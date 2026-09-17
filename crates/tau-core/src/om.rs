@@ -76,10 +76,12 @@ impl OmConfig {
     }
 }
 
-/// Observer trigger: unobserved tokens reached the (dynamic) threshold
-/// (`getStatus` `shouldObserve`).
-pub fn should_observe(pending_tokens: u32, config: &OmConfig) -> bool {
-    pending_tokens >= config.observe_threshold_for(0)
+/// Observer trigger: unobserved tokens reached the (dynamic) threshold,
+/// which shrinks as the observation log fills the shared budget
+/// (`getStatus` `shouldObserve`; `calculateDynamicThreshold` takes the
+/// current observation token count).
+pub fn should_observe(pending_tokens: u32, observed_tokens: u32, config: &OmConfig) -> bool {
+    pending_tokens >= config.observe_threshold_for(observed_tokens)
 }
 
 /// Reflector trigger: observation tokens reached the threshold
@@ -922,7 +924,9 @@ pub fn sanitize_observation_lines(observations: &str) -> String {
             if line.chars().count() > MAX_OBSERVATION_LINE_CHARS {
                 format!(
                     "{} … [truncated]",
-                    line.chars().take(MAX_OBSERVATION_LINE_CHARS).collect::<String>()
+                    line.chars()
+                        .take(MAX_OBSERVATION_LINE_CHARS)
+                        .collect::<String>()
                 )
             } else {
                 line.to_owned()
@@ -1309,9 +1313,9 @@ mod tests {
     #[test]
     fn observer_fires_at_threshold_and_only_above() {
         let c = OmConfig::default();
-        assert!(!should_observe(29_999, &c));
-        assert!(should_observe(30_000, &c));
-        assert!(should_observe(31_000, &c));
+        assert!(!should_observe(29_999, 0, &c));
+        assert!(should_observe(30_000, 0, &c));
+        assert!(should_observe(31_000, 0, &c));
     }
 
     #[test]
@@ -1320,8 +1324,8 @@ mod tests {
             observe_threshold: 10_000,
             ..Default::default()
         };
-        assert!(!should_observe(9_999, &c));
-        assert!(should_observe(10_000, &c));
+        assert!(!should_observe(9_999, 0, &c));
+        assert!(should_observe(10_000, 0, &c));
     }
 
     #[test]
@@ -1353,6 +1357,23 @@ mod tests {
         assert_eq!(c.observe_threshold_for(40_000), 30_000);
         // Never below the base threshold.
         assert_eq!(c.observe_threshold_for(100_000), 30_000);
+    }
+
+    #[test]
+    fn observer_guard_shrinks_with_the_observation_log() {
+        // With a shared budget the threshold shrinks as observations
+        // accumulate: 35k pending is below the unshrunk 70k but at/above
+        // the 30k floor reached at 40k observed.
+        let c = OmConfig {
+            share_token_budget: true,
+            ..Default::default()
+        };
+        assert!(should_observe(35_000, 40_000, &c));
+        assert!(!should_observe(29_999, 40_000, &c));
+        // No shared budget: observed tokens never move the threshold.
+        let c = OmConfig::default();
+        assert!(should_observe(30_000, 40_000, &c));
+        assert!(!should_observe(29_999, 40_000, &c));
     }
 
     #[test]
@@ -1682,8 +1703,10 @@ mod tests {
         // `||` evaluates to with no extractors).
         let tpl_at = ts.find("Use priority levels:").expect("template");
         let open = ts[..tpl_at].rfind('`').expect("template open backtick");
-        let close =
-            tpl_at + ts[tpl_at..].find("${extractorSections").expect("extractor slot");
+        let close = tpl_at
+            + ts[tpl_at..]
+                .find("${extractorSections")
+                .expect("extractor slot");
         let expected = format!("{}{}", &ts[open + 1..close], legacy);
         assert_eq!(
             OBSERVER_OUTPUT_FORMAT, expected,
