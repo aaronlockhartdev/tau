@@ -3,9 +3,9 @@
 //! zstd-compressed sidecar blobs for oversized payloads, and manual zstd
 //! archives.
 //!
-//! The active leaf is the last entry line in the file; `set_leaf` persists an
-//! explicit branch choice by rewriting only the header (entry lines are never
-//! touched — branching is always an append).
+//! The active leaf is the persisted branch choice (`set_leaf`) if any, else
+//! the last entry line; the choice lives in the header, which is rewritten
+//! atomically (entry lines are never touched — branching is always an append).
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,8 +23,8 @@ pub const FILE_VERSION: u32 = 1;
 const ZSTD_LEVEL: i32 = 3;
 
 /// Default sidecar-blob threshold; the config's `[sessions]
-/// `blob_threshold_bytes` overrides it (spec §3: 100 KB per the research
-/// corpus — 83 of 85 MB of measured lines exceeded it).
+/// `blob_threshold_bytes` overrides it (spec §3: 100 KB — the research
+/// corpus measured 83 lines >100 KB, max 1 MB, mostly base64 images).
 pub const DEFAULT_BLOB_THRESHOLD: u64 = 100_000;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,10 +59,10 @@ pub struct BlobRef {
 pub struct Entry {
     pub id: String,
     /// Previous entry in the branch; `None` for the first entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "parentId", default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     /// Epoch milliseconds.
-    pub ts: u64,
+    pub timestamp: u64,
     #[serde(rename = "type")]
     pub kind: String,
     /// Inline payload; `Value::Null` when the data lives in a sidecar blob.
@@ -72,8 +72,12 @@ pub struct Entry {
     pub blob: Option<BlobRef>,
     /// Compaction span reference (spec §3, pi's `firstKeptEntryId` pattern):
     /// the first entry kept after this record's compressed span.
-    #[serde(default, rename = "firstKept", skip_serializing_if = "Option::is_none")]
-    pub first_kept: Option<String>,
+    #[serde(
+        default,
+        rename = "firstKeptEntryId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub first_kept_entry_id: Option<String>,
     /// CRC32 (hex) of the canonical line with this field empty.
     #[serde(
         default,
@@ -137,6 +141,7 @@ pub struct SessionStore {
     id: String,
     root: PathBuf,
     blob_threshold: u64,
+    leaf: Option<String>,
     loaded: bool,
     ids: HashSet<String>,
     next: u64,
@@ -209,6 +214,7 @@ impl SessionStore {
             id: id.to_owned(),
             root,
             blob_threshold: DEFAULT_BLOB_THRESHOLD,
+            leaf: None,
             loaded: false,
             ids: HashSet::new(),
             next: 0,
@@ -249,15 +255,15 @@ impl SessionStore {
             .unwrap_or(0)
     }
 
-    fn new_entry(&self, kind: &str, payload: Value, first_kept: Option<String>) -> Entry {
+    fn new_entry(&self, kind: &str, payload: Value, first_kept_entry_id: Option<String>) -> Entry {
         Entry {
             id: format!("{:08}", self.next),
             parent: None,
-            ts: Self::now_ms(),
+            timestamp: Self::now_ms(),
             kind: kind.to_owned(),
             payload,
             blob: None,
-            first_kept,
+            first_kept_entry_id,
             crc: None,
         }
     }
@@ -297,7 +303,13 @@ impl SessionStore {
                     }
                     fs::write(self.path(), &raw)?;
                 }
-                None => return Err(Error::Other("session file has no header".into())),
+                None => {
+                    if serde_json::from_str::<Header>(&raw).is_err() {
+                        return Err(Error::Other("session file has no header".into()));
+                    }
+                    raw.push('\n');
+                    fs::write(self.path(), &raw)?;
+                }
             }
         }
         let lines: Vec<&str> = raw.split('\n').collect();
@@ -317,6 +329,7 @@ impl SessionStore {
                 header.id, self.id
             )));
         }
+        self.leaf = header.leaf.clone();
 
         self.ids.clear();
         self.next = 1;
@@ -405,12 +418,12 @@ impl SessionStore {
     /// Append a compaction record referencing the first kept entry (spec §3).
     pub fn append_compaction(
         &mut self,
-        first_kept: &str,
+        first_kept_entry_id: &str,
         payload: Value,
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
         self.append_line(
-            self.new_entry("compaction", payload, Some(first_kept.to_owned())),
+            self.new_entry("compaction", payload, Some(first_kept_entry_id.to_owned())),
             parent,
         )
     }
@@ -455,8 +468,13 @@ impl SessionStore {
         Ok(entry)
     }
 
-    /// The active leaf: the last entry line in the file.
-    pub fn leaf(&self) -> Result<Entry, Error> {
+    /// The active leaf: the persisted branch choice if any, else the last
+    /// entry line in the file.
+    pub fn leaf(&mut self) -> Result<Entry, Error> {
+        self.ensure_open()?;
+        if let Some(l) = &self.leaf {
+            return self.entry(l);
+        }
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
         let line = raw
             .lines()
@@ -468,8 +486,9 @@ impl SessionStore {
         Ok(entry)
     }
 
-    /// Persist an explicit branch choice (the GUI switches the active branch;
-    /// only the header line is rewritten).
+    /// Persist an explicit branch choice (the GUI switches the active
+    /// branch); only the header line's content changes, written atomically
+    /// via temp-file rename.
     pub fn set_leaf(&mut self, leaf_id: &str) -> Result<(), Error> {
         self.ensure_open()?;
         if !self.ids.contains(leaf_id) {
@@ -482,7 +501,10 @@ impl SessionStore {
         let new_header = serde_json::to_string(&header)?;
         lines[0] = &new_header;
         let joined = lines.join("\n");
-        fs::write(self.path(), joined)?;
+        let tmp = self.path().with_extension("tmp");
+        fs::write(&tmp, &joined)?;
+        fs::rename(&tmp, self.path())?;
+        self.leaf = Some(leaf_id.to_owned());
         Ok(())
     }
 
@@ -516,10 +538,10 @@ impl SessionStore {
                 continue;
             }
             let entry: Entry = line.parse::<Entry>()?;
+            entry.verify(i + 2)?;
             if past {
                 out.push(entry);
             } else if entry.id == cursor {
-                entry.verify(i + 2)?;
                 past = true;
             }
         }
@@ -658,7 +680,7 @@ mod tests {
     #[test]
     fn append_round_trip_builds_the_tree() {
         let tmp = tempfile::tempdir().unwrap();
-        let (s, entries) = seeded(tmp.path());
+        let (mut s, entries) = seeded(tmp.path());
         assert_eq!(entries[0].parent, None);
         assert_eq!(entries[1].parent, Some(entries[0].id.clone()));
         assert_eq!(entries[2].parent, Some(entries[1].id.clone()));
@@ -705,6 +727,8 @@ mod tests {
         assert_eq!(b_rest, a_rest);
         let h: Header = serde_json::from_str(a_h).unwrap();
         assert_eq!(h.leaf, Some(entries[0].id.clone()));
+        assert!(!s.path().with_extension("tmp").exists());
+        assert_eq!(s.leaf().unwrap().id, entries[0].id);
     }
 
     #[test]
@@ -734,7 +758,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (s, entries) = seeded(tmp.path());
         let mut raw = fs::read_to_string(s.path()).unwrap();
-        raw.push_str(&format!("{{\"id\":\"{:08}\",\"parent\":null", 99)); // no newline: a kill mid-append
+        raw.push_str(&format!("{{\"id\":\"{:08}\",\"parentId\":null", 99)); // no newline: a kill mid-append
         fs::write(s.path(), raw).unwrap();
         let mut reopened = store(tmp.path(), "s1");
         reopened.open().unwrap();
@@ -866,8 +890,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(c.kind, "compaction");
-        assert_eq!(c.first_kept, Some(entries[2].id.clone()));
+        assert_eq!(c.first_kept_entry_id, Some(entries[2].id.clone()));
         let on_disk = s.entry(&c.id).unwrap();
-        assert_eq!(on_disk.first_kept, Some(entries[2].id.clone()));
+        assert_eq!(on_disk.first_kept_entry_id, Some(entries[2].id.clone()));
     }
 }

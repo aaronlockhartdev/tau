@@ -89,6 +89,7 @@ impl Default for Gui {
         }
     }
 }
+
 /// Session storage settings (spec §3).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

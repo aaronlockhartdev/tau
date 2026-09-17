@@ -44,15 +44,25 @@ fn run(n: u64) {
         .unwrap();
     let range_ms = t.elapsed().as_millis();
 
+    let t = Instant::now();
+    let tail100 = reader.entries_since(&format!("{:08}", n - 100)).unwrap();
+    let since100_ms = t.elapsed().as_millis();
+
     eprintln!(
         "10k fixture: {file_kb} KB — write {write_ms} ms, open {open_ms} ms, \
-         entries_since(last) {since_ms} ms ({} entries), entries_range(middle, 100) {range_ms} ms",
-        tail.len()
+         entries_since(last) {since_ms} ms, entries_since(tail-100) {since100_ms} ms ({} entries), \
+         entries_range(middle, 100) {range_ms} ms",
+        tail100.len()
     );
     assert_eq!(tail.len(), 0, "the last cursor has nothing after it");
+    assert_eq!(tail100.len(), 100);
     assert_eq!(page.len(), 100);
     assert!(open_ms < 500, "open took {open_ms} ms");
     assert!(since_ms < 250, "entries_since took {since_ms} ms");
+    assert!(
+        since100_ms < 250,
+        "entries_since(tail-100) took {since100_ms} ms"
+    );
     assert!(range_ms < 250, "entries_range took {range_ms} ms");
 }
 
