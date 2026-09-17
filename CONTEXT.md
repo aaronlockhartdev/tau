@@ -49,7 +49,7 @@ A concurrent agent-loop instance in `tau-core` working a delegated task in its o
 _Avoid_: child agent, worker (implies a generic process)
 
 **Task**:
-A first-class unit of work: enforced state machine (pending → in-progress → done / blocked / cancelled), ordered steps with expected outputs, acceptance criteria, evidence. Stored per-workspace as append-only events (replayable). Completion is **evidence-gated**; completable by the parent or a sub-agent, whose finish resolves it as completed / handed_off / blocked (ADR-0001, ADR-0006).
+A first-class unit of work: enforced state machine (pending → in-progress → done / blocked / cancelled), ordered steps with expected outputs, acceptance criteria, evidence. Stored as append-only events **in the owning session's file** (on assignment, the worker's session becomes the live record); tasks do not outlive their session (user override 2026-09-17). Completion is **evidence-gated**; completable by the parent or a sub-agent, whose finish resolves it as completed / handed_off / blocked (ADR-0001, ADR-0006).
 _Avoid_: job, ticket (a ticket is a wayfinding/issue concept)
 
 **Handoff**:
@@ -61,7 +61,7 @@ In v0, a named OpenAI-compatible endpoint (base URL + key + model ids) speaking 
 _Avoid_: model (a single entry within a provider), LLM backend
 
 **Handle**:
-An opaque identifier returned by a sub-agent spawn; the target of `message` / `stop` / `resume` / `state` (ADR-0006).
+An opaque identifier returned by a sub-agent spawn; the target of `message` (which also resumes a non-running child) / `stop` / `state` (ADR-0006).
 _Avoid_: id (ambiguous with entry/session ids), reference
 
 **Sidecar blob**:
