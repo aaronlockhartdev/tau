@@ -7,7 +7,7 @@
 - Per-session `OmRecord` (observations text, path-scoped cursor, generation) stored with the session (ADR-0005 carries it as appended entries).
 - Observer fires at turn end when unobserved tokens ≥ threshold (default 30k); Reflector fires when observations tokens ≥ threshold (default 40k); **both thresholds are configurable**; the ported **dynamic threshold** (raw oscillates between a retention floor and the threshold) is the overflow guard.
 - v0 includes **async buffering**: fire-and-forget Observer runs over the safe completed prefix (~6k increments), activated at threshold/idle with no LLM call.
-- Observer/Reflector run on a per-provider configurable **`om_model`** (default: the session's model) — a cheap model can serve both roles.
+- Observer/Reflector run on a **single global `om_model`** config (user decision 2026-09-17 — not per-provider; default: the session's model) — a cheap model can serve both roles.
 - **Per-branch records**: forking copies the parent's `OmRecord` at the fork point; each branch then observes independently, cursor always evaluated on the active path. (Mastra has no branch concept — this is tau's addition.)
 - The **`recall` tool** is in v0: page from an observation group's entry range back to raw session entries — browsing-only, no vector search (a designed-in extension: groups already carry stable ids + ranges; a later `search` mode = embeddings config + index sidecar).
 - The Observer/Reflector prompts and threshold math are ported verbatim from Mastra (Apache-2.0 per the repo's `package.json`; the ported files sit outside the separately-licensed `ee/` directory; attribution at the port site).

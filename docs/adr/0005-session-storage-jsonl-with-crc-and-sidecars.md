@@ -6,8 +6,8 @@
 
 1. **Per-line CRC** field (measured +0.2% of file size) — detects silent mid-line corruption that parse-or-skip cannot.
 2. **Out-of-band sidecar blobs** for payloads above a threshold: raw bytes (removing base64's 33% expansion), zstd-compressed, referenced by id from the entry — the log stays readable, the worst-case single write shrinks, and tail reads stay cheap.
-3. **Dormant sessions are zstd-archived** on a cleanup schedule (one-way, off the live read/write path) — captures the 3.4× reclamation where it actually matters (old sessions).
-4. **Placement** (user-confirmed 2026-09-16): workspace-scoped session data lives in the workspace's project directory — `{project root}/.tau/sessions/` (one file per session, sidecar blobs in `blobs/`, dormant archives in `archive/`) — alongside the per-workspace task store at `{project root}/.tau/tasks/`; sessions with no project live in `~/.config/tau/sessions/`. Placement is a core-side rule: on a remote backend the files live on the host where tau-core runs (no local paths as identity, #13).
+3. **Manual archives** (explicit user action — no auto-archive, no auto-compression, no cleanup schedule): a session file is zstd-compressed into `archive/` and removed from `sessions/`; un-archiving decompresses it back (one-way per action, off the live read/write path) — captures the 3.4× reclamation where it actually matters (old sessions), on demand.
+4. **Placement** (user-confirmed 2026-09-16): workspace-scoped session data lives in the workspace's project directory — `{project root}/.tau/sessions/` (one file per session, sidecar blobs in `blobs/`, manual archives in `archive/`) — alongside the per-workspace task store at `{project root}/.tau/tasks/`; sessions with no project live in `~/.config/tau/sessions/`. Placement is a core-side rule: on a remote backend the files live on the host where tau-core runs (no local paths as identity, #13).
 
 **Consequences**: live session files stay `grep`/`jq`/`vim`/`diff`-able — a first-class debugging artifact for a dev tool; total on-disk footprint ends up comparable to a fully compressed log, with the live log readable.
 

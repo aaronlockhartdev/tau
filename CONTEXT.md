@@ -17,7 +17,7 @@ The standalone Rust library crate (`tau-core`) that owns the agent loop, session
 _Avoid_: engine, backend
 
 **Session**:
-The branching record of a conversation between a user and one agent instance: a tree of entries (`id`/`parentId`) that can branch in place. Stored as one JSONL file per session — append-only lines with a per-line CRC, oversized payloads as out-of-band sidecar blobs, dormant sessions zstd-archived (ADR-0005). Sub-agents have their own session files, linked to the parent. **Placement**: workspace-scoped session data lives in the workspace's project directory, `{project root}/.tau/sessions/` (sidecar blobs and dormant archives alongside); sessions with no project live in `~/.config/tau/sessions/`.
+The branching record of a conversation between a user and one agent instance: a tree of entries (`id`/`parentId`) that can branch in place. Stored as one JSONL file per session — append-only lines with a per-line CRC, oversized payloads as out-of-band sidecar blobs, manually zstd-archived on user request (ADR-0005). Sub-agents have their own session files, linked to the parent. **Placement**: workspace-scoped session data lives in the workspace's project directory, `{project root}/.tau/sessions/` (sidecar blobs and manual archives alongside); sessions with no project live in `~/.config/tau/sessions/`.
 _Avoid_: conversation, transcript (a transcript is a linear rendering of a session)
 
 **Turn**:
@@ -86,7 +86,7 @@ _Avoid_: checkpoint (that implies persistence granularity), summary (too generic
 
 **Snapshot**:
 The ephemeral point-in-time render state the core builds for the GUI — metadata skeleton + bounded OM + live state + cursor; never a file (ADR-0006).
-_Avoid_: export, archive (that is the dormant-session zstd thing)
+_Avoid_: export, archive (that is the manual-archive zstd thing)
 **Context files**:
-Project/global instruction files (e.g. AGENTS.md) that are loaded into the system prompt. The exact set and discovery walk are open.
+Project/global instruction files loaded into the system prompt, following pi's pattern (2026-09-17): `AGENTS.md`/`CLAUDE.md` from `~/.config/tau/`, from parent directories walking up from the workspace cwd, and the cwd itself — all layers appended; a per-directory `AGENTS.override.md` replaces that directory's `AGENTS.md`/`CLAUDE.md`.
 _Avoid_: prompt files
