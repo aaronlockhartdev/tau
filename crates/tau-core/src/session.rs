@@ -528,20 +528,25 @@ impl SessionStore {
         Ok(out)
     }
 
-    /// Paged read of the entries after `cursor` (exclusive).
+    /// Paged read of the entries after `cursor` (exclusive). The cursor line
+    /// is located by `"id"` prefix scan (entry ids serialize first, in
+    /// append order) so tail reads never parse the entries before the
+    /// cursor (spec §3: tail reads stay cheap); entries after it are parsed
+    /// and CRC-verified as usual.
     pub fn entries_since(&self, cursor: &str) -> Result<Vec<Entry>, Error> {
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
         let mut out = Vec::new();
+        let prefix = format!("{{\"id\":\"{cursor}\"");
         let mut past = false;
         for (i, line) in raw.lines().skip(1).enumerate() {
             if line.is_empty() {
                 continue;
             }
-            let entry: Entry = line.parse::<Entry>()?;
-            entry.verify(i + 2)?;
             if past {
+                let entry: Entry = line.parse::<Entry>()?;
+                entry.verify(i + 2)?;
                 out.push(entry);
-            } else if entry.id == cursor {
+            } else if line.starts_with(&prefix) {
                 past = true;
             }
         }
