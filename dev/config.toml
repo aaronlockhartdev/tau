@@ -1,0 +1,10 @@
+# Development example config: the local rapid-mlx test endpoint (ticket #16).
+# Copy to ~/.config/tau/config.toml (system) or .tau/config.toml (project).
+# Start the server with: rapid-mlx serve qwen3.5-9b-4bit
+[providers.dev]
+base_url = "http://127.0.0.1:8000/v1"
+key_env = ""
+models = ["qwen3.5-9b-4bit"]
+
+[om]
+om_model = "qwen3.5-9b-4bit"

@@ -1,0 +1,13 @@
+[package]
+name = "tau-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+tauri = { version = "2.11", features = [] }
+tau-protocol = { path = "../../crates/tau-protocol" }
+tau-core = { path = "../../crates/tau-core" }
