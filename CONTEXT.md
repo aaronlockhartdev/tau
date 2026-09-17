@@ -45,15 +45,15 @@ The memory model introduced by Mastra that tau's compaction is built on (ADR-000
 _Avoid_: "the OM feature", "memory feature"
 
 **Sub-agent**:
-A concurrent agent-loop instance in `tau-core` working a delegated task in its own session file linked to the parent; spawned asynchronously (opaque handle), with completions and messaging tool-based (ADR-0001).
+A concurrent agent-loop instance in `tau-core` working a delegated task in its own session file linked to the parent. Always asynchronous (opaque handle); a child is an *ordinary* session — openable, steerable, branchable in the GUI. States: running · idle (explicit wait) · done · failed · stopped — all deliberately resumable; nothing auto-resumes (ADR-0001, ADR-0006).
 _Avoid_: child agent, worker (implies a generic process)
 
 **Task**:
-A first-class unit of work — state machine (pending → in-progress → done), steps, acceptance criteria, evidence; completable by the parent agent or by a sub-agent. Assigning a task to a sub-agent spawns it with the task as brief (ADR-0001).
+A first-class unit of work: enforced state machine (pending → in-progress → done / blocked / cancelled), ordered steps with expected outputs, acceptance criteria, evidence. Stored per-workspace as append-only events (replayable). Completion is **evidence-gated**; completable by the parent or a sub-agent, whose finish resolves it as completed / handed_off / blocked (ADR-0001, ADR-0006).
 _Avoid_: job, ticket (a ticket is a wayfinding/issue concept)
 
 **Handoff**:
-The transfer of a task between agents: in = a self-contained brief (goal, context pointers, constraints, output schema); out = the sub-agent's schema-validated `finish` tool call (ADR-0001).
+The transfer of a task between agents: in = a self-contained brief (goal, context pointers, constraints, output schema); out = the sub-agent's schema-validated `parent_notify {done: true}` (ADR-0001, ADR-0006).
 _Avoid_: delegation (the act of assigning, not the transfer)
 
 **Provider**:
@@ -61,7 +61,7 @@ In v0, a named OpenAI-compatible endpoint (base URL + key + model ids) speaking 
 _Avoid_: model (a single entry within a provider), LLM backend
 
 **Handle**:
-An opaque identifier returned by a sub-agent spawn; the target of the `message`/`stop`/`resume` operations (ADR-0001).
+An opaque identifier returned by a sub-agent spawn; the target of `message` / `stop` / `resume` / `state` (ADR-0006).
 _Avoid_: id (ambiguous with entry/session ids), reference
 
 **Sidecar blob**:
@@ -71,6 +71,22 @@ _Avoid_: attachment (that is an in-message concept), spool
 **Recall**:
 The tool by which a model pages from an observation group back to the raw session entries (browsing-only in v0; no vector search) (ADR-0004).
 _Avoid_: search (v0 recall browses; search is the deferred vector mode), lookup
+
+**Agent type**:
+A named sub-agent configuration — system prompt, tools, model, default context mode — defined by `.md` files (system `~/.config/tau/agents/`, project `{project}/.tau/agents/`, project wins) or built in (`general`).
+_Avoid_: agent class, profile
+
+**Workspace**:
+`(id, display name, cwd)` — the directory on the host where `tau-core` runs; the identity unit for sessions and tasks. Paths in the protocol resolve against it; local paths are never used as identity (ADR-0006).
+_Avoid_: project (ambiguous with the git repo), cwd (just the path)
+
+**Resume contract**:
+A compact machine-generated summary of a task's current state — current step + expected output, evidence, gaps, blockers, next action; re-injected on compaction and the payload for resuming a paused/done sub-agent (ADR-0006).
+_Avoid_: checkpoint (that implies persistence granularity), summary (too generic)
+
+**Snapshot**:
+The ephemeral point-in-time render state the core builds for the GUI — metadata skeleton + bounded OM + live state + cursor; never a file (ADR-0006).
+_Avoid_: export, archive (that is the dormant-session zstd thing)
 **Context files**:
 Project/global instruction files (e.g. AGENTS.md) that are loaded into the system prompt. The exact set and discovery walk are open.
 _Avoid_: prompt files
