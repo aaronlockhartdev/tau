@@ -89,6 +89,20 @@ impl Default for Gui {
         }
     }
 }
+/// Session storage settings (spec §3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Sessions {
+    pub blob_threshold_bytes: u64,
+}
+
+impl Default for Sessions {
+    fn default() -> Self {
+        Self {
+            blob_threshold_bytes: 100_000,
+        }
+    }
+}
 
 /// The merged, fully-defaulted configuration the core operates on.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -99,6 +113,7 @@ pub struct Config {
     pub subagents: SubAgents,
     pub requests: Requests,
     pub gui: Gui,
+    pub sessions: Sessions,
 }
 
 /// On-disk file shape: every section optional so a partial file layers cleanly.
@@ -110,6 +125,7 @@ struct ConfigFile {
     subagents: Option<SubAgents>,
     requests: Option<Requests>,
     gui: Option<Gui>,
+    sessions: Option<Sessions>,
 }
 
 impl ConfigFile {
@@ -137,6 +153,9 @@ impl ConfigFile {
         }
         if let Some(gui) = &self.gui {
             config.gui = gui.clone();
+        }
+        if let Some(sessions) = &self.sessions {
+            config.sessions = sessions.clone();
         }
     }
 }
@@ -200,6 +219,7 @@ mod tests {
         assert_eq!(config.om.buffer_increment, 6_000);
         assert_eq!(config.subagents.max_depth, 1);
         assert_eq!(config.gui.coalesce_ms, 25);
+        assert_eq!(config.sessions.blob_threshold_bytes, 100_000);
         assert!(config.gui.reasoning_visible);
     }
 
