@@ -2,23 +2,31 @@
 <!--
   PROTOTYPE — throwaway, not production. Do not promote without rewrite.
 
-  Question (#11): what should the tau sessions & sub-agents GUI look like?
-  Three variants of the whole IA, switchable via ?variant= (and the floating bottom bar):
-    A — Workbench:  3-pane (tree | transcript+composer | inspector); children browse as SIBLING TABS
-    B — Focus:      single column, no sidebars; children browse as INLINE NESTED panels; tasks as top strip
-    C — Triage:     icon rail + command palette (⌘K) as primary affordance; children browse as a RIGHT DRAWER
-  All variants share one fake dataset and demonstrate the #10 protocol performance shape:
-  snapshot-projection load (metadata skeleton, payloads lazy), paged/virtualized reads,
-  25 ms delta coalescing, sidecar blobs on demand. Status strip (bottom bar) proves it live.
+  Question (#11), round 2: user verdict (2026-09-16) —
+    · chat is ALWAYS central; a focus mode (clean, chat only) hides both side panes
+    · open workspaces = tabs on top
+    · LEFT: file tree + session tree (MRU-sorted; sub-agent groups collapsible;
+      active session expanded by default, others collapsed; archive folder at bottom)
+    · RIGHT: tasks + sub-agents (no agent types). Tasks: collapsed rows, filter by
+      status (default: not-done), sorted by last modified, click → detail. Sub-agents:
+      same, plus a TREE (nested support), double-click → open the session.
+    · steering queue is VERTICAL; markdown + syntax highlighting render for real
+  Open question left by the verdict (the switchable axis, ←/→ or the bottom bar):
+    ?right=stacked (default) — tasks and sub-agents both visible, stacked
+    ?right=tabs — one at a time in two tabs
+  Earlier variants A/B/C (workbench / focus-inline / triage-drawer) live in git history
+  of this file — this file is now the verdict design only.
+  10k-entry virtualization + 2 live 25 ms-coalesced streams + status strip retained
+  (the #10 acceptance bar).
 
-  Run:  open this file directly, or:  python3 -m http.server 4173 -d prototype/gui-ia
-  Keys: ←/→ cycle variants (not while typing) · ⌘/Ctrl+K opens the palette in variant C
+  Run:  open this file, or:  python3 -m http.server 4173 -d prototype/gui-ia
+  Keys: ←/→ switch the right-pane axis (not while typing)
 -->
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tau GUI IA — PROTOTYPE</title>
+<title>tau GUI — PROTOTYPE (verdict design)</title>
 <style>
 :root{
   --bg:#101115; --panel:#16181d; --panel2:#1c1f26; --line:#262a33;
@@ -29,273 +37,286 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 var(--sans)}
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
-input,textarea{font:inherit;color:inherit}
+input{font:inherit;color:inherit}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#2c313c;border-radius:5px}
 .proto-banner{position:absolute;top:0;left:0;right:0;height:26px;background:#2a2113;color:#e8b64c;
   display:flex;align-items:center;justify-content:center;gap:10px;font:11px/1 var(--mono);letter-spacing:.08em;z-index:50}
-#app{position:absolute;inset:26px 0 0 0}
-/* ---------- shared atoms ---------- */
-.badge{display:inline-flex;align-items:center;gap:5px;font:10.5px/1.6 var(--mono);padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);white-space:nowrap}
+#app{position:absolute;inset:26px 0 0 0;display:flex;flex-direction:column}
+/* ---------- top bar: workspace tabs + focus ---------- */
+.top{display:flex;align-items:stretch;gap:0;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+.wstabs{display:flex;align-items:stretch}
+.wstab{display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:13px;color:var(--dim);border-right:1px solid var(--line);cursor:pointer}
+.wstab.on{color:var(--tx);background:var(--bg);box-shadow:inset 0 2px 0 var(--acc)}
+.wstab .cw{font:10px var(--mono);color:#4d5462}
+.top .tspacer{flex:1}
+.top .sht{display:flex;align-items:center;padding:0 12px;font-size:13px;color:var(--dim)}
+.iconbtn{display:flex;align-items:center;gap:7px;padding:0 14px;font-size:12.5px;color:var(--dim);border-left:1px solid var(--line)}
+.iconbtn:hover{color:var(--tx);background:var(--panel2)}
+.iconbtn.on{color:var(--acc);background:var(--bg)}
+/* ---------- body grid ---------- */
+.body{display:grid;grid-template-columns:270px 1fr 330px;flex:1;min-height:0}
+.body.focus{grid-template-columns:0 1fr 0}
+.body.focus .left,.body.focus .right{display:none}
+.left{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;min-height:0}
+.center{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+.right{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;min-height:0}
+/* ---------- left: file tree + session tree ---------- */
+.sec{border-bottom:1px solid var(--line)}
+.sec-h{display:flex;align-items:center;gap:6px;padding:9px 12px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--dim);cursor:pointer;user-select:none}
+.sec-h:hover{color:var(--tx)}
+.sec-h .chev{font-size:10px;transition:transform .12s}
+.sec-h.open .chev{transform:rotate(90deg)}
+.sec-b{display:none}
+.sec-b.open{display:block}
+.frow{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 12px;font-size:12.5px;color:var(--dim);cursor:pointer;white-space:nowrap}
+.frow:hover{background:var(--panel2);color:var(--tx)}
+.frow .chev{font-size:9px;width:10px}
+.frow .fn{color:var(--tx)}
+.frow .dir{color:var(--acc)}
+/* session tree */
+.srow{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:13px;cursor:pointer;color:var(--tx)}
+.srow:hover{background:var(--panel2)}
+.srow.sel{background:rgba(76,194,255,.12)}
+.srow .chev{font-size:9px;width:12px;color:var(--dim);cursor:pointer}
+.srow .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow .mru{font:9.5px var(--mono);color:#4d5462}
+.srow.child{padding-left:26px}
+.srow.nested{padding-left:44px}
+.srow.arch{padding:4px 12px;color:var(--dim);font-size:12px}
+.srow.arch:hover{color:var(--tx)}
+.kids{display:none}
+.kids.open{display:block}
+/* ---------- badges ---------- */
+.badge{display:inline-flex;align-items:center;gap:5px;font:10.5px/1.6 var(--mono);padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;flex:none}
 .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
 .badge.running{color:var(--acc);border-color:rgba(76,194,255,.4)}.badge.running .dot{background:var(--acc);animation:pulse 1.2s infinite}
 .badge.done{color:var(--green);border-color:rgba(87,217,122,.4)}.badge.done .dot{background:var(--green)}
 .badge.idle{color:var(--amber);border-color:rgba(232,182,76,.4)}.badge.idle .dot{background:var(--amber)}
 .badge.failed{color:var(--red);border-color:rgba(239,106,106,.45)}.badge.failed .dot{background:var(--red);animation:pulse .8s infinite}
 .badge.stopped{color:var(--dim)}.badge.stopped .dot{background:var(--dim)}
-.badge.in-progress{color:var(--acc);border-color:rgba(76,194,255,.4)}
-.badge.blocked{color:var(--red);border-color:rgba(239,106,106,.45)}
-.badge.pending{color:var(--dim)}.badge.satisfied{color:var(--green)}.badge.cancelled{color:var(--dim)}
+.badge.in-progress{color:var(--acc);border-color:rgba(76,194,255,.4)}.badge.in-progress .dot{background:var(--acc);animation:pulse 1.2s infinite}
+.badge.blocked{color:var(--red);border-color:rgba(239,106,106,.45)}.badge.blocked .dot{background:var(--red)}
+.badge.pending{color:var(--dim)}.badge.cancelled{color:var(--dim)}
 @keyframes pulse{50%{opacity:.35}}
-.entry{border-bottom:1px solid var(--line);padding:8px 14px;cursor:default}
+/* ---------- center: transcript ---------- */
+.chead{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+.chead .n{font-weight:600;font-size:13.5px}
+.chead .par{font-size:12px;color:var(--dim)}
+.chead .par a{color:var(--acc);cursor:pointer}
+.chead .m{margin-left:auto;font:10.5px var(--mono);color:#4d5462}
+.scroll{flex:1;overflow-y:auto;min-height:0;position:relative}
+.entry{border-bottom:1px solid var(--line);padding:8px 16px}
 .entry .eh{display:flex;align-items:center;gap:8px}
 .entry .eh .who{font:11px var(--mono);color:var(--dim)}
 .entry .eh .tt{font:10px var(--mono);color:#4d5462;margin-left:auto}
-.entry .body{margin-top:4px;color:var(--tx);white-space:pre-wrap;font-size:13px}
+.entry .body{margin-top:4px;color:#c6cad2;font-size:13.5px}
 .entry.user .who{color:var(--purple)}
-.entry.assistant .body{color:#c6cad2}
+.entry.user .body{color:var(--tx)}
 .entry.om{background:rgba(181,140,255,.05)}
 .entry.om .who{color:var(--purple)}
 .entry.archived{background:var(--panel);color:var(--dim);font-size:12px}
-.entry.tool .name{font:12px var(--mono);color:var(--acc)}
-.entry.tool .arg{font:11.5px var(--mono);color:var(--dim);margin-left:8px}
-.entry.tool .out{margin-top:6px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:11.5px/1.5 var(--mono);white-space:pre;overflow-x:auto;color:#9aa3b2;max-height:260px;overflow-y:auto}
-.entry.tool .out .add{color:var(--green);display:block}.entry.tool .out .del{color:var(--red);display:block}
-.entry.tool .out .hsh{color:#525a6a;display:inline-block;width:44px}
-.entry.tool .out .blob{color:var(--amber);font-style:italic}
-.entry.notify{background:rgba(76,194,255,.05);border-left:2px solid var(--acc);padding-left:12px}
+.entry.notify{background:rgba(76,194,255,.05);border-left:2px solid var(--acc);padding-left:14px}
 .entry.notify .who{color:var(--acc)}
 .entry.streaming .body::after{content:"▍";color:var(--acc);animation:pulse 1s infinite}
-.chip{display:inline-flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:2px 10px;font:11.5px var(--sans);color:var(--dim)}
-.chip b{color:var(--tx);font-weight:500}
-.chip .k{font:9.5px var(--mono);color:var(--acc);text-transform:uppercase}
-.chip .x{color:#4d5462;cursor:pointer;font-size:13px;line-height:1}
-.chip:hover .x{color:var(--red)}
-.composer{border-top:1px solid var(--line);background:var(--panel);padding:10px 14px}
-.composer .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;min-height:4px}
+.entry .body code.ic{font:11.5px var(--mono);background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:0 5px}
+.entry .body pre.code{background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:9px 11px;font:11.5px/1.55 var(--mono);overflow-x:auto;margin:6px 0;white-space:pre}
+.entry .body pre.code .lang{float:right;font-size:9.5px;color:#4d5462;text-transform:uppercase}
+.entry .body .mh{font-weight:600;margin-top:8px}.entry .body .mh2{font-weight:600;font-size:12px;margin-top:8px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.entry .body .mi{padding-left:14px;position:relative}.entry .body .mi::before{content:"–";position:absolute;left:2px;color:var(--dim)}
+.entry .body .lk{color:var(--acc)}
+.entry .body .k{color:var(--purple)}.entry .body .s{color:var(--green)}.entry .body .c{color:#525a6a}.entry .body .n{color:var(--amber)}.entry .body .t2{color:var(--acc)}
+.entry .body .add{color:var(--green);display:block}.entry .body .del{color:var(--red);display:block}
+.entry .body .hsh{color:#525a6a;display:inline-block;width:44px}
+.entry .body .blob{color:var(--amber);font-style:italic}
+.entry.tool .name{font:12px var(--mono);color:var(--acc)}
+.entry.tool .arg{font:11.5px var(--mono);color:var(--dim);margin-left:8px}
+.entry.tool .out{margin-top:6px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:11.5px/1.55 var(--mono);color:#9aa3b2;max-height:280px;overflow:auto;white-space:pre}
+/* ---------- vertical steering queue ---------- */
+.qvert{flex:none;border-top:1px solid var(--line);background:var(--panel);max-height:132px;overflow-y:auto;padding:6px 14px}
+.qvert .qh{font:10px var(--mono);color:#4d5462;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 4px}
+.qrow{display:flex;align-items:flex-start;gap:8px;padding:4px 8px;border-radius:7px;margin-bottom:3px;background:var(--panel2);border:1px solid var(--line)}
+.qrow:hover{border-color:var(--acc)}
+.qrow .k{font:9.5px var(--mono);color:var(--acc);text-transform:uppercase;flex:none;margin-top:2px;width:52px}
+.qrow .t{flex:1;font-size:12.5px;color:var(--tx)}
+.qrow .x{color:#4d5462;cursor:pointer;font-size:13px;line-height:1.2}
+.qrow:hover .x{color:var(--red)}
+/* ---------- composer ---------- */
+.composer{border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;flex:none}
 .composer .row{display:flex;gap:8px;align-items:center}
-.composer input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;outline:none}
+.composer input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;outline:none}
 .composer input:focus{border-color:var(--acc)}
-.composer .send{background:var(--acc);color:#081018;border-radius:8px;padding:8px 16px;font-weight:600}
-.composer .force{background:transparent;color:var(--red);border:1px solid rgba(239,106,106,.5);border-radius:8px;padding:7px 12px;font-size:12.5px}
+.composer .send{background:var(--acc);color:#081018;border-radius:8px;padding:9px 18px;font-weight:600}
+.composer .force{background:transparent;color:var(--red);border:1px solid rgba(239,106,106,.5);border-radius:8px;padding:8px 13px;font-size:12.5px}
 .composer .force:hover{background:rgba(239,106,106,.12)}
-.panel-h{font:11px var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--dim);padding:10px 14px 6px}
-.tree-item{display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:7px;cursor:pointer;font-size:13px;color:var(--tx)}
-.tree-item:hover{background:var(--panel2)}
-.tree-item.sel{background:rgba(76,194,255,.12)}
-.tree-item .t{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tree-item.child{padding-left:26px}
-.task{border:1px solid var(--line);border-radius:8px;background:var(--panel);padding:10px 12px;margin:0 14px 10px}
-.task .th{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.task .th .n{font-weight:600;font-size:13px;flex:1}
-.task .step{display:flex;gap:8px;font-size:12.5px;padding:2px 0;color:var(--dim)}
-.task .step .mk{font-family:var(--mono)}
-.task .step.active{color:var(--tx)}.task .step.active .mk{color:var(--acc)}
-.task .step.done .mk{color:var(--green)}
-.task .ev{font:11px var(--mono);color:var(--dim);padding:1px 0}
-.task .ev .ok{color:var(--green)}.task .ev .pend{color:var(--amber)}
-.task .block{color:var(--red);font-size:12.5px;margin-top:4px}
-.task .rc{margin-top:8px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:11px/1.55 var(--mono);color:#9aa3b2;white-space:pre}
-.agent-row{display:flex;gap:10px;padding:7px 14px;cursor:pointer;align-items:baseline}
-.agent-row:hover{background:var(--panel2)}
-.agent-row .n{font:12.5px var(--mono);color:var(--tx)}
-.agent-row .n .bi{color:var(--dim);font-size:10px}
-.agent-row .d{color:var(--dim);font-size:11.5px;flex:1}
-.sub-row{display:flex;align-items:center;gap:8px;padding:6px 14px;cursor:pointer}
-.sub-row:hover{background:var(--panel2)}
-.sub-row .n{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sub-row .meta{font:10.5px var(--mono);color:var(--dim)}
+/* ---------- right: tasks & sub-agents ---------- */
+.right .sec{flex:none}
+.rtabs{display:flex;border-bottom:1px solid var(--line)}
+.rtab{flex:1;text-align:center;padding:9px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+.rtab.on{color:var(--acc);box-shadow:inset 0 -2px 0 var(--acc)}
+.filters{display:flex;gap:4px;padding:8px 12px 4px;flex-wrap:wrap}
+.fchip{font:10.5px var(--mono);border:1px solid var(--line);border-radius:11px;padding:2px 9px;color:var(--dim)}
+.fchip.on{color:var(--acc);border-color:rgba(76,194,255,.5);background:rgba(76,194,255,.08)}
+.list{padding:4px 0}
+.lrow{padding:7px 14px;cursor:pointer;border-bottom:1px solid rgba(38,42,51,.5)}
+.lrow:hover{background:var(--panel2)}
+.lrow .lh{display:flex;align-items:center;gap:8px}
+.lrow .ln{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lrow .lm{font:9.5px var(--mono);color:#4d5462}
+.lrow .chev{font-size:9px;color:var(--dim);width:10px}
+.lrow .ld{margin-top:8px;display:none}
+.lrow.open .ld{display:block}
+.lrow.open .chev{transform:rotate(90deg)}
+.detail .step{display:flex;gap:8px;font-size:12px;padding:2px 0;color:var(--dim)}
+.detail .step .mk{font-family:var(--mono)}
+.detail .step.active{color:var(--tx)}.detail .step.active .mk{color:var(--acc)}
+.detail .step.done .mk{color:var(--green)}
+.detail .ev{font:10.5px var(--mono);color:var(--dim);padding:1px 0}
+.detail .ev .ok{color:var(--green)}.detail .ev .pend{color:var(--amber)}
+.detail .block{color:var(--red);font-size:12px;margin-top:4px}
+.detail .rc{margin-top:8px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:10.5px/1.55 var(--mono);color:#9aa3b2;white-space:pre}
+.detail .a{margin-top:4px;font:10.5px var(--mono);color:var(--dim)}
+.srow2{padding:7px 14px 7px 14px;cursor:pointer;border-bottom:1px solid rgba(38,42,51,.5);display:flex;align-items:center;gap:8px}
+.srow2:hover{background:var(--panel2)}
+.srow2 .ln{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srow2 .lm{font:9.5px var(--mono);color:#4d5462}
+.srow2.d2{padding-left:34px}
+.srow2 .hint{font:9px var(--mono);color:#4d5462}
 /* ---------- switcher (prototype chrome) ---------- */
 #bar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;
   background:#000;color:#fff;border:1px solid #333;border-radius:999px;padding:5px 8px;box-shadow:0 6px 24px rgba(0,0,0,.6);font:12px var(--mono)}
 #bar button{width:30px;height:26px;border-radius:6px;color:#fff}
 #bar button:hover{background:#222}
-#bar .lbl{min-width:170px;text-align:center}
-#bar .status{min-width:330px;text-align:center;color:#7fd4ff;font-size:11px}
-/* ---------- variant A: workbench ---------- */
-.a{display:grid;grid-template-columns:270px 1fr 300px;height:100%}
-.a .left,.a .right{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto}
-.a .right{border-right:none;border-left:1px solid var(--line)}
-.a .ws{padding:12px 14px;font-weight:600;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
-.a .ws .cw{font:10.5px var(--mono);color:var(--dim);font-weight:400}
-.a .center{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
-.a .tabs{display:flex;gap:4px;padding:8px 10px 0;border-bottom:1px solid var(--line);background:var(--panel);overflow-x:auto}
-.a .tab{display:flex;align-items:center;gap:7px;padding:6px 12px;border-radius:8px 8px 0 0;font-size:12.5px;color:var(--dim);white-space:nowrap;border:1px solid transparent;border-bottom:none}
-.a .tab.on{background:var(--bg);color:var(--tx);border-color:var(--line)}
-.a .tab .dot{width:7px;height:7px;border-radius:50%}
-.a .scroll{flex:1;overflow-y:auto;position:relative;min-height:0}
-.a .rtabs{display:flex;border-bottom:1px solid var(--line)}
-.a .rtab{flex:1;text-align:center;padding:9px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
-.a .rtab.on{color:var(--acc);box-shadow:inset 0 -2px 0 var(--acc)}
-.a .rbody{overflow-y:auto;flex:1}
-.a .right{display:flex;flex-direction:column}
-.a>.left,.a>.center,.a>.right{min-height:0}
-/* ---------- variant B: focus ---------- */
-.b{display:flex;flex-direction:column;height:100%;min-height:0}
-.b .top{border-bottom:1px solid var(--line);background:var(--panel);padding:10px 18px;display:flex;align-items:center;gap:14px}
-.b .ws{font-weight:600}
-.b .crumb{display:flex;gap:6px;align-items:center;color:var(--dim);font-size:13px}
-.b .crumb a{color:var(--tx);cursor:pointer;text-decoration:none}
-.b .crumb a:hover{color:var(--acc)}
-.b .tstrip{margin-left:auto;display:flex;gap:8px;align-items:center}
-.b .tstrip button{font:11.5px var(--mono);color:var(--dim);border:1px solid var(--line);border-radius:12px;padding:3px 10px}
-.b .tstrip button:hover{color:var(--tx);border-color:var(--acc)}
-.b .tstrip .warn{color:var(--red)}
-.b .tasks-open{border-bottom:1px solid var(--line);background:var(--panel);max-height:220px;overflow-y:auto}
-.b .scroll{flex:1;overflow-y:auto;min-height:0}
-.b .scroll .entry{max-width:880px;margin:0 auto}
-.b .inline-child{margin:0 auto;max-width:880px;border:1px solid var(--line);border-radius:10px;background:var(--panel);margin-bottom:6px;overflow:hidden}
-.b .ic-head{display:flex;align-items:center;gap:9px;padding:8px 14px;cursor:pointer}
-.b .ic-head .n{font-weight:600;font-size:13px}
-.b .ic-head .meta{font:10.5px var(--mono);color:var(--dim);margin-left:auto}
-.b .ic-head .chev{color:var(--dim);transition:transform .12s}
-.b .ic-head.open .chev{transform:rotate(90deg)}
-.b .ic-body{border-top:1px solid var(--line);max-height:300px;overflow-y:auto;background:#0e0f13}
-.b .composer .spawn{display:flex;gap:6px;align-items:center;margin-bottom:8px}
-.b .composer .spawn .k{font:10px var(--mono);color:var(--dim);text-transform:uppercase}
-/* ---------- variant C: triage ---------- */
-.c{display:grid;grid-template-columns:52px 1fr auto;height:100%;min-height:0}
-.c .rail{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding-top:12px;gap:6px}
-.c .rail button{width:36px;height:36px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;color:var(--dim);position:relative}
-.c .rail button.on,.c .rail button:hover{background:var(--panel2);color:var(--tx)}
-.c .rail .cnt{position:absolute;top:2px;right:2px;background:var(--acc);color:#081018;font:9px var(--mono);border-radius:7px;padding:0 4px}
-.c .center{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
-.c .scroll{flex:1;overflow-y:auto;min-height:0}
-.c .drawer{width:380px;border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
-.c .drawer.hidden{display:none}
-.c .dr-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
-.c .dr-head .n{flex:1;font-weight:600;font-size:13px}
-.c .dr-head .x{color:var(--dim);font-size:15px;cursor:pointer}
-.c .dr-body{flex:1;overflow-y:auto}
-.c .dr-list .sub-row{border-bottom:1px solid var(--line)}
-.c .palette{position:absolute;inset:0;background:rgba(0,0,0,.55);z-index:40;display:flex;justify-content:center;padding-top:12vh}
-.c .palette.hidden{display:none}
-.c .pal-box{width:560px;max-height:60vh;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.c .pal-box input{background:transparent;border:none;border-bottom:1px solid var(--line);padding:14px 16px;font-size:15px;outline:none}
-.c .pal-list{overflow-y:auto;padding:6px}
-.c .pal-item{display:flex;gap:10px;align-items:center;padding:8px 12px;border-radius:8px;cursor:pointer}
-.c .pal-item .ic{width:20px;text-align:center}
-.c .pal-item .n{flex:1;font-size:13px}
-.c .pal-item .k{font:10.5px var(--mono);color:var(--dim)}
-.c .pal-item.sel{background:rgba(76,194,255,.14)}
-.c .pal-hint{padding:8px 16px;font:10.5px var(--mono);color:var(--dim);border-top:1px solid var(--line)}
+#bar .lbl{min-width:185px;text-align:center}
+#bar .status{min-width:285px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;color:#7fd4ff;font-size:10.5px}
 </style>
 </head>
 <body>
-<div class="proto-banner">PROTOTYPE — throwaway IA exploration for ticket #11 · not production · ←/→ to switch variants</div>
+<div class="proto-banner">PROTOTYPE — #11 verdict design · throwaway · ←/→: right pane stacked/tabs · top-right: focus mode</div>
 <div id="app"></div>
 <div id="bar">
-  <button id="prev" title="previous variant (←)">‹</button>
+  <button id="prev" title="previous (←)">‹</button>
   <span class="lbl" id="lbl"></span>
-  <button id="next" title="next variant (→)">›</button>
+  <button id="next" title="next (→)">›</button>
   <span class="status" id="status"></span>
 </div>
 <script>
 'use strict';
-/* ================= fake data (snapshot shape: metadata skeleton, payloads lazy) ================= */
-const WS = {id:'ws-tau', name:'tau', cwd:'~/git/tau'};
-const AGENTS = [
-  {name:'general', builtin:true, desc:'Inherits the session’s tools and model.'},
-  {name:'researcher', file:'~/.config/tau/agents/researcher.md', desc:'Primary-source research; writes findings docs.'},
-  {name:'reviewer', file:'.tau/agents/reviewer.md', desc:'Blocker-first review of staged diffs.'},
+/* ================= fake data ================= */
+const FILETREES = {
+  w1:[
+    {n:'src', d:1, ch:[{n:'protocol', d:1, ch:[{f:'message.rs'},{f:'sse.rs'},{f:'envelope.rs'}]},{f:'loop.rs'},{f:'main.rs'}]},
+    {n:'docs', d:1, ch:[{n:'adr', d:1, ch:[{f:'0001-native-subagents-and-task-handoff.md'},{f:'0004-om-based-compaction.md'},{f:'0006-core-gui-protocol-single-message-crate.md'}]},{n:'spec', d:1, ch:[{f:'v0.md'}]}]},
+    {n:'.tau', d:1, ch:[{n:'agents', d:1, ch:[{f:'researcher.md'},{f:'reviewer.md'}]}]},
+    {f:'CONTEXT.md'},
+  ],
+  w2:[
+    {n:'src', d:1, ch:[{f:'observer.rs'},{f:'reflector.rs'},{f:'record.rs'}]},
+    {f:'Cargo.toml'},
+  ],
+};
+const WORKSPACES = [
+  {id:'w1', name:'tau', cwd:'~/git/tau'},
+  {id:'w2', name:'om-port', cwd:'~/git/om-port'},
 ];
-const S1N = 10000; // the 10k-entry stress session
-function genEntries(n){ // metadata skeleton only — payload is a closure, computed on demand
+function genEntries(n){
   const es = new Array(n);
   const toolNames = ['read','edit','bash','read','task_evidence','bash','read','edit','bash'];
   for(let i=0;i<n;i++){
     const r = i % 11;
-    const base = {id:i+1, t:(1758100000 + i*47) };
-    if(r===0)     es[i] = {...base, type:'user', size:200+ (i*13)%400};
-    else if(r===1)es[i] = {...base, type:'assistant', size:600+ (i*29)%900};
-    else if(r===2)es[i] = {...base, type:'tool', tool:toolNames[i%9], size:300+(i*31)%1200};
-    else if(r===3)es[i] = {...base, type:'om', size:420};
-    else if(r===4)es[i] = {...base, type:'event', size:120};
-    else if(r===5)es[i] = {...base, type:'assistant', size:500+(i*7)%700};
-    else if(r===6)es[i] = {...base, type:'tool', tool:toolNames[(i+3)%9], size:250+(i*17)%800};
-    else if(r===7)es[i] = {...base, type:'user', size:150+(i*11)%300};
-    else if(r===8)es[i] = {...base, type:'tool', tool:toolNames[(i+5)%9], size:200+(i*19)%900};
-    else if(r===9) es[i] = {...base, type:'archived', size:900, span:'entries '+(i*40-1600)+'–'+(i*40+240)};
-    else           es[i] = {...base, type:'assistant', size:400+(i*3)%600};
+    const base = {id:i+1, t:1758100000 + i*47};
+    if(r===0)     es[i] = {...base, type:'user', body:'(message '+i+')'};
+    else if(r===1)es[i] = {...base, type:'assistant', body:'Worked through the next chunk. '+(i%3? 'The refactor held up.':'Tests green.')};
+    else if(r===2)es[i] = {...base, type:'tool', tool:toolNames[i%9], arg:(toolNames[i%9]==='bash'?'':'src/protocol/file'+i+'.rs'), payload:()=> 'line '+i+' of output…\nline '+(i+1)+' …', hl: i%9===2?'rust':null};
+    else if(r===3)es[i] = {...base, type:'om', preview:'observed → group g'+(i/11|0)};
+    else if(r===4)es[i] = {...base, type:'event', preview:'task event t'+(1+(i%5))};
+    else if(r===5)es[i] = {...base, type:'assistant', body:'Continuing. '+(i%2?'Context stable.':'Cache hit.')};
+    else if(r===6)es[i] = {...base, type:'tool', tool:toolNames[(i+3)%9], arg:'src/'+((i*7)%40)+'.rs'};
+    else if(r===7)es[i] = {...base, type:'user', body:'(message '+i+')'};
+    else if(r===8)es[i] = {...base, type:'tool', tool:toolNames[(i+5)%9], arg:'docs/adr/000'+(1+(i%6))+'*.md'};
+    else if(r===9) es[i] = {...base, type:'archived', span:'entries '+(i*40-1600)+'–'+(i*40+240)};
+    else           es[i] = {...base, type:'assistant', body:'Note to self: '+(i%4?'keep the envelope multiplexed.':'the cursor query is the rebuild path.')};
   }
   return es;
 }
-const s1 = genEntries(S1N);
-// curated tail: the interesting last entries of the 10k session
-const TAIL = [
-  {id:S1N-7, type:'event', preview:'task: t2 step 2/3 → active'},
-  {id:S1N-6, type:'tool', tool:'edit', arg:'src/protocol/message.rs  {wUp, k2F} → 3 lines',
-    payload:()=>['<span class="hsh">wUp│</span><span class="del">- pub struct Command { pub kind: String }</span>',
+const S1N = 10000;
+const s1e = genEntries(S1N);
+s1e.push(
+  {id:S1N-6, type:'event', preview:'task: t2 step 2/3 → active'},
+  {id:S1N-5, type:'tool', tool:'edit', arg:'src/protocol/message.rs  {wUp, k2F} → 3 lines',
+    html:true, payload:()=>['<span class="hsh">wUp│</span><span class="del">- pub struct Command { pub kind: String }</span>',
                  '<span class="hsh">wUp│</span><span class="add">+ #[derive(Serialize, Deserialize)]</span>',
                  '<span class="hsh">wUp│</span><span class="add">+ pub enum Command { Open(OpenCmd), Send(SendCmd) }</span>',
                  '<span class="hsh">k2F│</span> pub struct Envelope { pub ws: WsId, ... }'].join('\n')},
-  {id:S1N-5, type:'tool', tool:'bash', arg:'cargo test protocol -- --nocapture',
-    payload:()=>'running 42 tests\ntest message::roundtrip ... ok\ntest envelope::multiplex ... ok\ntest result: ok. 42 passed; 0 failed; 0 ignored',
-    sidecar:true, blobMB:2.1},
-  {id:S1N-4, type:'notify', who:'C2 · sub-agent', preview:'parent_notify: SSE parser ports cleanly — 3 edge cases in llama.cpp shim, notes in findings/sse.md', body:'parent_notify {text: "SSE parser ports cleanly — 3 edge cases in the llama.cpp shim, notes in findings/sse.md"}'},
+  {id:S1N-4, type:'notify', who:'C2 · sub-agent', body:'parent_notify: SSE parser ports cleanly — **3 edge cases** in the llama.cpp shim (see `findings/sse.md`). One needs a `Content-Type` fallback: ```rust\nif hdr.content_type.contains("x-ndjson") { /* legacy */ }\n```'},
   {id:S1N-3, type:'om', preview:'OM: observed 6,412 tokens → 21 observations (group g47)', body:'observed 6,412 unobserved tokens → 21 observations · observations now 31.2k / 40k'},
-  {id:S1N-2, type:'assistant', body:'The envelope multiplexing works. Kicking off the snapshot benchmark as a sub-agent — I’ll park and wait for it. (ends turn)'},
+  {id:S1N-2, type:'assistant', body:'Envelope multiplexing works. Kicking off the snapshot benchmark as a sub-agent:\n```rust\nlet snap = session.snapshot();\nassert!(snap.size_bytes() < 2_000_000);\n```\n**I’ll park and wait for it.** (ends turn)'},
   {id:S1N-1, type:'tool', tool:'subagent_spawn', arg:'"Benchmark the 10k snapshot" · type=general · context=fresh · task=t5'},
-];
-s1.push(...TAIL);
-function childEntries(id, seed){ // small curated child sessions
-  const e = [];
-  const mk=(t,extra)=>Object.assign({id:id+'-'+(e.length+1), type:t}, extra);
-  e.push(mk('user',{body:'Brief: '+ (SEED_BRIEF[id]||'do the work') + '\nAgent type: general · context: fresh'}));
-  e.push(mk('assistant',{body:'Starting. Reading the relevant sources first.'}));
-  e.push(mk('tool',{tool:'read', arg:'findings/'+id+'.md', payload:()=>'(842 lines of notes)'}));
-  e.push(mk('tool',{tool:'bash', arg:'cargo check 2>&1 | tail -5', payload:()=>'Checking tau-core v0.0.1\nFinished dev profile in 1.8s'}));
-  e.push(mk('assistant',{body:'Halfway. The middle section is straightforward; the edge cases are in the shim layer.'}));
-  return e;
+);
+function childEntries(id, brief){
+  return [
+    {id:id+'-1', type:'user', body:'Brief: '+brief+'\nAgent type: general · context: fresh'},
+    {id:id+'-2', type:'assistant', body:'Starting. Reading the relevant sources first.'},
+    {id:id+'-3', type:'tool', tool:'read', arg:'findings/'+id+'.md', payload:()=>'(842 lines of notes)'},
+    {id:id+'-4', type:'assistant', body:'Halfway. The middle section is straightforward; the edge cases are in the shim layer: ```rust\nfn on_line(&mut self, line: &str) -> Result<()> { … }\n```'},
+  ];
 }
-const SEED_BRIEF = {
+const BRIEF = {
   c1:'Survey hashline edit schemes (Can Bölük, kebbbnnn/hashline, pi-better-edit). Write findings/hashline.md.',
   c2:'Port the SSE parser from the research notes to Rust. Task t2. Target: src/protocol/sse.rs.',
   c3:'Fix the flaky snapshot test (fails ~1 in 40).',
-  c4:'Draft the recall tool interface. Task pending.',
+  c4:'Draft the recall tool interface.',
   c5:'Trim the context assembly path.',
   c6:'Benchmark: snapshot projection of a 10k-entry session, plus 2 concurrent child streams. Report frame times.',
+  c7:'Extract the llama.cpp shim edge cases into fixture files.',
 };
-const CHILD = {
-  c1:{entries:childEntries('c1'), state:'done', note:'done: parent_notify{done:true, output: findings/hashline.md}'},
-  c2:{entries:childEntries('c2'), state:'running', task:'t2'},
-  c3:{entries:childEntries('c3'), state:'failed', reason:'nudge-exhausted — turn ended twice, no done, no wait declaration',
-       last:'the test only fails when the clock ticks between snapshot and compare; I was about to inject a fixed clock…'},
-  c4:{entries:childEntries('c4'), state:'idle', waiting_on:'parent', note:'waiting on parent: "should recall take a group id or a range?"'},
-  c5:{entries:childEntries('c5'), state:'stopped', by:'user', note:'stopped by user · resumable'},
-  c6:{entries:childEntries('c6'), state:'running'},
+const C = {
+  c1:{state:'done', mru:1758109000},
+  c2:{state:'running', mru:1758114000, task:'t2', child:'c7'},
+  c3:{state:'failed', mru:1758113000, reason:'nudge-exhausted — turn ended twice, no done, no wait declaration', last:'the test only fails when the clock ticks between snapshot and compare; I was about to inject a fixed clock…'},
+  c4:{state:'idle', mru:1758112000, note:'waiting on parent: "should recall take a group id or a range?"'},
+  c5:{state:'stopped', mru:1758111000, by:'user'},
+  c6:{state:'running', mru:1758115000, task:'t5'},
+  c7:{state:'running', mru:1758116000, parent2:'c2'},
 };
-const SESSIONS = [
-  {id:'s1', title:'Protocol crate: messages & events', parent:null, state:'running', entries:s1, model:'yunyun/qwen3.8-27b'},
-  {id:'s2', title:'Session storage format research', parent:null, state:'done', entries:childEntries('s2')},
-  {id:'c1', title:'Survey hashline edit schemes', parent:'s1', state:'done', task:'t1', entries:CHILD.c1.entries},
-  {id:'c2', title:'Port the SSE parser', parent:'s1', state:'running', task:'t2', entries:CHILD.c2.entries},
-  {id:'c3', title:'Fix the flaky snapshot test', parent:'s1', state:'failed', reason:CHILD.c3.reason, last:CHILD.c3.last, entries:CHILD.c3.entries},
-  {id:'c4', title:'Draft the recall tool', parent:'s1', state:'idle', waiting_on:'parent', note:CHILD.c4.note, entries:CHILD.c4.entries},
-  {id:'c5', title:'Trim the context assembly', parent:'s1', state:'stopped', note:CHILD.c5.note, entries:CHILD.c5.entries},
-  {id:'c6', title:'Benchmark the 10k snapshot', parent:'t5' && 's1', state:'running', task:'t5', entries:CHILD.c6.entries},
-];
+const SESSIONS = {
+  w1:[
+    {id:'s1', title:'Protocol crate: messages & events', parent:null, state:'running', mru:1758116500, model:'yunyun/qwen3.8-27b', entries:s1e,
+      children:['c2','c6','c3','c4','c5','c1']},
+    {id:'s3', title:'v0 spec drafting', parent:null, state:'running', mru:1758110000, entries:childEntries('s3','Draft docs/spec/v0.md from the settled decisions (map #12 prep).')},
+    {id:'s4', title:'SSE shim research', parent:null, state:'done', mru:1758105000, entries:childEntries('s4','Catalogue the responses-API shim behaviours across providers.')},
+    {id:'s5x', title:'Task panel notes', parent:null, state:'done', mru:1758099000, entries:childEntries('s5x','Capture observations about task-panel IA from the prototype.')},
+  ],
+  w2:[
+    {id:'s5', title:'Port Observer prompts', parent:null, state:'running', mru:1758115500, entries:childEntries('s5','Port the Mastra Observer/Reflector prompts into Rust (verbatim, Apache-2.0).')},
+  ],
+  archive_w1:[
+    {id:'a1', title:'Session storage format research', parent:null, state:'done', mru:1758080000, entries:childEntries('a1','Measured 280 real session files; JSONL + CRC + sidecars won.')},
+    {id:'a2', title:'OM research', parent:null, state:'done', mru:1758070000, entries:childEntries('a2','Confirmed the OM model against mastra sources.')},
+  ],
+};
+for(const [id,c] of Object.entries(C)){
+  if(c.parent2==='c2') continue;
+  SESSIONS.w1.push({id, title:{c1:'Survey hashline edit schemes',c2:'Port the SSE parser',c3:'Fix the flaky snapshot test',c4:'Draft the recall tool',c5:'Trim the context assembly',c6:'Benchmark the 10k snapshot'}[id],
+    parent:'s1', state:c.state, mru:c.mru, task:c.task||null, entries:childEntries(id, BRIEF[id]), reason:c.reason, last:c.last, note:c.note, by:c.by, depth:1});
+}
+SESSIONS.w1.push({id:'c7', title:'Extract edge cases to fixtures', parent:'c2', state:C.c7.state, mru:C.c7.mru, entries:childEntries('c7', BRIEF.c7), depth:2});
 const TASKS = [
-  {id:'t1', name:'Implement hash-anchored read/edit', state:'done', assigned:'c1',
+  {id:'t2', ws:'w1', name:'Port the SSE parser', state:'in-progress', assigned:'c2', mru:1758116000,
+    steps:[{s:'done',t:'Scaffold sse.rs from research notes'},{s:'active',t:'Port state machine + edge cases', eo:'cargo test sse green'},{s:'pending',t:'Benchmark against 10k-line capture'}],
+    ev:[{ok:true,t:'test roundtrip ... ok'},{ok:false,t:'llama.cpp shim edge cases (c7 working on fixtures)'}],
+    rc:'step: 2/3 port state machine + edge cases\nexpected: cargo test sse green\nevidence: 1 passed · 1 pending\ngaps: llama.cpp shim (fixtures in c7)\nnext:  edit src/protocol/sse.rs (anchors h9Q, z2a)'},
+  {id:'t5', ws:'w1', name:'Benchmark the 10k snapshot', state:'in-progress', assigned:'c6', mru:1758115900,
+    steps:[{s:'active',t:'Measure snapshot build + render at 10k entries', eo:'frame-time report'}], ev:[],
+    rc:'step: 1/1 measure snapshot build + render\nexpected: frame-time report'},
+  {id:'t3', ws:'w1', name:'Design the task panel', state:'blocked', mru:1758112000,
+    block:'waiting on #11 verdict — where the task panel lives', unblock:'this prototype ✓ (now settled: right pane)'},
+  {id:'t4', ws:'w1', name:'Write the v0 spec', state:'pending', mru:1758101000},
+  {id:'t1', ws:'w1', name:'Implement hash-anchored read/edit', state:'done', assigned:'c1', mru:1758098000,
     steps:[{s:'done',t:'Port xxhash + allocation bitset'},{s:'done',t:'Wire read/edit with hash anchors'}],
-    crit:[{t:'3-char/62-alphabet anchors, allocated uniqueness', sat:true, ev:'ev1'},
-          {t:'Stable across edits; reject stale/ambiguous', sat:true, ev:'ev2'}]},
-  {id:'t2', name:'Port the SSE parser', state:'in-progress', assigned:'c2',
-    steps:[{s:'done',t:'Scaffold sse.rs from research notes'},{s:'active',t:'Port state machine + edge cases', eo:'cargo test sse green'},
-           {s:'pending',t:'Benchmark against 10k-line capture'}],
-    ev:[{ref:'c2', ok:true, t:'test roundtrip ... ok'},{ref:'—', ok:false, t:'llama.cpp shim edge cases (pending)'}],
-    rc:'step: 2/3 port state machine + edge cases\nexpected: cargo test sse green\nevidence: 1 passed · 1 pending\ngaps: llama.cpp shim (3 cases in findings/sse.md)\nnext:  edit src/protocol/sse.rs (anchors h9Q, z2a)\nresume: subagent_resume {handle: c2, message: "…"}'},
-  {id:'t3', name:'Design the task panel', state:'blocked',
-    block:'#11 verdict — where does the task panel live (right rail? top strip? drawer?)', unblock:'this prototype'},
-  {id:'t4', name:'Write the v0 spec', state:'pending'},
-  {id:'t5', name:'Benchmark the 10k snapshot', state:'in-progress', assigned:'c6',
-    steps:[{s:'active',t:'Measure snapshot build + render at 10k entries', eo:'frame-time report'}], ev:[]},
+    crit:[{t:'3-char/62-alphabet anchors, allocated uniqueness', sat:true},{t:'Stable across edits; reject stale/ambiguous', sat:true}]},
+  {id:'t6', ws:'w2', name:'Port Reflector prompts', state:'pending', mru:1758115400},
 ];
-/* ================= live streams (2 children, deltas coalesced at 25 ms) ================= */
-const STREAMS = [
-  {child:'c2', text:'Rewriting the state machine —', tok:0},
-  {child:'c6', text:'building the 10k snapshot fixture —', tok:0},
-];
-const FILL = [' the delta path, then coalescing at 25 ms per the protocol rule;'];
+/* ================= live streams (2 children, 25 ms coalescing) ================= */
 const STREAM_LINES = [
  '  let buf = &mut self.buf;',
  '  while let Some((i, line)) = scan_line(buf) {',
@@ -306,476 +327,394 @@ const STREAM_LINES = [
  '  }',
  '  Ok(())',
 ];
+const STREAMS = [
+  {child:'c2', tok:0},
+  {child:'c6', tok:0},
+];
 let streamBuf = {c2:'', c6:''};
 let dirty = new Set();
-let frames = 0, lastFlushMs = 0, lastRenderMs = 0, lastRange = null;
-function streamTick(){
-  for(const s of STREAMS){
-    const line = STREAM_LINES[s.tok % STREAM_LINES.length];
-    streamBuf[s.child] += (s.tok % 3 === 2 ? '\n' : '') + line;
-    s.tok++;
-    dirty.add(s.child);
-  }
-}
-setInterval(streamTick, 47); // arrive irregularly…
-let flushAcc = 0;
-function flushTick(){ // …coalesce to a 25 ms render cadence
-  flushAcc += 25;
-  if(flushAcc < 25) return;
-  flushAcc = 0;
+let lastFlushMs = 0, lastRenderMs = 0, lastRange = null;
+setInterval(()=>{ for(const s of STREAMS){ streamBuf[s.child] += (streamBuf[s.child]? '\n':'') + STREAM_LINES[s.tok % STREAM_LINES.length]; s.tok++; dirty.add(s.child); } }, 47);
+setInterval(()=>{
   if(dirty.size === 0) return;
   const t0 = performance.now();
   for(const c of dirty){
-    const s = SESSIONS.find(x=>x.id===c);
+    const s = findSession(c);
     const last = s.entries[s.entries.length-1];
-    if(last.type !== 'assistant'){ s.entries.push({id:c+'-live-'+s.entries.length, type:'assistant', streaming:true, body:streamBuf[c]}); }
-    else { last.body = streamBuf[c]; }
+    if(last && last.type==='assistant' && last.streaming){ last.body = streamBuf[c]; }
+    else s.entries.push({id:c+'-live-'+s.entries.length, type:'assistant', streaming:true, body:streamBuf[c]});
     onStream(c);
   }
   dirty.clear();
   lastFlushMs = performance.now() - t0;
   updateStatus();
+}, 25);
+/* ================= lookups ================= */
+function allSessions(){ return [...SESSIONS.w1, ...SESSIONS.w2, ...SESSIONS.archive_w1]; }
+function findSession(id){ return allSessions().find(x=>x.id===id); }
+const NOW = 1758116500 + 90; // dataset "now": 90 s after the freshest event
+const fmtAgo = ts => { const m = (NOW - ts) / 60; return m<1?'just now': m<60? Math.round(m)+'m' : Math.round(m/60)+'h'; };
+/* ================= markdown + highlighting ================= */
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function hl(code, lang){
+  let s = esc(code);
+  s = s.replace(/(\/\/[^\n]*|#[^\n]*)/g, '<span class="c">$1</span>');
+  s = s.replace(/(&quot;[^&]*?&quot;|&apos;[^&]*?&apos;|'[^'\n]*')/g, '<span class="s">$1</span>');
+  const kw = ['let','fn','pub','struct','enum','impl','match','use','return','if','else','while','for','const','mod','move','mut','crate','self','Some','None','Ok'];
+  for(const k of kw) s = s.replace(new RegExp('(\\b'+k+'\\b)(?![^<]*</span>)','g'), '<span class="k">$1</span>');
+  s = s.replace(/\b(\d[\d_]*)\b/g, '<span class="n">$1</span>');
+  s = s.replace(/\b([A-Z][A-Za-z0-9]*)\b/g, '<span class="t2">$1</span>');
+  return s;
 }
-setInterval(flushTick, 25);
-/* ================= shared render atoms ================= */
+function md(t){
+  let s = esc(t);
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (m,lang,code)=>'<pre class="code">'+(lang?'<span class="lang">'+lang+'</span>':'')+hl(code, lang)+'</pre>');
+  s = s.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
+  s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
+  s = s.replace(/^### (.*)$/gm, '<div class="mh">$1</div>').replace(/^## (.*)$/gm, '<div class="mh2">$1</div>');
+  s = s.replace(/^- (.*)$/gm, '<div class="mi">$1</div>');
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="lk">$1</span>');
+  return s;
+}
+/* ================= atoms ================= */
 const $ = s=>document.querySelector(s);
 const el = (tag, cls, html)=>{const n=document.createElement(tag); if(cls)n.className=cls; if(html!=null)n.innerHTML=html; return n;};
-const badge = st=>{const m={running:'running',done:'done',idle:'idle',failed:'failed',stopped:'stopped','in-progress':'in-progress',blocked:'blocked',pending:'pending'};
-  return `<span class="badge ${m[st]||''}"><span class="dot"></span>${st}</span>`;};
+const badge = st => `<span class="badge ${st}"><span class="dot"></span>${st.replace('-',' ')}</span>`;
 function entryNode(e, ctx){
-  const n = el('div', 'entry ' + e.type);
+  const n = el('div','entry '+e.type);
+  if(e.type==='archived'){ n.innerHTML = `<div class="eh"><span class="who">⧉ archived span</span><span class="tt">${e.span} · zstd · expand via recall</span></div>`; return n; }
   const h = el('div','eh');
   if(e.type==='user') h.innerHTML = `<span class="who">you</span><span class="tt">${e.t?new Date(e.t*1000).toLocaleTimeString():''}</span>`;
-  else if(e.type==='assistant') h.innerHTML = `<span class="who">${ctx.who||'assistant'}</span>`;
   else if(e.type==='om') h.innerHTML = `<span class="who">om · observer</span><span class="tt">${e.preview||''}</span>`;
-  else if(e.type==='archived') { n.innerHTML = `<div class="eh"><span class="who">⧉ archived span</span><span class="tt">${e.span} · zstd · expand via recall</span></div>`; return n; }
-  else if(e.type==='event') { n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">event</span></div><div class="body">${e.preview}</div>`; return n; }
-  else if(e.type==='notify'){ n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">◈ ${e.who||'sub-agent'}</span></div><div class="body">${e.body||e.preview}</div>`; return n; }
+  else if(e.type==='event'){ n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">event</span></div><div class="body">${e.preview}</div>`; return n; }
+  else if(e.type==='notify'){ n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">◈ ${e.who||'sub-agent'}</span></div><div class="body">${md(e.body||e.preview||'')}</div>`; return n; }
   else if(e.type==='tool'){
     h.innerHTML = `<span class="name">⌘ ${e.tool}</span><span class="arg">${e.arg||''}</span>`;
     n.appendChild(h);
-    if(e.payload || e.sidecar){
-      const out = el('div','out collapsed');
-      out.style.display='none';
-      if(e.sidecar){ out.innerHTML = `<span class="blob">▣ sidecar blob ${(e.blobMB||1.2).toFixed(1)} MB — streamed on expand</span><span id="blobfill"></span>`; }
+    if(e.payload){
+      const out = el('div','out'); out.style.display='none';
       h.style.cursor='pointer';
-      h.onclick = ()=>{
-        out.style.display='block';
-        if(e.sidecar){ // fake on-demand stream
-          let i=0; const fill=out.querySelector('#blobfill');
-          const iv=setInterval(()=>{ fill.innerHTML += e.payload(); i++; if(i>=6)clearInterval(iv); },120);
-        } else out.innerHTML = e.payload();
-        out.classList.toggle('collapsed');
-      };
+      h.onclick = ()=>{ if(out.style.display==='none'){ out.style.display='block'; out.innerHTML = e.html ? e.payload() : (e.hl? hl(e.payload(), e.hl) : esc(e.payload())); } else out.style.display='none'; };
       n.appendChild(out);
     }
-    if(e.body) n.appendChild(el('div','body', e.body));
-    if(e.streaming) n.classList.add('streaming');
     return n;
   }
+  h.innerHTML = `<span class="who">${ctx.who||'assistant'}</span>`;
   n.appendChild(h);
-  if(e.body) n.appendChild(el('div','body', e.body));
+  if(e.body) n.appendChild(el('div','body', md(e.body)));
   if(e.streaming) n.classList.add('streaming');
   return n;
 }
-const entryH = e=> e.type==='archived'?58 : e.type==='user'?46 : e.type==='om'?50 : e.type==='event'||e.type==='notify'?54 : e.type==='tool'?64 : 60;
-/* virtual list: paged reads + windowed render (nothing mounted outside viewport ± buffer) */
+const entryH = e => e.type==='archived'?58 : e.type==='user'?52 : e.type==='om'?50 : e.type==='event'?54 : e.type==='tool'?62 : 74;
 function vlist(host, entries, ctx){
   const wrap = el('div','vl-wrap'); wrap.style.position='relative';
   host.appendChild(wrap);
   const heights = entries.map(entryH);
   const total = heights.reduce((a,b)=>a+b,0);
-  wrap.style.height = total + 'px'; // the wrapper IS the full-height spacer → creates scroll range
+  wrap.style.height = total+'px';
   const innerH = el('div'); innerH.style.position='relative'; innerH.style.height = total+'px'; wrap.appendChild(innerH);
-  let rendered = -1;
+  let rendered = -1, prefix = [0];
+  for(const h of heights) prefix.push(prefix[prefix.length-1]+h);
   function render(){
     const t0 = performance.now();
     const top = host.scrollTop, H = host.clientHeight, BUF = 12;
-    let acc = 0, start = entries.length;
-    for(let i=0;i<entries.length;i++){ acc += heights[i]; if(acc >= top){ start = i; break; } }
-    start = Math.max(0, start - BUF);
-    let end = start, s = 0;
-    for(let i=start;i<entries.length;i++){ s += heights[i]; if(s > H + BUF*60){ end = i; break; } end = i+1; }
-    end = Math.min(entries.length, end);
+    let start = 0; { let lo=0, hi=entries.length-1; while(lo<hi){ const mid=(lo+hi)>>1; if(prefix[mid] < top) lo=mid+1; else hi=mid; } start = Math.max(0, lo-BUF); }
+    let end = Math.min(entries.length, start + Math.ceil(H/46) + BUF*2);
     if(start !== rendered){
       rendered = start;
       innerH.innerHTML = '';
       for(let i=start;i<end;i++){
         const n = entryNode(entries[i], ctx||{});
         n.style.position='absolute'; n.style.left=0; n.style.right=0;
-        n.style.top = heights.slice(0,i).reduce((a,b)=>a+b,0) + 'px';
-        n.style.height = heights[i] + 'px'; n.style.overflow='hidden';
+        n.style.top = prefix[i]+'px'; n.style.height = heights[i]+'px'; n.style.overflow='hidden';
         innerH.appendChild(n);
       }
       lastRenderMs = performance.now() - t0;
       lastRange = `${start+1}–${end} of ${entries.length}`;
-      updateStatus(start, end, entries.length);
+      updateStatus();
     }
   }
   host.onscroll = render; window.addEventListener('resize', render); render();
-  return {refresh:render, setEntries(es){ entries.length=0; entries.push(...es); }};
 }
-function flatList(host, entries, ctx){ // small child sessions: plain list
-  host.innerHTML='';
-  for(const e of entries) host.appendChild(entryNode(e, ctx||{}));
-}
-/* ================= composer (shared shape, per-variant chrome) ================= */
+/* ================= state ================= */
+const state = {
+  ws:'w1', current:'s1', focus:false,
+  rightMode: new URLSearchParams(location.search).get('right')==='tabs' ? 'tabs' : 'stacked',
+  rightTab: 'tasks',
+  tFilter:'open', sFilter:'open',
+  expandedTasks:new Set(), openGroups:new Set(['s1']), // active session expanded by default
+  secs:{files:true, sessions:true, tasks:true, subs:true},
+};
 const queue = [
   {k:'steering', t:'use the 62-char alphabet, not base36'},
   {k:'follow-up', t:'also update CONTEXT.md with the new terms'},
+  {k:'steering', t:'before you finish, run cargo fmt'},
 ];
-function composer(){
-  const n = el('div','composer');
-  const chips = el('div','chips');
+/* ================= top bar ================= */
+function buildTop(){
+  const top = el('div','top');
+  const tabs = el('div','wstabs');
+  for(const w of WORKSPACES){
+    const t = el('div','wstab'+(state.ws===w.id?' on':''), `📁 ${w.name} <span class="cw">${w.cwd}</span>`);
+    t.onclick = ()=>{ state.ws = w.id; state.current = SESSIONS[w.id][0].id; state.openGroups = new Set([state.current]); mount(); };
+    tabs.appendChild(t);
+  }
+  top.appendChild(tabs);
+  top.appendChild(el('div','tspacer'));
+  const s = findSession(state.current);
+  if(s.parent){ const p = findSession(s.parent); top.appendChild(el('div','sht', `↳ sub-agent of <a data-s="${p.id}">${p.title}</a>`)); top.querySelector('[data-s]').onclick = e=>openSession(e.target.dataset.s); }
+  const fb = el('div','iconbtn'+(state.focus?' on':''), state.focus?'⛶ exit focus':'⛶ focus mode');
+  fb.onclick = ()=>{ state.focus = !state.focus; mount(); };
+  top.appendChild(fb);
+  return top;
+}
+/* ================= left pane ================= */
+function buildLeft(){
+  const left = el('div','left');
+  // file tree
+  const fs = el('div','sec');
+  const fh = el('div','sec-h'+(state.secs.files?' open':''), `<span class="chev">▸</span> files`);
+  fh.onclick = ()=>{ state.secs.files=!state.secs.files; mount(); };
+  fs.appendChild(fh);
+  const fb2 = el('div','sec-b'+(state.secs.files?' open':''));
+  (function walk(items, depth){
+    for(const it of items){
+      if(it.d){
+        const open = depth===0;
+        const r = el('div','frow', `<span class="chev">${open?'▾':'▸'}</span><span class="dir">${it.n}/</span>`);
+        r.querySelector('.chev').onclick = (e)=>{ e.stopPropagation(); r.querySelector('.chev').textContent = r.querySelector('.chev').textContent==='▾'?'▸':'▾'; r.nextElementSibling?.classList.toggle('open'); };
+        fb2.appendChild(r);
+        const k = el('div'); k.style.display = open?'block':'none';
+        if(it.ch) walk(it.ch, depth+1).forEach(x=>k.appendChild(x));
+        fb2.appendChild(k);
+      } else {
+        const r = el('div','frow', `<span class="chev" style="visibility:hidden"></span><span class="fn">${it.f}</span>`);
+        fb2.appendChild(r);
+      }
+    }
+    return [];
+  })(FILETREES[state.ws], 0);
+  fs.appendChild(fb2);
+  left.appendChild(fs);
+  // session tree (MRU)
+  const ss = el('div','sec');
+  const sh = el('div','sec-h'+(state.secs.sessions?' open':''), `<span class="chev">▸</span> sessions`);
+  sh.onclick = ()=>{ state.secs.sessions=!state.secs.sessions; mount(); };
+  ss.appendChild(sh);
+  const sb = el('div','sec-b'+(state.secs.sessions?' open':''));
+  const slist = SESSIONS[state.ws].filter(s=>!s.parent).sort((a,b)=>b.mru-a.mru);
+  for(const s of slist){
+    sb.appendChild(sessionRow(s, 0));
+  }
+  ss.appendChild(sb);
+  // archive at the bottom
+  const ar = el('div','sec');
+  const ah = el('div','sec-h', `<span class="chev">▸</span> ⧉ archive`);
+  ah.onclick = ()=>{ ah.classList.toggle('open'); ar.querySelector('.sec-b').classList.toggle('open'); };
+  ar.appendChild(ah);
+  const ab = el('div','sec-b');
+  for(const s of SESSIONS.archive_w1) ab.appendChild(sessionRow(s, 0));
+  ar.appendChild(ab);
+  left.appendChild(ss); left.appendChild(ar);
+  return left;
+}
+function sessionRow(s, depth){
+  const kids = s.children||[];
+  const hasKids = kids.length>0;
+  const open = state.openGroups.has(s.id);
+  const n = el('div');
+  const r = el('div','srow'+(s.id===state.current?' sel':'')+(depth? ' child'+(depth>1?' nested':''):''),
+    `<span class="chev">${hasKids?(open?'▾':'▸'):''}</span><span class="t">${s.title}</span>${badge(s.state)}<span class="mru">${fmtAgo(s.mru)}</span>`);
+  r.querySelector('.chev').onclick = e=>{ e.stopPropagation(); if(hasKids){ state.openGroups.has(s.id)?state.openGroups.delete(s.id):state.openGroups.add(s.id); mount(); } };
+  r.onclick = ()=>openSession(s.id);
+  n.appendChild(r);
+  if(hasKids){
+    const k = el('div','kids'+(open?' open':''));
+    for(const cid of kids){
+      k.appendChild(sessionRow(findSession(cid), depth+1));
+      // depth-2 children (nested sub-agents)
+      for(const nc of allSessions().filter(x=>x.parent===cid)){ k.appendChild(sessionRow(nc, depth+2)); }
+    }
+    n.appendChild(k);
+  }
+  return n;
+}
+/* ================= center ================= */
+function buildCenter(){
+  const c = el('div','center');
+  const s = findSession(state.current);
+  const ch = el('div','chead');
+  ch.innerHTML = `<span class="n">${s.title}</span>${badge(s.state)}<span class="m">${s.model||''}</span>`;
+  c.appendChild(ch);
+  const scroll = el('div','scroll');
+  c.appendChild(scroll);
+  // vertical steering queue
+  const q = el('div','qvert');
+  q.appendChild(el('div','qh', `queue · ${queue.length} waiting`));
+  for(const it of queue){
+    const r = el('div','qrow', `<span class="k">${it.k}</span><span class="t">${it.t}</span><span class="x">×</span>`);
+    r.querySelector('.x').onclick = ()=>{ queue.splice(queue.indexOf(it),1); mount(); };
+    q.appendChild(r);
+  }
+  if(!queue.length) q.appendChild(el('div','t','<span style="color:#4d5462;font-size:12px">queue empty — steering delivers after the tool batch, follow-ups after all work</span>'));
+  c.appendChild(q);
+  const comp = el('div','composer');
   const row = el('div','row');
-  const inp = el('input'); inp.placeholder='message (steering while a turn runs, follow-up after)…';
+  const inp = el('input'); inp.placeholder='message…';
   const send = el('button','send','send');
   const force = el('button','force','force ⚡');
   row.append(inp, send, force);
-  n.append(chips, row);
-  function drawChips(){
-    chips.innerHTML='';
-    for(const q of queue){
-      const c = el('span','chip', `<span class="k">${q.k}</span> <b>${q.t}</b> <span class="x">×</span>`);
-      c.querySelector('.x').onclick = ()=>{ queue.splice(queue.indexOf(q),1); drawChips(); };
-      chips.appendChild(c);
-    }
-    if(!queue.length) chips.innerHTML = '<span class="chip">queue empty</span>';
+  comp.appendChild(row);
+  c.appendChild(comp);
+  mountScroll(scroll, s);
+  return c;
+}
+function mountScroll(scroll, s){
+  if(s.entries.length > 500) vlist(scroll, s.entries, {who:'assistant'});
+  else {
+    scroll.innerHTML='';
+    for(const e of s.entries) scroll.appendChild(entryNode(e,{who: s.parent?'sub-agent':'assistant'}));
+    if(s.state==='failed' && s.last) scroll.appendChild(el('div','entry notify', `<div class="eh"><span class="who">failed · ${s.reason}</span></div><div class="body">${esc(s.last)} — [investigate] [resume with message] [reassign]</div>`));
+    if(s.state==='idle' && s.note) scroll.appendChild(el('div','entry notify', `<div class="eh"><span class="who">idle · waiting_on: parent</span></div><div class="body">${esc(s.note)}</div>`));
+    scroll.scrollTop = scroll.scrollHeight;
+    lastRange = `${s.entries.length} entries (small session)`;
+    updateStatus();
   }
-  drawChips();
-  force.onclick = ()=>{ force.textContent='force ⚡ sent'; setTimeout(()=>force.textContent='force ⚡',900); };
-  return n;
+  scroll.scrollTop = scroll.scrollHeight;
 }
-/* ================= panels (shared content, per-variant placement) ================= */
-function taskNode(t){
-  const n = el('div','task');
-  let h = `<div class="th">${badge(t.state)}<span class="n">${t.name}</span>${t.assigned?`<span class="chip">${t.assigned}</span>`:''}</div>`;
-  if(t.steps) h += t.steps.map(s=>`<div class="step ${s.s}"><span class="mk">${s.s==='done'?'✓':s.s==='active'?'▸':'○'}</span>${s.t}${s.eo?` <span style="color:#4d5462">→ ${s.eo}</span>`:''}</div>`).join('');
-  if(t.crit) h += t.crit.map(c=>`<div class="ev"><span class="${c.sat?'ok':'pend'}">${c.sat?'✓':'…'}</span> ${c.t}</div>`).join('');
-  if(t.ev) h += t.ev.map(e=>`<div class="ev"><span class="${e.ok?'ok':'pend'}">${e.ok?'✓':'…'}</span> ${e.t}</div>`).join('');
-  if(t.block) h += `<div class="block">⛔ ${t.block} — unblocks: ${t.unblock}</div>`;
-  if(t.rc) h += `<div class="rc">${t.rc.replace(/</g,'&lt;')}</div>`;
-  n.innerHTML = h;
-  return n;
+/* ================= right pane ================= */
+function buildRight(){
+  const r = el('div','right');
+  const sections = { tasks: buildTasks, subs: buildSubs };
+  if(state.rightMode==='tabs'){
+    const tabs = el('div','rtabs');
+    for(const [k,label] of [['tasks','tasks'],['subs','sub-agents']]){
+      const t = el('div','rtab'+(state.rightTab===k?' on':''), label);
+      t.onclick = ()=>{ state.rightTab=k; mount(); };
+      tabs.appendChild(t);
+    }
+    r.appendChild(tabs);
+    r.appendChild(sections[state.rightTab]());
+  } else {
+    r.appendChild(sections.tasks());
+    r.appendChild(sections.subs());
+  }
+  return r;
 }
-function agentNodes(){
-  const n = el('div');
-  for(const a of AGENTS) n.appendChild(el('div','agent-row', `<span class="n">${a.name}${a.builtin?' <span class="bi">built-in</span>':''}</span><span class="d">${a.desc}</span></div>`));
-  return n;
+function filterChip(label, key, current){
+  const c = el('span','fchip'+(current===key?' on':''), label);
+  c.onclick = ()=>{ (key==='tFilter'?state.tFilter=state.tFilter:0, state[key]=key==='tFilter'?state[key]:state[key]); mount(); };
+  return c;
 }
-function subRow(s){
-  const r = el('div','sub-row', `${badge(s.state)}<span class="n">${s.title}</span><span class="meta">${s.task||''}</span>`);
+function buildTasks(){
+  const sec = el('div','sec');
+  const h = el('div','sec-h'+(state.secs.tasks?' open':''), `<span class="chev">▸</span> tasks`);
+  h.onclick = ()=>{ state.secs.tasks=!state.secs.tasks; mount(); };
+  sec.appendChild(h);
+  const b = el('div','sec-b'+(state.secs.tasks?' open':''));
+  const F = [['open','open'],['all','all'],['in-progress','in-progress'],['blocked','blocked'],['pending','pending'],['done','done']];
+  const frow = el('div','filters');
+  for(const [label,key] of F){
+    const c = el('span','fchip'+(state.tFilter===key?' on':''), label);
+    c.onclick = ()=>{ state.tFilter = key; mount(); };
+    frow.appendChild(c);
+  }
+  b.appendChild(frow);
+  const list = el('div','list');
+  const items = TASKS.filter(t=>t.ws===state.ws && (state.tFilter==='all' || (state.tFilter==='open' ? t.state!=='done' : t.state===state.tFilter))).sort((a,b2)=>b2.mru-a.mru);
+  if(!items.length) list.appendChild(el('div','lrow','<span class="lm">none</span>'));
+  for(const t of items){
+    const row = el('div','lrow'+(state.expandedTasks.has(t.id)?' open':''));
+    let d = `<div class="ld detail">`;
+    if(t.steps) d += t.steps.map(s=>`<div class="step ${s.s}"><span class="mk">${s.s==='done'?'✓':s.s==='active'?'▸':'○'}</span>${s.t}${s.eo?` <span style="color:#4d5462">→ ${s.eo}</span>`:''}</div>`).join('');
+    if(t.crit) d += t.crit.map(c2=>`<div class="ev"><span class="${c2.sat?'ok':'pend'}">${c2.sat?'✓':'…'}</span> ${c2.t}</div>`).join('');
+    if(t.ev) d += t.ev.map(e2=>`<div class="ev"><span class="${e2.ok?'ok':'pend'}">${e2.ok?'✓':'…'}</span> ${e2.t}</div>`).join('');
+    if(t.block) d += `<div class="block">⛔ ${t.block}${t.unblock?' — '+t.unblock:''}</div>`;
+    if(t.rc) d += `<div class="rc">${esc(t.rc)}</div>`;
+    d += `<div class="a">${t.assigned?'assigned: '+t.assigned:'unassigned'} · modified ${fmtAgo(t.mru)}</div></div>`;
+    row.innerHTML = `<div class="lh"><span class="chev">▸</span>${badge(t.state)}<span class="ln">${t.name}</span><span class="lm">${t.assigned||''}</span></div>${d}`;
+    row.onclick = ()=>{ state.expandedTasks.has(t.id)?state.expandedTasks.delete(t.id):state.expandedTasks.add(t.id); mount(); };
+    list.appendChild(row);
+  }
+  b.appendChild(list);
+  sec.appendChild(b);
+  return sec;
+}
+function buildSubs(){
+  const sec = el('div','sec');
+  const h = el('div','sec-h'+(state.secs.subs?' open':''), `<span class="chev">▸</span> sub-agents`);
+  h.onclick = ()=>{ state.secs.subs=!state.secs.subs; mount(); };
+  sec.appendChild(h);
+  const b = el('div','sec-b'+(state.secs.subs?' open':''));
+  const F = [['open','open'],['all','all'],['running','running'],['idle','idle'],['failed','failed'],['stopped','stopped'],['done','done']];
+  const frow = el('div','filters');
+  for(const [label,key] of F){
+    const c = el('span','fchip'+(state.sFilter===key?' on':''), label);
+    c.onclick = ()=>{ state.sFilter = key; mount(); };
+    frow.appendChild(c);
+  }
+  b.appendChild(frow);
+  const list = el('div','list');
+  const kids = allSessions().filter(s=>s.parent && s.parent!=='c2' || (s.id==='c7'));
+  const roots = kids.filter(s=>s.parent && !findSession(s.parent)?.parent).sort((a,b)=>b.mru-a.mru);
+  const pass = s => state.sFilter==='all' || (state.sFilter==='open' ? s.state!=='done' : s.state===state.sFilter);
+  const show = roots.filter(pass);
+  if(!show.length && !kids.filter(s=>s.parent===show[0]?.id).filter(pass).length && !show.length) list.appendChild(el('div','lrow','<span class="lm">none</span>'));
+  for(const s of show){
+    list.appendChild(subRow2(s, 1));
+    for(const nc of kids.filter(x=>x.parent===s.id).filter(pass)) list.appendChild(subRow2(nc, 2));
+  }
+  b.appendChild(list);
+  sec.appendChild(b);
+  return sec;
+}
+function subRow2(s, depth){
+  const r = el('div','srow2'+(depth===2?' d2':''),
+    `${badge(s.state)}<span class="ln">${s.title}</span><span class="lm">${s.task||''}</span><span class="hint">dbl-click</span>`);
+  r.ondblclick = ()=>openSession(s.id);
   r.onclick = ()=>openSession(s.id);
   return r;
 }
-/* ================= app state ================= */
-const state = {variant:'a', current:'s1', drawer:null, tasksOpen:false, palOpen:false, palSel:0, palText:''};
-const childrenOf = id=>SESSIONS.filter(s=>s.parent===id);
-function openSession(id){
-  state.current = id;
-  if(state.variant==='b'){ const s = SESSIONS.find(x=>x.id===id); state.bFocus = s.parent ? s.id : null; }
-  mount();
-}
-function updateStatus(start, end, total){
-  frames++;
-  const st = SESSIONS.find(x=>x.id===state.current);
-  const n = (st && st.entries === s1) ? (total||s1.length) : st ? st.entries.length : 0;
-  const range = (start!=null)?`${start+1}–${end} of ${n}`:(lastRange?lastRange:`${n} entries`);
-  $('#status').textContent = `S1 snapshot 1.8 MB · rendering ${range} · render ${lastRenderMs.toFixed(1)} ms · 2 streams @ 25 ms · flush ${lastFlushMs.toFixed(1)} ms`;
+/* ================= mount + status + events ================= */
+function openSession(id){ state.current = id; const s = findSession(id); if(s.parent) state.openGroups.add(s.parent); mount(); }
+function updateStatus(){
+  const s = findSession(state.current);
+  const n = s.entries.length;
+  $('#status').textContent = `${s.id} ${n>=1000?'(10k stress)':''} · rendering ${lastRange||n+' entries'} · render ${lastRenderMs.toFixed(1)} ms · 2 streams @ 25 ms · flush ${lastFlushMs.toFixed(1)} ms`;
 }
 function onStream(child){
-  if(state.variant==='a'){
-    if(state.current===child) mountCenter();
-  } else if(state.variant==='b'){
-    if(state.bFocus===child || (state.current==='s1' && !state.bFocus)) mountBody();
-  } else {
-    if(state.drawer===child) mountDrawer();
-  }
+  if(state.current===child){ const c=$('.center'); if(c) c.replaceWith(buildCenter()); const nc=$('.center .scroll'); if(nc) nc.scrollTop = nc.scrollHeight; }
+  else if(state.ws==='w1' && (state.rightMode==='stacked' || state.rightTab==='subs')) mountRightOnly();
+  else if(state.ws==='w1') mountRightOnly();
   updateStatus();
 }
-/* ================= variant A — workbench ================= */
-function variantA(){
-  const n = el('div','a');
-  const left = el('div','left');
-  left.appendChild(el('div','ws',`📁 ${WS.name} <span class="cw">${WS.cwd}</span>`));
-  left.appendChild(el('div','panel-h','sessions'));
-  const tree = el('div');
-  for(const s of SESSIONS){
-    if(s.parent) continue;
-    const t = el('div','tree-item'+(state.current===s.id?' sel':''), `<span class="t">${s.title}</span>${badge(s.state)}`);
-    t.onclick=()=>openSession(s.id); tree.appendChild(t);
-    for(const c of childrenOf(s.id)){
-      const ct = el('div','tree-item child'+(state.current===c.id?' sel':''), `<span class="t">${c.title}</span>${badge(c.state)}`);
-      ct.onclick=()=>openSession(c.id); tree.appendChild(ct);
-    }
-  }
-  left.appendChild(tree);
-  left.appendChild(el('div','panel-h','tasks'));
-  for(const t of TASKS.slice(0,3)) left.appendChild(taskNode(t));
-  left.appendChild(el('div','panel-h','agent types'));
-  left.appendChild(agentNodes());
-  n.appendChild(left);
-  // center: tabs = parent session + its children (children browse as SIBLING TABS)
-  const center = el('div','center');
-  const tabs = el('div','tabs');
-  const s = SESSIONS.find(x=>x.id===state.current);
-  const par = s.parent ? SESSIONS.find(x=>x.id===s.parent) : s;
-  const tabSet = [par, ...childrenOf(par.id)];
-  for(const tb of tabSet){
-    const dot = tb.state==='running' ? '<span class="dot" style="background:var(--acc)"></span>'
-               : tb.state==='failed' ? '<span class="dot" style="background:var(--red)"></span>'
-               : tb.state==='idle' ? '<span class="dot" style="background:var(--amber)"></span>' : '';
-    const t = el('div','tab'+(tb.id===state.current?' on':''), `${dot}${tb.id===par.id?'':'↳ '}${tb.title}`);
-    t.onclick=()=>openSession(tb.id); tabs.appendChild(t);
-  }
-  center.appendChild(tabs);
-  const scroll = el('div','scroll');
-  center.appendChild(scroll);
-  n.appendChild(center);
-  // right inspector
-  const right = el('div','right');
-  const rt = el('div','rtabs');
-  const panels = {subs:el('div','rbody'), tasks:el('div','rbody'), agents:el('div','rbody')};
-  ['subs','tasks','agents'].forEach((p,i)=>{
-    const b = el('div','rtab'+(i===0?' on':''), p==='subs'?'sub-agents':p);
-    b.onclick=()=>{ rt.querySelectorAll('.rtab').forEach(x=>x.classList.remove('on')); b.classList.add('on');
-      Object.entries(panels).forEach(([k,v])=>v.style.display = k===p?'block':'none'); };
-    rt.appendChild(b);
-  });
-  panels.subs.innerHTML = el('div','panel-h','s1’s children');
-  for(const c of childrenOf('s1')) panels.subs.appendChild(subRow(c));
-  panels.subs.appendChild(el('div','panel-h','the point: a child is a tab, a badge, a row — never a mystery'));
-  panels.tasks.innerHTML=''; for(const t of TASKS) panels.tasks.appendChild(taskNode(t));
-  panels.agents.innerHTML=''; panels.agents.appendChild(agentNodes());
-  right.append(rt, panels.subs, panels.tasks, panels.agents);
-  n.appendChild(right);
-  return n;
+function mountRightOnly(){
+  const right = $('.right');
+  if(right) right.replaceWith(buildRight());
 }
-function mountCenter(){
-  const center = $('.a .center'); if(!center) return;
-  let scroll = $('.a .scroll');
-  if(!scroll){ scroll = el('div','scroll'); center.insertAdjacentElement('beforeend', scroll); }
-  const s = SESSIONS.find(x=>x.id===state.current);
-  scroll.scrollTop = 0;
-  if(s.entries.length > 500) vlist(scroll, s.entries, {who:'assistant'});
-  else { flatList(scroll, s.entries, {who:'assistant'}); updateStatus(); }
-  let comp = $('.a .composer'); if(comp) comp.remove();
-  center.appendChild(composer());
-}
-/* ================= variant B — focus ================= */
-function variantB(){
-  const n = el('div','b');
-  const s = SESSIONS.find(x=>x.id===state.current);
-  const top = el('div','top');
-  const crumb = el('div','crumb');
-  if(s.parent){ crumb.innerHTML = `<a data-g="${s.parent}">${SESSIONS.find(x=>x.id===s.parent).title}</a> <span>›</span> <a>${s.title}</a>`; }
-  else crumb.innerHTML = `<a>${s.title}</a>`;
-  crumb.querySelectorAll('a').forEach(a=>a.onclick=()=>a.dataset.g && openSession(a.dataset.g));
-  top.appendChild(el('div','ws',`📁 ${WS.name}`));
-  top.appendChild(crumb);
-  const nT = TASKS.length, nB = TASKS.filter(t=>t.state==='blocked').length;
-  const strip = el('div','tstrip');
-  const tb = el('button', `${nT} tasks${nB?` · <span class="warn">${nB} blocked</span>`:''}`);
-  tb.onclick=()=>{ state.tasksOpen=!state.tasksOpen; mount(); };
-  strip.appendChild(tb);
-  top.appendChild(strip);
-  n.appendChild(top);
-  if(state.tasksOpen){
-    const to = el('div','tasks-open');
-    for(const t of TASKS) to.appendChild(taskNode(t));
-    n.appendChild(to);
-  }
-  const scroll = el('div','scroll');
-  n.appendChild(scroll);
-  n.appendChild(composerB());
-  return n;
-}
-function composerB(){
-  const c = composer();
-  const spawn = el('div','spawn', `<span class="k">spawn as</span>` +
-    AGENTS.map(a=>`<span class="chip">${a.name}</span>`).join(''));
-  c.prepend(spawn);
-  return c;
-}
-function mountBody(){
-  const scroll = $('.b .scroll'); if(!scroll) return;
-  scroll.innerHTML='';
-  const s = SESSIONS.find(x=>x.id===state.current);
-  if(s.entries.length > 500){ // the 10k session, virtualized
-    // virtualize the flat list; spawn cards get their inline child panels after the list
-    vlist(scroll, s.entries, {who:'assistant'});
-    const spawns = ['c2','c3','c4','c5','c6'];
-    for(const cid of spawns) scroll.appendChild(inlineChild(SESSIONS.find(x=>x.id===cid)));
-  } else {
-    for(const e of s.entries) scroll.appendChild(entryNode(e,{who:'assistant'}));
-    if(s.parent==='s1' && s.state==='failed'){
-      scroll.appendChild(el('div','entry notify', `<div class="eh"><span class="who">failed · ${s.reason}</span></div><div class="body">${s.last}</div>`));
-    }
-  }
-  scroll.scrollTop = scroll.scrollHeight; // after content: land at the live tail
-  updateStatus();
-}
-function inlineChild(c){
-  const n = el('div','inline-child');
-  const head = el('div','ic-head', `<span class="chev">▸</span> ↳ ${c.title}  ${badge(c.state)} <span class="meta">${c.task?c.task+' · ':''}${c.state==='running'?'live':''}${c.note?' · '+c.note:''}</span>`);
-  const body = el('div','ic-body');
-  head.onclick=()=>{ head.classList.toggle('open'); body.style.display = head.classList.contains('open')?'block':'none'; };
-  body.style.display='none';
-  n.append(head, body);
-  head.onclick; // open by default so the state is visible on first paint
-  renderInlineBody(body, c);
-  return n;
-}
-function renderInlineBody(body, c){
-  body.innerHTML='';
-  for(const e of c.entries) body.appendChild(entryNode(e,{who:'sub-agent'}));
-  if(c.state==='failed') body.appendChild(el('div','entry notify', `<div class="eh"><span class="who">failed · nudge-exhausted</span></div><div class="body">${c.last} — [investigate] [resume with message] [reassign]`));
-  if(c.state==='idle') body.appendChild(el('div','entry notify', `<div class="eh"><span class="who">idle · waiting_on: parent</span></div><div class="body">${c.note} — [answer]`));
-}
-/* ================= variant C — triage ================= */
-function variantC(){
-  const n = el('div','c');
-  const rail = el('div','rail');
-  const icons = [['📄','sessions'],['↳','children'],['✓','tasks'],['👤','agents'],['⚙','settings']];
-  icons.forEach(([ic,lb],i)=>{
-    const b = el('button', `${ic}${lb==='children'?'<span class="cnt">6</span>':''}`);
-    b.title = lb;
-    b.onclick = ()=>{
-      if(lb==='children') state.drawer = state.drawer?'list':null;
-      if(lb==='tasks'){ state.drawer='tasks'; }
-      if(lb==='agents'){ state.drawer='agents'; }
-      mount();
-    };
-    rail.appendChild(b);
-  });
-  n.appendChild(rail);
-  const center = el('div','center');
-  const scroll = el('div','scroll');
-  center.appendChild(scroll);
-  center.appendChild(composer());
-  n.appendChild(center);
-  const drawer = el('div','drawer'+(state.drawer?'':' hidden'));
-  n.appendChild(drawer);
-  const pal = el('div','palette'+(state.palOpen?'':' hidden'));
-  n.appendChild(pal);
-  return n;
-}
-function mountScrollC(scroll){
-  const s = SESSIONS.find(x=>x.id===state.current);
-  if(s.entries.length > 500) vlist(scroll, s.entries, {who:'assistant'});
-  else { flatList(scroll, s.entries, {who:'assistant'}); }
-  scroll.scrollTop = scroll.scrollHeight; updateStatus();
-}
-function mountDrawer(){
-  const d = $('.c .drawer'); if(!d) return;
-  d.classList.toggle('hidden', !state.drawer);
-  if(!state.drawer) return;
-  d.innerHTML='';
-  const head = el('div','dr-head');
-  const close = el('span','x','✕'); close.onclick=()=>{ state.drawer=null; mount(); };
-  if(typeof state.drawer === 'string' && SESSIONS.find(x=>x.id===state.drawer)){
-    const s = SESSIONS.find(x=>x.id===state.drawer);
-    head.innerHTML = `<span class="n">↳ ${s.title}</span> ${badge(s.state)}`;
-    head.appendChild(close);
-    d.appendChild(head);
-    const body = el('div','dr-body');
-    for(const e of s.entries) body.appendChild(entryNode(e,{who:'sub-agent'}));
-    if(s.state==='failed') body.appendChild(el('div','entry notify', `<div class="eh"><span class="who">failed · ${s.reason}</span></div><div class="body">${s.last} — [investigate] [resume with message] [reassign]`));
-    if(s.state==='idle') body.appendChild(el('div','entry notify', `<div class="eh"><span class="who">idle · waiting_on: parent</span></div><div class="body">${s.note} — [answer]`));
-    d.appendChild(body);
-  } else if(state.drawer==='list'){
-    head.innerHTML = `<span class="n">children of s1</span>`; head.appendChild(close);
-    d.appendChild(head);
-    const body = el('div','dr-body dr-list');
-    for(const c of childrenOf('s1')){
-      const r = subRow(c); r.onclick = ()=>{ state.drawer = c.id; mount(); };
-      body.appendChild(r);
-    }
-    d.appendChild(body);
-  } else if(state.drawer==='tasks'){
-    head.innerHTML = `<span class="n">tasks</span>`; head.appendChild(close);
-    d.appendChild(head);
-    const body = el('div','dr-body');
-    for(const t of TASKS) body.appendChild(taskNode(t));
-    d.appendChild(body);
-  } else if(state.drawer==='agents'){
-    head.innerHTML = `<span class="n">agent types</span>`; head.appendChild(close);
-    d.appendChild(head);
-    d.appendChild(agentNodes());
-  }
-}
-function mountPalette(pal){
-  pal.innerHTML='';
-  const box = el('div','pal-box');
-  const inp = el('input'); inp.placeholder='jump to… session, task, agent, action';
-  inp.value = state.palText;
-  inp.oninput = e=>{ state.palText = e.target.value; state.palSel = 0; mountPalette(pal); };
-  inp.onkeydown = e=>{
-    if(e.key==='ArrowDown'){ state.palSel = Math.min(pals().length-1, state.palSel+1); mountPalette(pal); e.preventDefault(); }
-    else if(e.key==='ArrowUp'){ state.palSel = Math.max(0, state.palSel-1); mountPalette(pal); e.preventDefault(); }
-    else if(e.key==='Enter'){ const p = pals()[state.palSel]; if(p) p.go(); }
-    else if(e.key==='Escape'){ state.palOpen=false; mount(); }
-  };
-  const list = el('div','pal-list');
-  const q = state.palText.toLowerCase();
-  const items = pals().filter(p=>!q || p.n.toLowerCase().includes(q));
-  for(const [i,p] of items.entries()){
-    const it = el('div','pal-item'+(i===state.palSel?' sel':''), `<span class="ic">${p.ic}</span><span class="n">${p.n}</span><span class="k">${p.k}</span>`);
-    it.onclick = p.go;
-    list.appendChild(it);
-  }
-  box.append(inp, list, el('div','pal-hint','↑↓ navigate · ↵ open · esc close'));
-  pal.appendChild(box);
-  setTimeout(()=>inp.focus(),0);
-}
-function pals(){
-  const items = [];
-  for(const s of SESSIONS) items.push({ic: s.parent?'↳':'📄', n:s.title, k:'session', go:()=>{ state.palOpen=false; openSession(s.id); }});
-  for(const t of TASKS) items.push({ic:'✓', n:t.name, k:'task', go:()=>{ state.palOpen=false; state.drawer='tasks'; mount(); }});
-  for(const a of AGENTS) items.push({ic:'👤', n:a.name, k:'agent type', go:()=>{ state.palOpen=false; state.drawer='agents'; mount(); }});
-  items.push({ic:'⚡', n:'force-send a message', k:'action', go:()=>{ state.palOpen=false; }});
-  items.push({ic:'⎇', n:'fork / branch here', k:'action', go:()=>{ state.palOpen=false; }});
-  return items;
-}
-/* ================= wiring ================= */
-const VARIANTS = [
-  ['a','A (Workbench — 3 panes, children as tabs)'],
-  ['b','B (Focus — single column, children inline)'],
-  ['c','C (Triage — rail + ⌘K palette, children in drawer)'],
-];
 function mount(){
   const app = $('#app'); app.innerHTML='';
-  state.palOpen = false;
-  app.appendChild(state.variant==='a'?variantA():state.variant==='b'?variantB():variantC());
-  if(state.variant==='a') mountCenter();
-  else if(state.variant==='b') mountBody();
-  else { const cc=$('.c'); if(cc){ const sc2=cc.querySelector('.scroll'); if(sc2) mountScrollC(sc2); } mountDrawer(); const pal2=cc.querySelector('.palette'); if(pal2) mountPalette(pal2); }
-  $('#lbl').textContent = VARIANTS.find(v=>v[0]===state.variant)[1];
-  if(state.variant==='c') window.onkeydown = (e)=>{
+  app.appendChild(buildTop());
+  const body = el('div','body'+(state.focus?' focus':''));
+  body.appendChild(buildLeft());
+  body.appendChild(buildCenter());
+  body.appendChild(buildRight());
+  app.appendChild(body);
+  const sc = $('.center .scroll'); if(sc) sc.scrollTop = sc.scrollHeight;
+  $('#lbl').textContent = 'verdict design · right pane: ' + state.rightMode;
+  window.onkeydown = (e)=>{
     const t = document.activeElement;
-    const typing = t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable);
-    if((e.metaKey||e.ctrlKey) && e.key==='k'){ e.preventDefault(); state.palOpen=true; mount(); }
-    else if(!typing && e.key==='ArrowLeft'){ cycle(-1); }
-    else if(!typing && e.key==='ArrowRight'){ cycle(1); }
+    if(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
+    if(e.key==='ArrowLeft' || e.key==='ArrowRight'){
+      state.rightMode = state.rightMode==='stacked' ? 'tabs' : 'stacked';
+      history.replaceState(null,'','?right='+state.rightMode);
+      mount();
+    }
   };
-  else window.onkeydown = (e)=>{
-    const t = document.activeElement;
-    const typing = t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable);
-    if(typing) return;
-    if(e.key==='ArrowLeft') cycle(-1);
-    if(e.key==='ArrowRight') cycle(1);
-  };
+  updateStatus();
 }
-function cycle(d){
-  const i = VARIANTS.findIndex(v=>v[0]===state.variant);
-  state.variant = VARIANTS[(i+d+VARIANTS.length)%VARIANTS.length][0];
-  history.replaceState(null,'','?variant='+state.variant);
-  mount();
-}
-$('#prev').onclick = ()=>cycle(-1);
-$('#next').onclick = ()=>cycle(1);
-const url = new URLSearchParams(location.search).get('variant');
-if(url && VARIANTS.some(v=>v[0]===url)) state.variant = url;
+$('#prev').onclick = ()=>{ state.rightMode = state.rightMode==='stacked'?'tabs':'stacked'; history.replaceState(null,'','?right='+state.rightMode); mount(); };
+$('#next').onclick = ()=>{ state.rightMode = state.rightMode==='stacked'?'tabs':'stacked'; history.replaceState(null,'','?right='+state.rightMode); mount(); };
 mount();
 </script>
 </body>
