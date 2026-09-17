@@ -17,7 +17,7 @@ The standalone Rust library crate (`tau-core`) that owns the agent loop, session
 _Avoid_: engine, backend
 
 **Session**:
-The branching record of a conversation between a user and one agent instance: a tree of entries (`id`/`parentId`) that can branch in place. Stored as one JSONL file per session — append-only lines with a per-line CRC, oversized payloads as out-of-band sidecar blobs, dormant sessions zstd-archived (ADR-0005). Sub-agents have their own session files, linked to the parent.
+The branching record of a conversation between a user and one agent instance: a tree of entries (`id`/`parentId`) that can branch in place. Stored as one JSONL file per session — append-only lines with a per-line CRC, oversized payloads as out-of-band sidecar blobs, dormant sessions zstd-archived (ADR-0005). Sub-agents have their own session files, linked to the parent. **Placement**: workspace-scoped session data lives in the workspace's project directory, `{project root}/.tau/sessions/` (sidecar blobs and dormant archives alongside); sessions with no project live in `~/.config/tau/sessions/`.
 _Avoid_: conversation, transcript (a transcript is a linear rendering of a session)
 
 **Turn**:

@@ -2,25 +2,32 @@
 <!--
   PROTOTYPE — throwaway, not production. Do not promote without rewrite.
 
-  Question (#11), round 2: user verdict (2026-09-16) —
-    · chat is ALWAYS central; a focus mode (clean, chat only) hides both side panes
-    · open workspaces = tabs on top
-    · LEFT: file tree + session tree (MRU-sorted; sub-agent groups collapsible;
-      active session expanded by default, others collapsed; archive folder at bottom)
-    · RIGHT: tasks + sub-agents (no agent types). Tasks: collapsed rows, filter by
-      status (default: not-done), sorted by last modified, click → detail. Sub-agents:
-      same, plus a TREE (nested support), double-click → open the session.
-    · steering queue is VERTICAL; markdown + syntax highlighting render for real
-  Open question left by the verdict (the switchable axis, ←/→ or the bottom bar):
-    ?right=stacked (default) — tasks and sub-agents both visible, stacked
-    ?right=tabs — one at a time in two tabs
-  Earlier variants A/B/C (workbench / focus-inline / triage-drawer) live in git history
-  of this file — this file is now the verdict design only.
-  10k-entry virtualization + 2 live 25 ms-coalesced streams + status strip retained
-  (the #10 acceptance bar).
+  #11 verdict design (2026-09-16), round 2 after the user's bug/design list:
+    · chat always central; focus mode hides both side panes
+    · open workspaces = tabs on top + a "+" button (open a folder)
+    · LEFT is TAB-based: [files] [sessions] — sessions MRU-sorted, sub-agent
+      groups collapsible (active expanded, others collapsed), archive at bottom.
+      Top-level sessions show a "running" tag ONLY when the model is actively
+      generating or a sub-agent is running; inactive ones are untagged.
+      Sub-agent sessions keep their full status tags.
+    · RIGHT = [tasks | sub-agents] tabs; filtered (default: not-done),
+      sorted by last modified; task detail with labeled sections
+      (steps / evidence / blocker / resume contract); sub-agents are a tree,
+      single-click selects, double-click opens the session (no hint text).
+    · Steering queue VERTICAL with two sections: steering (top, next
+      opportunity) and follow-up (bottom, after all work completes).
+    · Composer: one send button + a 3-way message-lane selector
+      (⚡ force / ↪ steering / ⏭ follow-up); force delivers immediately
+      (interrupts), the others queue.
+    · Markdown renders with code segments protected (no more mangled rust);
+      entry heights are MEASURED (no clipping, no oversized gaps).
+    · Bottom lualine-style status bar: [workspace · session · state]
+      [prototype axis + hints] [10k render stats · model].
+  Axis (←/→ or click the bar): ?right=tabs (default) | ?right=stacked.
+  Earlier A/B/C variants: branch prototype/gui-ia-variants-a-c.
+  10k-entry virtualization + 2 live 25 ms-coalesced streams retained (#10 bar).
 
   Run:  open this file, or:  python3 -m http.server 4173 -d prototype/gui-ia
-  Keys: ←/→ switch the right-pane axis (not while typing)
 -->
 <html>
 <head>
@@ -41,39 +48,47 @@ input{font:inherit;color:inherit}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#2c313c;border-radius:5px}
 .proto-banner{position:absolute;top:0;left:0;right:0;height:26px;background:#2a2113;color:#e8b64c;
   display:flex;align-items:center;justify-content:center;gap:10px;font:11px/1 var(--mono);letter-spacing:.08em;z-index:50}
-#app{position:absolute;inset:26px 0 0 0;display:flex;flex-direction:column}
-/* ---------- top bar: workspace tabs + focus ---------- */
-.top{display:flex;align-items:stretch;gap:0;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
+#app{position:absolute;inset:26px 0 30px 0;display:flex;flex-direction:column}
+/* ---------- top bar ---------- */
+.top{display:flex;align-items:stretch;border-bottom:1px solid var(--line);background:var(--panel);flex:none;position:relative}
 .wstabs{display:flex;align-items:stretch}
 .wstab{display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:13px;color:var(--dim);border-right:1px solid var(--line);cursor:pointer}
 .wstab.on{color:var(--tx);background:var(--bg);box-shadow:inset 0 2px 0 var(--acc)}
 .wstab .cw{font:10px var(--mono);color:#4d5462}
+.wsp{display:flex;align-items:center;padding:0 14px;font-size:15px;color:var(--dim);border-right:1px solid var(--line);cursor:pointer}
+.wsp:hover{color:var(--acc);background:var(--panel2)}
+.wmenu{position:absolute;top:100%;left:0;z-index:40;background:var(--panel2);border:1px solid var(--line);border-radius:0 0 8px 8px;box-shadow:0 8px 24px rgba(0,0,0,.5);min-width:280px;padding:4px}
+.wmenu .mi{display:flex;gap:8px;align-items:center;padding:6px 10px;border-radius:6px;font-size:12.5px;cursor:pointer}
+.wmenu .mi:hover{background:var(--panel)}
+.wmenu .mi .mk{margin-left:auto;color:var(--green);font:10px var(--mono)}
+.wmenu .sep{border-top:1px solid var(--line);margin:4px 0}
 .top .tspacer{flex:1}
-.top .sht{display:flex;align-items:center;padding:0 12px;font-size:13px;color:var(--dim)}
+.top .sht{display:flex;align-items:center;padding:0 12px;font-size:12.5px;color:var(--dim)}
+.top .sht a{color:var(--acc);cursor:pointer}
 .iconbtn{display:flex;align-items:center;gap:7px;padding:0 14px;font-size:12.5px;color:var(--dim);border-left:1px solid var(--line)}
 .iconbtn:hover{color:var(--tx);background:var(--panel2)}
 .iconbtn.on{color:var(--acc);background:var(--bg)}
 /* ---------- body grid ---------- */
-.body{display:grid;grid-template-columns:270px 1fr 330px;flex:1;min-height:0}
+.body{display:grid;grid-template-columns:280px 1fr 330px;flex:1;min-height:0}
 .body.focus{grid-template-columns:0 1fr 0}
 .body.focus .left,.body.focus .right{display:none}
+.body.focus .center{grid-column:2;grid-row:1}
 .left{background:var(--panel);border-right:1px solid var(--line);overflow-y:auto;min-height:0}
 .center{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
 .right{background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;min-height:0}
-/* ---------- left: file tree + session tree ---------- */
-.sec{border-bottom:1px solid var(--line)}
-.sec-h{display:flex;align-items:center;gap:6px;padding:9px 12px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--dim);cursor:pointer;user-select:none}
-.sec-h:hover{color:var(--tx)}
-.sec-h .chev{font-size:10px;transition:transform .12s}
-.sec-h.open .chev{transform:rotate(90deg)}
-.sec-b{display:none}
-.sec-b.open{display:block}
-.frow{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 12px;font-size:12.5px;color:var(--dim);cursor:pointer;white-space:nowrap}
+/* ---------- left tabs ---------- */
+.ltabs{display:flex;border-bottom:1px solid var(--line);flex:none}
+.ltab{flex:1;text-align:center;padding:8px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim);cursor:pointer}
+.ltab.on{color:var(--acc);box-shadow:inset 0 -2px 0 var(--acc)}
+.lsec{overflow-y:auto;min-height:0}
+/* ---------- file tree ---------- */
+.frow{display:flex;align-items:center;gap:6px;padding:3px 10px 3px 12px;font-size:12.5px;color:var(--dim);white-space:nowrap}
 .frow:hover{background:var(--panel2);color:var(--tx)}
-.frow .chev{font-size:9px;width:10px}
+.frow .chev{font-size:9px;width:10px;cursor:pointer}
 .frow .fn{color:var(--tx)}
 .frow .dir{color:var(--acc)}
-/* session tree */
+.kids{display:none}.kids.open{display:block}
+/* ---------- session tree ---------- */
 .srow{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:13px;cursor:pointer;color:var(--tx)}
 .srow:hover{background:var(--panel2)}
 .srow.sel{background:rgba(76,194,255,.12)}
@@ -82,10 +97,8 @@ input{font:inherit;color:inherit}
 .srow .mru{font:9.5px var(--mono);color:#4d5462}
 .srow.child{padding-left:26px}
 .srow.nested{padding-left:44px}
-.srow.arch{padding:4px 12px;color:var(--dim);font-size:12px}
-.srow.arch:hover{color:var(--tx)}
-.kids{display:none}
-.kids.open{display:block}
+.arch-h{display:flex;align-items:center;gap:6px;padding:9px 12px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.1em;color:var(--dim);cursor:pointer}
+.arch-h:hover{color:var(--tx)}
 /* ---------- badges ---------- */
 .badge{display:inline-flex;align-items:center;gap:5px;font:10.5px/1.6 var(--mono);padding:1px 7px;border-radius:9px;border:1px solid var(--line);color:var(--dim);white-space:nowrap;flex:none}
 .badge .dot{width:7px;height:7px;border-radius:50%;background:var(--dim)}
@@ -98,16 +111,17 @@ input{font:inherit;color:inherit}
 .badge.blocked{color:var(--red);border-color:rgba(239,106,106,.45)}.badge.blocked .dot{background:var(--red)}
 .badge.pending{color:var(--dim)}.badge.cancelled{color:var(--dim)}
 @keyframes pulse{50%{opacity:.35}}
-/* ---------- center: transcript ---------- */
+/* ---------- center ---------- */
 .chead{display:flex;align-items:center;gap:10px;padding:8px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex:none}
 .chead .n{font-weight:600;font-size:13.5px}
-.chead .par{font-size:12px;color:var(--dim)}
-.chead .par a{color:var(--acc);cursor:pointer}
 .chead .m{margin-left:auto;font:10.5px var(--mono);color:#4d5462}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:var(--dim)}
+.empty .big{font-size:15px;color:var(--tx)}
 .scroll{flex:1;overflow-y:auto;min-height:0;position:relative}
 .entry{border-bottom:1px solid var(--line);padding:8px 16px}
 .entry .eh{display:flex;align-items:center;gap:8px}
 .entry .eh .who{font:11px var(--mono);color:var(--dim)}
+.entry .eh .who .fz{color:var(--red)}
 .entry .eh .tt{font:10px var(--mono);color:#4d5462;margin-left:auto}
 .entry .body{margin-top:4px;color:#c6cad2;font-size:13.5px}
 .entry.user .who{color:var(--purple)}
@@ -128,33 +142,36 @@ input{font:inherit;color:inherit}
 .entry .body .add{color:var(--green);display:block}.entry .body .del{color:var(--red);display:block}
 .entry .body .hsh{color:#525a6a;display:inline-block;width:44px}
 .entry .body .blob{color:var(--amber);font-style:italic}
+.entry .body .iv{color:#5d6474}
 .entry.tool .name{font:12px var(--mono);color:var(--acc)}
 .entry.tool .arg{font:11.5px var(--mono);color:var(--dim);margin-left:8px}
-.entry.tool .out{margin-top:6px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:11.5px/1.55 var(--mono);color:#9aa3b2;max-height:280px;overflow:auto;white-space:pre}
-/* ---------- vertical steering queue ---------- */
-.qvert{flex:none;border-top:1px solid var(--line);background:var(--panel);max-height:132px;overflow-y:auto;padding:6px 14px}
-.qvert .qh{font:10px var(--mono);color:#4d5462;text-transform:uppercase;letter-spacing:.08em;margin:2px 0 4px}
+.entry.tool .out{margin-top:6px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:11.5px/1.55 var(--mono);color:#9aa3b2;max-height:320px;overflow:auto;white-space:pre}
+/* ---------- vertical queue (two sections) ---------- */
+.qvert{flex:none;border-top:1px solid var(--line);background:var(--panel);max-height:170px;overflow-y:auto;padding:6px 14px}
+.qh{font:10px var(--mono);color:#4d5462;text-transform:uppercase;letter-spacing:.08em;margin:4px 0 3px}
+.qh.empty{opacity:.5}
 .qrow{display:flex;align-items:flex-start;gap:8px;padding:4px 8px;border-radius:7px;margin-bottom:3px;background:var(--panel2);border:1px solid var(--line)}
 .qrow:hover{border-color:var(--acc)}
-.qrow .k{font:9.5px var(--mono);color:var(--acc);text-transform:uppercase;flex:none;margin-top:2px;width:52px}
 .qrow .t{flex:1;font-size:12.5px;color:var(--tx)}
 .qrow .x{color:#4d5462;cursor:pointer;font-size:13px;line-height:1.2}
 .qrow:hover .x{color:var(--red)}
 /* ---------- composer ---------- */
-.composer{border-top:1px solid var(--line);background:var(--panel);padding:10px 16px;flex:none}
+.composer{border-top:1px solid var(--line);background:var(--panel);padding:8px 16px 10px;flex:none}
+.lanes{display:flex;gap:4px;margin-bottom:7px}
+.lane{font:11px var(--mono);border:1px solid var(--line);border-radius:12px;padding:2px 10px;color:var(--dim);cursor:pointer}
+.lane.on{color:var(--tx);border-color:var(--acc);background:rgba(76,194,255,.1)}
+.lane.f.on{border-color:var(--red);color:var(--red);background:rgba(239,106,106,.08)}
+.lane-hint{margin-left:auto;font:10px var(--mono);color:#4d5462}
 .composer .row{display:flex;gap:8px;align-items:center}
 .composer input{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:9px 12px;outline:none}
 .composer input:focus{border-color:var(--acc)}
 .composer .send{background:var(--acc);color:#081018;border-radius:8px;padding:9px 18px;font-weight:600}
-.composer .force{background:transparent;color:var(--red);border:1px solid rgba(239,106,106,.5);border-radius:8px;padding:8px 13px;font-size:12.5px}
-.composer .force:hover{background:rgba(239,106,106,.12)}
-/* ---------- right: tasks & sub-agents ---------- */
-.right .sec{flex:none}
+/* ---------- right ---------- */
 .rtabs{display:flex;border-bottom:1px solid var(--line)}
-.rtab{flex:1;text-align:center;padding:9px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim)}
+.rtab{flex:1;text-align:center;padding:8px;font:11px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--dim);cursor:pointer}
 .rtab.on{color:var(--acc);box-shadow:inset 0 -2px 0 var(--acc)}
 .filters{display:flex;gap:4px;padding:8px 12px 4px;flex-wrap:wrap}
-.fchip{font:10.5px var(--mono);border:1px solid var(--line);border-radius:11px;padding:2px 9px;color:var(--dim)}
+.fchip{font:10.5px var(--mono);border:1px solid var(--line);border-radius:11px;padding:2px 9px;color:var(--dim);cursor:pointer}
 .fchip.on{color:var(--acc);border-color:rgba(76,194,255,.5);background:rgba(76,194,255,.08)}
 .list{padding:4px 0}
 .lrow{padding:7px 14px;cursor:pointer;border-bottom:1px solid rgba(38,42,51,.5)}
@@ -166,38 +183,42 @@ input{font:inherit;color:inherit}
 .lrow .ld{margin-top:8px;display:none}
 .lrow.open .ld{display:block}
 .lrow.open .chev{transform:rotate(90deg)}
-.detail .step{display:flex;gap:8px;font-size:12px;padding:2px 0;color:var(--dim)}
+.detail .dl{font:9.5px var(--mono);text-transform:uppercase;letter-spacing:.08em;color:#4d5462;margin:6px 0 2px}
+.detail .dl:first-child{margin-top:0}
+.detail .step{display:flex;gap:8px;font-size:12px;padding:1px 0;color:var(--dim)}
 .detail .step .mk{font-family:var(--mono)}
 .detail .step.active{color:var(--tx)}.detail .step.active .mk{color:var(--acc)}
 .detail .step.done .mk{color:var(--green)}
 .detail .ev{font:10.5px var(--mono);color:var(--dim);padding:1px 0}
 .detail .ev .ok{color:var(--green)}.detail .ev .pend{color:var(--amber)}
-.detail .block{color:var(--red);font-size:12px;margin-top:4px}
-.detail .rc{margin-top:8px;background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:10.5px/1.55 var(--mono);color:#9aa3b2;white-space:pre}
-.detail .a{margin-top:4px;font:10.5px var(--mono);color:var(--dim)}
-.srow2{padding:7px 14px 7px 14px;cursor:pointer;border-bottom:1px solid rgba(38,42,51,.5);display:flex;align-items:center;gap:8px}
+.detail .block{color:var(--red);font-size:12px}
+.detail .rc{background:#0c0d10;border:1px solid var(--line);border-radius:6px;padding:8px 10px;font:10.5px/1.55 var(--mono);color:#9aa3b2;white-space:pre}
+.detail .a{margin-top:6px;font:10.5px var(--mono);color:#4d5462}
+.srow2{padding:7px 14px;cursor:pointer;border-bottom:1px solid rgba(38,42,51,.5);display:flex;align-items:center;gap:8px}
 .srow2:hover{background:var(--panel2)}
+.srow2.sel{background:rgba(76,194,255,.12)}
 .srow2 .ln{flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srow2 .lm{font:9.5px var(--mono);color:#4d5462}
 .srow2.d2{padding-left:34px}
-.srow2 .hint{font:9px var(--mono);color:#4d5462}
-/* ---------- switcher (prototype chrome) ---------- */
-#bar{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:60;display:flex;align-items:center;gap:10px;
-  background:#000;color:#fff;border:1px solid #333;border-radius:999px;padding:5px 8px;box-shadow:0 6px 24px rgba(0,0,0,.6);font:12px var(--mono)}
-#bar button{width:30px;height:26px;border-radius:6px;color:#fff}
-#bar button:hover{background:#222}
-#bar .lbl{min-width:185px;text-align:center}
-#bar .status{min-width:285px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:center;color:#7fd4ff;font-size:10.5px}
+/* ---------- lualine-style status bar ---------- */
+#bar{position:fixed;left:0;right:0;bottom:0;height:30px;display:flex;z-index:60;font:11.5px/30px var(--mono);overflow:hidden}
+.seg{display:flex;align-items:center;gap:10px;padding:0 12px;white-space:nowrap;overflow:hidden}
+.seg .sv{color:var(--tx)}
+.seg1{background:#1a2333;color:#9fb4d8}
+.seg2{flex:1;justify-content:center;background:#141a26;color:#7d8494}
+.seg2 button{font:11.5px var(--mono);color:var(--acc);padding:0 6px}
+.seg2 button:hover{color:var(--tx)}
+.seg3{background:#10141c;color:#5d6474}
+.seg3 .perf{color:#7fd4ff}
 </style>
 </head>
 <body>
-<div class="proto-banner">PROTOTYPE — #11 verdict design · throwaway · ←/→: right pane stacked/tabs · top-right: focus mode</div>
+<div class="proto-banner">PROTOTYPE — #11 verdict design · throwaway · ←/→: right pane · status bar shows the #10 perf bar</div>
 <div id="app"></div>
 <div id="bar">
-  <button id="prev" title="previous (←)">‹</button>
-  <span class="lbl" id="lbl"></span>
-  <button id="next" title="next (→)">›</button>
-  <span class="status" id="status"></span>
+  <div class="seg seg1" id="seg1"></div>
+  <div class="seg seg2" id="seg2"></div>
+  <div class="seg seg3" id="seg3"></div>
 </div>
 <script>
 'use strict';
@@ -206,7 +227,7 @@ const FILETREES = {
   w1:[
     {n:'src', d:1, ch:[{n:'protocol', d:1, ch:[{f:'message.rs'},{f:'sse.rs'},{f:'envelope.rs'}]},{f:'loop.rs'},{f:'main.rs'}]},
     {n:'docs', d:1, ch:[{n:'adr', d:1, ch:[{f:'0001-native-subagents-and-task-handoff.md'},{f:'0004-om-based-compaction.md'},{f:'0006-core-gui-protocol-single-message-crate.md'}]},{n:'spec', d:1, ch:[{f:'v0.md'}]}]},
-    {n:'.tau', d:1, ch:[{n:'agents', d:1, ch:[{f:'researcher.md'},{f:'reviewer.md'}]}]},
+    {n:'.tau', d:1, ch:[{n:'agents', d:1, ch:[{f:'researcher.md'},{f:'reviewer.md'}]},{n:'sessions', d:1, ch:[{f:'s1-protocol-crate.jsonl'},{f:'blobs/'}]}]},
     {f:'CONTEXT.md'},
   ],
   w2:[
@@ -271,7 +292,7 @@ const BRIEF = {
 };
 const C = {
   c1:{state:'done', mru:1758109000},
-  c2:{state:'running', mru:1758114000, task:'t2', child:'c7'},
+  c2:{state:'running', mru:1758114000, task:'t2'},
   c3:{state:'failed', mru:1758113000, reason:'nudge-exhausted — turn ended twice, no done, no wait declaration', last:'the test only fails when the clock ticks between snapshot and compare; I was about to inject a fixed clock…'},
   c4:{state:'idle', mru:1758112000, note:'waiting on parent: "should recall take a group id or a range?"'},
   c5:{state:'stopped', mru:1758111000, by:'user'},
@@ -280,14 +301,14 @@ const C = {
 };
 const SESSIONS = {
   w1:[
-    {id:'s1', title:'Protocol crate: messages & events', parent:null, state:'running', mru:1758116500, model:'yunyun/qwen3.8-27b', entries:s1e,
+    {id:'s1', title:'Protocol crate: messages & events', parent:null, state:'running', generating:true, mru:1758116500, model:'yunyun/qwen3.8-27b', entries:s1e,
       children:['c2','c6','c3','c4','c5','c1']},
-    {id:'s3', title:'v0 spec drafting', parent:null, state:'running', mru:1758110000, entries:childEntries('s3','Draft docs/spec/v0.md from the settled decisions (map #12 prep).')},
-    {id:'s4', title:'SSE shim research', parent:null, state:'done', mru:1758105000, entries:childEntries('s4','Catalogue the responses-API shim behaviours across providers.')},
-    {id:'s5x', title:'Task panel notes', parent:null, state:'done', mru:1758099000, entries:childEntries('s5x','Capture observations about task-panel IA from the prototype.')},
+    {id:'s3', title:'v0 spec drafting', parent:null, state:'idle', generating:false, mru:1758110000, entries:childEntries('s3','Draft docs/spec/v0.md from the settled decisions (map #12 prep).')},
+    {id:'s4', title:'SSE shim research', parent:null, state:'done', generating:false, mru:1758105000, entries:childEntries('s4','Catalogue the responses-API shim behaviours across providers.')},
+    {id:'s5x', title:'Task panel notes', parent:null, state:'done', generating:false, mru:1758099000, entries:childEntries('s5x','Capture observations about task-panel IA from the prototype.')},
   ],
   w2:[
-    {id:'s5', title:'Port Observer prompts', parent:null, state:'running', mru:1758115500, entries:childEntries('s5','Port the Mastra Observer/Reflector prompts into Rust (verbatim, Apache-2.0).')},
+    {id:'s5', title:'Port Observer prompts', parent:null, state:'running', generating:true, mru:1758115500, entries:childEntries('s5','Port the Mastra Observer/Reflector prompts into Rust (verbatim, Apache-2.0).')},
   ],
   archive_w1:[
     {id:'a1', title:'Session storage format research', parent:null, state:'done', mru:1758080000, entries:childEntries('a1','Measured 280 real session files; JSONL + CRC + sidecars won.')},
@@ -347,14 +368,20 @@ setInterval(()=>{
   }
   dirty.clear();
   lastFlushMs = performance.now() - t0;
-  updateStatus();
+  updateBar();
 }, 25);
 /* ================= lookups ================= */
 function allSessions(){ return [...SESSIONS.w1, ...SESSIONS.w2, ...SESSIONS.archive_w1]; }
 function findSession(id){ return allSessions().find(x=>x.id===id); }
-const NOW = 1758116500 + 90; // dataset "now": 90 s after the freshest event
+const NOW = 1758116500 + 90;
 const fmtAgo = ts => { const m = (NOW - ts) / 60; return m<1?'just now': m<60? Math.round(m)+'m' : Math.round(m/60)+'h'; };
-/* ================= markdown + highlighting ================= */
+const badge = st => `<span class="badge ${st}"><span class="dot"></span>${st.replace('-',' ')}</span>`;
+function sessionBadge(s){
+  if(s.parent) return badge(s.state);           // sub-agents keep their tags
+  const childRunning = (s.children||[]).some(c=>findSession(c)?.state==='running');
+  return (s.generating || childRunning) ? badge('running') : '';   // top-level: only when truly active
+}
+/* ================= markdown + highlighting (code-protected) ================= */
 const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 function hl(code, lang){
   let s = esc(code);
@@ -367,26 +394,41 @@ function hl(code, lang){
   return s;
 }
 function md(t){
-  let s = esc(t);
-  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (m,lang,code)=>'<pre class="code">'+(lang?'<span class="lang">'+lang+'</span>':'')+hl(code, lang)+'</pre>');
-  s = s.replace(/`([^`\n]+)`/g, '<code class="ic">$1</code>');
-  s = s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
-  s = s.replace(/^### (.*)$/gm, '<div class="mh">$1</div>').replace(/^## (.*)$/gm, '<div class="mh2">$1</div>');
-  s = s.replace(/^- (.*)$/gm, '<div class="mi">$1</div>');
-  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="lk">$1</span>');
-  return s;
+  const rest = esc(t);
+  const segs = []; let last = 0, m;
+  const fenceRe = /```(\w*)\n([\s\S]*?)```/g;
+  while((m = fenceRe.exec(rest))){
+    if(m.index>0) segs.push({txt: rest.slice(last, m.index)});
+    segs.push({code: m[2], lang: m[1]});
+    last = m.index + m[0].length;
+  }
+  if(last<rest.length) segs.push({txt: rest.slice(last)});
+  let out = '';
+  for(const sg of segs){
+    if(sg.code!=null){
+      out += '<pre class="code">'+(sg.lang?'<span class="lang">'+sg.lang+'</span>':'')+hl(sg.code, sg.lang)+'</pre>';
+    } else {
+      let x = sg.txt;
+      const codes = [];
+      x = x.replace(/`([^`\n]+)`/g, mm=>{ codes.push(mm.slice(1,-1)); return '\u0000'+(codes.length-1)+'\u0000'; });
+      x = x.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>').replace(/\*([^*\n]+)\*/g,'<i>$1</i>');
+      x = x.replace(/^### (.*)$/gm,'<div class="mh">$1</div>').replace(/^## (.*)$/gm,'<div class="mh2">$1</div>');
+      x = x.replace(/^- (.*)$/gm,'<div class="mi">$1</div>');
+      x = x.replace(/\[([^\]]+)\]\(([^)]+)\)/g,'<span class="lk">$1</span>');
+      x = x.replace(/\u0000(\d+)\u0000/g, (mm,i2)=>'<code class="ic">'+codes[+i2]+'</code>');
+      out += x;
+    }
+  }
+  return out;
 }
 /* ================= atoms ================= */
 const $ = s=>document.querySelector(s);
 const el = (tag, cls, html)=>{const n=document.createElement(tag); if(cls)n.className=cls; if(html!=null)n.innerHTML=html; return n;};
-const badge = st => `<span class="badge ${st}"><span class="dot"></span>${st.replace('-',' ')}</span>`;
 function entryNode(e, ctx){
   const n = el('div','entry '+e.type);
   if(e.type==='archived'){ n.innerHTML = `<div class="eh"><span class="who">⧉ archived span</span><span class="tt">${e.span} · zstd · expand via recall</span></div>`; return n; }
   const h = el('div','eh');
-  if(e.type==='user') h.innerHTML = `<span class="who">you</span><span class="tt">${e.t?new Date(e.t*1000).toLocaleTimeString():''}</span>`;
-  else if(e.type==='om') h.innerHTML = `<span class="who">om · observer</span><span class="tt">${e.preview||''}</span>`;
-  else if(e.type==='event'){ n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">event</span></div><div class="body">${e.preview}</div>`; return n; }
+  if(e.type==='event'){ n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">event</span></div><div class="body">${e.preview}</div>`; return n; }
   else if(e.type==='notify'){ n.classList.add('notify'); n.innerHTML = `<div class="eh"><span class="who">◈ ${e.who||'sub-agent'}</span></div><div class="body">${md(e.body||e.preview||'')}</div>`; return n; }
   else if(e.type==='tool'){
     h.innerHTML = `<span class="name">⌘ ${e.tool}</span><span class="arg">${e.arg||''}</span>`;
@@ -394,29 +436,40 @@ function entryNode(e, ctx){
     if(e.payload){
       const out = el('div','out'); out.style.display='none';
       h.style.cursor='pointer';
-      h.onclick = ()=>{ if(out.style.display==='none'){ out.style.display='block'; out.innerHTML = e.html ? e.payload() : (e.hl? hl(e.payload(), e.hl) : esc(e.payload())); } else out.style.display='none'; };
+      const fill = ()=>{ out.style.display='block'; out.innerHTML = e.html ? e.payload() : (e.hl? hl(e.payload(), e.hl) : esc(e.payload())); };
+      if(state.expandedOut.has(e.id)) fill();
+      h.onclick = ()=>{ out.style.display==='none' ? (state.expandedOut.add(e.id), fill()) : (state.expandedOut.delete(e.id), out.style.display='none'); };
       n.appendChild(out);
     }
     return n;
   }
-  h.innerHTML = `<span class="who">${ctx.who||'assistant'}</span>`;
+  if(e.type==='om') h.innerHTML = `<span class="who">om · observer</span><span class="tt">${e.preview||''}</span>`;
+  else if(e.type==='user') h.innerHTML = `<span class="who">you${e.forced?' <span class="fz">⚡ forced</span>':''}</span><span class="tt">${e.t?new Date(e.t*1000).toLocaleTimeString():''}</span>`;
+  else h.innerHTML = `<span class="who">${ctx.who||'assistant'}${e.interrupted?' <span class="fz">· interrupted, partial kept</span>':''}</span>`;
   n.appendChild(h);
   if(e.body) n.appendChild(el('div','body', md(e.body)));
   if(e.streaming) n.classList.add('streaming');
   return n;
 }
-const entryH = e => e.type==='archived'?58 : e.type==='user'?52 : e.type==='om'?50 : e.type==='event'?54 : e.type==='tool'?62 : 74;
+/* ================= virtualized list (measured heights) ================= */
+const estH = e => e.type==='archived'?58 : e.type==='user'?52 : e.type==='om'?50 : e.type==='event'?54 : e.type==='tool'?62 : 74;
+const sizeCache = new Map();
 function vlist(host, entries, ctx){
   const wrap = el('div','vl-wrap'); wrap.style.position='relative';
   host.appendChild(wrap);
-  const heights = entries.map(entryH);
-  const total = heights.reduce((a,b)=>a+b,0);
-  wrap.style.height = total+'px';
-  const innerH = el('div'); innerH.style.position='relative'; innerH.style.height = total+'px'; wrap.appendChild(innerH);
-  let rendered = -1, prefix = [0];
-  for(const h of heights) prefix.push(prefix[prefix.length-1]+h);
+  const innerH = el('div'); innerH.style.position='relative'; wrap.appendChild(innerH);
+  const heights = entries.map(e => sizeCache.get(e.id) ?? estH(e));
+  let rendered = -1;
+  function relayout(){
+    let acc = 0; const prefix = new Array(entries.length+1);
+    for(let i=0;i<entries.length;i++){ prefix[i]=acc; acc += heights[i]; }
+    prefix[entries.length]=acc;
+    wrap.style.height = acc+'px'; innerH.style.height = acc+'px';
+    return prefix;
+  }
   function render(){
     const t0 = performance.now();
+    const prefix = relayout();
     const top = host.scrollTop, H = host.clientHeight, BUF = 12;
     let start = 0; { let lo=0, hi=entries.length-1; while(lo<hi){ const mid=(lo+hi)>>1; if(prefix[mid] < top) lo=mid+1; else hi=mid; } start = Math.max(0, lo-BUF); }
     let end = Math.min(entries.length, start + Math.ceil(H/46) + BUF*2);
@@ -424,14 +477,20 @@ function vlist(host, entries, ctx){
       rendered = start;
       innerH.innerHTML = '';
       for(let i=start;i<end;i++){
-        const n = entryNode(entries[i], ctx||{});
+        const e = entries[i];
+        const n = entryNode(e, {...(ctx||{}), idx:i});
         n.style.position='absolute'; n.style.left=0; n.style.right=0;
-        n.style.top = prefix[i]+'px'; n.style.height = heights[i]+'px'; n.style.overflow='hidden';
+        n.style.top = prefix[i]+'px'; n.style.height = 'auto';
         innerH.appendChild(n);
+        const h = n.offsetHeight;                 // measure real height
+        if(heights[i] !== h) heights[i] = h;
+        sizeCache.set(e.id, h);
+        n.style.height = h+'px'; n.style.overflow='hidden';
       }
+      relayout();                                 // corrected totals
       lastRenderMs = performance.now() - t0;
       lastRange = `${start+1}–${end} of ${entries.length}`;
-      updateStatus();
+      updateBar();
     }
   }
   host.onscroll = render; window.addEventListener('resize', render); render();
@@ -439,84 +498,115 @@ function vlist(host, entries, ctx){
 /* ================= state ================= */
 const state = {
   ws:'w1', current:'s1', focus:false,
-  rightMode: new URLSearchParams(location.search).get('right')==='tabs' ? 'tabs' : 'stacked',
+  rightMode: new URLSearchParams(location.search).get('right')==='stacked' ? 'stacked' : 'tabs',
   rightTab: 'tasks',
-  tFilter:'open', sFilter:'open',
-  expandedTasks:new Set(), openGroups:new Set(['s1']), // active session expanded by default
-  secs:{files:true, sessions:true, tasks:true, subs:true},
+  ltab: 'sessions',
+  tFilter:'open', sFilter:'open', expandedOut:new Set(),
+  expandedTasks:new Set(), openGroups:new Set(['s1']),
+  lane:'steering', wmenu:false,
 };
-const queue = [
-  {k:'steering', t:'use the 62-char alphabet, not base36'},
-  {k:'follow-up', t:'also update CONTEXT.md with the new terms'},
-  {k:'steering', t:'before you finish, run cargo fmt'},
-];
+const queue = {
+  steering: [
+    {t:'use the 62-char alphabet, not base36'},
+    {t:'before you finish, run cargo fmt'},
+  ],
+  follow: [
+    {t:'also update CONTEXT.md with the new terms'},
+  ],
+};
 /* ================= top bar ================= */
 function buildTop(){
   const top = el('div','top');
   const tabs = el('div','wstabs');
   for(const w of WORKSPACES){
     const t = el('div','wstab'+(state.ws===w.id?' on':''), `📁 ${w.name} <span class="cw">${w.cwd}</span>`);
-    t.onclick = ()=>{ state.ws = w.id; state.current = SESSIONS[w.id][0].id; state.openGroups = new Set([state.current]); mount(); };
+    t.onclick = ()=>{ state.ws = w.id; const list = SESSIONS[w.id]||[]; state.current = list[0]?.id || null; state.openGroups = new Set(state.current?[state.current]:[]); mount(); };
     tabs.appendChild(t);
   }
+  const plus = el('div','wsp','+');
+  plus.onclick = e=>{ e.stopPropagation(); state.wmenu = !state.wmenu; mount(); };
+  tabs.appendChild(plus);
   top.appendChild(tabs);
+  if(state.wmenu){
+    const menu = el('div','wmenu');
+    for(const w of WORKSPACES) menu.appendChild(el('div','mi', `📁 ${w.cwd} <span class="mk">open</span>`));
+    menu.appendChild(el('div','sep'));
+    const cand = ['~/git/new-project','~/git/tau-web','browse…'];
+    for(const c of cand){
+      const mi = el('div','mi', c==='browse…'?'📂 browse…':'＋ '+c);
+      if(c!=='browse…') mi.onclick = ()=>{
+        const id = 'w'+(WORKSPACES.length+1);
+        WORKSPACES.push({id, name:c.split('/').pop(), cwd:c});
+        SESSIONS[id] = [];
+        state.ws = id; state.current = null; state.wmenu = false; mount();
+      };
+      menu.appendChild(mi);
+    }
+    menu.onclick = e=>{ if(e.target===menu){ state.wmenu=false; mount(); } };
+    top.appendChild(menu);
+  }
   top.appendChild(el('div','tspacer'));
-  const s = findSession(state.current);
-  if(s.parent){ const p = findSession(s.parent); top.appendChild(el('div','sht', `↳ sub-agent of <a data-s="${p.id}">${p.title}</a>`)); top.querySelector('[data-s]').onclick = e=>openSession(e.target.dataset.s); }
-  const fb = el('div','iconbtn'+(state.focus?' on':''), state.focus?'⛶ exit focus':'⛶ focus mode');
+  const s = state.current ? findSession(state.current) : null;
+  if(s && s.parent){ const p = findSession(s.parent); top.appendChild(el('div','sht', `↳ sub-agent of <a data-s="${p.id}">${p.title}</a>`)); top.querySelector('[data-s]').onclick = e=>openSession(e.target.dataset.s); }
+  const fb = el('div','iconbtn'+(state.focus?' on':''), state.focus?'⛶ exit focus':'⛶ focus');
   fb.onclick = ()=>{ state.focus = !state.focus; mount(); };
   top.appendChild(fb);
   return top;
 }
-/* ================= left pane ================= */
+/* ================= left pane (tabs: files | sessions) ================= */
 function buildLeft(){
   const left = el('div','left');
-  // file tree
-  const fs = el('div','sec');
-  const fh = el('div','sec-h'+(state.secs.files?' open':''), `<span class="chev">▸</span> files`);
-  fh.onclick = ()=>{ state.secs.files=!state.secs.files; mount(); };
-  fs.appendChild(fh);
-  const fb2 = el('div','sec-b'+(state.secs.files?' open':''));
-  (function walk(items, depth){
-    for(const it of items){
-      if(it.d){
-        const open = depth===0;
-        const r = el('div','frow', `<span class="chev">${open?'▾':'▸'}</span><span class="dir">${it.n}/</span>`);
-        r.querySelector('.chev').onclick = (e)=>{ e.stopPropagation(); r.querySelector('.chev').textContent = r.querySelector('.chev').textContent==='▾'?'▸':'▾'; r.nextElementSibling?.classList.toggle('open'); };
-        fb2.appendChild(r);
-        const k = el('div'); k.style.display = open?'block':'none';
-        if(it.ch) walk(it.ch, depth+1).forEach(x=>k.appendChild(x));
-        fb2.appendChild(k);
-      } else {
-        const r = el('div','frow', `<span class="chev" style="visibility:hidden"></span><span class="fn">${it.f}</span>`);
-        fb2.appendChild(r);
-      }
-    }
-    return [];
-  })(FILETREES[state.ws], 0);
-  fs.appendChild(fb2);
-  left.appendChild(fs);
-  // session tree (MRU)
-  const ss = el('div','sec');
-  const sh = el('div','sec-h'+(state.secs.sessions?' open':''), `<span class="chev">▸</span> sessions`);
-  sh.onclick = ()=>{ state.secs.sessions=!state.secs.sessions; mount(); };
-  ss.appendChild(sh);
-  const sb = el('div','sec-b'+(state.secs.sessions?' open':''));
-  const slist = SESSIONS[state.ws].filter(s=>!s.parent).sort((a,b)=>b.mru-a.mru);
-  for(const s of slist){
-    sb.appendChild(sessionRow(s, 0));
+  const tabs = el('div','ltabs');
+  for(const [k,label] of [['files','files'],['sessions','sessions']]){
+    const t = el('div','ltab'+(state.ltab===k?' on':''), label);
+    t.onclick = ()=>{ state.ltab = k; mount(); };
+    tabs.appendChild(t);
   }
-  ss.appendChild(sb);
-  // archive at the bottom
-  const ar = el('div','sec');
-  const ah = el('div','sec-h', `<span class="chev">▸</span> ⧉ archive`);
-  ah.onclick = ()=>{ ah.classList.toggle('open'); ar.querySelector('.sec-b').classList.toggle('open'); };
-  ar.appendChild(ah);
-  const ab = el('div','sec-b');
-  for(const s of SESSIONS.archive_w1) ab.appendChild(sessionRow(s, 0));
-  ar.appendChild(ab);
-  left.appendChild(ss); left.appendChild(ar);
+  left.appendChild(tabs);
+  const sec = el('div','lsec');
+  if(state.ltab==='files'){
+    const box = el('div');
+    buildFileTree(FILETREES[state.ws]||[], box, 0);
+    sec.appendChild(box);
+  } else {
+    const slist = (SESSIONS[state.ws]||[]).filter(s=>!s.parent).sort((a,b)=>b.mru-a.mru);
+    if(!slist.length){
+      sec.appendChild(el('div','empty', `<span class="big">no sessions yet</span><span>send the first message to start one</span>`));
+    } else {
+      for(const s of slist) sec.appendChild(sessionRow(s, 0));
+    }
+    // archive at the bottom
+    const arch = el('div');
+    const ah = el('div','arch-h', '⧉ archive');
+    const ab = el('div','kids'+(state.archOpen?' open':''));
+    for(const s of (state.ws==='w1'? SESSIONS.archive_w1 : [])) ab.appendChild(sessionRow(s, 0));
+    if(!ab.children.length) ab.appendChild(el('div','srow','<span class="t" style="color:#4d5462">nothing archived</span>'));
+    ah.onclick = ()=>{ state.archOpen = !state.archOpen; mount(); };
+    arch.appendChild(ah); arch.appendChild(ab);
+    sec.appendChild(arch);
+  }
+  left.appendChild(sec);
   return left;
+}
+function buildFileTree(items, box, depth){
+  for(const it of items){
+    if(it.d){
+      const open = depth===0;
+      const r = el('div','frow', `<span class="chev">${open?'▾':'▸'}</span><span class="dir">${it.n}/</span>`);
+      const k = el('div','kids'+(open?' open':''));
+      if(it.ch) buildFileTree(it.ch, k, depth+1);
+      r.querySelector('.chev').onclick = e=>{
+        e.stopPropagation();
+        const isOpen = k.classList.contains('open');
+        k.classList.toggle('open', !isOpen);
+        r.querySelector('.chev').textContent = isOpen?'▸':'▾';
+      };
+      box.appendChild(r);
+      if(k.children.length) box.appendChild(k);
+    } else {
+      box.appendChild(el('div','frow', `<span class="chev" style="visibility:hidden"></span><span class="fn">${it.f}</span>`));
+    }
+  }
 }
 function sessionRow(s, depth){
   const kids = s.children||[];
@@ -524,7 +614,7 @@ function sessionRow(s, depth){
   const open = state.openGroups.has(s.id);
   const n = el('div');
   const r = el('div','srow'+(s.id===state.current?' sel':'')+(depth? ' child'+(depth>1?' nested':''):''),
-    `<span class="chev">${hasKids?(open?'▾':'▸'):''}</span><span class="t">${s.title}</span>${badge(s.state)}<span class="mru">${fmtAgo(s.mru)}</span>`);
+    `<span class="chev">${hasKids?(open?'▾':'▸'):''}</span><span class="t">${s.title}</span>${sessionBadge(s)}<span class="mru">${fmtAgo(s.mru)}</span>`);
   r.querySelector('.chev').onclick = e=>{ e.stopPropagation(); if(hasKids){ state.openGroups.has(s.id)?state.openGroups.delete(s.id):state.openGroups.add(s.id); mount(); } };
   r.onclick = ()=>openSession(s.id);
   n.appendChild(r);
@@ -532,8 +622,7 @@ function sessionRow(s, depth){
     const k = el('div','kids'+(open?' open':''));
     for(const cid of kids){
       k.appendChild(sessionRow(findSession(cid), depth+1));
-      // depth-2 children (nested sub-agents)
-      for(const nc of allSessions().filter(x=>x.parent===cid)){ k.appendChild(sessionRow(nc, depth+2)); }
+      for(const nc of allSessions().filter(x=>x.parent===cid)) k.appendChild(sessionRow(nc, depth+2));
     }
     n.appendChild(k);
   }
@@ -542,30 +631,20 @@ function sessionRow(s, depth){
 /* ================= center ================= */
 function buildCenter(){
   const c = el('div','center');
-  const s = findSession(state.current);
+  const s = state.current ? findSession(state.current) : null;
+  if(!s){
+    c.appendChild(el('div','chead', `<span class="n">new session</span><span class="m">no model selected</span>`));
+    c.appendChild(el('div','empty', `<span class="big">no sessions in this workspace</span><span>send a message below to start the first one</span>`));
+    buildComposer(c);
+    return c;
+  }
   const ch = el('div','chead');
-  ch.innerHTML = `<span class="n">${s.title}</span>${badge(s.state)}<span class="m">${s.model||''}</span>`;
+  ch.innerHTML = `<span class="n">${s.title}</span>${sessionBadge(s)}<span class="m">${s.model||''}</span>`;
   c.appendChild(ch);
   const scroll = el('div','scroll');
   c.appendChild(scroll);
-  // vertical steering queue
-  const q = el('div','qvert');
-  q.appendChild(el('div','qh', `queue · ${queue.length} waiting`));
-  for(const it of queue){
-    const r = el('div','qrow', `<span class="k">${it.k}</span><span class="t">${it.t}</span><span class="x">×</span>`);
-    r.querySelector('.x').onclick = ()=>{ queue.splice(queue.indexOf(it),1); mount(); };
-    q.appendChild(r);
-  }
-  if(!queue.length) q.appendChild(el('div','t','<span style="color:#4d5462;font-size:12px">queue empty — steering delivers after the tool batch, follow-ups after all work</span>'));
-  c.appendChild(q);
-  const comp = el('div','composer');
-  const row = el('div','row');
-  const inp = el('input'); inp.placeholder='message…';
-  const send = el('button','send','send');
-  const force = el('button','force','force ⚡');
-  row.append(inp, send, force);
-  comp.appendChild(row);
-  c.appendChild(comp);
+  buildQueue(c);
+  buildComposer(c);
   mountScroll(scroll, s);
   return c;
 }
@@ -576,11 +655,60 @@ function mountScroll(scroll, s){
     for(const e of s.entries) scroll.appendChild(entryNode(e,{who: s.parent?'sub-agent':'assistant'}));
     if(s.state==='failed' && s.last) scroll.appendChild(el('div','entry notify', `<div class="eh"><span class="who">failed · ${s.reason}</span></div><div class="body">${esc(s.last)} — [investigate] [resume with message] [reassign]</div>`));
     if(s.state==='idle' && s.note) scroll.appendChild(el('div','entry notify', `<div class="eh"><span class="who">idle · waiting_on: parent</span></div><div class="body">${esc(s.note)}</div>`));
-    scroll.scrollTop = scroll.scrollHeight;
     lastRange = `${s.entries.length} entries (small session)`;
-    updateStatus();
+    updateBar();
   }
   scroll.scrollTop = scroll.scrollHeight;
+}
+function buildQueue(c){
+  const q = el('div','qvert');
+  const sec = (label, items, key) => {
+    const h = el('div','qh'+(items.length?'':' empty'), `${label} · ${items.length}`);
+    q.appendChild(h);
+    for(const it of items){
+      const r = el('div','qrow', `<span class="t">${it.t}</span><span class="x">×</span>`);
+      r.querySelector('.x').onclick = ()=>{ queue[key].splice(queue[key].indexOf(it),1); mount(); };
+      q.appendChild(r);
+    }
+  };
+  sec('steering — next opportunity', queue.steering, 'steering');
+  sec('follow-up — after work completes', queue.follow, 'follow');
+  c.appendChild(q);
+}
+function buildComposer(c){
+  const comp = el('div','composer');
+  const lanes = el('div','lanes');
+  const L = [['force','⚡ force'],['steering','↪ steering'],['follow-up','⏭ follow-up']];
+  for(const [k,label] of L){
+    const b = el('span','lane '+(k==='force'?'f ':'')+(state.lane===k?'on':''), label);
+    b.onclick = ()=>{ state.lane = k; mount(); };
+    lanes.appendChild(b);
+  }
+  lanes.appendChild(el('span','lane-hint', state.lane==='force'?'delivers immediately — interrupts the in-flight turn' : state.lane==='steering'?'delivered at the next opportunity (tool batch / turn)' : 'delivered after all work completes'));
+  comp.appendChild(lanes);
+  const row = el('div','row');
+  const inp = el('input'); inp.placeholder='message…';
+  const send = el('button','send','send');
+  row.append(inp, send);
+  comp.appendChild(row);
+  c.appendChild(comp);
+  const doSend = ()=>{
+    const t = inp.value.trim(); if(!t) return;
+    if(state.lane==='force'){
+      const s = state.current ? findSession(state.current) : null;
+      if(s){
+        const last = s.entries[s.entries.length-1];
+        if(s.generating){ last.interrupted = true; s.generating = false; s.entries.push({id:'i'+Date.now(), type:'event', preview:'⚡ force: in-flight turn interrupted — partial output kept, tools finished, delivered at head of queue'}); }
+        s.entries.push({id:'f'+Date.now(), type:'user', body:t, forced:true, t:Math.floor(Date.now()/1000)});
+        state.current = s.id;
+      }
+    } else {
+      (state.lane==='steering'? queue.steering : queue.follow).push({t});
+    }
+    mount();
+  };
+  inp.addEventListener('keydown', e=>{ if(e.key==='Enter') doSend(); });
+  send.onclick = doSend;
 }
 /* ================= right pane ================= */
 function buildRight(){
@@ -601,17 +729,8 @@ function buildRight(){
   }
   return r;
 }
-function filterChip(label, key, current){
-  const c = el('span','fchip'+(current===key?' on':''), label);
-  c.onclick = ()=>{ (key==='tFilter'?state.tFilter=state.tFilter:0, state[key]=key==='tFilter'?state[key]:state[key]); mount(); };
-  return c;
-}
 function buildTasks(){
-  const sec = el('div','sec');
-  const h = el('div','sec-h'+(state.secs.tasks?' open':''), `<span class="chev">▸</span> tasks`);
-  h.onclick = ()=>{ state.secs.tasks=!state.secs.tasks; mount(); };
-  sec.appendChild(h);
-  const b = el('div','sec-b'+(state.secs.tasks?' open':''));
+  const sec = el('div');
   const F = [['open','open'],['all','all'],['in-progress','in-progress'],['blocked','blocked'],['pending','pending'],['done','done']];
   const frow = el('div','filters');
   for(const [label,key] of F){
@@ -619,33 +738,37 @@ function buildTasks(){
     c.onclick = ()=>{ state.tFilter = key; mount(); };
     frow.appendChild(c);
   }
-  b.appendChild(frow);
+  sec.appendChild(frow);
   const list = el('div','list');
   const items = TASKS.filter(t=>t.ws===state.ws && (state.tFilter==='all' || (state.tFilter==='open' ? t.state!=='done' : t.state===state.tFilter))).sort((a,b2)=>b2.mru-a.mru);
   if(!items.length) list.appendChild(el('div','lrow','<span class="lm">none</span>'));
   for(const t of items){
     const row = el('div','lrow'+(state.expandedTasks.has(t.id)?' open':''));
     let d = `<div class="ld detail">`;
-    if(t.steps) d += t.steps.map(s=>`<div class="step ${s.s}"><span class="mk">${s.s==='done'?'✓':s.s==='active'?'▸':'○'}</span>${s.t}${s.eo?` <span style="color:#4d5462">→ ${s.eo}</span>`:''}</div>`).join('');
-    if(t.crit) d += t.crit.map(c2=>`<div class="ev"><span class="${c2.sat?'ok':'pend'}">${c2.sat?'✓':'…'}</span> ${c2.t}</div>`).join('');
-    if(t.ev) d += t.ev.map(e2=>`<div class="ev"><span class="${e2.ok?'ok':'pend'}">${e2.ok?'✓':'…'}</span> ${e2.t}</div>`).join('');
-    if(t.block) d += `<div class="block">⛔ ${t.block}${t.unblock?' — '+t.unblock:''}</div>`;
-    if(t.rc) d += `<div class="rc">${esc(t.rc)}</div>`;
+    if(t.steps){
+      d += `<div class="dl">steps — ${t.steps.filter(s=>s.s==='done').length}/${t.steps.length} done</div>`;
+      d += t.steps.map(s=>`<div class="step ${s.s}"><span class="mk">${s.s==='done'?'✓':s.s==='active'?'▸':'○'}</span>${s.t}${s.eo?` <span style="color:#4d5462">→ ${s.eo}</span>`:''}</div>`).join('');
+    }
+    if(t.crit){
+      d += `<div class="dl">acceptance criteria</div>`;
+      d += t.crit.map(c2=>`<div class="ev"><span class="${c2.sat?'ok':'pend'}">${c2.sat?'✓':'…'}</span> ${c2.t}</div>`).join('');
+    }
+    if(t.ev && t.ev.length){
+      d += `<div class="dl">evidence</div>`;
+      d += t.ev.map(e2=>`<div class="ev"><span class="${e2.ok?'ok':'pend'}">${e2.ok?'✓':'…'}</span> ${e2.t}</div>`).join('');
+    }
+    if(t.block) d += `<div class="dl">blocker</div><div class="block">⛔ ${t.block}${t.unblock?' — '+t.unblock:''}</div>`;
+    if(t.rc) d += `<div class="dl">resume contract</div><div class="rc">${esc(t.rc)}</div>`;
     d += `<div class="a">${t.assigned?'assigned: '+t.assigned:'unassigned'} · modified ${fmtAgo(t.mru)}</div></div>`;
     row.innerHTML = `<div class="lh"><span class="chev">▸</span>${badge(t.state)}<span class="ln">${t.name}</span><span class="lm">${t.assigned||''}</span></div>${d}`;
     row.onclick = ()=>{ state.expandedTasks.has(t.id)?state.expandedTasks.delete(t.id):state.expandedTasks.add(t.id); mount(); };
     list.appendChild(row);
   }
-  b.appendChild(list);
-  sec.appendChild(b);
+  sec.appendChild(list);
   return sec;
 }
 function buildSubs(){
-  const sec = el('div','sec');
-  const h = el('div','sec-h'+(state.secs.subs?' open':''), `<span class="chev">▸</span> sub-agents`);
-  h.onclick = ()=>{ state.secs.subs=!state.secs.subs; mount(); };
-  sec.appendChild(h);
-  const b = el('div','sec-b'+(state.secs.subs?' open':''));
+  const sec = el('div');
   const F = [['open','open'],['all','all'],['running','running'],['idle','idle'],['failed','failed'],['stopped','stopped'],['done','done']];
   const frow = el('div','filters');
   for(const [label,key] of F){
@@ -653,40 +776,56 @@ function buildSubs(){
     c.onclick = ()=>{ state.sFilter = key; mount(); };
     frow.appendChild(c);
   }
-  b.appendChild(frow);
+  sec.appendChild(frow);
   const list = el('div','list');
-  const kids = allSessions().filter(s=>s.parent && s.parent!=='c2' || (s.id==='c7'));
+  const kids = allSessions().filter(s=>s.parent);
   const roots = kids.filter(s=>s.parent && !findSession(s.parent)?.parent).sort((a,b)=>b.mru-a.mru);
   const pass = s => state.sFilter==='all' || (state.sFilter==='open' ? s.state!=='done' : s.state===state.sFilter);
   const show = roots.filter(pass);
-  if(!show.length && !kids.filter(s=>s.parent===show[0]?.id).filter(pass).length && !show.length) list.appendChild(el('div','lrow','<span class="lm">none</span>'));
+  if(!show.length) list.appendChild(el('div','lrow','<span class="lm">none</span>'));
   for(const s of show){
     list.appendChild(subRow2(s, 1));
     for(const nc of kids.filter(x=>x.parent===s.id).filter(pass)) list.appendChild(subRow2(nc, 2));
   }
-  b.appendChild(list);
-  sec.appendChild(b);
+  sec.appendChild(list);
   return sec;
 }
 function subRow2(s, depth){
   const r = el('div','srow2'+(depth===2?' d2':''),
-    `${badge(s.state)}<span class="ln">${s.title}</span><span class="lm">${s.task||''}</span><span class="hint">dbl-click</span>`);
+    `${badge(s.state)}<span class="ln">${s.title}</span><span class="lm">${s.task||''}</span>`);
+  r.onclick = ()=>{ document.querySelectorAll('.srow2.sel').forEach(x=>x.classList.remove('sel')); r.classList.add('sel'); };
   r.ondblclick = ()=>openSession(s.id);
-  r.onclick = ()=>openSession(s.id);
   return r;
 }
-/* ================= mount + status + events ================= */
-function openSession(id){ state.current = id; const s = findSession(id); if(s.parent) state.openGroups.add(s.parent); mount(); }
-function updateStatus(){
-  const s = findSession(state.current);
-  const n = s.entries.length;
-  $('#status').textContent = `${s.id} ${n>=1000?'(10k stress)':''} · rendering ${lastRange||n+' entries'} · render ${lastRenderMs.toFixed(1)} ms · 2 streams @ 25 ms · flush ${lastFlushMs.toFixed(1)} ms`;
+/* ================= status bar (lualine-style) ================= */
+function updateBar(){
+  const s = state.current ? findSession(state.current) : null;
+  const w = WORKSPACES.find(x=>x.id===state.ws);
+  const active = s ? (s.parent ? badge(s.state) : ((s.generating || (s.children||[]).some(c2=>findSession(c2)?.state==='running')) ? '· running' : '')) : '';
+  $('#seg1').innerHTML = `📁 <span class="sv">${w?w.name:'?'}</span> <span style="color:#4d5462">${w?w.cwd:''}</span> ${s?`· <span class="sv">${s.title}</span> ${s.parent?'(sub-agent)':''}`:''} ${active}`;
+  $('#seg2').innerHTML = `right pane: <button id="axisBtn">${state.rightMode}</button> ←/→ &nbsp;·&nbsp; focus: <button id="focusBtn">${state.focus?'on':'off'}</button> &nbsp;·&nbsp; ${state.lane}`;
+  const ax = $('#axisBtn'); if(ax) ax.onclick = ()=>{ state.rightMode = state.rightMode==='stacked'?'tabs':'stacked'; history.replaceState(null,'','?right='+state.rightMode); mount(); };
+  const fb2 = $('#focusBtn'); if(fb2) fb2.onclick = ()=>{ state.focus = !state.focus; mount(); };
+  const n = s? s.entries.length : 0;
+  $('#seg3').innerHTML = `${s&&n>=1000?'10k · ':''}<span class="perf">${lastRange||(s?n+' entries':'—')}</span> · render ${lastRenderMs.toFixed(1)} ms · 2 streams @ 25 ms · ${s?.model?.split('/').pop()||'no model'}`;
 }
+/* ================= mount + events ================= */
+function openSession(id){ state.current = id; const s = findSession(id); if(s.parent) state.openGroups.add(s.parent); mount(); }
 function onStream(child){
-  if(state.current===child){ const c=$('.center'); if(c) c.replaceWith(buildCenter()); const nc=$('.center .scroll'); if(nc) nc.scrollTop = nc.scrollHeight; }
-  else if(state.ws==='w1' && (state.rightMode==='stacked' || state.rightTab==='subs')) mountRightOnly();
-  else if(state.ws==='w1') mountRightOnly();
-  updateStatus();
+  if(state.current===child){
+    const c=$('.center');
+    if(c){
+      const sc = c.querySelector('.scroll');
+      const wasAtTail = sc ? Math.abs((sc.scrollHeight - sc.scrollTop) - sc.clientHeight) < 80 : true;
+      const prevTop = sc ? sc.scrollTop : 0;
+      c.replaceWith(buildCenter());
+      const nc = $('.center .scroll');
+      if(nc) nc.scrollTop = wasAtTail ? nc.scrollHeight : prevTop;
+    }
+  }
+  const sig = allSessions().map(s=>s.state).join(',');
+  if(sig !== (onStream._sig ?? (onStream._sig = sig))) mountRightOnly();
+  updateBar();
 }
 function mountRightOnly(){
   const right = $('.right');
@@ -701,7 +840,6 @@ function mount(){
   body.appendChild(buildRight());
   app.appendChild(body);
   const sc = $('.center .scroll'); if(sc) sc.scrollTop = sc.scrollHeight;
-  $('#lbl').textContent = 'verdict design · right pane: ' + state.rightMode;
   window.onkeydown = (e)=>{
     const t = document.activeElement;
     if(t && (t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
@@ -711,10 +849,8 @@ function mount(){
       mount();
     }
   };
-  updateStatus();
+  updateBar();
 }
-$('#prev').onclick = ()=>{ state.rightMode = state.rightMode==='stacked'?'tabs':'stacked'; history.replaceState(null,'','?right='+state.rightMode); mount(); };
-$('#next').onclick = ()=>{ state.rightMode = state.rightMode==='stacked'?'tabs':'stacked'; history.replaceState(null,'','?right='+state.rightMode); mount(); };
 mount();
 </script>
 </body>
