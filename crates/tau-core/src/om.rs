@@ -156,7 +156,13 @@ pub fn projected_message_removal(
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OmRecord {
-    /// The current observation log text (date-grouped, emoji-prioritized).
+    /// Frozen prefix: the parent's observation log verbatim at a compacted
+    /// spawn (ADR-0004) — never re-observed and never re-reflected, and
+    /// excluded from the observation-token accounting. Empty in fresh mode.
+    pub frozen_prefix: String,
+    /// The managed suffix: this session's own observations (date-grouped,
+    /// emoji-prioritized). The Reflector rewrites only this portion, keeping
+    /// the frozen prefix byte-verbatim (ADR-0004).
     pub active_observations: String,
     /// Newest entry already observed; `None` = nothing observed yet.
     pub cursor: Option<Cursor>,
@@ -166,6 +172,18 @@ pub struct OmRecord {
     pub pending_tokens: u32,
 }
 
+impl OmRecord {
+    /// The full live observation text: the frozen prefix (byte-verbatim)
+    /// followed by the managed suffix — one continuous log (ADR-0004).
+    pub fn live_observations(&self) -> String {
+        format!("{}{}", self.frozen_prefix, self.active_observations)
+    }
+
+    /// What the Reflector sees and rewrites: the managed suffix only.
+    pub fn reflect_source(&self) -> &str {
+        &self.active_observations
+    }
+}
 /// The observation cursor (ADR-0004 "path-scoped cursor (entry-id +
 /// timestamp)").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1433,9 +1451,62 @@ mod tests {
     #[test]
     fn record_defaults_are_empty() {
         let r = OmRecord::default();
+        assert!(r.frozen_prefix.is_empty());
         assert!(r.active_observations.is_empty());
         assert!(r.cursor.is_none());
         assert_eq!(r.generation, 0);
+    }
+
+    #[test]
+    fn frozen_prefix_survives_a_reflection_pass_verbatim() {
+        let prefix = "Date: Nov 30, 2025\n* 🔴 (10:00) Frozen parent observation";
+        let suffix = wrap_in_observation_group(
+            "Date: Dec 4, 2025\n* 🔴 (14:30) User prefers direct answers",
+            "00000001:00000005",
+            "aaaaaaaaaaaaaaaa",
+            None,
+        );
+        let mut record = OmRecord {
+            frozen_prefix: prefix.to_owned(),
+            active_observations: suffix.clone(),
+            ..Default::default()
+        };
+
+        // The Reflector prompt is built from the suffix only — the frozen
+        // prefix is not in its input.
+        let prompt = build_reflector_prompt(record.reflect_source(), 1);
+        assert!(!prompt.contains("Frozen parent observation"));
+        assert!(prompt.contains("User prefers direct answers"));
+
+        // The reflection output replaces only the suffix; the prefix stays
+        // byte-verbatim and the live log is prefix + new suffix.
+        let reflected = "## Group `aaaaaaaaaaaaaaaa`\nDate: Dec 4, 2025\n* 🔴 (14:30) User prefers direct answers";
+        let reconciled = reconcile_groups_from_reflection(reflected, &suffix).unwrap();
+        record.active_observations = reconciled;
+        record.generation += 1;
+        assert_eq!(record.frozen_prefix, prefix);
+        assert_eq!(
+            record.live_observations(),
+            format!("{}{}", prefix, record.active_observations)
+        );
+    }
+
+    #[test]
+    fn frozen_prefix_is_excluded_from_reflection_accounting() {
+        // A frozen prefix large enough to trip the reflect threshold on its
+        // own must not count: only the managed suffix's tokens drive the
+        // trigger (ADR-0004: the prefix is excluded from OM accounting).
+        let c = OmConfig {
+            reflect_threshold: 100,
+            ..Default::default()
+        };
+        let record = OmRecord {
+            frozen_prefix: "x".repeat(400),      // 100 tokens on its own
+            active_observations: "y".repeat(40), // 10 tokens
+            observation_tokens: 10,
+            ..Default::default()
+        };
+        assert!(!should_reflect(record.observation_tokens, &c));
     }
 
     #[test]
