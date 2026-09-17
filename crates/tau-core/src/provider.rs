@@ -346,7 +346,7 @@ pub async fn stream_response(
                 if !retryable || attempt >= requests.retries {
                     return Err(e);
                 }
-                tokio::time::sleep(Duration::from_secs(1u64 << attempt)).await;
+                tokio::time::sleep(Duration::from_secs(1u64 << attempt.min(6))).await;
                 attempt += 1;
             }
         }
