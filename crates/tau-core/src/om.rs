@@ -790,7 +790,7 @@ Date: Dec 5, 2025
 * 🔴 (09:15) Continued work on feature X
 </observations>
 
-${extractorSections 
+
 <current-task>
 State the current task(s) explicitly:
 - Primary: What the agent is currently working on
@@ -1656,14 +1656,13 @@ mod tests {
     fn output_format_matches_upstream_assembly() {
         let ts = mastra_file("observer-agent.ts");
         let legacy = ts_literal(&ts, "const legacyContinuationSections =");
-        // The return template: everything from "Use priority levels:" up to the
-        // `${extractorSections || legacyContinuationSections}` placeholder.
+        // The evaluated no-arg form: the template up to the extractor slot
+        // (the legacy continuation sections spliced in, which is what the
+        // `||` evaluates to with no extractors).
         let tpl_at = ts.find("Use priority levels:").expect("template");
         let open = ts[..tpl_at].rfind('`').expect("template open backtick");
-        let close = tpl_at
-            + ts[tpl_at..]
-                .find("|| legacyContinuationSections}`")
-                .expect("template close");
+        let close =
+            tpl_at + ts[tpl_at..].find("${extractorSections").expect("extractor slot");
         let expected = format!("{}{}", &ts[open + 1..close], legacy);
         assert_eq!(
             OBSERVER_OUTPUT_FORMAT, expected,
