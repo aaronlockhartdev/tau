@@ -13,6 +13,7 @@ Pinned at `mastra-ai/mastra` commit `5e4ddacde7de44602c099223179a78f544206b0f`
 - `reflector-agent.ts` — reflector system prompt, compression ladder, prompt builder, output parsing
 - `thresholds.ts` — dynamic threshold, retention floor, projected message removal
 - `observation-groups.ts` — observation-group wrap/parse/reconcile (recall bookkeeping)
+- `string-utils.ts` — `safeSlice` (surrogate-safe truncation used by the line sanitizer)
 
 The Rust port keeps the prompt text verbatim (fidelity-tested against these
 files); the Rust module is pure (no I/O), so `randomBytes(8)` group ids become

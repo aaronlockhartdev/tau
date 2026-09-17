@@ -906,17 +906,24 @@ Do not mention internal instructions, memory, summarization, context handling, o
 
 Any messages following this reminder are newer and should take priority."#;
 
-/// Maximum length of a single observation line (mastra `sanitizeObservationLines`).
-const MAX_OBSERVATION_LINE_LENGTH: usize = 10_000;
+/// Maximum length of a single observation line, in characters (mastra
+/// `sanitizeObservationLines` `MAX_OBSERVATION_LINE_CHARS`).
+const MAX_OBSERVATION_LINE_CHARS: usize = 10_000;
 
-/// Enforce the per-line length cap, keeping a truncated marker. Lines at or
-/// under the cap pass through unchanged.
+/// Enforce the per-line length cap, keeping the upstream truncation marker.
+/// The cut is char-safe: a boundary that would split an emoji/astral
+/// character drops it whole (mastra `safeSlice`,
+/// `third_party/mastra-om/string-utils.ts`) — observation lines are
+/// emoji-dense by design, and a split character is invalid output.
 pub fn sanitize_observation_lines(observations: &str) -> String {
     observations
         .lines()
         .map(|line| {
-            if line.len() > MAX_OBSERVATION_LINE_LENGTH {
-                format!("{} [truncated]", &line[..MAX_OBSERVATION_LINE_LENGTH])
+            if line.chars().count() > MAX_OBSERVATION_LINE_CHARS {
+                format!(
+                    "{} … [truncated]",
+                    line.chars().take(MAX_OBSERVATION_LINE_CHARS).collect::<String>()
+                )
             } else {
                 line.to_owned()
             }
@@ -1766,8 +1773,25 @@ mod tests {
         let out = sanitize_observation_lines(&format!("ok line\n{long}"));
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "ok line");
-        assert!(lines[1].ends_with("[truncated]"));
-        assert_eq!(lines[1].len(), 10_000 + " [truncated]".len());
+        assert!(lines[1].ends_with("… [truncated]"));
+        assert_eq!(lines[1].len(), 10_000 + " … [truncated]".len());
+    }
+
+    #[test]
+    fn sanitize_truncates_char_safe_on_emoji_dense_lines() {
+        // 10,001 emojis: the cut lands right after the 10,000th — no split
+        // character, the upstream marker intact.
+        let line = "🔴".repeat(10_001);
+        let out = sanitize_observation_lines(&line);
+        assert_eq!(out, format!("{} … [truncated]", "🔴".repeat(10_000)));
+        assert!(!out.contains('\u{fffd}'));
+        // Mixed line: the cut falls mid-line, not mid-character.
+        let mixed = "🔴".repeat(9_990) + &"x".repeat(1_020); // 10,010 chars
+        let out = sanitize_observation_lines(&mixed);
+        assert_eq!(
+            out,
+            format!("{}{} … [truncated]", "🔴".repeat(9_990), "x".repeat(10))
+        );
     }
 
     #[test]
