@@ -933,49 +933,63 @@ pub fn sanitize_observation_lines(observations: &str) -> String {
 }
 
 /// Detect model degenerate output (mastra `detectDegenerateRepetition`):
-/// identical line runs, a dominant line over 60% of the log, or the last
-/// third repeating the line right before it.
+/// the same ~200-char window recurring at >40% of ~50 sampled positions,
+/// a single line over 50k chars, or exact-duplicate lines ≥24 chars making
+/// up >50% of the counted lines. The window sampler has an aliasing blind
+/// spot for long-period multi-line loops (the 21×62 production case), which
+/// the third strategy exists to catch.
 fn detect_degenerate_repetition(observations: &str) -> bool {
-    if observations.len() < 2000 {
+    const MIN_DUPLICATE_LINE_CHARS: usize = 24;
+    let len = observations.chars().count();
+    if len < 2000 {
         return false;
     }
-    let lines: Vec<&str> = observations.lines().collect();
 
-    // Strategy 1: run of identical lines.
-    let mut identical_run = 1;
-    for i in 1..lines.len() {
-        if lines[i] == lines[i - 1] && !lines[i].is_empty() {
-            identical_run += 1;
-        } else {
-            identical_run = 1;
-        }
-        if identical_run > 20 {
-            return true;
+    // Strategy 1: repeated 200-char windows over ~50 sampled positions.
+    const WINDOW_SIZE: usize = 200;
+    let step = 1.max(len / 50);
+    let chars: Vec<char> = observations.chars().collect();
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut duplicate_windows = 0;
+    let mut total_windows = 0;
+    for i in (0..=len - WINDOW_SIZE).step_by(step) {
+        let window: String = chars[i..i + WINDOW_SIZE].iter().collect();
+        total_windows += 1;
+        let count = seen.entry(window).or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            duplicate_windows += 1;
         }
     }
-
-    // Strategy 2: one line dominates.
-    let mut dominant = 0;
-    if let Some(most_common) = lines
-        .iter()
-        .filter(|l| !l.trim().is_empty())
-        .max_by_key(|l| l.len())
-    {
-        dominant = lines.iter().filter(|l| *l == most_common).count();
-    }
-    if !lines.is_empty() && dominant as f64 / lines.len() as f64 > 0.6 {
+    if total_windows > 5 && duplicate_windows as f64 / total_windows as f64 > 0.4 {
         return true;
     }
 
-    // Strategy 3: end-of-output repetition.
-    let len = lines.len();
-    if len > 100 {
-        let start = len * 2 / 3;
-        let last_line = lines[len - 1];
-        let prev_line = lines[len - 2];
-        if last_line == prev_line && len.saturating_sub(start) >= (last_line.len() / 100 + 1) * 3 {
-            return true;
+    let lines: Vec<&str> = observations.lines().collect();
+
+    // Strategy 2: a single extremely long line.
+    if lines.iter().any(|line| line.chars().count() > 50_000) {
+        return true;
+    }
+
+    // Strategy 3: exact-duplicate substantial lines.
+    let mut seen_lines: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut duplicate_lines = 0;
+    let mut total_counted_lines = 0;
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed.chars().count() < MIN_DUPLICATE_LINE_CHARS {
+            continue;
         }
+        total_counted_lines += 1;
+        let count = seen_lines.entry(trimmed).or_insert(0);
+        *count += 1;
+        if *count > 1 {
+            duplicate_lines += 1;
+        }
+    }
+    if total_counted_lines >= 20 && duplicate_lines as f64 / total_counted_lines as f64 > 0.5 {
+        return true;
     }
 
     false
@@ -1795,27 +1809,42 @@ mod tests {
     }
 
     #[test]
-    fn degenerate_detection_flags_runs_and_dominant_lines() {
-        // Identical run (strategy 1): needs >2000 chars total; wrapped in an
-        // observations section since the degenerate check runs on the parsed
-        // observations, not the raw output.
-        let run = format!(
-            "<observations>\n{}\n</observations>",
-            format!("{}\n", "x".repeat(80)).repeat(25)
-        );
-        assert!(parse_observer_output(&run).degenerate);
-        // Dominant line over 60% (strategy 2).
-        let dominant = format!(
-            "<observations>\n{}{}\n</observations>",
-            format!("{}\n", "y".repeat(210)).repeat(7),
-            format!("z{}\n", "q".repeat(200)).repeat(4)
-        );
-        assert!(parse_observer_output(&dominant).degenerate);
-        // Normal mixed content is not degenerate.
-        let normal = (0..40)
-            .map(|i| format!("line {i} with some content"))
+    fn degenerate_detection_flags_the_upstream_strategies() {
+        // Strategy 1: one repeated 200-char period — the window sampler
+        // sees every sampled window duplicated.
+        let windowed = "w".repeat(200).repeat(60); // 12,000 chars
+        let raw = format!("<observations>\n{windowed}\n</observations>");
+        assert!(parse_observer_output(&raw).degenerate);
+
+        // Strategy 2: a single line over 50k chars.
+        let long_line = "z".repeat(50_001);
+        let raw = format!("<observations>\n{long_line}\n</observations>");
+        assert!(parse_observer_output(&raw).degenerate);
+
+        // Strategy 3: the upstream production case — a 21-line block
+        // repeated 62 times. Its ~700-char period falls in the window
+        // sampler's aliasing blind spot, so only the exact-duplicate-line
+        // strategy catches it.
+        let block: Vec<String> = (0..21)
+            .map(|i| format!("observation line {i} with some content"))
+            .collect();
+        let looped = block
+            .iter()
+            .cycle()
+            .take(21 * 62)
+            .cloned()
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(looped.chars().count() >= 2000);
+        let raw = format!("<observations>\n{looped}\n</observations>");
+        assert!(parse_observer_output(&raw).degenerate);
+
+        // Normal mixed content is not degenerate.
+        let normal = (0..120)
+            .map(|i| format!("line {i} with distinct content {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(normal.chars().count() >= 2000);
         assert!(!parse_observer_output(&normal).degenerate);
     }
 
