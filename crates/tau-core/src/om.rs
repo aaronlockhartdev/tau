@@ -873,12 +873,12 @@ pub fn observer_system_prompt() -> String {
     currentTaskEnabled
       ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
       : ''
-  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'")
+  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.")
         .replace("${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
       : ''
-  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'")
+  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.")
         .replace("${customInstructions}", "")
 }
 
@@ -1249,12 +1249,12 @@ pub fn reflector_system_prompt() -> String {
     currentTaskEnabled
       ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
       : ''
-  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'")
+  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.")
         .replace("${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
       : ''
-  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'")
+  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.")
         .replace("${customInstructions}", "")
 }
 
@@ -1723,7 +1723,7 @@ mod tests {
             let j = i + built[i..].find('}').expect("ternary end") + 1;
             let span = &built[i..j];
             let a = span.find('\'').expect("branch open");
-            let b = span.find("'\n").expect("branch close") + 1;
+            let b = span.find("'\n").expect("branch close");
             built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
         }
         built = built.replace("${customInstructions}", "");
@@ -1834,7 +1834,7 @@ mod tests {
             let j = i + built[i..].find('}').expect("ternary end") + 1;
             let span = &built[i..j];
             let a = span.find('\'').expect("branch open");
-            let b = span.find("'\n").expect("branch close") + 1;
+            let b = span.find("'\n").expect("branch close");
             built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
         }
         built.replace("${customInstructions}", "")
