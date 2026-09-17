@@ -3,5 +3,6 @@
 //! transport shim (spec §2).
 
 pub mod config;
+pub mod om;
 pub mod provider;
 pub mod session;
