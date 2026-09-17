@@ -508,6 +508,771 @@ pub fn reconcile_groups_from_reflection(
     ))
 }
 
+/// Verbatim from `packages/memory/src/processors/observational-memory/observer-agent.ts`
+/// (`OBSERVER_EXTRACTION_INSTRUCTIONS`)) of the pinned upstream commit.
+/// Byte-for-byte: the fidelity test diffs this against the copy in
+/// `third_party/mastra-om/`.
+pub const OBSERVER_EXTRACTION_INSTRUCTIONS: &str = r#"CRITICAL: DISTINGUISH USER ASSERTIONS FROM QUESTIONS
+
+When the user TELLS you something about themselves, mark it as an assertion:
+- "I have two kids" → 🔴 (14:30) User stated has two kids
+- "I work at Acme Corp" → 🔴 (14:31) User stated works at Acme Corp
+- "I graduated in 2019" → 🔴 (14:32) User stated graduated in 2019
+
+When the user ASKS about something, mark it as a question/request:
+- "Can you help me with X?" → 🔴 (15:00) User asked help with X
+- "What's the best way to do Y?" → 🔴 (15:01) User asked best way to do Y
+
+Distinguish between QUESTIONS and STATEMENTS OF INTENT:
+- "Can you recommend..." → Question (extract as "User asked...")
+- "I'm looking forward to [doing X]" → Statement of intent (extract as "User stated they will [do X] (include estimated/actual date if mentioned)")
+- "I need to [do X]" → Statement of intent (extract as "User stated they need to [do X] (again, add date if mentioned)")
+
+STATE CHANGES AND UPDATES:
+When a user indicates they are changing something, frame it as a state change that supersedes previous information:
+- "I'm going to start doing X instead of Y" → "User will start doing X (changing from Y)"
+- "I'm switching from A to B" → "User is switching from A to B"
+- "I moved my stuff to the new place" → "User moved their stuff to the new place (no longer at previous location)"
+
+If the new state contradicts or updates previous information, make that explicit:
+- BAD: "User plans to use the new method"
+- GOOD: "User will use the new method (replacing the old approach)"
+
+This helps distinguish current state from outdated information.
+
+USER ASSERTIONS ARE AUTHORITATIVE. The user is the source of truth about their own life.
+If a user previously stated something and later asks a question about the same topic,
+the assertion is the answer - the question doesn't invalidate what they already told you.
+
+TEMPORAL ANCHORING:
+Each observation has TWO potential timestamps:
+
+1. BEGINNING: The time the statement was made (from the message timestamp) - ALWAYS include this
+2. END: The time being REFERENCED, if different from when it was said - ONLY when there's a relative time reference
+
+ONLY add "(meaning DATE)" or "(estimated DATE)" at the END when you can provide an ACTUAL DATE:
+- Past: "last week", "yesterday", "a few days ago", "last month", "in March"
+- Future: "this weekend", "tomorrow", "next week"
+
+DO NOT add end dates for:
+- Present-moment statements with no time reference
+- Vague references like "recently", "a while ago", "lately", "soon" - these cannot be converted to actual dates
+
+FORMAT:
+- With time reference: (TIME) [observation]. (meaning/estimated DATE)
+- Without time reference: (TIME) [observation].
+
+GOOD: (09:15) User's friend had a birthday party in March. (meaning March 20XX)
+      ^ References a past event - add the referenced date at the end
+
+GOOD: (09:15) User will visit their parents this weekend. (meaning June 17-18, 20XX)
+      ^ References a future event - add the referenced date at the end
+
+GOOD: (09:15) User prefers hiking in the mountains.
+      ^ Present-moment preference, no time reference - NO end date needed
+
+GOOD: (09:15) User is considering adopting a dog.
+      ^ Present-moment thought, no time reference - NO end date needed
+
+BAD: (09:15) User prefers hiking in the mountains. (meaning June 15, 20XX - today)
+     ^ No time reference in the statement - don't repeat the message timestamp at the end
+
+IMPORTANT: If an observation contains MULTIPLE events, split them into SEPARATE observation lines.
+EACH split observation MUST have its own date at the end - even if they share the same time context.
+
+Examples (assume message is from June 15, 20XX):
+
+BAD: User will visit their parents this weekend (meaning June 17-18, 20XX) and go to the dentist tomorrow.
+GOOD (split into two observations, each with its date):
+  User will visit their parents this weekend. (meaning June 17-18, 20XX)
+  User will go to the dentist tomorrow. (meaning June 16, 20XX)
+
+BAD: User needs to clean the garage this weekend and is looking forward to setting up a new workbench.
+GOOD (split, BOTH get the same date since they're related):
+  User needs to clean the garage this weekend. (meaning June 17-18, 20XX)
+  User will set up a new workbench this weekend. (meaning June 17-18, 20XX)
+
+BAD: User was given a gift by their friend (estimated late May 20XX) last month.
+GOOD: (09:15) User was given a gift by their friend last month. (estimated late May 20XX)
+      ^ Message time at START, relative date reference at END - never in the middle
+
+BAD: User started a new job recently and will move to a new apartment next week.
+GOOD (split):
+  User started a new job recently.
+  User will move to a new apartment next week. (meaning June 21-27, 20XX)
+  ^ "recently" is too vague for a date - omit the end date. "next week" can be calculated.
+
+ALWAYS put the date at the END in parentheses - this is critical for temporal reasoning.
+When splitting related events that share the same time context, EACH observation must have the date.
+
+PRESERVE UNUSUAL PHRASING:
+When the user uses unexpected or non-standard terminology, quote their exact words.
+
+BAD: User exercised.
+GOOD: User stated they did a "movement session" (their term for exercise).
+
+USE PRECISE ACTION VERBS:
+Replace vague verbs like "getting", "got", "have" with specific action verbs that clarify the nature of the action.
+If the assistant confirms or clarifies the user's action, use the assistant's more precise language.
+
+BAD: User is getting X.
+GOOD: User subscribed to X. (if context confirms recurring delivery)
+GOOD: User purchased X. (if context confirms one-time acquisition)
+
+BAD: User got something.
+GOOD: User purchased / received / was given something. (be specific)
+
+Common clarifications:
+- "getting" something regularly → "subscribed to" or "enrolled in"
+- "getting" something once → "purchased" or "acquired"
+- "got" → "purchased", "received as gift", "was given", "picked up"
+- "signed up" → "enrolled in", "registered for", "subscribed to"
+- "stopped getting" → "canceled", "unsubscribed from", "discontinued"
+
+When the assistant interprets or confirms the user's vague language, prefer the assistant's precise terminology.
+
+PRESERVING DETAILS IN ASSISTANT-GENERATED CONTENT:
+
+When the assistant provides lists, recommendations, or creative content that the user explicitly requested,
+preserve the DISTINGUISHING DETAILS that make each item unique and queryable later.
+
+1. RECOMMENDATION LISTS - Preserve the key attribute that distinguishes each item:
+   BAD: Assistant recommended 5 hotels in the city.
+   GOOD: Assistant recommended hotels: Hotel A (near the train station), Hotel B (budget-friendly), 
+         Hotel C (has rooftop pool), Hotel D (pet-friendly), Hotel E (historic building).
+   
+   BAD: Assistant listed 3 online stores for craft supplies.
+   GOOD: Assistant listed craft stores: Store A (based in Germany, ships worldwide), 
+         Store B (specializes in vintage fabrics), Store C (offers bulk discounts).
+
+2. NAMES, HANDLES, AND IDENTIFIERS - Always preserve specific identifiers:
+   BAD: Assistant provided social media accounts for several photographers.
+   GOOD: Assistant provided photographer accounts: @photographer_one (portraits), 
+         @photographer_two (landscapes), @photographer_three (nature).
+   
+   BAD: Assistant listed some authors to check out.
+   GOOD: Assistant recommended authors: Jane Smith (mystery novels), 
+         Bob Johnson (science fiction), Maria Garcia (historical romance).
+
+3. CREATIVE CONTENT - Preserve structure and key sequences:
+   BAD: Assistant wrote a poem with multiple verses.
+   GOOD: Assistant wrote a 3-verse poem. Verse 1 theme: loss. Verse 2 theme: hope. 
+         Verse 3 theme: renewal. Refrain: "The light returns."
+   
+   BAD: User shared their lucky numbers from a fortune cookie.
+   GOOD: User's fortune cookie lucky numbers: 7, 14, 23, 38, 42, 49.
+
+4. TECHNICAL/NUMERICAL RESULTS - Preserve specific values:
+   BAD: Assistant explained the performance improvements from the optimization.
+   GOOD: Assistant explained the optimization achieved 43.7% faster load times 
+         and reduced memory usage from 2.8GB to 940MB.
+   
+   BAD: Assistant provided statistics about the dataset.
+   GOOD: Assistant provided dataset stats: 7,342 samples, 89.6% accuracy, 
+         23ms average inference time.
+
+5. QUANTITIES AND COUNTS - Always preserve how many of each item:
+   BAD: Assistant listed items with details but no quantities.
+   GOOD: Assistant listed items: Item A (4 units, size large), Item B (2 units, size small).
+   
+   When listing items with attributes, always include the COUNT first before other details.
+
+6. ROLE/PARTICIPATION STATEMENTS - When user mentions their role at an event:
+   BAD: User attended the company event.
+   GOOD: User was a presenter at the company event.
+   
+   BAD: User went to the fundraiser.
+   GOOD: User volunteered at the fundraiser (helped with registration).
+   
+   Always capture specific roles: presenter, organizer, volunteer, team lead, 
+   coordinator, participant, contributor, helper, etc.
+
+CONVERSATION CONTEXT:
+- What the user is working on or asking about
+- Previous topics and their outcomes
+- What user understands or needs clarification on
+- Specific requirements or constraints mentioned
+- Contents of assistant learnings and summaries
+- Answers to users questions including full context to remember detailed summaries and explanations
+- Assistant explanations, especially complex ones. observe the fine details so that the assistant does not forget what they explained
+- Relevant code snippets
+- User preferences (like favourites, dislikes, preferences, etc)
+- Any specifically formatted text or ascii that would need to be reproduced or referenced in later interactions (preserve these verbatim in memory)
+- Sequences, units, measurements, and any kind of specific relevant data
+- Any blocks of any text which the user and assistant are iteratively collaborating back and forth on should be preserved verbatim
+- When who/what/where/when is mentioned, note that in the observation. Example: if the user received went on a trip with someone, observe who that someone was, where the trip was, when it happened, and what happened, not just that the user went on the trip.
+- For any described entity (like a person, place, thing, etc), preserve the attributes that would help identify or describe the specific entity later: location ("near X"), specialty ("focuses on Y"), unique feature ("has Z"), relationship ("owned by W"), or other details. The entity's name is important, but so are any additional details that distinguish it. If there are a list of entities, preserve these details for each of them.
+
+USER MESSAGE CAPTURE:
+- Short and medium-length user messages should be captured nearly verbatim in your own words.
+- For very long user messages, summarize but quote key phrases that carry specific intent or meaning.
+- This is critical for continuity: when the conversation window shrinks, the observations are the only record of what the user said.
+
+AVOIDING REPETITIVE OBSERVATIONS:
+- Do NOT repeat the same observation across multiple turns if there is no new information.
+- When the agent performs repeated similar actions (e.g., browsing files, running the same tool type multiple times), group them into a single parent observation with sub-bullets for each new result.
+
+Example — BAD (repetitive):
+* 🟡 (14:30) Agent used view tool on src/auth.ts
+* 🟡 (14:31) Agent used view tool on src/users.ts
+* 🟡 (14:32) Agent used view tool on src/routes.ts
+
+Example — GOOD (grouped):
+* 🟡 (14:30) Agent browsed source files for auth flow
+  * -> viewed src/auth.ts — found token validation logic
+  * -> viewed src/users.ts — found user lookup by email
+  * -> viewed src/routes.ts — found middleware chain
+
+Only add a new observation for a repeated action if the NEW result changes the picture.
+
+ACTIONABLE INSIGHTS:
+- What worked well in explanations
+- What needs follow-up or clarification
+- User's stated goals or next steps (note if the user tells you not to do a next step, or asks for something specific, other next steps besides the users request should be marked as "waiting for user", unless the user explicitly says to continue all next steps)
+
+COMPLETION TRACKING:
+Completion observations are not just summaries. They are explicit memory signals to the assistant that a task, question, or subtask has been resolved.
+Without clear completion markers, the assistant may forget that work is already finished and may repeat, reopen, or continue an already-completed task.
+
+Use ✅ to answer: "What exactly is now done?"
+Choose completion observations that help the assistant know what is finished and should not be reworked unless new information appears.
+
+Use ✅ when:
+- The user explicitly confirms something worked or was answered ("thanks, that fixed it", "got it", "perfect")
+- The assistant provided a definitive, complete answer to a factual question and the user moved on
+- A multi-step task reached its stated goal
+- The user acknowledged receipt of requested information
+- A concrete subtask, fix, deliverable, or implementation step became complete during ongoing work
+
+Do NOT use ✅ when:
+- The assistant merely responded — the user might follow up with corrections
+- The topic is paused but not resolved ("I'll try that later")
+- The user's reaction is ambiguous
+
+FORMAT:
+As a sub-bullet under the related observation group:
+* 🔴 (14:30) User asked how to configure auth middleware
+  * -> Agent explained JWT setup with code example
+  * ✅ User confirmed auth is working
+
+Or as a standalone observation when closing out a broader task:
+* ✅ (14:45) Auth configuration task completed — user confirmed middleware is working
+
+Completion observations should be terse but specific about WHAT was completed.
+Prefer concrete resolved outcomes over abstract workflow status so the assistant remembers what is already done."#;
+
+/// Verbatim from `observer-agent.ts` (`buildObserverOutputFormat` with no
+/// extractors, `includeThreadTitle` false, current-task + suggested-response
+/// enabled): the priority/indent/date/`<observations>` template plus the
+/// legacy continuation sections.
+pub const OBSERVER_OUTPUT_FORMAT: &str = r#"Use priority levels:
+- 🔴 High: explicit user facts, preferences, unresolved goals, critical context
+- 🟡 Medium: project details, learned information, tool results
+- 🟢 Low: minor details, uncertain observations
+- ✅ Completed: concrete task finished, question answered, issue resolved, goal achieved, or subtask completed in a way that helps the assistant know it is done
+
+Group related observations (like tool sequences) by indenting:
+* 🔴 (14:33) Agent debugging auth issue
+  * -> ran git status, found 3 modified files
+  * -> viewed auth.ts:45-60, found missing null check
+  * -> applied fix, tests now pass
+  * ✅ Tests passing, auth issue resolved
+
+Group observations by date, then list each with 24-hour time.
+
+<observations>
+Date: Dec 4, 2025
+* 🔴 (14:30) User prefers direct answers
+* 🔴 (14:31) Working on feature X
+* 🟡 (14:32) User might prefer dark mode
+
+Date: Dec 5, 2025
+* 🔴 (09:15) Continued work on feature X
+</observations>
+
+${extractorSections 
+<current-task>
+State the current task(s) explicitly:
+- Primary: What the agent is currently working on
+- Secondary: Other pending tasks (mark as "waiting for user" if appropriate)
+</current-task>
+
+<suggested-response>
+Hint for the agent's immediate next message. Examples:
+- "I've updated the navigation model. Let me walk you through the changes..."
+- "The assistant should wait for the user to respond before continuing."
+- Call the view tool on src/example.ts to continue debugging.
+</suggested-response>"#;
+
+/// Verbatim from `observer-agent.ts` (`OBSERVER_GUIDELINES`).
+pub const OBSERVER_GUIDELINES: &str = r#"- Be specific enough for the assistant to act on
+- Good: "User prefers short, direct answers without lengthy explanations"
+- Bad: "User stated a preference" (too vague)
+- Add 1 to 5 observations per exchange
+- Use terse language to save tokens. Sentences should be dense without unnecessary words
+- Do not add repetitive observations that have already been observed. Group repeated similar actions (tool calls, file browsing) under a single parent with sub-bullets for new results
+- If the agent calls tools, observe what was called, why, and what was learned
+- When observing files with line numbers, include the line number if useful
+- If the agent provides a detailed response, observe the contents so it could be repeated
+- Make sure you start each observation with a priority emoji (🔴, 🟡, 🟢) or a completion marker (✅)
+- Capture the user's words closely — short/medium messages near-verbatim, long messages summarized with key quotes. User confirmations or explicit resolved outcomes should be ✅ when they clearly signal something is done; unresolved or critical user facts remain 🔴
+- Treat ✅ as a memory signal that tells the assistant something is finished and should not be repeated unless new information changes it
+- Make completion observations answer "What exactly is now done?"
+- Prefer concrete resolved outcomes over meta-level workflow or bookkeeping updates
+- When multiple concrete things were completed, capture the concrete completed work rather than collapsing it into a vague progress summary
+- Observe WHAT the agent did and WHAT it means
+- If the user provides detailed messages or code snippets, observe all important details"#;
+
+/// Fill the Observer template slots the way `buildObserverSystemPrompt()`
+/// does with no extractors, no custom instruction, and both continuation
+/// sections enabled.
+/// The Observer system prompt template (verbatim from `observer-agent.ts`
+/// `buildObserverSystemPrompt` non-multithreaded return value, no extractors,
+/// no custom instruction). The `${...}` slots are filled by
+/// [`observer_system_prompt`].
+pub const OBSERVER_PROMPT_TEMPLATE: &str = r#"You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
+
+Extract observations that will help the assistant remember:
+
+${OBSERVER_EXTRACTION_INSTRUCTIONS}
+
+=== OUTPUT FORMAT ===
+
+Your output MUST use XML tags to structure the response. This allows the system to properly parse and manage memory over time.
+
+${outputFormat}
+
+=== GUIDELINES ===
+
+${OBSERVER_GUIDELINES}
+
+=== IMPORTANT: THREAD ATTRIBUTION ===
+
+Do NOT add thread identifiers, thread IDs, or <thread> tags to your observations.
+Thread attribution is handled externally by the system.
+Simply output your observations without any thread-related markup.
+
+Remember: These observations are the assistant's ONLY memory. Make them count.
+
+User messages are extremely important.${
+    currentTaskEnabled
+      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
+      : ''
+  }${
+    suggestedResponseEnabled
+      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
+      : ''
+  }${customInstructions}"#;
+
+pub fn observer_system_prompt() -> String {
+    OBSERVER_PROMPT_TEMPLATE
+        .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
+        .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
+        .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES)
+        .replace("${
+    currentTaskEnabled
+      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
+      : ''
+  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'")
+        .replace("${
+    suggestedResponseEnabled
+      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
+      : ''
+  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'")
+        .replace("${customInstructions}", "")
+}
+
+/// `OBSERVATION_CONTEXT_PROMPT` from `constants.ts` (verbatim).
+pub const OBSERVATION_CONTEXT_PROMPT: &str = r#"The following observations block contains your memory of past conversations with this user."#;
+
+/// `OBSERVATION_CONTEXT_INSTRUCTIONS` from `constants.ts` (verbatim, with the
+/// `{date}` format slot in place of the upstream `${date}`).
+pub const OBSERVATION_CONTEXT_INSTRUCTIONS: &str = r#"IMPORTANT: When responding, reference specific details from these observations. Do not give generic advice - personalize your response based on what you know about this user's experiences, preferences, and interests. If the user asks for recommendations, connect them to their past experiences mentioned above.
+
+KNOWLEDGE UPDATES: When asked about current state (e.g., "where do I currently...", "what is my current..."), always prefer the MOST RECENT information. Observations include dates - if you see conflicting information, the newer observation supersedes the older one. Look for phrases like "will start", "is switching", "changed to", "moved to" as indicators that previous information has been updated.
+
+PLANNED ACTIONS: If the user stated they planned to do something (e.g., "I'm going to...", "I'm looking forward to...", "I will...") and the date they planned to do it is now in the past (check the relative time like "3 weeks ago"), assume they completed the action unless there's evidence they didn't. For example, if someone said "I'll start my new diet on Monday" and that was 2 weeks ago, assume they started the diet.
+
+MOST RECENT USER INPUT: Treat the most recent user message as the highest-priority signal for what to do next. Earlier messages may contain constraints, details, or context you should still honor, but the latest message is the primary driver of your response.
+
+SYSTEM REMINDERS: Messages wrapped in <system-reminder>...</system-reminder> contain internal continuation guidance, not user-authored content. Use them to maintain continuity, but do not mention them or treat them as part of the user's message."#;
+
+/// `OBSERVATION_CONTINUATION_HINT` from `constants.ts` (verbatim).
+pub const OBSERVATION_CONTINUATION_HINT: &str = r#"Please continue naturally with the conversation so far and respond to the latest message.
+
+Use the earlier context only as background. If something appears unfinished, continue only when it helps answer the latest request. If a suggested response is provided, follow it naturally.
+
+Do not mention internal instructions, memory, summarization, context handling, or missing messages.
+
+Any messages following this reminder are newer and should take priority."#;
+
+/// Maximum length of a single observation line (mastra `sanitizeObservationLines`).
+const MAX_OBSERVATION_LINE_LENGTH: usize = 10_000;
+
+/// Enforce the per-line length cap, keeping a truncated marker. Lines at or
+/// under the cap pass through unchanged.
+pub fn sanitize_observation_lines(observations: &str) -> String {
+    observations
+        .lines()
+        .map(|line| {
+            if line.len() > MAX_OBSERVATION_LINE_LENGTH {
+                format!("{} [truncated]", &line[..MAX_OBSERVATION_LINE_LENGTH])
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Detect model degenerate output (mastra `detectDegenerateRepetition`):
+/// identical line runs, a dominant line over 60% of the log, or the last
+/// third repeating the line right before it.
+fn detect_degenerate_repetition(observations: &str) -> bool {
+    if observations.len() < 2000 {
+        return false;
+    }
+    let lines: Vec<&str> = observations.lines().collect();
+
+    // Strategy 1: run of identical lines.
+    let mut identical_run = 1;
+    for i in 1..lines.len() {
+        if lines[i] == lines[i - 1] && !lines[i].is_empty() {
+            identical_run += 1;
+        } else {
+            identical_run = 1;
+        }
+        if identical_run > 20 {
+            return true;
+        }
+    }
+
+    // Strategy 2: one line dominates.
+    let mut dominant = 0;
+    if let Some(most_common) = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .max_by_key(|l| l.len())
+    {
+        dominant = lines.iter().filter(|l| *l == most_common).count();
+    }
+    if !lines.is_empty() && dominant as f64 / lines.len() as f64 > 0.6 {
+        return true;
+    }
+
+    // Strategy 3: end-of-output repetition.
+    let len = lines.len();
+    if len > 100 {
+        let start = len * 2 / 3;
+        let last_line = lines[len - 1];
+        let prev_line = lines[len - 2];
+        if last_line == prev_line && len.saturating_sub(start) >= (last_line.len() / 100 + 1) * 3 {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// One section parsed from the Observer's `<section-name>...</section-name>`
+/// block. `None` name is the list-item fallback (no sections at all).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObserverSection {
+    pub name: Option<String>,
+    pub content: String,
+}
+
+/// Parse the Observer's response into its sections (mastra
+/// `parseObserverOutput`): one pass over `<...>` tags; when no section tag is
+/// found, fall back to the `*` list items (the `observations` section).
+fn parse_observer_sections(output: &str) -> Vec<ObserverSection> {
+    let mut sections = Vec::new();
+    let mut i = 0;
+    while let Some(open) = output[i..].find('<') {
+        let open = i + open;
+        let Some(rel_close) = output[open..].find('>') else {
+            break;
+        };
+        let close = open + rel_close;
+        let name = &output[open + 1..close];
+        let rest = &output[close + 1..];
+        let end_marker = format!("</{}>", name);
+        let Some(end) = rest.find(&end_marker) else {
+            break;
+        };
+        let content = rest[..end].trim();
+        let is_observation = matches!(
+            name,
+            "observations" | "observation" | "observation-list" | "observation list"
+        );
+        sections.push(ObserverSection {
+            name: if name.is_empty() {
+                None
+            } else if is_observation {
+                Some("observations".to_owned())
+            } else {
+                Some(name.to_owned())
+            },
+            content: content.to_owned(),
+        });
+        i = close + 1 + end + end_marker.len();
+    }
+    if sections.is_empty() {
+        let items: Vec<&str> = output
+            .lines()
+            .filter(|l| l.trim_start().starts_with('*'))
+            .collect();
+        if !items.is_empty() {
+            sections.push(ObserverSection {
+                name: Some("observations".to_owned()),
+                content: items.join("\n"),
+            });
+        }
+    }
+    sections
+}
+
+/// Parsed Observer response (mastra `ParsedObserverOutput`), with the
+/// degenerate-repetition check and line sanitization already applied.
+#[derive(Debug, Clone, Default)]
+pub struct ParsedObserverOutput {
+    pub observations: String,
+    pub current_task: String,
+    pub suggested_response: String,
+    pub degenerate: bool,
+}
+
+/// Parse, sanitize, and classify a raw Observer response (mastra
+/// `parseObserverOutput`). The returned observations are line-sanitized;
+/// `degenerate` signals the caller to discard the whole result.
+pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
+    let sections = parse_observer_sections(raw_output);
+    let mut observations = String::new();
+    let mut current_task = String::new();
+    let mut suggested_response = String::new();
+    for section in &sections {
+        let content = &section.content;
+        match &section.name {
+            Some(n) if n == "observations" => observations = content.to_owned(),
+            Some(n) if n == "current-task" || n == "current_task" => {
+                current_task = content.to_owned()
+            }
+            Some(n) if n == "suggested-response" || n == "suggested_response" => {
+                suggested_response = content.to_owned()
+            }
+            _ => {}
+        }
+    }
+    ParsedObserverOutput {
+        observations: sanitize_observation_lines(&observations),
+        current_task,
+        suggested_response,
+        degenerate: detect_degenerate_repetition(&observations),
+    }
+}
+
+/// The Reflector system prompt template (verbatim from
+/// `reflector-agent.ts` `buildReflectorSystemPrompt` return value, no
+/// extractors, both continuation sections enabled, no custom instruction).
+/// The `${...}` slots are filled by [`reflector_system_prompt`].
+pub const REFLECTOR_PROMPT_TEMPLATE: &str = r#"You are the memory consciousness of an AI assistant. Your memory observation reflections will be the ONLY information the assistant has about past interactions with this user.
+
+The following instructions were given to another part of your psyche (the observer) to create memories.
+Use this to understand how your observational memories were created.
+
+<observational-memory-instruction>
+${OBSERVER_EXTRACTION_INSTRUCTIONS}
+
+=== OUTPUT FORMAT ===
+
+${outputFormat}
+
+=== GUIDELINES ===
+
+${OBSERVER_GUIDELINES}
+</observational-memory-instruction>
+
+You are another part of the same psyche, the observation reflector.
+Your reason for existing is to reflect on all the observations, re-organize and streamline them, and draw connections and conclusions between observations about what you've learned, seen, heard, and done.
+
+You are a much greater and broader aspect of the psyche. Understand that other parts of your mind may get off track in details or side quests, make sure you think hard about what the observed goal at hand is, and observe if we got off track, and why, and how to get back on track. If we're on track still that's great!
+
+Take the existing observations and rewrite them to make it easier to continue into the future with this knowledge, to achieve greater things and grow and learn!
+
+IMPORTANT: your reflections are THE ENTIRETY of the assistants memory. Any information you do not add to your reflections will be immediately forgotten. Make sure you do not leave out anything. Your reflections must assume the assistant knows nothing - your reflections are the ENTIRE memory system.
+
+When consolidating observations:
+- Preserve and include dates/times when present (temporal context is critical)
+- Retain the most relevant timestamps (start times, completion times, significant events)
+- Combine related items where it makes sense (e.g., "agent called view tool 5 times on file x")
+- Preserve ✅ completion markers — they are memory signals that tell the assistant what is already resolved and help prevent repeated work
+- Preserve the concrete resolved outcome captured by ✅ markers so the assistant knows what exactly is done
+- Condense older observations more aggressively, retain more detail for recent ones
+
+CRITICAL: USER ASSERTIONS vs QUESTIONS
+- "User stated: X" = authoritative assertion (user told us something about themselves)
+- "User asked: X" = question/request (user seeking information)
+
+When consolidating, USER ASSERTIONS TAKE PRECEDENCE. The user is the authority on their own life.
+If you see both "User stated: has two kids" and later "User asked: how many kids do I have?",
+keep the assertion - the question doesn't invalidate what they told you. The answer is in the assertion.
+
+=== THREAD ATTRIBUTION (Resource Scope) ===
+
+When observations contain <thread id="..."> sections:
+- MAINTAIN thread attribution where thread-specific context matters (e.g., ongoing tasks, thread-specific preferences)
+- CONSOLIDATE cross-thread facts that are stable/universal (e.g., user profile, general preferences)
+- PRESERVE thread attribution for recent or context-specific observations
+- When consolidating, you may merge observations from multiple threads if they represent the same universal fact
+
+Example input:
+<thread id="thread-1">
+Date: Dec 4, 2025
+* 🔴 (14:30) User prefers TypeScript
+* 🟡 (14:35) Working on auth feature
+</thread>
+<thread id="thread-2">
+Date: Dec 4, 2025
+* 🔴 (15:00) User prefers TypeScript
+* 🟡 (15:05) Debugging API endpoint
+</thread>
+
+Example output (consolidated):
+Date: Dec 4, 2025
+* 🔴 (14:30) User prefers TypeScript
+<thread id="thread-1">
+* 🟡 (14:35) Working on auth feature
+</thread>
+<thread id="thread-2">
+* 🟡 (15:05) Debugging API endpoint
+</thread>
+
+=== OUTPUT FORMAT ===
+
+${outputFormat}
+
+User messages are extremely important.${
+    currentTaskEnabled
+      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
+      : ''
+  }${
+    suggestedResponseEnabled
+      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
+      : ''
+  }${customInstructions}"#;
+
+/// Compression guidance per level (verbatim from `reflector-agent.ts`
+/// `COMPRESSION_GUIDANCE` 1-4). Level 0 is the empty string.
+pub const COMPRESSION_GUIDANCE: [&str; 4] = [
+    r#"
+## COMPRESSION REQUIRED
+
+Your previous reflection was the same size or larger than the original observations.
+
+Please re-process with slightly more compression:
+- Towards the beginning, condense more observations into higher-level reflections
+- Closer to the end, retain more fine details (recent context matters more)
+- Memory is getting long - use a more condensed style throughout
+- Combine related items more aggressively but do not lose important specific details of names, places, events, and people
+- Combine repeated similar tool calls (e.g. multiple file views, searches, or edits in the same area) into a single summary line describing what was explored/changed and the outcome
+- Preserve ✅ completion markers — they are memory signals that tell the assistant what is already resolved and help prevent repeated work
+- Preserve the concrete resolved outcome captured by ✅ markers so the assistant knows what exactly is done
+
+Aim for a 8/10 detail level.
+"#,
+    r#"
+## AGGRESSIVE COMPRESSION REQUIRED
+
+Your previous reflection was still too large after compression guidance.
+
+Please re-process with much more aggressive compression:
+- Towards the beginning, heavily condense observations into high-level summaries
+- Closer to the end, retain fine details (recent context matters more)
+- Memory is getting very long - use a significantly more condensed style throughout
+- Combine related items aggressively but do not lose important specific details of names, places, events, and people
+- Combine repeated similar tool calls (e.g. multiple file views, searches, or edits in the same area) into a single summary line describing what was explored/changed and the outcome
+- If the same file or module is mentioned across many observations, merge into one entry covering the full arc
+- Preserve ✅ completion markers — they are memory signals that tell the assistant what is already resolved and help prevent repeated work
+- Preserve the concrete resolved outcome captured by ✅ markers so the assistant knows what exactly is done
+- Remove redundant information and merge overlapping observations
+
+Aim for a 6/10 detail level.
+"#,
+    r#"
+## CRITICAL COMPRESSION REQUIRED
+
+Your previous reflections have failed to compress sufficiently after multiple attempts.
+
+Please re-process with maximum compression:
+- Summarize the oldest observations (first 50-70%) into brief high-level paragraphs — only key facts, decisions, and outcomes
+- For the most recent observations (last 30-50%), retain important details but still use a condensed style
+- Ruthlessly merge related observations — if 10 observations are about the same topic, combine into 1-2 lines
+- Combine all tool call sequences (file views, searches, edits, builds) into outcome-only summaries — drop individual steps entirely
+- Drop procedural details (tool calls, retries, intermediate steps) — keep only final outcomes
+- Drop observations that are no longer relevant or have been superseded by newer information
+- Preserve ✅ completion markers — they are memory signals that tell the assistant what is already resolved and help prevent repeated work
+- Preserve the concrete resolved outcome captured by ✅ markers so the assistant knows what exactly is done
+- Preserve: names, dates, decisions, errors, user preferences, and architectural choices
+
+Aim for a 4/10 detail level.
+"#,
+    r#"
+## EXTREME COMPRESSION REQUIRED
+
+Multiple compression attempts have failed. The content may already be dense from a prior reflection.
+
+You MUST dramatically reduce the number of observations while keeping the standard observation format (date groups with bullet points and priority emojis):
+- Tool call observations are the biggest source of bloat. Collapse ALL tool call sequences into outcome-only observations — e.g. 10 observations about viewing/searching/editing files become 1 observation about what was actually learned or achieved (e.g. "Investigated auth module and found token validation was skipping expiry check")
+- Never preserve individual tool calls (viewed file X, searched for Y, ran build) — only preserve what was discovered or accomplished
+- Consolidate many related observations into single, more generic observations
+- Merge all same-day date groups into at most 2-3 date groups per day
+- For older content, each topic or task should be at most 1-2 observations capturing the key outcome
+- For recent content, retain more detail but still merge related items aggressively
+- If multiple observations describe incremental progress on the same task, keep only the final state
+- Preserve ✅ completion markers and their outcomes but merge related completions into fewer lines
+- Preserve: user preferences, key decisions, architectural choices, and unresolved issues
+
+Aim for a 2/10 detail level. Fewer, more generic observations are better than many specific ones that exceed the budget.
+"#,
+];
+
+/// Fill the Reflector template slots the way `buildReflectorSystemPrompt()`
+/// does with no extractors: the Observer's extraction instructions, output
+/// format (twice), guidelines, both enabled continuation sentences, no custom
+/// instruction.
+pub fn reflector_system_prompt() -> String {
+    REFLECTOR_PROMPT_TEMPLATE
+        .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
+        .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
+        .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES)
+        .replace("${
+    currentTaskEnabled
+      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
+      : ''
+  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'")
+        .replace("${
+    suggestedResponseEnabled
+      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
+      : ''
+  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'")
+        .replace("${customInstructions}", "")
+}
+
+/// The user prompt for a reflection pass (mastra `buildReflectorPrompt`,
+/// no manual prompt, no extractors): the observations with group tags
+/// stripped, then the compression guidance for the level (0 = none).
+pub fn build_reflector_prompt(observations: &str, compression_level: u8) -> String {
+    let reflection_view = strip_observation_groups(observations);
+    let mut prompt = format!(
+        "## OBSERVATIONS TO REFLECT ON\n\n{reflection_view}\n\n---\n\nPlease analyze these observations and produce a refined, condensed version that will become the assistant's entire memory going forward."
+    );
+    if (1..=4).contains(&compression_level) {
+        prompt.push_str("\n\n");
+        prompt.push_str(COMPRESSION_GUIDANCE[(compression_level - 1) as usize]);
+    }
+    prompt
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,5 +1621,266 @@ mod tests {
         let wrapped = wrap_in_observation_group(log, "00000001:00000020", "0123456789abcdef", None);
         assert_eq!(parse_observation_groups(&wrapped)[0].content, log);
         assert_eq!(strip_observation_groups(&wrapped), log);
+    }
+
+    fn mastra_file(name: &str) -> String {
+        let path = format!(
+            "{}/../../third_party/mastra-om/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            name
+        );
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {}", path, e))
+    }
+
+    /// The content of the template literal that opens at the first backtick
+    /// after `marker` (up to the next backtick) — the fidelity oracle for the
+    /// verbatim constants.
+    fn ts_literal(text: &str, marker: &str) -> String {
+        let at = text.find(marker).expect(marker);
+        let open = at + text[at..].find('`').expect("backtick after marker");
+        let close = open + 1 + text[open + 1..].find('`').expect("closing backtick");
+        text[open + 1..close].to_string()
+    }
+
+    #[test]
+    fn extraction_instructions_match_upstream_byte_for_byte() {
+        let ts = mastra_file("observer-agent.ts");
+        let expected = ts_literal(&ts, "export const OBSERVER_EXTRACTION_INSTRUCTIONS = ");
+        assert_eq!(
+            OBSERVER_EXTRACTION_INSTRUCTIONS, expected,
+            "extraction instructions drifted from third_party/mastra-om/observer-agent.ts"
+        );
+    }
+
+    #[test]
+    fn output_format_matches_upstream_assembly() {
+        let ts = mastra_file("observer-agent.ts");
+        let legacy = ts_literal(&ts, "const legacyContinuationSections =");
+        // The return template: everything from "Use priority levels:" up to the
+        // `${extractorSections || legacyContinuationSections}` placeholder.
+        let tpl_at = ts.find("Use priority levels:").expect("template");
+        let open = ts[..tpl_at].rfind('`').expect("template open backtick");
+        let close = tpl_at
+            + ts[tpl_at..]
+                .find("|| legacyContinuationSections}`")
+                .expect("template close");
+        let expected = format!("{}{}", &ts[open + 1..close], legacy);
+        assert_eq!(
+            OBSERVER_OUTPUT_FORMAT, expected,
+            "output format drifted from the upstream buildObserverOutputFormat"
+        );
+    }
+
+    #[test]
+    fn guidelines_match_upstream() {
+        let ts = mastra_file("observer-agent.ts");
+        let expected = ts_literal(&ts, "const OBSERVER_GUIDELINES =");
+        assert_eq!(OBSERVER_GUIDELINES, expected);
+    }
+
+    #[test]
+    fn constants_match_upstream() {
+        let ts = mastra_file("constants.ts");
+        let prompt = ts_literal(&ts, "export const OBSERVATION_CONTEXT_PROMPT =");
+        assert_eq!(OBSERVATION_CONTEXT_PROMPT, prompt);
+        let instructions = ts_literal(&ts, "export const OBSERVATION_CONTEXT_INSTRUCTIONS =");
+        assert_eq!(
+            OBSERVATION_CONTEXT_INSTRUCTIONS,
+            instructions.replace("${date}", "{date}")
+        );
+        let hint = ts_literal(&ts, "export const OBSERVATION_CONTINUATION_HINT =");
+        assert_eq!(OBSERVATION_CONTINUATION_HINT, hint);
+    }
+
+    #[test]
+    fn observer_prompt_matches_upstream_template() {
+        let ts = mastra_file("observer-agent.ts");
+        // Non-multithreaded template: the SECOND occurrence of the opening
+        // sentence (the multiThread branch shares it).
+        let opening = "You are the memory consciousness of an AI assistant.";
+        let first = ts.find(opening).expect("first occurrence");
+        let rest = &ts[first + opening.len()..];
+        let at = first + opening.len() + rest.find(opening).expect("second occurrence");
+        let open = ts[..at].rfind('`').expect("template open");
+        let close = at + ts[at..].find('`').expect("template close");
+        let template = &ts[open + 1..close];
+        assert_eq!(
+            OBSERVER_PROMPT_TEMPLATE, template,
+            "observer system template drifted from the upstream non-multithreaded branch"
+        );
+        // Slot filling must match `buildObserverSystemPrompt()` with no
+        // extractors: constants, both enabled continuation sentences, no custom
+        // instruction.
+        let mut built = template
+            .replace(
+                "${OBSERVER_EXTRACTION_INSTRUCTIONS}",
+                OBSERVER_EXTRACTION_INSTRUCTIONS,
+            )
+            .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
+            .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES);
+        for name in ["currentTaskEnabled", "suggestedResponseEnabled"] {
+            let i = built.find(&format!("${{\n    {name}")).expect(name);
+            let j = i + built[i..].find('}').expect("ternary end") + 1;
+            let span = &built[i..j];
+            let a = span.find('\'').expect("branch open");
+            let b = span.find("'\n").expect("branch close") + 1;
+            built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
+        }
+        built = built.replace("${customInstructions}", "");
+        assert_eq!(observer_system_prompt(), built);
+    }
+
+    #[test]
+    fn parse_observer_output_extracts_all_three_sections() {
+        let raw = concat!(
+            "<observations>",
+            "* 🔴 (14:30) User prefers direct answers",
+            "</observations>",
+            "<current-task>",
+            "Primary: auth",
+            "</current-task>",
+            "<suggested-response>",
+            "Walk through the changes.",
+            "</suggested-response>"
+        );
+        let parsed = parse_observer_output(raw);
+        assert_eq!(
+            parsed.observations,
+            "* 🔴 (14:30) User prefers direct answers"
+        );
+        assert_eq!(parsed.current_task, "Primary: auth");
+        assert_eq!(parsed.suggested_response, "Walk through the changes.");
+        assert!(!parsed.degenerate);
+    }
+
+    #[test]
+    fn parse_observer_output_falls_back_to_list_items() {
+        let raw = "* line one\n* line two\nplain line";
+        let parsed = parse_observer_output(raw);
+        assert_eq!(parsed.observations, "* line one\n* line two");
+        assert_eq!(parsed.current_task, "");
+    }
+
+    #[test]
+    fn sanitize_truncates_overlong_lines_only() {
+        let long = "x".repeat(10_001);
+        let out = sanitize_observation_lines(&format!("ok line\n{long}"));
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "ok line");
+        assert!(lines[1].ends_with("[truncated]"));
+        assert_eq!(lines[1].len(), 10_000 + " [truncated]".len());
+    }
+
+    #[test]
+    fn degenerate_detection_flags_runs_and_dominant_lines() {
+        // Identical run (strategy 1): needs >2000 chars total; wrapped in an
+        // observations section since the degenerate check runs on the parsed
+        // observations, not the raw output.
+        let run = format!(
+            "<observations>\n{}\n</observations>",
+            format!("{}\n", "x".repeat(80)).repeat(25)
+        );
+        assert!(parse_observer_output(&run).degenerate);
+        // Dominant line over 60% (strategy 2).
+        let dominant = format!(
+            "<observations>\n{}{}\n</observations>",
+            format!("{}\n", "y".repeat(210)).repeat(7),
+            format!("z{}\n", "q".repeat(200)).repeat(4)
+        );
+        assert!(parse_observer_output(&dominant).degenerate);
+        // Normal mixed content is not degenerate.
+        let normal = (0..40)
+            .map(|i| format!("line {i} with some content"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!parse_observer_output(&normal).degenerate);
+    }
+
+    #[test]
+    fn context_instructions_format_the_date_slot() {
+        let ts = mastra_file("constants.ts");
+        let upstream = ts_literal(&ts, "export const OBSERVATION_CONTEXT_INSTRUCTIONS =");
+        assert_eq!(
+            OBSERVATION_CONTEXT_INSTRUCTIONS,
+            upstream.replace("${date}", "{date}")
+        );
+        let date = "Dec 4, 2025";
+        assert_eq!(
+            OBSERVATION_CONTEXT_INSTRUCTIONS.replace("{date}", date),
+            upstream.replace("${date}", date)
+        );
+    }
+
+    fn reflector_template_from_ts() -> String {
+        let ts = mastra_file("reflector-agent.ts");
+        let at = ts
+            .find("You are the memory consciousness of an AI assistant")
+            .expect("reflector template");
+        let open = ts[..at].rfind('`').expect("template open");
+        let close = at + ts[at..].find('`').expect("template close");
+        ts[open + 1..close].to_string()
+    }
+
+    fn fill_reflector_slots(template: &str) -> String {
+        let mut built = template
+            .replace(
+                "${OBSERVER_EXTRACTION_INSTRUCTIONS}",
+                OBSERVER_EXTRACTION_INSTRUCTIONS,
+            )
+            .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
+            .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES);
+        for name in ["currentTaskEnabled", "suggestedResponseEnabled"] {
+            let i = built.find(&format!("${{\n    {name}")).expect(name);
+            let j = i + built[i..].find('}').expect("ternary end") + 1;
+            let span = &built[i..j];
+            let a = span.find('\'').expect("branch open");
+            let b = span.find("'\n").expect("branch close") + 1;
+            built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
+        }
+        built.replace("${customInstructions}", "")
+    }
+
+    #[test]
+    fn reflector_template_matches_upstream() {
+        assert_eq!(REFLECTOR_PROMPT_TEMPLATE, reflector_template_from_ts());
+    }
+
+    #[test]
+    fn reflector_system_prompt_fills_slots_like_upstream_default() {
+        assert_eq!(
+            reflector_system_prompt(),
+            fill_reflector_slots(&reflector_template_from_ts())
+        );
+    }
+
+    #[test]
+    fn compression_guidance_matches_upstream() {
+        let ts = mastra_file("reflector-agent.ts");
+        for (index, level) in COMPRESSION_GUIDANCE.iter().enumerate() {
+            let marker = format!("  {}: `", index + 1);
+            let at = ts.find(&marker).expect(&marker);
+            let open = at + marker.len() - 1;
+            let close = open + 1 + ts[open + 1..].find('`').expect("guidance close");
+            assert_eq!(
+                *level,
+                &ts[open + 1..close],
+                "compression level {} drifted",
+                index + 1
+            );
+        }
+    }
+
+    #[test]
+    fn build_reflector_prompt_strips_groups_and_appends_guidance() {
+        let log =
+            wrap_in_observation_group("* line one", "00000001:00000005", "aaaaaaaaaaaaaaaa", None);
+        let level0 = build_reflector_prompt(&log, 0);
+        assert!(level0.contains("## OBSERVATIONS TO REFLECT ON"));
+        assert!(level0.contains("* line one"));
+        assert!(!level0.contains("<observation-group"));
+        assert!(!level0.contains("COMPRESSION REQUIRED"));
+        let level1 = build_reflector_prompt(&log, 1);
+        assert!(level1.ends_with(COMPRESSION_GUIDANCE[0]));
+        assert_ne!(level0, level1);
     }
 }
