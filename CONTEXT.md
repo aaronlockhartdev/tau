@@ -90,3 +90,7 @@ _Avoid_: export, archive (that is the manual-archive zstd thing)
 **Context files**:
 Project/global instruction files loaded into the system prompt, following pi's pattern (2026-09-17): `AGENTS.md`/`CLAUDE.md` from `~/.config/tau/`, from parent directories walking up from the workspace cwd, and the cwd itself — all layers appended; a per-directory `AGENTS.override.md` replaces that directory's `AGENTS.md`/`CLAUDE.md`.
 _Avoid_: prompt files
+
+**Security model**:
+In v0: **transparency, not enforcement** (ADR-0007, user decision 2026-09-17) — no sandbox, no permission popups, no per-tool policy; tools run with the user's privileges; sub-agent output marked untrusted is the one enforced boundary; the GUI's legibility affordances (per-tool cards, kill, force, sub-agent visibility) are the security feature; a post-v0 security ticket decides what enforcement comes back.
+_Avoid_: trust flow, permission system (v0 has neither)
