@@ -26,7 +26,7 @@
   {/each}
   <div class="addwrap">
     <button class="add" title="open a workspace" onclick={() => (menuOpen = !menuOpen)}>+</button>
-    {#if menuOpen}
+    {#if menuOpen && store.demo}
       <div class="menu">
         <button class="mi" onclick={() => { menuOpen = false; void addWorkspace(); }}>
           new window

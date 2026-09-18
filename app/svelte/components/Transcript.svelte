@@ -9,7 +9,7 @@
   // off-screen), total = sum of measured + estimated, the DOM windowed to
   // viewport + buffer, positioned by an absolutely-positioned inner track.
 
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
   import type { Entry } from '../lib/protocol';
@@ -51,6 +51,7 @@
   const total = $derived(all.reduce((sum, e) => sum + hOf(e), 0));
 
   function computeWin() {
+    const t0 = performance.now();
     const { top, h } = scroll;
     const view = h || 600;
     let acc = 0;
@@ -78,9 +79,23 @@
     // prefix[start]); the viewport scroll does the rest. Adding scrollTop
     // to it double-counts the scroll — at mid-session the slice lands ~S
     // px below the viewport and the screen is blank.
-    return { start, end: Math.min(all.length, end + 1), offset: scrollBefore(start) };
+    return {
+      start,
+      end: Math.min(all.length, end + 1),
+      offset: scrollBefore(start),
+      ms: performance.now() - t0
+    };
   }
   const win = $derived(computeWin());
+
+  // The status bar's render stats (spec §9 seg3): the window's range and
+  // the compute cost, reported on every recompute.
+  $effect(() => {
+    void win.start;
+    void win.end;
+    store.renderMs = win.ms;
+    store.renderRange = `${win.start + 1}–${win.end} of ${all.length}`;
+  });
 
   function scrollBefore(i: number): number {
     let acc = 0;
@@ -101,14 +116,25 @@
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
     node.scrollTo({ top: node.scrollHeight });
+    // Follow the tail while the user is near it. The hysteresis must exceed
+    // the growth per tick (a live stream adds ~100 px every 300 ms), or the
+    // tail drifts off-screen and the pin never re-arms.
     const t = setInterval(() => {
-      const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+      const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 200;
       if (atBottom) node.scrollTop = node.scrollHeight;
     }, 300);
     return () => {
       node.removeEventListener('scroll', onScroll);
       clearInterval(t);
     };
+  });
+
+  onDestroy(() => {
+    // A closed workspace (not a session switch) drops this session's
+    // cached heights so the module map stays bounded.
+    if (store.current !== cur) {
+      for (const k of [...heights.keys()]) if (k.startsWith(`${cur}:`)) heights.delete(k);
+    }
   });
 
   // Paged read around the viewport (spec §8): the window's slice is

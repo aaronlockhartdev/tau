@@ -15,19 +15,19 @@
     {#if s.pending.some((p) => p.lane === 'steering')}
       <div class="qlabel">next opportunity</div>
     {/if}
-    {#each s.pending.filter((p) => p.lane === 'steering') as p (p.text)}
+    {#each s.pending.filter((p) => p.lane === 'steering') as p, idx (p.text + ':' + idx)}
       <div class="qrow">
         <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => deleteQueueItem(p.text, p.lane)}>✕</button>
+        <button class="qdel" onclick={() => deleteQueueItem(p.text, p.lane, idx)}>✕</button>
       </div>
     {/each}
     {#if s.pending.some((p) => p.lane === 'follow-up')}
       <div class="qlabel">after work completes</div>
     {/if}
-    {#each s.pending.filter((p) => p.lane === 'follow-up') as p (p.text)}
+    {#each s.pending.filter((p) => p.lane === 'follow-up') as p, idx (p.text + ':' + idx)}
       <div class="qrow">
         <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => deleteQueueItem(p.text, p.lane)}>✕</button>
+        <button class="qdel" onclick={() => deleteQueueItem(p.text, p.lane, idx)}>✕</button>
       </div>
     {/each}
   </div>

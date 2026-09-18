@@ -50,8 +50,16 @@
     sessions: {} as Record<string, SessionState>,
     loading: false,
     error: null as string | null,
-    demo: false
+    demo: false,
+    // The transcript's last window computation (spec §9 seg3 render stats).
+    renderRange: '',
+    renderMs: 0
   });
+
+  // Deltas that land before their stream_start (a GUI connecting mid-stream):
+  // buffered per call until the start or end arrives.
+  let pendingDeltas = new Map<string, { text: string; reasoning: string }>();
+  const PENDING_CAP = 64 * 1024;
 
   let demoViews: ViewEntry[] = [];
   let demoStreamsStarted = false;
@@ -251,8 +259,12 @@
       }
     }
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
+    for (const [sid, s] of Object.entries(store.sessions)) {
+      if (s.meta.workspace === ws.id) delete store.sessions[sid];
+    }
+    pendingDeltas.clear();
     const cur = store.current;
-    if (cur && sessionOf(cur).meta.workspace === ws.id) {
+    if (cur && store.sessions[cur]?.meta.workspace === ws.id) {
       store.current = null;
     }
   }
@@ -355,11 +367,20 @@
     }
   }
 
-  export async function deleteQueueItem(text: string, lane: PendingMsg['lane']): Promise<void> {
+  export async function deleteQueueItem(
+    text: string,
+    lane: PendingMsg['lane'],
+    idx: number
+  ): Promise<void> {
     const sid = store.current;
     if (sid === null) return;
     const s = sessionOf(sid);
-    s.pending = s.pending.filter((p) => !(p.text === text && p.lane === lane));
+    // Duplicates are keyed by occurrence; delete only the idx-th of them.
+    let seen = 0;
+    s.pending = s.pending.filter((p) => {
+      if (p.text !== text || p.lane !== lane) return true;
+      return seen++ !== idx;
+    });
     if (store.demo) return;
     try {
       const out = await command({ type: 'session_open', session: sid });
@@ -384,20 +405,43 @@
       if (!s) continue;
       switch (ev.type) {
         case 'stream_start': {
-          s.live.push({ id: ev.call_id, text: '', reasoning: '' });
+          const le = { id: ev.call_id, text: '', reasoning: '' };
+          const pd = pendingDeltas.get(ev.call_id);
+          if (pd) {
+            le.text = pd.text;
+            le.reasoning = pd.reasoning;
+            pendingDeltas.delete(ev.call_id);
+          }
+          s.live.push(le);
           s.turn = 'running';
           break;
         }
         case 'stream_delta': {
           const le = s.live.find((x) => x.id === ev.call_id);
-          if (!le) break;
-          le.text += ev.text;
-          if (ev.reasoning) le.reasoning += ev.reasoning;
+          if (le) {
+            le.text += ev.text;
+            if (ev.reasoning) le.reasoning += ev.reasoning;
+          } else {
+            const pd = pendingDeltas.get(ev.call_id) ?? { text: '', reasoning: '' };
+            if (pd.text.length < PENDING_CAP) {
+              pd.text += ev.text;
+              if (ev.reasoning) pd.reasoning += ev.reasoning;
+              pendingDeltas.set(ev.call_id, pd);
+            }
+          }
           break;
         }
         case 'stream_end': {
-          const le = s.live.find((x) => x.id === ev.call_id);
+          let le = s.live.find((x) => x.id === ev.call_id);
           s.live = s.live.filter((x) => x.id !== ev.call_id);
+          if (!le) {
+            // Ended before we saw its start: close it out of the buffer.
+            const pd = pendingDeltas.get(ev.call_id);
+            if (pd) {
+              pendingDeltas.delete(ev.call_id);
+              le = { id: ev.call_id, text: pd.text, reasoning: pd.reasoning };
+            }
+          }
           if (le) {
             s.entries.push({
               id: le.id,

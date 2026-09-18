@@ -30,6 +30,7 @@
     <main class="center">
       <div class="chead">
         <span class="n">{title}</span>
+        <!-- Badge reflects this session's own turn; a running sub-agent shows when #23's events land -->
         {#if cur?.turn === 'running'}
           <span class="badge running"><span class="dot"></span>running</span>
         {/if}
@@ -41,7 +42,9 @@
       {#if loading}
         <div class="empty"><span class="big">loading…</span></div>
       {:else if cur}
+        {#key store.current}
         <Transcript />
+        {/key}
         <Queue />
         <Composer />
       {:else}

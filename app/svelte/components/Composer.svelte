@@ -7,7 +7,7 @@
   import { store, send, type PendingMsg } from '../lib/store.svelte';
 
   let text = $state('');
-  let lane = $state<PendingMsg['lane']>('follow-up');
+  let lane = $state<PendingMsg['lane']>('steering');
 
   const lanes: Array<{ id: PendingMsg['lane']; label: string; title: string }> = [
     { id: 'force', label: 'force', title: 'interrupt the in-flight turn now' },

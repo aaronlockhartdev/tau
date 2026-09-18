@@ -44,10 +44,8 @@
     <span class="k">fps</span> {fps}
   </span>
   <span class="seg s3">
+    <span class="k">render</span> {store.renderRange || '—'} · {store.renderMs.toFixed(1)} ms · {s?.live.length ?? 0} streams
     <span class="k">model</span> {s?.meta.model ?? '—'}
-    {#if s?.usage}
-      <span class="k">tok</span> {fmt(s.usage.total_tokens)}
-    {/if}
   </span>
 </div>
 
