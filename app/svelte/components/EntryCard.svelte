@@ -28,7 +28,7 @@
     if (el) heights.set(heightKey, el.offsetHeight);
   });
 
-  const md = $derived(renderMarkdown(entry.text));
+  const md = $derived(renderMarkdown(entry.text ?? ''));
   let reasoningOpen = $state(true);
   let outputOpen = $state(false);
 
@@ -80,7 +80,7 @@
     {/if}
     <div class="md">{@html md}</div>
     {#if entry.usage}
-      <div class="meta">{fmt(entry.usage.in)} in · {fmt(entry.usage.out)} out · {entry.model ?? ''}</div>
+      <div class="meta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
     {/if}
   {/if}
 </div>

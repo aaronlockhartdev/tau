@@ -196,8 +196,7 @@ export function toEntry(v: ViewEntry): Entry {
         kind: interrupted ? 'interrupted' : 'message',
         text: String(p.text ?? ''),
         reasoning: p.reasoning ? String(p.reasoning) : undefined,
-        usage,
-        model: undefined
+        usage
       };
     }
     case 'tool': {

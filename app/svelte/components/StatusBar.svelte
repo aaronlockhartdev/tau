@@ -46,8 +46,7 @@
   <span class="seg s3">
     <span class="k">model</span> {s?.meta.model ?? '—'}
     {#if s?.usage}
-      <span class="k">tok</span> {fmt(s.usage.in + s.usage.out)}
-      {#if s.usage.cost > 0}$<span>{s.usage.cost.toFixed(4)}</span>{/if}
+      <span class="k">tok</span> {fmt(s.usage.total_tokens)}
     {/if}
   </span>
 </div>

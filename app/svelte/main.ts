@@ -12,6 +12,8 @@ if (isTauri()) {
   void onEvents(applyEvents);
 }
 
-const app = mount(App, { target: document.getElementById('app') });
+const root = document.getElementById('app');
+if (!root) throw new Error('missing #app element');
+const app = mount(App, { target: root });
 
 export default app;

@@ -88,7 +88,7 @@
       store.workspaces = out.workspaces;
       const wanted = params.get('workspace');
       const first =
-        (wanted && out.workspaces.find((w) => w.name === wanted || w.id === wanted)) ??
+        (wanted ? out.workspaces.find((w) => w.name === wanted || w.id === wanted) : undefined) ??
         out.workspaces[0] ??
         null;
       if (first === null) return;
@@ -376,7 +376,7 @@
       const sid = ev.session;
       if (!sid) {
         if (ev.type === 'system') {
-          store.error = ev.kind === 'error' ? ev.kind.message : null;
+          store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
         }
         continue;
       }
@@ -438,7 +438,7 @@
           break;
         }
         case 'system': {
-          store.error = ev.kind === 'error' ? ev.kind.message : null;
+          store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
           break;
         }
       }

@@ -12,17 +12,17 @@
 <div class="bar">
   <span class="logo">τ</span>
   {#each store.workspaces as w (w.id)}
-    <button
+    <div
       class="tab"
       class:active={store.current && store.sessions[store.current]?.meta.workspace === w.id}
-      onclick={() => openWorkspace(w)}
     >
-      <span class="dot"></span>{w.name}
+      <button class="tabname" onclick={() => openWorkspace(w)}>
+        <span class="dot"></span>{w.name}
+      </button>
       {#if store.current && store.sessions[store.current]?.meta.workspace === w.id}
-        <span class="x" role="button" aria-label="close workspace"
-          onclick={(e) => { e.stopPropagation(); closeWorkspace(w); }}>×</span>
+        <button class="x" aria-label="close workspace" onclick={() => closeWorkspace(w)}>×</button>
       {/if}
-    </button>
+    </div>
   {/each}
   <div class="addwrap">
     <button class="add" title="open a workspace" onclick={() => (menuOpen = !menuOpen)}>+</button>
@@ -80,6 +80,11 @@
     color: var(--tx);
     background: var(--panel2);
     border-color: var(--line);
+  }
+  .tab .tabname {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
   .tab .dot {
     width: 7px;

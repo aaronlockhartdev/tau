@@ -92,20 +92,21 @@
   // scroll listener that writes $state from an effect re-triggers itself
   // in this Svelte. onMount registers once; the deriveds just read.
   onMount(() => {
-    if (!el) return;
+    const node = el;
+    if (!node) return;
     const onScroll = () => {
-      scroll.top = el.scrollTop;
-      scroll.h = el.clientHeight;
+      scroll.top = node.scrollTop;
+      scroll.h = node.clientHeight;
     };
     onScroll();
-    el.addEventListener('scroll', onScroll, { passive: true });
-    el.scrollTo({ top: el.scrollHeight });
+    node.addEventListener('scroll', onScroll, { passive: true });
+    node.scrollTo({ top: node.scrollHeight });
     const t = setInterval(() => {
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-      if (atBottom) el.scrollTop = el.scrollHeight;
+      const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+      if (atBottom) node.scrollTop = node.scrollHeight;
     }, 300);
     return () => {
-      el.removeEventListener('scroll', onScroll);
+      node.removeEventListener('scroll', onScroll);
       clearInterval(t);
     };
   });
