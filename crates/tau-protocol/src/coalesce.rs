@@ -61,6 +61,12 @@ impl Coalescer {
         }
     }
 
+    /// The next flush deadline, if a window is armed (the pump sleeps
+    /// until it).
+    pub fn due_at(&self) -> Option<u64> {
+        self.due_at
+    }
+
     /// Take everything that is due at `now` (in arrival order).
     pub fn take(&mut self, now: u64) -> Vec<Event> {
         match self.due_at {

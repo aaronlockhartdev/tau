@@ -79,6 +79,10 @@ pub enum ProtocolError {
 /// compiles against (ADR-0006: no richer in-process API).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+// The snapshot variant is the payload; the rest are small. Boxing the
+// large variants would buy a few bytes at the cost of an allocation per
+// command output on a surface that serializes to JSON anyway.
+#[allow(clippy::large_enum_variant)]
 pub enum CommandOutput {
     None,
     Workspace(snapshot::Workspace),
@@ -220,6 +224,7 @@ pub enum Command {
     },
 
     FileRead {
+        workspace: String,
         /// Absolute, or relative to the workspace root.
         path: String,
         /// 0-based first line to include.
@@ -453,6 +458,7 @@ mod tests {
             },
             Command::ProviderDelete { name: "p".into() },
             Command::FileRead {
+                workspace: "w1".into(),
                 path: "a/b.txt".into(),
                 offset: None,
                 limit: None,

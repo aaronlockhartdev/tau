@@ -11,3 +11,11 @@ tauri-build = { version = "2.6", features = [] }
 tauri = { version = "2.11", features = [] }
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
+tokio = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+xxhash-rust = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
