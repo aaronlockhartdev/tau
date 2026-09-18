@@ -439,6 +439,8 @@ impl Core {
                 &config.om, record,
             )),
             om_model: config.om.om_model.clone(),
+            subagents: None,
+            child: None,
         });
         let meta = SessionMeta {
             id: provider.session.clone(),
@@ -1390,6 +1392,8 @@ mod tests {
             turn,
             om: None,
             om_model: String::new(),
+            subagents: None,
+            child: None,
         });
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {

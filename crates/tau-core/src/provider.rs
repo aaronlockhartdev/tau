@@ -415,7 +415,7 @@ pub trait TurnSink: Send {
     fn event(&mut self, event: TurnEvent) -> bool;
 }
 
-fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
+pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
     match event {
         TurnEvent::Text(t) => result.text.push_str(t),
         TurnEvent::Reasoning(t) => result.reasoning.push_str(t),

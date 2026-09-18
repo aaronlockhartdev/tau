@@ -23,7 +23,6 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-
 /// The session entry kind for sub-agent lifecycle records (spawn, state
 /// transitions, notifies) — the child's session file is the record.
 pub const KIND_SUBAGENT: &str = "subagent";
@@ -78,18 +77,10 @@ impl StoppedBy {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ChildState {
     Running,
-    Idle {
-        waiting_on: WaitingOn,
-    },
-    Done {
-        output: Option<Value>,
-    },
-    Failed {
-        reason: String,
-    },
-    Stopped {
-        by: StoppedBy,
-    },
+    Idle { waiting_on: WaitingOn },
+    Done { output: Option<Value> },
+    Failed { reason: String },
+    Stopped { by: StoppedBy },
 }
 
 impl ChildState {
@@ -183,9 +174,6 @@ pub struct Child {
     pub agent: Arc<AgentSession>,
     state: Mutex<ChildState>,
     nudge_sent: AtomicBool,
-    /// The drive's in-flight flag: one drive per child at a time (the
-    /// single-writer rule at the sub-agent level).
-    turn: AtomicBool,
     last_message: Mutex<Option<String>>,
 }
 
@@ -341,14 +329,12 @@ impl Supervisor {
     }
 
     fn check_cap(&self, extra: bool) -> Result<(), String> {
-        if let Some(max) = self.caps.max_concurrent {
-            if self.live_children().len() as u32 + extra as u32 > max {
-                return Err(format!(
-                    "subagent_spawn: concurrency cap ({max}) reached"
-                ));
+        match self.caps.max_concurrent {
+            Some(max) if self.live_children().len() as u32 + extra as u32 > max => {
+                Err(format!("subagent_spawn: concurrency cap ({max}) reached"))
             }
+            _ => Ok(()),
         }
-        Ok(())
     }
 
     /// Spawn a child (spec §5.1): async — this only sets things up; the
@@ -386,8 +372,7 @@ impl Supervisor {
         // branched copy of the parent's entry tree (fork, spec §5.1).
         let mut store = match context_mode {
             ContextMode::Fork => {
-                let mut source =
-                    SessionStore::for_workspace(&self.cwd, &self.parent_session);
+                let mut source = SessionStore::for_workspace(&self.cwd, &self.parent_session);
                 source
                     .open()
                     .map_err(|e| format!("subagent_spawn: cannot fork: {e}"))?;
@@ -396,9 +381,7 @@ impl Supervisor {
             }
             _ => {
                 let mut store = SessionStore::for_workspace(&self.cwd, &session_id);
-                store
-                    .create()
-                    .map_err(|e| format!("subagent_spawn: {e}"))?;
+                store.create().map_err(|e| format!("subagent_spawn: {e}"))?;
                 store
             }
         };
@@ -437,7 +420,17 @@ impl Supervisor {
             ContextMode::Fresh => OmRecord::default(),
         };
 
-        let handle = format!("{}-{}", self.parent_session, self.next.fetch_add(1, Ordering::SeqCst) + 1);
+        // Persist the record into the child's file so it survives the
+        // session close/open boundary (load_record reads the newest `om`
+        // entry; the seeded prefix would be lost without it).
+        OmState::from_config(&self.om, record.clone())
+            .save(&mut store)
+            .map_err(|e| format!("subagent_spawn: {e}"))?;
+        let handle = format!(
+            "{}-{}",
+            self.parent_session,
+            self.next.fetch_add(1, Ordering::SeqCst) + 1
+        );
         let provider = self.provider.create(&session_id);
         let agent = Arc::new(AgentSession::new(SessionParams {
             store,
@@ -470,10 +463,12 @@ impl Supervisor {
             agent: agent.clone(),
             state: Mutex::new(ChildState::Running),
             nudge_sent: AtomicBool::new(false),
-            turn: AtomicBool::new(false),
             last_message: Mutex::new(Some(brief.to_owned())),
         });
-        self.children.lock().unwrap().insert(handle.clone(), child.clone());
+        self.children
+            .lock()
+            .unwrap()
+            .insert(handle.clone(), child.clone());
         self.bridge.spawned(&SpawnNotice {
             parent: self.parent_session.clone(),
             handle: handle.clone(),
@@ -498,28 +493,48 @@ impl Supervisor {
         })
     }
 
-    /// The child's drive: run turns until the child leaves the running
-    /// state, with the one-shot nudge and the three-way fork (ADR-0001).
+    /// The child's drive: it runs turns while the child is `Running` and
+    /// sleeps while the child rests in `idle` / `done`, so a resume — a
+    /// message that flips the child back to `Running` — is picked up by
+    /// the same task; there is no window in which a resume can race the
+    /// drive's exit (ADR-0001: everything non-running is resumable,
+    /// nothing auto-resumes). `stopped` and `failed` end the drive; the
+    /// resume path starts a fresh drive for those.
     async fn drive_loop(sup: Arc<Supervisor>, child: Arc<Child>) {
-        child.turn.store(true, Ordering::SeqCst);
         loop {
-            match sup
-                .driver
-                .drive(&child.session_id, &child.agent)
-                .await
-            {
+            match child.state() {
+                ChildState::Running => {}
+                ChildState::Idle { .. } | ChildState::Done { .. } => {
+                    if child.agent.has_pending() {
+                        child.set_state(
+                            ChildState::Running,
+                            Some("resumed by a queued message".into()),
+                        );
+                        sup.bridge.state(&StateNotice {
+                            parent: sup.parent_session.clone(),
+                            handle: child.handle.clone(),
+                            child: child.session_id.clone(),
+                            state: ChildState::Running,
+                            note: Some("resumed by a queued message".into()),
+                        });
+                        continue;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    continue;
+                }
+                _ => break,
+            }
+            match sup.driver.drive(&child.session_id, &child.agent).await {
                 Ok(()) => {}
                 Err(reason) => {
                     sup.mark_failed(&child, reason);
                     break;
                 }
             }
-            // The drive drained the queue: whatever the child's state is
-            // now, only `Running` keeps the loop (done / idle / failed /
-            // stopped are all deliberate rest states — the child is
-            // resumable, and nothing here resumes it).
+            // The drive drained the queue and the child moved into a rest
+            // state: the loop's head sleeps until a resume.
             if !matches!(child.state(), ChildState::Running) {
-                break;
+                continue;
             }
             // A turn ended without `parent_notify`: the one-shot nudge.
             if !child.nudge_sent.swap(true, Ordering::SeqCst) {
@@ -533,20 +548,27 @@ impl Supervisor {
             // Nudge exhausted: the three-way fork's remaining arm.
             sup.mark_failed(
                 &child,
-                "nudge exhausted: the child ended a turn without done or a valid wait declaration".to_owned(),
+                "nudge exhausted: the child ended a turn without done or a valid wait declaration"
+                    .to_owned(),
             );
             break;
         }
-        child.turn.store(false, Ordering::SeqCst);
     }
 
     fn mark_failed(&self, child: &Arc<Child>, reason: String) {
-        child.set_state(ChildState::Failed { reason: reason.clone() }, None);
+        child.set_state(
+            ChildState::Failed {
+                reason: reason.clone(),
+            },
+            None,
+        );
         self.bridge.state(&StateNotice {
             parent: self.parent_session.clone(),
             handle: child.handle.clone(),
             child: child.session_id.clone(),
-            state: ChildState::Failed { reason: reason.clone() },
+            state: ChildState::Failed {
+                reason: reason.clone(),
+            },
             note: Some(reason.clone()),
         });
         // A failed child auto-notifies the parent to investigate (ADR-0001
@@ -563,9 +585,8 @@ impl Supervisor {
 
     /// The child-side `parent_notify` (routed here from the child's loop).
     fn notify(&self, handle: &str, args: &Value) -> String {
-        let Some(child) = self.children.lock().unwrap().get(handle).cloned() else {
-            return format!("parent_notify: unknown child {handle}");
-        };
+        // Argument validation before the child lookup: a malformed call
+        // is rejected without touching state, even for an unknown handle.
         let Some(text) = args.get("text").and_then(Value::as_str) else {
             return "parent_notify: missing \"text\"".into();
         };
@@ -577,7 +598,9 @@ impl Supervisor {
             Some("user") => Some(WaitingOn::User),
             Some("subagent") => Some(WaitingOn::Subagent),
             Some(other) => {
-                return format!("parent_notify: waiting_on must be parent | user | subagent, got {other:?}");
+                return format!(
+                    "parent_notify: waiting_on must be parent | user | subagent, got {other:?}"
+                );
             }
         };
 
@@ -589,6 +612,10 @@ impl Supervisor {
         if !done && output.is_some() {
             return "parent_notify: output requires done:true".into();
         }
+
+        let Some(child) = self.children.lock().unwrap().get(handle).cloned() else {
+            return format!("parent_notify: unknown child {handle}");
+        };
 
         let mut payload = json!({ "event": "notify", "text": text, "done": done });
         if let Some(output) = &output {
@@ -605,12 +632,19 @@ impl Supervisor {
         if done {
             // Quiescence, not death (ADR-0001): the loop ends, the
             // concurrency slot frees, and the parent is woken always.
-            child.set_state(ChildState::Done { output: output.clone() }, None);
+            child.set_state(
+                ChildState::Done {
+                    output: output.clone(),
+                },
+                None,
+            );
             self.bridge.state(&StateNotice {
                 parent: self.parent_session.clone(),
                 handle: child.handle.clone(),
                 child: child.session_id.clone(),
-                state: ChildState::Done { output: output.clone() },
+                state: ChildState::Done {
+                    output: output.clone(),
+                },
                 note: None,
             });
             self.bridge.wake(&WakeNotice {
@@ -654,10 +688,19 @@ impl Supervisor {
     /// `subagent_message` (and the GUI's send to a child): running → the
     /// text queues on the child's lane; non-running → resume (text omitted
     /// = a pure resume). One tool, state decides (ADR-0006).
-    pub fn message(self: &Arc<Self>, handle: &str, text: Option<String>, lane: Lane) -> Result<String, String> {
-        let child = self.children.lock().unwrap().get(handle).cloned().ok_or_else(|| {
-            format!("subagent_message: no sub-agent {handle} in this session")
-        })?;
+    pub fn message(
+        self: &Arc<Self>,
+        handle: &str,
+        text: Option<String>,
+        lane: Lane,
+    ) -> Result<String, String> {
+        let child = self
+            .children
+            .lock()
+            .unwrap()
+            .get(handle)
+            .cloned()
+            .ok_or_else(|| format!("subagent_message: no sub-agent {handle} in this session"))?;
         match child.state() {
             ChildState::Running => match &text {
                 Some(text) => {
@@ -674,6 +717,10 @@ impl Supervisor {
                 if matches!(child.state(), ChildState::Done { .. }) {
                     self.check_cap(true)?;
                 }
+                let was_dead = matches!(
+                    *child.state.lock().unwrap(),
+                    ChildState::Stopped { .. } | ChildState::Failed { .. }
+                );
                 let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
                 child.set_state(ChildState::Running, Some(text.clone()));
                 self.bridge.state(&StateNotice {
@@ -684,12 +731,13 @@ impl Supervisor {
                     note: Some("resumed".into()),
                 });
                 child.agent.send(text, Lane::FollowUp);
-                // One drive at a time: a second concurrent resume just
-                // queues — the in-flight drive absorbs the message.
-                if child.turn.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-                {
-                    tokio::spawn(Self::drive_loop(Arc::clone(self), child));
+                // A drive ended by stop/failure is gone: this resume starts
+                // a fresh one (idle/done drives persist and wake on their
+                // own). The nudge budget resets with the new work period.
+                if was_dead {
+                    tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone()));
                 }
+                child.nudge_sent.store(false, Ordering::SeqCst);
                 Ok(format!("resumed sub-agent {handle}"))
             }
         }
@@ -825,7 +873,11 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
             let Some(handle) = tc.args.get("handle").and_then(Value::as_str) else {
                 return "subagent_message: missing \"handle\"".into();
             };
-            let text = tc.args.get("text").and_then(Value::as_str).map(str::to_owned);
+            let text = tc
+                .args
+                .get("text")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
             match sup.message(handle, text, Lane::Steering) {
                 Ok(s) => s,
                 Err(e) => e,
@@ -865,9 +917,9 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-    use crate::provider::{self, canned, ResponseRequest, TurnSink};
+    use crate::provider::{self, ResponseRequest, TurnSink};
     use crate::session::SessionStore;
+    use std::time::Duration;
 
     // ── test seams ──────────────────────────────────────────────────────
 
@@ -900,19 +952,27 @@ mod tests {
     }
 
     /// Per-child canned scripts: the k-th child created gets scripts[k]
-    /// (falls back to the last script).
+    /// (falls back to the last script); delays likewise (default: none).
     struct CannedFactory {
         scripts: Vec<Vec<String>>,
+        delays: Vec<Duration>,
         created: AtomicUsize,
     }
 
     impl ChildProviderFactory for CannedFactory {
         fn create(&self, _id: &str) -> TurnProviderRef {
             let slot = self.created.fetch_add(1, Ordering::SeqCst);
-            let scripts = self.scripts.get(slot).or(self.scripts.last()).cloned().unwrap_or_default();
+            let scripts = self
+                .scripts
+                .get(slot)
+                .or(self.scripts.last())
+                .cloned()
+                .unwrap_or_default();
+            let pre_delay = self.delays.get(slot).copied().unwrap_or(Duration::ZERO);
             Arc::new(CannedChildProvider {
                 scripts,
                 index: AtomicUsize::new(0),
+                pre_delay,
             })
         }
     }
@@ -920,20 +980,52 @@ mod tests {
     struct CannedChildProvider {
         scripts: Vec<String>,
         index: AtomicUsize,
+        pre_delay: Duration,
     }
     impl CannedChildProvider {
         fn next(&self) -> String {
+            // No modulo: an exhausted script ends in bare turns, so a
+            // child's scripted turn always terminates.
             let i = self.index.fetch_add(1, Ordering::SeqCst);
-            self.scripts
-                .get(i % self.scripts.len())
-                .cloned()
-                .unwrap_or_else(|| sse("", &[]))
+            self.scripts.get(i).cloned().unwrap_or_else(|| sse("", &[]))
         }
     }
     impl provider::TurnProvider for CannedChildProvider {
-        fn call<'a>(&self, req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> provider::ProviderTurn<'a> {
+        fn call<'a>(
+            &self,
+            _req: &ResponseRequest,
+            sink: &'a mut dyn TurnSink,
+        ) -> provider::ProviderTurn<'a> {
             let body = self.next();
-            provider::canned(&body).call(req, sink)
+            let delay = self.pre_delay;
+            let (events, calls) = provider::decode_stream(&body).unwrap();
+            Box::pin(async move {
+                let mut result = provider::TurnResult::default();
+                let mut accepted = 0usize;
+                for (i, event) in events.iter().cloned().enumerate() {
+                    // A mid-stream pause: the first event lands, then the
+                    // stream stalls long enough for a stop to cut it.
+                    if i == 1 && delay > Duration::ZERO {
+                        tokio::time::sleep(delay).await;
+                    }
+                    if !sink.event(event.clone()) {
+                        break;
+                    }
+                    provider::fold_event(&event, &mut result);
+                    accepted += 1;
+                }
+                if accepted == events.len() {
+                    result.completed = events
+                        .iter()
+                        .any(|e| matches!(e, provider::TurnEvent::Completed(_)));
+                }
+                result.calls = calls
+                    .iter()
+                    .filter(|(i, _)| *i <= accepted)
+                    .map(|(_, c)| c.clone())
+                    .collect();
+                Ok(result)
+            })
         }
     }
 
@@ -960,7 +1052,13 @@ mod tests {
         body
     }
 
-    fn notify_call(call_id: &str, text: &str, done: bool, output: Option<Value>, waiting: Option<&str>) -> (String, String, String) {
+    fn notify_call(
+        call_id: &str,
+        text: &str,
+        done: bool,
+        output: Option<Value>,
+        waiting: Option<&str>,
+    ) -> (String, String, String) {
         let mut args = json!({ "text": text });
         if done {
             args["done"] = json!(true);
@@ -971,11 +1069,7 @@ mod tests {
         if let Some(w) = waiting {
             args["waiting_on"] = json!(w);
         }
-        (
-            "parent_notify".into(),
-            call_id.into(),
-            args.to_string(),
-        )
+        ("parent_notify".into(), call_id.into(), args.to_string())
     }
 
     /// A parent session + supervisor wired to the test seams. The parent
@@ -986,9 +1080,20 @@ mod tests {
         child_scripts: Vec<Vec<String>>,
         caps: SubAgents,
     ) -> (Arc<Supervisor>, Arc<TestBridge>) {
+        harness_with_delays(dir, parent_bodies, child_scripts, vec![], caps)
+    }
+
+    fn harness_with_delays(
+        dir: &std::path::Path,
+        parent_bodies: Vec<String>,
+        child_scripts: Vec<Vec<String>>,
+        delays: Vec<Duration>,
+        caps: SubAgents,
+    ) -> (Arc<Supervisor>, Arc<TestBridge>) {
         let bridge = Arc::new(TestBridge::default());
         let factory = Arc::new(CannedFactory {
             scripts: child_scripts,
+            delays,
             created: AtomicUsize::new(0),
         });
         let sup = Supervisor::new(SupervisorParams {
@@ -1041,9 +1146,17 @@ mod tests {
         }
     }
     impl provider::TurnProvider for ScriptedProvider {
-        fn call<'a>(&self, req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> provider::ProviderTurn<'a> {
+        fn call<'a>(
+            &self,
+            req: &ResponseRequest,
+            sink: &'a mut dyn TurnSink,
+        ) -> provider::ProviderTurn<'a> {
             let i = self.index.fetch_add(1, Ordering::SeqCst);
-            let body = self.bodies.get(i % self.bodies.len()).cloned().unwrap_or_else(|| sse("", &[]));
+            let body = self
+                .bodies
+                .get(i % self.bodies.len())
+                .cloned()
+                .unwrap_or_else(|| sse("", &[]));
             provider::canned(&body).call(req, sink)
         }
     }
@@ -1052,7 +1165,11 @@ mod tests {
         json!({ "type": "general", "brief": brief, "context_mode": mode })
     }
 
-    fn entry_by_event(dir: &std::path::Path, session: &str, event: &str) -> Option<crate::session::Entry> {
+    fn entry_by_event(
+        dir: &std::path::Path,
+        session: &str,
+        event: &str,
+    ) -> Option<crate::session::Entry> {
         let mut store = SessionStore::for_workspace(dir, session);
         store.open().unwrap();
         store
@@ -1076,35 +1193,69 @@ mod tests {
         let parent_bodies = vec![
             sse(
                 "",
-                &[("subagent_spawn".into(), "c1".into(), spawn_args("do A", "fresh").to_string())],
+                &[(
+                    "subagent_spawn".into(),
+                    "c1".into(),
+                    spawn_args("do A", "fresh").to_string(),
+                )],
             ),
             sse(
                 "",
-                &[("subagent_spawn".into(), "c2".into(), spawn_args("do B", "fresh").to_string())],
+                &[(
+                    "subagent_spawn".into(),
+                    "c2".into(),
+                    spawn_args("do B", "fresh").to_string(),
+                )],
             ),
             sse(
                 "",
-                &[("subagent_spawn".into(), "c3".into(), spawn_args("do C", "fresh").to_string())],
+                &[(
+                    "subagent_spawn".into(),
+                    "c3".into(),
+                    spawn_args("do C", "fresh").to_string(),
+                )],
             ),
             sse("all spawned", &[]),
         ];
         // Per-child scripts: A → done; B → a note (park), then a resumed
         // turn that finishes; C → two bare turn-ends (nudge, then failed).
         let child_scripts = vec![
-            vec![sse(
-                "",
-                &[notify_call("n1", "A is done", true, Some(json!({"answer": 42})), None)],
-            )],
             vec![
-                sse("", &[notify_call("n2", "B needs input", false, None, None)]),
                 sse(
                     "",
-                    &[notify_call("n3", "B finished after resume", true, Some(json!({"ok": true})), None)],
+                    &[notify_call(
+                        "n1",
+                        "A is done",
+                        true,
+                        Some(json!({"answer": 42})),
+                        None,
+                    )],
                 ),
+                sse("", &[]),
+            ],
+            vec![
+                sse("", &[notify_call("n2", "B needs input", false, None, None)]),
+                sse("", &[]),
+                sse(
+                    "",
+                    &[notify_call(
+                        "n3",
+                        "B finished after resume",
+                        true,
+                        Some(json!({"ok": true})),
+                        None,
+                    )],
+                ),
+                sse("", &[]),
             ],
             vec![sse("", &[]), sse("", &[])],
         ];
-        let (sup, bridge) = harness(dir.path(), parent_bodies, child_scripts, SubAgents::default());
+        let (sup, bridge) = harness(
+            dir.path(),
+            parent_bodies,
+            child_scripts,
+            SubAgents::default(),
+        );
 
         // The parent's loop runs the spawns (tools dispatch in-loop).
         sup_spawn_from_parent(&sup).await;
@@ -1114,24 +1265,68 @@ mod tests {
         let handle_c = "parent-3".to_owned();
 
         // A: done — the parent is woken with the schema-validated output.
-        wait_for(|| matches!(sup.state_info(&handle_a).unwrap().state, ChildState::Done { .. }));
-        let wake = bridge.wakes.lock().unwrap().iter().find(|w| w.kind == WakeKind::Done).cloned().expect("done wakes the parent");
+        wait_for(|| {
+            matches!(
+                sup.state_info(&handle_a).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        let wake = bridge
+            .wakes
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|w| w.kind == WakeKind::Done)
+            .cloned()
+            .expect("done wakes the parent");
         assert_eq!(wake.output, Some(json!({"answer": 42})));
         // The transition is a session entry in the child's file.
-        let entry = entry_by_event(dir.path(), &sup.state_info(&handle_a).unwrap().child, "state");
+        let entry = entry_by_event(
+            dir.path(),
+            &sup.state_info(&handle_a).unwrap().child,
+            "state",
+        );
         assert!(entry.is_some(), "the done transition is a session entry");
 
         // B: parked by a note (default waiting_on = parent → a wake).
-        wait_for(|| matches!(sup.state_info(&handle_b).unwrap().state, ChildState::Idle { .. }));
-        assert!(bridge.wakes.lock().unwrap().iter().any(|w| w.kind == WakeKind::Waiting));
+        wait_for(|| {
+            matches!(
+                sup.state_info(&handle_b).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        });
+        assert!(
+            bridge
+                .wakes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|w| w.kind == WakeKind::Waiting)
+        );
         // Resumed by a message (the tool's non-running branch).
-        sup.message(&handle_b, Some("proceed".into()), Lane::Steering).unwrap();
-        wait_for(|| matches!(sup.state_info(&handle_b).unwrap().state, ChildState::Done { .. }));
+        sup.message(&handle_b, Some("proceed".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&handle_b).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
 
         // C: nudge-exhausted → failed, and the parent is notified.
-        wait_for(|| matches!(sup.state_info(&handle_c).unwrap().state, ChildState::Failed { .. }));
+        wait_for(|| {
+            matches!(
+                sup.state_info(&handle_c).unwrap().state,
+                ChildState::Failed { .. }
+            )
+        });
         assert!(
-            bridge.wakes.lock().unwrap().iter().any(|w| w.kind == WakeKind::Failed),
+            bridge
+                .wakes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|w| w.kind == WakeKind::Failed),
             "a failed child auto-notifies the parent"
         );
         // The nudge is a session entry (one-shot).
@@ -1141,14 +1336,24 @@ mod tests {
         let centries = cstore.entries_range(0, usize::MAX).unwrap();
         let nudges: Vec<_> = centries
             .iter()
-            .filter(|e| e.kind == crate::agent::KIND_SYSTEM && e.payload["note"].as_str() == Some("nudge: state what you are waiting for, or finish"))
+            .filter(|e| {
+                e.kind == crate::agent::KIND_SYSTEM
+                    && e.payload["note"].as_str()
+                        == Some("nudge: state what you are waiting for, or finish")
+            })
             .collect();
         assert_eq!(nudges.len(), 1, "one nudge per parked state, no loops");
 
         // Every spawn produced a bridge event; the state stream saw the
         // full transition set.
         assert_eq!(bridge.spawns.lock().unwrap().len(), 3);
-        let states: Vec<&str> = bridge.states.lock().unwrap().iter().map(|n| n.state.kind()).collect();
+        let states: Vec<&str> = bridge
+            .states
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|n| n.state.kind())
+            .collect();
         assert!(states.contains(&"done") && states.contains(&"idle") && states.contains(&"failed"));
     }
 
@@ -1163,7 +1368,10 @@ mod tests {
     fn wait_for(cond: impl Fn() -> bool) {
         let start = std::time::Instant::now();
         while !cond() {
-            assert!(start.elapsed() < Duration::from_secs(10), "timed out waiting");
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "timed out waiting"
+            );
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -1176,9 +1384,45 @@ mod tests {
     async fn the_wake_rule_matrix() {
         let dir = tempfile::tempdir().unwrap();
         let child_scripts = vec![
-            vec![sse("", &[notify_call("n1", "waiting for the user", false, None, Some("user"))])],
-            vec![sse("", &[notify_call("n2", "waiting for my child", false, None, Some("subagent"))])],
-            vec![sse("", &[notify_call("n3", "waiting for the parent", false, None, Some("parent"))])],
+            vec![
+                sse(
+                    "",
+                    &[notify_call(
+                        "n1",
+                        "waiting for the user",
+                        false,
+                        None,
+                        Some("user"),
+                    )],
+                ),
+                sse("", &[]),
+            ],
+            vec![
+                sse(
+                    "",
+                    &[notify_call(
+                        "n2",
+                        "waiting for my child",
+                        false,
+                        None,
+                        Some("subagent"),
+                    )],
+                ),
+                sse("", &[]),
+            ],
+            vec![
+                sse(
+                    "",
+                    &[notify_call(
+                        "n3",
+                        "waiting for the parent",
+                        false,
+                        None,
+                        Some("parent"),
+                    )],
+                ),
+                sse("", &[]),
+            ],
         ];
         let (sup, bridge) = harness(
             dir.path(),
@@ -1197,15 +1441,20 @@ mod tests {
             r.unwrap();
         }
         wait_for(|| {
-            (0..3)
-                .all(|i| matches!(
+            (0..3).all(|i| {
+                matches!(
                     sup.state_info(&format!("parent-{}", i + 1)).unwrap().state,
                     ChildState::Idle { .. }
-                ))
+                )
+            })
         });
         let wakes = bridge.wakes.lock().unwrap();
         // Exactly one wake: the waiting_on=parent child.
-        assert_eq!(wakes.len(), 1, "only the parent-declared child wakes the parent");
+        assert_eq!(
+            wakes.len(),
+            1,
+            "only the parent-declared child wakes the parent"
+        );
         assert_eq!(wakes[0].kind, WakeKind::Waiting);
         assert_eq!(wakes[0].waiting_on, Some(WaitingOn::Parent));
     }
@@ -1223,16 +1472,23 @@ mod tests {
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
         );
-        let (sup, bridge) = harness(
+        let (sup, bridge) = harness_with_delays(
             dir.path(),
             vec![sse("spawning", &[])],
             vec![vec![
                 slow.to_owned(),
-                sse("", &[notify_call("n1", "done", true, Some(json!({"r": 1})), None)]),
+                sse(
+                    "",
+                    &[notify_call("n1", "done", true, Some(json!({"r": 1})), None)],
+                ),
+                sse("", &[]),
             ]],
+            vec![Duration::from_millis(200)],
             SubAgents::default(),
         );
-        let s = sup.spawn("general", "slow work", ContextMode::Fresh, None, "c0").unwrap();
+        let s = sup
+            .spawn("general", "slow work", ContextMode::Fresh, None, "c0")
+            .unwrap();
         let drive = s.drive;
         // Let the slow stream start, then stop it.
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -1244,20 +1500,44 @@ mod tests {
         let entries = store.entries_range(0, usize::MAX).unwrap();
         let interrupted = entries
             .iter()
-            .find(|e| e.kind == crate::agent::KIND_ASSISTANT && e.payload["interrupted"] == json!(true))
+            .find(|e| {
+                e.kind == crate::agent::KIND_ASSISTANT && e.payload["interrupted"] == json!(true)
+            })
             .expect("the partial is kept as interrupted");
-        assert!(interrupted.payload["text"].as_str().unwrap().contains("partial"));
-        assert!(matches!(sup.state_info(&s.handle).unwrap().state, ChildState::Stopped { by: StoppedBy::User }));
-        assert!(bridge.states.lock().unwrap().iter().any(|n| n.state == ChildState::Stopped { by: StoppedBy::User }));
+        assert!(
+            interrupted.payload["text"]
+                .as_str()
+                .unwrap()
+                .contains("partial")
+        );
+        assert!(matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Stopped {
+                by: StoppedBy::User
+            }
+        ));
+        assert!(bridge.states.lock().unwrap().iter().any(|n| n.state
+            == ChildState::Stopped {
+                by: StoppedBy::User
+            }));
 
         // Resume from the stopped state: the message starts the next turn.
-        sup.message(&s.handle, Some("continue".into()), Lane::Steering).unwrap();
-        wait_for(|| matches!(sup.state_info(&s.handle).unwrap().state, ChildState::Done { .. }));
+        sup.message(&s.handle, Some("continue".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&s.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
         // The resume is a session entry (the state transition is durable).
+        let mut cstore = SessionStore::for_workspace(dir.path(), &s.session_id);
+        cstore.open().unwrap();
+        let entries = cstore.entries_range(0, usize::MAX).unwrap();
         assert!(
-            entry_by_event(dir.path(), &s.session_id, "state")
-                .map(|e| e.payload["state"] == json!({"state": "running"}))
-                .unwrap_or(false),
+            entries.iter().any(|e| e.kind == KIND_SUBAGENT
+                && e.payload["event"] == json!("state")
+                && e.payload["state"] == json!({"state": "running"})),
             "the resume transition is recorded"
         );
     }
@@ -1272,29 +1552,84 @@ mod tests {
         let (sup, _) = harness(
             dir.path(),
             vec![sse("x", &[])],
-            vec![vec![sse("", &[notify_call("n1", "note", false, None, Some("user"))])]],
+            vec![
+                vec![
+                    sse("", &[notify_call("n1", "note", false, None, Some("user"))]),
+                    sse("", &[]),
+                    sse(
+                        "",
+                        &[notify_call(
+                            "n2",
+                            "done",
+                            true,
+                            Some(json!({"ok": true})),
+                            None,
+                        )],
+                    ),
+                    sse("", &[]),
+                ],
+                vec![
+                    sse(
+                        "",
+                        &[notify_call(
+                            "n3",
+                            "done",
+                            true,
+                            Some(json!({"ok": true})),
+                            None,
+                        )],
+                    ),
+                    sse("", &[]),
+                ],
+            ],
             SubAgents {
                 max_depth: 1,
                 max_concurrent: Some(1),
             },
         );
-        let first = sup.spawn("general", "one", ContextMode::Fresh, None, "c0").unwrap();
+        let first = sup
+            .spawn("general", "one", ContextMode::Fresh, None, "c0")
+            .unwrap();
         // Second spawn while the first holds its slot: refused.
         let err = sup
             .spawn("general", "two", ContextMode::Fresh, None, "c1")
             .expect_err("second spawn while the first holds its slot");
         assert!(err.contains("concurrency cap"), "{err}");
         // The child's tool set: parent_notify in, subagent_spawn out.
-        let tools = tools::child_tool_specs().iter().map(|t| t.name.clone()).collect::<Vec<_>>();
+        let tools = tools::child_tool_specs()
+            .iter()
+            .map(|t| t.name.clone())
+            .collect::<Vec<_>>();
         assert!(tools.contains(&"parent_notify".to_owned()));
         assert!(!tools.contains(&"subagent_spawn".to_owned()));
-        // Free the slot: the done child no longer counts.
-        sup.message(&first.handle, Some("finish".into()), Lane::Steering).unwrap();
-        wait_for(|| matches!(sup.state_info(&first.handle).unwrap().state, ChildState::Done { .. }));
+        // Free the slot: the done child no longer counts. Wait for the
+        // park first so the resume is deterministic (a message delivered
+        // mid-brief-turn would be a steering, consumed by that turn).
+        wait_for(|| {
+            matches!(
+                sup.state_info(&first.handle).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        });
+        sup.message(&first.handle, Some("finish".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&first.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
         let second = sup.spawn("general", "two", ContextMode::Fresh, None, "c1");
-        assert!(second.is_ok(), "a done child frees its slot: {:?}", second.err());
+        assert!(
+            second.is_ok(),
+            "a done child frees its slot: {:?}",
+            second.err()
+        );
         // Unknown agent types are refused (v0 has only `general`).
-        assert!(sup.spawn("planner", "x", ContextMode::Fresh, None, "c2").is_err());
+        assert!(
+            sup.spawn("planner", "x", ContextMode::Fresh, None, "c2")
+                .is_err()
+        );
     }
 
     // ── context modes ───────────────────────────────────────────────────
@@ -1314,14 +1649,16 @@ mod tests {
         );
         let parent = sup.parent.lock().unwrap().clone().unwrap();
         parent.set_om(Some(OmState::from_config(
-                &Om::default(),
-                OmRecord {
-                    frozen_prefix: String::new(),
-                    active_observations: "<observations>the parent's log</observations>".into(),
-                    ..Default::default()
-                },
-            )));
-        let s = sup.spawn("general", "compact me", ContextMode::Compacted, None, "c0").unwrap();
+            &Om::default(),
+            OmRecord {
+                frozen_prefix: String::new(),
+                active_observations: "<observations>the parent's log</observations>".into(),
+                ..Default::default()
+            },
+        )));
+        let s = sup
+            .spawn("general", "compact me", ContextMode::Compacted, None, "c0")
+            .unwrap();
         let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
         store.open().unwrap();
         // The spawn-snapshot entry (the record in the child's file).
@@ -1332,10 +1669,18 @@ mod tests {
             .find(|e| e.kind == om_integration::KIND_SPAWN_SNAPSHOT)
             .expect("a spawn-snapshot entry links the frozen prefix to the parent");
         assert_eq!(snapshot.payload["parentSession"], "parent");
-        assert!(snapshot.payload["log"].as_str().unwrap().contains("the parent's log"));
+        assert!(
+            snapshot.payload["log"]
+                .as_str()
+                .unwrap()
+                .contains("the parent's log")
+        );
         // The child's own record: the prefix verbatim, empty suffix.
         let record = OmState::load_record(&mut store).unwrap();
-        assert_eq!(record.frozen_prefix, "<observations>the parent's log</observations>");
+        assert_eq!(
+            record.frozen_prefix,
+            "<observations>the parent's log</observations>"
+        );
         assert!(record.active_observations.is_empty());
     }
 
@@ -1360,14 +1705,16 @@ mod tests {
             .unwrap();
         // A record on the parent.
         parent.set_om(Some(OmState::from_config(
-                &Om::default(),
-                OmRecord {
-                    frozen_prefix: "FROZEN".into(),
-                    active_observations: "SUFFIX".into(),
-                    ..Default::default()
-                },
-            )));
-        let s = sup.spawn("general", "fork me", ContextMode::Fork, None, "c0").unwrap();
+            &Om::default(),
+            OmRecord {
+                frozen_prefix: "FROZEN".into(),
+                active_observations: "SUFFIX".into(),
+                ..Default::default()
+            },
+        )));
+        let s = sup
+            .spawn("general", "fork me", ContextMode::Fork, None, "c0")
+            .unwrap();
         let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
         store.open().unwrap();
         let child_entries = store.entries_range(0, usize::MAX).unwrap();
@@ -1375,7 +1722,10 @@ mod tests {
         let mut pstore = SessionStore::for_workspace(dir.path(), "parent");
         pstore.open().unwrap();
         let parent_entries = pstore.entries_range(0, usize::MAX).unwrap();
-        let parent_user = parent_entries.iter().find(|e| e.kind == "user").expect("the parent has a user entry");
+        let parent_user = parent_entries
+            .iter()
+            .find(|e| e.kind == "user")
+            .expect("the parent has a user entry");
         assert!(
             child_entries.iter().any(|e| e.id == parent_user.id),
             "the fork carries the parent's entries with stable ids"
@@ -1395,7 +1745,12 @@ mod tests {
     #[tokio::test]
     async fn notify_rejects_invalid_shapes() {
         let dir = tempfile::tempdir().unwrap();
-        let (sup, _) = harness(dir.path(), vec![sse("x", &[])], vec![vec![sse("", &[])]], SubAgents::default());
+        let (sup, _) = harness(
+            dir.path(),
+            vec![sse("x", &[])],
+            vec![vec![sse("", &[])]],
+            SubAgents::default(),
+        );
         // A child session file + link: notify validation is checked before
         // any state change.
         let mut store = SessionStore::for_workspace(dir.path(), "child");
@@ -1404,9 +1759,21 @@ mod tests {
             supervisor: sup,
             handle: "child-1".into(),
         });
-        assert!(link.notify(&json!({ "text": "t", "output": json!({}) })).contains("output requires done:true"));
-        assert!(link.notify(&json!({ "text": "t", "done": true })).contains("done:true requires an object output"));
-        assert!(link.notify(&json!({ "text": "t", "done": true, "output": json!([1]) })).contains("object output"));
-        assert!(link.notify(&json!({ "text": "t", "waiting_on": "the void" })).contains("waiting_on must be"));
+        assert!(
+            link.notify(&json!({ "text": "t", "output": json!({}) }))
+                .contains("output requires done:true")
+        );
+        assert!(
+            link.notify(&json!({ "text": "t", "done": true }))
+                .contains("done:true requires an object output")
+        );
+        assert!(
+            link.notify(&json!({ "text": "t", "done": true, "output": json!([1]) }))
+                .contains("object output")
+        );
+        assert!(
+            link.notify(&json!({ "text": "t", "waiting_on": "the void" }))
+                .contains("waiting_on must be")
+        );
     }
 }

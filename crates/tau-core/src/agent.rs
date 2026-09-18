@@ -221,6 +221,12 @@ impl AgentSession {
         self.stop.clone()
     }
 
+    /// Whether a queued message is waiting (a parked sub-agent with a
+    /// queued message is resumed by it, ADR-0001).
+    pub fn has_pending(&self) -> bool {
+        !self.inner.lock().unwrap().queue.is_empty()
+    }
+
     /// The child-side link (a child session's `parent_notify` routing).
     pub fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
         self.inner.lock().unwrap().child.clone()
@@ -383,21 +389,23 @@ impl AgentSession {
                     .unwrap_or_default();
                 crate::om_integration::recall(&mut inner.store, &record, &args)
             } else {
-                // The sub-agent surface routes outside the core tools:
-                // the parent's supervisor tools, or the child's
-                // `parent_notify` (ticket #23); everything else is a core
-                // tool.
-                let routed = {
+                // The sub-agent surface routes outside the core tools: the
+                // parent's supervisor tools, or the child's `parent_notify`
+                // (ticket #23); everything else is a core tool. The links
+                // are cloned under the lock and invoked outside it: the
+                // routes re-lock this session's `inner` (a child notify
+                // records a state entry; a spawn reads the parent's OM
+                // record), and the lock is not reentrant.
+                let (sup, link) = {
                     let inner = self.inner.lock().unwrap();
-                    match (inner.subagents.clone(), inner.child.clone()) {
-                        (Some(sup), _) => Some(crate::subagent::route_parent(&sup, &tc)),
-                        (None, Some(link)) => Some(link.notify(&args)),
-                        _ => None,
-                    }
+                    (inner.subagents.clone(), inner.child.clone())
                 };
-                match routed {
-                    Some(out) => out,
-                    None => tools::dispatch(&self.cwd(), &tc).await,
+                if let Some(sup) = sup {
+                    crate::subagent::route_parent(&sup, &tc)
+                } else if let Some(link) = link {
+                    link.notify(&args)
+                } else {
+                    tools::dispatch(&self.cwd(), &tc).await
                 }
             };
             self.append(
