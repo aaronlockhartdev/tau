@@ -3,10 +3,9 @@
 //! consistent with it.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use serde_json::json;
-use tau_app::core::{Core, CoreBuilder};
+use tau_app::core::CoreBuilder;
 use tau_core::config::Provider;
 use tau_core::session::SessionStore;
 use tau_protocol::snapshot::EntryRange;
@@ -24,7 +23,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
             models: vec!["m".into()],
         },
     );
-    let core = Arc::new(CoreBuilder::custom(providers).build());
+    let core = CoreBuilder::custom(providers).build();
 
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {

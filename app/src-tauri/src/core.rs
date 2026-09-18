@@ -1332,19 +1332,6 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let events = collected.lock().unwrap().clone();
-        let types: Vec<&str> = events
-            .iter()
-            .map(|e| match e {
-                Event::StreamStart { .. } => "stream_start",
-                Event::StreamDelta { .. } => "stream_delta",
-                Event::StreamEnd { .. } => "stream_end",
-                Event::ToolStart { .. } => "tool_start",
-                Event::ToolEnd { .. } => "tool_end",
-                Event::Queue { .. } => "queue",
-                Event::SessionEvent { .. } => "session_event",
-                Event::System { .. } => "system",
-            })
-            .collect();
 
         // The stream: one start, deltas coalesced into one, one end with
         // the usage; the tool batch: a start/end pair; the queue: the
