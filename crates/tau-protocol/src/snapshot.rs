@@ -24,6 +24,8 @@ pub struct SessionMeta {
     pub workspace: String,
     /// v0 sessions carry no title yet; the GUI derives one.
     pub title: Option<String>,
+    /// The header's created timestamp (epoch ms).
+    pub created: u64,
     /// The active branch's leaf entry id.
     pub leaf: Option<String>,
     pub model: Option<String>,
@@ -45,6 +47,24 @@ pub struct EntryMeta {
     pub preview: String,
     /// Set on compaction records (spec §3).
     pub first_kept: Option<String>,
+    /// `Ok` is omitted on the wire — it is the near-universal case and the
+    /// type's default; the spec's field stays present via the type.
+    #[serde(default, skip_serializing_if = "is_ok_status")]
+    pub status: EntryStatus,
+}
+/// Per-entry status (spec §8 entry metadata): in the v0 format the only
+/// per-entry state is a cut partial — an assistant entry recorded as
+/// `interrupted` (spec §6/§7).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntryStatus {
+    #[default]
+    Ok,
+    Interrupted,
+}
+
+fn is_ok_status(s: &EntryStatus) -> bool {
+    *s == EntryStatus::Ok
 }
 
 /// A paged-read window (spec §8: `entries {range}`).

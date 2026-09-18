@@ -1,14 +1,32 @@
 <script lang="ts">
   // Layout skeleton only (spec §9): workspace tabs on top, chat central.
-  // Behavior lands with the GUI milestones.
+  // Full GUI behavior lands with tickets #25/#26.
+  import { onDestroy } from 'svelte';
+  import { listen } from '@tauri-apps/api/event';
+
   let workspace = 'workspace';
+  let transcriptEl: HTMLDivElement;
+
+  // The one wired live path (ticket #21): coalesced event batches from the
+  // core — main.rs emits them on the `tau://event` channel — reach the
+  // shell. Each event is a tagged-union JSON object; the skeleton appends
+  // a line per event type.
+  const unlisten = listen<Record<string, unknown>[]>('tau://event', (event) => {
+    for (const item of event.payload) {
+      const type = (item.type as string | undefined) ?? 'event';
+      transcriptEl.insertAdjacentHTML('beforeend', `<div class="event">${type}</div>`);
+    }
+  });
+  onDestroy(() => {
+    unlisten.then((fn) => fn());
+  });
 </script>
 
 <div class="shell">
   <header class="tab-bar">
     <div class="tab active" aria-current="page">{workspace}</div>
   </header>
-  <main class="transcript" aria-label="transcript"></main>
+  <main class="transcript" bind:this={transcriptEl} aria-label="transcript"></main>
 </div>
 
 <style>
@@ -36,6 +54,13 @@
 
   .transcript {
     overflow-y: auto;
+  }
+
+  .event {
+    padding: 2px 8px;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    opacity: 0.8;
   }
 
   :global(html),

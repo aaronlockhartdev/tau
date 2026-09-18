@@ -9,6 +9,7 @@
 //! and the 25 ms coalescer in the event pump.
 
 use std::collections::{BTreeMap, HashMap};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,7 +27,8 @@ use tau_core::session::{Entry, SessionStore};
 use tau_core::tools;
 use tau_protocol::coalesce::Coalescer;
 use tau_protocol::snapshot::{
-    EntryMeta, LiveState, QueuedItem, SessionMeta, Snapshot, TurnState, ViewEntry, Workspace,
+    EntryMeta, EntryStatus, LiveState, QueuedItem, SessionMeta, Snapshot, TurnState, ViewEntry,
+    Workspace,
 };
 use tau_protocol::{
     AgentType, Command, CommandOutput, Event, FileText, MessageLane, ProtocolError, ProviderInfo,
@@ -178,6 +180,7 @@ pub struct Core {
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     configs: Mutex<HashMap<String, Config>>,
     system_dir: Option<PathBuf>,
+    custom: bool,
     client: reqwest::Client,
     events_tx: mpsc::Sender<Event>,
     /// The pump's half of the events channel; taken exactly once.
@@ -187,6 +190,9 @@ pub struct Core {
 
 pub struct CoreBuilder {
     system_dir: Option<PathBuf>,
+    /// A custom root carries an explicit provider list (no system layer);
+    /// a production root gets full file-level layering (spec §12).
+    custom: bool,
     providers: BTreeMap<String, tau_core::config::Provider>,
 }
 
@@ -198,6 +204,7 @@ impl CoreBuilder {
             .expect("HOME set");
         Self {
             system_dir: Some(home.join(".config").join("tau")),
+            custom: false,
             providers: BTreeMap::new(),
         }
     }
@@ -206,6 +213,7 @@ impl CoreBuilder {
     pub fn custom(providers: BTreeMap<String, tau_core::config::Provider>) -> Self {
         Self {
             system_dir: None,
+            custom: true,
             providers,
         }
     }
@@ -217,6 +225,7 @@ impl CoreBuilder {
             sessions: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
+            custom: self.custom,
             client: reqwest::Client::new(),
             events_tx,
             events_rx: Mutex::new(Some(rx)),
@@ -318,9 +327,8 @@ impl Core {
         if project.exists()
             && let Ok(loaded) = config::load(&self.system_dir_of(), &project)
         {
-            if self.system_dir.is_some() {
+            if !self.custom {
                 // Full file-level layering (system + project).
-                c = loaded;
             } else {
                 // Custom roots carry explicit providers: a project entry
                 // replaces the same-named root entry, others coexist.
@@ -337,12 +345,12 @@ impl Core {
     }
 
     fn system_dir_of(&self) -> PathBuf {
-        self.system_dir.clone().unwrap_or_else(|| {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            home.join(".config").join("tau")
-        })
+        // A custom root has no system layer: the marker directory holds no
+        // config.toml, so `config::load` contributes defaults only — a test
+        // build never reads the developer's real `~/.config/tau` (N8).
+        self.system_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("/nonexistent-tau-system"))
     }
 
     // ── sessions ─────────────────────────────────────────────────────────
@@ -392,6 +400,7 @@ impl Core {
         store.create().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        let created = store.created();
 
         // The loop assembles no context of its own: base prompt + context
         // files (spec §10) are built here, once, at session creation.
@@ -423,6 +432,7 @@ impl Core {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),
             title,
+            created,
             leaf: None,
             model: Some(model),
             usage: None,
@@ -472,6 +482,13 @@ impl Core {
                 size: serde_json::to_vec(e).map(|v| v.len() as u64).unwrap_or(0),
                 preview: preview(e),
                 first_kept: e.first_kept_entry_id.clone(),
+                status: if e.kind == tau_core::agent::KIND_ASSISTANT
+                    && e.payload.get("interrupted") == Some(&Value::Bool(true))
+                {
+                    EntryStatus::Interrupted
+                } else {
+                    EntryStatus::Ok
+                },
             })
             .collect();
         let meta = live.meta.lock().unwrap().clone();
@@ -575,11 +592,16 @@ impl Core {
                 Ok(CommandOutput::Snapshot(self.snapshot(&live)?))
             }
             Command::SessionClose { session } => {
-                self.sessions.lock().unwrap().remove(&session);
+                // Closing stops any in-flight turn: a closed session must
+                // not keep streaming (review N7).
+                if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
+                    live.stop.store(true, Ordering::SeqCst);
+                }
                 Ok(CommandOutput::None)
             }
             Command::SessionDelete { session } => {
                 if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
+                    live.stop.store(true, Ordering::SeqCst);
                     delete_session_files(&live.cwd, &session);
                 }
                 Ok(CommandOutput::None)
@@ -700,22 +722,37 @@ impl Core {
                 } else {
                     Path::new(&workspace.cwd).join(full)
                 };
-                let bytes = std::fs::read(&path).map_err(|e| ProtocolError::Other {
+                // Line-streamed: an offset lands anywhere in the file, not
+                // just inside the first 1 MB (review N9); the read stops at
+                // the cap or end of file.
+                let file = std::fs::File::open(&path).map_err(|e| ProtocolError::Other {
                     message: format!("reading {}: {e}", path.display()),
                 })?;
-                let cap = 1_000_000usize;
-                let truncated = bytes.len() > cap;
-                let text = String::from_utf8_lossy(&bytes[..cap.min(bytes.len())]).into_owned();
-                let mut lines = text.lines();
+                let reader = std::io::BufReader::new(file);
                 let start = offset.unwrap_or(0);
-                for _ in 0..start {
-                    lines.next();
+                let cap = 1_000_000usize;
+                let mut seen = 0usize;
+                let mut bytes = 0usize;
+                let mut taken = Vec::new();
+                let mut truncated = false;
+                for line in reader.lines() {
+                    let line = line.map_err(|e| ProtocolError::Other {
+                        message: format!("reading {}: {e}", path.display()),
+                    })?;
+                    let line = line.strip_suffix('\r').map(str::to_owned).unwrap_or(line);
+                    bytes += line.len() + 1;
+                    if bytes > cap {
+                        truncated = true;
+                        break;
+                    }
+                    seen += 1;
+                    if seen > start && taken.len() < limit.unwrap_or(usize::MAX) {
+                        taken.push(line);
+                    }
                 }
-                let body = if let Some(n) = limit {
-                    lines.take(n).collect::<Vec<_>>().join("\n")
-                } else {
-                    lines.collect::<Vec<_>>().join("\n")
-                };
+                // A short file is not truncation: only the cap marks lost
+                // content.
+                let body = taken.join("\n");
                 Ok(CommandOutput::File(FileText {
                     text: body,
                     truncated,
@@ -907,6 +944,22 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     entry: entry.id.clone(),
                     first_kept: first_kept.clone(),
                 },
+            });
+        }
+    }
+
+    // A call cut before it produced an entry (an empty partial, N10) still
+    // gets its interrupted end — the GUI's live bubble must close.
+    {
+        let calls = live.provider.calls.lock().unwrap();
+        let new_calls = calls.len() - calls_before;
+        for i in assistant_index..new_calls {
+            core.emit(Event::StreamEnd {
+                workspace: workspace.clone(),
+                session: session.clone(),
+                call_id: calls[calls_before + i].clone(),
+                interrupted: true,
+                usage: None,
             });
         }
     }
@@ -1204,6 +1257,89 @@ mod tests {
         assert_eq!(dev.models, vec!["proj-model".to_owned()]);
     }
 
+    /// Closing a session with an in-flight turn stops the stream — the
+    /// call closes as interrupted and nothing for that session follows
+    /// (review N7).
+    #[tokio::test]
+    async fn closing_a_session_stops_its_in_flight_turn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Workspace(w) => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned_slow(&canned_body(), 600),
+            TurnConfig::default(),
+        );
+
+        let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let sink = Arc::clone(&collected);
+        let pump_core = Arc::clone(&core);
+        tokio::spawn(async move {
+            pump(pump_core, move |batch| {
+                sink.lock().unwrap().extend(batch.iter().cloned());
+            })
+            .await;
+        });
+
+        let session_id = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: session_id.clone(),
+            text: "first".into(),
+            lane: MessageLane::Steering,
+        })
+        .await
+        .unwrap();
+
+        // In flight: the first deltas have landed.
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        core.dispatch(Command::SessionClose {
+            session: session_id.clone(),
+        })
+        .await
+        .unwrap();
+
+        // The sink cuts the stream at the next delta (≤ 600 ms); the turn
+        // then winds down — give it room to finish.
+        tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+        let events = collected.lock().unwrap().clone();
+        let session_events: Vec<&Event> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::StreamStart { session, .. }
+                        | Event::StreamDelta { session, .. }
+                        | Event::StreamEnd { session, .. }
+                        | Event::ToolStart { session, .. }
+                        | Event::ToolEnd { session, .. }
+                        if *session == session_id
+                )
+            })
+            .collect();
+        // The stream was cut, not completed: the last stream event for the
+        // session is an interrupted end, with no live activity after it.
+        let Some(Event::StreamEnd { interrupted, .. }) = session_events.last().cloned() else {
+            panic!("the closed session's stream never closed: {session_events:?}");
+        };
+        assert!(interrupted, "the close did not cut the stream");
+        assert!(
+            session_events
+                .iter()
+                .any(|e| matches!(e, Event::StreamStart { .. })),
+            "no stream ever started"
+        );
+    }
+
     /// A session wired to `inner` (canned in tests, production in the
     /// live test), registered with the core the way `SessionNew` does.
     fn manual_session(
@@ -1216,6 +1352,7 @@ mod tests {
         let cwd = PathBuf::from(&tmp);
         let mut store = SessionStore::for_workspace(&cwd, &Core::new_session_id());
         store.create().unwrap();
+        let created = store.created();
         let provider = Arc::new(ForwardingProvider {
             inner,
             tx: core.events_tx.clone(),
@@ -1241,6 +1378,7 @@ mod tests {
                 id: provider.session.clone(),
                 workspace: workspace.id.clone(),
                 title: None,
+                created,
                 leaf: None,
                 model: Some("model".into()),
                 usage: None,

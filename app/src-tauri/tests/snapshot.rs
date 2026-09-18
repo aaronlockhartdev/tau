@@ -8,7 +8,7 @@ use serde_json::json;
 use tau_app::core::CoreBuilder;
 use tau_core::config::Provider;
 use tau_core::session::SessionStore;
-use tau_protocol::snapshot::EntryRange;
+use tau_protocol::snapshot::{EntryRange, Snapshot};
 use tau_protocol::{Command, CommandOutput};
 
 #[tokio::test]
@@ -90,6 +90,18 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         "the snapshot carries an entry payload"
     );
     assert!(snapshot.om.is_null(), "no OM log in v0 pre-#22");
+
+    // The spec's parse bar (single-digit ms locally); a generous bar for
+    // contended CI runners — the 25 ms coalesce budget is what the GUI
+    // actually has.
+    let parse_start = std::time::Instant::now();
+    let parsed: Snapshot = serde_json::from_str(&text).unwrap();
+    assert!(
+        parse_start.elapsed() < std::time::Duration::from_millis(500),
+        "snapshot parse took {:?}, over the CI bar",
+        parse_start.elapsed()
+    );
+    assert_eq!(parsed.entries.len(), snapshot.entries.len());
 
     // The cursor is the leaf: an entries-since read at it returns nothing.
     let entries = match core

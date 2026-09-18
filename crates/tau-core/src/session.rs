@@ -142,6 +142,7 @@ pub struct SessionStore {
     root: PathBuf,
     blob_threshold: u64,
     leaf: Option<String>,
+    created: u64,
     loaded: bool,
     ids: HashSet<String>,
     next: u64,
@@ -215,6 +216,7 @@ impl SessionStore {
             root,
             blob_threshold: DEFAULT_BLOB_THRESHOLD,
             leaf: None,
+            created: 0,
             loaded: false,
             ids: HashSet::new(),
             next: 0,
@@ -230,6 +232,11 @@ impl SessionStore {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The header's created timestamp (epoch ms).
+    pub fn created(&self) -> u64 {
+        self.created
     }
 
     pub fn path(&self) -> PathBuf {
@@ -274,13 +281,15 @@ impl SessionStore {
             return Err(Error::Other(format!("session {} already exists", self.id)));
         }
         fs::create_dir_all(self.root.join("sessions"))?;
+        let created = Self::now_ms();
         let header = Header {
             kind: "session".into(),
             version: FILE_VERSION,
             id: self.id.clone(),
-            created: Self::now_ms(),
+            created,
             leaf: None,
         };
+        self.created = created;
         let mut line = serde_json::to_string(&header)?;
         line.push('\n');
         fs::write(self.path(), line)?;
@@ -330,6 +339,7 @@ impl SessionStore {
             )));
         }
         self.leaf = header.leaf.clone();
+        self.created = header.created;
 
         self.ids.clear();
         self.next = 1;

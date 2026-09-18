@@ -286,6 +286,15 @@ impl AgentSession {
     }
 
     fn append_assistant(&self, result: &TurnResult) -> Result<(), AgentError> {
+        // A partial cut before anything arrived has nothing to record
+        // (review N10): an empty, call-less interrupted entry is noise.
+        if !result.completed
+            && result.text.is_empty()
+            && result.reasoning.is_empty()
+            && result.calls.is_empty()
+        {
+            return Ok(());
+        }
         self.append(
             KIND_ASSISTANT,
             json!({

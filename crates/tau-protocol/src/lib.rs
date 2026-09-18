@@ -238,6 +238,9 @@ pub enum Command {
 /// the workspace id and, where session-scoped, the session id, over one
 /// multiplexed channel; stream/tool events correlate by `call_id`
 /// (idempotent-cumulative, #13) and every id is stable across retries.
+/// The spec §8 HITL request/response pair exists in this shape with zero
+/// live request types (ADR-0007: transparency, not enforcement) — a
+/// future security ticket adds concrete types, not a new channel.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
@@ -558,6 +561,19 @@ mod tests {
                 kind: SystemEventKind::Error {
                     message: "boom".into(),
                 },
+            },
+            Event::SessionEvent {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                kind: SessionEventKind::Compaction {
+                    entry: "00000043".into(),
+                    first_kept: "00000044".into(),
+                },
+            },
+            Event::System {
+                workspace: "w1".into(),
+                session: None,
+                kind: SystemEventKind::ProviderChanged,
             },
         ];
         for ev in &events {
