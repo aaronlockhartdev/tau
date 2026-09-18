@@ -118,7 +118,7 @@ async fn read(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     };
     let path = resolve(cwd, path);
     let content = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
+        Ok(c) => hashline::normalize(&c),
         Err(e) => return format!("read: cannot read {}: {e}", path.display()),
     };
     let rows = match hashline::render(&content) {
@@ -246,7 +246,7 @@ async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     };
     let path = resolve(cwd, path);
     let original = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
+        Ok(c) => hashline::normalize(&c),
         Err(e) => return format!("edit: cannot read {}: {e}", path.display()),
     };
     let edited = match hashline::apply_edit(
@@ -391,6 +391,26 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("s.txt")).unwrap(),
             "keep\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn crlf_files_are_normalized_through_read_and_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("w.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
+        let out = read(dir.path(), &json!({"path": "w.txt"})).await;
+        assert!(!out.contains('\r'), "{out}");
+        let rows: Vec<&str> = out.lines().collect();
+        let anchor = rows[0].split('│').next().unwrap().to_string();
+        edit(
+            dir.path(),
+            &json!({"path": "w.txt", "from": anchor, "to": anchor, "content": "ONE"}),
+        )
+        .await;
+        // The written file is consistently LF — untouched lines included.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("w.txt")).unwrap(),
+            "ONE\ntwo\nthree\n"
         );
     }
 

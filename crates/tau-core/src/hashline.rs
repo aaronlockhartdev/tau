@@ -71,6 +71,13 @@ impl fmt::Display for EditError {
 
 /// canon: the line with all whitespace stripped (reformatting never
 /// invalidates an anchor).
+/// CRLF (and lone CR) line endings become LF. The reference normalizes on
+/// read, so canon, hashing, and the content written back all agree on line
+/// endings — an edit never leaves a CRLF file half-converted.
+pub fn normalize(content: &str) -> String {
+    content.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 pub fn canon(line: &str) -> String {
     line.chars()
         .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
