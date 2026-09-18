@@ -1,10 +1,10 @@
-# Development example config: the local rapid-mlx test endpoint (ticket #16).
+# Development example config: the hosted vLLM test endpoint (switched 2026-09-18).
 # Copy to ~/.config/tau/config.toml (system) or .tau/config.toml (project).
-# Start the server with: rapid-mlx serve qwen3.5-9b-4bit
+# The model is a thinking model: keep test generations small (max_output_tokens).
 [providers.dev]
-base_url = "http://127.0.0.1:8000/v1"
+base_url = "https://llms.aaronlockhart.dev/v1"
 key_env = ""
-models = ["qwen3.5-9b-4bit"]
+models = ["qwen3.8-27b"]
 
 [om]
-om_model = "qwen3.5-9b-4bit"
+om_model = "qwen3.8-27b"
