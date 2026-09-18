@@ -513,16 +513,12 @@ impl Core {
                 .map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?,
-            (None, None) => {
-                store
-                    .entries_range(0, usize::MAX)
-                    .map_err(|e| ProtocolError::Other {
-                        message: e.to_string(),
-                    })?
-            }
+            // (None, None) would be a full dump with payloads — spec §8
+            // has no full-dump command (ADR-0006); one of the two is
+            // required.
             _ => {
                 return Err(ProtocolError::Other {
-                    message: "exactly one of since/range".into(),
+                    message: "exactly one of since/range is required".into(),
                 });
             }
         };
@@ -1130,6 +1126,49 @@ mod tests {
         assert!(matches!(err, ProtocolError::Other { .. }));
         let _ = tmp;
     }
+
+    /// `SessionEntries` with neither cursor nor range is a full dump —
+    /// spec §8 has no full-dump command (ADR-0006), so it is an error
+    /// (review B2).
+    #[tokio::test]
+    async fn entries_without_a_cursor_or_range_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Workspace(w) => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id,
+                title: None,
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Session(m) => m,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let err = core
+            .dispatch(Command::SessionEntries {
+                session: session.id,
+                since: None,
+                range: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ProtocolError::Other { .. }),
+            "expected a rejection, got: {err:?}"
+        );
+    }
+
     /// A session wired to `inner` (canned in tests, production in the
     /// live test), registered with the core the way `SessionNew` does.
     fn manual_session(
