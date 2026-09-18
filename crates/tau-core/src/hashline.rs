@@ -38,12 +38,8 @@ impl fmt::Display for TooManyLines {
 pub enum EditError {
     /// The anchor is not in the file's current anchor set.
     Stale { anchor: String },
-    /// Two lines resolved to the same anchor (the allocation makes this
-    /// structurally rare; the diagnostic is kept for the contract).
-    Ambiguous {
-        anchor: String,
-        candidates: Vec<usize>,
-    },
+    /// The file exceeds the 238,328-line anchor cap; fall back to `write`.
+    TooLarge,
     /// anchor_from resolves after anchor_to.
     Reversed { from: String, to: String },
     /// Not a bare 3-char anchor from the alphabet.
@@ -59,10 +55,7 @@ impl fmt::Display for EditError {
                 f,
                 "stale anchor \"{anchor}\": not in the file's current anchor set. Re-read the file and copy the fresh 3-char anchors (the 3 chars before {SEP})."
             ),
-            Self::Ambiguous { anchor, candidates } => write!(
-                f,
-                "ambiguous anchor \"{anchor}\": matches lines {candidates:?}. Re-read and pick a live anchor."
-            ),
+            Self::TooLarge => write!(f, "{TooManyLines}"),
             Self::Reversed { from, to } => write!(
                 f,
                 "reversed range: \"{from}\" resolves after \"{to}\". Swap from/to."
@@ -187,8 +180,11 @@ pub struct Edited {
     pub last_changed: usize,
 }
 
-/// Re-derive anchors after an edit: survivors keep their anchors, deleted
-/// lines are tombstoned (their slots stay used), fresh lines are allocated.
+/// Re-derive anchors after an edit: survivors keep their anchors, fresh
+/// lines are allocated, and a deleted line's slot stays used for this edit
+/// only — cross-edit tombstone persistence (the reference's hash store) is
+/// outside v0's per-edit allocation scope, so a later edit may re-allocate a
+/// freed slot.
 fn stable_hashes(
     old_content: &str,
     old_hashes: &[String],
@@ -301,8 +297,7 @@ pub fn apply_edit(content: &str, edit: &Edit) -> Result<Edited, EditError> {
     if content.is_empty() {
         return do_edit(content, edit, &[]);
     }
-    let hashes =
-        line_hashes(content).map_err(|_| EditError::BadAnchor("(file too large)".into()))?;
+    let hashes = line_hashes(content).map_err(|_| EditError::TooLarge)?;
     do_edit(content, edit, &hashes)
 }
 
@@ -311,15 +306,15 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
         let positions: Vec<usize> = (0..hashes.len())
             .filter(|&i| hashes[i] == *anchor)
             .collect();
-        match positions.len() {
-            0 => Err(EditError::Stale {
+        match positions.as_slice() {
+            [] => Err(EditError::Stale {
                 anchor: anchor.to_owned(),
             }),
-            1 => Ok(positions[0]),
-            n => Err(EditError::Ambiguous {
-                anchor: anchor.to_owned(),
-                candidates: (0..n).map(|i| i + 1).collect(),
-            }),
+            [pos] => Ok(*pos),
+            // Allocation makes every anchor unique in the file, so a repeat is
+            // structurally impossible; fail loudly if the invariant breaks
+            // rather than fuzzy-match.
+            _ => unreachable!("anchor set is unique by allocation"),
         }
     };
     let start = resolve(&edit.from)?;
@@ -352,8 +347,8 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
         new_content.push('\n');
     }
     let removed: Vec<String> = hashes[start..=end].to_vec();
-    let new_hashes = stable_hashes(content, hashes, &new_content, &removed)
-        .map_err(|_| EditError::BadAnchor("(file too large)".into()))?;
+    let new_hashes =
+        stable_hashes(content, hashes, &new_content, &removed).map_err(|_| EditError::TooLarge)?;
     // The changed region, measured against the old lines from both ends.
     let min_len = new_lines.len().min(lines.len());
     let mut lo = 0;
@@ -495,6 +490,20 @@ mod tests {
             apply_edit(content, &edit),
             Err(EditError::EmptyFile)
         ));
+    }
+
+    #[test]
+    fn edit_over_the_cap_is_diagnosed_as_too_large_not_a_bad_anchor() {
+        let content = "x\n".repeat(HASH_SPACE + 1);
+        let edit = Edit {
+            from: "abc".into(),
+            to: "abc".into(),
+            content: "y".into(),
+        };
+        match apply_edit(&content, &edit) {
+            Err(EditError::TooLarge) => {}
+            other => panic!("expected TooLarge, got {other:?}"),
+        }
     }
 
     #[test]
