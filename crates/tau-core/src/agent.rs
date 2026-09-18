@@ -368,6 +368,19 @@ impl AgentSession {
                 break;
             }
             self.run_tools(&result.calls).await?;
+            if self
+                .inner
+                .lock()
+                .unwrap()
+                .child
+                .as_ref()
+                .is_some_and(|c| !c.is_running())
+            {
+                // Quiescence (ADR-0001): the child's notify ended it, so the
+                // core auto-terminates its loop — a done child never burns
+                // another provider call.
+                break;
+            }
         }
         Ok(())
     }

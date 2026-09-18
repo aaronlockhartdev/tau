@@ -212,6 +212,12 @@ impl ChildLink {
     pub fn notify(&self, args: &Value) -> String {
         self.supervisor.notify(&self.handle, args)
     }
+
+    /// Whether the child is still `Running` (the loop's quiescence check,
+    /// ADR-0001: the core auto-terminates a child's loop on done).
+    pub fn is_running(&self) -> bool {
+        self.supervisor.child_running(&self.handle)
+    }
 }
 
 /// A drive's result: `Err` = the child's loop failed (provider/storage) →
@@ -314,6 +320,17 @@ impl Supervisor {
     /// `AgentSession` exists).
     pub fn attach_parent(&self, agent: Arc<AgentSession>) {
         *self.parent.lock().unwrap() = Some(agent);
+    }
+
+    /// Whether a child is still `Running` (the child-side loop's exit
+    /// check, ADR-0001).
+    pub fn child_running(&self, handle: &str) -> bool {
+        self.children
+            .lock()
+            .unwrap()
+            .get(handle)
+            .map(|c| matches!(c.state(), ChildState::Running))
+            .unwrap_or(false)
     }
 
     /// A child's concurrency slot: every child that is not done holds one
@@ -494,17 +511,19 @@ impl Supervisor {
     }
 
     /// The child's drive: it runs turns while the child is `Running` and
-    /// sleeps while the child rests in `idle` / `done`, so a resume — a
-    /// message that flips the child back to `Running` — is picked up by
-    /// the same task; there is no window in which a resume can race the
-    /// drive's exit (ADR-0001: everything non-running is resumable,
-    /// nothing auto-resumes). `stopped` and `failed` end the drive; the
-    /// resume path starts a fresh drive for those.
+    /// sleeps while the child rests in `idle`, so a resume — a message that
+    /// flips the child back to `Running` — is picked up by the same task;
+    /// there is no window in which a resume can race the drive's exit
+    /// (ADR-0001: everything non-running is resumable, nothing
+    /// auto-resumes). `done`, `stopped`, and `failed` end the drive — a
+    /// done child is quiescent (no polling task held for the session's
+    /// life), and the resume path starts a fresh drive for each.
+
     async fn drive_loop(sup: Arc<Supervisor>, child: Arc<Child>) {
         loop {
             match child.state() {
                 ChildState::Running => {}
-                ChildState::Idle { .. } | ChildState::Done { .. } => {
+                ChildState::Idle { .. } => {
                     if child.agent.has_pending() {
                         child.set_state(
                             ChildState::Running,
@@ -522,6 +541,9 @@ impl Supervisor {
                     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                     continue;
                 }
+                // done ends the drive: a done child is quiescent, and a
+                // resume of it starts a fresh drive (the message path).
+                ChildState::Done { .. } => break,
                 _ => break,
             }
             match sup.driver.drive(&child.session_id, &child.agent).await {
@@ -616,6 +638,11 @@ impl Supervisor {
         let Some(child) = self.children.lock().unwrap().get(handle).cloned() else {
             return format!("parent_notify: unknown child {handle}");
         };
+        // A repeated `done` is a no-op (ADR-0001 quiescence): the child has
+        // already terminated — no second state entry, no second wake.
+        if matches!(child.state(), ChildState::Done { .. }) {
+            return "already done: the parent has your result".into();
+        }
 
         let mut payload = json!({ "event": "notify", "text": text, "done": done });
         if let Some(output) = &output {
@@ -717,9 +744,11 @@ impl Supervisor {
                 if matches!(child.state(), ChildState::Done { .. }) {
                     self.check_cap(true)?;
                 }
-                let was_dead = matches!(
+                let was_quiescent = matches!(
                     *child.state.lock().unwrap(),
-                    ChildState::Stopped { .. } | ChildState::Failed { .. }
+                    ChildState::Stopped { .. }
+                        | ChildState::Failed { .. }
+                        | ChildState::Done { .. }
                 );
                 let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
                 child.set_state(ChildState::Running, Some(text.clone()));
@@ -731,10 +760,11 @@ impl Supervisor {
                     note: Some("resumed".into()),
                 });
                 child.agent.send(text, Lane::FollowUp);
-                // A drive ended by stop/failure is gone: this resume starts
-                // a fresh one (idle/done drives persist and wake on their
-                // own). The nudge budget resets with the new work period.
-                if was_dead {
+                // A drive ended by stop/failure/done is gone: this resume
+                // starts a fresh one (only an idle drive persists and
+                // wakes on its own). The nudge budget resets with the new
+                // work period.
+                if was_quiescent {
                     tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone()));
                 }
                 child.nudge_sent.store(false, Ordering::SeqCst);
@@ -957,6 +987,8 @@ mod tests {
         scripts: Vec<Vec<String>>,
         delays: Vec<Duration>,
         created: AtomicUsize,
+        /// Provider calls across every child (the quiescence test's oracle).
+        calls: Arc<AtomicUsize>,
     }
 
     impl ChildProviderFactory for CannedFactory {
@@ -973,6 +1005,7 @@ mod tests {
                 scripts,
                 index: AtomicUsize::new(0),
                 pre_delay,
+                calls: self.calls.clone(),
             })
         }
     }
@@ -981,6 +1014,7 @@ mod tests {
         scripts: Vec<String>,
         index: AtomicUsize,
         pre_delay: Duration,
+        calls: Arc<AtomicUsize>,
     }
     impl CannedChildProvider {
         fn next(&self) -> String {
@@ -997,6 +1031,7 @@ mod tests {
             sink: &'a mut dyn TurnSink,
         ) -> provider::ProviderTurn<'a> {
             let body = self.next();
+            self.calls.fetch_add(1, Ordering::SeqCst);
             let delay = self.pre_delay;
             let (events, calls) = provider::decode_stream(&body).unwrap();
             Box::pin(async move {
@@ -1080,26 +1115,29 @@ mod tests {
         child_scripts: Vec<Vec<String>>,
         caps: SubAgents,
     ) -> (Arc<Supervisor>, Arc<TestBridge>) {
-        harness_with_delays(dir, parent_bodies, child_scripts, vec![], caps)
+        let (sup, bridge, _) = harness_full(dir, parent_bodies, child_scripts, vec![], caps);
+        (sup, bridge)
     }
 
-    fn harness_with_delays(
+    fn harness_full(
         dir: &std::path::Path,
         parent_bodies: Vec<String>,
         child_scripts: Vec<Vec<String>>,
         delays: Vec<Duration>,
         caps: SubAgents,
-    ) -> (Arc<Supervisor>, Arc<TestBridge>) {
+    ) -> (Arc<Supervisor>, Arc<TestBridge>, Arc<CannedFactory>) {
         let bridge = Arc::new(TestBridge::default());
         let factory = Arc::new(CannedFactory {
             scripts: child_scripts,
             delays,
             created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
         });
+        let provider: Arc<dyn ChildProviderFactory> = factory.clone();
         let sup = Supervisor::new(SupervisorParams {
             parent_session: "parent".into(),
             cwd: dir.to_path_buf(),
-            provider: factory,
+            provider,
             model: "test-model".into(),
             system_prompt: "be terse".into(),
             om: Om::default(),
@@ -1129,7 +1167,7 @@ mod tests {
             child: None,
         }));
         sup.attach_parent(parent);
-        (sup, bridge)
+        (sup, bridge, factory)
     }
 
     /// A scripted parent provider: one canned body per call.
@@ -1459,6 +1497,65 @@ mod tests {
         assert_eq!(wakes[0].waiting_on, Some(WaitingOn::Parent));
     }
 
+    /// A child whose script is only `parent_notify{done}` — no trailing
+    /// entries — must quiesce with exactly one provider call, one Done
+    /// state entry, and one parent wake (review B2: the loop used to
+    /// re-call the model forever, re-appending the Done entry and
+    /// re-issuing the wake every round).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_done_child_quiesces_with_exactly_one_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sup, bridge, factory) = harness_full(
+            dir.path(),
+            vec![sse("spawning", &[])],
+            vec![vec![sse(
+                "",
+                &[notify_call(
+                    "n1",
+                    "done",
+                    true,
+                    Some(json!({ "ok": true })),
+                    None,
+                )],
+            )]],
+            vec![],
+            SubAgents::default(),
+        );
+        let s = sup
+            .spawn("general", "one call", ContextMode::Fresh, None, "c0")
+            .unwrap();
+        s.drive.await.unwrap();
+        assert_eq!(
+            factory.calls.load(Ordering::SeqCst),
+            1,
+            "a done child makes exactly one provider call"
+        );
+        let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
+        store.open().unwrap();
+        let done_entries: Vec<_> = store
+            .entries_range(0, usize::MAX)
+            .unwrap()
+            .into_iter()
+            .filter(|e| {
+                e.kind == KIND_SUBAGENT
+                    && e.payload["event"] == json!("state")
+                    && e.payload["state"] == json!({ "state": "done", "output": { "ok": true } })
+            })
+            .collect();
+        assert_eq!(done_entries.len(), 1, "exactly one Done state entry");
+        assert_eq!(
+            bridge
+                .wakes
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|w| w.kind == WakeKind::Done)
+                .count(),
+            1,
+            "exactly one Done wake"
+        );
+    }
+
     // ── stop / resume ───────────────────────────────────────────────────
 
     /// A running child is soft-stopped (the stream cut, the partial kept
@@ -1472,7 +1569,7 @@ mod tests {
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
             "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
         );
-        let (sup, bridge) = harness_with_delays(
+        let (sup, bridge, _) = harness_full(
             dir.path(),
             vec![sse("spawning", &[])],
             vec![vec![
