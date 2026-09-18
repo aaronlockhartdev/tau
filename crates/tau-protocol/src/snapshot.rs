@@ -124,8 +124,7 @@ pub struct LiveState {
 
 /// The ephemeral snapshot (spec §8): metadata skeleton + bounded OM + live
 /// state + cursor. `om` is the only full-payload piece (bounded ~40k tokens
-/// by the Reflector) and is `null` until the OM integration (#22) populates
-/// it.
+/// by the Reflector): the session's current OM record (ticket #22).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub workspace: Workspace,

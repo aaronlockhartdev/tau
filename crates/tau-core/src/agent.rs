@@ -484,6 +484,11 @@ impl AgentSession {
     fn turn_config(&self) -> TurnConfig {
         self.inner.lock().unwrap().turn
     }
+
+    /// The session's OM state (ticket #22); `None` = OM disabled.
+    pub fn om_state(&self) -> Option<crate::om_integration::OmState> {
+        self.inner.lock().unwrap().om.clone()
+    }
 }
 
 /// The sink the loop gives the provider: a set kill flag stops the stream
