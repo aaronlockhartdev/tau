@@ -5,7 +5,7 @@
 
 use crate::om::{self, Cursor, OmConfig, OmRecord};
 use crate::session::{Entry, SessionStore};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// The session entry kind that carries the OM record (spec §4: the session
 /// file carries the record; the newest entry is the current state).
@@ -587,6 +587,36 @@ impl OmState {
     }
 }
 
+/// Compacted-spawn seeding (ADR-0004, spec §5.1): the parent's observation
+/// log verbatim becomes the child's frozen prefix — appended to the child's
+/// session file as a `spawn-snapshot` entry carrying the parent's session
+/// pointer and the source range the prefix covers, and returned as the
+/// child's record (an empty managed suffix). The prefix is never
+/// re-observed and never re-reflected: the child's Reflector rewrites only
+/// the suffix.
+pub fn seed_compacted_child(
+    parent: &OmRecord,
+    parent_session_id: &str,
+    child: &mut SessionStore,
+) -> Result<OmRecord, OmError> {
+    let log = format!("{}{}", parent.frozen_prefix, parent.active_observations);
+    if !log.is_empty() {
+        let range = om::combine_group_ranges(&om::parse_observation_groups(&log));
+        let payload = json!({
+            "parentSession": parent_session_id,
+            "range": range,
+            "log": log,
+        });
+        let leaf = child.leaf()?.map(|e| e.id);
+        child.append(KIND_SPAWN_SNAPSHOT, payload, leaf.as_deref())?;
+    }
+    Ok(OmRecord {
+        frozen_prefix: log,
+        ..Default::default()
+    })
+}
+
+
 /// The `recall` tool (spec §4): browse the raw entries an observation group
 /// covers. Groups carry `range="startEntryId:endEntryId"` (comma-joined
 /// segments for a merged span); browsing only, no vector search.
@@ -1144,4 +1174,45 @@ mod tests {
         assert_eq!(idle_gap_secs(&fresh, Some("00000002")), 0);
     }
 
+
+    #[test]
+    fn seed_compacted_child_stores_the_snapshot_and_returns_the_frozen_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
+        parent_store.create().unwrap();
+        let parent_record = OmRecord {
+            frozen_prefix: "grandparent log".into(),
+            active_observations: om::wrap_in_observation_group(
+                "parent log",
+                "00000000:00000001",
+                "p",
+                None,
+            ),
+            ..Default::default()
+        };
+        let mut child_store = SessionStore::for_workspace(dir.path(), "child");
+        child_store.create().unwrap();
+        let child = seed_compacted_child(&parent_record, "parent", &mut child_store).unwrap();
+        // The child's record carries the parent's full log verbatim.
+        assert_eq!(
+            child.frozen_prefix,
+            format!("grandparent log{}", parent_record.active_observations)
+        );
+        assert!(child.active_observations.is_empty());
+        // The child's session file carries the spawn-snapshot entry.
+        let entries = child_store.entries_range(0, usize::MAX).unwrap();
+        let snap = entries
+            .iter()
+            .find(|e| e.kind == KIND_SPAWN_SNAPSHOT)
+            .expect("spawn-snapshot entry");
+        assert_eq!(snap.payload["parentSession"], "parent");
+        assert_eq!(snap.payload["range"], "00000000:00000001");
+        assert_eq!(snap.payload["log"], child.frozen_prefix);
+        // An empty parent log: no snapshot entry, empty prefix.
+        let mut child2 = SessionStore::for_workspace(dir.path(), "child2");
+        child2.create().unwrap();
+        let rec2 = seed_compacted_child(&OmRecord::default(), "parent", &mut child2).unwrap();
+        assert!(rec2.frozen_prefix.is_empty());
+        assert!(child2.entries_range(0, usize::MAX).unwrap().is_empty());
+    }
 }
