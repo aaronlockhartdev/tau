@@ -1131,6 +1131,86 @@ pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
     }
 }
 
+/// Parsed Reflector response (mastra `parseReflectorOutput`): the
+/// observations with the section extraction, line sanitization, and group
+/// reconciliation (against `source`, when given) already applied. The port
+/// omits the extractor sections and `stripEphemeralAnchorIds` (not in the
+/// pinned set; the v0 prompts never emit ephemeral anchors).
+#[derive(Debug, Clone, Default)]
+pub struct ParsedReflectorOutput {
+    pub observations: String,
+    pub suggested_response: String,
+    pub degenerate: bool,
+}
+
+/// Parse, sanitize, and classify a raw Reflector response (mastra
+/// `parseReflectorOutput`): a degenerate-repetition check over the whole
+/// output, the XML sections (all `<observations>` blocks joined; the
+/// list-item/full-content fallback when untagged), line sanitization, and
+/// group reconciliation against the current log. `degenerate` signals the
+/// caller to discard the result entirely.
+pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedReflectorOutput {
+    if detect_degenerate_repetition(raw_output) {
+        return ParsedReflectorOutput {
+            degenerate: true,
+            ..Default::default()
+        };
+    }
+    let sections = parse_observer_sections(raw_output);
+    let mut observations = String::new();
+    let mut suggested_response = String::new();
+    for section in &sections {
+        match &section.name {
+            Some(n) if n == "observations" => {
+                let content = section.content.trim();
+                if content.is_empty() {
+                    continue;
+                }
+                if !observations.is_empty() {
+                    observations.push('\n');
+                }
+                observations.push_str(content);
+            }
+            Some(n) if n == "suggested-response" || n == "suggested_response" => {
+                if suggested_response.is_empty() {
+                    suggested_response = section.content.to_owned();
+                }
+            }
+            _ => {}
+        }
+    }
+    if observations.is_empty() {
+        // No `<observations>` tags: the list items, else the whole content
+        // (mastra `extractReflectorListItems` and its fallback).
+        let items: Vec<&str> = raw_output.lines().filter(|l| is_reflector_list_item(l)).collect();
+        observations = if items.is_empty() {
+            raw_output.trim().to_owned()
+        } else {
+            items.join("\n")
+        };
+    }
+    let sanitized = sanitize_observation_lines(&observations);
+    let observations = match source {
+        Some(s) => reconcile_groups_from_reflection(&sanitized, s).unwrap_or(sanitized),
+        None => sanitized,
+    };
+    ParsedReflectorOutput { observations, suggested_response, degenerate: false }
+}
+
+/// A reflector list item (mastra `extractReflectorListItems` match): a
+/// `-`/`*` bullet or a numbered `n.` line, followed by a space.
+fn is_reflector_list_item(line: &str) -> bool {
+    let t = line.trim_start();
+    if let Some(rest) = t.strip_prefix('-').or_else(|| t.strip_prefix('*')) {
+        return rest.starts_with(' ');
+    }
+    if let Some(dot) = t.find('.') {
+        return dot > 0
+            && t[..dot].bytes().all(|b| b.is_ascii_digit())
+            && t[dot + 1..].starts_with(' ');
+    }
+    false
+}
 /// The Reflector system prompt template (verbatim from
 /// `reflector-agent.ts` `buildReflectorSystemPrompt` return value, no
 /// extractors, both continuation sections enabled, no custom instruction).

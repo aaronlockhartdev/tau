@@ -342,18 +342,26 @@ impl OmState {
             }
             TurnEndAction::Reflect { level } => {
                 let source = self.record.reflect_source().to_owned();
-                let reflected = result.text.trim();
-                if !reflected.is_empty() && om::validate_compression(&source, reflected) {
-                    let new_suffix = match om::reconcile_groups_from_reflection(reflected, &source)
-                    {
-                        Some(reconciled) => reconciled,
-                        None => om::wrap_in_observation_group(
-                            reflected,
-                            &om::combine_group_ranges(&om::parse_observation_groups(&source)),
-                            &om::generate_group_id(reflected),
-                            Some("reflection"),
-                        ),
-                    };
+                // The committed suffix is the parsed <observations> content,
+                // never the raw response (mastra `parseReflectorOutput`):
+                // the <current-task>/<suggested-response> sections are not
+                // observation material and must not pollute the log.
+                let parsed = om::parse_reflector_output(&result.text, Some(&source));
+                if !parsed.degenerate
+                    && !parsed.observations.trim().is_empty()
+                    && om::validate_compression(&source, &parsed.observations)
+                {
+                    let new_suffix =
+                        if om::parse_observation_groups(&parsed.observations).is_empty() {
+                            om::wrap_in_observation_group(
+                                &parsed.observations,
+                                &om::combine_group_ranges(&om::parse_observation_groups(&source)),
+                                &om::generate_group_id(&parsed.observations),
+                                Some("reflection"),
+                            )
+                        } else {
+                            parsed.observations
+                        };
                     self.record.active_observations = new_suffix;
                     self.record.generation += 1;
                     self.record.observation_tokens =
@@ -737,18 +745,26 @@ mod tests {
             TurnEndAction::Reflect { level } => assert_eq!(level, 0),
             other => panic!("expected Reflect, got {other:?}"),
         }
-        let result = turn_result("condensed suffix");
+        // A realistic TAGGED reflection: only the <observations> content
+        // may land in the log — the other sections are not observation
+        // material (B1).
+        let tagged = "<observations>condensed suffix</observations>"
+            .to_owned()
+            + "\n<current-task>finish the refactor</current-task>"
+            + "\n<suggested-response>report the summary</suggested-response>";
+        let result = turn_result(&tagged);
         let mut action = TurnEndAction::Reflect { level: 0 };
         state.commit(&mut store, &mut action, &result).unwrap();
         assert_eq!(action, TurnEndAction::Done);
         assert_eq!(state.record.frozen_prefix, prefix);
         assert_eq!(state.record.generation, 1);
-        assert!(
-            state
-                .record
-                .active_observations
-                .contains("condensed suffix")
-        );
+        let suffix = &state.record.active_observations;
+        assert!(suffix.contains("condensed suffix"), "{suffix:?}");
+        assert!(!suffix.contains("<observations>"), "{suffix:?}");
+        assert!(!suffix.contains("<current-task>"), "{suffix:?}");
+        assert!(!suffix.contains("<suggested-response>"), "{suffix:?}");
+        assert!(!suffix.contains("finish the refactor"), "{suffix:?}");
+        assert!(!suffix.contains("report the summary"), "{suffix:?}");
         assert_eq!(
             state.record.live_observations(),
             format!("{}{}", prefix, state.record.active_observations)
