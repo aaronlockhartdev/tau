@@ -74,7 +74,11 @@
       }
       end = i + 1;
     }
-    return { start, end: Math.min(all.length, end + 1), offset: top + scrollBefore(start) };
+    // The slice sits at its natural document position (the prototype's
+    // prefix[start]); the viewport scroll does the rest. Adding scrollTop
+    // to it double-counts the scroll — at mid-session the slice lands ~S
+    // px below the viewport and the screen is blank.
+    return { start, end: Math.min(all.length, end + 1), offset: scrollBefore(start) };
   }
   const win = $derived(computeWin());
 
