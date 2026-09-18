@@ -519,6 +519,42 @@ impl SessionStore {
         Ok(())
     }
 
+    /// A fork (spec §5.1): the source's entire entry tree copied into a new
+    /// session file — identical entry ids and parent links (the per-line CRCs
+    /// stay valid on the copied lines), a fresh header, and the source's
+    /// active leaf inherited.
+    pub fn fork_from(source: &Self, id: &str) -> Result<Self, Error> {
+        if id == source.id {
+            return Err(Error::Other(format!(
+                "fork target {id} is the source session"
+            )));
+        }
+        let raw = fs::read_to_string(source.path())?;
+        let mut lines: Vec<&str> = raw.lines().collect();
+        let Some(first) = lines.first() else {
+            return Err(Error::Other("empty session file".into()));
+        };
+        let mut header: Header = serde_json::from_str(first)?;
+        header.id = id.to_owned();
+        let new_header = serde_json::to_string(&header)?;
+        lines[0] = &new_header;
+        let mut target = Self::new(source.root.clone(), id);
+        fs::create_dir_all(target.root.join("sessions"))?;
+        fs::write(target.path(), format!("{}\n", lines.join("\n")))?;
+        target.open()?;
+        Ok(target)
+    }
+
+    /// A new session id: nanosecond clock, 16 hex digits (a collision needs
+    /// two creations in the same nanosecond on the same machine).
+    pub fn new_session_id() -> String {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{:016x}", nanos)
+    }
+
     /// Paged read by 0-based entry index (the header is not an entry).
     pub fn entries_range(&self, start: usize, end: usize) -> Result<Vec<Entry>, Error> {
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
@@ -921,5 +957,50 @@ mod tests {
             .append("user", serde_json::json!({"text": "hi"}), None)
             .unwrap();
         assert_eq!(store.leaf().unwrap().unwrap().id, e.id);
+    }
+    #[test]
+    fn a_fork_copies_the_entry_tree_with_stable_ids_and_crcs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, entries) = seeded(dir.path());
+        let _forked = SessionStore::fork_from(&s, "s2").unwrap();
+        // A second independent open verifies every copied line's CRC and
+        // resolves the inherited leaf.
+        let mut re = store(dir.path(), "s2");
+        re.open().unwrap();
+        let copied = re.entries_range(0, usize::MAX).unwrap();
+        assert_eq!(copied.len(), entries.len());
+        for (a, b) in entries.iter().zip(&copied) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.parent, b.parent);
+            assert_eq!(a.crc, b.crc);
+        }
+        // The fork appends against the inherited leaf, not a new root.
+        let e = re
+            .append(
+                "user",
+                serde_json::json!({"text": "after the fork"}),
+                Some(&entries.last().unwrap().id),
+            )
+            .unwrap();
+        assert_eq!(
+            e.parent.as_deref(),
+            Some(entries.last().unwrap().id.as_str())
+        );
+    }
+
+    #[test]
+    fn a_fork_cannot_target_the_source_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _) = seeded(dir.path());
+        assert!(SessionStore::fork_from(&s, "s1").is_err());
+    }
+
+    #[test]
+    fn session_ids_are_distinct_and_well_formed() {
+        let a = SessionStore::new_session_id();
+        std::thread::sleep(std::time::Duration::from_millis(1));
+        let b = SessionStore::new_session_id();
+        assert_ne!(a, b);
+        assert_eq!(a.len(), 16);
     }
 }
