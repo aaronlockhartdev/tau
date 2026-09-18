@@ -12,9 +12,9 @@
   import { store } from './lib/store.svelte';
 
   const cur = $derived(store.current ? store.sessions[store.current] : null);
-  const loading = store.loading;
-  const error = store.error;
-  const focus = store.focus;
+  const loading = $derived(store.loading);
+  const error = $derived(store.error);
+  const focus = $derived(store.focus);
   const title = $derived(cur?.meta.title ?? cur?.meta.id ?? 'new session');
   const model = $derived(cur?.meta.model ?? '');
 </script>
