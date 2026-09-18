@@ -395,8 +395,9 @@ impl OmState {
     }
 
     /// The Reflector (spec §4): rewrite the managed suffix as a new
-    /// generation. The frozen prefix never enters the prompt and stays
-    /// byte-verbatim (ADR-0004); a non-shrinking output is discarded.
+    /// generation. The frozen prefix never enters the prompt body and stays
+    /// byte-verbatim (ADR-0004); a non-shrinking output escalates through
+    /// the compression ladder (levels 0..=4).
     pub async fn reflect(
         &mut self,
         store: &mut SessionStore,
@@ -408,40 +409,63 @@ impl OmState {
             return Ok(false);
         }
         let system = om::reflector_system_prompt();
-        let request = crate::provider::ResponseRequest::new(
-            model,
-            Some(system.as_str()),
-            vec![crate::provider::InputEntry::Message(
-                crate::provider::InputMessage {
-                    role: "user".into(),
-                    content: om::build_reflector_prompt(&source, 0),
-                },
-            )],
-        );
-        let mut sink = NoopSink;
-        let result = provider
-            .call(&request, &mut sink)
-            .await
-            .map_err(OmError::Provider)?;
-        let reflected = result.text.trim();
-        if reflected.is_empty() || !om::validate_compression(&source, reflected) {
-            return Ok(false);
+        for level in 0..=4u8 {
+            let prompt = if self.record.frozen_prefix.is_empty() {
+                om::build_reflector_prompt(&source, level)
+            } else {
+                om::build_reflector_prompt_frozen(&self.record.frozen_prefix, &source, level)
+            };
+            let request = crate::provider::ResponseRequest::new(
+                model,
+                Some(system.as_str()),
+                vec![crate::provider::InputEntry::Message(
+                    crate::provider::InputMessage {
+                        role: "user".into(),
+                        content: prompt,
+                    },
+                )],
+            );
+            let mut sink = NoopSink;
+            let result = provider
+                .call(&request, &mut sink)
+                .await
+                .map_err(OmError::Provider)?;
+            let reflected = result.text.trim();
+            if reflected.is_empty() || !om::validate_compression(&source, reflected) {
+                continue;
+            }
+            let new_suffix = match om::reconcile_groups_from_reflection(reflected, &source) {
+                Some(reconciled) => reconciled,
+                None => om::wrap_in_observation_group(
+                    reflected,
+                    &om::combine_group_ranges(&om::parse_observation_groups(&source)),
+                    &om::generate_group_id(reflected),
+                    Some("reflection"),
+                ),
+            };
+            self.record.active_observations = new_suffix;
+            self.record.generation += 1;
+            self.record.observation_tokens = om::token_count(&self.record.active_observations);
+            self.changed = true;
+            self.save(store)?;
+            return Ok(true);
         }
-        let new_suffix = match om::reconcile_groups_from_reflection(reflected, &source) {
-            Some(reconciled) => reconciled,
-            None => om::wrap_in_observation_group(
-                reflected,
-                &om::combine_group_ranges(&om::parse_observation_groups(&source)),
-                &om::generate_group_id(reflected),
-                Some("reflection"),
-            ),
-        };
-        self.record.active_observations = new_suffix;
-        self.record.generation += 1;
-        self.record.observation_tokens = om::token_count(&self.record.active_observations);
-        self.changed = true;
-        self.save(store)?;
-        Ok(true)
+        Ok(false)
+    }
+
+    /// The overflow ladder (spec §4): after reflection, a combined log still
+    /// over budget demotes the frozen prefix to recall-only (it stays in the
+    /// session file); it is re-admitted when the managed suffix falls below
+    /// the threshold.
+    fn maintain_prefix_budget(&mut self) {
+        let combined = om::token_count(&self.record.live_observations());
+        if !self.record.prefix_demoted && combined > self.config.reflect_threshold {
+            self.record.prefix_demoted = true;
+        } else if self.record.prefix_demoted
+            && om::token_count(&self.record.active_observations) < self.config.reflect_threshold
+        {
+            self.record.prefix_demoted = false;
+        }
     }
 
     /// The turn-end compaction pass (spec §4): an activation with buffered
@@ -462,8 +486,11 @@ impl OmState {
             self.promote(store)?;
         }
 
-        if om::should_reflect(self.record.observation_tokens, &self.config) {
-            self.reflect(store, provider, model).await?;
+        if om::should_reflect(self.record.observation_tokens, &self.config)
+            && self.reflect(store, provider, model).await?
+        {
+            self.maintain_prefix_budget();
+            self.save(store)?;
         }
 
         let pending = self.pending_tokens(&self.unobserved(store)?);
@@ -751,5 +778,150 @@ mod tests {
         assert_eq!(groups[0].range, "00000000:00000015");
         assert_eq!(groups[1].range, "00000016:00000090");
         assert_eq!(state.record.cursor.unwrap().entry_id, "00000090");
+    }
+
+    /// A canned provider that serves a different body per call (the
+    /// compression-ladder tests escalate through levels).
+    struct CannedSeq {
+        bodies: Vec<String>,
+        index: std::sync::atomic::AtomicUsize,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CannedSeq {
+        fn new(bodies: Vec<String>) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                bodies,
+                index: std::sync::atomic::AtomicUsize::new(0),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl crate::provider::TurnProvider for CannedSeq {
+        fn call<'a>(
+            &self,
+            _req: &crate::provider::ResponseRequest,
+            _sink: &'a mut dyn crate::provider::TurnSink,
+        ) -> crate::provider::ProviderTurn<'a> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let i = self.index.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let text = self.bodies[i.min(self.bodies.len() - 1)].clone();
+            Box::pin(async move {
+                Ok(crate::provider::TurnResult {
+                    text,
+                    reasoning: String::new(),
+                    usage: Some(crate::provider::Usage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                        output_tokens_details: None,
+                    }),
+                    completed: true,
+                    calls: Vec::new(),
+                    mid_stream_errors: Vec::new(),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn reflect_rewrites_the_suffix_and_keeps_the_prefix_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store_with_text_entries(dir.path(), 1, 100);
+        let prefix = "FROZEN PARENT LOG".to_owned();
+        let suffix =
+            crate::om::wrap_in_observation_group(&"x".repeat(4000), "00000001:00000002", "b", None);
+        let mut state = OmState::from_config(
+            &crate::config::Om::default(),
+            OmRecord {
+                frozen_prefix: prefix.clone(),
+                active_observations: suffix,
+                cursor: None,
+                generation: 0,
+                observation_tokens: 0,
+                pending_tokens: 0,
+                prefix_demoted: false,
+            },
+        );
+        let canned = CannedSeq::new(vec!["condensed suffix".to_owned()]);
+        let provider: TurnProviderRef = canned.clone();
+
+        assert!(state.reflect(&mut store, &provider, "m").await.unwrap());
+        assert_eq!(state.record.frozen_prefix, prefix);
+        assert_eq!(state.record.generation, 1);
+        // The reflected output is re-wrapped as a reflection group; the
+        // prefix + wrapped suffix form one continuous log.
+        assert!(state.record.active_observations.contains("condensed suffix"));
+        assert_eq!(
+            state.record.live_observations(),
+            format!("{}{}", prefix, state.record.active_observations)
+        );
+    }
+
+    #[tokio::test]
+    async fn reflect_escalates_the_compression_ladder_until_the_output_shrinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store_with_text_entries(dir.path(), 1, 100);
+        let source = "y".repeat(400); // 100 tokens
+        let mut state = OmState::from_config(
+            &crate::config::Om::default(),
+            OmRecord {
+                active_observations: source,
+                ..Default::default()
+            },
+        );
+        // Level 0 answers larger than the source (rejected), level 1 smaller.
+        let canned = CannedSeq::new(vec!["z".repeat(800), "z".repeat(80)]);
+        let provider: TurnProviderRef = canned.clone();
+
+        assert!(state.reflect(&mut store, &provider, "m").await.unwrap());
+        assert_eq!(canned.calls(), 2);
+        assert_eq!(state.record.generation, 1);
+    }
+
+    #[test]
+    fn the_overflow_ladder_demotes_the_prefix_and_readmits_it() {
+        let mut state = OmState {
+            config: OmConfig {
+                reflect_threshold: 100,
+                ..Default::default()
+            },
+            record: OmRecord {
+                frozen_prefix: "a".repeat(400),       // 100 tokens
+                active_observations: "b".repeat(400), // 100 tokens
+                ..Default::default()
+            },
+            buffered: Vec::new(),
+            changed: false,
+        };
+        // 200 combined tokens over the 100 budget: the prefix demotes out of
+        // the live context (it stays in the record, recall reaches it).
+        state.maintain_prefix_budget();
+        assert!(state.record.prefix_demoted);
+        assert_eq!(state.record.live_observations(), "b".repeat(400));
+        // The suffix falls under the budget: the prefix comes back.
+        state.record.active_observations = "b".repeat(40);
+        state.record.observation_tokens = 10;
+        state.maintain_prefix_budget();
+        assert!(!state.record.prefix_demoted);
+        assert_eq!(
+            state.record.live_observations(),
+            format!("{}{}", "a".repeat(400), "b".repeat(40))
+        );
+    }
+
+    #[test]
+    fn the_frozen_prompt_carries_the_marker_and_the_suffix_only() {
+        let prompt = crate::om::build_reflector_prompt_frozen("FROZEN", "LIVE SUFFIX", 2);
+        assert!(prompt.contains("<frozen-prefix>\nFROZEN\n</frozen-prefix>"));
+        assert!(prompt.contains("byte-verbatim"));
+        assert!(prompt.contains("LIVE SUFFIX"));
+        // The compression guidance for level 2 is appended.
+        assert!(prompt.contains(crate::om::COMPRESSION_GUIDANCE[1]));
     }
 }

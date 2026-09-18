@@ -1333,6 +1333,24 @@ pub fn build_reflector_prompt(observations: &str, compression_level: u8) -> Stri
     prompt
 }
 
+/// The reflector prompt for a compacted child (ADR-0004): the frozen prefix
+/// is presented in a marker with a keep-verbatim instruction. The structural
+/// split (the prompt body is the managed suffix only) is the real guard; the
+/// marker is the prompt-level one.
+pub fn build_reflector_prompt_frozen(
+    prefix: &str,
+    observations: &str,
+    compression_level: u8,
+) -> String {
+    let mut prompt = format!(
+        "<frozen-prefix>\n{prefix}\n</frozen-prefix>\n\n\
+         The text inside <frozen-prefix> is a frozen memory prefix that must remain \
+         byte-verbatim. It is not part of the observations to reflect on.\n\n"
+    );
+    prompt.push_str(&build_reflector_prompt(observations, compression_level));
+    prompt
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
