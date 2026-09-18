@@ -166,10 +166,71 @@ async fn write(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     {
         return format!("write: cannot create {}: {e}", parent.display());
     }
-    match std::fs::write(&path, content) {
+    match write_atomic(&path, content) {
         Ok(()) => format!("wrote {} ({} bytes)", path.display(), content.len()),
         Err(e) => format!("write: {e}"),
     }
+}
+/// Overwrite a file without a torn intermediate state: unique temp file in
+/// the target directory + fsync + rename (+ best-effort directory sync),
+/// preserving an existing file's mode — the reference scheme's `writeAtomic`
+/// (spec §5.4): a crash mid-rewrite must never truncate a complete file.
+#[cfg(unix)]
+fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let existing_mode = std::fs::metadata(path).ok().map(|m| m.permissions().mode());
+    write_atomic_inner(path, content, existing_mode)
+}
+
+#[cfg(not(unix))]
+fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
+    write_atomic_inner(path, content, None)
+}
+
+fn write_atomic_inner(
+    path: &Path,
+    content: &str,
+    existing_mode: Option<u32>,
+) -> std::io::Result<()> {
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let mut temp = dir.to_path_buf();
+    {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        temp = temp.join(format!(".tmp-{}-{nanos}", std::process::id()));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)?;
+    let result = (|| {
+        use std::io::Write;
+        file.write_all(content.as_bytes())?;
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(mode) = existing_mode {
+            let mut perm = file.metadata()?.permissions().clone();
+            perm.set_mode(mode);
+            file.set_permissions(perm)?;
+        }
+        file.sync_all()?;
+        std::fs::rename(&temp, path)?;
+        // Directory sync is a durability optimization, best-effort (the rename
+        // already committed the file).
+        if let Ok(dir_file) = std::fs::File::open(dir) {
+            let _ = dir_file.sync_all();
+        }
+        Ok::<(), std::io::Error>(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
@@ -199,7 +260,7 @@ async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         Ok(e) => e,
         Err(e) => return e.to_string(),
     };
-    if let Err(e) = std::fs::write(&path, &edited.content) {
+    if let Err(e) = write_atomic(&path, &edited.content) {
         return format!("edit: cannot write {}: {e}", path.display());
     }
     format!(
