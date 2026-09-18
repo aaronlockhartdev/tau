@@ -263,15 +263,23 @@ async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     if let Err(e) = write_atomic(&path, &edited.content) {
         return format!("edit: cannot write {}: {e}", path.display());
     }
+    // Bounded output (the reference returns the changed region, not the
+    // whole file): the changed lines plus two context lines per side, with
+    // their fresh anchors, plus the result line count.
+    if edited.first_changed > edited.last_changed {
+        return format!("edited {} (no change)", path.display());
+    }
+    let rows = hashline::render(&edited.content).unwrap_or_default();
+    let lo = edited.first_changed.saturating_sub(1).saturating_sub(2);
+    let hi = (edited.last_changed + 2).min(rows.len());
     format!(
-        "edited {} (lines {}–{})\n{}",
+        "edited {} (lines {}–{} of {})",
         path.display(),
         edited.first_changed,
         edited.last_changed,
-        hashline::render(&edited.content)
-            .map(|rows| rows.join("\n"))
-            .unwrap_or_default()
-    )
+        rows.len()
+    ) + "\n"
+        + &rows[lo..hi].join("\n")
 }
 
 async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
@@ -380,6 +388,29 @@ mod tests {
             std::fs::read_to_string(dir.path().join("s.txt")).unwrap(),
             "keep\n"
         );
+    }
+
+    #[tokio::test]
+    async fn edit_output_is_bounded_to_the_changed_region() {
+        let dir = tempfile::tempdir().unwrap();
+        let content: String = (0..50).map(|i| format!("line{i}\n")).collect();
+        write(
+            dir.path(),
+            &json!({"path": "big.txt", "content": content.as_str()}),
+        )
+        .await;
+        let read_out = read(dir.path(), &json!({"path": "big.txt"})).await;
+        let lines: Vec<&str> = read_out.lines().collect();
+        let anchor = lines[24].split('│').next().unwrap().to_string();
+        let out = edit(
+            dir.path(),
+            &json!({"path": "big.txt", "from": anchor, "to": anchor, "content": "LINE25"}),
+        )
+        .await;
+        // The changed region plus two context lines per side — never the 50-line file.
+        let shown = out.lines().count() - 1;
+        assert!(shown <= 7, "output had {shown} rows: {out}");
+        assert!(out.contains("LINE25"), "{out}");
     }
 
     #[tokio::test]
