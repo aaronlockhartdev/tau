@@ -454,8 +454,9 @@ impl OmState {
     /// observation log (a demoted prefix drops out — it stays in the
     /// session file, reachable via `recall`), the active task's resume
     /// contract (ticket #24 fills the slot; the loop passes `None`
-    /// today), and the continuation hint after a log change. Pure — no
-    /// store access, so it runs outside the session's write lock.
+    /// today), and the continuation hint after a log change. Pure over the
+    /// record (no store access), so the one-shot `changed` flip sticks
+    /// when the loop runs it on the persistent state under the lock.
     pub fn assemble_context(&mut self, base: &str, task_contract: Option<&str>) -> String {
         let mut instructions = base.to_owned();
         let observations = self.record.live_observations();

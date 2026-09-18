@@ -225,7 +225,6 @@ impl AgentSession {
             let (system_prompt, input) = {
                 let mut inner = self.inner.lock().unwrap();
                 let base = inner.system_prompt.clone();
-                let om = inner.om.clone();
                 let entries = inner
                     .store
                     .entries_range(0, usize::MAX)
@@ -235,8 +234,13 @@ impl AgentSession {
                     .leaf()
                     .map_err(AgentError::Session)?
                     .map(|e| e.id);
-                match om {
-                    Some(mut om) => {
+                // Assembly runs on the persistent state, not a clone: it is
+                // pure over the record, and the one-shot continuation-hint
+                // flip must stick (a clone's flip would be dropped, and the
+                // om_turn_end write-back would re-set `changed`, so the hint
+                // would re-inject on every assembly).
+                match inner.om.as_mut() {
+                    Some(om) => {
                         let instructions = om.assemble_context(&base, None);
                         let raw = om.raw_window_from(&entries, leaf_id.as_deref());
                         (instructions, input_items(&raw))
