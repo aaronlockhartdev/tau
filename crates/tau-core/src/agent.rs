@@ -336,7 +336,24 @@ impl AgentSession {
             let mut inner = self.inner.lock().unwrap();
             let unobserved = state.unobserved(&mut inner.store).map_err(AgentError::Om)?;
             state.record.pending_tokens = state.pending_tokens(&unobserved);
-            if !state.buffered.is_empty() && state.activation_reached(state.record.pending_tokens) {
+            // Activation (no LLM call): the token threshold, or the fixed
+            // idle timeout with pending chunks (spec §4).
+            let idle = {
+                let all = inner
+                    .store
+                    .entries_range(0, usize::MAX)
+                    .map_err(|e| AgentError::Om(e.into()))?;
+                let leaf = inner
+                    .store
+                    .leaf()
+                    .map_err(|e| AgentError::Om(e.into()))?
+                    .map(|e| e.id);
+                crate::om_integration::idle_gap_secs(&all, leaf.as_deref())
+            };
+            if !state.buffered.is_empty()
+                && (state.activation_reached(state.record.pending_tokens)
+                    || idle >= crate::om_integration::IDLE_ACTIVATION_SECS)
+            {
                 state.promote(&mut inner.store).map_err(AgentError::Om)?;
             }
             state.plan(&unobserved)

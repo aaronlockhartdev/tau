@@ -41,6 +41,11 @@ pub struct OmState {
     pub config: OmConfig,
     pub record: OmRecord,
     pub buffered: Vec<BufferedChunk>,
+    /// The last entry a buffered run covered (mastra's buffer cursor, the
+    /// port's `lastBufferedAtTokens`): runs are disjoint — a new buffer run
+    /// covers only entries after this one. In memory like the chunks
+    /// themselves (a restart re-observes via the threshold path).
+    buffer_cursor: Option<String>,
     /// The log changed since the last assembled context: the next assembly
     /// carries the continuation hint so the model doesn't react to the raw
     /// history vanishing (spec §4).
@@ -63,6 +68,7 @@ impl OmState {
             },
             record,
             buffered: Vec::new(),
+            buffer_cursor: None,
             changed: false,
         }
     }
@@ -248,11 +254,37 @@ impl OmState {
             .sum()
     }
 
+    /// Activation (no LLM call, mastra `swapBufferedToActive`): promote
+    /// buffered chunks to the log up to the boundary that lands the
+    /// remaining raw at or below the retention floor
+    /// (`projected_message_removal`), leaving later chunks buffered. The
+    /// observation cursor advances to the last promoted entry; `false` when
+    /// there is nothing to promote.
     pub fn promote(&mut self, store: &mut SessionStore) -> Result<bool, OmError> {
         if self.buffered.is_empty() {
             return Ok(false);
         }
+        let chunks: Vec<om::ChunkTokens> =
+            self.buffered.iter().map(|c| om::ChunkTokens(c.tokens)).collect();
+        let remove =
+            om::projected_message_removal(&chunks, &self.config, self.record.pending_tokens);
+        if remove == 0 {
+            // Pending is already at or below the retention floor: the
+            // chunks stay buffered for the next activation.
+            return Ok(false);
+        }
+        // The returned count is the cumulative at the selected boundary;
+        // the cumulative sums are monotone, so the walk lands exactly on it.
+        let mut count = 0usize;
+        let mut cumulative = 0u32;
         for chunk in &self.buffered {
+            cumulative = cumulative.saturating_add(chunk.tokens);
+            count += 1;
+            if cumulative >= remove {
+                break;
+            }
+        }
+        for chunk in &self.buffered[..count] {
             self.record.active_observations =
                 om::append_observation(&self.record.active_observations, &now_iso(), &chunk.text);
             self.record.cursor = Some(Cursor {
@@ -261,8 +293,8 @@ impl OmState {
             });
         }
         self.record.observation_tokens = om::token_count(&self.record.active_observations);
-        self.record.pending_tokens = 0;
-        self.buffered.clear();
+        self.record.pending_tokens = self.buffered.iter().skip(count).map(|c| c.tokens).sum();
+        self.buffered.drain(0..count);
         self.changed = true;
         self.save(store)?;
         Ok(true)
@@ -309,8 +341,17 @@ impl OmState {
             };
         }
         if self.record.pending_tokens >= self.config.buffer_increment() {
+            // The transcript covers only the not-yet-buffered tail of the
+            // unobserved range (the buffer cursor keeps runs disjoint).
+            let start = match &self.buffer_cursor {
+                Some(id) => match unobserved.iter().position(|e| e.id == *id) {
+                    Some(i) => i + 1,
+                    None => 0,
+                },
+                None => 0,
+            };
             return TurnEndAction::Buffer {
-                transcript: transcript(unobserved),
+                transcript: transcript(&unobserved[start..]),
             };
         }
         TurnEndAction::Done
@@ -413,15 +454,17 @@ impl OmState {
         Ok(())
     }
 
-    /// Apply one buffered observation (no cursor advance, no save — the
-    /// buffer is in memory until activation; the shared tail of the
+    /// Apply one buffered observation over the entries NOT already covered
+    /// by a previous run (the buffer cursor keeps runs disjoint, mastra's
+    /// `lastBufferedAtTokens`): no observation-cursor advance and no save —
+    /// the buffer is in memory until activation (the shared tail of the
     /// observe path).
     fn apply_buffer(
         &mut self,
         store: &mut SessionStore,
         observations: &str,
     ) -> Result<(), OmError> {
-        let entries = self.unobserved(store)?;
+        let entries = self.unbuffered(store)?;
         let Some(last) = entries.last() else {
             return Ok(());
         };
@@ -435,7 +478,26 @@ impl OmState {
             text: wrapped,
             tokens: om::token_count(observations),
         });
+        self.buffer_cursor = Some(last.id.clone());
         Ok(())
+    }
+
+    /// The raw entries not yet covered by a buffered run: after the buffer
+    /// cursor, or the whole branch when no run has happened (the buffer
+    /// cursor never lags the observation cursor — promotion advances the
+    /// latter to the buffered material's end).
+    fn unbuffered(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
+        let all = store.entries_range(0, usize::MAX)?;
+        let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
+        let branch = branch_entries(&all, leaf.as_deref());
+        let after = match &self.buffer_cursor {
+            Some(id) => match branch.iter().position(|e| e.id == *id) {
+                Some(i) => &branch[i + 1..],
+                None => &branch[..],
+            },
+            None => &branch[..],
+        };
+        Ok(after.iter().filter(|e| is_raw(e)).cloned().collect())
     }
 
     /// The Reflector prompt for a level (spec §4): the frozen variant
@@ -572,6 +634,31 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
             format!("{} {} {}\n", e.id, e.kind, preview)
         })
         .collect()
+}
+
+/// The idle gap before the latest turn, in seconds: the timestamp distance
+/// between that turn's first user entry and the entry before it (spec §4:
+/// v0 activates pending buffered chunks on a fixed idle timeout, not on
+/// provider-cache TTLs). Zero when the branch starts with the turn's user
+/// entry (a fresh session).
+pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
+    let branch = branch_entries(all, leaf_id);
+    // Back over the current turn's model output (assistant + tool entries)
+    // to its user run, then to the run's first entry.
+    let mut i = branch.len();
+    while i > 0 && matches!(branch[i - 1].kind.as_str(), "assistant" | "tool") {
+        i -= 1;
+    }
+    if i == 0 {
+        return 0;
+    }
+    while i > 0 && branch[i - 1].kind == "user" {
+        i -= 1;
+    }
+    if i == 0 {
+        return 0;
+    }
+    branch[i].timestamp.saturating_sub(branch[i - 1].timestamp) / 1000
 }
 
 #[cfg(test)]
@@ -827,6 +914,7 @@ mod tests {
                 ..Default::default()
             },
             buffered: Vec::new(),
+            buffer_cursor: None,
             changed: false,
         };
         // 200 combined tokens over the 100 budget: the prefix demotes out of
