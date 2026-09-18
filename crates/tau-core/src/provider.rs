@@ -614,6 +614,43 @@ pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
     })
 }
 
+/// A canned provider that sleeps between events — the in-flight seam for
+/// force-kill tests: the loop's kill flag, not a pre-cut, terminates it.
+struct SlowCannedProvider {
+    events: Vec<TurnEvent>,
+    delay_ms: u64,
+}
+
+impl TurnProvider for SlowCannedProvider {
+    fn call<'a>(&self, _request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+        let events = self.events.clone();
+        let delay_ms = self.delay_ms;
+        Box::pin(async move {
+            let mut result = TurnResult::default();
+            let mut accepted = 0usize;
+            for event in &events {
+                if !sink.event(event.clone()) {
+                    break;
+                }
+                fold_event(event, &mut result);
+                accepted += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            if accepted == events.len() {
+                result.completed = events.iter().any(|e| matches!(e, TurnEvent::Completed(_)));
+            }
+            Ok(result)
+        })
+    }
+}
+
+/// A canned provider replaying its stream with a delay between events: a
+/// force sent mid-stream cuts it (the loop's kill flag is the terminator).
+pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
+    let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
+    Arc::new(SlowCannedProvider { events, delay_ms })
+}
+
 /// Decode a canned SSE body into the event/call sequence the live path would
 /// produce (the canned provider's source; also the offline-decode utility).
 /// A canned stream: the events in order, plus each call with the event

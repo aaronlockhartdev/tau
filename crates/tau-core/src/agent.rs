@@ -624,6 +624,69 @@ mod tests {
         assert_eq!(users, vec!["FORCE", "queued steering", "go"]);
     }
 
+    /// A force sent while the stream is IN FLIGHT (not a pre-cut): the kill
+    /// flag stops the slow stream mid-way, the partial stands as interrupted,
+    /// and the forced message preempts a steering queued at the same instant
+    /// on the next call.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn force_mid_stream_kills_the_stream_and_preempts_contemporaneous_steering() {
+        let dir = tempfile::tempdir().unwrap();
+        // One stream, four 40 ms-apart text deltas, ending in a single
+        // completed event: left alone it runs ~200 ms to completion, the
+        // force at ~100 ms cuts it mid-way. (Built by hand — sse() ends each
+        // chunk in [DONE], and the decoder stops at the first one.)
+        let body = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"a\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"b\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"c\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"d\"}\n\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+            "data: [DONE]\n\n"
+        );
+        let provider = crate::provider::canned_slow(body, 40);
+        let agent = Arc::new(make_agent(dir.path(), provider));
+        agent.send("go", Lane::FollowUp);
+        let killer = {
+            let agent = agent.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                agent.send("FORCE", Lane::Force);
+                agent.send("steer", Lane::Steering);
+            })
+        };
+        agent.process().await.unwrap();
+        killer.await.unwrap();
+        let entries = entries_of(&agent.inner.lock().unwrap().store);
+        let kinds: Vec<&str> = entries.iter().map(|e| e.kind.as_str()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                KIND_USER,
+                KIND_ASSISTANT,
+                KIND_USER,
+                KIND_USER,
+                KIND_ASSISTANT
+            ]
+        );
+        let killed = &entries[1];
+        assert!(
+            killed.payload["interrupted"].as_bool().unwrap(),
+            "{killed:?}"
+        );
+        // a, b, c land before the 100 ms force (d is at 120 ms); under a
+        // loaded runner the 80 ms c may lose the race, so accept ab or abc.
+        let partial = killed.payload["text"].as_str().unwrap();
+        assert!(
+            partial == "ab" || partial == "abc",
+            "partial was {partial:?}"
+        );
+        assert_eq!(entries[2].payload["text"], "FORCE");
+        assert_eq!(entries[3].payload["text"], "steer");
+        // The following call starts un-killed and runs the stream to completion.
+        assert_eq!(entries[4].payload["text"], "abcd");
+        assert!(!entries[4].payload["interrupted"].as_bool().unwrap());
+    }
+
     /// Live acceptance (ticket #19): a four-tool session against the hosted
     /// vLLM endpoint; skipped unless TAU_TEST_ENDPOINT is set.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
