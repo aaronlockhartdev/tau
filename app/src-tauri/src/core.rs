@@ -628,9 +628,18 @@ impl Core {
                     live.queue.lock().unwrap().push(QueuedItem { text, lane });
                 }
                 self.emit_queue(&live);
-                let live = Arc::clone(&live);
-                let core = Arc::clone(self);
-                tokio::spawn(async move { run_turn(core, live).await });
+                // Turn start is a check-and-set on the turn flag: a send that
+                // lands mid-turn is queued and the in-flight process() absorbs
+                // it (spec §7 steering rides the live call; §8 single writer).
+                if live
+                    .turn
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    let live = Arc::clone(&live);
+                    let core = Arc::clone(self);
+                    tokio::spawn(async move { run_turn(core, live).await });
+                }
                 Ok(CommandOutput::None)
             }
             Command::MessageStop { session } => {
@@ -764,7 +773,6 @@ fn deadline(coalescer: &Coalescer) -> std::time::Duration {
 /// file is the record; the events it implies are derived here, after
 /// `process()` drained the queue.
 async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
-    live.turn.store(true, Ordering::SeqCst);
     let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
     if store.open().is_err() {
         live.turn.store(false, Ordering::SeqCst);
@@ -1326,6 +1334,90 @@ mod tests {
                 .rev()
                 .any(|e| matches!(e, Event::Queue { items, .. } if items.is_empty())),
             "the delivered message never left the queue: {queues:?}"
+        );
+    }
+
+    /// A send that lands while a turn is in flight must not spawn a second
+    /// concurrent process(): the message is queued and the in-flight turn
+    /// absorbs it (spec §7/§8 single writer, review B1).
+    #[tokio::test]
+    async fn a_mid_turn_send_is_queued_not_a_second_turn() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Workspace(w) => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        // The slow stream (~2.4 s in flight per call) is the in-flight
+        // window the second send lands in.
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned_slow(&canned_body(), 600),
+            TurnConfig::default(),
+        );
+
+        let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let sink = Arc::clone(&collected);
+        let pump_core = Arc::clone(&core);
+        tokio::spawn(async move {
+            pump(pump_core, move |batch| {
+                sink.lock().unwrap().extend(batch.iter().cloned());
+            })
+            .await;
+        });
+
+        let session_id = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: session_id.clone(),
+            text: "first".into(),
+            lane: MessageLane::Steering,
+        })
+        .await
+        .unwrap();
+
+        // Mid-stream of call 1: the first deltas have arrived, the stream
+        // is still going (call 1 ends near t=2.4 s).
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        core.dispatch(Command::MessageSend {
+            session: session_id,
+            text: "second".into(),
+            lane: MessageLane::Steering,
+        })
+        .await
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        let events = collected.lock().unwrap().clone();
+        let starts = events
+            .iter()
+            .filter(|e| matches!(e, Event::StreamStart { .. }))
+            .count();
+        assert_eq!(
+            starts, 1,
+            "a mid-turn send spawned a second turn ({starts} stream starts): {events:?}"
+        );
+        // The second message sits in the GUI's queue state, waiting for the
+        // in-flight process() to deliver it — it was not consumed by a
+        // second turn (the starter stays listed until the post-turn
+        // reconciliation, so both are present).
+        let last_queue = events
+            .iter()
+            .rev()
+            .find(|e| matches!(e, Event::Queue { .. }))
+            .cloned();
+        let Some(Event::Queue { items, .. }) = last_queue else {
+            panic!("no queue state after the second send: {events:?}")
+        };
+        assert!(
+            items.iter().any(|i| i.text == "second"),
+            "the mid-turn message must remain queued: {items:?}"
         );
     }
 
