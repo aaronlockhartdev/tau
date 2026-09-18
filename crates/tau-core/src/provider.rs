@@ -4,9 +4,14 @@
 //! catalog, no keychain.
 
 use crate::config::{Provider, Requests};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::Value;
 use std::error::Error;
 use std::fmt;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// A model as reported by the provider's `/models` endpoint.
@@ -168,6 +173,19 @@ enum Frame {
     /// Mid-stream provider error: recorded, never fatal (spec §6 invariant).
     #[serde(rename = "error")]
     Error { error: ProviderErrorFrame },
+    /// A completed output item — the carrier for a function call (spec §5.4).
+    #[serde(rename = "response.output_item.done")]
+    OutputItemDone {
+        #[serde(default)]
+        item: OutputItem,
+    },
+    /// vLLM's native reasoning-delta dialect (`reasoning_text` parts on the
+    /// reasoning item); folded into the one internal field like the rest.
+    #[serde(rename = "response.reasoning_text.delta")]
+    ReasoningTextDelta {
+        #[serde(default)]
+        delta: Option<String>,
+    },
     /// Lifecycle/content items the v0 client does not consume.
     #[serde(other)]
     Other,
@@ -191,6 +209,69 @@ struct ProviderErrorFrame {
     message: Option<String>,
 }
 
+/// A completed `response.output_item.done` item. Only the function-call
+/// shape is consumed (spec §5.4); the rest is ignored.
+#[derive(Debug, Default, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OutputItem {
+    FunctionCall {
+        #[serde(default)]
+        id: String,
+        #[serde(default)]
+        call_id: String,
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        arguments: String,
+    },
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+/// One model-facing tool definition, wire-shaped for the responses API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub struct ToolSpec {
+    #[serde(rename = "type")]
+    pub kind: ToolKind,
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolKind {
+    Function,
+}
+
+/// The reasoning budget in the responses-API shape (`{"effort": ...}`);
+/// `None` leaves the server default (a thinking model reasons heavily by
+/// default, which burns the output budget — spec §6).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct ReasoningParam {
+    effort: ReasoningEffort,
+}
+
+/// A function call the model emitted on a turn (spec §5.4).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct FunctionCall {
+    pub id: String,
+    pub call_id: String,
+    pub name: String,
+    /// Raw JSON, as the server sent it.
+    pub arguments: String,
+}
 /// Usage from the `response.completed` event (spec §6). Field names accept
 /// both the Responses shape and the chat-completions dialect.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -221,12 +302,18 @@ impl Usage {
 
 /// One request to `POST {base}/responses` (streaming; v0 is responses-only,
 /// ADR-0003).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ResponseRequest {
     model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     instructions: Option<String>,
-    input: Vec<InputMessage>,
+    input: Vec<InputEntry>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tools: Vec<ToolSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<ReasoningParam>,
     stream: bool,
 }
 
@@ -236,59 +323,130 @@ impl ResponseRequest {
         instructions: Option<&str>,
         input: Vec<InputMessage>,
     ) -> Self {
+        let input = input.into_iter().map(InputEntry::Message).collect();
         Self {
             model: model.into(),
             instructions: instructions.map(str::to_owned),
             input,
+            tools: Vec::new(),
+            max_output_tokens: None,
+            reasoning: None,
             stream: true,
         }
     }
+
+    pub fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    pub fn with_max_output_tokens(mut self, n: u64) -> Self {
+        self.max_output_tokens = Some(n);
+        self
+    }
+
+    pub fn with_reasoning(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning = Some(ReasoningParam { effort });
+        self
+    }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct InputMessage {
     pub role: String,
     pub content: String,
 }
 
+/// One input item, wire-shaped: a plain message, a prior function call, or a
+/// tool result (spec §5.4: results ride back to the model on the next call).
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum InputEntry {
+    Message(InputMessage),
+    Call(FunctionCallInput),
+    CallOutput(FunctionCallOutputInput),
+}
+
+/// A prior function call as an input item (responses API shape).
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionCallInput {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    id: String,
+    call_id: String,
+    name: String,
+    arguments: String,
+}
+
+/// A tool result as an input item (responses API shape).
+#[derive(Debug, Clone, Serialize)]
+pub struct FunctionCallOutputInput {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    call_id: String,
+    output: String,
+}
 /// The assembled result of one turn.
 #[derive(Debug, Default)]
 pub struct TurnResult {
     pub text: String,
     pub reasoning: String,
     pub usage: Option<Usage>,
+    /// `response.completed` arrived; a kill or an early EOF leaves this
+    /// false and the partial stands (spec §6/§7, #17 handoff gap b).
+    pub completed: bool,
+    pub calls: Vec<FunctionCall>,
     /// Mid-stream provider error frames, in arrival order.
     pub mid_stream_errors: Vec<String>,
 }
 
-fn append_reasoning(
-    result: &mut TurnResult,
-    field: Option<String>,
-    blocks: Option<Vec<ReasoningBlock>>,
-) {
-    if let Some(text) = field {
-        result.reasoning.push_str(&text);
-    }
-    if let Some(blocks) = blocks {
-        for block in blocks {
-            if let Some(text) = block.text {
-                result.reasoning.push_str(&text);
-            }
-        }
+/// One stream delta, or the usage at `response.completed`. The sink decides
+/// whether the stream may continue (false = kill, spec §7).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TurnEvent {
+    Text(String),
+    Reasoning(String),
+    Completed(Usage),
+}
+
+/// A streaming sink: the force-kill point (spec §7).
+pub trait TurnSink: Send {
+    /// Return false to kill the in-flight stream; the partial result then
+    /// stands with `completed: false`.
+    fn event(&mut self, event: TurnEvent) -> bool;
+}
+
+fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
+    match event {
+        TurnEvent::Text(t) => result.text.push_str(t),
+        TurnEvent::Reasoning(t) => result.reasoning.push_str(t),
+        TurnEvent::Completed(u) => result.usage = Some(u.clone()),
     }
 }
 
-fn apply_frame(result: &mut TurnResult, payload: &str) {
+fn emit(sink: &mut dyn TurnSink, result: &mut TurnResult, event: TurnEvent) -> bool {
+    if !sink.event(event.clone()) {
+        return false;
+    }
+    fold_event(&event, result);
+    true
+}
+
+/// Consume one `data:` payload: accumulate into the result and forward the
+/// stream-delta events to the sink (false = kill, spec §7).
+fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payload: &str) -> bool {
     // Undecodable frames are skipped rather than failing the turn: servers
     // pad the stream with non-JSON frames (research #4, quirk 1).
     let frame: Frame = match serde_json::from_str(payload) {
         Ok(frame) => frame,
-        Err(_) => return,
+        Err(_) => return true,
     };
     match frame {
         Frame::Completed { response } => {
-            if let Some(usage) = response.and_then(|r| r.usage) {
-                result.usage = Some(usage);
+            result.completed = true;
+            match response.and_then(|r| r.usage) {
+                Some(usage) => emit(sink, result, TurnEvent::Completed(usage)),
+                None => true,
             }
         }
         Frame::OutputTextDelta {
@@ -296,15 +454,48 @@ fn apply_frame(result: &mut TurnResult, payload: &str) {
             reasoning_text,
             reasoning_details,
         } => {
-            if let Some(text) = delta {
-                result.text.push_str(&text);
+            if let Some(text) = delta
+                && !emit(sink, result, TurnEvent::Text(text))
+            {
+                return false;
             }
-            append_reasoning(result, reasoning_text, reasoning_details);
+            if let Some(text) = reasoning_text
+                && !emit(sink, result, TurnEvent::Reasoning(text))
+            {
+                return false;
+            }
+            for block in reasoning_details.into_iter().flatten() {
+                if let Some(text) = block.text
+                    && !emit(sink, result, TurnEvent::Reasoning(text))
+                {
+                    return false;
+                }
+            }
+            true
         }
-        Frame::ReasoningDelta { delta } => {
+        Frame::ReasoningDelta { delta } | Frame::ReasoningTextDelta { delta } => {
             if let Some(text) = delta {
-                result.reasoning.push_str(&text);
+                emit(sink, result, TurnEvent::Reasoning(text))
+            } else {
+                true
             }
+        }
+        Frame::OutputItemDone { item } => {
+            if let OutputItem::FunctionCall {
+                id,
+                call_id,
+                name,
+                arguments,
+            } = item
+            {
+                result.calls.push(FunctionCall {
+                    id,
+                    call_id,
+                    name,
+                    arguments,
+                });
+            }
+            true
         }
         Frame::Error { error } => {
             result.mid_stream_errors.push(
@@ -313,27 +504,172 @@ fn apply_frame(result: &mut TurnResult, payload: &str) {
                     .clone()
                     .unwrap_or_else(|| "mid-stream provider error".into()),
             );
+            true
         }
-        Frame::Created | Frame::InProgress | Frame::Other => {}
+        Frame::Created | Frame::InProgress | Frame::Other => true,
     }
 }
 
+/// The loop's provider seam (spec §6): a turn is a request in, a result out,
+/// with every stream delta forwarded to the sink on the way — the live path
+/// and the canned test path share this contract (ticket #19).
+pub type ProviderTurn<'a> =
+    Pin<Box<dyn Future<Output = Result<TurnResult, ProviderError>> + Send + 'a>>;
+
+pub trait TurnProvider: Send + Sync {
+    fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a>;
+}
+
+pub type TurnProviderRef = Arc<dyn TurnProvider>;
+
+/// The production seam: the live responses endpoint (spec §6).
+pub fn production(
+    client: &reqwest::Client,
+    provider: &Provider,
+    requests: &Requests,
+) -> TurnProviderRef {
+    Arc::new(ProductionProvider {
+        client: client.clone(),
+        provider: provider.clone(),
+        requests: requests.clone(),
+    })
+}
+
+struct ProductionProvider {
+    client: reqwest::Client,
+    provider: Provider,
+    requests: Requests,
+}
+
+impl TurnProvider for ProductionProvider {
+    fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+        let client = self.client.clone();
+        let provider = self.provider.clone();
+        let requests = self.requests.clone();
+        let request = request.clone();
+        Box::pin(async move { stream_turn(&client, &provider, &requests, &request, sink).await })
+    }
+}
+
+/// A canned provider for tests (ticket #19's SSE-fixture seam): replays the
+/// events decoded from a canned SSE body through the same sink contract as
+/// the live path, so lane semantics run against the real decode pipeline.
+struct CannedProvider {
+    events: Vec<TurnEvent>,
+    /// Calls indexed by the event position they completed at.
+    calls: Vec<(usize, FunctionCall)>,
+    /// Cut the stream after this many events (the force-kill shape);
+    /// `usize::MAX` = the full stream.
+    cut_after: usize,
+}
+
+impl TurnProvider for CannedProvider {
+    fn call<'a>(&self, _request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+        let events = self.events.clone();
+        let calls = self.calls.clone();
+        let cut_after = self.cut_after;
+        Box::pin(async move {
+            let mut result = TurnResult::default();
+            let mut accepted = 0usize;
+            for event in &events {
+                if accepted >= cut_after {
+                    break;
+                }
+                if !sink.event(event.clone()) {
+                    break;
+                }
+                fold_event(event, &mut result);
+                accepted += 1;
+            }
+            if accepted == events.len() {
+                result.completed = events.iter().any(|e| matches!(e, TurnEvent::Completed(_)));
+            }
+            result.calls = calls
+                .iter()
+                .filter(|(i, _)| *i <= accepted)
+                .map(|(_, c)| c.clone())
+                .collect();
+            Ok(result)
+        })
+    }
+}
+
+/// A canned provider replaying the full decoded stream.
+pub fn canned(body: &str) -> TurnProviderRef {
+    let (events, calls) = decode_stream(body).expect("canned SSE body must decode");
+    Arc::new(CannedProvider {
+        events,
+        calls,
+        cut_after: usize::MAX,
+    })
+}
+
+/// A canned provider whose stream is cut after `n` events — the shape a
+/// force-kill produces (partial, `completed: false`).
+pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
+    let (events, calls) = decode_stream(body).expect("canned SSE body must decode");
+    Arc::new(CannedProvider {
+        events,
+        calls,
+        cut_after: n,
+    })
+}
+
+/// Decode a canned SSE body into the event/call sequence the live path would
+/// produce (the canned provider's source; also the offline-decode utility).
+/// A canned stream: the events in order, plus each call with the event
+/// position it completed at.
+pub type CannedStream = (Vec<TurnEvent>, Vec<(usize, FunctionCall)>);
+
+pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
+    let mut parser = SseParser::new();
+    let payloads = parser.feed(body.as_bytes())?;
+    struct RecordSink(Vec<TurnEvent>);
+    impl TurnSink for RecordSink {
+        fn event(&mut self, event: TurnEvent) -> bool {
+            self.0.push(event);
+            true
+        }
+    }
+    let mut sink = RecordSink(Vec::new());
+    let mut result = TurnResult::default();
+    let mut calls = Vec::new();
+    let mut seen_calls = 0usize;
+    for payload in payloads {
+        if payload == "[DONE]" {
+            break;
+        }
+        apply_frame(&mut sink, &mut result, &payload);
+        while result.calls.len() > seen_calls {
+            let call = result
+                .calls
+                .last()
+                .cloned()
+                .expect("calls appended in order");
+            calls.push((sink.0.len(), call));
+            seen_calls += 1;
+        }
+    }
+    Ok((sink.0, calls))
+}
+
 /// One streamed `POST {base}/responses` turn (spec §6): typed SSE frames,
-/// reasoning-dialect normalization, usage from `response.completed`.
-/// Retries connect/timeout/5xx up to `requests.retries` with exponential
-/// backoff; 4xx and mid-stream errors fail or annotate the turn without
-/// retrying.
-pub async fn stream_response(
+/// reasoning-dialect normalization, usage from `response.completed`, and the
+/// delta events on the sink. Retries connect/timeout/5xx up to
+/// `requests.retries` with exponential backoff; 4xx and mid-stream errors
+/// fail or annotate the turn without retrying.
+pub async fn stream_turn(
     client: &reqwest::Client,
     provider: &Provider,
     requests: &Requests,
     request: &ResponseRequest,
+    sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
     let url = endpoint_url(&provider.base_url, "responses");
     let key = resolve_key(provider);
     let mut attempt = 0u32;
     loop {
-        match attempt_one_turn(client, &url, key.as_deref(), requests, request).await {
+        match attempt_one_turn(client, &url, key.as_deref(), requests, request, sink).await {
             Ok(result) => return Ok(result),
             Err(e) => {
                 let retryable = match &e {
@@ -353,12 +689,29 @@ pub async fn stream_response(
     }
 }
 
+/// One streamed turn; the events are discarded (the original #17 surface).
+pub async fn stream_response(
+    client: &reqwest::Client,
+    provider: &Provider,
+    requests: &Requests,
+    request: &ResponseRequest,
+) -> Result<TurnResult, ProviderError> {
+    struct Keep;
+    impl TurnSink for Keep {
+        fn event(&mut self, _: TurnEvent) -> bool {
+            true
+        }
+    }
+    stream_turn(client, provider, requests, request, &mut Keep).await
+}
+
 async fn attempt_one_turn(
     client: &reqwest::Client,
     url: &str,
     key: Option<&str>,
     requests: &Requests,
     request: &ResponseRequest,
+    sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
     let mut builder = client
         .post(url)
@@ -377,14 +730,31 @@ async fn attempt_one_turn(
     let mut result = TurnResult::default();
     let mut stream = response;
     'outer: while !parser.terminated {
-        let Some(chunk) = stream.chunk().await.map_err(ProviderError::Request)? else {
-            break;
+        let chunk = match stream.chunk().await {
+            Ok(Some(chunk)) => chunk,
+            // EOF: the result stands as accumulated — `completed` only if
+            // `response.completed` arrived (spec §6, #17 handoff gap b).
+            Ok(None) => break,
+            Err(e) => {
+                // A mid-body drop keeps the partial as an incomplete turn
+                // instead of an error (ticket #19, #17 handoff gap c): the
+                // partial cannot be re-derived by a retry; a pre-body
+                // failure (nothing received) still fails and retries.
+                if result.text.is_empty() && result.reasoning.is_empty() && result.calls.is_empty()
+                {
+                    return Err(ProviderError::Request(e));
+                }
+                break;
+            }
         };
         for payload in parser.feed(&chunk)? {
             if payload == "[DONE]" {
                 break 'outer;
             }
-            apply_frame(&mut result, &payload);
+            if !apply_frame(sink, &mut result, &payload) {
+                // Killed: the partial stands (spec §7 force).
+                return Ok(result);
+            }
         }
     }
     Ok(result)
@@ -394,6 +764,13 @@ async fn attempt_one_turn(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    struct Keep;
+    impl TurnSink for Keep {
+        fn event(&mut self, _: TurnEvent) -> bool {
+            true
+        }
+    }
     use std::sync::atomic::{AtomicU32, Ordering};
 
     #[test]
@@ -480,14 +857,14 @@ mod tests {
                 r#"{{"type":"response.output_text.delta","delta":"answer","{field}":"thought"}}"#
             );
             let mut result = TurnResult::default();
-            apply_frame(&mut result, &payload);
+            apply_frame(&mut Keep, &mut result, &payload);
             assert_eq!(result.text, "answer", "dialect {field}");
             assert_eq!(result.reasoning, "thought", "dialect {field}");
         }
         let payload = r#"{"type":"response.output_text.delta","delta":"answer",
             "reasoning_details": [{"text": "thought-a"}, {"text": "thought-b"}]}"#;
         let mut result = TurnResult::default();
-        apply_frame(&mut result, payload);
+        apply_frame(&mut Keep, &mut result, payload);
         assert_eq!(result.reasoning, "thought-athought-b");
     }
 
@@ -751,5 +1128,204 @@ mod tests {
             .expect("turn 2");
         assert!(!turn2.text.is_empty(), "turn 2 produced no text");
         assert!(turn2.usage.is_some(), "turn 2 recorded no usage");
+    }
+
+    #[test]
+    fn decode_stream_extracts_function_calls_and_reasoning_dialect() {
+        let body = ok_body(&[
+            r#"{"type":"response.output_item.added","item":{"id":"i1","type":"function_call","name":"bash","call_id":"c1","arguments":""}}"#,
+            r#"{"type":"response.function_call_arguments.delta","delta":"{\"command\": \"ls\"}","item_id":"i1"}"#,
+            r#"{"type":"response.output_item.done","item":{"id":"i1","type":"function_call","name":"bash","call_id":"c1","arguments":"{\"command\": \"ls\"}"}}"#,
+            r#"{"type":"response.reasoning_text.delta","delta":"thinking"}"#,
+            r#"{"type":"response.output_text.delta","delta":"done"}"#,
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
+            "[DONE]",
+        ]);
+        let (events, calls) = decode_stream(&body).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                TurnEvent::Reasoning("thinking".into()),
+                TurnEvent::Text("done".into()),
+                TurnEvent::Completed(Usage {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    total_tokens: 5,
+                    ..Default::default()
+                })
+            ]
+        );
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].1.name, "bash");
+        assert_eq!(calls[0].1.call_id, "c1");
+        assert_eq!(calls[0].1.arguments, r#"{"command": "ls"}"#);
+    }
+
+    #[test]
+    fn canned_cut_leaves_the_partial_incomplete() {
+        let body = ok_body(&[
+            r#"{"type":"response.output_text.delta","delta":"par"}"#,
+            r#"{"type":"response.output_text.delta","delta":"tial"}"#,
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}"#,
+            "[DONE]",
+        ]);
+        let provider = canned_cut(&body, 1);
+        let request = ResponseRequest::new("m", None, vec![]);
+        let result = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                struct Keep;
+                impl TurnSink for Keep {
+                    fn event(&mut self, _: TurnEvent) -> bool {
+                        true
+                    }
+                }
+                provider.call(&request, &mut Keep).await.unwrap()
+            })
+        };
+        assert_eq!(result.text, "par");
+        assert!(!result.completed, "a cut stream is not completed");
+        assert!(
+            result.usage.is_none(),
+            "usage commits only from response.completed"
+        );
+
+        let provider = canned(&body);
+        let result = {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                struct Keep;
+                impl TurnSink for Keep {
+                    fn event(&mut self, _: TurnEvent) -> bool {
+                        true
+                    }
+                }
+                provider.call(&request, &mut Keep).await.unwrap()
+            })
+        };
+        assert_eq!(result.text, "partial");
+        assert!(result.completed);
+    }
+
+    #[tokio::test]
+    async fn sink_kill_stops_the_stream_with_a_partial() {
+        let body = ok_body(&[
+            r#"{"type":"response.output_text.delta","delta":"abc"}"#,
+            r#"{"type":"response.output_text.delta","delta":"def"}"#,
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}"#,
+            "[DONE]",
+        ]);
+        let (base, _) = mock_server(vec![body]).await;
+        let request = ResponseRequest::new("m", None, vec![]);
+        let mut sink = KillAfterOne::default();
+        let result = stream_turn(
+            &reqwest::Client::new(),
+            &provider_for(&base),
+            &fast_requests(),
+            &request,
+            &mut sink,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.text, "abc");
+        assert!(!result.completed);
+        assert!(result.usage.is_none());
+    }
+
+    /// A sink that kills after the first event.
+    struct KillAfterOne {
+        seen: u32,
+    }
+
+    impl KillAfterOne {
+        const fn new() -> Self {
+            Self { seen: 0 }
+        }
+    }
+
+    impl Default for KillAfterOne {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl TurnSink for KillAfterOne {
+        fn event(&mut self, _: TurnEvent) -> bool {
+            self.seen += 1;
+            self.seen <= 1
+        }
+    }
+
+    #[tokio::test]
+    async fn mid_body_drop_keeps_the_partial_turn() {
+        // Server that sends one delta and drops the connection.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            use tokio::io::AsyncWriteExt;
+            let partial = "HTTP/1.1 200 OK
+content-type: text/event-stream
+
+data: "
+                .to_string()
+                + r#"{"type":"response.output_text.delta","delta":"survived"}"#
+                + "
+
+";
+            let _ = sock.write_all(partial.as_bytes()).await;
+            drop(sock);
+        });
+        let request = ResponseRequest::new("m", None, vec![]);
+        struct Keep;
+        impl TurnSink for Keep {
+            fn event(&mut self, _: TurnEvent) -> bool {
+                true
+            }
+        }
+        let result = stream_turn(
+            &reqwest::Client::new(),
+            &provider_for(&format!("http://{addr}")),
+            &fast_requests(),
+            &request,
+            &mut Keep,
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.text, "survived");
+        assert!(!result.completed, "an early EOF is an incomplete turn");
+    }
+
+    #[test]
+    fn request_wire_shape_carries_tools_and_limits() {
+        let request = ResponseRequest::new(
+            "m",
+            Some("sys"),
+            vec![InputMessage {
+                role: "user".into(),
+                content: "hi".into(),
+            }],
+        )
+        .with_tools(vec![ToolSpec {
+            kind: ToolKind::Function,
+            name: "bash".into(),
+            description: "run".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }])
+        .with_max_output_tokens(128)
+        .with_reasoning(ReasoningEffort::Low);
+        let wire: serde_json::Value = serde_json::to_value(&request).unwrap();
+        assert_eq!(wire["stream"], true);
+        assert_eq!(wire["tools"][0]["type"], "function");
+        assert_eq!(wire["tools"][0]["name"], "bash");
+        assert_eq!(wire["max_output_tokens"], 128);
+        assert_eq!(wire["reasoning"]["effort"], "low");
+        assert_eq!(wire["input"][0]["role"], "user");
     }
 }
