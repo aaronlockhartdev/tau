@@ -170,12 +170,23 @@ pub struct OmRecord {
     pub generation: u32,
     pub observation_tokens: u32,
     pub pending_tokens: u32,
+    /// The frozen prefix demoted to recall-only (spec §4 overflow ladder:
+    /// the suffix was compressed and the combined log still exceeds budget —
+    /// the prefix leaves the live context, stays in the session file, and is
+    /// re-admitted when space frees).
+    #[serde(default)]
+    pub prefix_demoted: bool,
 }
 
 impl OmRecord {
-    /// The full live observation text: the frozen prefix (byte-verbatim)
-    /// followed by the managed suffix — one continuous log (ADR-0004).
+    /// The full live observation text: the frozen prefix (byte-verbatim) and
+    /// the managed suffix — one continuous log (ADR-0004); a demoted prefix
+    /// drops out of the live context (it stays in the session file, reachable
+    /// via `recall`; spec §4 overflow ladder).
     pub fn live_observations(&self) -> String {
+        if self.prefix_demoted {
+            return self.active_observations.clone();
+        }
         format!("{}{}", self.frozen_prefix, self.active_observations)
     }
 

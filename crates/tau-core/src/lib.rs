@@ -7,6 +7,7 @@ pub mod config;
 pub mod context;
 pub mod hashline;
 pub mod om;
+pub mod om_integration;
 pub mod provider;
 pub mod session;
 pub mod tools;
