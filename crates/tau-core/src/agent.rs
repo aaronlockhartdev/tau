@@ -774,7 +774,10 @@ mod tests {
             .iter()
             .find(|e| e.kind == KIND_SYSTEM)
             .expect("a system note records why the turn stopped");
-        assert!(note.payload["note"].as_str().unwrap().contains("32"), "{note:?}");
+        assert!(
+            note.payload["note"].as_str().unwrap().contains("32"),
+            "{note:?}"
+        );
         assert_eq!(
             entries.iter().filter(|e| e.kind == KIND_TOOL).count(),
             MAX_ROUNDS
