@@ -58,11 +58,21 @@ impl Default for SubAgents {
     }
 }
 
+/// What a force does to an in-flight tool batch (spec §7: complete | kill).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolBatchPolicy {
+    #[default]
+    Complete,
+    Kill,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Requests {
     pub timeout_secs: u64,
     pub retries: u32,
+    pub tool_batch_on_force: ToolBatchPolicy,
 }
 
 impl Default for Requests {
@@ -70,6 +80,7 @@ impl Default for Requests {
         Self {
             timeout_secs: 120,
             retries: 2,
+            tool_batch_on_force: ToolBatchPolicy::default(),
         }
     }
 }

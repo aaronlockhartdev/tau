@@ -321,9 +321,8 @@ impl ResponseRequest {
     pub fn new(
         model: impl Into<String>,
         instructions: Option<&str>,
-        input: Vec<InputMessage>,
+        input: Vec<InputEntry>,
     ) -> Self {
-        let input = input.into_iter().map(InputEntry::Message).collect();
         Self {
             model: model.into(),
             instructions: instructions.map(str::to_owned),
@@ -371,20 +370,20 @@ pub enum InputEntry {
 #[derive(Debug, Clone, Serialize)]
 pub struct FunctionCallInput {
     #[serde(rename = "type")]
-    kind: &'static str,
-    id: String,
-    call_id: String,
-    name: String,
-    arguments: String,
+    pub kind: &'static str,
+    pub id: String,
+    pub call_id: String,
+    pub name: String,
+    pub arguments: String,
 }
 
 /// A tool result as an input item (responses API shape).
 #[derive(Debug, Clone, Serialize)]
 pub struct FunctionCallOutputInput {
     #[serde(rename = "type")]
-    kind: &'static str,
-    call_id: String,
-    output: String,
+    pub kind: &'static str,
+    pub call_id: String,
+    pub output: String,
 }
 /// The assembled result of one turn.
 #[derive(Debug, Default)]
@@ -911,6 +910,7 @@ mod tests {
         Requests {
             timeout_secs: 10,
             retries: 2,
+            tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
         }
     }
 
@@ -931,7 +931,10 @@ mod tests {
             vec![InputMessage {
                 role: "user".into(),
                 content: "hi".into(),
-            }],
+            }]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         );
         let result = stream_response(
             &reqwest::Client::new(),
@@ -965,7 +968,10 @@ mod tests {
             vec![InputMessage {
                 role: "user".into(),
                 content: "hi".into(),
-            }],
+            }]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         );
         let result = stream_response(
             &reqwest::Client::new(),
@@ -991,7 +997,10 @@ mod tests {
             vec![InputMessage {
                 role: "user".into(),
                 content: "hi".into(),
-            }],
+            }]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         );
         let err = stream_response(
             &reqwest::Client::new(),
@@ -1031,6 +1040,7 @@ mod tests {
         let requests = Requests {
             timeout_secs: 1,
             retries: 1,
+            tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
         };
         let request = ResponseRequest::new(
             "m",
@@ -1038,7 +1048,10 @@ mod tests {
             vec![InputMessage {
                 role: "user".into(),
                 content: "hi".into(),
-            }],
+            }]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         );
         let err = stream_response(
             &reqwest::Client::new(),
@@ -1096,7 +1109,10 @@ mod tests {
             vec![InputMessage {
                 role: "user".into(),
                 content: "What is 27 times 4? Reply with just the number.".into(),
-            }],
+            }]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         );
         let turn1 = stream_response(&client, &provider, &requests, &request)
             .await
@@ -1121,7 +1137,10 @@ mod tests {
                     role: "user".into(),
                     content: "Now double that number.".into(),
                 },
-            ],
+            ]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         );
         let turn2 = stream_response(&client, &provider, &requests, &follow_up)
             .await
@@ -1310,7 +1329,10 @@ data: "
             vec![InputMessage {
                 role: "user".into(),
                 content: "hi".into(),
-            }],
+            }]
+            .into_iter()
+            .map(InputEntry::Message)
+            .collect(),
         )
         .with_tools(vec![ToolSpec {
             kind: ToolKind::Function,
