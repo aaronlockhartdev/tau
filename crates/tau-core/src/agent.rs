@@ -41,6 +41,7 @@ const MAX_ROUNDS: usize = 32;
 pub enum AgentError {
     Session(crate::session::Error),
     Provider(crate::provider::ProviderError),
+    Om(crate::om_integration::OmError),
 }
 
 impl fmt::Display for AgentError {
@@ -48,6 +49,7 @@ impl fmt::Display for AgentError {
         match self {
             Self::Session(e) => write!(f, "session: {e}"),
             Self::Provider(e) => write!(f, "provider: {e}"),
+            Self::Om(e) => write!(f, "om: {e}"),
         }
     }
 }
@@ -98,6 +100,8 @@ struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
+    om: Option<crate::om_integration::OmState>,
+    om_model: String,
 }
 
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
@@ -117,6 +121,11 @@ pub struct SessionParams {
     pub provider: TurnProviderRef,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
+    /// The OM integration state (ticket #22); `None` = OM disabled and the
+    /// loop behaves as before.
+    pub om: Option<crate::om_integration::OmState>,
+    /// The OM model (global config, spec §4); empty = the session's model.
+    pub om_model: String,
 }
 
 pub struct AgentSession {
@@ -137,6 +146,8 @@ impl AgentSession {
                 tool_batch_on_force: p.tool_batch_on_force,
                 turn: p.turn,
                 queue: VecDeque::new(),
+                om: p.om,
+                om_model: p.om_model,
             }),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -207,21 +218,35 @@ impl AgentSession {
                 self.append_user(msg).await?;
             }
 
-            let entries = {
-                let inner = self.inner.lock().unwrap();
-                inner
+            // The context (spec §4): with OM enabled, the system prompt
+            // carries the observation log and the raw window is the
+            // unobserved entries; without it, the session's entries as-is.
+            // Everything is read under one lock, then assembled purely.
+            let (system_prompt, input) = {
+                let mut inner = self.inner.lock().unwrap();
+                let base = inner.system_prompt.clone();
+                let om = inner.om.clone();
+                let entries = inner
                     .store
                     .entries_range(0, usize::MAX)
+                    .map_err(AgentError::Session)?;
+                let leaf_id = inner
+                    .store
+                    .leaf()
                     .map_err(AgentError::Session)?
+                    .map(|e| e.id);
+                match om {
+                    Some(mut om) => {
+                        let instructions = om.assemble_context(&base, None);
+                        let raw = om.raw_window_from(&entries, leaf_id.as_deref());
+                        (instructions, input_items(&raw))
+                    }
+                    None => (base, input_items(&entries)),
+                }
             };
-
-            let input = input_items(&entries);
-            let mut request = ResponseRequest::new(
-                self.model().to_owned(),
-                Some(self.system_prompt().as_str()),
-                input,
-            )
-            .with_tools(self.tools().clone());
+            let mut request =
+                ResponseRequest::new(self.model().to_owned(), Some(system_prompt.as_str()), input)
+                    .with_tools(self.tools().clone());
             if let Some(n) = self.turn_config().max_output_tokens {
                 request = request.with_max_output_tokens(n);
             }
@@ -249,6 +274,9 @@ impl AgentSession {
                 break;
             }
             if result.calls.is_empty() {
+                // The model ended the turn: the synchronous OM pass runs
+                // before any follow-up starts the next one (spec §4).
+                self.om_turn_end().await?;
                 break;
             }
             self.run_tools(&result.calls).await?;
@@ -264,7 +292,17 @@ impl AgentSession {
                 name: call.name.clone(),
                 args: args.clone(),
             };
-            let output = tools::dispatch(&self.cwd(), &tc).await;
+            let output = if call.name == "recall" {
+                let mut inner = self.inner.lock().unwrap();
+                let record = inner
+                    .om
+                    .as_ref()
+                    .map(|om| om.record.clone())
+                    .unwrap_or_default();
+                crate::om_integration::recall(&mut inner.store, &record, &args)
+            } else {
+                tools::dispatch(&self.cwd(), &tc).await
+            };
             self.append(
                 KIND_TOOL,
                 json!({
@@ -276,6 +314,89 @@ impl AgentSession {
             )?;
         }
         Ok(())
+    }
+
+    /// The turn-end OM pass (ticket #22): the state runs on a clone and
+    /// every store op takes the session lock briefly; the LLM round-trips
+    /// run between the lock scopes, so a force or steering send is never
+    /// blocked on an OM call.
+    async fn om_turn_end(&self) -> Result<(), AgentError> {
+        let mut state = {
+            let inner = self.inner.lock().unwrap();
+            inner.om.clone()
+        };
+        let Some(state) = &mut state else {
+            return Ok(());
+        };
+        let mut action = {
+            let mut inner = self.inner.lock().unwrap();
+            let unobserved = state.unobserved(&mut inner.store).map_err(AgentError::Om)?;
+            state.record.pending_tokens = state.pending_tokens(&unobserved);
+            if !state.buffered.is_empty() && state.activation_reached(state.record.pending_tokens) {
+                state.promote(&mut inner.store).map_err(AgentError::Om)?;
+            }
+            state.plan(&unobserved)
+        };
+        loop {
+            let result = match &action {
+                crate::om_integration::TurnEndAction::Done => break,
+                crate::om_integration::TurnEndAction::Observe { transcript }
+                | crate::om_integration::TurnEndAction::Buffer { transcript } => {
+                    let system = crate::om::observer_system_prompt();
+                    let request = ResponseRequest::new(
+                        self.om_model(),
+                        Some(system.as_str()),
+                        vec![InputEntry::Message(InputMessage {
+                            role: "user".into(),
+                            content: transcript.clone(),
+                        })],
+                    );
+                    let mut sink = crate::om_integration::NoopSink;
+                    self.provider
+                        .call(&request, &mut sink)
+                        .await
+                        .map_err(AgentError::Provider)?
+                }
+                crate::om_integration::TurnEndAction::Reflect { level } => {
+                    let prompt = state.reflector_prompt(*level);
+                    let system = crate::om::reflector_system_prompt();
+                    let request = ResponseRequest::new(
+                        self.om_model(),
+                        Some(system.as_str()),
+                        vec![InputEntry::Message(InputMessage {
+                            role: "user".into(),
+                            content: prompt,
+                        })],
+                    );
+                    let mut sink = crate::om_integration::NoopSink;
+                    self.provider
+                        .call(&request, &mut sink)
+                        .await
+                        .map_err(AgentError::Provider)?
+                }
+            };
+            {
+                let mut inner = self.inner.lock().unwrap();
+                state
+                    .commit(&mut inner.store, &mut action, &result)
+                    .map_err(AgentError::Om)?;
+            }
+        }
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.om = Some(state.clone());
+        }
+        Ok(())
+    }
+
+    /// The OM model (global config, spec §4); empty = the session's model.
+    fn om_model(&self) -> String {
+        let inner = self.inner.lock().unwrap();
+        if inner.om_model.is_empty() {
+            inner.model.clone()
+        } else {
+            inner.om_model.clone()
+        }
     }
 
     async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
@@ -315,10 +436,6 @@ impl AgentSession {
 
     fn model(&self) -> String {
         self.inner.lock().unwrap().model.clone()
-    }
-
-    fn system_prompt(&self) -> String {
-        self.inner.lock().unwrap().system_prompt.clone()
     }
 
     fn tools(&self) -> Vec<ToolSpec> {
@@ -442,6 +559,8 @@ mod tests {
             provider,
             tool_batch_on_force: ToolBatchPolicy::Complete,
             turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
         })
     }
 
@@ -740,6 +859,8 @@ mod tests {
                 max_output_tokens: Some(200),
                 reasoning: Some(crate::provider::ReasoningEffort::Low),
             },
+            om: None,
+            om_model: String::new(),
         });
         agent.send(
             "Do exactly this: 1) read notes.txt, 2) edit the line containing              'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write              the file out.txt with the single line 'done'. Then reply              'finished'.",
@@ -829,6 +950,8 @@ mod tests {
             provider,
             tool_batch_on_force: ToolBatchPolicy::Complete,
             turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
         });
         agent.send("go", Lane::FollowUp);
         agent.send("FORCE", Lane::Force);
