@@ -2,6 +2,7 @@
 //! types (ADR-0002) — the boundary that keeps a future `tau serve` binary a
 //! transport shim (spec §2).
 
+pub mod subagent;
 pub mod agent;
 pub mod config;
 pub mod context;

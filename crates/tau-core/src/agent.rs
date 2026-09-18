@@ -81,6 +81,9 @@ pub struct TurnConfig {
 struct Queued {
     text: String,
     lane: Lane,
+    /// Provenance: the child session that produced this wake message
+    /// (ticket #23) — a child notification is a user entry with a `source`.
+    source: Option<String>,
 }
 
 fn lane_name(lane: Lane) -> &'static str {
@@ -102,6 +105,12 @@ struct Inner {
     queue: VecDeque<Queued>,
     om: Option<crate::om_integration::OmState>,
     om_model: String,
+    /// The parent-side supervisor (ticket #23): present on non-child
+    /// sessions only — the depth cap (a child cannot spawn) is structural.
+    subagents: Option<Arc<crate::subagent::Supervisor>>,
+    /// The child-side link (ticket #23): present on child sessions only;
+    /// routes `parent_notify` to the child's supervisor.
+    child: Option<Arc<crate::subagent::ChildLink>>,
 }
 
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
@@ -126,12 +135,21 @@ pub struct SessionParams {
     pub om: Option<crate::om_integration::OmState>,
     /// The OM model (global config, spec §4); empty = the session's model.
     pub om_model: String,
+    /// The parent-side sub-agent supervisor (ticket #23); `None` for child
+    /// sessions (a child cannot spawn — the depth cap is structural).
+    pub subagents: Option<Arc<crate::subagent::Supervisor>>,
+    /// The child-side link (ticket #23); `None` for non-child sessions.
+    pub child: Option<Arc<crate::subagent::ChildLink>>,
 }
 
 pub struct AgentSession {
     inner: Mutex<Inner>,
     provider: TurnProviderRef,
     kill: Arc<AtomicBool>,
+    /// Persistent stop (ticket #23): unlike the per-call kill flag (reset
+    /// at each call), it stays set until the next send — a sub-agent soft
+    /// stop cuts the stream this way.
+    stop: Arc<AtomicBool>,
 }
 
 impl AgentSession {
@@ -148,9 +166,12 @@ impl AgentSession {
                 queue: VecDeque::new(),
                 om: p.om,
                 om_model: p.om_model,
+                subagents: p.subagents,
+                child: p.child,
             }),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
+            stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -159,9 +180,13 @@ impl AgentSession {
     /// keeps its position.
     pub fn send(&self, text: impl Into<String>, lane: Lane) {
         let mut inner = self.inner.lock().unwrap();
+        // A new send clears a previous stop (ticket #23): a stop means
+        // "interrupt current work", not "never work again".
+        self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
             text: text.into(),
             lane,
+            source: None,
         };
         if lane == Lane::Force {
             self.kill.store(true, Ordering::SeqCst);
@@ -169,6 +194,53 @@ impl AgentSession {
         } else {
             inner.queue.push_back(msg);
         }
+    }
+
+    /// A wake message with provenance (ticket #23): the child's result
+    /// lands on the follow-up lane tagged with the child's session id, so
+    /// the notification entry carries child provenance (ADR-0001).
+    pub fn send_notified(&self, text: impl Into<String>, source: String) {
+        let mut inner = self.inner.lock().unwrap();
+        self.stop.store(false, Ordering::SeqCst);
+        inner.queue.push_back(Queued {
+            text: text.into(),
+            lane: Lane::FollowUp,
+            source: Some(source),
+        });
+    }
+
+    /// A persistent stop (ticket #23): cuts the in-flight stream at the
+    /// next delta and stays until the next send.
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::SeqCst);
+    }
+
+    /// The persistent stop flag (a forwarding seam can share it so one
+    /// flag cuts at both the transport mirror and the loop sink).
+    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+        self.stop.clone()
+    }
+
+    /// The child-side link (a child session's `parent_notify` routing).
+    pub fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
+        self.inner.lock().unwrap().child.clone()
+    }
+
+    /// The session store's header timestamp (epoch ms).
+    pub fn store_created(&self) -> u64 {
+        self.inner.lock().unwrap().store.created()
+    }
+
+    #[cfg(test)]
+    /// Test-only OM state injection (the sub-agent module's tests).
+    pub fn set_om(&self, om: Option<crate::om_integration::OmState>) {
+        self.inner.lock().unwrap().om = om;
+    }
+
+    /// Append a record entry against the active leaf (the sub-agent
+    /// lifecycle records, ticket #23).
+    pub fn append_entry(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
+        self.append(kind, payload)
     }
 
     /// Run turns until the queue is empty.
@@ -261,7 +333,10 @@ impl AgentSession {
             // A force has already killed the stream it targeted; every
             // fresh call starts un-killed (spec §7).
             self.kill.store(false, Ordering::SeqCst);
-            let mut sink = KillSink(self.kill.clone());
+            let mut sink = KillSink {
+                kill: self.kill.clone(),
+                stop: self.stop.clone(),
+            };
             let result = self.provider.call(&request, &mut sink).await?;
             self.append_assistant(&result)?;
 
@@ -308,7 +383,22 @@ impl AgentSession {
                     .unwrap_or_default();
                 crate::om_integration::recall(&mut inner.store, &record, &args)
             } else {
-                tools::dispatch(&self.cwd(), &tc).await
+                // The sub-agent surface routes outside the core tools:
+                // the parent's supervisor tools, or the child's
+                // `parent_notify` (ticket #23); everything else is a core
+                // tool.
+                let routed = {
+                    let inner = self.inner.lock().unwrap();
+                    match (inner.subagents.clone(), inner.child.clone()) {
+                        (Some(sup), _) => Some(crate::subagent::route_parent(&sup, &tc)),
+                        (None, Some(link)) => Some(link.notify(&args)),
+                        _ => None,
+                    }
+                };
+                match routed {
+                    Some(out) => out,
+                    None => tools::dispatch(&self.cwd(), &tc).await,
+                }
             };
             self.append(
                 KIND_TOOL,
@@ -424,10 +514,11 @@ impl AgentSession {
     }
 
     async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
-        self.append(
-            KIND_USER,
-            json!({ "text": msg.text, "lane": lane_name(msg.lane) }),
-        )
+        let mut payload = json!({ "text": msg.text, "lane": lane_name(msg.lane) });
+        if let Some(source) = &msg.source {
+            payload["source"] = json!(source);
+        }
+        self.append(KIND_USER, payload)
     }
 
     fn append_assistant(&self, result: &TurnResult) -> Result<(), AgentError> {
@@ -491,13 +582,16 @@ impl AgentSession {
     }
 }
 
-/// The sink the loop gives the provider: a set kill flag stops the stream
-/// (spec §7 force).
-struct KillSink(Arc<AtomicBool>);
+/// The sink the loop gives the provider: the per-call kill flag (force)
+/// or the persistent stop flag (ticket #23) stops the stream (spec §7).
+struct KillSink {
+    kill: Arc<AtomicBool>,
+    stop: Arc<AtomicBool>,
+}
 
 impl TurnSink for KillSink {
     fn event(&mut self, _: crate::provider::TurnEvent) -> bool {
-        !self.0.load(Ordering::SeqCst)
+        !self.kill.load(Ordering::SeqCst) && !self.stop.load(Ordering::SeqCst)
     }
 }
 
@@ -597,6 +691,8 @@ mod tests {
             turn: TurnConfig::default(),
             om: None,
             om_model: String::new(),
+            subagents: None,
+            child: None,
         })
     }
 
@@ -923,6 +1019,8 @@ mod tests {
             },
             om: None,
             om_model: String::new(),
+            subagents: None,
+            child: None,
         });
         agent.send(
             "Do exactly this: 1) read notes.txt, 2) edit the line containing              'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write              the file out.txt with the single line 'done'. Then reply              'finished'.",
@@ -1014,6 +1112,8 @@ mod tests {
             turn: TurnConfig::default(),
             om: None,
             om_model: String::new(),
+            subagents: None,
+            child: None,
         });
         agent.send("go", Lane::FollowUp);
         agent.send("FORCE", Lane::Force);
@@ -1093,6 +1193,8 @@ mod tests {
                 crate::om::OmRecord::default(),
             )),
             om_model: String::new(),
+            subagents: None,
+            child: None,
         });
         agent.send("go1", Lane::FollowUp);
         agent.send("go2", Lane::FollowUp);
@@ -1188,6 +1290,8 @@ mod tests {
                 },
             )),
             om_model: String::new(),
+            subagents: None,
+            child: None,
         });
         agent.send("go1", Lane::FollowUp);
         agent.send("go2", Lane::FollowUp);
