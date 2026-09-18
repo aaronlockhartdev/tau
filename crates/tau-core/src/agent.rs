@@ -266,9 +266,12 @@ impl AgentSession {
             self.append_assistant(&result)?;
 
             if !result.completed {
-                // A force-kill: per the policy, the in-flight tool batch is
-                // let to complete, then one final call so the model sees the
-                // tool results alongside the forced message (spec §7).
+                // A force-killed turn skips the OM pass: the Observer needs
+                // no tool batch in flight, and the interrupted material
+                // joins the next turn's unobserved window (v0).
+                // Per the policy, the in-flight tool batch is let to
+                // complete, then one final call so the model sees the tool
+                // results alongside the forced message (spec §7).
                 if self.tool_batch_on_force() == ToolBatchPolicy::Complete
                     && !result.calls.is_empty()
                 {
@@ -442,9 +445,7 @@ impl AgentSession {
 
     fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
         let mut inner = self.inner.lock().unwrap();
-        // A fresh session has no leaf yet; the first entry starts the
-        // branch (None parent).
-        // A fresh session has no leaf; the first entry starts the branch.
+        // A fresh session has no leaf: the first entry starts the branch.
         // Any other failure is a storage error and propagates.
         let parent = match inner.store.leaf() {
             Ok(leaf) => leaf.map(|e| e.id),
@@ -1090,9 +1091,6 @@ mod tests {
             .om
             .clone()
             .expect("the om state is written back");
-        for e in agent.inner.lock().unwrap().store.entries_range(0, usize::MAX).unwrap() {
-            eprintln!("DBG entry {} {} len={}", e.id, e.kind, e.payload.get("text").and_then(serde_json::Value::as_str).map(|t| t.len()).unwrap_or(0));
-        }
         // Observe: the log is non-empty and the cursor sits on turn 1's
         // last raw entry (the raw window for turn 2 is the new user entry).
         assert!(state.record.active_observations.contains("obs"));

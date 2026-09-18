@@ -75,19 +75,17 @@ impl OmState {
 
     /// The current record: the last `om` entry on the active branch,
     /// reconstructed on open (spec §4: the record is appended, not
-    /// maintained in place).
-    pub fn load_record(store: &mut SessionStore) -> OmRecord {
-        let entries = match store.entries_range(0, usize::MAX) {
-            Ok(e) => e,
-            Err(_) => return OmRecord::default(),
-        };
-        let leaf = store.leaf().ok().flatten().map(|e| e.id);
-        branch_entries(&entries, leaf.as_deref())
+    /// maintained in place). A storage failure is a storage failure — a
+    /// corrupted file must not masquerade as fresh OM state.
+    pub fn load_record(store: &mut SessionStore) -> Result<OmRecord, OmError> {
+        let entries = store.entries_range(0, usize::MAX)?;
+        let leaf = store.leaf()?.map(|e| e.id);
+        Ok(branch_entries(&entries, leaf.as_deref())
             .into_iter()
             .rev()
             .find(|e| e.kind == KIND_OM)
             .and_then(|e| serde_json::from_value(e.payload).ok())
-            .unwrap_or_default()
+            .unwrap_or_default())
     }
 
     /// Persist the record as a new `om` entry (the newest entry wins).
@@ -120,12 +118,15 @@ pub fn branch_entries(entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
 }
 
 /// A fork copies the parent's record at the fork point (observations +
-/// cursor); a fork owns its copy outright — no frozen prefix (ADR-0004: a
-/// fork is the same session's history).
+/// cursor); a fork owns its copy outright (ADR-0004: a fork is the same
+/// session's history) — so it copies the FULL log, including a demoted
+/// prefix (which the fork undemotes: in the child it is owned context,
+/// reflectable like any of the child's own material), carried as the
+/// fork's suffix.
 pub fn fork_record(parent: &OmRecord) -> OmRecord {
     OmRecord {
         frozen_prefix: String::new(),
-        active_observations: parent.live_observations(),
+        active_observations: format!("{}{}", parent.frozen_prefix, parent.active_observations),
         cursor: parent.cursor.clone(),
         generation: parent.generation,
         observation_tokens: parent.observation_tokens,
@@ -137,14 +138,12 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
 #[derive(Debug)]
 pub enum OmError {
     Session(crate::session::Error),
-    Provider(crate::provider::ProviderError),
 }
 
 impl std::fmt::Display for OmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Session(e) => write!(f, "session: {e}"),
-            Self::Provider(e) => write!(f, "provider: {e}"),
         }
     }
 }
@@ -154,12 +153,6 @@ impl std::error::Error for OmError {}
 impl From<crate::session::Error> for OmError {
     fn from(e: crate::session::Error) -> Self {
         Self::Session(e)
-    }
-}
-
-impl From<crate::provider::ProviderError> for OmError {
-    fn from(e: crate::provider::ProviderError) -> Self {
-        Self::Provider(e)
     }
 }
 
@@ -212,7 +205,7 @@ fn transcript(entries: &[Entry]) -> String {
 
 /// The boundary delimiter's timestamp: epoch millis (no chrono in the
 /// dependency surface; the delimiter needs monotonicity, not a calendar).
-fn now_iso() -> String {
+fn now_ms() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().to_string())
@@ -264,8 +257,11 @@ impl OmState {
         if self.buffered.is_empty() {
             return Ok(false);
         }
-        let chunks: Vec<om::ChunkTokens> =
-            self.buffered.iter().map(|c| om::ChunkTokens(c.tokens)).collect();
+        let chunks: Vec<om::ChunkTokens> = self
+            .buffered
+            .iter()
+            .map(|c| om::ChunkTokens(c.tokens))
+            .collect();
         let remove =
             om::projected_message_removal(&chunks, &self.config, self.record.pending_tokens);
         if remove == 0 {
@@ -286,7 +282,7 @@ impl OmState {
         }
         for chunk in &self.buffered[..count] {
             self.record.active_observations =
-                om::append_observation(&self.record.active_observations, &now_iso(), &chunk.text);
+                om::append_observation(&self.record.active_observations, &now_ms(), &chunk.text);
             self.record.cursor = Some(Cursor {
                 entry_id: chunk.range.1.clone(),
                 timestamp: chunk.last_ts,
@@ -442,7 +438,7 @@ impl OmState {
         let id = om::generate_group_id(observations);
         let wrapped = om::wrap_in_observation_group(observations, &range, &id, None);
         self.record.active_observations =
-            om::append_observation(&self.record.active_observations, &now_iso(), &wrapped);
+            om::append_observation(&self.record.active_observations, &now_ms(), &wrapped);
         self.record.cursor = Some(Cursor {
             entry_id: last.id.clone(),
             timestamp: last.timestamp,
@@ -616,7 +612,6 @@ pub fn seed_compacted_child(
     })
 }
 
-
 /// The `recall` tool (spec §4): browse the raw entries an observation group
 /// covers. Groups carry `range="startEntryId:endEntryId"` (comma-joined
 /// segments for a merged span); browsing only, no vector search.
@@ -716,7 +711,9 @@ mod tests {
         state.record.active_observations = "first".into();
         state.save(&mut store).unwrap();
         assert_eq!(
-            OmState::load_record(&mut store).active_observations,
+            OmState::load_record(&mut store)
+                .unwrap()
+                .active_observations,
             "first"
         );
 
@@ -724,7 +721,9 @@ mod tests {
         state.save(&mut store).unwrap();
         // The newest entry is the current state.
         assert_eq!(
-            OmState::load_record(&mut store).active_observations,
+            OmState::load_record(&mut store)
+                .unwrap()
+                .active_observations,
             "second"
         );
     }
@@ -734,7 +733,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = SessionStore::for_workspace(dir.path(), "s1");
         store.create().unwrap();
-        let record = OmState::load_record(&mut store);
+        let record = OmState::load_record(&mut store).unwrap();
         assert!(record.frozen_prefix.is_empty());
         assert!(record.active_observations.is_empty());
         assert!(record.cursor.is_none());
@@ -760,6 +759,16 @@ mod tests {
         assert_eq!(fork.active_observations, "frozenlive");
         assert_eq!(fork.cursor, parent.cursor);
         assert_eq!(fork.generation, 3);
+        // A demoted prefix is owned (not borrowed) in the fork: copied
+        // verbatim and undemoted.
+        let demoted = OmRecord {
+            prefix_demoted: true,
+            ..parent
+        };
+        let fork = fork_record(&demoted);
+        assert_eq!(fork.active_observations, "frozenlive");
+        assert!(!fork.prefix_demoted);
+        assert!(fork.live_observations() == "frozenlive");
     }
     fn store_with_text_entries(dir: &std::path::Path, n: usize, chars_each: usize) -> SessionStore {
         let mut store = SessionStore::for_workspace(dir, "s1");
@@ -817,6 +826,7 @@ mod tests {
         // The observation persists across a re-load from the session file.
         assert!(
             OmState::load_record(&mut store)
+                .unwrap()
                 .active_observations
                 .contains("workbench")
         );
@@ -867,8 +877,7 @@ mod tests {
         // A realistic TAGGED reflection: only the <observations> content
         // may land in the log — the other sections are not observation
         // material (B1).
-        let tagged = "<observations>condensed suffix</observations>"
-            .to_owned()
+        let tagged = "<observations>condensed suffix</observations>".to_owned()
             + "\n<current-task>finish the refactor</current-task>"
             + "\n<suggested-response>report the summary</suggested-response>";
         let result = turn_result(&tagged);
@@ -1023,16 +1032,18 @@ mod tests {
                 "<observation-group id=\"c\" range=\",\">orphan</observation-group>".into(),
             ..Default::default()
         };
-        assert!(
-            recall(&mut store, &no_range, &json!({ "group": "c" })).contains("no range")
-        );
+        assert!(recall(&mut store, &no_range, &json!({ "group": "c" })).contains("no range"));
         let foreign = OmRecord {
-            active_observations: om::wrap_in_observation_group("foreign", "99999999:99999999", "d", None),
+            active_observations: om::wrap_in_observation_group(
+                "foreign",
+                "99999999:99999999",
+                "d",
+                None,
+            ),
             ..Default::default()
         };
         assert!(
-            recall(&mut store, &foreign, &json!({ "group": "d" }))
-                .contains("not in this session")
+            recall(&mut store, &foreign, &json!({ "group": "d" })).contains("not in this session")
         );
     }
 
@@ -1132,7 +1143,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert!(!state3.assemble_context("base", None).contains("demoted prefix"));
+        assert!(
+            !state3
+                .assemble_context("base", None)
+                .contains("demoted prefix")
+        );
     }
 
     #[test]
@@ -1173,7 +1188,6 @@ mod tests {
         ];
         assert_eq!(idle_gap_secs(&fresh, Some("00000002")), 0);
     }
-
 
     #[test]
     fn seed_compacted_child_stores_the_snapshot_and_returns_the_frozen_prefix() {

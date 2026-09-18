@@ -1171,10 +1171,11 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
                 }
                 observations.push_str(content);
             }
-            Some(n) if n == "suggested-response" || n == "suggested_response" => {
-                if suggested_response.is_empty() {
-                    suggested_response = section.content.to_owned();
-                }
+            Some(n)
+                if (n == "suggested-response" || n == "suggested_response")
+                    && suggested_response.is_empty() =>
+            {
+                suggested_response = section.content.to_owned();
             }
             _ => {}
         }
@@ -1182,7 +1183,10 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
     if observations.is_empty() {
         // No `<observations>` tags: the list items, else the whole content
         // (mastra `extractReflectorListItems` and its fallback).
-        let items: Vec<&str> = raw_output.lines().filter(|l| is_reflector_list_item(l)).collect();
+        let items: Vec<&str> = raw_output
+            .lines()
+            .filter(|l| is_reflector_list_item(l))
+            .collect();
         observations = if items.is_empty() {
             raw_output.trim().to_owned()
         } else {
@@ -1194,7 +1198,11 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
         Some(s) => reconcile_groups_from_reflection(&sanitized, s).unwrap_or(sanitized),
         None => sanitized,
     };
-    ParsedReflectorOutput { observations, suggested_response, degenerate: false }
+    ParsedReflectorOutput {
+        observations,
+        suggested_response,
+        degenerate: false,
+    }
 }
 
 /// A reflector list item (mastra `extractReflectorListItems` match): a
