@@ -612,10 +612,22 @@ mod tests {
         body
     }
 
+    /// Like sse(), but the text is JSON-escaped (multi-line deltas).
+    fn sse_json(text: &str) -> String {
+        let delta = json!({ "type": "response.output_text.delta", "delta": text });
+        let done = json!({
+            "type": "response.completed",
+            "response": { "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 } }
+        });
+        format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n", delta, done)
+    }
+
     /// A canned provider scripted per call: each entry is (sse body, calls).
+    /// `seen` captures (instructions, first input message content) per call.
     struct ScriptedProvider {
         calls: Vec<String>,
         index: std::sync::atomic::AtomicUsize,
+        seen: std::sync::Mutex<Vec<(Option<String>, Option<String>)>>,
     }
 
     impl ScriptedProvider {
@@ -623,6 +635,7 @@ mod tests {
             Self {
                 calls,
                 index: std::sync::atomic::AtomicUsize::new(0),
+                seen: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -630,7 +643,7 @@ mod tests {
     impl crate::provider::TurnProvider for ScriptedProvider {
         fn call<'a>(
             &self,
-            _request: &ResponseRequest,
+            request: &ResponseRequest,
             sink: &'a mut dyn TurnSink,
         ) -> crate::provider::ProviderTurn<'a> {
             let body = self
@@ -638,8 +651,21 @@ mod tests {
                 .get(self.index.fetch_add(1, Ordering::SeqCst) % self.calls.len())
                 .cloned()
                 .unwrap_or_else(|| sse("", &[]));
+            let captured = serde_json::to_value(request).unwrap();
+            self.seen.lock().unwrap().push((
+                captured
+                    .get("instructions")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                captured
+                    .get("input")
+                    .and_then(|i| i.get(0))
+                    .and_then(|i| i.get("content"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            ));
             let provider = canned(&body);
-            provider.call(_request, sink)
+            provider.call(request, sink)
         }
     }
 
@@ -988,5 +1014,195 @@ mod tests {
             .find(|e| e.kind == KIND_ASSISTANT && e.payload["interrupted"].as_bool() == Some(true))
             .unwrap();
         assert_eq!(interrupted.payload["calls"].as_array().unwrap().len(), 1);
+    }
+
+    /// End-to-end OM (the ticket's acceptance bar): synthesized raw entries
+    /// cross the observe threshold, the canned Observer fills the log past
+    /// the reflect threshold, the canned Reflector rewrites the suffix —
+    /// and the continuation hint is injected exactly once across the run
+    /// (B2 at the agent level).
+    #[tokio::test]
+    async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path());
+        // Real content accumulation: 5 synthesized entries cross the
+        // 1000-token observe threshold (5 x 225 tokens).
+        let mut parent: Option<String> = None;
+        for _ in 0..5 {
+            let e = store
+                .append(
+                    "user",
+                    json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(e.id);
+        }
+        let cfg = crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1000,
+            reflect_threshold: 2000,
+            buffer_increment: 230,
+        };
+        let obs_text = format!(
+            "<observations>obs {}</observations>",
+            (0..900)
+                .map(|i| format!("L{:04} data", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let ref_text = format!(
+            "<observations>condensed {}</observations>",
+            (0..200)
+                .map(|i| format!("c{:04}", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            sse("a1", &[]),
+            sse_json(&obs_text),
+            sse("a2", &[]),
+            sse_json(&ref_text),
+        ]));
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: provider.clone(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: Some(crate::om_integration::OmState::from_config(
+                &cfg,
+                crate::om::OmRecord::default(),
+            )),
+            om_model: String::new(),
+        });
+        agent.send("go1", Lane::FollowUp);
+        agent.send("go2", Lane::FollowUp);
+        agent.process().await.unwrap();
+
+        let state = agent
+            .inner
+            .lock()
+            .unwrap()
+            .om
+            .clone()
+            .expect("the om state is written back");
+        for e in agent.inner.lock().unwrap().store.entries_range(0, usize::MAX).unwrap() {
+            eprintln!("DBG entry {} {} len={}", e.id, e.kind, e.payload.get("text").and_then(serde_json::Value::as_str).map(|t| t.len()).unwrap_or(0));
+        }
+        // Observe: the log is non-empty and the cursor sits on turn 1's
+        // last raw entry (the raw window for turn 2 is the new user entry).
+        assert!(state.record.active_observations.contains("obs"));
+        assert_eq!(state.record.cursor.unwrap().entry_id, "00000007");
+        // Reflect: the tagged reflection committed its <observations>
+        // content only, as generation 1.
+        assert_eq!(state.record.generation, 1);
+        assert!(state.record.active_observations.contains("condensed"));
+        assert!(!state.record.active_observations.contains("<observations>"));
+        // The continuation hint: exactly one assembled context in the whole
+        // run carries it — the turn-2 assembly, right after the observe.
+        let seen = provider.seen.lock().unwrap();
+        let hints = seen
+            .iter()
+            .filter(|(ins, _)| {
+                ins.as_deref()
+                    .is_some_and(|i| i.contains(crate::om::OBSERVATION_CONTINUATION_HINT))
+            })
+            .count();
+        assert_eq!(hints, 1, "the hint is one-shot: {seen:?}");
+    }
+
+    /// A compacted-spawn-seeded record: the frozen prefix survives the
+    /// child's reflect byte-identical (ADR-0004), and the reflector prompt
+    /// carries the frozen-prefix marker.
+    #[tokio::test]
+    async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path());
+        let mut parent: Option<String> = None;
+        for _ in 0..5 {
+            let e = store
+                .append(
+                    "user",
+                    json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(e.id);
+        }
+        let cfg = crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1000,
+            reflect_threshold: 2000,
+            buffer_increment: 230,
+        };
+        let obs_text = format!(
+            "<observations>obs {}</observations>",
+            (0..900)
+                .map(|i| format!("L{:04} data", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let ref_text = format!(
+            "<observations>condensed {}</observations>",
+            (0..200)
+                .map(|i| format!("c{:04}", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            sse("a1", &[]),
+            sse_json(&obs_text),
+            sse("a2", &[]),
+            sse_json(&ref_text),
+        ]));
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: provider.clone(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: Some(crate::om_integration::OmState::from_config(
+                &cfg,
+                crate::om::OmRecord {
+                    frozen_prefix: "FROZEN PARENT LOG".into(),
+                    ..Default::default()
+                },
+            )),
+            om_model: String::new(),
+        });
+        agent.send("go1", Lane::FollowUp);
+        agent.send("go2", Lane::FollowUp);
+        agent.process().await.unwrap();
+
+        let state = agent
+            .inner
+            .lock()
+            .unwrap()
+            .om
+            .clone()
+            .expect("the om state is written back");
+        assert_eq!(state.record.frozen_prefix, "FROZEN PARENT LOG");
+        assert_eq!(state.record.generation, 1);
+        // The reflector call used the frozen variant.
+        let seen = provider.seen.lock().unwrap();
+        let reflect = seen
+            .iter()
+            .find(|(_, content)| {
+                content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("<frozen-prefix>"))
+            })
+            .expect("the reflector prompt carries the frozen-prefix marker");
+        assert!(
+            reflect.1.as_deref().unwrap().contains("FROZEN PARENT LOG"),
+            "{reflect:?}"
+        );
     }
 }
