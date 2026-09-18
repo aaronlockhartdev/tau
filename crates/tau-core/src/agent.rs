@@ -31,6 +31,7 @@ pub enum Lane {
 pub const KIND_USER: &str = "user";
 pub const KIND_ASSISTANT: &str = "assistant";
 pub const KIND_TOOL: &str = "tool";
+pub const KIND_SYSTEM: &str = "system";
 
 /// Runaway guard: a model that never stops calling tools.
 const MAX_ROUNDS: usize = 32;
@@ -172,6 +173,16 @@ impl AgentSession {
         loop {
             rounds += 1;
             if rounds > MAX_ROUNDS {
+                // A runaway turn dies visibly, not silently: the session
+                // records why it stopped.
+                self.append(
+                    KIND_SYSTEM,
+                    json!({
+                        "note": format!(
+                            "stopped after {MAX_ROUNDS} tool rounds without the model ending the turn"
+                        )
+                    }),
+                )?;
                 break;
             }
             // Steering and forced messages ride this LLM call (spec §7);
@@ -743,6 +754,30 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.path().join("out.txt")).unwrap(),
             "done"
+        );
+    }
+
+    #[tokio::test]
+    async fn runaway_turn_stops_with_a_visible_note() {
+        let dir = tempfile::tempdir().unwrap();
+        // The same tool call, forever: the round cap is the only exit.
+        let body = sse(
+            "",
+            &[("bash".into(), "c1".into(), r#"{"command":"true"}"#.into())],
+        );
+        let provider = Arc::new(ScriptedProvider::new(vec![body]));
+        let agent = make_agent(dir.path(), provider);
+        agent.send("loop", Lane::FollowUp);
+        agent.process().await.unwrap();
+        let entries = entries_of(&agent.inner.lock().unwrap().store);
+        let note = entries
+            .iter()
+            .find(|e| e.kind == KIND_SYSTEM)
+            .expect("a system note records why the turn stopped");
+        assert!(note.payload["note"].as_str().unwrap().contains("32"), "{note:?}");
+        assert_eq!(
+            entries.iter().filter(|e| e.kind == KIND_TOOL).count(),
+            MAX_ROUNDS
         );
     }
 
