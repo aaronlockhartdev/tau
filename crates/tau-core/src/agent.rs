@@ -107,6 +107,9 @@ struct Inner {
 /// stays a single parameter as the ticket series grows the loop (spec §5).
 pub struct SessionParams {
     pub store: SessionStore,
+    /// The fully assembled system prompt: the caller builds it (agent-type
+    /// prompt + context files via `context::assemble`) — the loop takes the
+    /// result and performs no discovery of its own.
     pub system_prompt: String,
     pub model: String,
     pub tools: Vec<ToolSpec>,
