@@ -3,8 +3,10 @@
 //! turn-end observe/reflect, Phase-2 buffered chunks, context assembly, the
 //! `recall` tool, and the compacted-spawn frozen prefix.
 
-use crate::om::{OmConfig, OmRecord};
+use crate::om::{self, Cursor, OmConfig, OmRecord};
+use crate::provider::TurnProviderRef;
 use crate::session::{Entry, SessionStore};
+use serde_json::Value;
 
 /// The session entry kind that carries the OM record (spec §4: the session
 /// file carries the record; the newest entry is the current state).
@@ -125,11 +127,358 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
         prefix_demoted: false,
     }
 }
+/// An OM failure: session storage or the model call.
+#[derive(Debug)]
+pub enum OmError {
+    Session(crate::session::Error),
+    Provider(crate::provider::ProviderError),
+}
 
+impl std::fmt::Display for OmError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(e) => write!(f, "session: {e}"),
+            Self::Provider(e) => write!(f, "provider: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for OmError {}
+
+impl From<crate::session::Error> for OmError {
+    fn from(e: crate::session::Error) -> Self {
+        Self::Session(e)
+    }
+}
+
+impl From<crate::provider::ProviderError> for OmError {
+    fn from(e: crate::provider::ProviderError) -> Self {
+        Self::Provider(e)
+    }
+}
+
+/// A raw conversation entry (spec §4: raw = what the Observer observes);
+/// record entries (om, spawn-snapshot, system) are not raw.
+fn is_raw(entry: &Entry) -> bool {
+    matches!(entry.kind.as_str(), "user" | "assistant" | "tool")
+}
+
+/// The raw text of an entry for token accounting and transcripts: user and
+/// assistant text, tool output. Record entries (om, spawn-snapshot, system)
+/// are not raw.
+fn entry_text(entry: &Entry) -> String {
+    let text = entry
+        .payload
+        .get("text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if !text.is_empty() {
+        return text;
+    }
+    let mut out = String::new();
+    let reasoning = entry
+        .payload
+        .get("reasoning")
+        .and_then(Value::as_str)
+        .filter(|r| !r.is_empty());
+    if let Some(reasoning) = reasoning {
+        out.push_str(reasoning);
+        out.push('\n');
+    }
+    if let Some(output) = entry.payload.get("output").and_then(Value::as_str) {
+        out.push_str(output);
+    }
+    out
+}
+
+fn transcript(entries: &[Entry]) -> String {
+    let mut out = String::new();
+    for entry in entries {
+        let text = entry_text(entry);
+        if text.trim().is_empty() {
+            continue;
+        }
+        out.push_str(&format!("[{}] {}\n", entry.kind, text));
+    }
+    out
+}
+
+/// The boundary delimiter's timestamp: epoch millis (no chrono in the
+/// dependency surface; the delimiter needs monotonicity, not a calendar).
+fn now_iso() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_default()
+}
+
+/// The OM call's sink: OM calls are not user-facing — nothing kills them.
+struct NoopSink;
+
+impl crate::provider::TurnSink for NoopSink {
+    fn event(&mut self, _: crate::provider::TurnEvent) -> bool {
+        true
+    }
+}
+
+impl OmState {
+    /// The unobserved raw on the active branch: the entries after the
+    /// cursor. A missing cursor means the whole branch; a cursor not on
+    /// this branch (a branch switch) means the branch is unobserved —
+    /// the cursor is path-scoped (spec §4).
+    pub fn unobserved(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
+        let all = store
+            .entries_range(0, usize::MAX)
+            .map_err(OmError::Session)?;
+        let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
+        let branch = active_path(&all, leaf.as_deref());
+        let Some(cursor) = &self.record.cursor else {
+            return Ok(branch);
+        };
+        let unobserved = match branch.iter().position(|e| e.id == cursor.entry_id) {
+            Some(i) => &branch[i + 1..],
+            None => &branch[..],
+        };
+        Ok(unobserved.iter().filter(|e| is_raw(e)).cloned().collect())
+    }
+
+    fn pending_tokens(&self, entries: &[Entry]) -> u32 {
+        entries
+            .iter()
+            .map(|e| om::token_count(&entry_text(e)))
+            .sum()
+    }
+
+    /// The synchronous turn-end Observer (spec §4): observe the whole
+    /// unobserved window, wrap it in its provenance group, append it after a
+    /// boundary, advance the cursor, persist. Degenerate or empty output is
+    /// discarded — the cursor stays where it was.
+    pub async fn observe(
+        &mut self,
+        store: &mut SessionStore,
+        provider: &TurnProviderRef,
+        model: &str,
+    ) -> Result<bool, OmError> {
+        let entries = self.unobserved(store)?;
+        let (Some(first), Some(last)) = (entries.first(), entries.last()) else {
+            return Ok(false);
+        };
+        let text = transcript(&entries);
+        if text.trim().is_empty() {
+            return Ok(false);
+        }
+        let system = om::observer_system_prompt();
+        let request = crate::provider::ResponseRequest::new(
+            model,
+            Some(system.as_str()),
+            vec![crate::provider::InputEntry::Message(
+                crate::provider::InputMessage {
+                    role: "user".into(),
+                    content: text,
+                },
+            )],
+        );
+        let mut sink = NoopSink;
+        let result = provider
+            .call(&request, &mut sink)
+            .await
+            .map_err(OmError::Provider)?;
+        let parsed = om::parse_observer_output(&result.text);
+        if parsed.degenerate || parsed.observations.trim().is_empty() {
+            return Ok(false);
+        }
+        let range = format!("{}:{}", first.id, last.id);
+        let id = om::generate_group_id(&parsed.observations);
+        let wrapped = om::wrap_in_observation_group(&parsed.observations, &range, &id, None);
+        self.record.active_observations =
+            om::append_observation(&self.record.active_observations, &now_iso(), &wrapped);
+        self.record.cursor = Some(Cursor {
+            entry_id: last.id.clone(),
+            timestamp: last.timestamp,
+        });
+        self.record.observation_tokens = om::token_count(&self.record.active_observations);
+        self.record.pending_tokens = 0;
+        self.changed = true;
+        self.save(store)?;
+        Ok(true)
+    }
+
+    /// The Phase-2 buffered chunk (spec §4): the next `buffer_increment` of
+    /// the unobserved raw, observed and held until activation. A tail below
+    /// one increment is not buffered — the threshold path covers it.
+    pub async fn buffer_next(
+        &mut self,
+        store: &mut SessionStore,
+        provider: &TurnProviderRef,
+        model: &str,
+    ) -> Result<bool, OmError> {
+        let entries = self.unobserved(store)?;
+        let start = match self.buffered.last() {
+            Some(chunk) => entries
+                .iter()
+                .position(|e| e.id == chunk.range.1)
+                .map(|i| i + 1)
+                .unwrap_or(entries.len()),
+            None => 0,
+        };
+        let slice = &entries[start..];
+        let mut picked: Vec<Entry> = Vec::new();
+        let mut tokens = 0u32;
+        for entry in slice {
+            picked.push((*entry).clone());
+            tokens += om::token_count(&entry_text(entry));
+            if tokens >= self.config.buffer_increment() {
+                break;
+            }
+        }
+        if picked.is_empty() || tokens < self.config.buffer_increment() {
+            return Ok(false);
+        }
+        let system = om::observer_system_prompt();
+        let request = crate::provider::ResponseRequest::new(
+            model,
+            Some(system.as_str()),
+            vec![crate::provider::InputEntry::Message(
+                crate::provider::InputMessage {
+                    role: "user".into(),
+                    content: transcript(&picked),
+                },
+            )],
+        );
+        let mut sink = NoopSink;
+        let result = provider
+            .call(&request, &mut sink)
+            .await
+            .map_err(OmError::Provider)?;
+        let parsed = om::parse_observer_output(&result.text);
+        if parsed.degenerate || parsed.observations.trim().is_empty() {
+            return Ok(false);
+        }
+        let range = format!("{}:{}", picked[0].id, picked[picked.len() - 1].id);
+        let id = om::generate_group_id(&parsed.observations);
+        let text = om::wrap_in_observation_group(&parsed.observations, &range, &id, None);
+        let tokens = om::token_count(&text);
+        self.buffered.push(BufferedChunk {
+            range: (picked[0].id.clone(), picked[picked.len() - 1].id.clone()),
+            last_ts: picked[picked.len() - 1].timestamp,
+            text,
+            tokens,
+        });
+        Ok(true)
+    }
+
+    /// Activation (spec §4): the buffered chunks are promoted into the log
+    /// and the cursor advances over them — no LLM call.
+    pub fn promote(&mut self, store: &mut SessionStore) -> Result<bool, OmError> {
+        if self.buffered.is_empty() {
+            return Ok(false);
+        }
+        for chunk in &self.buffered {
+            self.record.active_observations =
+                om::append_observation(&self.record.active_observations, &now_iso(), &chunk.text);
+            self.record.cursor = Some(Cursor {
+                entry_id: chunk.range.1.clone(),
+                timestamp: chunk.last_ts,
+            });
+        }
+        self.record.observation_tokens = om::token_count(&self.record.active_observations);
+        self.record.pending_tokens = 0;
+        self.buffered.clear();
+        self.changed = true;
+        self.save(store)?;
+        Ok(true)
+    }
+
+    fn activation_reached(&self, pending_tokens: u32) -> bool {
+        om::should_observe(pending_tokens, self.record.observation_tokens, &self.config)
+    }
+
+    /// The Reflector (spec §4): rewrite the managed suffix as a new
+    /// generation. The frozen prefix never enters the prompt and stays
+    /// byte-verbatim (ADR-0004); a non-shrinking output is discarded.
+    pub async fn reflect(
+        &mut self,
+        store: &mut SessionStore,
+        provider: &TurnProviderRef,
+        model: &str,
+    ) -> Result<bool, OmError> {
+        let source = self.record.reflect_source().to_owned();
+        if source.trim().is_empty() {
+            return Ok(false);
+        }
+        let system = om::reflector_system_prompt();
+        let request = crate::provider::ResponseRequest::new(
+            model,
+            Some(system.as_str()),
+            vec![crate::provider::InputEntry::Message(
+                crate::provider::InputMessage {
+                    role: "user".into(),
+                    content: om::build_reflector_prompt(&source, 0),
+                },
+            )],
+        );
+        let mut sink = NoopSink;
+        let result = provider
+            .call(&request, &mut sink)
+            .await
+            .map_err(OmError::Provider)?;
+        let reflected = result.text.trim();
+        if reflected.is_empty() || !om::validate_compression(&source, reflected) {
+            return Ok(false);
+        }
+        let new_suffix = match om::reconcile_groups_from_reflection(reflected, &source) {
+            Some(reconciled) => reconciled,
+            None => om::wrap_in_observation_group(
+                reflected,
+                &om::combine_group_ranges(&om::parse_observation_groups(&source)),
+                &om::generate_group_id(reflected),
+                Some("reflection"),
+            ),
+        };
+        self.record.active_observations = new_suffix;
+        self.record.generation += 1;
+        self.record.observation_tokens = om::token_count(&self.record.active_observations);
+        self.changed = true;
+        self.save(store)?;
+        Ok(true)
+    }
+
+    /// The turn-end compaction pass (spec §4): an activation with buffered
+    /// chunks promotes them first (no LLM call); the Reflector fires at the
+    /// observation threshold; the Observer fires synchronously at the
+    /// (dynamic) message threshold; below it, the next buffer increment is
+    /// observed out-of-band.
+    pub async fn turn_end(
+        &mut self,
+        store: &mut SessionStore,
+        provider: &TurnProviderRef,
+        model: &str,
+    ) -> Result<(), OmError> {
+        let pending = self.pending_tokens(&self.unobserved(store)?);
+        self.record.pending_tokens = pending;
+
+        if !self.buffered.is_empty() && self.activation_reached(pending) {
+            self.promote(store)?;
+        }
+
+        if om::should_reflect(self.record.observation_tokens, &self.config) {
+            self.reflect(store, provider, model).await?;
+        }
+
+        let pending = self.pending_tokens(&self.unobserved(store)?);
+        self.record.pending_tokens = pending;
+        if self.activation_reached(pending) {
+            self.observe(store, provider, model).await?;
+        } else if pending >= self.config.buffer_increment() {
+            self.buffer_next(store, provider, model).await?;
+        }
+        Ok(())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::om::Cursor;
 
     #[test]
     fn config_fold_maps_increment_to_activation() {
@@ -195,5 +544,212 @@ mod tests {
         assert_eq!(fork.active_observations, "frozenlive");
         assert_eq!(fork.cursor, parent.cursor);
         assert_eq!(fork.generation, 3);
+    }
+    fn store_with_text_entries(dir: &std::path::Path, n: usize, chars_each: usize) -> SessionStore {
+        let mut store = SessionStore::for_workspace(dir, "s1");
+        store.create().unwrap();
+        let mut parent: Option<String> = None;
+        for _ in 0..n {
+            let text = "w".repeat(chars_each);
+            let entry = store
+                .append(
+                    "user",
+                    serde_json::json!({ "text": text, "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(entry.id);
+        }
+        store
+    }
+
+    /// A canned OM provider: answers every call with the same body and
+    /// counts the calls (the no-LLM-call activation proof uses the count).
+    struct Canned {
+        text: String,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Canned {
+        fn new(text: &str) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                text: text.into(),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            })
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl crate::provider::TurnProvider for Canned {
+        fn call<'a>(
+            &self,
+            _req: &crate::provider::ResponseRequest,
+            _sink: &'a mut dyn crate::provider::TurnSink,
+        ) -> crate::provider::ProviderTurn<'a> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let text = self.text.clone();
+            Box::pin(async move {
+                Ok(crate::provider::TurnResult {
+                    text,
+                    reasoning: String::new(),
+                    usage: Some(crate::provider::Usage {
+                        input_tokens: 1,
+                        output_tokens: 1,
+                        total_tokens: 2,
+                        output_tokens_details: None,
+                    }),
+                    completed: true,
+                    calls: Vec::new(),
+                    mid_stream_errors: Vec::new(),
+                })
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn observe_wraps_the_window_and_advances_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store_with_text_entries(dir.path(), 3, 100);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        let provider: TurnProviderRef =
+            Canned::new("<observations>user is setting up a workbench</observations>");
+
+        assert!(state.observe(&mut store, &provider, "m").await.unwrap());
+        let cursor = state.record.cursor.clone().unwrap();
+        assert_eq!(cursor.entry_id, "00000003");
+        assert_eq!(cursor.timestamp, store.entry("00000003").unwrap().timestamp);
+        let log = state.record.active_observations.clone();
+        let groups = crate::om::parse_observation_groups(&log);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].range, "00000000:00000003");
+        assert!(groups[0].content.contains("workbench"));
+        assert_eq!(state.record.pending_tokens, 0);
+        // The observation persists across a re-load from the session file.
+        assert!(
+            OmState::load_record(&mut store)
+                .active_observations
+                .contains("workbench")
+        );
+    }
+
+    #[tokio::test]
+    async fn observe_discards_degenerate_output_and_keeps_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store_with_text_entries(dir.path(), 3, 100);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        // 100 identical 30-char lines (over 2k chars, >50% duplicates) —
+        // the ported degenerate detector rejects this shape.
+        let body = (0..100)
+            .map(|_| "the same observation line")
+            .collect::<Vec<_>>()
+            .join("\n");
+        let provider: TurnProviderRef =
+            Canned::new(&format!("<observations>{body}</observations>"));
+
+        assert!(!state.observe(&mut store, &provider, "m").await.unwrap());
+        assert!(state.record.cursor.is_none());
+        assert!(state.record.active_observations.is_empty());
+    }
+
+    #[test]
+    fn unobserved_is_cut_at_the_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store_with_text_entries(dir.path(), 5, 10);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        state.record.cursor = Some(Cursor {
+            entry_id: "00000003".into(),
+            timestamp: 1,
+        });
+        let unobserved = state.unobserved(&mut store).unwrap();
+        assert_eq!(
+            unobserved.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["00000004", "00000005"]
+        );
+    }
+
+    #[test]
+    fn promote_moves_buffered_chunks_into_the_log_without_an_llm_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store_with_text_entries(dir.path(), 2, 100);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        state.buffered.push(BufferedChunk {
+            range: ("00000001".into(), "00000002".into()),
+            last_ts: 9,
+            text: crate::om::wrap_in_observation_group(
+                "buffered obs",
+                "00000001:00000002",
+                "a",
+                None,
+            ),
+            tokens: 10,
+        });
+        let canned = Canned::new("<observations>never</observations>");
+
+        assert!(state.promote(&mut store).unwrap());
+        assert_eq!(canned.calls(), 0);
+        assert!(state.record.active_observations.contains("buffered obs"));
+        let cursor = state.record.cursor.clone().unwrap();
+        assert_eq!(cursor.entry_id, "00000002");
+        assert_eq!(cursor.timestamp, 9);
+        assert!(state.buffered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn turn_end_observes_at_the_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        // 100 × 1200 chars = 30k tokens: exactly at the default threshold.
+        let mut store = store_with_text_entries(dir.path(), 100, 1200);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        let canned = Canned::new("<observations>done</observations>");
+        let provider: TurnProviderRef = canned.clone();
+
+        state.turn_end(&mut store, &provider, "m").await.unwrap();
+        assert_eq!(state.record.cursor.unwrap().entry_id, "00000100");
+        assert!(state.record.active_observations.contains("done"));
+        assert_eq!(canned.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn turn_end_buffers_below_the_threshold() {
+        let dir = tempfile::tempdir().unwrap();
+        // 25 × 1000 chars = 25k tokens: below the 30k threshold, past the
+        // 6k increment — one buffered chunk, no log change, no record saved.
+        let mut store = store_with_text_entries(dir.path(), 25, 1000);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        let canned = Canned::new("<observations>chunk</observations>");
+        let provider: TurnProviderRef = canned.clone();
+
+        state.turn_end(&mut store, &provider, "m").await.unwrap();
+        assert_eq!(state.buffered.len(), 1);
+        assert_eq!(state.buffered[0].range.1, "00000024"); // 24 × 250 = 6k
+        assert!(state.record.active_observations.is_empty());
+        assert!(state.record.cursor.is_none());
+        assert_eq!(canned.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn activation_promotes_before_observing_and_makes_no_call_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        // 90 × 400 tokens = 36k: buffer one 6k chunk (15 entries), then
+        // the remaining 30k is observed synchronously at the threshold.
+        let mut store = store_with_text_entries(dir.path(), 90, 1600);
+        let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+        let canned = Canned::new("<observations>chunk</observations>");
+        let provider: TurnProviderRef = canned.clone();
+
+        state.buffer_next(&mut store, &provider, "m").await.unwrap();
+        assert_eq!(canned.calls(), 1);
+
+        state.turn_end(&mut store, &provider, "m").await.unwrap();
+        assert_eq!(canned.calls(), 2);
+        // The promoted chunk and the observed remainder share one log.
+        let groups = crate::om::parse_observation_groups(&state.record.active_observations);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].range, "00000000:00000015");
+        assert_eq!(groups[1].range, "00000016:00000090");
+        assert_eq!(state.record.cursor.unwrap().entry_id, "00000090");
     }
 }

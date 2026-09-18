@@ -90,6 +90,12 @@ pub fn should_reflect(observation_tokens: u32, config: &OmConfig) -> bool {
     observation_tokens >= config.reflect_threshold
 }
 
+/// A reflection pass must shrink the log (mastra `validateCompression`):
+/// a non-smaller output is discarded and the ladder escalates.
+pub fn validate_compression(source: &str, reflected: &str) -> bool {
+    token_count(reflected) < token_count(source)
+}
+
 /// A buffered Observer chunk's footprint in the raw window
 /// (`BufferedObservationChunk.messageTokens`).
 #[derive(Debug, Clone, Copy)]
