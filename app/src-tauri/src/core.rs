@@ -311,7 +311,10 @@ impl Core {
             return c.clone();
         }
         let mut c = self.system_config();
-        let project = Path::new(&workspace.cwd).join(".tau").join("config.toml");
+        // `config::load` takes the project *directory* and joins
+        // config.toml onto it; a path to the file itself would miss
+        // (spec §12 project layer).
+        let project = Path::new(&workspace.cwd).join(".tau");
         if project.exists()
             && let Ok(loaded) = config::load(&self.system_dir_of(), &project)
         {
@@ -1167,6 +1170,38 @@ mod tests {
             matches!(err, ProtocolError::Other { .. }),
             "expected a rejection, got: {err:?}"
         );
+    }
+
+    /// The workspace's `.tau/config.toml` layers over the root config
+    /// (spec §12) — a same-named provider entry replaces the root's
+    /// (review B3: the layer was silently dead on a path bug).
+    #[tokio::test]
+    async fn the_project_config_layer_is_read_from_the_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".tau")).unwrap();
+        std::fs::write(
+            tmp.path().join(".tau").join("config.toml"),
+            "[providers.dev]\nbase_url = \"http://project:9/v1\"\nkey_env = \"\"\nmodels = [\"proj-model\"]\n",
+        )
+        .unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Workspace(w) => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let config = core.workspace_config(&workspace);
+        let dev = &config.providers["dev"];
+        assert_eq!(
+            dev.base_url, "http://project:9/v1",
+            "the project layer did not replace the root provider"
+        );
+        assert_eq!(dev.models, vec!["proj-model".to_owned()]);
     }
 
     /// A session wired to `inner` (canned in tests, production in the
