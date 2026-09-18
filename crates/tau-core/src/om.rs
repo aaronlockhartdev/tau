@@ -90,6 +90,12 @@ pub fn should_reflect(observation_tokens: u32, config: &OmConfig) -> bool {
     observation_tokens >= config.reflect_threshold
 }
 
+/// A reflection pass must shrink the log (mastra `validateCompression`):
+/// a non-smaller output is discarded and the ladder escalates.
+pub fn validate_compression(source: &str, reflected: &str) -> bool {
+    token_count(reflected) < token_count(source)
+}
+
 /// A buffered Observer chunk's footprint in the raw window
 /// (`BufferedObservationChunk.messageTokens`).
 #[derive(Debug, Clone, Copy)]
@@ -170,12 +176,23 @@ pub struct OmRecord {
     pub generation: u32,
     pub observation_tokens: u32,
     pub pending_tokens: u32,
+    /// The frozen prefix demoted to recall-only (spec §4 overflow ladder:
+    /// the suffix was compressed and the combined log still exceeds budget —
+    /// the prefix leaves the live context, stays in the session file, and is
+    /// re-admitted when space frees).
+    #[serde(default)]
+    pub prefix_demoted: bool,
 }
 
 impl OmRecord {
-    /// The full live observation text: the frozen prefix (byte-verbatim)
-    /// followed by the managed suffix — one continuous log (ADR-0004).
+    /// The full live observation text: the frozen prefix (byte-verbatim) and
+    /// the managed suffix — one continuous log (ADR-0004); a demoted prefix
+    /// drops out of the live context (it stays in the session file, reachable
+    /// via `recall`; spec §4 overflow ladder).
     pub fn live_observations(&self) -> String {
+        if self.prefix_demoted {
+            return self.active_observations.clone();
+        }
         format!("{}{}", self.frozen_prefix, self.active_observations)
     }
 
@@ -1114,6 +1131,94 @@ pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
     }
 }
 
+/// Parsed Reflector response (mastra `parseReflectorOutput`): the
+/// observations with the section extraction, line sanitization, and group
+/// reconciliation (against `source`, when given) already applied. The port
+/// omits the extractor sections and `stripEphemeralAnchorIds` (not in the
+/// pinned set; the v0 prompts never emit ephemeral anchors).
+#[derive(Debug, Clone, Default)]
+pub struct ParsedReflectorOutput {
+    pub observations: String,
+    pub suggested_response: String,
+    pub degenerate: bool,
+}
+
+/// Parse, sanitize, and classify a raw Reflector response (mastra
+/// `parseReflectorOutput`): a degenerate-repetition check over the whole
+/// output, the XML sections (all `<observations>` blocks joined; the
+/// list-item/full-content fallback when untagged), line sanitization, and
+/// group reconciliation against the current log. `degenerate` signals the
+/// caller to discard the result entirely.
+pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedReflectorOutput {
+    if detect_degenerate_repetition(raw_output) {
+        return ParsedReflectorOutput {
+            degenerate: true,
+            ..Default::default()
+        };
+    }
+    let sections = parse_observer_sections(raw_output);
+    let mut observations = String::new();
+    let mut suggested_response = String::new();
+    for section in &sections {
+        match &section.name {
+            Some(n) if n == "observations" => {
+                let content = section.content.trim();
+                if content.is_empty() {
+                    continue;
+                }
+                if !observations.is_empty() {
+                    observations.push('\n');
+                }
+                observations.push_str(content);
+            }
+            Some(n)
+                if (n == "suggested-response" || n == "suggested_response")
+                    && suggested_response.is_empty() =>
+            {
+                suggested_response = section.content.to_owned();
+            }
+            _ => {}
+        }
+    }
+    if observations.is_empty() {
+        // No `<observations>` tags: the list items, else the whole content
+        // (mastra `extractReflectorListItems` and its fallback).
+        let items: Vec<&str> = raw_output
+            .lines()
+            .filter(|l| is_reflector_list_item(l))
+            .collect();
+        observations = if items.is_empty() {
+            raw_output.trim().to_owned()
+        } else {
+            items.join("\n")
+        };
+    }
+    let sanitized = sanitize_observation_lines(&observations);
+    let observations = match source {
+        Some(s) => reconcile_groups_from_reflection(&sanitized, s).unwrap_or(sanitized),
+        None => sanitized,
+    };
+    ParsedReflectorOutput {
+        observations,
+        suggested_response,
+        degenerate: false,
+    }
+}
+
+/// A reflector list item (mastra `extractReflectorListItems` match): a
+/// `-`/`*` bullet or a numbered `n.` line, followed by a space.
+fn is_reflector_list_item(line: &str) -> bool {
+    let t = line.trim_start();
+    if let Some(rest) = t.strip_prefix('-').or_else(|| t.strip_prefix('*')) {
+        return rest.starts_with(' ');
+    }
+    if let Some(dot) = t.find('.') {
+        return dot > 0
+            && t[..dot].bytes().all(|b| b.is_ascii_digit())
+            && t[dot + 1..].starts_with(' ');
+    }
+    false
+}
 /// The Reflector system prompt template (verbatim from
 /// `reflector-agent.ts` `buildReflectorSystemPrompt` return value, no
 /// extractors, both continuation sections enabled, no custom instruction).
@@ -1313,6 +1418,24 @@ pub fn build_reflector_prompt(observations: &str, compression_level: u8) -> Stri
         prompt.push_str("\n\n");
         prompt.push_str(COMPRESSION_GUIDANCE[(compression_level - 1) as usize]);
     }
+    prompt
+}
+
+/// The reflector prompt for a compacted child (ADR-0004): the frozen prefix
+/// is presented in a marker with a keep-verbatim instruction. The structural
+/// split (the prompt body is the managed suffix only) is the real guard; the
+/// marker is the prompt-level one.
+pub fn build_reflector_prompt_frozen(
+    prefix: &str,
+    observations: &str,
+    compression_level: u8,
+) -> String {
+    let mut prompt = format!(
+        "<frozen-prefix>\n{prefix}\n</frozen-prefix>\n\n\
+         The text inside <frozen-prefix> is a frozen memory prefix that must remain \
+         byte-verbatim. It is not part of the observations to reflect on.\n\n"
+    );
+    prompt.push_str(&build_reflector_prompt(observations, compression_level));
     prompt
 }
 

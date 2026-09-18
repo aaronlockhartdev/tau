@@ -41,6 +41,7 @@ const MAX_ROUNDS: usize = 32;
 pub enum AgentError {
     Session(crate::session::Error),
     Provider(crate::provider::ProviderError),
+    Om(crate::om_integration::OmError),
 }
 
 impl fmt::Display for AgentError {
@@ -48,6 +49,7 @@ impl fmt::Display for AgentError {
         match self {
             Self::Session(e) => write!(f, "session: {e}"),
             Self::Provider(e) => write!(f, "provider: {e}"),
+            Self::Om(e) => write!(f, "om: {e}"),
         }
     }
 }
@@ -98,6 +100,8 @@ struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
+    om: Option<crate::om_integration::OmState>,
+    om_model: String,
 }
 
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
@@ -117,6 +121,11 @@ pub struct SessionParams {
     pub provider: TurnProviderRef,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
+    /// The OM integration state (ticket #22); `None` = OM disabled and the
+    /// loop behaves as before.
+    pub om: Option<crate::om_integration::OmState>,
+    /// The OM model (global config, spec §4); empty = the session's model.
+    pub om_model: String,
 }
 
 pub struct AgentSession {
@@ -137,6 +146,8 @@ impl AgentSession {
                 tool_batch_on_force: p.tool_batch_on_force,
                 turn: p.turn,
                 queue: VecDeque::new(),
+                om: p.om,
+                om_model: p.om_model,
             }),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -207,21 +218,39 @@ impl AgentSession {
                 self.append_user(msg).await?;
             }
 
-            let entries = {
-                let inner = self.inner.lock().unwrap();
-                inner
+            // The context (spec §4): with OM enabled, the system prompt
+            // carries the observation log and the raw window is the
+            // unobserved entries; without it, the session's entries as-is.
+            // Everything is read under one lock, then assembled purely.
+            let (system_prompt, input) = {
+                let mut inner = self.inner.lock().unwrap();
+                let base = inner.system_prompt.clone();
+                let entries = inner
                     .store
                     .entries_range(0, usize::MAX)
+                    .map_err(AgentError::Session)?;
+                let leaf_id = inner
+                    .store
+                    .leaf()
                     .map_err(AgentError::Session)?
+                    .map(|e| e.id);
+                // Assembly runs on the persistent state, not a clone: it is
+                // pure over the record, and the one-shot continuation-hint
+                // flip must stick (a clone's flip would be dropped, and the
+                // om_turn_end write-back would re-set `changed`, so the hint
+                // would re-inject on every assembly).
+                match inner.om.as_mut() {
+                    Some(om) => {
+                        let instructions = om.assemble_context(&base, None);
+                        let raw = om.raw_window_from(&entries, leaf_id.as_deref());
+                        (instructions, input_items(&raw))
+                    }
+                    None => (base, input_items(&entries)),
+                }
             };
-
-            let input = input_items(&entries);
-            let mut request = ResponseRequest::new(
-                self.model().to_owned(),
-                Some(self.system_prompt().as_str()),
-                input,
-            )
-            .with_tools(self.tools().clone());
+            let mut request =
+                ResponseRequest::new(self.model().to_owned(), Some(system_prompt.as_str()), input)
+                    .with_tools(self.tools().clone());
             if let Some(n) = self.turn_config().max_output_tokens {
                 request = request.with_max_output_tokens(n);
             }
@@ -237,9 +266,12 @@ impl AgentSession {
             self.append_assistant(&result)?;
 
             if !result.completed {
-                // A force-kill: per the policy, the in-flight tool batch is
-                // let to complete, then one final call so the model sees the
-                // tool results alongside the forced message (spec §7).
+                // A force-killed turn skips the OM pass: the Observer needs
+                // no tool batch in flight, and the interrupted material
+                // joins the next turn's unobserved window (v0).
+                // Per the policy, the in-flight tool batch is let to
+                // complete, then one final call so the model sees the tool
+                // results alongside the forced message (spec §7).
                 if self.tool_batch_on_force() == ToolBatchPolicy::Complete
                     && !result.calls.is_empty()
                 {
@@ -249,6 +281,9 @@ impl AgentSession {
                 break;
             }
             if result.calls.is_empty() {
+                // The model ended the turn: the synchronous OM pass runs
+                // before any follow-up starts the next one (spec §4).
+                self.om_turn_end().await?;
                 break;
             }
             self.run_tools(&result.calls).await?;
@@ -264,7 +299,17 @@ impl AgentSession {
                 name: call.name.clone(),
                 args: args.clone(),
             };
-            let output = tools::dispatch(&self.cwd(), &tc).await;
+            let output = if call.name == "recall" {
+                let mut inner = self.inner.lock().unwrap();
+                let record = inner
+                    .om
+                    .as_ref()
+                    .map(|om| om.record.clone())
+                    .unwrap_or_default();
+                crate::om_integration::recall(&mut inner.store, &record, &args)
+            } else {
+                tools::dispatch(&self.cwd(), &tc).await
+            };
             self.append(
                 KIND_TOOL,
                 json!({
@@ -276,6 +321,106 @@ impl AgentSession {
             )?;
         }
         Ok(())
+    }
+
+    /// The turn-end OM pass (ticket #22): the state runs on a clone and
+    /// every store op takes the session lock briefly; the LLM round-trips
+    /// run between the lock scopes, so a force or steering send is never
+    /// blocked on an OM call.
+    async fn om_turn_end(&self) -> Result<(), AgentError> {
+        let mut state = {
+            let inner = self.inner.lock().unwrap();
+            inner.om.clone()
+        };
+        let Some(state) = &mut state else {
+            return Ok(());
+        };
+        let mut action = {
+            let mut inner = self.inner.lock().unwrap();
+            let unobserved = state.unobserved(&mut inner.store).map_err(AgentError::Om)?;
+            state.record.pending_tokens = state.pending_tokens(&unobserved);
+            // Activation (no LLM call): the token threshold, or the fixed
+            // idle timeout with pending chunks (spec §4).
+            let idle = {
+                let all = inner
+                    .store
+                    .entries_range(0, usize::MAX)
+                    .map_err(|e| AgentError::Om(e.into()))?;
+                let leaf = inner
+                    .store
+                    .leaf()
+                    .map_err(|e| AgentError::Om(e.into()))?
+                    .map(|e| e.id);
+                crate::om_integration::idle_gap_secs(&all, leaf.as_deref())
+            };
+            if !state.buffered.is_empty()
+                && (state.activation_reached(state.record.pending_tokens)
+                    || idle >= crate::om_integration::IDLE_ACTIVATION_SECS)
+            {
+                state.promote(&mut inner.store).map_err(AgentError::Om)?;
+            }
+            state.plan(&unobserved)
+        };
+        loop {
+            let result = match &action {
+                crate::om_integration::TurnEndAction::Done => break,
+                crate::om_integration::TurnEndAction::Observe { transcript }
+                | crate::om_integration::TurnEndAction::Buffer { transcript } => {
+                    let system = crate::om::observer_system_prompt();
+                    let request = ResponseRequest::new(
+                        self.om_model(),
+                        Some(system.as_str()),
+                        vec![InputEntry::Message(InputMessage {
+                            role: "user".into(),
+                            content: transcript.clone(),
+                        })],
+                    );
+                    let mut sink = crate::om_integration::NoopSink;
+                    self.provider
+                        .call(&request, &mut sink)
+                        .await
+                        .map_err(AgentError::Provider)?
+                }
+                crate::om_integration::TurnEndAction::Reflect { level } => {
+                    let prompt = state.reflector_prompt(*level);
+                    let system = crate::om::reflector_system_prompt();
+                    let request = ResponseRequest::new(
+                        self.om_model(),
+                        Some(system.as_str()),
+                        vec![InputEntry::Message(InputMessage {
+                            role: "user".into(),
+                            content: prompt,
+                        })],
+                    );
+                    let mut sink = crate::om_integration::NoopSink;
+                    self.provider
+                        .call(&request, &mut sink)
+                        .await
+                        .map_err(AgentError::Provider)?
+                }
+            };
+            {
+                let mut inner = self.inner.lock().unwrap();
+                state
+                    .commit(&mut inner.store, &mut action, &result)
+                    .map_err(AgentError::Om)?;
+            }
+        }
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.om = Some(state.clone());
+        }
+        Ok(())
+    }
+
+    /// The OM model (global config, spec §4); empty = the session's model.
+    fn om_model(&self) -> String {
+        let inner = self.inner.lock().unwrap();
+        if inner.om_model.is_empty() {
+            inner.model.clone()
+        } else {
+            inner.om_model.clone()
+        }
     }
 
     async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
@@ -309,9 +454,7 @@ impl AgentSession {
 
     fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
         let mut inner = self.inner.lock().unwrap();
-        // A fresh session has no leaf yet; the first entry starts the
-        // branch (None parent).
-        // A fresh session has no leaf; the first entry starts the branch.
+        // A fresh session has no leaf: the first entry starts the branch.
         // Any other failure is a storage error and propagates.
         let parent = match inner.store.leaf() {
             Ok(leaf) => leaf.map(|e| e.id),
@@ -324,10 +467,6 @@ impl AgentSession {
 
     fn model(&self) -> String {
         self.inner.lock().unwrap().model.clone()
-    }
-
-    fn system_prompt(&self) -> String {
-        self.inner.lock().unwrap().system_prompt.clone()
     }
 
     fn tools(&self) -> Vec<ToolSpec> {
@@ -451,6 +590,8 @@ mod tests {
             provider,
             tool_batch_on_force: ToolBatchPolicy::Complete,
             turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
         })
     }
 
@@ -481,10 +622,22 @@ mod tests {
         body
     }
 
+    /// Like sse(), but the text is JSON-escaped (multi-line deltas).
+    fn sse_json(text: &str) -> String {
+        let delta = json!({ "type": "response.output_text.delta", "delta": text });
+        let done = json!({
+            "type": "response.completed",
+            "response": { "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 } }
+        });
+        format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n", delta, done)
+    }
+
     /// A canned provider scripted per call: each entry is (sse body, calls).
+    /// `seen` captures (instructions, first input message content) per call.
     struct ScriptedProvider {
         calls: Vec<String>,
         index: std::sync::atomic::AtomicUsize,
+        seen: std::sync::Mutex<Vec<(Option<String>, Option<String>)>>,
     }
 
     impl ScriptedProvider {
@@ -492,6 +645,7 @@ mod tests {
             Self {
                 calls,
                 index: std::sync::atomic::AtomicUsize::new(0),
+                seen: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -499,7 +653,7 @@ mod tests {
     impl crate::provider::TurnProvider for ScriptedProvider {
         fn call<'a>(
             &self,
-            _request: &ResponseRequest,
+            request: &ResponseRequest,
             sink: &'a mut dyn TurnSink,
         ) -> crate::provider::ProviderTurn<'a> {
             let body = self
@@ -507,8 +661,21 @@ mod tests {
                 .get(self.index.fetch_add(1, Ordering::SeqCst) % self.calls.len())
                 .cloned()
                 .unwrap_or_else(|| sse("", &[]));
+            let captured = serde_json::to_value(request).unwrap();
+            self.seen.lock().unwrap().push((
+                captured
+                    .get("instructions")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                captured
+                    .get("input")
+                    .and_then(|i| i.get(0))
+                    .and_then(|i| i.get("content"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            ));
             let provider = canned(&body);
-            provider.call(_request, sink)
+            provider.call(request, sink)
         }
     }
 
@@ -749,6 +916,8 @@ mod tests {
                 max_output_tokens: Some(200),
                 reasoning: Some(crate::provider::ReasoningEffort::Low),
             },
+            om: None,
+            om_model: String::new(),
         });
         agent.send(
             "Do exactly this: 1) read notes.txt, 2) edit the line containing              'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write              the file out.txt with the single line 'done'. Then reply              'finished'.",
@@ -838,6 +1007,8 @@ mod tests {
             provider,
             tool_batch_on_force: ToolBatchPolicy::Complete,
             turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
         });
         agent.send("go", Lane::FollowUp);
         agent.send("FORCE", Lane::Force);
@@ -853,5 +1024,192 @@ mod tests {
             .find(|e| e.kind == KIND_ASSISTANT && e.payload["interrupted"].as_bool() == Some(true))
             .unwrap();
         assert_eq!(interrupted.payload["calls"].as_array().unwrap().len(), 1);
+    }
+
+    /// End-to-end OM (the ticket's acceptance bar): synthesized raw entries
+    /// cross the observe threshold, the canned Observer fills the log past
+    /// the reflect threshold, the canned Reflector rewrites the suffix —
+    /// and the continuation hint is injected exactly once across the run
+    /// (B2 at the agent level).
+    #[tokio::test]
+    async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path());
+        // Real content accumulation: 5 synthesized entries cross the
+        // 1000-token observe threshold (5 x 225 tokens).
+        let mut parent: Option<String> = None;
+        for _ in 0..5 {
+            let e = store
+                .append(
+                    "user",
+                    json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(e.id);
+        }
+        let cfg = crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1000,
+            reflect_threshold: 2000,
+            buffer_increment: 230,
+        };
+        let obs_text = format!(
+            "<observations>obs {}</observations>",
+            (0..900)
+                .map(|i| format!("L{:04} data", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let ref_text = format!(
+            "<observations>condensed {}</observations>",
+            (0..200)
+                .map(|i| format!("c{:04}", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            sse("a1", &[]),
+            sse_json(&obs_text),
+            sse("a2", &[]),
+            sse_json(&ref_text),
+        ]));
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: provider.clone(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: Some(crate::om_integration::OmState::from_config(
+                &cfg,
+                crate::om::OmRecord::default(),
+            )),
+            om_model: String::new(),
+        });
+        agent.send("go1", Lane::FollowUp);
+        agent.send("go2", Lane::FollowUp);
+        agent.process().await.unwrap();
+
+        let state = agent
+            .inner
+            .lock()
+            .unwrap()
+            .om
+            .clone()
+            .expect("the om state is written back");
+        // Observe: the log is non-empty and the cursor sits on turn 1's
+        // last raw entry (the raw window for turn 2 is the new user entry).
+        assert!(state.record.active_observations.contains("obs"));
+        assert_eq!(state.record.cursor.unwrap().entry_id, "00000007");
+        // Reflect: the tagged reflection committed its <observations>
+        // content only, as generation 1.
+        assert_eq!(state.record.generation, 1);
+        assert!(state.record.active_observations.contains("condensed"));
+        assert!(!state.record.active_observations.contains("<observations>"));
+        // The continuation hint: exactly one assembled context in the whole
+        // run carries it — the turn-2 assembly, right after the observe.
+        let seen = provider.seen.lock().unwrap();
+        let hints = seen
+            .iter()
+            .filter(|(ins, _)| {
+                ins.as_deref()
+                    .is_some_and(|i| i.contains(crate::om::OBSERVATION_CONTINUATION_HINT))
+            })
+            .count();
+        assert_eq!(hints, 1, "the hint is one-shot: {seen:?}");
+    }
+
+    /// A compacted-spawn-seeded record: the frozen prefix survives the
+    /// child's reflect byte-identical (ADR-0004), and the reflector prompt
+    /// carries the frozen-prefix marker.
+    #[tokio::test]
+    async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path());
+        let mut parent: Option<String> = None;
+        for _ in 0..5 {
+            let e = store
+                .append(
+                    "user",
+                    json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(e.id);
+        }
+        let cfg = crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1000,
+            reflect_threshold: 2000,
+            buffer_increment: 230,
+        };
+        let obs_text = format!(
+            "<observations>obs {}</observations>",
+            (0..900)
+                .map(|i| format!("L{:04} data", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let ref_text = format!(
+            "<observations>condensed {}</observations>",
+            (0..200)
+                .map(|i| format!("c{:04}", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            sse("a1", &[]),
+            sse_json(&obs_text),
+            sse("a2", &[]),
+            sse_json(&ref_text),
+        ]));
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: provider.clone(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: Some(crate::om_integration::OmState::from_config(
+                &cfg,
+                crate::om::OmRecord {
+                    frozen_prefix: "FROZEN PARENT LOG".into(),
+                    ..Default::default()
+                },
+            )),
+            om_model: String::new(),
+        });
+        agent.send("go1", Lane::FollowUp);
+        agent.send("go2", Lane::FollowUp);
+        agent.process().await.unwrap();
+
+        let state = agent
+            .inner
+            .lock()
+            .unwrap()
+            .om
+            .clone()
+            .expect("the om state is written back");
+        assert_eq!(state.record.frozen_prefix, "FROZEN PARENT LOG");
+        assert_eq!(state.record.generation, 1);
+        // The reflector call used the frozen variant.
+        let seen = provider.seen.lock().unwrap();
+        let reflect = seen
+            .iter()
+            .find(|(_, content)| {
+                content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("<frozen-prefix>"))
+            })
+            .expect("the reflector prompt carries the frozen-prefix marker");
+        assert!(
+            reflect.1.as_deref().unwrap().contains("FROZEN PARENT LOG"),
+            "{reflect:?}"
+        );
     }
 }

@@ -88,6 +88,21 @@ pub fn tool_specs() -> Vec<ToolSpec> {
                 "required": ["command"]
             }),
         },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "recall".into(),
+            description: "Browse the raw session entries an observation group \"\n\
+                covers. Pass the group id (16 hex digits, from the observation \"\n\
+                log). Returns the entries in the group's range."
+                .into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "group": {"type": "string"}
+                },
+                "required": ["group"]
+            }),
+        },
     ]
 }
 
