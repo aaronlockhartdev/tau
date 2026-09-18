@@ -469,21 +469,22 @@ impl SessionStore {
     }
 
     /// The active leaf: the persisted branch choice if any, else the last
-    /// entry line in the file.
-    pub fn leaf(&mut self) -> Result<Entry, Error> {
+    /// entry line in the file; `None` = a fresh session with no entries (not
+    /// an error — the first entry starts a root branch).
+    pub fn leaf(&mut self) -> Result<Option<Entry>, Error> {
         self.ensure_open()?;
         if let Some(l) = &self.leaf {
-            return self.entry(l);
+            return self.entry(l).map(Some);
         }
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
-        let line = raw
-            .lines()
-            .rev()
-            .find(|l| !l.is_empty())
-            .ok_or_else(|| Error::Other("session has no entries".into()))?;
+        // Line 1 is the header; the leaf is the last entry line after it.
+        let lines: Vec<&str> = raw.lines().skip(1).collect();
+        let Some(line) = lines.iter().rev().find(|l| !l.is_empty()) else {
+            return Ok(None);
+        };
         let entry: Entry = line.parse::<Entry>()?;
         entry.verify(raw.lines().count())?;
-        Ok(entry)
+        Ok(Some(entry))
     }
 
     /// Persist an explicit branch choice (the GUI switches the active
@@ -689,7 +690,7 @@ mod tests {
         assert_eq!(entries[0].parent, None);
         assert_eq!(entries[1].parent, Some(entries[0].id.clone()));
         assert_eq!(entries[2].parent, Some(entries[1].id.clone()));
-        let leaf = s.leaf().unwrap();
+        let leaf = s.leaf().unwrap().unwrap();
         assert_eq!(leaf.id, entries[2].id);
         let again = s.entry(&entries[1].id).unwrap();
         assert_eq!(again, entries[1]);
@@ -708,7 +709,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(e4.parent, Some(entries[0].id.clone()));
-        assert_eq!(s.leaf().unwrap().id, e4.id);
+        assert_eq!(s.leaf().unwrap().unwrap().id, e4.id);
         let since = s.entries_since(&entries[0].id).unwrap();
         assert_eq!(
             since.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
@@ -733,7 +734,7 @@ mod tests {
         let h: Header = serde_json::from_str(a_h).unwrap();
         assert_eq!(h.leaf, Some(entries[0].id.clone()));
         assert!(!s.path().with_extension("tmp").exists());
-        assert_eq!(s.leaf().unwrap().id, entries[0].id);
+        assert_eq!(s.leaf().unwrap().unwrap().id, entries[0].id);
     }
 
     #[test]
@@ -767,7 +768,7 @@ mod tests {
         fs::write(s.path(), raw).unwrap();
         let mut reopened = store(tmp.path(), "s1");
         reopened.open().unwrap();
-        assert_eq!(reopened.leaf().unwrap().id, entries[2].id);
+        assert_eq!(reopened.leaf().unwrap().unwrap().id, entries[2].id);
         let fixed = fs::read_to_string(s.path()).unwrap();
         assert!(fixed.ends_with('\n'));
         assert!(!fixed.contains("99999999"));
@@ -781,7 +782,7 @@ mod tests {
         fs::write(s.path(), raw.trim_end_matches('\n')).unwrap();
         let mut reopened = store(tmp.path(), "s1");
         reopened.open().unwrap();
-        assert_eq!(reopened.leaf().unwrap().id, entries[2].id);
+        assert_eq!(reopened.leaf().unwrap().unwrap().id, entries[2].id);
         assert!(fs::read_to_string(s.path()).unwrap().ends_with('\n'));
     }
 
@@ -898,5 +899,17 @@ mod tests {
         assert_eq!(c.first_kept_entry_id, Some(entries[2].id.clone()));
         let on_disk = s.entry(&c.id).unwrap();
         assert_eq!(on_disk.first_kept_entry_id, Some(entries[2].id.clone()));
+    }
+
+    #[test]
+    fn leaf_is_none_on_a_fresh_session_and_the_entry_on_a_used_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = store(dir.path(), "s1");
+        store.create().unwrap();
+        assert_eq!(store.leaf().unwrap(), None);
+        let e = store
+            .append("user", serde_json::json!({"text": "hi"}), None)
+            .unwrap();
+        assert_eq!(store.leaf().unwrap().unwrap().id, e.id);
     }
 }

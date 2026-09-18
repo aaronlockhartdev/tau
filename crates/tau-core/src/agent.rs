@@ -299,7 +299,12 @@ impl AgentSession {
         let mut inner = self.inner.lock().unwrap();
         // A fresh session has no leaf yet; the first entry starts the
         // branch (None parent).
-        let parent = inner.store.leaf().ok().map(|e| e.id.clone());
+        // A fresh session has no leaf; the first entry starts the branch.
+        // Any other failure is a storage error and propagates.
+        let parent = match inner.store.leaf() {
+            Ok(leaf) => leaf.map(|e| e.id),
+            Err(e) => return Err(AgentError::Session(e)),
+        };
         let parent = parent.as_deref();
         inner.store.append(kind, payload, parent)?;
         Ok(())
@@ -755,6 +760,20 @@ mod tests {
             std::fs::read_to_string(dir.path().join("out.txt")).unwrap(),
             "done"
         );
+    }
+
+    #[tokio::test]
+    async fn append_propagates_storage_errors_not_a_new_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let provider = Arc::new(ScriptedProvider::new(vec![sse("ok", &[])]));
+        let agent = make_agent(dir.path(), provider);
+        agent.send("go", Lane::FollowUp);
+        agent.process().await.unwrap();
+        // Lose the file under the session: the next append must fail with a
+        // storage error, not silently start a new root branch.
+        std::fs::remove_file(agent.inner.lock().unwrap().store.path()).unwrap();
+        agent.send("again", Lane::FollowUp);
+        assert!(agent.process().await.is_err());
     }
 
     #[tokio::test]
