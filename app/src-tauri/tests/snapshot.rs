@@ -83,13 +83,16 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
     );
     assert_eq!(snapshot.entries.len(), 10_000);
     // No payloads in the snapshot: the only full-payload piece is the OM
-    // log, which is null until the OM integration (#22) populates it.
+    // record, which the integration (#22) populates.
     let text = String::from_utf8_lossy(&bytes);
     assert!(
         !text.contains("\"payload\""),
         "the snapshot carries an entry payload"
     );
-    assert!(snapshot.om.is_null(), "no OM log in v0 pre-#22");
+    assert!(
+        !snapshot.om.is_null(),
+        "the snapshot carries the session's OM record (ticket #22)"
+    );
 
     // The spec's parse bar (single-digit ms locally); a generous bar for
     // contended CI runners — the 25 ms coalesce budget is what the GUI

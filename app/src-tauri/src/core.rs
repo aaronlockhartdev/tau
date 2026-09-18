@@ -402,6 +402,14 @@ impl Core {
         })?;
         let created = store.created();
 
+        // The per-session OM record (ticket #22): reconstructed from the
+        // file on open; a fresh session starts with the default record.
+        let record = tau_core::om_integration::OmState::load_record(&mut store).map_err(|e| {
+            ProtocolError::Other {
+                message: e.to_string(),
+            }
+        })?;
+
         // The loop assembles no context of its own: base prompt + context
         // files (spec §10) are built here, once, at session creation.
         let layers = context::discover(&cwd, &self.system_dir_of());
@@ -427,6 +435,10 @@ impl Core {
             provider: provider.clone(),
             tool_batch_on_force: config.requests.tool_batch_on_force,
             turn: TurnConfig::default(),
+            om: Some(tau_core::om_integration::OmState::from_config(
+                &config.om, record,
+            )),
+            om_model: config.om.om_model.clone(),
         });
         let meta = SessionMeta {
             id: provider.session.clone(),
@@ -496,7 +508,11 @@ impl Core {
             workspace,
             session: SessionMeta { usage, ..meta },
             entries,
-            om: Value::Null,
+            om: live
+                .agent
+                .om_state()
+                .map(|s| serde_json::to_value(&s.record).unwrap_or(Value::Null))
+                .unwrap_or(Value::Null),
             live: LiveState {
                 queue: live.queue.lock().unwrap().clone(),
                 turn: if live.turn.load(Ordering::SeqCst) {
@@ -1372,6 +1388,8 @@ mod tests {
             provider: provider.clone(),
             tool_batch_on_force: Default::default(),
             turn,
+            om: None,
+            om_model: String::new(),
         });
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
