@@ -297,6 +297,8 @@ async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
+        // A timed-out (dropped) child is killed, not left behind.
+        .kill_on_drop(true)
         .spawn();
     let output = match child {
         Ok(child) => match tokio::time::timeout(
@@ -307,6 +309,8 @@ async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => return format!("bash: {e}"),
+            // The timeout dropped the (now owned) child; kill_on_drop fired,
+            // so a timed-out command cannot keep running and mutate files.
             Err(_) => return format!("bash: timed out after {timeout_secs}s"),
         },
         Err(e) => return format!("bash: {e}"),
@@ -388,6 +392,22 @@ mod tests {
             std::fs::read_to_string(dir.path().join("s.txt")).unwrap(),
             "keep\n"
         );
+    }
+
+    #[tokio::test]
+    async fn bash_timeout_kills_the_child_not_just_the_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("marker");
+        let out = bash(
+            dir.path(),
+            &json!({"command": "sleep 5; touch marker", "timeout_secs": 1}),
+        )
+        .await;
+        assert!(out.contains("timed out after 1s"), "{out}");
+        // If the child survived the timeout it would finish its sleep and
+        // write the marker; give it time to prove it is dead.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        assert!(!marker.exists(), "the timed-out child kept running");
     }
 
     #[tokio::test]
