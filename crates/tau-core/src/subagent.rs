@@ -1659,6 +1659,10 @@ mod tests {
         let s = sup
             .spawn("general", "compact me", ContextMode::Compacted, None, "c0")
             .unwrap();
+        // Quiesce the child before reading its file from a second store:
+        // its drive ends when the nudge exhausts, after which the file is
+        // stable (review B1: a reader racing the drive saw a torn branch).
+        s.drive.await.unwrap();
         let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
         store.open().unwrap();
         // The spawn-snapshot entry (the record in the child's file).
@@ -1715,6 +1719,9 @@ mod tests {
         let s = sup
             .spawn("general", "fork me", ContextMode::Fork, None, "c0")
             .unwrap();
+        // Quiesce the child before reading its file from a second store
+        // (review B1, same as the compacted test).
+        s.drive.await.unwrap();
         let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
         store.open().unwrap();
         let child_entries = store.entries_range(0, usize::MAX).unwrap();
