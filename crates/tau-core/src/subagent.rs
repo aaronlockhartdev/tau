@@ -400,6 +400,46 @@ impl Supervisor {
             .map(|c| c.agent.clone())
     }
 
+    /// Assign one of this session's tasks to a child (spec §5.3): the
+    /// record copies into the child's session, which becomes the live
+    /// record; the creator's copy becomes the status pointer. Both sides
+    /// run through the sessions' own stores — one writer per session,
+    /// never a second store on a live file (review B3).
+    pub fn assign_task(&self, task_id: &str, worker_session: &str) -> Result<(), String> {
+        if task_id.is_empty() {
+            return Err("task_assign: missing \"task\"".into());
+        }
+        let child = self
+            .children
+            .lock()
+            .unwrap()
+            .values()
+            .find(|c| c.session_id == worker_session)
+            .cloned()
+            .ok_or_else(|| {
+                format!("task_assign: {worker_session} is not a sub-agent of this session")
+            })?;
+        let parent = self
+            .parent
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("task_assign: no parent attached".to_owned())?;
+        parent
+            .with_task_store(|cstore| {
+                child.agent.with_task_store(|wstore| {
+                    crate::task::assign(
+                        cstore,
+                        wstore,
+                        task_id,
+                        worker_session,
+                        &self.parent_session,
+                    )
+                })
+            })
+            .map(|_| ())
+    }
+
     /// Spawn a child (spec §5.1): async — this only sets things up; the
     /// child's loop runs on its own task and reports through `parent_notify`.
     pub fn spawn(
@@ -481,6 +521,18 @@ impl Supervisor {
             )
             .map_err(|e| format!("subagent_spawn: {e}"))?;
 
+        // A spawn with a task is an assignment (spec §5.3): the record
+        // copies into the child's session before its first turn, so the
+        // child works a task that already exists in its own file — the
+        // child's session is the live record, the parent's the pointer.
+        // Both sides run on their own stores (single writer per session).
+        if let Some(task) = task
+            && let Some(parent) = self.parent.lock().unwrap().clone()
+        {
+            let _ = parent.with_task_store(|cstore| {
+                crate::task::assign(cstore, &mut store, task, &session_id, &self.parent_session)
+            });
+        }
         // The child's OM record (spec §5.1, ADR-0004): fresh = an empty
         // prefix; compacted = the parent's log verbatim as the frozen
         // prefix; fork = the parent's record copied wholesale (a fork owns
@@ -759,6 +811,12 @@ impl Supervisor {
         child.set_last_message(text);
 
         if done {
+            // The task gate (spec §5.3): a done child cannot leave its
+            // assigned task dangling in_progress — the resolution is
+            // forced (completed / handed_off / blocked), and the
+            // creator's pointer is mirrored. Runs before the state set so
+            // the Done record and the wake see the final task state.
+            self.resolve_assigned_task(&child, &output);
             // Quiescence, not death (ADR-0001): the loop ends, the
             // concurrency slot frees, and the parent is woken always.
             if let Err(e) = child.set_state(
@@ -819,6 +877,50 @@ impl Supervisor {
         }
     }
 
+    /// The child's assigned task, resolved on done (spec §5.3): the
+    /// completion gate runs on the child's own store (the live record),
+    /// and the creator's pointer is mirrored on the parent's own store —
+    /// one store per session, never a second store on a live file.
+    ///
+    /// - all criteria satisfied → `done`
+    /// - not satisfied, not blocked → `handed_off` (stays in_progress;
+    ///   the output becomes the resume contract, the parent decides)
+    /// - already blocked (the child called `task_block`) → stays blocked
+    fn resolve_assigned_task(&self, child: &Child, output: &Option<Value>) {
+        let resolved = child.agent.with_task_store(|store| {
+            let entries = store.entries_range(0, usize::MAX).ok()?;
+            let tasks = crate::task::fold_entries(&entries);
+            // The live record is the task with a creator link (in v0 a
+            // child carries at most one assigned task).
+            let task = tasks.into_iter().find(|t| t.created_in.is_some())?;
+            let output = output.as_ref().unwrap_or(&Value::Null);
+            let status = if task.status == crate::task::STATUS_IN_PROGRESS {
+                let gate = task
+                    .criteria
+                    .iter()
+                    .all(|c| c.status == crate::task::CriterionStatus::Satisfied);
+                if gate {
+                    crate::task::finish(store, &task.id, false, None)
+                } else {
+                    crate::task::handoff(store, &task.id, output)
+                }
+                .ok()?
+                .status
+            } else {
+                task.status.clone()
+            };
+            Some((task.id, status))
+        });
+        if let Some((id, status)) = resolved
+            && let Some(parent) = self.parent.lock().unwrap().clone()
+        {
+            parent.with_task_store(|store| {
+                // The creator's copy tracks the worker's state; a creator
+                // without the copy is a no-op (mirror_status handles it).
+                let _ = crate::task::mirror_status(store, &id, &status);
+            });
+        }
+    }
     /// `subagent_message` (and the GUI's send to a child): running → the
     /// text queues on the child's lane; non-running → resume (text omitted
     /// = a pure resume). One tool, state decides (ADR-0006).
@@ -952,6 +1054,25 @@ impl Supervisor {
                         .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok())
                 })
         };
+        // The child's assigned task + its resume contract (spec §5.1):
+        // read from the child's own entries (read-only — the writer stays
+        // the child's session).
+        let (task, resume_contract) = {
+            let mut store = SessionStore::for_workspace(&self.cwd, &child.session_id);
+            store
+                .open()
+                .ok()
+                .and_then(|_| store.entries_range(0, usize::MAX).ok())
+                .and_then(|entries| {
+                    let tasks = crate::task::fold_entries(&entries);
+                    let t = tasks.into_iter().find(|t| t.created_in.is_some())?;
+                    Some((
+                        serde_json::to_value(&t).ok(),
+                        Some(crate::task::resume_contract(&t)),
+                    ))
+                })
+                .unwrap_or((None, None))
+        };
         Some(SubagentInfo {
             handle: child.handle.clone(),
             child: child.session_id.clone(),
@@ -961,10 +1082,8 @@ impl Supervisor {
             waiting_on,
             last_message: child.last_message.lock().unwrap().clone(),
             usage,
-            // Ticket #24 fills the task linkage (the per-session task
-            // record and its resume contract); v0 carries null.
-            task: None,
-            resume_contract: None,
+            task,
+            resume_contract,
         })
     }
 }
@@ -2354,7 +2473,7 @@ mod tests {
                     ),
                 ],
             )]],
-            delays: vec![Duration::from_millis(200)],
+            delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
         });
@@ -2398,21 +2517,10 @@ mod tests {
                 "c0",
             )
             .expect("the compacted spawn");
-        // The assignment copies the record into the child's session (the
-        // child becomes the live record); the 200 ms child delay gives it
-        // time to land before the child's first turn.
-        let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
-        parent_store.open().unwrap();
-        let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
-        child_store.open().unwrap();
-        crate::task::assign(
-            &mut parent_store,
-            &mut child_store,
-            "task-1",
-            &spawned.session_id,
-            "parent",
-        )
-        .expect("the assignment");
+        // The spawn with a task IS the assignment (spec §5.3): the record
+        // is in the child's session before its first turn — no second
+        // store, no timing cushion (review N3/B3). The child's session is
+        // the live record; the parent's copy is the status pointer.
         wait_for(|| {
             matches!(
                 sup.state_info(&spawned.handle).unwrap().state,
@@ -2438,6 +2546,9 @@ mod tests {
             crate::task::fold_entries(&parent_store.entries_range(0, usize::MAX).unwrap());
         let p = &parent_tasks[0];
         assert_eq!(p.worker.as_ref().unwrap().session, spawned.session_id);
+        // The pointer reflects the worker's final state (review B2): the
+        // done resolution mirrored through the gate, not just the link.
+        assert_eq!(p.worker.as_ref().unwrap().status, crate::task::STATUS_DONE);
         // The parent was woken by the notify.
         let wakes = bridge.wakes.lock().unwrap();
         assert!(

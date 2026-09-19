@@ -647,12 +647,7 @@ pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {
 
 /// The seven task tools (spec §5.4): free text + ids in, core-enforced
 /// transitions; diagnostics are results, never panics.
-pub fn tool_call(
-    store: &mut SessionStore,
-    cwd: &std::path::Path,
-    name: &str,
-    args: &Value,
-) -> String {
+pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
     match name {
         "task_create" => {
             let Some(title) = args.get("title").and_then(Value::as_str) else {
@@ -698,26 +693,6 @@ pub fn tool_call(
                     steps.len(),
                     criteria.len()
                 ),
-                Err(e) => e,
-            }
-        }
-        "task_assign" => {
-            let Some(task) = args.get("task").and_then(Value::as_str) else {
-                return "task_assign: missing \"task\"".into();
-            };
-            let Some(worker) = args.get("worker").and_then(Value::as_str) else {
-                return "task_assign: missing \"worker\" (the worker session id)".into();
-            };
-            if worker == store.id() {
-                return format!("task {task}: a session cannot assign to its own session");
-            }
-            let mut wstore = SessionStore::for_workspace(cwd, worker);
-            if let Err(e) = wstore.open() {
-                return format!("task_assign: cannot open worker session {worker}: {e}");
-            }
-            let self_id = store.id().to_owned();
-            match assign(store, &mut wstore, task, worker, &self_id) {
-                Ok(t) => report(&t),
                 Err(e) => e,
             }
         }

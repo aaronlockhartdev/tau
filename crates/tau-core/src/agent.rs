@@ -280,12 +280,26 @@ impl AgentSession {
     /// store — the session-scoped task store a parent and a child share.
     fn task_tool(&self, tc: &tools::ToolCall) -> String {
         let mut inner = self.inner.lock().unwrap();
-        let cwd = inner.cwd.clone();
-        crate::task::tool_call(&mut inner.store, &cwd, &tc.name, &tc.args)
+        crate::task::tool_call(&mut inner.store, &tc.name, &tc.args)
     }
     /// The session store's header timestamp (epoch ms).
     pub fn store_created(&self) -> u64 {
         self.inner.lock().unwrap().store.created()
+    }
+
+    /// Run one operation against this session's own store — the
+    /// single-writer surface for other components (the sub-agent task
+    /// gate, the app's task commands; review B3).
+    pub fn with_task_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
+        let mut inner = self.inner.lock().unwrap();
+        f(&mut inner.store)
+    }
+
+    /// The seven task tools against this session's own store (the app's
+    /// task commands; the model's dispatch uses `task_tool`).
+    pub fn task_tool_call(&self, name: &str, args: &Value) -> String {
+        let mut inner = self.inner.lock().unwrap();
+        crate::task::tool_call(&mut inner.store, name, args)
     }
 
     #[cfg(test)]
@@ -460,7 +474,25 @@ impl AgentSession {
                 name: call.name.clone(),
                 args: args.clone(),
             };
-            let output = if call.name.starts_with("task_") {
+            let output = if call.name == "task_assign" {
+                // Cross-session: routed through the supervisor, which runs
+                // both sides on the sessions' own stores (review B3).
+                let sup = {
+                    let inner = self.inner.lock().unwrap();
+                    inner.subagents.clone()
+                };
+                match sup {
+                    Some(sup) => {
+                        let task = tc.args.get("task").and_then(Value::as_str).unwrap_or("");
+                        let worker = tc.args.get("worker").and_then(Value::as_str).unwrap_or("");
+                        match sup.assign_task(task, worker) {
+                            Ok(()) => format!("assigned {task} to {worker}"),
+                            Err(e) => e,
+                        }
+                    }
+                    None => "task_assign: this session has no sub-agents".into(),
+                }
+            } else if call.name.starts_with("task_") {
                 // Tasks live in this session's own store (spec §5.3) — parent
                 // and child alike. Routed before the sub-agent surface so a
                 // child (which has no supervisor) still gets its tools.

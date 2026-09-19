@@ -794,14 +794,6 @@ impl Core {
         sup.attach_parent(live.agent.clone());
         Ok(meta)
     }
-
-    fn open_store(&self, live: &LiveSession) -> Result<SessionStore, ProtocolError> {
-        let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
-        store.open().map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
-        Ok(store)
-    }
     fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
         let workspace = self.workspace(&live.meta.lock().unwrap().workspace)?;
         let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
@@ -1176,19 +1168,14 @@ impl Core {
             }
             Command::TaskCreate { session, title } => {
                 let live = self.live(&session)?;
-                let mut store = self.open_store(&live)?;
-                // The id rule is the tool path's: task-{count+1}.
-                let n = tau_core::task::fold_entries(&store.entries_range(0, usize::MAX).map_err(
-                    |e| ProtocolError::Other {
-                        message: e.to_string(),
-                    },
-                )?)
-                .iter()
-                .filter(|t| t.id.starts_with("task-"))
-                .count()
-                    + 1;
-                tau_core::task::create(&mut store, &format!("task-{n}"), &title, vec![], vec![])
-                    .map_err(|e| ProtocolError::Other { message: e })?;
+                // Routed through the session's own store (one writer per
+                // session, review B3); the id rule lives in the tool path.
+                let out = live
+                    .agent
+                    .task_tool_call("task_create", &json!({ "title": title }));
+                if out.starts_with("task_create:") {
+                    return Err(ProtocolError::Other { message: out });
+                }
                 Ok(CommandOutput::None)
             }
             Command::TaskUpdate {
@@ -1197,8 +1184,8 @@ impl Core {
                 note,
             } => {
                 let live = self.live(&session)?;
-                let mut store = self.open_store(&live)?;
-                tau_core::task::note(&mut store, &task, &note)
+                live.agent
+                    .with_task_store(|store| tau_core::task::note(store, &task, &note))
                     .map_err(|e| ProtocolError::Other { message: e })?;
                 Ok(CommandOutput::None)
             }
@@ -1218,23 +1205,14 @@ impl Core {
                         what: format!("subagent {worker}"),
                     })?;
                 let worker_session = info.child;
-                let mut store = self.open_store(&live)?;
-                let mut worker_store = SessionStore::for_workspace(&live.cwd, &worker_session);
-                worker_store.open().map_err(|e| ProtocolError::Other {
-                    message: e.to_string(),
-                })?;
+                // One writer per session (review B3): the supervisor runs
+                // both sides on the sessions' own stores.
+                sup.assign_task(&task, &worker_session)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
                 let brief = format!(
                     "You were assigned task {task} (\"{}\"). Work it: record evidence for each criterion, then call task_finish.",
                     task
                 );
-                tau_core::task::assign(
-                    &mut store,
-                    &mut worker_store,
-                    &task,
-                    &worker_session,
-                    &session,
-                )
-                .map_err(|e| ProtocolError::Other { message: e })?;
                 // The assignment brief starts (or resumes) the worker.
                 sup.message(&worker, Some(brief), tau_core::agent::Lane::Steering)
                     .map_err(|e| ProtocolError::Other { message: e })?;
@@ -1248,27 +1226,28 @@ impl Core {
                 passed,
             } => {
                 let live = self.live(&session)?;
-                let mut store = self.open_store(&live)?;
-                tau_core::task::add_evidence(
-                    &mut store,
-                    &task,
-                    tau_core::task::Evidence {
-                        criterion,
-                        summary,
-                        passed: passed.unwrap_or(true),
-                        step: None,
-                        command: None,
-                        artifact: None,
-                    },
-                )
-                .map_err(|e| ProtocolError::Other { message: e })?;
+                let out = live.agent.task_tool_call(
+                    "task_evidence",
+                    &json!({
+                        "task": task,
+                        "criterion": criterion,
+                        "summary": summary,
+                        "passed": passed,
+                    }),
+                );
+                if out.starts_with("task_evidence:") {
+                    return Err(ProtocolError::Other { message: out });
+                }
                 Ok(CommandOutput::None)
             }
             Command::TaskCancel { session, task } => {
                 let live = self.live(&session)?;
-                let mut store = self.open_store(&live)?;
-                tau_core::task::cancel(&mut store, &task, None)
-                    .map_err(|e| ProtocolError::Other { message: e })?;
+                let out = live
+                    .agent
+                    .task_tool_call("task_cancel", &json!({ "task": task }));
+                if out.starts_with("task_cancel:") {
+                    return Err(ProtocolError::Other { message: out });
+                }
                 Ok(CommandOutput::None)
             }
 
