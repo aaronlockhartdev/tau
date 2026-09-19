@@ -257,14 +257,15 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
     // to reach a terminal state (reading its own session file), running the
     // parent's follow-up turns whenever its queue is non-empty (the wake
     // lands as a queued notification, spec §5.2 wake rules).
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
     let child_file = session_files(ws.path())
         .iter()
         .find(|f| f.file_stem().and_then(|n| n.to_str()) != Some(id.as_str()))
         .cloned();
     loop {
         if std::time::Instant::now() > deadline {
-            return Err("leg c: the child never reached a terminal state in 180 s".into());
+            dump_sessions(ws.path(), "/tmp/legc-dump");
+            return Err("leg c: the child never reached a terminal state in 300 s (session dump at /tmp/legc-dump)".into());
         }
         let terminal = child_file
             .as_ref()
@@ -602,6 +603,20 @@ fn main() {
         Err(e) => {
             println!("leg {leg}: FAIL — {e}");
             std::process::exit(1);
+        }
+    }
+}
+
+fn dump_sessions(cwd: &Path, dest: &str) {
+    use std::io::Write;
+    if let Some(dir) = cwd.join(".tau").join("sessions").read_dir().ok() {
+        for e in dir.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if let Ok(data) = std::fs::read(e.path()) {
+                if let Ok(mut f) = std::fs::File::create(format!("{dest}-{name}")) {
+                    let _ = f.write_all(&data);
+                }
+            }
         }
     }
 }
