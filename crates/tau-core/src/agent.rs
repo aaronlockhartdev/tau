@@ -517,10 +517,21 @@ impl AgentSession {
                     let inner = self.inner.lock().unwrap();
                     (inner.subagents.clone(), inner.child.clone())
                 };
-                if let Some(sup) = sup {
-                    crate::subagent::route_parent(&sup, &tc)
-                } else if let Some(link) = link {
-                    link.notify(&args)
+                // Route by name, not by which link exists: a parent session
+                // carries a supervisor AND core tools (ticket #23's original
+                // `if let Some(sup)` swallowed every core tool into
+                // route_parent, which only knows sub-agent names), and a
+                // child carries a link AND core tools.
+                if call.name.starts_with("subagent_") {
+                    match sup {
+                        Some(sup) => crate::subagent::route_parent(&sup, &tc),
+                        None => format!("{}: not available in this session", call.name),
+                    }
+                } else if call.name == "parent_notify" {
+                    match link {
+                        Some(link) => link.notify(&args),
+                        None => "parent_notify: not available in a top-level session".into(),
+                    }
                 } else {
                     tools::dispatch(&self.cwd(), &tc).await
                 }

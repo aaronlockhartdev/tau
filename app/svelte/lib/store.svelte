@@ -24,6 +24,7 @@
     type Workspace
   } from './protocol';
   import { buildDemoSession, toEntry } from './fixture';
+  import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
 
   export interface LiveEntry {
     id: string;
@@ -224,17 +225,16 @@
     for (const c of demoChildren()) store.sessions[c.meta.id] = c;
     startDemoStreams();
     // In-browser test seam (demo only): the wire-shape checks feed the exact
-    // bridge objects through applyEvents — the demo cannot see the live path.
-    // Demo-only verification seam: feed wire-shaped events and read the
-    // accumulated live-stream lengths (store level — the virtualized DOM
-    // only shows the window, one stream card can sit outside it).
-    (window as unknown as { __tau?: unknown }).__tau = {
-      applyEvents,
-      liveTexts: () =>
-        store.sessions['demo'].live.map((l) => l.text.length)
-    };
   }
 
+  // Verification seam (both modes): feed wire-shaped events through
+  // applyEvents and read the store's live-stream lengths (store level — the
+  // virtualized DOM only shows the window, one stream card can sit outside it).
+  (window as unknown as { __tau?: unknown }).__tau = {
+    applyEvents,
+    liveTexts: () =>
+      (store.sessions['demo']?.live ?? []).map((l) => l.text.length)
+  };
   // The #26 pane dataset (the prototype's): six sub-agent sessions under
   // the demo session (TWO running), a nested pair under the idle one as
   // real store sessions, two archived top-level sessions, and the five
@@ -512,6 +512,14 @@
 
   export async function openWorkspace(ws: Workspace): Promise<void> {
     if (store.demo) return;
+    try {
+      await openWorkspaceInner(ws);
+    } catch (e) {
+      store.error = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function openWorkspaceInner(ws: Workspace): Promise<void> {
     if (!store.workspaces.some((w) => w.id === ws.id)) store.workspaces.push(ws);
     const opened = await command({ type: 'workspace_open', cwd: ws.cwd });
     if (opened.kind === 'workspace') {
@@ -533,7 +541,13 @@
   // The v0 protocol has no "open folder" command (a workspace is a project
   // directory the core opens); the + menu's items are the demo's stand-in.
   export async function addWorkspace(): Promise<void> {
-    if (!store.demo) return;
+    if (!store.demo) {
+      const dir = await pickDirectory({ directory: true, multiple: false });
+      if (typeof dir !== 'string' || dir === '') return; // the user cancelled
+      const name = dir.split('/').filter(Boolean).pop() ?? dir;
+      void openWorkspace({ id: 'w-pending', name, cwd: dir });
+      return;
+    }
     const n = store.workspaces.length + 1;
     const ws: Workspace = { id: `w-demo-${n}`, name: `demo ${n}`, cwd: `~/git/tau${n}` };
     store.workspaces.push(ws);
@@ -559,6 +573,23 @@
     };
   }
 
+  // A workspace can be opened by any client (this window, a future second
+  // window, a remote backend): the store re-reads the list and, if nothing
+  // is open yet, opens the first one — the boot rule, applied live.
+  async function syncWorkspaces(): Promise<void> {
+    if (store.demo) return;
+    try {
+      const out = await command({ type: 'workspace_list' });
+      if (out.kind !== 'workspaces') return;
+      store.workspaces = out.workspaces;
+      if (store.current === null) {
+        const first = out.workspaces[0];
+        if (first) await openWorkspace(first);
+      }
+    } catch (e) {
+      store.error = e instanceof Error ? e.message : String(e);
+    }
+  }
   export async function closeWorkspace(ws: Workspace): Promise<void> {
     if (!store.demo) {
       const list = await command({ type: 'session_list', workspace: ws.id }).catch(() => ({
@@ -736,6 +767,7 @@
       if (!sid) {
         if (ev.type === 'system') {
           store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
+          if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
         }
         continue;
       }

@@ -32,7 +32,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .await
         .unwrap()
     {
-        CommandOutput::Workspace(w) => w,
+        CommandOutput::Workspace { workspace: w } => w,
         other => panic!("expected a workspace: {other:?}"),
     };
     let session = match core
@@ -43,7 +43,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .await
         .unwrap()
     {
-        CommandOutput::Session(m) => m,
+        CommandOutput::Session { session: m } => m,
         other => panic!("expected a session: {other:?}"),
     };
 
@@ -67,7 +67,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .await
         .unwrap()
     {
-        CommandOutput::Snapshot(s) => s,
+        CommandOutput::Snapshot { snapshot: s } => s,
         other => panic!("expected a snapshot: {other:?}"),
     };
     let bytes = serde_json::to_vec(&snapshot).unwrap();
@@ -116,7 +116,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .await
         .unwrap()
     {
-        CommandOutput::Entries(e) => e,
+        CommandOutput::Entries { entries } => entries,
         other => panic!("expected entries: {other:?}"),
     };
     assert!(entries.is_empty(), "nothing follows the leaf cursor");
@@ -135,7 +135,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .await
         .unwrap()
     {
-        CommandOutput::Entries(e) => e,
+        CommandOutput::Entries { entries } => entries,
         other => panic!("expected entries: {other:?}"),
     };
     assert_eq!(entries.len(), 100);

@@ -947,32 +947,37 @@ impl Core {
 
     pub async fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
         match cmd {
-            Command::WorkspaceOpen { cwd } => {
-                Ok(CommandOutput::Workspace(self.open_workspace(&cwd)?))
-            }
-            Command::WorkspaceList => Ok(CommandOutput::Workspaces(
-                self.workspaces.lock().unwrap().values().cloned().collect(),
-            )),
+            Command::WorkspaceOpen { cwd } => Ok(CommandOutput::Workspace {
+                workspace: self.open_workspace(&cwd)?,
+            }),
+            Command::WorkspaceList => Ok(CommandOutput::Workspaces {
+                workspaces: self.workspaces.lock().unwrap().values().cloned().collect(),
+            }),
 
             Command::SessionList { workspace } => {
                 let workspace = self.workspace(&workspace)?;
-                Ok(CommandOutput::Sessions(
-                    self.sessions
+                Ok(CommandOutput::Sessions {
+                    sessions: self
+                        .sessions
                         .lock()
                         .unwrap()
                         .values()
                         .filter(|s| s.meta.lock().unwrap().workspace == workspace.id)
                         .map(|s| s.meta.lock().unwrap().clone())
                         .collect(),
-                ))
+                })
             }
             Command::SessionNew { workspace, title } => {
                 let workspace = self.workspace(&workspace)?;
-                Ok(CommandOutput::Session(self.session_new(&workspace, title)?))
+                Ok(CommandOutput::Session {
+                    session: self.session_new(&workspace, title)?,
+                })
             }
             Command::SessionOpen { session } => {
                 let live = self.live(&session)?;
-                Ok(CommandOutput::Snapshot(self.snapshot(&live)?))
+                Ok(CommandOutput::Snapshot {
+                    snapshot: self.snapshot(&live)?,
+                })
             }
             Command::SessionClose { session } => {
                 // Closing stops any in-flight turn: a closed session must
@@ -1004,11 +1009,15 @@ impl Core {
                     session: session.clone(),
                     kind: tau_protocol::SessionEventKind::BranchMove { leaf: at },
                 });
-                Ok(CommandOutput::Session(live.meta.lock().unwrap().clone()))
+                Ok(CommandOutput::Session {
+                    session: live.meta.lock().unwrap().clone(),
+                })
             }
             Command::SessionSnapshot { session } => {
                 let live = self.live(&session)?;
-                Ok(CommandOutput::Snapshot(self.snapshot(&live)?))
+                Ok(CommandOutput::Snapshot {
+                    snapshot: self.snapshot(&live)?,
+                })
             }
             Command::SessionEntries {
                 session,
@@ -1016,7 +1025,9 @@ impl Core {
                 range,
             } => {
                 let live = self.live(&session)?;
-                Ok(CommandOutput::Entries(self.entries(&live, since, range)?))
+                Ok(CommandOutput::Entries {
+                    entries: self.entries(&live, since, range)?,
+                })
             }
 
             Command::MessageSend {
@@ -1081,8 +1092,8 @@ impl Core {
                 Ok(CommandOutput::None)
             }
 
-            Command::SubagentTypes => Ok(CommandOutput::Agents(
-                tau_core::agent_type::discover(
+            Command::SubagentTypes => Ok(CommandOutput::Agents {
+                agents: tau_core::agent_type::discover(
                     self.system_dir.as_deref(),
                     Path::new("/nonexistent-tau-project"),
                 )
@@ -1093,18 +1104,19 @@ impl Core {
                     builtin: t.name == "general",
                 })
                 .collect(),
-            )),
+            }),
             Command::SubagentList { session } => {
                 let live = self.live(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
                 })?;
-                Ok(CommandOutput::Subagents(
-                    sup.handles()
+                Ok(CommandOutput::Subagents {
+                    subagents: sup
+                        .handles()
                         .iter()
                         .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
                         .collect(),
-                ))
+                })
             }
             Command::SubagentState { handle } => {
                 // The handle is `<parent-session>-<n>`; the supervisor
@@ -1290,7 +1302,7 @@ impl Core {
                     })
                     .collect::<Vec<_>>();
                 providers.sort_by(|a, b| a.name.cmp(&b.name));
-                Ok(CommandOutput::Providers(providers))
+                Ok(CommandOutput::Providers { providers })
             }
             Command::ProviderAdd { .. }
             | Command::ProviderSet { .. }
@@ -1690,7 +1702,10 @@ mod tests {
             .await
             .unwrap();
         match (w1, w2) {
-            (CommandOutput::Workspace(a), CommandOutput::Workspace(b)) => {
+            (
+                CommandOutput::Workspace { workspace: a },
+                CommandOutput::Workspace { workspace: b },
+            ) => {
                 assert_eq!(a.id, b.id);
                 assert_eq!(a.name, "w");
                 // The id is a hash of the cwd, not the path itself.
@@ -1735,7 +1750,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         std::fs::write(tmp.path().join("f.txt"), "l1\nl2\nl3\n").unwrap();
@@ -1769,7 +1784,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let err = core
@@ -1797,7 +1812,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let session = match core
@@ -1808,7 +1823,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Session(m) => m,
+            CommandOutput::Session { session: m } => m,
             other => panic!("expected a session: {other:?}"),
         };
         let err = core
@@ -1845,7 +1860,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let config = core.workspace_config(&workspace);
@@ -1871,7 +1886,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let live = manual_session(
@@ -2025,7 +2040,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let live = manual_session(
@@ -2154,7 +2169,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         // The slow stream (~2.4 s in flight per call) is the in-flight
@@ -2251,7 +2266,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let config = core.system_config();
@@ -2400,7 +2415,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Workspace(w) => w,
+            CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
         let session = match core
@@ -2411,7 +2426,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Session(m) => m,
+            CommandOutput::Session { session: m } => m,
             other => panic!("expected a session: {other:?}"),
         };
         let info = match core

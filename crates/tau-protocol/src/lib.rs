@@ -85,15 +85,37 @@ pub enum ProtocolError {
 #[allow(clippy::large_enum_variant)]
 pub enum CommandOutput {
     None,
-    Workspace(snapshot::Workspace),
-    Workspaces(Vec<snapshot::Workspace>),
-    Session(snapshot::SessionMeta),
-    Sessions(Vec<snapshot::SessionMeta>),
-    Snapshot(snapshot::Snapshot),
-    Entries(Vec<snapshot::ViewEntry>),
-    Providers(Vec<ProviderInfo>),
-    Agents(Vec<AgentType>),
-    Subagents(Vec<SubagentInfo>),
+    Workspace {
+        workspace: snapshot::Workspace,
+    },
+    // Every struct-payload variant is a struct variant, not a newtype:
+    // an internally tagged enum merges the tag into the payload's map, so a
+    // newtype would flatten the payload's fields to the top level. The named
+    // fields are the GUI's contract (protocol.ts mirrors them).
+    Workspaces {
+        workspaces: Vec<snapshot::Workspace>,
+    },
+    Session {
+        session: snapshot::SessionMeta,
+    },
+    Sessions {
+        sessions: Vec<snapshot::SessionMeta>,
+    },
+    Snapshot {
+        snapshot: snapshot::Snapshot,
+    },
+    Entries {
+        entries: Vec<snapshot::ViewEntry>,
+    },
+    Providers {
+        providers: Vec<ProviderInfo>,
+    },
+    Agents {
+        agents: Vec<AgentType>,
+    },
+    Subagents {
+        subagents: Vec<SubagentInfo>,
+    },
     Subagent(SubagentInfo),
     File(FileText),
 }
@@ -669,6 +691,103 @@ mod tests {
             let json = serde_json::to_string(ev).unwrap();
             let back: Event = serde_json::from_str(&json).unwrap();
             assert_eq!(&back, ev, "round-trip mismatch for {json}");
+        }
+    }
+
+    /// Every `CommandOutput` variant serializes to JSON. Regression: the
+    /// list variants were newtypes, and an internally tagged enum cannot
+    /// serialize a sequence payload — `workspace_list` failed on the wire
+    /// and the app launched with zero workspaces.
+    #[test]
+    fn command_output_variants_roundtrip() {
+        let ws = snapshot::Workspace {
+            id: "w1".into(),
+            name: "tau".into(),
+            cwd: "/tmp/tau".into(),
+        };
+        let meta = snapshot::SessionMeta {
+            id: "s1".into(),
+            workspace: "w1".into(),
+            title: None,
+            created: 1,
+            leaf: None,
+            model: None,
+            usage: None,
+        };
+        let entry = snapshot::ViewEntry {
+            id: "e1".into(),
+            parent: None,
+            kind: "message".into(),
+            timestamp: 1,
+            payload: json!({ "text": "hi" }),
+            blob: None,
+            first_kept: None,
+        };
+        let snap = snapshot::Snapshot {
+            workspace: ws.clone(),
+            session: meta.clone(),
+            entries: vec![],
+            om: json!({}),
+            live: snapshot::LiveState {
+                queue: vec![],
+                turn: snapshot::TurnState::Idle,
+                subagents: vec![],
+                tasks: vec![],
+            },
+            cursor: "e1".into(),
+        };
+        let provider = ProviderInfo {
+            name: "vllm".into(),
+            base_url: "http://localhost:8000/v1".into(),
+            models: vec!["m1".into()],
+        };
+        let agent = AgentType {
+            name: "general".into(),
+            description: "the built-in".into(),
+            builtin: true,
+        };
+        let sub = SubagentInfo {
+            handle: "h1".into(),
+            child: "s2".into(),
+            agent_type: "general".into(),
+            context_mode: ContextMode::Fresh,
+            state: "running".into(),
+            waiting_on: None,
+            last_message: None,
+            usage: None,
+            task: None,
+            resume_contract: None,
+        };
+        let file = FileText {
+            text: "x".into(),
+            truncated: false,
+        };
+        let outputs = vec![
+            CommandOutput::None,
+            CommandOutput::Workspace { workspace: ws },
+            CommandOutput::Workspaces { workspaces: vec![] },
+            CommandOutput::Session { session: meta },
+            CommandOutput::Sessions { sessions: vec![] },
+            CommandOutput::Snapshot { snapshot: snap },
+            CommandOutput::Entries {
+                entries: vec![entry],
+            },
+            CommandOutput::Providers {
+                providers: vec![provider],
+            },
+            CommandOutput::Agents {
+                agents: vec![agent],
+            },
+            CommandOutput::Subagents {
+                subagents: vec![sub.clone()],
+            },
+            CommandOutput::Subagent(sub),
+            CommandOutput::File(file),
+        ];
+        for out in &outputs {
+            let json = serde_json::to_string(out).unwrap();
+            let back: CommandOutput = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, out, "round-trip mismatch for {json}");
         }
     }
 }

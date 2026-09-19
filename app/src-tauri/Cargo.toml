@@ -8,7 +8,8 @@ license.workspace = true
 tauri-build = { version = "2.6", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = [] }
+tauri = { version = "2.11", features = ["devtools"] }
+tauri-plugin-dialog = "2"
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
 tokio = { workspace = true }
@@ -16,6 +17,16 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 xxhash-rust = { workspace = true }
+# the agent-tools dev bridge (debug builds only; wired in main.rs)
+tiny_http = "0.12"
+scopeguard = "1"
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = { workspace = true }
