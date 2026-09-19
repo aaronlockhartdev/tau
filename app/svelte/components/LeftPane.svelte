@@ -409,7 +409,7 @@
     border-color: rgba(126, 201, 126, 0.4);
   }
   .badge.failed {
-    color: var(--err);
+    color: var(--red);
     border-color: rgba(240, 109, 109, 0.4);
   }
   .badge.stopped {
