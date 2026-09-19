@@ -31,10 +31,14 @@
     <main class="center">
       <div class="chead">
         <span class="n">{title}</span>
-        <!-- The #11 verdict: badged `running` only while this session is
-             generating or one of its sub-agents is running; untagged when idle -->
-        {#if cur && (cur.turn === 'running' || cur.subagents.some((x) => x.state === 'running'))}
+        <!-- #11 verdict, TOP-LEVEL only: badged `running` while this session
+             is generating or one of its sub-agents is running. A child
+             session's header shows its own lifecycle state instead (its
+             sub-agent's state, not its parent's badge rule). -->
+        {#if cur && !cur.parent && (cur.turn === 'running' || cur.subagents.some((x) => x.state === 'running'))}
           <span class="badge running"><span class="dot"></span>running</span>
+        {:else if cur && cur.parent}
+          <span class="badge {cur.state}"><span class="dot"></span>{cur.state}{cur.state === 'idle' && cur.waiting_on ? ` · ${cur.waiting_on}` : ''}</span>
         {/if}
         <span class="m">{model}</span>
       </div>
@@ -148,6 +152,23 @@
   .badge.running .dot {
     background: var(--acc);
     animation: pulse 1.2s infinite;
+  }
+  /* The child header's own state tag (the badge rule is top-level only). */
+  .badge.idle {
+    color: #e5c07b;
+    border-color: rgba(229, 192, 123, 0.4);
+  }
+  .badge.done {
+    color: #7ec97e;
+    border-color: rgba(126, 201, 126, 0.4);
+  }
+  .badge.failed {
+    color: var(--red);
+    border-color: rgba(240, 109, 109, 0.4);
+  }
+  .badge.stopped {
+    color: #9aa4b5;
+    border-color: rgba(154, 164, 181, 0.4);
   }
   @keyframes pulse {
     50% {
