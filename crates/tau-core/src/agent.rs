@@ -376,8 +376,10 @@ impl AgentSession {
                 // would re-inject on every assembly).
                 match inner.om.as_mut() {
                     Some(om) => {
-                        let instructions =
-                            om.assemble_context(&base, contract.as_ref().map(|c| c.to_string()).as_deref());
+                        let instructions = om.assemble_context(
+                            &base,
+                            contract.as_ref().map(|c| c.to_string()).as_deref(),
+                        );
                         let raw = om.raw_window_from(&entries, leaf_id.as_deref());
                         (instructions, input_items(&raw))
                     }
@@ -641,12 +643,16 @@ impl AgentSession {
         Ok(())
     }
 
-    fn model(&self) -> String {
+    pub fn model(&self) -> String {
         self.inner.lock().unwrap().model.clone()
     }
 
-    fn tools(&self) -> Vec<ToolSpec> {
+    pub fn tools(&self) -> Vec<ToolSpec> {
         self.inner.lock().unwrap().tools.clone()
+    }
+
+    pub fn system_prompt(&self) -> String {
+        self.inner.lock().unwrap().system_prompt.clone()
     }
 
     fn cwd(&self) -> PathBuf {

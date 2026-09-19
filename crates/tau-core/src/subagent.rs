@@ -257,6 +257,8 @@ pub struct Supervisor {
     /// structural cap (a child carries no supervisor) already bounds v0
     /// depth to 1; this knob additionally disables spawning at 0.
     depth: u32,
+    /// The agent-type registry (spec §5.5).
+    types: Vec<crate::agent_type::AgentType>,
     /// Set after the parent's own loop is constructed (the constructor
     /// cannot close over its owner).
     parent: Mutex<Option<Arc<AgentSession>>>,
@@ -296,6 +298,9 @@ pub struct SupervisorParams {
     /// The session's depth (top-level = 0); a spawn fails when the child's
     /// depth (depth + 1) would exceed `max_depth`.
     pub depth: u32,
+    /// The agent-type registry (spec §5.5): `general` first, then the
+    /// discovered `.md` types.
+    pub types: Vec<crate::agent_type::AgentType>,
     pub bridge: Arc<dyn SubagentBridge>,
     pub driver: Arc<dyn ChildDriver>,
 }
@@ -332,6 +337,7 @@ impl Supervisor {
             children: Mutex::new(HashMap::new()),
             next: AtomicUsize::new(0),
             caps: p.caps,
+            types: p.types,
             depth: p.depth,
             cwd: p.cwd,
             provider: p.provider,
@@ -400,17 +406,24 @@ impl Supervisor {
         self: &Arc<Self>,
         agent_type: &str,
         brief: &str,
-        context_mode: ContextMode,
+        context_mode: Option<ContextMode>,
         task: Option<&str>,
         call_id: &str,
     ) -> Result<Spawned, String> {
-        // v0 has exactly one agent type (the built-in `general`); the
-        // `.md`-file registry lands with ticket #24.
-        if agent_type != "general" {
-            return Err(format!(
-                "subagent_spawn: unknown agent type {agent_type:?} (v0 has the built-in \"general\")"
-            ));
-        }
+        // Resolve the type (spec §5.5): an unknown name is an error that
+        // lists what the session can spawn.
+        let ty = self
+            .types
+            .iter()
+            .find(|t| t.name == agent_type)
+            .ok_or_else(|| {
+                let names: Vec<&str> = self.types.iter().map(|t| t.name.as_str()).collect();
+                format!(
+                    "subagent_spawn: unknown agent type {agent_type:?} (available: {})",
+                    names.join(", ")
+                )
+            })?;
+        let context_mode = context_mode.unwrap_or(ty.context_mode);
         if self.depth + 1 > self.caps.max_depth {
             return Err(format!(
                 "subagent_spawn: depth cap reached (max_depth {}; this session is at depth {})",
@@ -495,14 +508,27 @@ impl Supervisor {
             self.next.fetch_add(1, Ordering::SeqCst) + 1
         );
         let provider = self.provider.create(&session_id);
+        // The type configures the child (spec §5.5): `general` inherits
+        // the session's prompt, tools, and model; a `.md` type brings its
+        // own prompt and, optionally, a tool subset and model.
+        let child_prompt = if ty.name == "general" {
+            self.system_prompt.clone()
+        } else {
+            ty.body.clone()
+        };
+        let child_model = ty.model.clone().unwrap_or_else(|| self.model.clone());
+        let child_tools = match &ty.tools {
+            Some(allowed) => tools::child_tool_specs()
+                .into_iter()
+                .filter(|s| allowed.iter().any(|a| a == &s.name))
+                .collect(),
+            None => tools::child_tool_specs(),
+        };
         let agent = Arc::new(AgentSession::new(SessionParams {
             store,
-            // The built-in `general` type inherits the session's prompt,
-            // tools, and model (spec §5.5); type-specific prompts land
-            // with ticket #24.
-            system_prompt: self.system_prompt.clone(),
-            model: self.model.clone(),
-            tools: tools::child_tool_specs(),
+            system_prompt: child_prompt,
+            model: child_model.clone(),
+            tools: child_tools,
             cwd: self.cwd.clone(),
             provider: provider.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
@@ -540,7 +566,7 @@ impl Supervisor {
             child: session_id.clone(),
             agent_type: agent_type.to_owned(),
             context_mode,
-            model: self.model.clone(),
+            model: child_model.clone(),
         });
 
         // The brief is the child's first turn (the handoff-in, ADR-0001).
@@ -554,7 +580,7 @@ impl Supervisor {
             provider,
             stop,
             cwd: self.cwd.clone(),
-            model: self.model.clone(),
+            model: child_model.clone(),
             created,
             drive,
         })
@@ -970,11 +996,15 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
             let Some(brief) = tc.args.get("brief").and_then(Value::as_str) else {
                 return "subagent_spawn: missing \"brief\"".into();
             };
-            let context_mode = match tc.args.get("context_mode").and_then(Value::as_str) {
-                Some("compacted") => ContextMode::Compacted,
-                Some("fork") => ContextMode::Fork,
-                _ => ContextMode::Fresh,
-            };
+            let context_mode =
+                tc.args
+                    .get("context_mode")
+                    .and_then(Value::as_str)
+                    .map(|m| match m {
+                        "compacted" => ContextMode::Compacted,
+                        "fork" => ContextMode::Fork,
+                        _ => ContextMode::Fresh,
+                    });
             let task = tc.args.get("task").and_then(Value::as_str);
             match sup.spawn(agent_type, brief, context_mode, task, &tc.id) {
                 Ok(s) => format!(
@@ -1231,6 +1261,7 @@ mod tests {
             turn: TurnConfig::default(),
             caps,
             depth: 0,
+            types: vec![crate::agent_type::builtin_general()],
             bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
             driver: Arc::new(TestDriver),
         });
@@ -1558,7 +1589,7 @@ mod tests {
             let r = sup.spawn(
                 "general",
                 &format!("child {i}"),
-                ContextMode::Fresh,
+                Some(ContextMode::Fresh),
                 None,
                 "c0",
             );
@@ -1608,7 +1639,7 @@ mod tests {
             SubAgents::default(),
         );
         let s = sup
-            .spawn("general", "one call", ContextMode::Fresh, None, "c0")
+            .spawn("general", "one call", Some(ContextMode::Fresh), None, "c0")
             .unwrap();
         s.drive.await.unwrap();
         assert_eq!(
@@ -1670,7 +1701,7 @@ mod tests {
             SubAgents::default(),
         );
         let s = sup
-            .spawn("general", "slow work", ContextMode::Fresh, None, "c0")
+            .spawn("general", "slow work", Some(ContextMode::Fresh), None, "c0")
             .unwrap();
         let drive = s.drive;
         // Let the slow stream start, then stop it.
@@ -1771,11 +1802,11 @@ mod tests {
             },
         );
         let first = sup
-            .spawn("general", "one", ContextMode::Fresh, None, "c0")
+            .spawn("general", "one", Some(ContextMode::Fresh), None, "c0")
             .unwrap();
         // Second spawn while the first holds its slot: refused.
         let err = sup
-            .spawn("general", "two", ContextMode::Fresh, None, "c1")
+            .spawn("general", "two", Some(ContextMode::Fresh), None, "c1")
             .expect_err("second spawn while the first holds its slot");
         assert!(err.contains("concurrency cap"), "{err}");
         // The child's tool set: parent_notify in, subagent_spawn out.
@@ -1802,19 +1833,88 @@ mod tests {
                 ChildState::Done { .. }
             )
         });
-        let second = sup.spawn("general", "two", ContextMode::Fresh, None, "c1");
+        let second = sup.spawn("general", "two", Some(ContextMode::Fresh), None, "c1");
         assert!(
             second.is_ok(),
             "a done child frees its slot: {:?}",
             second.err()
         );
-        // Unknown agent types are refused (v0 has only `general`).
-        assert!(
-            sup.spawn("planner", "x", ContextMode::Fresh, None, "c2")
-                .is_err()
-        );
+        // Unknown agent types are refused, naming what is available.
+        let err = sup
+            .spawn("planner", "x", Some(ContextMode::Fresh), None, "c2")
+            .expect_err("an unknown type is refused");
+        assert!(err.contains("unknown agent type \"planner\""), "{err}");
+        assert!(err.contains("general"), "{err}");
     }
 
+    /// A `.md` type (spec §5.5) configures the child: its body is the
+    /// system prompt, its model the child's model, its tools a subset of
+    /// the child's default set.
+    #[tokio::test]
+    async fn a_md_type_configures_the_child_prompt_model_and_tools() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join(".tau").join("agents")).unwrap();
+        std::fs::write(
+            project.join(".tau/agents/reviewer.md"),
+            "---\nname: reviewer\ndescription: reviews\ntools: read\nmodel: review-model\n---\nYou are a strict reviewer.\n",
+        )
+        .unwrap();
+        let types = crate::agent_type::discover(None, &project);
+        let bridge = Arc::new(TestBridge::default());
+        let factory = Arc::new(CannedFactory {
+            scripts: vec![vec![sse("done", &[])]],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: "parent".into(),
+            cwd: dir.path().to_path_buf(),
+            provider: factory,
+            model: "test-model".into(),
+            system_prompt: "be terse".into(),
+            om: Om::default(),
+            om_model: String::new(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            caps: SubAgents::default(),
+            depth: 0,
+            types,
+            bridge: bridge as Arc<dyn SubagentBridge>,
+            driver: Arc::new(TestDriver),
+        });
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.create().unwrap();
+        let parent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: crate::provider::canned(sse("ok", &[]).as_str()),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        sup.attach_parent(parent);
+        let spawned = sup
+            .spawn("reviewer", "look", None, None, "c0")
+            .expect("the discovered type spawns");
+        // The type's body, not the session's prompt; the type's model, not
+        // the session's; the subset, not the full child set.
+        assert_eq!(spawned.agent.system_prompt(), "You are a strict reviewer.");
+        assert_eq!(spawned.model, "review-model");
+        assert_eq!(spawned.agent.tools().len(), 1);
+        assert_eq!(spawned.agent.tools()[0].name, "read");
+        // An omitted context_mode falls back to the type's default (fresh
+        let children = sup.children.lock().unwrap();
+        let child = children.get(&spawned.handle).unwrap();
+        assert_eq!(child.context_mode, ContextMode::Fresh);
+    }
     /// `max_depth` is enforced at spawn: a session at the cap refuses to
     /// spawn, and `max_depth: 0` disables spawning outright (the
     /// structural child-carries-no-supervisor rule already bounds v0 depth
@@ -1844,6 +1944,7 @@ mod tests {
                     max_depth,
                     max_concurrent: None,
                 },
+                types: vec![crate::agent_type::builtin_general()],
                 depth,
                 bridge: bridge as Arc<dyn SubagentBridge>,
                 driver: Arc::new(TestDriver),
@@ -1852,20 +1953,20 @@ mod tests {
         // At the cap: refused with a clear diagnostic.
         let at_cap = sup(1, 1);
         let err = at_cap
-            .spawn("general", "x", ContextMode::Fresh, None, "c0")
+            .spawn("general", "x", Some(ContextMode::Fresh), None, "c0")
             .expect_err("a session at the depth cap cannot spawn");
         assert!(err.contains("depth cap"), "{err}");
         // max_depth 0 disables spawning for a top-level session.
         let zero = sup(0, 0);
         let err = zero
-            .spawn("general", "x", ContextMode::Fresh, None, "c0")
+            .spawn("general", "x", Some(ContextMode::Fresh), None, "c0")
             .expect_err("max_depth 0 disables spawning");
         assert!(err.contains("depth cap"), "{err}");
         // Below the cap the depth check passes (spawn then fails only on
         // the missing parent attachment, not on depth).
         let below = sup(0, 1);
         let err = below
-            .spawn("general", "x", ContextMode::Fresh, None, "c0")
+            .spawn("general", "x", Some(ContextMode::Fresh), None, "c0")
             .expect_err("no parent attached in this bare harness");
         assert!(!err.contains("depth cap"), "{err}");
     }
@@ -1919,6 +2020,7 @@ mod tests {
             turn: TurnConfig::default(),
             caps: SubAgents::default(),
             depth: 0,
+            types: vec![crate::agent_type::builtin_general()],
             bridge: bridge as Arc<dyn SubagentBridge>,
             driver: Arc::clone(&driver) as Arc<dyn ChildDriver>,
         });
@@ -1944,7 +2046,7 @@ mod tests {
         // is in flight too — the window opens when the notify releases
         // both rounds at once.
         let spawned = sup
-            .spawn("general", "work", ContextMode::Fresh, None, "c0")
+            .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
             .unwrap();
         wait_for(|| driver.calls.load(Ordering::SeqCst) == 1);
         sup.stop(&spawned.handle, StoppedBy::User).unwrap();
@@ -2008,7 +2110,13 @@ mod tests {
             },
         )));
         let s = sup
-            .spawn("general", "compact me", ContextMode::Compacted, None, "c0")
+            .spawn(
+                "general",
+                "compact me",
+                Some(ContextMode::Compacted),
+                None,
+                "c0",
+            )
             .unwrap();
         // Quiesce the child before reading its file from a second store:
         // its drive ends when the nudge exhausts, after which the file is
@@ -2088,7 +2196,13 @@ mod tests {
             .unwrap();
         parent.set_om(Some(OmState::from_config(&Om::default(), record)));
         let s = sup
-            .spawn("general", "compact me", ContextMode::Compacted, None, "c0")
+            .spawn(
+                "general",
+                "compact me",
+                Some(ContextMode::Compacted),
+                None,
+                "c0",
+            )
             .unwrap();
         s.drive.await.unwrap();
         let child = sup.child_agent(&s.handle).unwrap();
@@ -2130,7 +2244,7 @@ mod tests {
             },
         )));
         let s = sup
-            .spawn("general", "fork me", ContextMode::Fork, None, "c0")
+            .spawn("general", "fork me", Some(ContextMode::Fork), None, "c0")
             .unwrap();
         // Quiesce the child before reading its file from a second store
         // (review B1, same as the compacted test).

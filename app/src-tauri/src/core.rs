@@ -744,6 +744,7 @@ impl Core {
             tool_batch_on_force: config.requests.tool_batch_on_force,
             turn: TurnConfig::default(),
             caps: config.subagents.clone(),
+            types: tau_core::agent_type::discover(self.system_dir.as_deref(), &cwd),
             depth: 0,
             bridge: bridge.clone() as Arc<dyn SubagentBridge>,
             driver: Arc::new(AppChildDriver {
@@ -794,6 +795,13 @@ impl Core {
         Ok(meta)
     }
 
+    fn open_store(&self, live: &LiveSession) -> Result<SessionStore, ProtocolError> {
+        let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
+        store.open().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        Ok(store)
+    }
     fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
         let workspace = self.workspace(&live.meta.lock().unwrap().workspace)?;
         let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
@@ -1054,11 +1062,19 @@ impl Core {
                 Ok(CommandOutput::None)
             }
 
-            Command::SubagentTypes => Ok(CommandOutput::Agents(vec![AgentType {
-                name: "general".into(),
-                description: "The built-in agent: the session's tools and model.".into(),
-                builtin: true,
-            }])),
+            Command::SubagentTypes => Ok(CommandOutput::Agents(
+                tau_core::agent_type::discover(
+                    self.system_dir.as_deref(),
+                    Path::new("/nonexistent-tau-project"),
+                )
+                .iter()
+                .map(|t| AgentType {
+                    name: t.name.clone(),
+                    description: t.description.clone(),
+                    builtin: t.name == "general",
+                })
+                .collect(),
+            )),
             Command::SubagentList { session } => {
                 let live = self.live(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
@@ -1102,11 +1118,11 @@ impl Core {
                 let spawned = sup.spawn(
                     &agent_type,
                     &brief,
-                    match context_mode {
+                    Some(match context_mode {
                         ContextMode::Fresh => tau_core::subagent::ContextMode::Fresh,
                         ContextMode::Compacted => tau_core::subagent::ContextMode::Compacted,
                         ContextMode::Fork => tau_core::subagent::ContextMode::Fork,
-                    },
+                    }),
                     None,
                     "gui",
                 );
@@ -1158,13 +1174,103 @@ impl Core {
                     })?;
                 Ok(CommandOutput::Subagent(info_to_protocol(&info)))
             }
-            Command::TaskCreate { .. }
-            | Command::TaskUpdate { .. }
-            | Command::TaskAssign { .. }
-            | Command::TaskEvidence { .. }
-            | Command::TaskCancel { .. } => Err(ProtocolError::Unsupported {
-                message: "task records land in ticket #24".into(),
-            }),
+            Command::TaskCreate { session, title } => {
+                let live = self.live(&session)?;
+                let mut store = self.open_store(&live)?;
+                // The id rule is the tool path's: task-{count+1}.
+                let n = tau_core::task::fold_entries(&store.entries_range(0, usize::MAX).map_err(
+                    |e| ProtocolError::Other {
+                        message: e.to_string(),
+                    },
+                )?)
+                .iter()
+                .filter(|t| t.id.starts_with("task-"))
+                .count()
+                    + 1;
+                tau_core::task::create(&mut store, &format!("task-{n}"), &title, vec![], vec![])
+                    .map_err(|e| ProtocolError::Other { message: e })?;
+                Ok(CommandOutput::None)
+            }
+            Command::TaskUpdate {
+                session,
+                task,
+                note,
+            } => {
+                let live = self.live(&session)?;
+                let mut store = self.open_store(&live)?;
+                tau_core::task::note(&mut store, &task, &note)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
+                Ok(CommandOutput::None)
+            }
+            Command::TaskAssign {
+                session,
+                task,
+                worker,
+            } => {
+                let live = self.live(&session)?;
+                // The worker is a child handle: resolve it to a session.
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no supervisor (it is a child itself)".into(),
+                })?;
+                let info = sup
+                    .state_info(&worker)
+                    .ok_or_else(|| ProtocolError::NotFound {
+                        what: format!("subagent {worker}"),
+                    })?;
+                let worker_session = info.child;
+                let mut store = self.open_store(&live)?;
+                let mut worker_store = SessionStore::for_workspace(&live.cwd, &worker_session);
+                worker_store.open().map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+                let brief = format!(
+                    "You were assigned task {task} (\"{}\"). Work it: record evidence for each criterion, then call task_finish.",
+                    task
+                );
+                tau_core::task::assign(
+                    &mut store,
+                    &mut worker_store,
+                    &task,
+                    &worker_session,
+                    &session,
+                )
+                .map_err(|e| ProtocolError::Other { message: e })?;
+                // The assignment brief starts (or resumes) the worker.
+                sup.message(&worker, Some(brief), tau_core::agent::Lane::Steering)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
+                Ok(CommandOutput::None)
+            }
+            Command::TaskEvidence {
+                session,
+                task,
+                criterion,
+                summary,
+                passed,
+            } => {
+                let live = self.live(&session)?;
+                let mut store = self.open_store(&live)?;
+                tau_core::task::add_evidence(
+                    &mut store,
+                    &task,
+                    tau_core::task::Evidence {
+                        criterion,
+                        summary,
+                        passed: passed.unwrap_or(true),
+                        step: None,
+                        command: None,
+                        artifact: None,
+                    },
+                )
+                .map_err(|e| ProtocolError::Other { message: e })?;
+                Ok(CommandOutput::None)
+            }
+            Command::TaskCancel { session, task } => {
+                let live = self.live(&session)?;
+                let mut store = self.open_store(&live)?;
+                tau_core::task::cancel(&mut store, &task, None)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
+                Ok(CommandOutput::None)
+            }
 
             Command::ProviderList => {
                 let mut providers = self
@@ -1600,6 +1706,8 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, ProtocolError::NotFound { .. }));
+        // The task commands are live (ticket #24): an unknown session's
+        // task is a NotFound, not an Unsupported.
         let err = core
             .dispatch(Command::TaskCreate {
                 session: "s".into(),
@@ -1607,7 +1715,7 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(matches!(err, ProtocolError::Unsupported { .. }));
+        assert!(matches!(err, ProtocolError::NotFound { .. }));
     }
 
     #[tokio::test]

@@ -3,6 +3,7 @@
 //! transport shim (spec §2).
 
 pub mod agent;
+pub mod agent_type;
 pub mod config;
 pub mod context;
 pub mod hashline;
