@@ -4,7 +4,10 @@
 
 use std::sync::Arc;
 
-use tau_app::{core::{Core, CoreBuilder, pump}, CoreState};
+use tau_app::{
+    CoreState,
+    core::{Core, CoreBuilder, pump},
+};
 use tau_protocol::{Command, CommandOutput, ProtocolError};
 use tauri::{Emitter, Manager, State};
 
