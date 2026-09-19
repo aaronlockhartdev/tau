@@ -539,6 +539,9 @@ impl SessionStore {
         let new_header = serde_json::to_string(&header)?;
         lines[0] = &new_header;
         let mut target = Self::new(source.root.clone(), id);
+        if target.path().exists() {
+            return Err(Error::Other(format!("fork target {id} already exists")));
+        }
         fs::create_dir_all(target.root.join("sessions"))?;
         fs::write(target.path(), format!("{}\n", lines.join("\n")))?;
         target.open()?;
@@ -993,6 +996,24 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (s, _) = seeded(dir.path());
         assert!(SessionStore::fork_from(&s, "s1").is_err());
+    }
+
+    #[test]
+    fn a_fork_cannot_clobber_an_existing_session_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let (s, _) = seeded(dir.path());
+        let mut taken = store(dir.path(), "s2");
+        taken.create().unwrap();
+        taken
+            .append("user", serde_json::json!({"text": "the original"}), None)
+            .unwrap();
+        assert!(SessionStore::fork_from(&s, "s2").is_err());
+        // The existing file is untouched.
+        let mut re = store(dir.path(), "s2");
+        re.open().unwrap();
+        let entries = re.entries_range(0, usize::MAX).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].payload["text"], "the original");
     }
 
     #[test]

@@ -183,6 +183,10 @@ pub struct Child {
     /// stop-then-resume window between `drive()` returning and the loop's
     /// state check — two drives must never run the child concurrently).
     drive_gen: AtomicUsize,
+    /// The idle drive sleeps on this (review N8): a message or a stop
+    /// wakes it, so an idle child costs no polling. `Notify`'s permit
+    /// makes a wake that lands before the drive arms its future unlost.
+    wake: tokio::sync::Notify,
 }
 
 impl Child {
@@ -190,14 +194,14 @@ impl Child {
         self.state.lock().unwrap().clone()
     }
 
-    fn set_state(&self, state: ChildState, note: Option<String>) {
+    fn set_state(&self, state: ChildState, note: Option<String>) -> Result<(), String> {
         *self.state.lock().unwrap() = state.clone();
-        if let Err(e) = self.agent.append_entry(
-            KIND_SUBAGENT,
-            json!({ "event": "state", "state": state, "note": note }),
-        ) {
-            eprintln!("subagent state entry failed: {e}");
-        }
+        self.agent
+            .append_entry(
+                KIND_SUBAGENT,
+                json!({ "event": "state", "state": state, "note": note }),
+            )
+            .map_err(|e| format!("subagent state entry failed: {e}"))
     }
 
     fn set_last_message(&self, text: &str) {
@@ -256,6 +260,11 @@ pub struct Supervisor {
     /// Set after the parent's own loop is constructed (the constructor
     /// cannot close over its owner).
     parent: Mutex<Option<Arc<AgentSession>>>,
+    /// The children map (review N8): a terminal child (done/stopped/failed)
+    /// stays in it until the parent session closes — every non-running
+    /// state is resumable, so the record must outlive its drive. Bounded
+    /// by the spawn count for the session's life; a long-lived-session
+    /// prune would need resume to re-adopt from the session file.
     children: Mutex<HashMap<String, Arc<Child>>>,
     next: AtomicUsize,
     caps: SubAgents,
@@ -519,6 +528,7 @@ impl Supervisor {
             nudge_sent: AtomicBool::new(false),
             last_message: Mutex::new(Some(brief.to_owned())),
             drive_gen: AtomicUsize::new(0),
+            wake: tokio::sync::Notify::new(),
         });
         self.children
             .lock()
@@ -570,10 +580,16 @@ impl Supervisor {
                 ChildState::Running => {}
                 ChildState::Idle { .. } => {
                     if child.agent.has_pending() {
-                        child.set_state(
-                            ChildState::Running,
-                            Some("resumed by a queued message".into()),
-                        );
+                        if child
+                            .set_state(
+                                ChildState::Running,
+                                Some("resumed by a queued message".into()),
+                            )
+                            .is_err()
+                        {
+                            sup.mark_failed(&child, "state entry failed".into());
+                            break;
+                        }
                         sup.bridge.state(&StateNotice {
                             parent: sup.parent_session.clone(),
                             handle: child.handle.clone(),
@@ -583,7 +599,10 @@ impl Supervisor {
                         });
                         continue;
                     }
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    // No polling (review N8): a message, a nudge, or a
+                    // stop notifies the drive; the permit keeps an
+                    // out-of-order wake from being lost.
+                    child.wake.notified().await;
                     continue;
                 }
                 // done ends the drive: a done child is quiescent, and a
@@ -629,12 +648,16 @@ impl Supervisor {
     }
 
     fn mark_failed(&self, child: &Arc<Child>, reason: String) {
-        child.set_state(
+        // The state entry itself can fail (storage down): nothing further
+        // to do — the in-memory state already says failed.
+        if let Err(e) = child.set_state(
             ChildState::Failed {
                 reason: reason.clone(),
             },
             None,
-        );
+        ) {
+            eprintln!("subagent state entry failed: {e}");
+        }
         self.bridge.state(&StateNotice {
             parent: self.parent_session.clone(),
             handle: child.handle.clone(),
@@ -658,8 +681,10 @@ impl Supervisor {
 
     /// The child-side `parent_notify` (routed here from the child's loop).
     fn notify(&self, handle: &str, args: &Value) -> String {
-        // Argument validation before the child lookup: a malformed call
-        // is rejected without touching state, even for an unknown handle.
+        // Shape-only validation (v0, review N9): the keys and their types
+        // are checked, not a full schema — a semantic schema would be
+        // speculative until the task gate lands. A malformed call is
+        // rejected before the child lookup, even for an unknown handle.
         let Some(text) = args.get("text").and_then(Value::as_str) else {
             return "parent_notify: missing \"text\"".into();
         };
@@ -710,12 +735,14 @@ impl Supervisor {
         if done {
             // Quiescence, not death (ADR-0001): the loop ends, the
             // concurrency slot frees, and the parent is woken always.
-            child.set_state(
+            if let Err(e) = child.set_state(
                 ChildState::Done {
                     output: output.clone(),
                 },
                 None,
-            );
+            ) {
+                return e;
+            }
             self.bridge.state(&StateNotice {
                 parent: self.parent_session.clone(),
                 handle: child.handle.clone(),
@@ -738,7 +765,10 @@ impl Supervisor {
             // A note parks the child. The declared (or default) wait
             // target decides the wake (ADR-0001 wake rules).
             let waiting_on = waiting_on.unwrap_or(WaitingOn::Parent);
-            child.set_state(ChildState::Idle { waiting_on }, Some(text.to_owned()));
+            if let Err(e) = child.set_state(ChildState::Idle { waiting_on }, Some(text.to_owned()))
+            {
+                return e;
+            }
             self.bridge.state(&StateNotice {
                 parent: self.parent_session.clone(),
                 handle: child.handle.clone(),
@@ -784,6 +814,7 @@ impl Supervisor {
                 Some(text) => {
                     child.agent.send(text.clone(), lane);
                     child.set_last_message(text);
+                    child.wake.notify_one();
                     Ok(format!("delivered to {handle}"))
                 }
                 None => Ok(format!("sub-agent {handle} is already running")),
@@ -802,7 +833,8 @@ impl Supervisor {
                         | ChildState::Done { .. }
                 );
                 let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
-                child.set_state(ChildState::Running, Some(text.clone()));
+                child.set_state(ChildState::Running, Some(text.clone()))?;
+                child.wake.notify_one();
                 self.bridge.state(&StateNotice {
                     parent: self.parent_session.clone(),
                     handle: child.handle.clone(),
@@ -842,7 +874,8 @@ impl Supervisor {
             child.agent.stop();
         }
         let note = format!("stopped by {}", by.as_str());
-        child.set_state(ChildState::Stopped { by }, Some(note.clone()));
+        child.set_state(ChildState::Stopped { by }, Some(note.clone()))?;
+        child.wake.notify_one();
         self.bridge.state(&StateNotice {
             parent: self.parent_session.clone(),
             handle: child.handle.clone(),
@@ -2004,6 +2037,68 @@ mod tests {
             "<observations>the parent's log</observations>"
         );
         assert!(record.active_observations.is_empty());
+    }
+
+    /// Parent-scoped recall (review N4): a compacted child's
+    /// `scope: "parent"` browses the parent session's raw history — the
+    /// target of its frozen prefix; a session without a parent link gets a
+    /// refusal, not a guess.
+    #[tokio::test]
+    async fn a_compacted_child_recalls_the_parent_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sup, _) = harness(
+            dir.path(),
+            vec![sse("obs turn", &[])],
+            vec![vec![sse("", &[])]],
+            SubAgents::default(),
+        );
+        let parent = sup.parent.lock().unwrap().clone().unwrap();
+        // The parent's raw history, plus an observation group covering it.
+        parent
+            .append_entry(
+                crate::agent::KIND_USER,
+                json!({ "text": "parent raw one", "lane": "follow-up" }),
+            )
+            .unwrap();
+        parent
+            .append_entry(
+                crate::agent::KIND_USER,
+                json!({ "text": "parent raw two", "lane": "follow-up" }),
+            )
+            .unwrap();
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.open().unwrap();
+        let entries = store.entries_range(0, usize::MAX).unwrap();
+        let first = entries[0].id.as_str();
+        let last = entries.last().unwrap().id.as_str();
+        let record = OmRecord {
+            frozen_prefix: String::new(),
+            active_observations: crate::om::wrap_in_observation_group(
+                "parent obs",
+                &format!("{first}:{last}"),
+                "pg",
+                None,
+            ),
+            ..Default::default()
+        };
+        // Saved to the file: the parent-scoped recall reads the record the
+        // way it always does (a file read, not the parent's memory).
+        OmState::from_config(&Om::default(), record.clone())
+            .save(&mut store)
+            .unwrap();
+        parent.set_om(Some(OmState::from_config(&Om::default(), record)));
+        let s = sup
+            .spawn("general", "compact me", ContextMode::Compacted, None, "c0")
+            .unwrap();
+        s.drive.await.unwrap();
+        let child = sup.child_agent(&s.handle).unwrap();
+        // Parent scope: the parent's raw entries come back.
+        let out = child.recall_scoped(&json!({ "group": "pg", "scope": "parent" }));
+        assert!(out.contains("parent raw one"), "{out}");
+        assert!(out.contains("parent raw two"), "{out}");
+        // The parent itself has no parent link.
+        let out = parent.recall_scoped(&json!({ "group": "pg", "scope": "parent" }));
+        assert!(out.contains("needs a parent link"), "{out}");
     }
 
     /// A fork copies the parent's entry tree (stable ids) and inherits the

@@ -238,6 +238,43 @@ impl AgentSession {
         self.inner.lock().unwrap().subagents.clone()
     }
 
+    /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
+    /// the parent session's raw history (a compacted child's frozen prefix
+    /// points there); everything else is this session's own log.
+    pub fn recall_scoped(&self, args: &Value) -> String {
+        if args.get("scope").and_then(Value::as_str) == Some("parent") {
+            let (link, cwd) = {
+                let inner = self.inner.lock().unwrap();
+                (inner.child.clone(), inner.cwd.clone())
+            };
+            match link {
+                Some(link) => {
+                    let parent_id = link
+                        .handle()
+                        .rsplit_once('-')
+                        .map(|(s, _)| s.to_owned())
+                        .unwrap_or_default();
+                    let mut store = SessionStore::for_workspace(&cwd, &parent_id);
+                    match store.open() {
+                        Ok(()) => match crate::om_integration::OmState::load_record(&mut store) {
+                            Ok(record) => crate::om_integration::recall(&mut store, &record, args),
+                            Err(e) => format!("recall: parent record: {e}"),
+                        },
+                        Err(e) => format!("recall: parent session: {e}"),
+                    }
+                }
+                None => "recall: scope \"parent\" needs a parent link (compacted child)".into(),
+            }
+        } else {
+            let mut inner = self.inner.lock().unwrap();
+            let record = inner
+                .om
+                .as_ref()
+                .map(|om| om.record.clone())
+                .unwrap_or_default();
+            crate::om_integration::recall(&mut inner.store, &record, args)
+        }
+    }
     /// The session store's header timestamp (epoch ms).
     pub fn store_created(&self) -> u64 {
         self.inner.lock().unwrap().store.created()
@@ -400,13 +437,7 @@ impl AgentSession {
                 args: args.clone(),
             };
             let output = if call.name == "recall" {
-                let mut inner = self.inner.lock().unwrap();
-                let record = inner
-                    .om
-                    .as_ref()
-                    .map(|om| om.record.clone())
-                    .unwrap_or_default();
-                crate::om_integration::recall(&mut inner.store, &record, &args)
+                self.recall_scoped(&args)
             } else {
                 // The sub-agent surface routes outside the core tools: the
                 // parent's supervisor tools, or the child's `parent_notify`

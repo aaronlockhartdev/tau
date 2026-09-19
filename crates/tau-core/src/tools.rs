@@ -91,14 +91,14 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "recall".into(),
-            description: "Browse the raw session entries an observation group \"\n\
-                covers. Pass the group id (16 hex digits, from the observation \"\n\
-                log). Returns the entries in the group's range."
-                .into(),
+            description:
+                "Browse the raw session entries an observation group covers. Pass the group id (16 hex digits, from the observation log). A compacted sub-agent passes scope: \"parent\" to browse the parent session's raw history (its frozen prefix points there). Returns the entries in the group's range."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "group": {"type": "string"}
+                    "group": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["self", "parent"]}
                 },
                 "required": ["group"]
             }),

@@ -641,14 +641,6 @@ impl Core {
 
     // ── sessions ─────────────────────────────────────────────────────────
 
-    fn new_session_id() -> String {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("{:016x}", nanos)
-    }
-
     fn live(&self, session: &str) -> Result<Arc<LiveSession>, ProtocolError> {
         self.sessions
             .lock()
@@ -682,7 +674,7 @@ impl Core {
                 message: format!("provider {name} has no models"),
             })?;
         let cwd = PathBuf::from(&workspace.cwd);
-        let mut store = SessionStore::for_workspace(&cwd, &Self::new_session_id());
+        let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
         store.create().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
@@ -1844,7 +1836,7 @@ mod tests {
     ) -> Arc<LiveSession> {
         let tmp = workspace.cwd.clone();
         let cwd = PathBuf::from(&tmp);
-        let mut store = SessionStore::for_workspace(&cwd, &Core::new_session_id());
+        let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
         store.create().unwrap();
         let created = store.created();
         let provider = Arc::new(ForwardingProvider {
