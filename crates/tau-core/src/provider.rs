@@ -415,7 +415,7 @@ pub trait TurnSink: Send {
     fn event(&mut self, event: TurnEvent) -> bool;
 }
 
-fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
+pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
     match event {
         TurnEvent::Text(t) => result.text.push_str(t),
         TurnEvent::Reasoning(t) => result.reasoning.push_str(t),
@@ -797,9 +797,18 @@ async fn attempt_one_turn(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Arc;
+
+    /// Live tests use a no-pool client: a pooled keep-alive connection keeps
+    /// the tokio runtime alive after the test and hangs teardown (ticket #23).
+    pub(crate) fn test_client() -> reqwest::Client {
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .build()
+            .expect("test client")
+    }
 
     struct Keep;
     impl TurnSink for Keep {
@@ -1113,7 +1122,7 @@ mod tests {
             Ok(base) => base,
             Err(_) => return,
         };
-        let client = reqwest::Client::new();
+        let client = test_client();
         let provider = Provider {
             base_url: base,
             key_env: String::new(),
@@ -1133,7 +1142,7 @@ mod tests {
             Ok(base) => base,
             Err(_) => return,
         };
-        let client = reqwest::Client::new();
+        let client = test_client();
         let provider = Provider {
             base_url: base,
             key_env: String::new(),

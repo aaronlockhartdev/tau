@@ -91,19 +91,111 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "recall".into(),
-            description: "Browse the raw session entries an observation group \"\n\
-                covers. Pass the group id (16 hex digits, from the observation \"\n\
-                log). Returns the entries in the group's range."
-                .into(),
+            description:
+                "Browse the raw session entries an observation group covers. Pass the group id (16 hex digits, from the observation log). A compacted sub-agent passes scope: \"parent\" to browse the parent session's raw history (its frozen prefix points there). Returns the entries in the group's range."
+                    .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "group": {"type": "string"}
+                    "group": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["self", "parent"]}
                 },
                 "required": ["group"]
             }),
         },
     ]
+}
+
+/// The parent-side sub-agent tools (spec §5.3): present on non-child
+/// sessions only — the depth cap (a child cannot spawn) is structural.
+pub fn subagent_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "subagent_spawn".into(),
+            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its handle. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["general"]},
+                    "brief": {"type": "string"},
+                    "context_mode": {"type": "string", "enum": ["fresh", "compacted", "fork"]},
+                    "task": {"type": "string"}
+                },
+                "required": ["type", "brief"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "subagent_message".into(),
+            description: "Message a sub-agent by handle. A running child takes it on its steering lane; a non-running child is resumed with it. Omit text for a pure resume (\"continue from where you stopped\").".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "handle": {"type": "string"},
+                    "text": {"type": "string"}
+                },
+                "required": ["handle"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "subagent_stop".into(),
+            description: "Soft-stop a sub-agent: its in-flight stream is cut (the partial is kept) and it parks; it stays resumable.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {"handle": {"type": "string"}},
+                "required": ["handle"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "subagent_state".into(),
+            description: "Inspect a sub-agent by handle: lifecycle state, what it is waiting for, its last message, usage, and its session id.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {"handle": {"type": "string"}},
+                "required": ["handle"]
+            }),
+        },
+    ]
+}
+
+/// The child-side tool (spec §5.3): the only channel back to the parent.
+/// done:true requires a structured output and ends the child; a note keeps
+/// it parked. waiting_on declares what a parking child waits for (the nudge
+/// fork: done / a valid declaration / failed).
+pub fn parent_notify_spec() -> ToolSpec {
+    ToolSpec {
+        kind: ToolKind::Function,
+        name: "parent_notify".into(),
+        description: "Notify your parent. done:true with an object output finishes the task (the output is the result handed back). Without done, the note parks you; waiting_on declares what you wait for: parent | user | subagent.".into(),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"},
+                "done": {"type": "boolean"},
+                "output": {"type": "object"},
+                "waiting_on": {"type": "string", "enum": ["parent", "user", "subagent"]}
+            },
+            "required": ["text"]
+        }),
+    }
+}
+
+/// A non-child session's tool set: the core tools + the sub-agent tools.
+pub fn agent_tool_specs() -> Vec<ToolSpec> {
+    let mut v = tool_specs();
+    v.extend(subagent_tool_specs());
+    v
+}
+
+/// A child session's tool set: the core tools + parent_notify — no sub-agent
+/// tools (a child cannot spawn, ADR-0001 depth cap).
+pub fn child_tool_specs() -> Vec<ToolSpec> {
+    let mut v = tool_specs();
+    v.push(parent_notify_spec());
+    v
 }
 
 /// Dispatch one tool call. Never panics on bad input — the diagnostic is the

@@ -78,8 +78,14 @@ impl OmState {
     /// maintained in place). A storage failure is a storage failure — a
     /// corrupted file must not masquerade as fresh OM state.
     pub fn load_record(store: &mut SessionStore) -> Result<OmRecord, OmError> {
-        let entries = store.entries_range(0, usize::MAX)?;
+        // Snapshot consistency: resolve the leaf BEFORE the entry read. The
+        // walk runs over the entry list from that read, and the leaf's
+        // ancestors are all older entries — an append-only file guarantees
+        // they are in the list. Reading the leaf after the list lets a
+        // concurrent writer append a new leaf between the two reads, which
+        // strands the walk on an id the list does not contain.
         let leaf = store.leaf()?.map(|e| e.id);
+        let entries = store.entries_range(0, usize::MAX)?;
         Ok(branch_entries(&entries, leaf.as_deref())
             .into_iter()
             .rev()
