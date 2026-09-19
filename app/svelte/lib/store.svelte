@@ -576,7 +576,8 @@
       next.parent = prev.parent;
       next.state = prev.state;
       next.archived = prev.archived;
-      next.mru = prev.mru;
+      // Opening is a user action: it bumps the session to the MRU head.
+      next.mru = Date.now();
     }
     store.sessions[sid] = next;
   }
@@ -586,7 +587,10 @@
   // serves it from the prebuilt dataset; the live path fetches the snapshot.
   export async function openSessionById(sid: string): Promise<void> {
     if (store.demo) {
-      if (store.sessions[sid]) store.current = sid;
+      if (store.sessions[sid]) {
+        store.sessions[sid].mru = Date.now();
+        store.current = sid;
+      }
       return;
     }
     await switchSession(sid);
