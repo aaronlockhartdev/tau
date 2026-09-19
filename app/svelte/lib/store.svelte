@@ -17,6 +17,8 @@
     type QueuedItem,
     type SessionMeta,
     type Snapshot,
+    type SubagentInfo,
+    type Task,
     type Usage,
     type ViewEntry,
     type Workspace
@@ -41,6 +43,16 @@
     usage: Usage | null;
     turn: 'running' | 'idle';
     pending: PendingMsg[];
+    // The session-tree row (ticket #26): a child session's parent link,
+    // its lifecycle state, its archive flag, and its sort key.
+    parent: string | null;
+    state: 'running' | 'idle' | 'done' | 'failed' | 'stopped';
+    archived: boolean;
+    mru: number;
+    // The session's children (the parent's view — the sub-agent panel) and
+    // its tasks (the tasks panel; active ones carry their resume contract).
+    subagents: SubagentInfo[];
+    tasks: Task[];
   }
 
   export const store = $state({
@@ -53,8 +65,84 @@
     demo: false,
     // The transcript's last window computation (spec §9 seg3 render stats).
     renderRange: '',
-    renderMs: 0
+    renderMs: 0,
+    // Per-tab isolation (spec §9): each open workspace owns its pane view
+    // state; the transcript's conversation state stays per-session.
+    pane: {} as Record<string, PaneState>
   });
+
+  export interface PaneState {
+    ltab: 'files' | 'sessions';
+    rtab: 'tasks' | 'subs';
+    tFilter: 'open' | 'all' | 'in-progress' | 'blocked' | 'pending' | 'done';
+    sFilter: 'open' | 'all' | 'running' | 'idle' | 'failed' | 'stopped' | 'done';
+    expandedTasks: string[];
+    openGroups: string[];
+    archOpen: boolean;
+    selSub: string | null;
+  }
+
+  function paneOf(ws: string | null): PaneState {
+    if (ws === null) {
+      return {
+        ltab: 'sessions',
+        rtab: 'tasks',
+        tFilter: 'open',
+        sFilter: 'open',
+        expandedTasks: [],
+        openGroups: [],
+        archOpen: false,
+        selSub: null
+      };
+    }
+    let p = store.pane[ws];
+    if (!p) {
+      p = {
+        ltab: 'sessions',
+        rtab: 'tasks',
+        tFilter: 'open',
+        sFilter: 'open',
+        expandedTasks: [],
+        openGroups: [],
+        archOpen: false,
+        selSub: null
+      };
+      store.pane[ws] = p;
+    }
+    return p;
+  }
+  export function pane(ws: string | null): PaneState {
+    return paneOf(ws);
+  }
+
+  // A spawn/state event for a child we haven't opened yet: register a stub
+  // so the session tree can group it; a later session_open replaces the
+  // stub with the real snapshot (keeping the parent link, which the child's
+  // own snapshot does not carry).
+  function touchChild(parentSid: string, childSid: string, state: SessionState['state'], mru: number): void {
+    const parent = store.sessions[parentSid];
+    const ws = parent?.meta.workspace ?? '';
+    const prev = store.sessions[childSid];
+    if (prev) {
+      prev.state = state;
+      prev.mru = mru;
+      return;
+    }
+    store.sessions[childSid] = {
+      meta: { id: childSid, workspace: ws, title: null, created: mru, leaf: null, model: null, usage: null },
+      entries: [],
+      live: [],
+      usage: null,
+      turn: state === 'running' ? 'running' : 'idle',
+      pending: [],
+      parent: parentSid,
+      state,
+      archived: false,
+      mru,
+      subagents: [],
+      tasks: []
+    };
+  }
 
   // Deltas that land before their stream_start (a GUI connecting mid-stream):
   // buffered per call until the start or end arrives.
@@ -124,7 +212,13 @@
         { text: 'use the 62-char alphabet, not base36', lane: 'steering' },
         { text: 'before you finish, run cargo fmt', lane: 'steering' },
         { text: 'also update CONTEXT.md with the new terms', lane: 'follow-up' }
-      ]
+      ],
+      parent: null,
+      state: 'idle',
+      archived: false,
+      mru: meta.created,
+      subagents: [],
+      tasks: []
     };
     startDemoStreams();
   }
@@ -201,9 +295,16 @@
       live: [],
       usage: meta.usage,
       turn: snap.live.turn === 'running' ? 'running' : 'idle',
-      pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }))
+      pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) })),
+      parent: null,
+      state: snap.live.turn === 'running' ? 'running' : 'idle',
+      archived: false,
+      mru: meta.created,
+      subagents: snap.live.subagents,
+      tasks: snap.live.tasks
     };
   }
+
 
   export async function openWorkspace(ws: Workspace): Promise<void> {
     if (store.demo) return;
@@ -242,7 +343,13 @@
       live: [],
       usage: m2.usage,
       turn: 'idle',
-      pending: []
+      pending: [],
+      parent: null,
+      state: 'idle',
+      archived: false,
+      mru: m2.created,
+      subagents: [],
+      tasks: []
     };
   }
 
@@ -273,7 +380,28 @@
     store.current = sid;
     const out = await command({ type: 'session_open', session: sid });
     if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
-    store.sessions[sid] = snapshotToState(out.snapshot);
+    const next = snapshotToState(out.snapshot);
+    // A child's parent link is not in its own snapshot (it lives in the
+    // parent's sub-agent list); keep what the tree already knew.
+    const prev = store.sessions[sid];
+    if (prev) {
+      next.parent = prev.parent;
+      next.state = prev.state;
+      next.archived = prev.archived;
+      next.mru = prev.mru;
+    }
+    store.sessions[sid] = next;
+  }
+
+  // A pane action (session tree row / sub-agent double-click): the child is
+  // an ordinary session — opening it switches the current view. The demo
+  // serves it from the prebuilt dataset; the live path fetches the snapshot.
+  export async function openSessionById(sid: string): Promise<void> {
+    if (store.demo) {
+      if (store.sessions[sid]) store.current = sid;
+      return;
+    }
+    await switchSession(sid);
   }
 
   // Paged read around the viewport (spec §8): the GUI decides the window,
@@ -479,6 +607,55 @@
         }
         case 'session_event': {
           if (ev.kind.kind === 'branch_move') s.meta.leaf = ev.kind.leaf;
+          break;
+        }
+        case 'subagent': {
+          // Idempotent-cumulative (spec §8): each event carries the full
+          // state of one handle; a lost batch self-heals on the next
+          // snapshot.
+          const k = ev.kind;
+          const now = Date.now();
+          if (k.kind === 'spawned') {
+            const info: SubagentInfo = {
+              handle: k.handle,
+              child: k.child,
+              agent_type: k.agent_type,
+              context_mode: k.context_mode,
+              state: 'running',
+              waiting_on: null,
+              last_message: null,
+              usage: null,
+              task: null,
+              resume_contract: null
+            };
+            s.subagents = s.subagents.filter((x) => x.handle !== k.handle);
+            s.subagents.push(info);
+            touchChild(ev.session, k.child, 'running', now);
+            break;
+          }
+          if (k.kind === 'state') {
+            const st = k.state as 'running' | 'idle' | 'done' | 'failed' | 'stopped';
+            const info = s.subagents.find((x) => x.handle === k.handle);
+            if (info) {
+              info.state = st;
+              info.waiting_on = typeof k.detail === 'string' ? k.detail : info.waiting_on;
+              if (k.note) info.last_message = k.note;
+            }
+            touchChild(ev.session, k.child, st, now);
+            break;
+          }
+          // notified: a child notification reached the parent.
+          const child = store.sessions[k.child];
+          if (child) child.mru = now;
+          const info = s.subagents.find((x) => x.child === k.child);
+          if (info) {
+            info.last_message = k.text;
+            info.state = k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : 'idle';
+            if (info.state === 'idle') info.waiting_on = 'parent';
+          }
+          if (child) {
+            child.state = k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : 'idle';
+          }
           break;
         }
         case 'system': {

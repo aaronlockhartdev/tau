@@ -80,11 +80,102 @@ export interface QueuedItem {
 
 export type TurnState = 'idle' | 'running';
 
+// Task shapes (ticket #24; crates/tau-core/src/task.rs) — tasks are
+// per-session entries; the snapshot's LiveState carries the fold.
+export type TaskStatus = 'pending' | 'in_progress' | 'done' | 'blocked' | 'cancelled';
+export type StepStatus = 'pending' | 'active' | 'done' | 'skipped';
+export type CriterionStatus = 'pending' | 'satisfied' | 'failed' | 'skipped';
+
+export interface Step {
+  text: string;
+  expected_output: string;
+  status: StepStatus;
+}
+
+export interface Criterion {
+  text: string;
+  status: CriterionStatus;
+}
+
+export interface Evidence {
+  criterion: string;
+  summary: string;
+  command?: string;
+  artifact?: string;
+  passed: boolean;
+  step?: string;
+}
+
+export interface Blocker {
+  reason: string;
+  needs?: string;
+}
+
+export interface Decision {
+  question: string;
+  decision: string;
+  decided_by: string;
+  rationale?: string;
+}
+
+export interface WorkerPointer {
+  session: string;
+  status: string;
+}
+
+export interface ResumeContract {
+  task: string;
+  title: string;
+  status: string;
+  current_step: { text: string; expected_output: string } | null;
+  steps: Step[];
+  evidence: Evidence[];
+  gaps: string[];
+  blockers: Blocker[];
+  next_action: string;
+}
+
+export interface Task {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  steps: Step[];
+  criteria: Criterion[];
+  evidence: Evidence[];
+  blockers: Blocker[];
+  decisions: Decision[];
+  notes: string[];
+  worker?: WorkerPointer;
+  created_in?: string;
+  updated: number;
+  resume_contract?: ResumeContract;
+}
+
+// Sub-agent shapes (ticket #23; crates/tau-protocol) — a child is an
+// ordinary session; this is its structured mirror in the parent's state.
+export interface SubagentInfo {
+  handle: string;
+  child: string;
+  agent_type: string;
+  context_mode: ContextMode;
+  state: 'running' | 'idle' | 'done' | 'failed' | 'stopped';
+  waiting_on: string | null;
+  last_message: string | null;
+  usage: Usage | null;
+  task: Task | null;
+  resume_contract: ResumeContract | null;
+}
+
+export type SubagentEventKind =
+  | { kind: 'spawned'; handle: string; child: string; agent_type: string; context_mode: ContextMode }
+  | { kind: 'state'; handle: string; child: string; state: string; detail: unknown; note: string | null }
+  | { kind: 'notified'; child: string; wake: string; text: string; output: unknown };
+
 export interface LiveState {
   queue: QueuedItem[];
   turn: TurnState;
-  subagents: string[];
-  tasks: Record<string, unknown>[];
+  subagents: SubagentInfo[];
+  tasks: Task[];
 }
 
 export interface Snapshot {
@@ -161,7 +252,8 @@ export type Event =
   | { type: 'tool_end'; workspace: string; session: string; call_id: string; tool_call_id: string; name: string; output: unknown }
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
-  | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind };
+  | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind }
+  | { type: 'subagent'; workspace: string; session: string; kind: SubagentEventKind };
 
 export type ProtocolError =
   | { kind: 'unsupported'; message: string }
