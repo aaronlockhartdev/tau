@@ -175,6 +175,9 @@ export interface LiveState {
   queue: QueuedItem[];
   turn: TurnState;
   subagents: SubagentInfo[];
+  // v0 has no task event group in the Event enum — the tasks panel is
+  // snapshot-fed and re-fetched on task commands; a live task event group is
+  // a recorded v1 candidate (not built in #26).
   tasks: Task[];
 }
 
