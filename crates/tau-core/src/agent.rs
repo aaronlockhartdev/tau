@@ -275,6 +275,14 @@ impl AgentSession {
             crate::om_integration::recall(&mut inner.store, &record, args)
         }
     }
+
+    /// The task tools (spec §5.3/§5.4): run against this session's own
+    /// store — the session-scoped task store a parent and a child share.
+    fn task_tool(&self, tc: &tools::ToolCall) -> String {
+        let mut inner = self.inner.lock().unwrap();
+        let cwd = inner.cwd.clone();
+        crate::task::tool_call(&mut inner.store, &cwd, &tc.name, &tc.args)
+    }
     /// The session store's header timestamp (epoch ms).
     pub fn store_created(&self) -> u64 {
         self.inner.lock().unwrap().store.created()
@@ -436,7 +444,12 @@ impl AgentSession {
                 name: call.name.clone(),
                 args: args.clone(),
             };
-            let output = if call.name == "recall" {
+            let output = if call.name.starts_with("task_") {
+                // Tasks live in this session's own store (spec §5.3) — parent
+                // and child alike. Routed before the sub-agent surface so a
+                // child (which has no supervisor) still gets its tools.
+                self.task_tool(&tc)
+            } else if call.name == "recall" {
                 self.recall_scoped(&args)
             } else {
                 // The sub-agent surface routes outside the core tools: the
@@ -840,6 +853,73 @@ mod tests {
 
     fn entries_of(store: &SessionStore) -> Vec<Entry> {
         store.entries_range(0, usize::MAX).unwrap()
+    }
+
+    #[tokio::test]
+    async fn task_tools_run_through_the_loop_and_the_gate_enforces_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = session_in(dir.path());
+        // The session gets the full non-child tool set (incl. tasks).
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::agent_tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: Arc::new(ScriptedProvider::new(vec![
+                sse(
+                    "",
+                    &[(
+                        "task_create".into(),
+                        "c1".into(),
+                        r#"{"title":"write the docs","criteria":["docs exist"]}"#.into(),
+                    )],
+                ),
+                sse("", &[("task_start".into(), "c2".into(), r#"{"task":"task-1"}"#.into())]),
+                // The gate: no evidence yet → the finish fails with the gap.
+                sse("", &[("task_finish".into(), "c3".into(), r#"{"task":"task-1"}"#.into())]),
+                sse(
+                    "",
+                    &[(
+                        "task_evidence".into(),
+                        "c4".into(),
+                        r#"{"task":"task-1","criterion":"docs exist","summary":"they do"}"#.into(),
+                    )],
+                ),
+                // The same finish now passes.
+                sse("", &[("task_finish".into(), "c5".into(), r#"{"task":"task-1"}"#.into())]),
+                sse("done", &[]),
+            ])),
+            tool_batch_on_force: Default::default(),
+            turn: Default::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        });
+        agent.send("work the task", Lane::FollowUp);
+        agent.process().await.unwrap();
+        let entries = entries_of(&agent.inner.lock().unwrap().store);
+        let out = |id: &str| -> String {
+            entries
+                .iter()
+                .find(|e| e.payload["call_id"] == id)
+                .unwrap()
+                .payload["output"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert!(out("c1").contains("created task-1"), "{}", out("c1"));
+        assert!(out("c2").contains("[in_progress]"), "{}", out("c2"));
+        assert!(out("c3").contains("completion gate failed"), "{}", out("c3"));
+        assert!(out("c4").contains("[in_progress]"), "{}", out("c4"));
+        assert!(out("c5").contains("[done]"), "{}", out("c5"));
+        // The session file holds the task events, and the fold ends done.
+        let task_entries = entries.iter().filter(|e| e.kind == crate::task::KIND_TASK).count();
+        assert_eq!(task_entries, 4); // the failed finish appends nothing
+        let tasks = crate::task::fold_entries(&entries);
+        assert_eq!(tasks[0].status, crate::task::STATUS_DONE);
     }
 
     #[tokio::test]

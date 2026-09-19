@@ -183,18 +183,125 @@ pub fn parent_notify_spec() -> ToolSpec {
     }
 }
 
-/// A non-child session's tool set: the core tools + the sub-agent tools.
+/// The seven task tools (spec §5.4): free text + ids in; the core enforces
+/// the state machines, the model never sees the enums. Available in every
+/// session — a parent can complete small tasks itself (ADR-0001).
+pub fn task_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_create".into(),
+            description: "Create a task in this session: a title, an ordered list of steps (each with its expected output), and acceptance criteria. Returns the task id.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "steps": {"type": "array", "items": {"type": "object", "properties": {"text": {"type": "string"}, "expected_output": {"type": "string"}}, "required": ["text", "expected_output"]}},
+                    "criteria": {"type": "array", "items": {"type": "string"}}
+                },
+                "required": ["title"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_assign".into(),
+            description: "Assign a task to a worker session: its record copies into that session, which becomes the live one; this session's copy becomes a status pointer. worker is a session id.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "worker": {"type": "string"}
+                },
+                "required": ["task", "worker"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_start".into(),
+            description: "Start working a task (pending, or unblock it).".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {"task": {"type": "string"}},
+                "required": ["task"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_evidence".into(),
+            description: "Record evidence for a criterion: a summary, optionally a reproducible command and an artifact, and whether it passed. A task is done only when every criterion has passing evidence.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "criterion": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "command": {"type": "string"},
+                    "artifact": {"type": "string"},
+                    "passed": {"type": "boolean"},
+                    "step": {"type": "string"}
+                },
+                "required": ["task", "criterion", "summary"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_block".into(),
+            description: "Block a task with a free-text reason and, optionally, what is needed to unblock it.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "reason": {"type": "string"},
+                    "needs": {"type": "string"}
+                },
+                "required": ["task", "reason"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_finish".into(),
+            description: "Finish a task. Fails unless every criterion is satisfied by passing evidence; force:true with a reason is the documented escape.".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "force": {"type": "boolean"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["task"]
+            }),
+        },
+        ToolSpec {
+            kind: ToolKind::Function,
+            name: "task_cancel".into(),
+            description: "Cancel a task (with an optional reason).".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["task"]
+            }),
+        },
+    ]
+}
+
+/// A non-child session's tool set: the core tools + the sub-agent tools +
+/// the task tools.
 pub fn agent_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.extend(subagent_tool_specs());
+    v.extend(task_tool_specs());
     v
 }
 
-/// A child session's tool set: the core tools + parent_notify — no sub-agent
-/// tools (a child cannot spawn, ADR-0001 depth cap).
+/// A child session's tool set: the core tools + parent_notify + tasks — no
+/// sub-agent tools (a child cannot spawn, ADR-0001 depth cap).
 pub fn child_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.push(parent_notify_spec());
+    v.extend(task_tool_specs());
     v
 }
 
