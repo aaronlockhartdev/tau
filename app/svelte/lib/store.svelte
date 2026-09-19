@@ -114,13 +114,14 @@
   // so the session tree can group it; a later session_open replaces the
   // stub with the real snapshot (keeping the parent link, which the child's
   // own snapshot does not carry).
-  function touchChild(parentSid: string, childSid: string, state: SessionState['state'], mru: number): void {
+  function touchChild(parentSid: string, childSid: string, state: SessionState['state'], mru: number, waitingOn: string | null = null): void {
     const parent = store.sessions[parentSid];
     const ws = parent?.meta.workspace ?? '';
     const prev = store.sessions[childSid];
     if (prev) {
       prev.state = state;
       prev.mru = mru;
+      if (waitingOn !== null) prev.waiting_on = waitingOn;
       return;
     }
     store.sessions[childSid] = {
@@ -221,11 +222,15 @@
     store.sessions[meta.id].usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000 };
     for (const c of demoChildren()) store.sessions[c.meta.id] = c;
     startDemoStreams();
+    // In-browser test seam (demo only): the wire-shape checks feed the exact
+    // bridge objects through applyEvents — the demo cannot see the live path.
+    (window as unknown as { __tau?: unknown }).__tau = { applyEvents };
   }
 
-  // The #26 pane dataset (the prototype's): five sub-agent sessions under
-  // the demo session — one per lifecycle state — plus a nested pair under
-  // the idle one, and the five tasks with steps/criteria/evidence.
+  // The #26 pane dataset (the prototype's): six sub-agent sessions under
+  // the demo session (TWO running), a nested pair under the idle one as
+  // real store sessions, two archived top-level sessions, and the five
+  // tasks with steps/criteria/evidence.
   function demoMeta(id: string, title: string, created: number): SessionMeta {
     return {
       id,
@@ -817,14 +822,25 @@
             break;
           }
           if (k.kind === 'state') {
-            const st = k.state as 'running' | 'idle' | 'done' | 'failed' | 'stopped';
+            const st = k.state as SessionState['state'];
             const info = s.subagents.find((x) => x.handle === k.handle);
+            // The live bridge sends detail as an object (core.rs: {waiting_on}
+            // for idle, {by, resume_contract?} for stopped, {output},
+            // {reason}, null for running); the demo sends the bare string.
+            const d = k.detail as { waiting_on?: unknown } | string | null;
+            const waitingOn =
+              typeof d === 'string'
+                ? d
+                : d && typeof d === 'object' && typeof d.waiting_on === 'string'
+                  ? d.waiting_on
+                  : null;
             if (info) {
               info.state = st;
-              info.waiting_on = typeof k.detail === 'string' ? k.detail : info.waiting_on;
+              if (waitingOn !== null) info.waiting_on = waitingOn;
+              else if (st !== 'idle') info.waiting_on = null;
               if (k.note) info.last_message = k.note;
             }
-            touchChild(ev.session, k.child, st, now);
+            touchChild(ev.session, k.child, st, now, waitingOn);
             break;
           }
           // notified: a child notification reached the parent.
@@ -834,10 +850,11 @@
           if (info) {
             info.last_message = k.text;
             info.state = k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : 'idle';
-            if (info.state === 'idle') info.waiting_on = 'parent';
+            if (info.state === 'idle' && info.waiting_on === null) info.waiting_on = 'parent';
           }
           if (child) {
             child.state = k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : 'idle';
+            if (child.state === 'idle' && child.waiting_on === null) child.waiting_on = 'parent';
           }
           break;
         }

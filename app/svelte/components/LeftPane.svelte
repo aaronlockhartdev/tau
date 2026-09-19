@@ -206,7 +206,7 @@
                         onkeydown={onKey(() => openSessionById(gc.meta.id))}
                       >
                         <span class="t">{gc.meta.title ?? gc.meta.id}</span>
-                        <span class="badge {gc.state}"><span class="dot"></span>{gc.state}</span>
+                        <span class="badge {gc.state}"><span class="dot"></span>{gc.state}{childInfo(gc)?.waiting_on ? ` · ${childInfo(gc)?.waiting_on}` : ''}</span>
                         <span class="mru">{fmtAgo(gc.mru)}</span>
                       </div>
                     {/each}
