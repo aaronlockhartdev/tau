@@ -47,6 +47,9 @@
     // its lifecycle state, its archive flag, and its sort key.
     parent: string | null;
     state: 'running' | 'idle' | 'done' | 'failed' | 'stopped';
+    // The child's declared wait (parent | user | subagent) — from the state
+    // event's detail; annotated on the row and the child's own header.
+    waiting_on: string | null;
     archived: boolean;
     mru: number;
     // The session's children (the parent's view — the sub-agent panel) and
@@ -207,11 +210,15 @@
       ],
       parent: null,
       state: 'idle',
+      waiting_on: null,
       archived: false,
       mru: meta.created,
       subagents: demoSubagents(),
       tasks: demoTasks()
     };
+    // The demo parent's usage: the sum of its children's (the bar's usage
+    // segment shows real tokens, not undefined).
+    store.sessions[meta.id].usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000 };
     for (const c of demoChildren()) store.sessions[c.meta.id] = c;
     startDemoStreams();
   }
@@ -235,7 +242,7 @@
     id: string,
     title: string,
     handle: string,
-    parent: string,
+    parent: string | null,
     state: SubagentInfo['state'],
     waitingOn: SubagentInfo['waiting_on'],
     lastMessage: string | null,
@@ -243,22 +250,24 @@
     created: number,
     mru: number,
     subagents: SubagentInfo[],
-    tasks: Task[]
+    tasks: Task[],
+    archived = false
   ): SessionState {
     return {
       meta: demoMeta(id, title, created),
       entries: [],
       live: [],
       usage,
-      turn: state === 'running' ? 'active' : 'idle',
+      turn: state === 'running' ? 'running' : 'idle',
       pending: [],
       parent,
       state,
-      archived: false,
+      waiting_on: state === 'idle' ? waitingOn : null,
+      archived,
       mru,
       subagents,
       tasks
-    } as SessionState;
+    };
   }
 
   function demoChildren(): SessionState[] {
@@ -470,6 +479,7 @@
       pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) })),
       parent: null,
       state: snap.live.turn === 'running' ? 'running' : 'idle',
+      waiting_on: null,
       archived: false,
       mru: meta.created,
       subagents: snap.live.subagents,
@@ -518,6 +528,7 @@
       pending: [],
       parent: null,
       state: 'idle',
+      waiting_on: null,
       archived: false,
       mru: m2.created,
       subagents: [],
