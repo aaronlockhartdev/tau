@@ -246,7 +246,7 @@
   function demoChild(
     id: string,
     title: string,
-    handle: string,
+    handle: string | null,
     parent: string | null,
     state: SubagentInfo['state'],
     waitingOn: SubagentInfo['waiting_on'],
@@ -285,7 +285,15 @@
       ], [demoTask('t4', 'blocked', 'c2', 1)]),
       demoChild('c3', 'config loader', 'c', 'demo', 'done', null, 'loader passes all tests', { input_tokens: 12400, output_tokens: 6100, total_tokens: 18500 }, now - 14400e3, now - 3600e3, [], [demoTask('t2', 'done', 'c3', 0)]),
       demoChild('c4', 'fixture generator', 'd', 'demo', 'failed', null, 'provider rejected the degenerate observation run', { input_tokens: 30100, output_tokens: 9400, total_tokens: 39500 }, now - 21600e3, now - 5400e3, [], [demoTask('t5', 'done', 'c4', 0)]),
-      demoChild('c5', 'doc sweep', 'e', 'demo', 'stopped', null, 'stopped by user mid-sweep', { input_tokens: 5200, output_tokens: 2100, total_tokens: 7300 }, now - 28800e3, now - 7200e3, [], [])
+      demoChild('c5', 'doc sweep', 'e', 'demo', 'stopped', null, 'stopped by user mid-sweep', { input_tokens: 5200, output_tokens: 2100, total_tokens: 7300 }, now - 28800e3, now - 7200e3, [], []),
+      // The prototype's 6th child — TWO running, so the badge rule is testable.
+      demoChild('c6', 'snapshot benchmark', 'f', 'demo', 'running', null, 'measuring the 10k snapshot size', { input_tokens: 15600, output_tokens: 3400, total_tokens: 19000 }, now - 1800e3, now - 30e3, [], []),
+      // The nested pair as real store sessions (depth 2) — double-click opens them.
+      demoChild('cg1', 'event renames', 'g1', 'c2', 'idle', 'subagent', 'waiting on the field renames', { input_tokens: 1200, output_tokens: 400, total_tokens: 1600 }, now - 3600e3, now - 120e3, [], []),
+      demoChild('cg2', 'event groups', 'g2', 'c2', 'running', null, 'renaming the event groups', { input_tokens: 2100, output_tokens: 900, total_tokens: 3000 }, now - 3000e3, now - 90e3, [], []),
+      // Two archived top-level sessions (the prototype's a1/a2).
+      demoChild('a1', 'old: provider spike', null, null, 'done', null, 'archived after the spike closed', { input_tokens: 9800, output_tokens: 2400, total_tokens: 12200 }, now - 86400e3 * 30, now - 86400e3 * 5, [], [], true),
+      demoChild('a2', 'old: first session store', null, null, 'done', null, 'archived — superseded by the JSONL store', { input_tokens: 14300, output_tokens: 5100, total_tokens: 19400 }, now - 86400e3 * 45, now - 86400e3 * 10, [], [], true)
     ];
   }
 
@@ -310,7 +318,8 @@
       demoSub('b', 'c2', 'fork', 'idle', 'parent', 'types drafted — needs review sign-off'),
       demoSub('c', 'c3', 'fresh', 'done', null, 'loader passes all tests'),
       demoSub('d', 'c4', 'compacted', 'failed', null, 'provider rejected the degenerate run'),
-      demoSub('e', 'c5', 'fresh', 'stopped', null, 'stopped by user mid-sweep')
+      demoSub('e', 'c5', 'fresh', 'stopped', null, 'stopped by user mid-sweep'),
+      demoSub('f', 'c6', 'compacted', 'running', null, 'measuring the 10k snapshot size')
     ];
   }
 
