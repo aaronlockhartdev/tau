@@ -433,8 +433,15 @@ fn append_event(store: &mut SessionStore, id: &str, event: &str, extra: Value) -
             obj.insert(k.clone(), v.clone());
         }
     }
+    // Task events append to the active branch like all entries (spec
+    // §5.3): a null parent would fork the conversation onto a phantom
+    // root, since every later entry chains from the leaf.
+    let parent = match store.leaf() {
+        Ok(leaf) => leaf.map(|e| e.id),
+        Err(e) => return Err(e.to_string()),
+    };
     store
-        .append(KIND_TASK, payload, None)
+        .append(KIND_TASK, payload, parent.as_deref())
         .map(|_| ())
         .map_err(|e| e.to_string())
 }
@@ -1121,5 +1128,35 @@ mod tests {
         // a's copy is a pointer (not active for assembly); b's is the live one
         assert_eq!(active_tasks(&load(&a).unwrap()).len(), 0);
         assert_eq!(active_tasks(&load(&b).unwrap()).len(), 1);
+    }
+
+    #[test]
+    fn task_events_sit_on_the_active_branch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path(), "s1");
+        store
+            .append("user", json!({ "text": "start" }), None)
+            .unwrap();
+        create(
+            &mut store,
+            "task-1",
+            "t",
+            vec![step("a", "b")],
+            vec![criterion("c")],
+        )
+        .unwrap();
+        let task = store.leaf().unwrap().expect("the task event is the leaf");
+        assert_eq!(task.kind, KIND_TASK);
+        // The next conversation entry is written the way the loop writes it:
+        // parent resolved from the current leaf.
+        let leaf_id = store.leaf().unwrap().map(|e| e.id);
+        let parent = leaf_id.as_deref();
+        let later = store
+            .append("user", json!({ "text": "next" }), parent)
+            .unwrap();
+        // The task is ON the branch: the next conversation entry chains from
+        // it, and the leaf stays on the conversation (not the task root).
+        assert_eq!(later.parent.as_deref(), Some(task.id.as_str()));
+        assert_eq!(store.leaf().unwrap().unwrap().id, later.id);
     }
 }
