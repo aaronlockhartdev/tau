@@ -26,25 +26,48 @@ async function http(method, url) {
   return r.json();
 }
 
-async function cdp(wsUrl, method, params) {
-  const ws = await new Promise((res, rej) => {
+// One shared CDP connection for the whole run: per-call connect/close churn
+// under the demo's stream load intermittently dropped replies; a persistent
+// socket with id-routed replies does not (a 10 s timeout still guards it).
+let sharedWs = null;
+let sharedWsUrl = null;
+const pending = new Map();
+let cdpId = 0;
+
+function openCdp(wsUrl) {
+  if (sharedWs && sharedWsUrl === wsUrl) return Promise.resolve(sharedWs);
+  sharedWsUrl = wsUrl;
+  return new Promise((res, rej) => {
     const s = new WebSocket(wsUrl);
-    s.onopen = () => res(s);
+    s.onopen = () => {
+      s.addEventListener('message', (m) => {
+        const msg = JSON.parse(m.data);
+        if (pending.has(msg.id)) {
+          pending.get(msg.id)(msg);
+          pending.delete(msg.id);
+        }
+      });
+      sharedWs = s;
+      res(s);
+    };
     s.onerror = () => rej(new Error('cdp connect failed'));
   });
-  const id = Math.floor(Math.random() * 1e9);
-  const reply = await new Promise((res) => {
-    const onMsg = (m) => {
-      const msg = JSON.parse(m.data);
-      if (msg.id === id) {
-        ws.removeEventListener('message', onMsg);
-        res(msg);
-      }
-    };
-    ws.addEventListener('message', onMsg);
-    ws.send(JSON.stringify({ id, method, params }));
+}
+
+async function cdp(wsUrl, method, params) {
+  await openCdp(wsUrl);
+  const id = ++cdpId;
+  const reply = await new Promise((res, rej) => {
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      rej(new Error(`cdp ${method} timed out after 10 s`));
+    }, 10000);
+    pending.set(id, (msg) => {
+      clearTimeout(timer);
+      res(msg);
+    });
+    sharedWs.send(JSON.stringify({ id, method, params }));
   });
-  ws.close();
   if (reply.result?.exceptionDetails) throw new Error(JSON.stringify(reply.result.exceptionDetails));
   return reply.result;
 }
@@ -207,17 +230,111 @@ try {
         });
       }, 150);
     })`);
-    check('sub-agents: the open filter shows the 4 not-done roots',
-      subs.roots.length === 4 && !subs.roots.some((r) => r.includes('done')),
+    check('sub-agents: the open filter shows the 5 not-done roots',
+      subs.roots.length === 5 && !subs.roots.some((r) => r.includes('done')),
       subs.roots.map((r) => r.slice(0, 24)).join(' | '));
     const subsAll = await evalPage(wsUrl, `new Promise((res) => {
       const [left, right] = [...document.querySelectorAll('.pane')];
       [...right.querySelectorAll('.fchip')].find((c) => c.textContent.trim() === 'all').click();
       setTimeout(() => res([...right.querySelectorAll('.srow2')].filter((r) => !r.classList.contains('d2')).length), 150);
     })`);
-    check('sub-agents: the all filter shows all 5', subsAll === 5, `${subsAll} roots`);
-    check('sub-agents: nesting renders (2 under the forked child)',
+    check('sub-agents: the all filter shows all 6', subsAll === 6, `${subsAll} roots`);
+    check('sub-agents: nesting renders (2 under the idle child)',
       subs.nested.length === 2, subs.nested.map((r) => r.slice(0, 24)).join(' | '));
+
+    // --- B3 wire shape: feed the EXACT objects the live bridge produces
+    // (app/src-tauri/src/core.rs `state`: detail is an OBJECT) through the
+    // store — the demo cannot see the live path, so the shapes are copied.
+    const wire = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      if (!t) return res({ missing: 'no __tau seam' });
+      t.applyEvents([
+        { type: 'subagent', workspace: 'w-demo', session: 'demo', kind: { kind: 'state', handle: 'b', child: 'c2', state: 'idle', detail: { waiting_on: 'user' }, note: null } },
+        { type: 'subagent', workspace: 'w-demo', session: 'demo', kind: { kind: 'state', handle: 'e', child: 'c5', state: 'stopped', detail: { by: 'user', resume_contract: { task: 't5' } }, note: null } }
+      ]);
+      setTimeout(() => {
+        const [left] = [...document.querySelectorAll('.pane')];
+        res({ badges: [...left.querySelectorAll('.srow .badge')].map((b) => b.textContent.trim()) });
+      }, 200);
+    })`);
+    check('B3 wire shape: a state event with OBJECT detail populates the waiting_on annotation',
+      wire.badges?.some((b) => b === 'idle · user'), (wire.badges ?? [wire.missing]).join(' '));
+
+    // --- B1/B2: the center header — a running child badges running; an idle
+    // child with a RUNNING nested child shows its own state, not the badge.
+    const openChild = (title) => evalPage(wsUrl, `(() => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      const row = [...left.querySelectorAll('.srow')].find((r) => r.textContent.includes(${JSON.stringify(title)}));
+      if (!row) return { missing: true };
+      row.click();
+      return true;
+    })()`);
+    await openChild('provider hardening');
+    await sleep(350);
+    const c1view = await evalPage(wsUrl, `(() => ({
+      head: [...document.querySelectorAll('.chead .badge')].map((b) => b.textContent.trim()),
+      bar: [...document.querySelectorAll('.bar')].pop()?.innerText ?? ''
+    }))()`);
+    check("B1: the running child's header badges running (not idle)", c1view.head.includes('running'), c1view.head.join(' / '));
+    check('B1: the bar shows running for the running child', /st\s*running/i.test(c1view.bar.replace(/\n/g, ' ')), c1view.bar.replace(/\n/g, ' | '));
+    await openChild('protocol surface');
+    await sleep(350);
+    const c2view = await evalPage(wsUrl, `(() => ({
+      head: [...document.querySelectorAll('.chead .badge')].map((b) => b.textContent.trim()),
+      headTitle: document.querySelector('.chead .n')?.textContent
+    }))()`);
+    check('B2: an idle child with a RUNNING nested child shows its own state, not the blanket badge',
+      c2view.head.includes('idle · user') && !c2view.head.includes('running'), c2view.head.join(' / '));
+
+    // --- N2: the nested pair are real sessions — double-click opens one.
+    // While c2 is current, its sub-agents tab lists the pair as rows (the
+    // depth-2 indentation only appears in the grandparent's view).
+    const nestedOpen = await evalPage(wsUrl, `new Promise((res) => {
+      const [right] = [...document.querySelectorAll('.pane')].slice(1);
+      [...right.querySelectorAll('.tab')].find((t) => t.textContent.trim() === 'sub-agents')?.click();
+      setTimeout(() => {
+        const nested = [...right.querySelectorAll('.srow2')].find((r) => r.textContent.includes('event renames'));
+        if (!nested) return res({ missing: 'no nested row' });
+        nested.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+        res(true);
+      }, 400);
+    })`);
+    await sleep(350);
+    const nestedHead = await evalPage(wsUrl, `(() => document.querySelector('.chead .n')?.textContent ?? '')()`);
+    check('N2: double-clicking the nested child opens its session', nestedHead === 'event renames', nestedHead);
+
+    // --- N1: opening a child keeps its parent group expanded (the row the
+    // user just clicked stays visible in the tree).
+    const treeRows = await evalPage(wsUrl, `(() => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      return [...left.querySelectorAll('.srow')].map((r) => r.textContent.trim());
+    })()`);
+    check('N1: the parent group stays expanded while its child is active',
+      treeRows.length >= 7 && treeRows.some((t) => t.includes('provider hardening')), `${treeRows.length} rows`);
+
+    // --- B4: the bar's usage segment — real tokens, not undefined.
+    const bar2 = await evalPage(wsUrl, `(() => [...document.querySelectorAll('.bar')].pop()?.innerText ?? '')()`);
+    check('B4: the bar shows a usage segment with real tokens', /\d+(\.\d+k)? in · \d+(\.\d+k)? out/.test(bar2.replace(/\n/g, ' ')), bar2.replace(/\n/g, ' | '));
+
+    // --- B5: opening a session bumps it to the MRU head (archive folder).
+    const archClick = await evalPage(wsUrl, `new Promise((res) => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      left.querySelector('.arch-h').click();
+      setTimeout(() => res([...left.querySelectorAll('.arch .srow')].map((r) => r.textContent.trim())), 200);
+    })`);
+    check('the archive folder lists the 2 archived sessions', archClick.length === 2, archClick.join(' | '));
+    await evalPage(wsUrl, `(() => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      [...left.querySelectorAll('.arch .srow')].find((r) => r.textContent.includes('first session store'))?.click();
+      return true;
+    })()`);
+    await sleep(350);
+    const archAfter = await evalPage(wsUrl, `(() => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      return [...left.querySelectorAll('.arch .srow')].map((r) => r.textContent.trim());
+    })()`);
+    check('B5: opening the older archived session bumps it to the MRU head of the archive list',
+      archAfter.length === 2 && archAfter[0].includes('first session store'), archAfter.join(' | '));
 
     // focus mode collapses both panes
     const collapsed = await evalPage(wsUrl, `new Promise((res) => {
@@ -236,6 +353,7 @@ try {
     preview.kill('SIGTERM');
   }
 } finally {
+  sharedWs?.close();
   proc.kill('SIGTERM');
 }
 
