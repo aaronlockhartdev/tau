@@ -130,6 +130,9 @@ pub struct SpawnNotice {
     pub child: String,
     pub agent_type: String,
     pub context_mode: ContextMode,
+    /// The child's model (the dispatch registers the child's live session
+    /// with it).
+    pub model: String,
 }
 
 /// A wake (ADR-0001 wake rules): the implementation appends the
@@ -210,6 +213,10 @@ pub struct ChildLink {
 }
 
 impl ChildLink {
+    pub fn handle(&self) -> &str {
+        &self.handle
+    }
+
     /// The `parent_notify` tool handler (ticket #23): `done:true` requires
     /// a structured output and ends the child; a note parks it. The
     /// declared `waiting_on` (default: parent — it just messaged the
@@ -368,6 +375,16 @@ impl Supervisor {
         }
     }
 
+    /// The child's live agent (the dispatch registers it as an ordinary
+    /// live session — a child is a session, ADR-0006).
+    pub fn child_agent(&self, handle: &str) -> Option<Arc<AgentSession>> {
+        self.children
+            .lock()
+            .unwrap()
+            .get(handle)
+            .map(|c| c.agent.clone())
+    }
+
     /// Spawn a child (spec §5.1): async — this only sets things up; the
     /// child's loop runs on its own task and reports through `parent_notify`.
     pub fn spawn(
@@ -513,6 +530,7 @@ impl Supervisor {
             child: session_id.clone(),
             agent_type: agent_type.to_owned(),
             context_mode,
+            model: self.model.clone(),
         });
 
         // The brief is the child's first turn (the handoff-in, ADR-0001).

@@ -93,6 +93,8 @@ pub enum CommandOutput {
     Entries(Vec<snapshot::ViewEntry>),
     Providers(Vec<ProviderInfo>),
     Agents(Vec<AgentType>),
+    Subagents(Vec<SubagentInfo>),
+    Subagent(SubagentInfo),
     File(FileText),
 }
 
@@ -305,6 +307,61 @@ pub enum Event {
         session: Option<String>,
         kind: SystemEventKind,
     },
+    SubagentEvent {
+        workspace: String,
+        /// The parent session (the child is identified inside `kind`).
+        session: String,
+        kind: SubagentEventKind,
+    },
+}
+
+/// Sub-agent-group events (spec §8): lifecycle transitions and wakes.
+/// Idempotent-cumulative — each carries the full state of one handle, so
+/// a lost batch self-heals on the next snapshot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SubagentEventKind {
+    Spawned {
+        handle: String,
+        child: String,
+        agent_type: String,
+        context_mode: ContextMode,
+    },
+    /// A lifecycle transition (all five states, incl. stop and its
+    /// provenance); `detail` carries the state's payload (done's output,
+    /// failed's reason, idle's waiting_on, stopped's by).
+    State {
+        handle: String,
+        child: String,
+        state: String,
+        detail: Option<Value>,
+        note: Option<String>,
+    },
+    /// A child notification reached the parent (done / failed / a
+    Notified {
+        child: String,
+        /// done | failed | waiting
+        wake: String,
+        text: String,
+        output: Option<Value>,
+    },
+}
+
+/// A child's structured state (the protocol's mirror of the core's 5-state
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SubagentInfo {
+    pub handle: String,
+    /// The child's session id — a child is an ordinary session.
+    pub child: String,
+    pub agent_type: String,
+    pub context_mode: ContextMode,
+    /// running | idle | done | failed | stopped
+    pub state: String,
+    pub waiting_on: Option<String>,
+    pub last_message: Option<String>,
+    pub usage: Option<Usage>,
+    pub task: Option<Value>,
+    pub resume_contract: Option<Value>,
 }
 
 /// Session-group events the built core produces (spec §8 session group).
@@ -349,6 +406,7 @@ pub struct Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// Every command variant round-trips through its golden JSON shape.
     #[test]
@@ -574,6 +632,37 @@ mod tests {
                 workspace: "w1".into(),
                 session: None,
                 kind: SystemEventKind::ProviderChanged,
+            },
+            Event::SubagentEvent {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                kind: SubagentEventKind::Spawned {
+                    handle: "s1-1".into(),
+                    child: "s2".into(),
+                    agent_type: "general".into(),
+                    context_mode: ContextMode::Compacted,
+                },
+            },
+            Event::SubagentEvent {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                kind: SubagentEventKind::State {
+                    handle: "s1-1".into(),
+                    child: "s2".into(),
+                    state: "done".into(),
+                    detail: Some(json!({ "output": { "result": "ok" } })),
+                    note: None,
+                },
+            },
+            Event::SubagentEvent {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                kind: SubagentEventKind::Notified {
+                    child: "s2".into(),
+                    wake: "done".into(),
+                    text: "finished".into(),
+                    output: Some(json!({ "result": "ok" })),
+                },
             },
         ];
         for ev in &events {

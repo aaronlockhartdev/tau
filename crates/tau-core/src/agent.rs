@@ -232,6 +232,12 @@ impl AgentSession {
         self.inner.lock().unwrap().child.clone()
     }
 
+    /// This session's supervisor (None for a child session — children
+    /// cannot spawn, so the supervisor is parent-side only).
+    pub fn subagents(&self) -> Option<Arc<crate::subagent::Supervisor>> {
+        self.inner.lock().unwrap().subagents.clone()
+    }
+
     /// The session store's header timestamp (epoch ms).
     pub fn store_created(&self) -> u64 {
         self.inner.lock().unwrap().store.created()

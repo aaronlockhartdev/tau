@@ -118,8 +118,9 @@ pub enum TurnState {
 pub struct LiveState {
     pub queue: Vec<QueuedItem>,
     pub turn: TurnState,
-    /// Child handles; v0 has none until ticket #23.
-    pub subagents: Vec<String>,
+    /// The session's children (structured state — the GUI's sub-agent
+    /// panel); empty for child sessions (the depth cap is structural).
+    pub subagents: Vec<crate::SubagentInfo>,
 }
 
 /// The ephemeral snapshot (spec §8): metadata skeleton + bounded OM + live

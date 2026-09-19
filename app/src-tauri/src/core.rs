@@ -12,10 +12,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use tau_core::agent::{AgentSession, Lane, SessionParams, TurnConfig};
 use tau_core::config::{self, Config};
 use tau_core::context;
@@ -24,6 +24,10 @@ use tau_core::provider::{
     Usage as CoreUsage,
 };
 use tau_core::session::{Entry, SessionStore};
+use tau_core::subagent::{
+    BoxedDrive, ChildDriver, ChildProviderFactory, SpawnNotice, StateNotice, StoppedBy,
+    SubagentBridge, Supervisor, SupervisorParams, WakeKind, WakeNotice,
+};
 use tau_core::tools;
 use tau_protocol::coalesce::Coalescer;
 use tau_protocol::snapshot::{
@@ -31,8 +35,8 @@ use tau_protocol::snapshot::{
     Workspace,
 };
 use tau_protocol::{
-    AgentType, Command, CommandOutput, Event, FileText, MessageLane, ProtocolError, ProviderInfo,
-    SystemEventKind, Usage,
+    AgentType, Command, CommandOutput, ContextMode, Event, FileText, MessageLane, ProtocolError,
+    ProviderInfo, SubagentEventKind, SubagentInfo, SystemEventKind, Usage,
 };
 use tokio::sync::mpsc;
 
@@ -41,7 +45,7 @@ use tokio::sync::mpsc;
 /// the calls it started).
 struct LiveSession {
     meta: Mutex<SessionMeta>,
-    agent: AgentSession,
+    agent: Arc<AgentSession>,
     /// User stop (spec §7): the forwarding sink returns false on it, which
     /// cuts the in-flight stream the way a force does — a stop is a force
     /// with no message.
@@ -172,6 +176,247 @@ impl ForwardSink<'_> {
     }
 }
 
+/// The context modes are structurally identical (both three-lowercase);
+/// the mapping is the ADR-0002 crate boundary.
+fn mode_to_protocol(m: tau_core::subagent::ContextMode) -> ContextMode {
+    match m {
+        tau_core::subagent::ContextMode::Fresh => ContextMode::Fresh,
+        tau_core::subagent::ContextMode::Compacted => ContextMode::Compacted,
+        tau_core::subagent::ContextMode::Fork => ContextMode::Fork,
+    }
+}
+
+/// The core's child record as the protocol's (the protocol crate is
+/// independent of the core — ADR-0002 — so the mapping lives here).
+fn info_to_protocol(i: &tau_core::subagent::SubagentInfo) -> SubagentInfo {
+    let state = match &i.state {
+        tau_core::subagent::ChildState::Running => "running",
+        tau_core::subagent::ChildState::Idle { .. } => "idle",
+        tau_core::subagent::ChildState::Done { .. } => "done",
+        tau_core::subagent::ChildState::Failed { .. } => "failed",
+        tau_core::subagent::ChildState::Stopped { .. } => "stopped",
+    };
+    SubagentInfo {
+        handle: i.handle.clone(),
+        child: i.child.clone(),
+        agent_type: i.agent_type.clone(),
+        context_mode: mode_to_protocol(i.context_mode),
+        state: state.to_owned(),
+        waiting_on: i.waiting_on.map(|w| w.as_str().to_owned()),
+        last_message: i.last_message.clone(),
+        usage: i.usage.as_ref().map(|u| Usage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            total_tokens: u.total_tokens,
+        }),
+        task: i.task.clone(),
+        resume_contract: i.resume_contract.clone(),
+    }
+}
+
+/// The child provider factory (ticket #23 N3): wraps the session's
+/// production provider in the forwarding seam, per child session id.
+struct AppChildProviderFactory {
+    client: reqwest::Client,
+    provider: tau_core::config::Provider,
+    requests: tau_core::config::Requests,
+    tx: mpsc::Sender<Event>,
+    workspace: String,
+}
+impl ChildProviderFactory for AppChildProviderFactory {
+    fn create(&self, child: &str) -> TurnProviderRef {
+        Arc::new(ForwardingProvider {
+            inner: provider::production(&self.client, &self.provider, &self.requests),
+            tx: self.tx.clone(),
+            workspace: self.workspace.clone(),
+            session: child.to_owned(),
+            stop: Arc::new(AtomicBool::new(false)),
+            call_seq: AtomicU64::new(0),
+            calls: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+        })
+    }
+}
+
+/// The child driver (N3): a child's in-flight round is a plain session
+/// turn — the child is an ordinary session, so its drive is `run_turn` on
+/// its live session (registered by the bridge at spawn).
+struct AppChildDriver {
+    core: Weak<Core>,
+}
+impl ChildDriver for AppChildDriver {
+    fn drive(&self, session: &str, _agent: &Arc<AgentSession>) -> BoxedDrive {
+        let live = self
+            .core
+            .upgrade()
+            .and_then(|c| c.sessions.lock().unwrap().get(session).cloned());
+        let Some((core, live)) = self.core.upgrade().zip(live) else {
+            return Box::pin(async { Ok(()) });
+        };
+        Box::pin(async move {
+            run_turn(core, live).await;
+            Ok(())
+        })
+    }
+}
+
+/// The dispatch-side sub-agent bridge (N3): events, parent wakes, and
+/// child-session registration — a child is an ordinary live session
+/// (ADR-0006), so the GUI can open it the same way as any session.
+struct AppSubagentBridge {
+    core: Arc<Core>,
+    workspace: String,
+    client: reqwest::Client,
+    provider: tau_core::config::Provider,
+    requests: tau_core::config::Requests,
+    sup: Mutex<Option<Weak<Supervisor>>>,
+}
+impl SubagentBridge for AppSubagentBridge {
+    fn spawned(&self, n: &SpawnNotice) {
+        self.core.emit(Event::SubagentEvent {
+            workspace: self.workspace.clone(),
+            session: n.parent.clone(),
+            kind: SubagentEventKind::Spawned {
+                handle: n.handle.clone(),
+                child: n.child.clone(),
+                agent_type: n.agent_type.clone(),
+                context_mode: mode_to_protocol(n.context_mode),
+            },
+        });
+        // Register the child as a live session so the GUI can open it and
+        // the driver can feed it turns.
+        let Some(agent) = self
+            .sup
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .and_then(|s| s.child_agent(&n.handle))
+        else {
+            return;
+        };
+        let Some(parent_live) = self.core.sessions.lock().unwrap().get(&n.parent).cloned() else {
+            return;
+        };
+        let mut store = SessionStore::for_workspace(&parent_live.cwd, &n.child);
+        if store.open().is_err() {
+            return; // the spawn failed after the notice; nothing to register
+        }
+        let provider = Arc::new(ForwardingProvider {
+            inner: provider::production(&self.client, &self.provider, &self.requests),
+            tx: self.core.events_tx.clone(),
+            workspace: self.workspace.clone(),
+            session: n.child.clone(),
+            stop: agent.stop_flag(),
+            call_seq: AtomicU64::new(0),
+            calls: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+        });
+        let live = Arc::new(LiveSession {
+            meta: Mutex::new(SessionMeta {
+                id: n.child.clone(),
+                workspace: self.workspace.clone(),
+                title: Some(format!("sub-agent {}", n.handle)),
+                created: store.created(),
+                leaf: None,
+                model: Some(n.model.clone()),
+                usage: None,
+            }),
+            agent: agent.clone(),
+            stop: agent.stop_flag(),
+            queue: Mutex::new(Vec::new()),
+            turn: AtomicBool::new(false),
+            provider,
+            cwd: parent_live.cwd.clone(),
+        });
+        let id = live.meta.lock().unwrap().id.clone();
+        self.core.sessions.lock().unwrap().insert(id, live);
+    }
+
+    fn state(&self, n: &StateNotice) {
+        let detail = match &n.state {
+            tau_core::subagent::ChildState::Done { output } => Some(json!({ "output": output })),
+            tau_core::subagent::ChildState::Failed { reason } => Some(json!({ "reason": reason })),
+            tau_core::subagent::ChildState::Idle { waiting_on } => {
+                Some(json!({ "waiting_on": waiting_on.as_str() }))
+            }
+            tau_core::subagent::ChildState::Stopped { by } => Some(json!({ "by": by })),
+            tau_core::subagent::ChildState::Running => None,
+        };
+        self.core.emit(Event::SubagentEvent {
+            workspace: self.workspace.clone(),
+            session: n.parent.clone(),
+            kind: SubagentEventKind::State {
+                handle: n.handle.clone(),
+                child: n.child.clone(),
+                state: match &n.state {
+                    tau_core::subagent::ChildState::Running => "running",
+                    tau_core::subagent::ChildState::Idle { .. } => "idle",
+                    tau_core::subagent::ChildState::Done { .. } => "done",
+                    tau_core::subagent::ChildState::Failed { .. } => "failed",
+                    tau_core::subagent::ChildState::Stopped { .. } => "stopped",
+                }
+                .to_owned(),
+                detail,
+                note: n.note.clone(),
+            },
+        });
+    }
+
+    fn wake(&self, n: &WakeNotice) {
+        self.core.emit(Event::SubagentEvent {
+            workspace: self.workspace.clone(),
+            session: n.parent.clone(),
+            kind: SubagentEventKind::Notified {
+                child: n.child.clone(),
+                wake: match n.kind {
+                    WakeKind::Done => "done",
+                    WakeKind::Failed => "failed",
+                    WakeKind::Waiting => "waiting",
+                }
+                .into(),
+                text: n.text.clone(),
+                output: n.output.clone(),
+            },
+        });
+        // Wake the parent (ADR-0001 wake rules): the notification is already
+        // on its active branch; deliver it to the loop and start a turn.
+        let Some(live) = self.core.sessions.lock().unwrap().get(&n.parent).cloned() else {
+            return;
+        };
+        let text = match &n.output {
+            Some(o) => format!(
+                "{} — {}",
+                n.text,
+                serde_json::to_string(o).unwrap_or_default()
+            ),
+            None => n.text.clone(),
+        };
+        live.agent.send_notified(text.clone(), n.child.clone());
+        {
+            let mut q = live.queue.lock().unwrap();
+            q.push(QueuedItem {
+                text: text.clone(),
+                lane: MessageLane::FollowUp,
+            });
+        }
+        self.core.emit(Event::Queue {
+            workspace: self.workspace.clone(),
+            session: n.parent.clone(),
+            items: live.queue.lock().unwrap().clone(),
+        });
+        live.stop.store(false, Ordering::SeqCst);
+        if live
+            .turn
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+            && let Some(core) = self.core.self_arc()
+        {
+            tokio::spawn(run_turn(core, live));
+        }
+    }
+}
+
 /// The core's owned state: workspaces (identity, never paths) and the live
 /// sessions. Everything the GUI can show is derivable from here + the
 /// session files (ADR-0006 state ownership).
@@ -186,6 +431,11 @@ pub struct Core {
     /// The pump's half of the events channel; taken exactly once.
     events_rx: Mutex<Option<mpsc::Receiver<Event>>>,
     coalesce_ms: u64,
+    /// The test-seam child provider factory (None in production builds).
+    child_factory: Option<Arc<dyn ChildProviderFactory>>,
+    /// Self-reference for the seams that need an `Arc<Core>` (the child
+    /// driver/factory/bridge); set in `build`.
+    self_weak: Mutex<Option<Weak<Core>>>,
 }
 
 pub struct CoreBuilder {
@@ -194,6 +444,9 @@ pub struct CoreBuilder {
     /// a production root gets full file-level layering (spec §12).
     custom: bool,
     providers: BTreeMap<String, tau_core::config::Provider>,
+    /// A test seam: the child provider factory replaces the production
+    /// one (tests script child turns).
+    child_factory: Option<Arc<dyn ChildProviderFactory>>,
 }
 
 impl CoreBuilder {
@@ -206,6 +459,7 @@ impl CoreBuilder {
             system_dir: Some(home.join(".config").join("tau")),
             custom: false,
             providers: BTreeMap::new(),
+            child_factory: None,
         }
     }
 
@@ -215,12 +469,21 @@ impl CoreBuilder {
             system_dir: None,
             custom: true,
             providers,
+            child_factory: None,
         }
+    }
+
+    /// A test seam: child sessions get this factory's provider (scripted
+    /// child turns).
+    pub fn with_child_factory(mut self, f: Arc<dyn ChildProviderFactory>) -> Self {
+        self.child_factory = Some(f);
+        self
     }
 
     pub fn build(self) -> Arc<Core> {
         let (events_tx, rx) = mpsc::channel(1024);
         let core = Arc::new(Core {
+            self_weak: Mutex::new(None),
             workspaces: Mutex::new(BTreeMap::new()),
             sessions: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
@@ -239,7 +502,12 @@ impl CoreBuilder {
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             coalesce_ms: 25,
+            child_factory: self.child_factory.clone(),
         });
+        core.self_weak
+            .lock()
+            .unwrap()
+            .replace(Arc::downgrade(&core));
         self.apply_startup(&core);
         core
     }
@@ -273,6 +541,15 @@ impl Core {
 
     fn emit(&self, event: Event) {
         let _ = self.events_tx.try_send(event);
+    }
+
+    /// The core as an `Arc` (the child seams keep one); None pre-`build`.
+    fn self_arc(&self) -> Option<Arc<Core>> {
+        self.self_weak
+            .lock()
+            .unwrap()
+            .as_ref()
+            .and_then(Weak::upgrade)
     }
 
     fn system_config(&self) -> Config {
@@ -435,7 +712,54 @@ impl Core {
             completed: Arc::new(Mutex::new(HashMap::new())),
         };
         let provider = Arc::new(provider);
-        let agent = AgentSession::new(SessionParams {
+        // Ticket #23: this session's supervisor (children live here; a
+        // child session carries none — the depth cap is structural).
+        let self_arc = self.self_arc().expect("session_new on a built core");
+        let first_provider = config
+            .providers
+            .iter()
+            .next()
+            .map(|(_, p)| p.clone())
+            .expect("provider checked above");
+        let factory: Arc<dyn ChildProviderFactory> =
+            self.child_factory.clone().unwrap_or_else(|| {
+                Arc::new(AppChildProviderFactory {
+                    client: self.client.clone(),
+                    provider: first_provider.clone(),
+                    requests: config.requests.clone(),
+                    tx: self.events_tx.clone(),
+                    workspace: workspace.id.clone(),
+                })
+            });
+        // The bridge and the supervisor reference each other: build the
+        // bridge with an empty weak and patch it in after construction.
+        let bridge = Arc::new(AppSubagentBridge {
+            core: self_arc.clone(),
+            workspace: workspace.id.clone(),
+            client: self.client.clone(),
+            provider: first_provider.clone(),
+            requests: config.requests.clone(),
+            sup: Mutex::new(None),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: provider.session.clone(),
+            cwd: cwd.clone(),
+            provider: factory,
+            model: model.clone(),
+            system_prompt: system_prompt.clone(),
+            om: config.om.clone(),
+            om_model: config.om.om_model.clone(),
+            tool_batch_on_force: config.requests.tool_batch_on_force,
+            turn: TurnConfig::default(),
+            caps: config.subagents.clone(),
+            depth: 0,
+            bridge: bridge.clone() as Arc<dyn SubagentBridge>,
+            driver: Arc::new(AppChildDriver {
+                core: Arc::downgrade(&self_arc),
+            }),
+        });
+        bridge.sup.lock().unwrap().replace(Arc::downgrade(&sup));
+        let agent = Arc::new(AgentSession::new(SessionParams {
             store,
             system_prompt,
             model: model.clone(),
@@ -448,9 +772,9 @@ impl Core {
                 &config.om, record,
             )),
             om_model: config.om.om_model.clone(),
-            subagents: None,
+            subagents: Some(sup.clone()),
             child: None,
-        });
+        }));
         let meta = SessionMeta {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),
@@ -462,7 +786,7 @@ impl Core {
         };
         let live = Arc::new(LiveSession {
             meta: Mutex::new(meta.clone()),
-            agent,
+            agent: agent.clone(),
             stop: provider.stop.clone(),
             queue: Mutex::new(Vec::new()),
             turn: AtomicBool::new(false),
@@ -470,7 +794,11 @@ impl Core {
             cwd,
         });
         let id = live.meta.lock().unwrap().id.clone();
-        self.sessions.lock().unwrap().insert(id, live);
+        self.sessions
+            .lock()
+            .unwrap()
+            .insert(id.clone(), live.clone());
+        sup.attach_parent(live.agent.clone());
         Ok(meta)
     }
 
@@ -531,7 +859,16 @@ impl Core {
                 } else {
                     TurnState::Idle
                 },
-                subagents: Vec::new(),
+                subagents: live
+                    .agent
+                    .subagents()
+                    .map(|sup| {
+                        sup.handles()
+                            .iter()
+                            .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -671,6 +1008,35 @@ impl Core {
                 let live = self.live(&session)?;
                 // A new send clears the stop flag: the previous turn is over.
                 live.stop.store(false, Ordering::SeqCst);
+                // A child session takes messages through its supervisor
+                // (the parent's subagent_message semantics: a running
+                // child gets a steering-lane message; a non-running one is
+                // resumed with it, ADR-0001).
+                if let Some(link) = live.agent.child_link() {
+                    let parent = link
+                        .handle()
+                        .rsplit_once('-')
+                        .map(|(s, _)| s.to_owned())
+                        .unwrap_or_default();
+                    let parent_live = self.live(&parent)?;
+                    let sup =
+                        parent_live
+                            .agent
+                            .subagents()
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "child's parent has no supervisor".into(),
+                            })?;
+                    let lane = if lane == MessageLane::Force {
+                        sup.stop(link.handle(), StoppedBy::User)
+                            .map_err(|e| ProtocolError::Other { message: e })?;
+                        Lane::Steering
+                    } else {
+                        lane_to_lane(lane)
+                    };
+                    sup.message(link.handle(), Some(text.clone()), lane)
+                        .map_err(|e| ProtocolError::Other { message: e })?;
+                    return Ok(CommandOutput::None);
+                }
                 live.agent.send(text.clone(), lane_to_lane(lane));
                 if lane != MessageLane::Force {
                     live.queue.lock().unwrap().push(QueuedItem { text, lane });
@@ -701,13 +1067,105 @@ impl Core {
                 description: "The built-in agent: the session's tools and model.".into(),
                 builtin: true,
             }])),
-            Command::SubagentList { .. }
-            | Command::SubagentState { .. }
-            | Command::SubagentSpawn { .. }
-            | Command::SubagentMessage { .. }
-            | Command::SubagentStop { .. } => Err(ProtocolError::Unsupported {
-                message: "sub-agent lifecycle lands in ticket #23".into(),
-            }),
+            Command::SubagentList { session } => {
+                let live = self.live(&session)?;
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no children (it is a child itself)".into(),
+                })?;
+                Ok(CommandOutput::Subagents(
+                    sup.handles()
+                        .iter()
+                        .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
+                        .collect(),
+                ))
+            }
+            Command::SubagentState { handle } => {
+                // The handle is `<parent-session>-<n>`; the supervisor
+                // lives on the parent.
+                let session = handle
+                    .rsplit_once('-')
+                    .map(|(s, _)| s.to_owned())
+                    .unwrap_or_default();
+                let live = self.live(&session)?;
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no children (it is a child itself)".into(),
+                })?;
+                let info = sup
+                    .state_info(&handle)
+                    .ok_or_else(|| ProtocolError::NotFound {
+                        what: format!("subagent {handle}"),
+                    })?;
+                Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+            }
+            Command::SubagentSpawn {
+                session,
+                agent_type,
+                brief,
+                context_mode,
+            } => {
+                let live = self.live(&session)?;
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no children (it is a child itself)".into(),
+                })?;
+                let spawned = sup.spawn(
+                    &agent_type,
+                    &brief,
+                    match context_mode {
+                        ContextMode::Fresh => tau_core::subagent::ContextMode::Fresh,
+                        ContextMode::Compacted => tau_core::subagent::ContextMode::Compacted,
+                        ContextMode::Fork => tau_core::subagent::ContextMode::Fork,
+                    },
+                    None,
+                    "gui",
+                );
+                match spawned {
+                    Ok(sp) => {
+                        let info =
+                            sup.state_info(&sp.handle)
+                                .ok_or_else(|| ProtocolError::Other {
+                                    message: "child vanished after spawn".into(),
+                                })?;
+                        Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+                    }
+                    Err(e) => Err(ProtocolError::Other { message: e }),
+                }
+            }
+            Command::SubagentMessage { handle, text } => {
+                let session = handle
+                    .rsplit_once('-')
+                    .map(|(s, _)| s.to_owned())
+                    .unwrap_or_default();
+                let live = self.live(&session)?;
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no children (it is a child itself)".into(),
+                })?;
+                sup.message(&handle, text.clone(), Lane::Steering)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
+                let info = sup
+                    .state_info(&handle)
+                    .ok_or_else(|| ProtocolError::NotFound {
+                        what: format!("subagent {handle}"),
+                    })?;
+                Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+            }
+            Command::SubagentStop { handle } => {
+                let session = handle
+                    .rsplit_once('-')
+                    .map(|(s, _)| s.to_owned())
+                    .unwrap_or_default();
+                let live = self.live(&session)?;
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no children (it is a child itself)".into(),
+                })?;
+                sup.stop(&handle, StoppedBy::User)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
+                let info = sup
+                    .state_info(&handle)
+                    .ok_or_else(|| ProtocolError::NotFound {
+                        what: format!("subagent {handle}"),
+                    })?;
+                Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+            }
             Command::TaskCreate { .. }
             | Command::TaskUpdate { .. }
             | Command::TaskAssign { .. }
@@ -952,6 +1410,10 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     tool_call_id: tool_call_id.clone(),
                     name: name.clone(),
                 });
+                core.self_weak
+                    .lock()
+                    .unwrap()
+                    .replace(Arc::downgrade(&core));
                 core.emit(Event::ToolEnd {
                     workspace: workspace.clone(),
                     session: session.clone(),
@@ -1093,6 +1555,7 @@ fn delete_session_files(cwd: &Path, session: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     fn providers() -> BTreeMap<String, tau_core::config::Provider> {
         let mut m = BTreeMap::new();
@@ -1136,11 +1599,15 @@ mod tests {
     #[tokio::test]
     async fn not_yet_landed_commands_fail_explicitly() {
         let core = CoreBuilder::custom(providers()).build();
+        // The sub-agent commands are live (ticket #23): an unknown
+        // session's child is a NotFound, not an Unsupported.
         let err = core
-            .dispatch(Command::SubagentState { handle: "h".into() })
+            .dispatch(Command::SubagentState {
+                handle: "h-1".into(),
+            })
             .await
             .unwrap_err();
-        assert!(matches!(err, ProtocolError::Unsupported { .. }));
+        assert!(matches!(err, ProtocolError::NotFound { .. }));
         let err = core
             .dispatch(Command::TaskCreate {
                 session: "s".into(),
@@ -1390,7 +1857,7 @@ mod tests {
             calls: Arc::new(Mutex::new(Vec::new())),
             completed: Arc::new(Mutex::new(HashMap::new())),
         });
-        let agent = AgentSession::new(SessionParams {
+        let agent = Arc::new(AgentSession::new(SessionParams {
             store,
             system_prompt: "You are Tau, a coding agent.".into(),
             model: "model".into(),
@@ -1403,7 +1870,7 @@ mod tests {
             om_model: String::new(),
             subagents: None,
             child: None,
-        });
+        }));
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
                 id: provider.session.clone(),
@@ -1414,7 +1881,7 @@ mod tests {
                 model: Some("model".into()),
                 usage: None,
             }),
-            agent,
+            agent: agent.clone(),
             stop: provider.stop.clone(),
             queue: Mutex::new(Vec::new()),
             turn: AtomicBool::new(false),
@@ -1755,5 +2222,139 @@ mod tests {
             end
         );
         assert!(!text.is_empty(), "deltas arrived but carried no text");
+    }
+    /// End-to-end sub-agent lifecycle (ticket #23 N3): a spawned child runs
+    /// its scripted `parent_notify {done}` turn, the supervisor resolves it,
+    /// and the parent is woken — the notification lands on the parent's
+    /// active branch and a `Notified` event reaches the stream.
+    #[tokio::test]
+    async fn a_spawned_child_finishes_and_wakes_the_parent() {
+        struct CannedChild {
+            body: String,
+            index: AtomicUsize,
+        }
+        impl TurnProvider for CannedChild {
+            fn call<'a>(
+                &self,
+                _req: &ResponseRequest,
+                sink: &'a mut dyn TurnSink,
+            ) -> ProviderTurn<'a> {
+                let body = self.body.clone();
+                self.index.fetch_add(1, Ordering::SeqCst);
+                let (events, calls) = provider::decode_stream(&body).unwrap();
+                Box::pin(async move {
+                    let mut result = provider::TurnResult::default();
+                    for event in &events {
+                        if !sink.event(event.clone()) {
+                            break;
+                        }
+                        provider::fold_event(event, &mut result);
+                    }
+                    result.calls = calls.into_iter().map(|(_, c)| c).collect();
+                    Ok(result)
+                })
+            }
+        }
+        struct CannedChildFactory {
+            body: String,
+        }
+        impl ChildProviderFactory for CannedChildFactory {
+            fn create(&self, _child: &str) -> TurnProviderRef {
+                Arc::new(CannedChild {
+                    body: self.body.clone(),
+                    index: AtomicUsize::new(0),
+                })
+            }
+        }
+        // One scripted turn: parent_notify done with a structured output.
+        let call_id = "c1".to_string();
+        let args = json!({
+            "text": "the work is done",
+            "done": true,
+            "output": { "result": "ok" },
+        });
+        let item = json!({
+            "id": call_id,
+            "type": "function_call",
+            "name": "parent_notify",
+            "call_id": call_id,
+            "arguments": args,
+        });
+        let data = format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}");
+        let body = format!("{data}\n\ndata: [DONE]\n\n");
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body }))
+            .build();
+        let mut rx = core.events_rx.lock().unwrap().take().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Workspace(w) => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Session(m) => m,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = match core
+            .dispatch(Command::SubagentSpawn {
+                session: session.id.clone(),
+                agent_type: "general".into(),
+                brief: "do the thing".into(),
+                context_mode: ContextMode::Fresh,
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Subagent(i) => i,
+            other => panic!("expected a subagent: {other:?}"),
+        };
+        // The child's scripted done-notify must wake the parent: the
+        // Notified event reaches the stream, and the wake's message lands
+        // on the parent's branch tagged with the child's session id.
+        let mut notified = false;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(Some(ev)) =
+                tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
+                && matches!(
+                    ev,
+                    Event::SubagentEvent {
+                        kind: SubagentEventKind::Notified { .. },
+                        ..
+                    }
+                )
+            {
+                notified = true;
+                break;
+            }
+        }
+        assert!(notified, "the parent was never woken by the child's done");
+        let mut store = SessionStore::for_workspace(tmp.path(), &session.id);
+        store.open().unwrap();
+        let entries = store.entries_range(0, usize::MAX).unwrap();
+        let woke = entries
+            .iter()
+            .any(|e| e.payload.get("source") == Some(&json!(info.child)));
+        assert!(woke, "no notification entry on the parent's branch");
+        // The child registered as an ordinary live session (the GUI can
+        // open it like any session).
+        assert!(
+            core.sessions.lock().unwrap().get(&info.child).is_some(),
+            "the child's live session was not registered"
+        );
+        drop(core);
     }
 }
