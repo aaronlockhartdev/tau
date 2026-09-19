@@ -1,0 +1,30 @@
+#!/bin/sh
+# The single build entry point (ticket #27): the release cargo build, the
+# Svelte build (svelte-check included), and the Tauri bundle. Idempotent;
+# on macOS it produces the runnable app/src-tauri/target/release/bundle/
+# macos/Tau.app (unsigned local bundle — no dmg, no signing, v1 work).
+set -eu
+
+cd "$(dirname "$0")"
+
+echo "==> cargo build --workspace --release"
+cargo build --workspace --release
+
+echo "==> app: npm ci + npm run build (svelte-check + vite)"
+(cd app && npm ci && npm run build)
+
+if [ "$(uname)" = "Darwin" ]; then
+  echo "==> tauri build --bundles app (unsigned)"
+  (cd app && npx tauri build --bundles app)
+  echo ""
+  echo "Build complete. Artifact:"
+  echo "  app/src-tauri/target/release/bundle/macos/Tau.app"
+  echo "Run: open app/src-tauri/target/release/bundle/macos/Tau.app"
+else
+  echo "==> Linux: skipping the Tauri app bundle (it needs the webkit system"
+  echo "    libraries; the core + frontend artifacts are built and tested)."
+  echo ""
+  echo "Build complete. Artifacts:"
+  echo "  target/release (tau-core, tau-protocol, tau-acceptance)"
+  echo "  app/svelte/dist (frontend)"
+fi
