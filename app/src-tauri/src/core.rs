@@ -340,7 +340,13 @@ impl SubagentBridge for AppSubagentBridge {
             tau_core::subagent::ChildState::Idle { waiting_on } => {
                 Some(json!({ "waiting_on": waiting_on.as_str() }))
             }
-            tau_core::subagent::ChildState::Stopped { by } => Some(json!({ "by": by })),
+            tau_core::subagent::ChildState::Stopped { by } => {
+                let mut d = json!({ "by": by });
+                if let Some(rc) = &n.resume_contract {
+                    d["resume_contract"] = rc.clone();
+                }
+                Some(d)
+            }
             tau_core::subagent::ChildState::Running => None,
         };
         self.core.emit(Event::SubagentEvent {
@@ -858,6 +864,27 @@ impl Core {
                         sup.handles()
                             .iter()
                             .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                // The session's tasks (per-session store, spec §5.3): the
+                // GUI's tasks panel; active ones ride their resume contract.
+                tasks: store
+                    .entries_range(0, usize::MAX)
+                    .map(|entries| {
+                        tau_core::task::fold_entries(&entries)
+                            .into_iter()
+                            .map(|t| {
+                                let mut v = serde_json::to_value(&t).unwrap_or(Value::Null);
+                                if t.status == tau_core::task::STATUS_IN_PROGRESS
+                                    || t.status == tau_core::task::STATUS_BLOCKED
+                                {
+                                    v["resume_contract"] =
+                                        serde_json::to_value(tau_core::task::resume_contract(&t))
+                                            .unwrap_or(Value::Null);
+                                }
+                                v
+                            })
                             .collect()
                     })
                     .unwrap_or_default(),

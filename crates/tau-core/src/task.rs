@@ -481,6 +481,11 @@ pub fn assign(
             "task {id}: not found in this session (or already assigned)"
         ));
     };
+    // A terminal task is closed, not pausable: assigning it would
+    // resurrect it (review N7).
+    if task.status == STATUS_DONE || task.status == STATUS_CANCELLED {
+        return Err(format!("task {id}: cannot assign a {} task", task.status));
+    }
     append_event(creator, id, "assigned", json!({ "worker": worker_session }))?;
     append_event(
         worker,
@@ -590,6 +595,9 @@ pub fn finish(
             gaps.join("; ")
         ));
     }
+    // Force without a reason is how silent corruption would in: the
+    // reason lands in the session entry, so the gate's bypass is auditable
+    // even when the evidence is incomplete (review N8).
     if force && reason.is_none() {
         return Err(format!("task {id}: force finish requires a reason"));
     }
@@ -653,35 +661,48 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
             let Some(title) = args.get("title").and_then(Value::as_str) else {
                 return "task_create: missing \"title\"".into();
             };
-            let steps: Vec<Step> = args
-                .get("steps")
-                .and_then(|v| v.as_array())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|s| {
-                            Some(Step {
-                                text: s.get("text")?.as_str()?.to_owned(),
-                                expected_output: s.get("expected_output")?.as_str()?.to_owned(),
-                                status: StepStatus::Pending,
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            let criteria: Vec<Criterion> = args
-                .get("criteria")
-                .and_then(|v| v.as_array())
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|c| {
-                            Some(Criterion {
-                                text: c.as_str()?.to_owned(),
-                                status: CriterionStatus::Pending,
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            // Malformed items are rejected, not silently dropped (review
+            // N6): a step without its expected output is a quality-gate
+            // failure the model must see.
+            let steps = match args.get("steps").and_then(|v| v.as_array()) {
+                Some(v) => {
+                    let mut out = Vec::new();
+                    for (i, s) in v.iter().enumerate() {
+                        let Some(text) = s.get("text").and_then(Value::as_str) else {
+                            return format!("task_create: step {i} is missing \"text\"");
+                        };
+                        let Some(expected) = s.get("expected_output").and_then(Value::as_str)
+                        else {
+                            return format!(
+                                "task_create: step {i} (\"{text}\") is missing \"expected_output\""
+                            );
+                        };
+                        out.push(Step {
+                            text: text.to_owned(),
+                            expected_output: expected.to_owned(),
+                            status: StepStatus::Pending,
+                        });
+                    }
+                    out
+                }
+                None => Vec::new(),
+            };
+            let criteria = match args.get("criteria").and_then(|v| v.as_array()) {
+                Some(v) => {
+                    let mut out = Vec::new();
+                    for (i, c) in v.iter().enumerate() {
+                        let Some(text) = c.as_str() else {
+                            return format!("task_create: criterion {i} is not a string");
+                        };
+                        out.push(Criterion {
+                            text: text.to_owned(),
+                            status: CriterionStatus::Pending,
+                        });
+                    }
+                    out
+                }
+                None => Vec::new(),
+            };
             let n = load(store)
                 .map(|t| t.iter().filter(|t| t.id.starts_with("task-")).count())
                 .unwrap_or(0)

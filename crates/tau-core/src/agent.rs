@@ -377,12 +377,21 @@ impl AgentSession {
                     .leaf()
                     .map_err(AgentError::Session)?
                     .map(|e| e.id);
-                // The active task's resume contract (spec §5.3): re-injected
-                // into every assembly while the task is active, so a
-                // compaction can never make a session lose sight of it.
-                let contract = crate::task::active_tasks(&crate::task::fold_entries(&entries))
-                    .first()
-                    .map(|t| crate::task::resume_contract(t));
+                // The active tasks' resume contracts (spec §5.3): re-injected
+                // into every assembly while active, so a compaction can
+                // never make a session lose sight of them. All active tasks
+                // ride (bounded) — a session may work several (review N4).
+                let contracts = crate::task::active_tasks(&crate::task::fold_entries(&entries))
+                    .iter()
+                    .take(5)
+                    .map(|t| crate::task::resume_contract(t).to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let contract = if contracts.is_empty() {
+                    None
+                } else {
+                    Some(contracts)
+                };
                 // Assembly runs on the persistent state, not a clone: it is
                 // pure over the record, and the one-shot continuation-hint
                 // flip must stick (a clone's flip would be dropped, and the
@@ -390,18 +399,15 @@ impl AgentSession {
                 // would re-inject on every assembly).
                 match inner.om.as_mut() {
                     Some(om) => {
-                        let instructions = om.assemble_context(
-                            &base,
-                            contract.as_ref().map(|c| c.to_string()).as_deref(),
-                        );
+                        let instructions = om.assemble_context(&base, contract.as_deref());
                         let raw = om.raw_window_from(&entries, leaf_id.as_deref());
                         (instructions, input_items(&raw))
                     }
                     None => {
                         let mut instructions = base;
-                        if let Some(contract) = contract {
+                        if let Some(contract) = &contract {
                             instructions.push_str("\n\n# Task (resume contract)\n");
-                            instructions.push_str(&contract.to_string());
+                            instructions.push_str(contract);
                         }
                         (instructions, input_items(&entries))
                     }

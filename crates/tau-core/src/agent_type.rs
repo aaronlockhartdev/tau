@@ -99,7 +99,12 @@ fn parse(raw: &str) -> Option<AgentType> {
                 .collect()
         }),
         model: get("model").filter(|v| !v.is_empty()),
-        context_mode: match get("context_mode").as_deref() {
+        // `context_mode` is canonical; the spec's phrasing is
+        // "default context mode", so the alias is accepted too (review N5).
+        context_mode: match get("context_mode")
+            .or_else(|| get("default_context_mode"))
+            .as_deref()
+        {
             Some("compacted") => ContextMode::Compacted,
             Some("fork") => ContextMode::Fork,
             _ => ContextMode::Fresh,
@@ -160,6 +165,8 @@ mod tests {
         assert_eq!(t.body, "You review code strictly.");
         let t = parse("---\nname: c\ncontext_mode: compacted\n---\nbody").unwrap();
         assert_eq!(t.context_mode, ContextMode::Compacted);
+        let t = parse("---\nname: c\ndefault_context_mode: fork\n---\nbody").unwrap();
+        assert_eq!(t.context_mode, ContextMode::Fork);
     }
 
     #[test]

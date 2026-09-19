@@ -84,6 +84,7 @@ export interface LiveState {
   queue: QueuedItem[];
   turn: TurnState;
   subagents: string[];
+  tasks: Record<string, unknown>[];
 }
 
 export interface Snapshot {

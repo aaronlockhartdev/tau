@@ -121,6 +121,9 @@ pub struct LiveState {
     /// The session's children (structured state — the GUI's sub-agent
     /// panel); empty for child sessions (the depth cap is structural).
     pub subagents: Vec<crate::SubagentInfo>,
+    /// The session's tasks (per-session store, spec §5.3) — the GUI's
+    /// tasks panel; active ones carry their resume contract.
+    pub tasks: Vec<Value>,
 }
 
 /// The ephemeral snapshot (spec §8): metadata skeleton + bounded OM + live

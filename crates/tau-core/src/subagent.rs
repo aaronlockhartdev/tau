@@ -120,6 +120,9 @@ pub struct StateNotice {
     pub child: String,
     pub state: ChildState,
     pub note: Option<String>,
+    /// A stopped child's assigned task rides its resume contract (spec
+    /// §5.2); None for every other transition.
+    pub resume_contract: Option<Value>,
 }
 
 /// A spawn notice (the protocol's `subagent_spawned` event).
@@ -674,6 +677,7 @@ impl Supervisor {
                             child: child.session_id.clone(),
                             state: ChildState::Running,
                             note: Some("resumed by a queued message".into()),
+                            resume_contract: None,
                         });
                         continue;
                     }
@@ -744,6 +748,7 @@ impl Supervisor {
                 reason: reason.clone(),
             },
             note: Some(reason.clone()),
+            resume_contract: None,
         });
         // A failed child auto-notifies the parent to investigate (ADR-0001
         // wake rules: failed is always woken).
@@ -835,6 +840,7 @@ impl Supervisor {
                     output: output.clone(),
                 },
                 note: None,
+                resume_contract: None,
             });
             self.bridge.wake(&WakeNotice {
                 parent: self.parent_session.clone(),
@@ -859,6 +865,7 @@ impl Supervisor {
                 child: child.session_id.clone(),
                 state: ChildState::Idle { waiting_on },
                 note: Some(text.to_owned()),
+                resume_contract: None,
             });
             if waiting_on == WaitingOn::Parent {
                 // A parked parent (including a user-stopped one) is woken
@@ -969,6 +976,7 @@ impl Supervisor {
                     child: child.session_id.clone(),
                     state: ChildState::Running,
                     note: Some("resumed".into()),
+                    resume_contract: None,
                 });
                 child.agent.send(text, Lane::FollowUp);
                 // A drive ended by stop/failure/done is gone: this resume
@@ -1004,14 +1012,33 @@ impl Supervisor {
         let note = format!("stopped by {}", by.as_str());
         child.set_state(ChildState::Stopped { by }, Some(note.clone()))?;
         child.wake.notify_one();
+        // A stopped child with an assigned task carries the task's resume
+        // contract in the stop event (spec §5.2).
+        let resume_contract = child.agent.with_task_store(|store| {
+            let entries = store.entries_range(0, usize::MAX).ok()?;
+            crate::task::fold_entries(&entries)
+                .into_iter()
+                .find(|t| t.created_in.is_some())
+                .filter(|t| {
+                    t.status == crate::task::STATUS_IN_PROGRESS
+                        || t.status == crate::task::STATUS_BLOCKED
+                })
+                .map(|t| crate::task::resume_contract(&t))
+        });
         self.bridge.state(&StateNotice {
             parent: self.parent_session.clone(),
             handle: child.handle.clone(),
             child: child.session_id.clone(),
             state: ChildState::Stopped { by },
             note: Some(note),
+            resume_contract: resume_contract.clone(),
         });
-        Ok(format!("stopped sub-agent {handle}"))
+        match resume_contract {
+            Some(rc) => Ok(format!(
+                "stopped sub-agent {handle}; its assigned task stays live (resume contract: {rc})"
+            )),
+            None => Ok(format!("stopped sub-agent {handle}")),
+        }
     }
 
     /// Soft-stop every live child (the parent session was closed or
