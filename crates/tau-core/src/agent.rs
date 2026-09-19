@@ -363,6 +363,12 @@ impl AgentSession {
                     .leaf()
                     .map_err(AgentError::Session)?
                     .map(|e| e.id);
+                // The active task's resume contract (spec §5.3): re-injected
+                // into every assembly while the task is active, so a
+                // compaction can never make a session lose sight of it.
+                let contract = crate::task::active_tasks(&crate::task::fold_entries(&entries))
+                    .first()
+                    .map(|t| crate::task::resume_contract(t));
                 // Assembly runs on the persistent state, not a clone: it is
                 // pure over the record, and the one-shot continuation-hint
                 // flip must stick (a clone's flip would be dropped, and the
@@ -370,11 +376,19 @@ impl AgentSession {
                 // would re-inject on every assembly).
                 match inner.om.as_mut() {
                     Some(om) => {
-                        let instructions = om.assemble_context(&base, None);
+                        let instructions =
+                            om.assemble_context(&base, contract.as_ref().map(|c| c.to_string()).as_deref());
                         let raw = om.raw_window_from(&entries, leaf_id.as_deref());
                         (instructions, input_items(&raw))
                     }
-                    None => (base, input_items(&entries)),
+                    None => {
+                        let mut instructions = base;
+                        if let Some(contract) = contract {
+                            instructions.push_str("\n\n# Task (resume contract)\n");
+                            instructions.push_str(&contract.to_string());
+                        }
+                        (instructions, input_items(&entries))
+                    }
                 }
             };
             let mut request =
@@ -875,9 +889,23 @@ mod tests {
                         r#"{"title":"write the docs","criteria":["docs exist"]}"#.into(),
                     )],
                 ),
-                sse("", &[("task_start".into(), "c2".into(), r#"{"task":"task-1"}"#.into())]),
+                sse(
+                    "",
+                    &[(
+                        "task_start".into(),
+                        "c2".into(),
+                        r#"{"task":"task-1"}"#.into(),
+                    )],
+                ),
                 // The gate: no evidence yet → the finish fails with the gap.
-                sse("", &[("task_finish".into(), "c3".into(), r#"{"task":"task-1"}"#.into())]),
+                sse(
+                    "",
+                    &[(
+                        "task_finish".into(),
+                        "c3".into(),
+                        r#"{"task":"task-1"}"#.into(),
+                    )],
+                ),
                 sse(
                     "",
                     &[(
@@ -887,7 +915,14 @@ mod tests {
                     )],
                 ),
                 // The same finish now passes.
-                sse("", &[("task_finish".into(), "c5".into(), r#"{"task":"task-1"}"#.into())]),
+                sse(
+                    "",
+                    &[(
+                        "task_finish".into(),
+                        "c5".into(),
+                        r#"{"task":"task-1"}"#.into(),
+                    )],
+                ),
                 sse("done", &[]),
             ])),
             tool_batch_on_force: Default::default(),
@@ -912,11 +947,18 @@ mod tests {
         };
         assert!(out("c1").contains("created task-1"), "{}", out("c1"));
         assert!(out("c2").contains("[in_progress]"), "{}", out("c2"));
-        assert!(out("c3").contains("completion gate failed"), "{}", out("c3"));
+        assert!(
+            out("c3").contains("completion gate failed"),
+            "{}",
+            out("c3")
+        );
         assert!(out("c4").contains("[in_progress]"), "{}", out("c4"));
         assert!(out("c5").contains("[done]"), "{}", out("c5"));
         // The session file holds the task events, and the fold ends done.
-        let task_entries = entries.iter().filter(|e| e.kind == crate::task::KIND_TASK).count();
+        let task_entries = entries
+            .iter()
+            .filter(|e| e.kind == crate::task::KIND_TASK)
+            .count();
         assert_eq!(task_entries, 4); // the failed finish appends nothing
         let tasks = crate::task::fold_entries(&entries);
         assert_eq!(tasks[0].status, crate::task::STATUS_DONE);
@@ -1458,5 +1500,92 @@ mod tests {
             reflect.1.as_deref().unwrap().contains("FROZEN PARENT LOG"),
             "{reflect:?}"
         );
+    }
+
+    /// Spec §5.3: a session holding an active task re-injects the resume
+    /// contract after its OM compacts — the second turn's system prompt
+    /// carries it even though the raw window no longer does.
+    #[tokio::test]
+    async fn a_compaction_reinjects_the_active_task_resume_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path());
+        crate::task::create(
+            &mut store,
+            "task-1",
+            "the long job",
+            vec![crate::task::Step {
+                text: "the step".into(),
+                expected_output: "the artifact".into(),
+                status: crate::task::StepStatus::Pending,
+            }],
+            vec![crate::task::Criterion {
+                text: "the criterion".into(),
+                status: crate::task::CriterionStatus::Pending,
+            }],
+        )
+        .unwrap();
+        crate::task::start(&mut store, "task-1").unwrap();
+        // 1000-token observe threshold (5 x 225 tokens), like the sibling.
+        let mut parent: Option<String> = None;
+        for _ in 0..5 {
+            let e = store
+                .append(
+                    "user",
+                    json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(e.id);
+        }
+        let cfg = crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1000,
+            reflect_threshold: 2000,
+            buffer_increment: 230,
+        };
+        let obs_text = "<observations>observed work</observations>".to_owned();
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            sse("a1", &[]),
+            sse_json(&obs_text),
+            sse("a2", &[]),
+        ]));
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: provider.clone(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: Some(crate::om_integration::OmState::from_config(
+                &cfg,
+                crate::om::OmRecord::default(),
+            )),
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        });
+        agent.send("go1", Lane::FollowUp);
+        agent.send("go2", Lane::FollowUp);
+        agent.process().await.unwrap();
+        // The active task's contract rides every assembly — turn 1 (before
+        // any compaction) and turn 2 (after the observe compacted the raw
+        // window, which no longer carries the task entries).
+        let seen = provider.seen.lock().unwrap();
+        // `seen` also holds the observer's own calls; the turn assemblies
+        // are the ones built on the session's system prompt.
+        let assemblies = seen
+            .iter()
+            .filter(|(ins, _)| ins.as_deref().is_some_and(|i| i.starts_with("be terse")))
+            .count();
+        assert_eq!(assemblies, 2, "two turn assemblies");
+        for (ins, _) in seen
+            .iter()
+            .filter(|(ins, _)| ins.as_deref().is_some_and(|i| i.starts_with("be terse")))
+        {
+            let ins = ins.as_deref().unwrap();
+            assert!(ins.contains("# Task (resume contract)"), "{ins}");
+        }
     }
 }
