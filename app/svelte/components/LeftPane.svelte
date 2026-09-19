@@ -110,12 +110,11 @@
 </script>
 
 <div class="pane">
+  <div class="tabs" role="tablist">
+    <button class="tab" class:on={p?.ltab === 'files'} disabled={!p} onclick={() => { if (p) setLtab('files'); }}>files</button>
+    <button class="tab" class:on={p?.ltab === 'sessions'} disabled={!p} onclick={() => { if (p) setLtab('sessions'); }}>sessions</button>
+  </div>
   {#if p}
-    <div class="tabs" role="tablist">
-      <button class="tab" class:on={p.ltab === 'files'} onclick={() => setLtab('files')}>files</button>
-      <button class="tab" class:on={p.ltab === 'sessions'} onclick={() => setLtab('sessions')}>sessions</button>
-    </div>
-
     {#if p.ltab === 'files'}
       <div class="sec">
         {#if store.demo}

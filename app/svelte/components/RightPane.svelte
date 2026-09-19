@@ -105,12 +105,11 @@
 </script>
 
 <div class="pane">
-  {#if p}
   <div class="tabs" role="tablist">
-    <button class="tab" class:on={p.rtab === 'tasks'} onclick={() => setRtab('tasks')}>tasks</button>
-    <button class="tab" class:on={p.rtab === 'subs'} onclick={() => setRtab('subs')}>sub-agents</button>
+    <button class="tab" class:on={p?.rtab === 'tasks'} disabled={!p} onclick={() => { if (p) setRtab('tasks'); }}>tasks</button>
+    <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p} onclick={() => { if (p) setRtab('subs'); }}>sub-agents</button>
   </div>
-
+  {#if p}
   {#if p.rtab === 'tasks'}
     <div class="filters">
       {#each T_CHIPS as [key, label] (key)}
