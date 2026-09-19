@@ -114,7 +114,7 @@ if command -v node >/dev/null 2>&1; then
   if [ ! -d app/node_modules ]; then
     (cd app && npm ci >/dev/null 2>&1)
   fi
-  out=$(node app/verify-demo.mjs 2>&1); status=$?
+  out=$(node app/scripts/verify-demo.mjs 2>&1); status=$?
   if [ $status -eq 0 ]; then
     n=$(echo "$out" | grep -c '^PASS')
     report f PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') demo checks (10k entries, 2 live 25 ms streams)"

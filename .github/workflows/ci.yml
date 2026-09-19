@@ -39,3 +39,30 @@ jobs:
       - name: Tauri build
         working-directory: app
         run: npx tauri build --bundles app
+
+  linux:
+    runs-on: ubuntu-latest
+    # How far Linux is exercised (map fog item): the full non-GUI build
+    # (./build: non-GUI crates + frontend) plus the non-GUI acceptance
+    # legs — e (branch + archive) and f (the 10k-entry performance demo
+    # with headless Chrome). Leg a (the app-launch smoke) skips: the Tauri
+    # app binary needs the webkit system libraries, macOS-first per spec §13.
+    # Live legs (b/c/d) do not run in CI (no TAU_LIVE).
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.98.1
+
+      - uses: swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Build (core + frontend)
+        run: ./build
+
+      - name: Acceptance (non-GUI legs)
+        run: ./scripts/acceptance.sh

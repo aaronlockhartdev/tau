@@ -13,7 +13,15 @@ import path from 'node:path';
 const ROOT = path.join(import.meta.dirname, '..');
 const PORT = 4173;
 const CDP = 9333;
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const CHROME =
+  process.platform === 'darwin'
+    ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+    : ['google-chrome', 'google-chrome-stable', 'chromium', 'chromium-browser'].find(
+        (b) =>
+          fs.existsSync(`/usr/bin/${b}`) ||
+          fs.existsSync(`/usr/local/bin/${b}`) ||
+          fs.existsSync(`/snap/bin/${b}`),
+      ) ?? 'google-chrome';
 
 function run(cmd, args) {
   const p = spawn(cmd, args, { cwd: ROOT, stdio: 'inherit' });
@@ -89,8 +97,10 @@ const proc = spawn(CHROME, [
   '--no-first-run',
   '--no-default-browser-check',
   `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'tau-verify-'))}`,
-  'about:blank'
-]);
+  'about:blank',
+],
+  // Linux runners resolve Chrome from PATH (the #27 acceptance leg f).
+  { shell: process.platform !== 'darwin' });
 
 try {
   await run('npm', ['run', 'build']);
