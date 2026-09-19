@@ -130,13 +130,13 @@ try {
     const wsUrl = target.webSocketDebuggerUrl;
     await sleep(2500); // demo load + first coalesced stream flushes
 
-    // At the pinned bottom the tail window contains the 2 live streams; keep
-    // the pin so the growing tail stays in the window.
-    const pin = () => evalPage(wsUrl, `(() => { const sc = document.querySelector('.scroll'); sc.scrollTop = sc.scrollHeight; return [...document.querySelectorAll('.card')].map((c) => c.textContent.length).reduce((a, b) => a + b, 0); })()`);
-    const s1 = await pin();
+    // Both demo streams, measured in the store (not the virtualized DOM —
+    // one stream card can sit outside the window while both keep growing).
+    const live = () => evalPage(wsUrl, `window.__tau.liveTexts()`);
+    const l1 = await live();
     await sleep(700);
-    const s2 = await pin();
-    check('the 2 demo streams are flowing (25 ms coalescing)', s2 > s1, `card text ${s1} → ${s2}`);
+    const l2 = await live();
+    check('the 2 demo streams are flowing (25 ms coalescing)', l1.length === 2 && l1.every((x, i) => l2[i] > x), `live texts ${l1} → ${l2}`);
 
     const top = await evalPage(wsUrl, `(() => {
       const sc = document.querySelector('.scroll');

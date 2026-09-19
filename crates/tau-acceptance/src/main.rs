@@ -406,7 +406,10 @@ async fn leg_d(ctx: &Ctx) -> Result<(), String> {
         &Om {
             om_model: String::new(),
             observe_threshold: 4000,
-            reflect_threshold: 150,
+            // 10, not 150: a live observation can legitimately be short; the
+            // leg must prove the reflector FIRES once an observation exists,
+            // not that the model writes long observations
+            reflect_threshold: 10,
             buffer_increment: 500,
         },
         OmRecord::default(),

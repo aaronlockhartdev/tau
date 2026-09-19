@@ -225,7 +225,14 @@
     startDemoStreams();
     // In-browser test seam (demo only): the wire-shape checks feed the exact
     // bridge objects through applyEvents — the demo cannot see the live path.
-    (window as unknown as { __tau?: unknown }).__tau = { applyEvents };
+    // Demo-only verification seam: feed wire-shaped events and read the
+    // accumulated live-stream lengths (store level — the virtualized DOM
+    // only shows the window, one stream card can sit outside it).
+    (window as unknown as { __tau?: unknown }).__tau = {
+      applyEvents,
+      liveTexts: () =>
+        store.sessions['demo'].live.map((l) => l.text.length)
+    };
   }
 
   // The #26 pane dataset (the prototype's): six sub-agent sessions under
