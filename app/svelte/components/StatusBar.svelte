@@ -1,6 +1,9 @@
 <script lang="ts">
   // Lualine-style 3-segment bottom bar (spec §9):
   //   [workspace · session · state]   [entries · rendered · fps]   [model · usage]
+  // The spec's 'axis' segment has no v0 backing (there is no tabs/stacked
+  // axis to switch): state sits in segment one, performance in two and three,
+  // and usage closes the bar.
 
   import { store } from '../lib/store.svelte';
 
@@ -46,6 +49,7 @@
   <span class="seg s3">
     <span class="k">render</span> {store.renderRange || '—'} · {store.renderMs.toFixed(1)} ms · {s?.live.length ?? 0} streams
     <span class="k">model</span> {s?.meta.model ?? '—'}
+    <span class="k">usage</span> {s?.usage ? `${fmt(s.usage.input_tokens)} in · ${fmt(s.usage.output_tokens)} out · ${fmt(s.usage.total_tokens)} total` : '—'}
   </span>
 </div>
 
