@@ -283,6 +283,16 @@ pub struct Usage {
     pub output_tokens: u64,
     pub total_tokens: u64,
     pub output_tokens_details: Option<OutputTokensDetails>,
+    #[serde(alias = "input_tokens_details")]
+    pub prompt_tokens_details: Option<PromptTokensDetails>,
+}
+
+/// Prompt-side details: how many prompt tokens the server served from its
+/// prefix cache (vLLM/OpenAI `prompt_tokens_details.cached_tokens`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PromptTokensDetails {
+    pub cached_tokens: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

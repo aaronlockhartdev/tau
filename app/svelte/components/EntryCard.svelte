@@ -12,8 +12,14 @@
   let {
     entry,
     heightKey,
-    heights
-  }: { entry: Entry; heightKey: string; heights: Map<string, number> } = $props();
+    heights,
+    streaming = false
+  }: {
+    entry: Entry;
+    heightKey: string;
+    heights: Map<string, number>;
+    streaming?: boolean;
+  } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
 
@@ -69,14 +75,17 @@
       <div class="klabel">system</div>
     {/if}
     {#if entry.reasoning}
-      <button class="expando reason" onclick={() => (reasoningOpen = !reasoningOpen)}>
-        {reasoningOpen ? '▾' : '▸'} reasoning
-      </button>
-      {#if reasoningOpen}
-        <div class="reason">
-          <span class="cursor"></span>{entry.reasoning}
-        </div>
-      {/if}
+      <div class="reasonblock" class:open={reasoningOpen}>
+        <button class="reasontitle" onclick={() => (reasoningOpen = !reasoningOpen)}>
+          {reasoningOpen ? '▾' : '▸'} reasoning
+        </button>
+        {#if reasoningOpen}
+          <div class="reason">
+            {#if streaming}<span class="cursor"></span>
+            {/if}{entry.reasoning}
+          </div>
+        {/if}
+      </div>
     {/if}
     <div class="md">{@html md}</div>
     {#if entry.usage}
@@ -145,14 +154,32 @@
   .expando:hover {
     color: var(--tx);
   }
-  .expando.reason {
+  .reasonblock {
+    margin: 0 0 5px;
+    border: 1px solid rgba(181, 140, 255, 0.16);
+    border-left: 2px solid rgba(181, 140, 255, 0.35);
+    border-radius: 6px;
+    background: rgba(181, 140, 255, 0.04);
+  }
+  .reasontitle {
+    display: block;
+    width: 100%;
+    padding: 4px 10px;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+    font: 10.5px var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     color: var(--purple);
   }
+  .reasontitle:hover {
+    color: #b58cff;
+  }
   .reason {
-    margin-top: 6px;
-    padding: 8px 10px;
-    background: rgba(181, 140, 255, 0.05);
-    border-left: 2px solid rgba(181, 140, 255, 0.3);
+    margin: 0;
+    padding: 4px 10px 8px;
     color: #9a8fb8;
     font-size: 12px;
     white-space: pre-wrap;

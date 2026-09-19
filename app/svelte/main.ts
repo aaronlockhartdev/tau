@@ -9,7 +9,15 @@ import { onEvents, isTauri } from './lib/protocol';
 // re-triggers that effect in this Svelte (update-depth loop).
 void init();
 if (isTauri()) {
-  void onEvents(applyEvents);
+  // Dev seam: a rolling log of the event types the wire delivers
+  // (window.__evlog) — the diagnosis aid for stream/event bugs.
+  void onEvents((evs) => {
+    const w = window as unknown as { __evlog?: string[] };
+    w.__evlog = w.__evlog ?? [];
+    for (const e of evs) w.__evlog.push(e.type);
+    if (w.__evlog.length > 200) w.__evlog.shift();
+    applyEvents(evs);
+  });
 }
 
 const root = document.getElementById('app');

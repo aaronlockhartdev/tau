@@ -50,6 +50,8 @@
     <span class="k">render</span> {store.renderRange || '—'} · {store.renderMs.toFixed(1)} ms · {s?.live.length ?? 0} streams
     <span class="k">model</span> {s?.meta.model ?? '—'}
     <span class="k">usage</span> {s?.usage ? `${fmt(s.usage.input_tokens)} in · ${fmt(s.usage.output_tokens)} out · ${fmt(s.usage.total_tokens)} total` : '—'}
+    <span class="k">tps</span> {s && s.tps > 0 ? s.tps.toFixed(0) : '—'}
+    <span class="k">cache</span> {s?.usage && s.usage.input_tokens > 0 ? `${Math.round((100 * s.usage.cached_prompt_tokens) / s.usage.input_tokens)}%` : '—'}
   </span>
 </div>
 

@@ -427,6 +427,8 @@ pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub total_tokens: u64,
+    /// Prompt tokens served from the server's prefix cache (0 = no hit data).
+    pub cached_prompt_tokens: u64,
 }
 
 #[cfg(test)]
@@ -599,6 +601,7 @@ mod tests {
                     input_tokens: 100,
                     output_tokens: 20,
                     total_tokens: 120,
+                    cached_prompt_tokens: 0,
                 }),
             },
             Event::ToolStart {

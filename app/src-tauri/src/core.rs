@@ -155,6 +155,11 @@ impl TurnSink for ForwardSink<'_> {
                         input_tokens: u.input_tokens,
                         output_tokens: u.output_tokens,
                         total_tokens: u.total_tokens,
+                        cached_prompt_tokens: u
+                            .prompt_tokens_details
+                            .as_ref()
+                            .map(|d| d.cached_tokens)
+                            .unwrap_or(0),
                     }),
                 });
             }
@@ -208,6 +213,11 @@ fn info_to_protocol(i: &tau_core::subagent::SubagentInfo) -> SubagentInfo {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
             total_tokens: u.total_tokens,
+            cached_prompt_tokens: u
+                .prompt_tokens_details
+                .as_ref()
+                .map(|d| d.cached_tokens)
+                .unwrap_or(0),
         }),
         task: i.task.clone(),
         resume_contract: i.resume_contract.clone(),
@@ -762,7 +772,7 @@ impl Core {
             store,
             system_prompt,
             model: model.clone(),
-            tools: tools::tool_specs(),
+            tools: tools::agent_tool_specs(),
             cwd: cwd.clone(),
             provider: provider.clone(),
             tool_batch_on_force: config.requests.tool_batch_on_force,
@@ -1068,18 +1078,22 @@ impl Core {
                     return Ok(CommandOutput::None);
                 }
                 live.agent.send(text.clone(), lane_to_lane(lane));
-                if lane != MessageLane::Force {
-                    live.queue.lock().unwrap().push(QueuedItem { text, lane });
-                }
-                self.emit_queue(&live);
-                // Turn start is a check-and-set on the turn flag: a send that
-                // lands mid-turn is queued and the in-flight process() absorbs
-                // it (spec §7 steering rides the live call; §8 single writer).
-                if live
+                // Turn start is a check-and-set on the turn flag (spec §8
+                // single writer). A send that lands while a turn is in flight
+                // is the queued one: it shows in the GUI's queue and the
+                // in-flight process() absorbs it (spec §7). A send that starts
+                // a turn IS the turn — it is not queued, so an idle send is
+                // delivered immediately instead of sitting in the queue
+                // section until the turn's reconciliation runs.
+                let started = live
                     .turn
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                    .is_ok()
-                {
+                    .is_ok();
+                if !started && lane != MessageLane::Force {
+                    live.queue.lock().unwrap().push(QueuedItem { text, lane });
+                    self.emit_queue(&live);
+                }
+                if started {
                     let live = Arc::clone(&live);
                     let core = Arc::clone(self);
                     tokio::spawn(async move { run_turn(core, live).await });
@@ -1134,7 +1148,9 @@ impl Core {
                     .ok_or_else(|| ProtocolError::NotFound {
                         what: format!("subagent {handle}"),
                     })?;
-                Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
+                Ok(CommandOutput::Subagent {
+                    subagent: info_to_protocol(&info),
+                })
             }
             Command::SubagentSpawn {
                 session,
@@ -1164,7 +1180,9 @@ impl Core {
                                 .ok_or_else(|| ProtocolError::Other {
                                     message: "child vanished after spawn".into(),
                                 })?;
-                        Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
+                        Ok(CommandOutput::Subagent {
+                            subagent: info_to_protocol(&info),
+                        })
                     }
                     Err(e) => Err(ProtocolError::Other { message: e }),
                 }
@@ -1185,7 +1203,9 @@ impl Core {
                     .ok_or_else(|| ProtocolError::NotFound {
                         what: format!("subagent {handle}"),
                     })?;
-                Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
+                Ok(CommandOutput::Subagent {
+                    subagent: info_to_protocol(&info),
+                })
             }
             Command::SubagentStop { handle } => {
                 let session = handle
@@ -1203,7 +1223,9 @@ impl Core {
                     .ok_or_else(|| ProtocolError::NotFound {
                         what: format!("subagent {handle}"),
                     })?;
-                Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
+                Ok(CommandOutput::Subagent {
+                    subagent: info_to_protocol(&info),
+                })
             }
             Command::TaskCreate { session, title } => {
                 let live = self.live(&session)?;
@@ -1354,10 +1376,12 @@ impl Core {
                 // A short file is not truncation: only the cap marks lost
                 // content.
                 let body = taken.join("\n");
-                Ok(CommandOutput::File { file: FileText {
-                    text: body,
-                    truncated,
-                }})
+                Ok(CommandOutput::File {
+                    file: FileText {
+                        text: body,
+                        truncated,
+                    },
+                })
             }
         }
     }
@@ -1640,6 +1664,10 @@ fn usage_of(value: &Value) -> Option<Usage> {
         input_tokens: u.input_tokens,
         output_tokens: u.output_tokens,
         total_tokens: u.total_tokens,
+        cached_prompt_tokens: u
+            .prompt_tokens_details
+            .map(|d| d.cached_tokens)
+            .unwrap_or(0),
     })
 }
 
@@ -2091,8 +2119,8 @@ mod tests {
         let events = collected.lock().unwrap().clone();
 
         // The stream: one start, deltas coalesced into one, one end with
-        // the usage; the tool batch: a start/end pair; the queue: the
-        // message arrives, then the delivered message leaves it.
+        // the usage; the tool batch: a start/end pair; a starter send while
+        // idle is the turn itself and never sits in the queue.
         assert!(
             events
                 .iter()
@@ -2135,7 +2163,6 @@ mod tests {
             panic!("no tool end: {events:?}");
         };
         assert_eq!(name, "bash");
-        // The queue: sent, then delivered (empty).
         let queues: Vec<&Event> = events
             .iter()
             .filter(|e| matches!(e, Event::Queue { .. }))
@@ -2143,15 +2170,8 @@ mod tests {
         assert!(
             queues
                 .iter()
-                .any(|e| matches!(e, Event::Queue { items, .. } if !items.is_empty())),
-            "no non-empty queue state: {queues:?}"
-        );
-        assert!(
-            queues
-                .iter()
-                .rev()
-                .any(|e| matches!(e, Event::Queue { items, .. } if items.is_empty())),
-            "the delivered message never left the queue: {queues:?}"
+                .all(|e| matches!(e, Event::Queue { items, .. } if items.is_empty())),
+            "a starter send must not appear in the queue: {queues:?}"
         );
     }
 

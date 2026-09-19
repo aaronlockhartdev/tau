@@ -42,6 +42,8 @@
     entries: Entry[];
     live: LiveEntry[];
     usage: Usage | null;
+    // Output tokens/second of the session's most recent turn (status bar).
+    tps: number;
     turn: 'running' | 'idle';
     pending: PendingMsg[];
     // The session-tree row (ticket #26): a child session's parent link,
@@ -130,6 +132,7 @@
       entries: [],
       live: [],
       usage: null,
+      tps: 0,
       turn: state === 'running' ? 'running' : 'idle',
       pending: [],
       parent: parentSid,
@@ -145,6 +148,9 @@
   // Deltas that land before their stream_start (a GUI connecting mid-stream):
   // buffered per call until the start or end arrives.
   let pendingDeltas = new Map<string, { text: string; reasoning: string }>();
+  // Per-call clock (ms epoch) by call_id: TPS = a call's output tokens over
+  // its own stream duration, shown in the status bar.
+  let callStartMs = new Map<string, number>();
   const PENDING_CAP = 64 * 1024;
 
   let demoViews: ViewEntry[] = [];
@@ -205,6 +211,7 @@
       entries,
       live: [],
       usage: meta.usage,
+      tps: 0,
       turn: 'idle',
       pending: [
         { text: 'use the 62-char alphabet, not base36', lane: 'steering' },
@@ -221,7 +228,7 @@
     };
     // The demo parent's usage: the sum of its children's (the bar's usage
     // segment shows real tokens, not undefined).
-    store.sessions[meta.id].usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000 };
+    store.sessions[meta.id].usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000, cached_prompt_tokens: 0 };
     for (const c of demoChildren()) store.sessions[c.meta.id] = c;
     startDemoStreams();
   }
@@ -231,6 +238,7 @@
   // virtualized DOM only shows the window, one stream card can sit outside it).
   (window as unknown as { __tau?: unknown }).__tau = {
     applyEvents,
+    store: () => store,
     liveTexts: () =>
       (store.sessions['demo']?.live ?? []).map((l) => l.text.length)
   };
@@ -270,6 +278,7 @@
       entries: [],
       live: [],
       usage,
+      tps: 0,
       turn: state === 'running' ? 'running' : 'idle',
       pending: [],
       parent,
@@ -285,22 +294,22 @@
   function demoChildren(): SessionState[] {
     const now = Date.now();
     return [
-      demoChild('c1', 'provider hardening', 'a', 'demo', 'running', null, 'retry loop done, writing backoff tests', { input_tokens: 41200, output_tokens: 8900, total_tokens: 50100 }, now - 3600e3, now - 60e3, [], [demoTask('t1', 'in_progress', 'c1', 0)]),
-      demoChild('c2', 'protocol surface', 'b', 'demo', 'idle', 'parent', 'types drafted — needs review sign-off', { input_tokens: 88000, output_tokens: 31000, total_tokens: 119000 }, now - 7200e3, now - 180e3, [
+      demoChild('c1', 'provider hardening', 'a', 'demo', 'running', null, 'retry loop done, writing backoff tests', { input_tokens: 41200, output_tokens: 8900, total_tokens: 50100, cached_prompt_tokens: 0 }, now - 3600e3, now - 60e3, [], [demoTask('t1', 'in_progress', 'c1', 0)]),
+      demoChild('c2', 'protocol surface', 'b', 'demo', 'idle', 'parent', 'types drafted — needs review sign-off', { input_tokens: 88000, output_tokens: 31000, total_tokens: 119000, cached_prompt_tokens: 0 }, now - 7200e3, now - 180e3, [
         demoSub('g1', 'cg1', 'fresh', 'idle', 'subagent', 'waiting on the field renames'),
         demoSub('g2', 'cg2', 'compacted', 'running', null, 'renaming the event groups')
       ], [demoTask('t4', 'blocked', 'c2', 1)]),
-      demoChild('c3', 'config loader', 'c', 'demo', 'done', null, 'loader passes all tests', { input_tokens: 12400, output_tokens: 6100, total_tokens: 18500 }, now - 14400e3, now - 3600e3, [], [demoTask('t2', 'done', 'c3', 0)]),
-      demoChild('c4', 'fixture generator', 'd', 'demo', 'failed', null, 'provider rejected the degenerate observation run', { input_tokens: 30100, output_tokens: 9400, total_tokens: 39500 }, now - 21600e3, now - 5400e3, [], [demoTask('t5', 'done', 'c4', 0)]),
-      demoChild('c5', 'doc sweep', 'e', 'demo', 'stopped', null, 'stopped by user mid-sweep', { input_tokens: 5200, output_tokens: 2100, total_tokens: 7300 }, now - 28800e3, now - 7200e3, [], []),
+      demoChild('c3', 'config loader', 'c', 'demo', 'done', null, 'loader passes all tests', { input_tokens: 12400, output_tokens: 6100, total_tokens: 18500, cached_prompt_tokens: 0 }, now - 14400e3, now - 3600e3, [], [demoTask('t2', 'done', 'c3', 0)]),
+      demoChild('c4', 'fixture generator', 'd', 'demo', 'failed', null, 'provider rejected the degenerate observation run', { input_tokens: 30100, output_tokens: 9400, total_tokens: 39500, cached_prompt_tokens: 0 }, now - 21600e3, now - 5400e3, [], [demoTask('t5', 'done', 'c4', 0)]),
+      demoChild('c5', 'doc sweep', 'e', 'demo', 'stopped', null, 'stopped by user mid-sweep', { input_tokens: 5200, output_tokens: 2100, total_tokens: 7300, cached_prompt_tokens: 0 }, now - 28800e3, now - 7200e3, [], []),
       // The prototype's 6th child — TWO running, so the badge rule is testable.
-      demoChild('c6', 'snapshot benchmark', 'f', 'demo', 'running', null, 'measuring the 10k snapshot size', { input_tokens: 15600, output_tokens: 3400, total_tokens: 19000 }, now - 1800e3, now - 30e3, [], []),
+      demoChild('c6', 'snapshot benchmark', 'f', 'demo', 'running', null, 'measuring the 10k snapshot size', { input_tokens: 15600, output_tokens: 3400, total_tokens: 19000, cached_prompt_tokens: 0 }, now - 1800e3, now - 30e3, [], []),
       // The nested pair as real store sessions (depth 2) — double-click opens them.
-      demoChild('cg1', 'event renames', 'g1', 'c2', 'idle', 'subagent', 'waiting on the field renames', { input_tokens: 1200, output_tokens: 400, total_tokens: 1600 }, now - 3600e3, now - 120e3, [], []),
-      demoChild('cg2', 'event groups', 'g2', 'c2', 'running', null, 'renaming the event groups', { input_tokens: 2100, output_tokens: 900, total_tokens: 3000 }, now - 3000e3, now - 90e3, [], []),
+      demoChild('cg1', 'event renames', 'g1', 'c2', 'idle', 'subagent', 'waiting on the field renames', { input_tokens: 1200, output_tokens: 400, total_tokens: 1600, cached_prompt_tokens: 0 }, now - 3600e3, now - 120e3, [], []),
+      demoChild('cg2', 'event groups', 'g2', 'c2', 'running', null, 'renaming the event groups', { input_tokens: 2100, output_tokens: 900, total_tokens: 3000, cached_prompt_tokens: 0 }, now - 3000e3, now - 90e3, [], []),
       // Two archived top-level sessions (the prototype's a1/a2).
-      demoChild('a1', 'old: provider spike', null, null, 'done', null, 'archived after the spike closed', { input_tokens: 9800, output_tokens: 2400, total_tokens: 12200 }, now - 86400e3 * 30, now - 86400e3 * 5, [], [], true),
-      demoChild('a2', 'old: first session store', null, null, 'done', null, 'archived — superseded by the JSONL store', { input_tokens: 14300, output_tokens: 5100, total_tokens: 19400 }, now - 86400e3 * 45, now - 86400e3 * 10, [], [], true)
+      demoChild('a1', 'old: provider spike', null, null, 'done', null, 'archived after the spike closed', { input_tokens: 9800, output_tokens: 2400, total_tokens: 12200, cached_prompt_tokens: 0 }, now - 86400e3 * 30, now - 86400e3 * 5, [], [], true),
+      demoChild('a2', 'old: first session store', null, null, 'done', null, 'archived — superseded by the JSONL store', { input_tokens: 14300, output_tokens: 5100, total_tokens: 19400, cached_prompt_tokens: 0 }, now - 86400e3 * 45, now - 86400e3 * 10, [], [], true)
     ];
   }
 
@@ -313,7 +322,7 @@
       state,
       waiting_on: waitingOn,
       last_message: lastMessage,
-      usage: { input_tokens: 1200, output_tokens: 400, total_tokens: 1600 },
+      usage: { input_tokens: 1200, output_tokens: 400, total_tokens: 1600, cached_prompt_tokens: 0 },
       task: null,
       resume_contract: null
     };
@@ -497,6 +506,7 @@
       live: [],
       usage: meta.usage,
       turn: snap.live.turn === 'running' ? 'running' : 'idle',
+      tps: 0,
       pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) })),
       parent: null,
       state: snap.live.turn === 'running' ? 'running' : 'idle',
@@ -573,6 +583,7 @@
       entries,
       live: [],
       usage: m2.usage,
+      tps: 0,
       turn: 'idle',
       pending: [],
       parent: null,
@@ -676,9 +687,20 @@
       views = out.entries;
     }
     for (const v of views) {
-      const i = s.entries.findIndex((e) => e.id === v.id);
-      if (i < 0) continue;
       const next = toEntry(v);
+      const i = s.entries.findIndex((e) => e.id === v.id);
+      if (i < 0) {
+        // The store has no entry for this id — the live path streams the
+        // assistant under its call_id and never receives the user entry the
+        // core appended, so hydrated reads insert what the stream missed.
+        // The text dedup keeps the streamed assistant (same content, call_id
+        // id) from appearing twice against its file id.
+        if (next.text && s.entries.some((e) => e.text === next.text)) continue;
+        const at = s.entries.findIndex((e) => e.id > v.id);
+        if (at < 0) s.entries.push(next);
+        else s.entries.splice(at, 0, next);
+        continue;
+      }
       const old = s.entries[i];
       if (old.text !== next.text || old.output !== next.output || old.status !== next.status) {
         s.entries[i] = next;
@@ -710,7 +732,7 @@
       s.meta.leaf = id;
       const callId = 'demo-reply-' + id;
       const answer = 'On it. ' + text + '\n```rust\nlet n = 0;\n```\nDone — **verified**.';
-      const usage: Usage = { input_tokens: 1200, output_tokens: 40, total_tokens: 1240 };
+      const usage: Usage = { input_tokens: 1200, output_tokens: 40, total_tokens: 1240, cached_prompt_tokens: 0 };
       applyEvents([
         { type: 'stream_start', workspace: s.meta.workspace, session: sid, call_id: callId },
         { type: 'stream_delta', workspace: s.meta.workspace, session: sid, call_id: callId, text: answer, reasoning: null },
@@ -795,6 +817,7 @@
             pendingDeltas.delete(ev.call_id);
           }
           s.live.push(le);
+          callStartMs.set(ev.call_id, Date.now());
           s.turn = 'running';
           break;
         }
@@ -833,8 +856,22 @@
               usage: ev.usage ?? undefined
             });
           }
-          if (ev.usage) s.usage = ev.usage;
-          if (s.live.length === 0) s.turn = 'idle';
+          if (ev.usage) {
+            s.usage = ev.usage;
+            const started = callStartMs.get(ev.call_id);
+            if (started !== undefined) {
+              const secs = (Date.now() - started) / 1000;
+              if (secs > 0.2) s.tps = ev.usage.output_tokens / secs;
+            }
+            callStartMs.delete(ev.call_id);
+          }
+          if (s.live.length === 0) {
+            s.turn = 'idle';
+            // Post-turn reconciliation (GUI side): the session file is the
+            // record — re-read the tail so tool entries and the final
+            // assistant state land even if their events raced the stream.
+            void fetchWindow(sid, Math.max(0, s.entries.length - 50), 50);
+          }
           s.meta.leaf = le?.id ?? s.meta.leaf;
           break;
         }

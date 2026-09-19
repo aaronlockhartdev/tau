@@ -24,6 +24,9 @@
 
   const entries = $derived(cur ? store.sessions[cur].entries : []);
   const live = $derived(cur ? store.sessions[cur].live : []);
+  // Only a live (in-flight) entry carries the streaming cursor; a persisted
+  // entry's reasoning is done and shows none.
+  const liveIds = $derived(new Set(live.map((l) => l.id)));
 
   // Live entries sit at the tail of the virtual list (the running message is
   // the most recent thing in the session).
@@ -157,7 +160,7 @@
     <div class="track" style="height: {total}px">
       <div class="inner" style="transform: translateY({win.offset}px)">
         {#each all.slice(win.start, win.end) as e (e.id)}
-          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} />
+          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} streaming={liveIds.has(e.id)} />
         {/each}
       </div>
     </div>
