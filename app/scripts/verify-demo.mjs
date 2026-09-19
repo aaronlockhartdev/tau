@@ -156,6 +156,82 @@ try {
     check('usage renders real numbers (no undefined/NaN)', ui.metas.length > 0 && ui.metas.every((m) => /^\d+(\.\dk)? in · \d+(\.\dk)? out$/.test(m)), ui.metas.join(' / '));
     check('focus mode applies the class', ui.focusOn === true, ui.focus);
     await evalPage(wsUrl, `document.querySelector('.focus').click()`); // toggle back
+
+    // --- ticket #26: the side panes ---
+    const panes = await evalPage(wsUrl, `(() => {
+      const [left, right] = [...document.querySelectorAll('.pane')];
+      if (!left || !right) return { missing: document.body.innerText.slice(0, 300) };
+      const leftRows = [...left.querySelectorAll('.srow')].map((r) => r.textContent.trim());
+      const badges = [...left.querySelectorAll('.srow .badge')].map((b) => b.textContent.trim());
+      const rightTabs = [...right.querySelectorAll('.tab')].map((t) => t.textContent.trim());
+      const taskRows = [...right.querySelectorAll('.lrow')].map((r) => r.textContent.trim());
+      return { leftRows, badges, rightTabs, taskRows };
+    })()`);
+    if (panes.missing) throw new Error('no .pane in DOM — ' + panes.missing);
+    check('left pane: session tree shows the 5 sub-agent children grouped under the active session',
+      panes.leftRows.length >= 6 && panes.leftRows.some((t) => t.includes('provider hardening')),
+      `${panes.leftRows.length} rows`);
+    check('left pane: sub-agent rows carry their full lifecycle tags',
+      ['running', 'idle', 'done', 'failed', 'stopped'].every((s) => panes.badges.some((b) => b.startsWith(s))),
+      panes.badges.join(' '));
+    check('left pane: the active top-level session is badged running while generating',
+      panes.badges.includes('running') || panes.badges.some((b) => b === 'running'),
+      panes.badges.join(' '));
+    check('right pane: the two tabs are tasks and sub-agents',
+      JSON.stringify(panes.rightTabs) === JSON.stringify(['tasks', 'sub-agents']),
+      panes.rightTabs.join(' / '));
+    check('right pane: tasks default to the open filter (3 not-done of 5)',
+      panes.taskRows.length === 3 && panes.taskRows.some((t) => t.includes('Harden provider')) && panes.taskRows.some((t) => t.includes('Protocol surface')),
+      `${panes.taskRows.length} rows: ${panes.taskRows.join(' | ').slice(0, 120)}`);
+
+    // expand a task → labeled detail with the resume contract
+    const detail = await evalPage(wsUrl, `new Promise((res) => {
+      const [left, right] = [...document.querySelectorAll('.pane')];
+      const row = [...right.querySelectorAll('.lrow')].find((r) => r.textContent.includes('Protocol surface'));
+      row.click();
+      setTimeout(() => res([...right.querySelectorAll('.dl')].map((d) => d.textContent.trim())), 150);
+    })`);
+    check('task detail: labeled sections include the resume contract',
+      detail.some((d) => d.toLowerCase().includes('resume')) && detail.some((d) => d.toLowerCase().includes('blocker')),
+      detail.join(' / '));
+
+    // sub-agents tab: 5 roots, the idle one carries its nested pair
+    const subs = await evalPage(wsUrl, `new Promise((res) => {
+      const [left, right] = [...document.querySelectorAll('.pane')];
+      [...right.querySelectorAll('.tab')].find((t) => t.textContent.trim() === 'sub-agents').click();
+      setTimeout(() => {
+        const rows = [...right.querySelectorAll('.srow2')];
+        res({
+          roots: rows.filter((r) => !r.classList.contains('d2')).map((r) => r.textContent.trim()),
+          nested: rows.filter((r) => r.classList.contains('d2')).map((r) => r.textContent.trim())
+        });
+      }, 150);
+    })`);
+    check('sub-agents: the open filter shows the 4 not-done roots',
+      subs.roots.length === 4 && !subs.roots.some((r) => r.includes('done')),
+      subs.roots.map((r) => r.slice(0, 24)).join(' | '));
+    const subsAll = await evalPage(wsUrl, `new Promise((res) => {
+      const [left, right] = [...document.querySelectorAll('.pane')];
+      [...right.querySelectorAll('.fchip')].find((c) => c.textContent.trim() === 'all').click();
+      setTimeout(() => res([...right.querySelectorAll('.srow2')].filter((r) => !r.classList.contains('d2')).length), 150);
+    })`);
+    check('sub-agents: the all filter shows all 5', subsAll === 5, `${subsAll} roots`);
+    check('sub-agents: nesting renders (2 under the forked child)',
+      subs.nested.length === 2, subs.nested.map((r) => r.slice(0, 24)).join(' | '));
+
+    // focus mode collapses both panes
+    const collapsed = await evalPage(wsUrl, `new Promise((res) => {
+      const body = document.querySelector('.body');
+      document.querySelector('.focus').click();
+      setTimeout(() => res({
+        focus: body.classList.contains('focus'),
+        widths: [...document.querySelectorAll('.pane')].map((p) => p.getBoundingClientRect().width)
+      }), 200);
+    })`);
+    check('focus mode: both side panes collapse to 0 width',
+      collapsed.focus && collapsed.widths.every((w) => w === 0),
+      JSON.stringify(collapsed));
+    await evalPage(wsUrl, `document.querySelector('.focus').click()`); // toggle back
   } finally {
     preview.kill('SIGTERM');
   }

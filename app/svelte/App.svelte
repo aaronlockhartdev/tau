@@ -2,10 +2,13 @@
   // The shell (spec §9): workspace tabs on top; body grid with the chat
   // ALWAYS central — focus mode collapses both side panes (the prototype's
   // grid fix: the center keeps its explicit track when the panes hide).
-  // The side panes are placeholder regions: their content is ticket #26.
+  // The side panes are ticket #26: left = files | sessions tree, right =
+  // tasks | sub-agents (both tabbed, per the #11 verdict).
 
   import WorkspaceTabs from './components/WorkspaceTabs.svelte';
   import Transcript from './components/Transcript.svelte';
+  import LeftPane from './components/LeftPane.svelte';
+  import RightPane from './components/RightPane.svelte';
   import Queue from './components/Queue.svelte';
   import Composer from './components/Composer.svelte';
   import StatusBar from './components/StatusBar.svelte';
@@ -23,15 +26,14 @@
   <WorkspaceTabs />
   <div class="body" class:focus={focus}>
     <aside class="left">
-      <div class="pane-tab">files</div>
-      <div class="pane-tab">sessions</div>
-      <div class="pane-ph">side panes land in ticket #26</div>
+      <LeftPane />
     </aside>
     <main class="center">
       <div class="chead">
         <span class="n">{title}</span>
-        <!-- Badge reflects this session's own turn; a running sub-agent shows when #23's events land -->
-        {#if cur?.turn === 'running'}
+        <!-- The #11 verdict: badged `running` only while this session is
+             generating or one of its sub-agents is running; untagged when idle -->
+        {#if cur && (cur.turn === 'running' || cur.subagents.some((x) => x.state === 'running'))}
           <span class="badge running"><span class="dot"></span>running</span>
         {/if}
         <span class="m">{model}</span>
@@ -55,9 +57,7 @@
       {/if}
     </main>
     <aside class="right">
-      <div class="pane-tab">tasks</div>
-      <div class="pane-tab">sub-agents</div>
-      <div class="pane-ph">side panes land in ticket #26</div>
+      <RightPane />
     </aside>
   </div>
   <StatusBar />
@@ -98,21 +98,6 @@
     border-left: 1px solid var(--line);
     overflow-y: auto;
     min-height: 0;
-  }
-  .pane-tab {
-    flex: 1;
-    text-align: center;
-    padding: 8px;
-    font: 11px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--dim);
-    border-bottom: 1px solid var(--line);
-  }
-  .pane-ph {
-    padding: 16px;
-    font: 11px var(--mono);
-    color: #4d5462;
   }
   .center {
     display: flex;

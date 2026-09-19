@@ -82,37 +82,29 @@
     selSub: string | null;
   }
 
-  function paneOf(ws: string | null): PaneState {
-    if (ws === null) {
-      return {
-        ltab: 'sessions',
-        rtab: 'tasks',
-        tFilter: 'open',
-        sFilter: 'open',
-        expandedTasks: [],
-        openGroups: [],
-        archOpen: false,
-        selSub: null
-      };
-    }
-    let p = store.pane[ws];
-    if (!p) {
-      p = {
-        ltab: 'sessions',
-        rtab: 'tasks',
-        tFilter: 'open',
-        sFilter: 'open',
-        expandedTasks: [],
-        openGroups: [],
-        archOpen: false,
-        selSub: null
-      };
-      store.pane[ws] = p;
-    }
-    return p;
+  // Pure read — a $derived may call this; creation goes through ensurePane
+  // (a mutation, only from effects/actions).
+  export function pane(ws: string | null): PaneState | null {
+    if (ws === null) return null;
+    return store.pane[ws] ?? null;
   }
-  export function pane(ws: string | null): PaneState {
-    return paneOf(ws);
+
+  // Create-if-missing (the old pane() behavior) — call from effects/actions.
+  export function ensurePane(ws: string): PaneState {
+    const prev = store.pane[ws];
+    if (prev) return prev;
+    const p: PaneState = {
+      ltab: 'sessions',
+      rtab: 'tasks',
+      tFilter: 'open',
+      sFilter: 'open',
+      expandedTasks: [],
+      openGroups: [],
+      archOpen: false,
+      selSub: null
+    };
+    store.pane[ws] = p;
+    return p;
   }
 
   // A spawn/state event for a child we haven't opened yet: register a stub
@@ -217,10 +209,190 @@
       state: 'idle',
       archived: false,
       mru: meta.created,
-      subagents: [],
-      tasks: []
+      subagents: demoSubagents(),
+      tasks: demoTasks()
     };
+    for (const c of demoChildren()) store.sessions[c.meta.id] = c;
     startDemoStreams();
+  }
+
+  // The #26 pane dataset (the prototype's): five sub-agent sessions under
+  // the demo session — one per lifecycle state — plus a nested pair under
+  // the idle one, and the five tasks with steps/criteria/evidence.
+  function demoMeta(id: string, title: string, created: number): SessionMeta {
+    return {
+      id,
+      workspace: 'w-demo',
+      title,
+      created,
+      leaf: null,
+      model: 'vllm/qwen3.8-27b',
+      usage: null
+    };
+  }
+
+  function demoChild(
+    id: string,
+    title: string,
+    handle: string,
+    parent: string,
+    state: SubagentInfo['state'],
+    waitingOn: SubagentInfo['waiting_on'],
+    lastMessage: string | null,
+    usage: Usage,
+    created: number,
+    mru: number,
+    subagents: SubagentInfo[],
+    tasks: Task[]
+  ): SessionState {
+    return {
+      meta: demoMeta(id, title, created),
+      entries: [],
+      live: [],
+      usage,
+      turn: state === 'running' ? 'active' : 'idle',
+      pending: [],
+      parent,
+      state,
+      archived: false,
+      mru,
+      subagents,
+      tasks
+    } as SessionState;
+  }
+
+  function demoChildren(): SessionState[] {
+    const now = Date.now();
+    return [
+      demoChild('c1', 'provider hardening', 'a', 'demo', 'running', null, 'retry loop done, writing backoff tests', { input_tokens: 41200, output_tokens: 8900, total_tokens: 50100 }, now - 3600e3, now - 60e3, [], [demoTask('t1', 'in_progress', 'c1', 0)]),
+      demoChild('c2', 'protocol surface', 'b', 'demo', 'idle', 'parent', 'types drafted — needs review sign-off', { input_tokens: 88000, output_tokens: 31000, total_tokens: 119000 }, now - 7200e3, now - 180e3, [
+        demoSub('g1', 'cg1', 'fresh', 'idle', 'subagent', 'waiting on the field renames'),
+        demoSub('g2', 'cg2', 'compacted', 'running', null, 'renaming the event groups')
+      ], [demoTask('t4', 'blocked', 'c2', 1)]),
+      demoChild('c3', 'config loader', 'c', 'demo', 'done', null, 'loader passes all tests', { input_tokens: 12400, output_tokens: 6100, total_tokens: 18500 }, now - 14400e3, now - 3600e3, [], [demoTask('t2', 'done', 'c3', 0)]),
+      demoChild('c4', 'fixture generator', 'd', 'demo', 'failed', null, 'provider rejected the degenerate observation run', { input_tokens: 30100, output_tokens: 9400, total_tokens: 39500 }, now - 21600e3, now - 5400e3, [], [demoTask('t5', 'done', 'c4', 0)]),
+      demoChild('c5', 'doc sweep', 'e', 'demo', 'stopped', null, 'stopped by user mid-sweep', { input_tokens: 5200, output_tokens: 2100, total_tokens: 7300 }, now - 28800e3, now - 7200e3, [], [])
+    ];
+  }
+
+  function demoSub(handle: string, child: string, mode: SubagentInfo['context_mode'], state: SubagentInfo['state'], waitingOn: SubagentInfo['waiting_on'], lastMessage: string | null): SubagentInfo {
+    return {
+      handle,
+      child,
+      agent_type: 'general',
+      context_mode: mode,
+      state,
+      waiting_on: waitingOn,
+      last_message: lastMessage,
+      usage: { input_tokens: 1200, output_tokens: 400, total_tokens: 1600 },
+      task: null,
+      resume_contract: null
+    };
+  }
+
+  function demoSubagents(): SubagentInfo[] {
+    return [
+      demoSub('a', 'c1', 'compacted', 'running', null, 'writing backoff tests'),
+      demoSub('b', 'c2', 'fork', 'idle', 'parent', 'types drafted — needs review sign-off'),
+      demoSub('c', 'c3', 'fresh', 'done', null, 'loader passes all tests'),
+      demoSub('d', 'c4', 'compacted', 'failed', null, 'provider rejected the degenerate run'),
+      demoSub('e', 'c5', 'fresh', 'stopped', null, 'stopped by user mid-sweep')
+    ];
+  }
+
+  function demoTask(id: string, status: Task['status'], worker: string, skip: number): Task {
+    const now = Date.now();
+    const base: Task = {
+      id,
+      title: { t1: 'Harden provider retry/backoff', t2: 'Config loader with layering', t3: 'Migrate tests to the 62-char alphabet', t4: 'Protocol surface: types & events', t5: '10k-entry fixture generator' }[id] ?? id,
+      status,
+      steps: [],
+      criteria: [],
+      evidence: [],
+      blockers: [],
+      notes: [],
+      worker: { session: worker, status },
+      created_in: 'demo',
+      updated: now - 60e3 * (skip + 1),
+      resume_contract: undefined,
+      decisions: []
+    };
+    return base;
+  }
+
+  function demoTasks(): Task[] {
+    const now = Date.now();
+    const t1 = demoTask('t1', 'in_progress', 'c1', 0);
+    t1.steps = [
+      { text: 'inventory the retry paths', status: 'done', expected_output: 'retry-path list in the session' },
+      { text: 'add backoff + jitter tests', status: 'active', expected_output: 'hardened retry/backoff tests' },
+      { text: 'run the live acceptance', status: 'pending', expected_output: 'green live run log' }
+    ];
+    t1.criteria = [
+      { text: 'retries on mid-stream provider errors', status: 'satisfied' },
+      { text: 'backoff is capped', status: 'satisfied' },
+      { text: 'live run passes', status: 'pending' }
+    ];
+    t1.evidence = [
+      { criterion: 'retries on mid-stream provider errors', summary: 'mid-stream error preserves partial output', command: 'cargo test -p tau-core sse', passed: true },
+      { criterion: 'backoff is capped', summary: 'backoff capped at 64 s', command: 'cargo test -p tau-core backoff', passed: true }
+    ];
+    t1.resume_contract = {
+      task: 't1',
+      title: t1.title,
+      status: 'in_progress',
+      current_step: { text: t1.steps[1].text, expected_output: t1.steps[1].expected_output },
+      steps: t1.steps,
+      evidence: t1.evidence,
+      gaps: ['timeout path untested'],
+      blockers: [],
+      next_action: 'finish the backoff test, then the live acceptance'
+    };
+    const t2 = demoTask('t2', 'done', 'c3', 1);
+    t2.steps = [
+      { text: 'parse the TOML layers', status: 'done', expected_output: 'layering rules' },
+      { text: 'reject unknown keys', status: 'done', expected_output: 'unknown-key test' }
+    ];
+    t2.criteria = [
+      { text: 'project layer wins on collision', status: 'satisfied' },
+      { text: 'unknown keys rejected', status: 'satisfied' }
+    ];
+    t2.evidence = [{ criterion: 'project layer wins on collision', summary: 'collision + unknown-key tests green', command: 'cargo test -p tau-core config', passed: true }];
+    t2.decisions = [{ question: 'wholesale or field-level layering?', decision: 'field-level fallback per entry', decided_by: 'user' }];
+    const t3 = demoTask('t3', 'pending', 'c1', 2);
+    t3.steps = [
+      { text: 'map base36 call sites', status: 'pending', expected_output: 'call-site list' },
+      { text: 'port to the 62-char alphabet', status: 'pending', expected_output: 'ported + retested' }
+    ];
+    t3.criteria = [{ text: 'all tests green on the new alphabet', status: 'pending' }];
+    t3.worker = undefined;
+    const t4 = demoTask('t4', 'blocked', 'c2', 3);
+    t4.steps = [
+      { text: 'mirror the Rust types', status: 'done', expected_output: 'protocol.ts surface' },
+      { text: 'wire the event groups', status: 'active', expected_output: 'subagent + task event cases' }
+    ];
+    t4.criteria = [
+      { text: 'type-mirrors the crate field-for-field', status: 'satisfied' },
+      { text: 'review sign-off', status: 'pending' }
+    ];
+    t4.evidence = [{ criterion: 'type-mirrors the crate field-for-field', summary: 'svelte-check green against the crate', passed: true }];
+    t4.blockers = [{ reason: 'protocol types rejected in review', needs: 'resubmit after the N1 note' }];
+    t4.resume_contract = {
+      task: 't4',
+      title: t4.title,
+      status: 'blocked',
+      current_step: { text: t4.steps[1].text, expected_output: t4.steps[1].expected_output },
+      steps: t4.steps,
+      evidence: t4.evidence,
+      gaps: ['SubagentInfo shape pending review'],
+      blockers: t4.blockers,
+      next_action: 'address the review note, resubmit the types'
+    };
+    const t5 = demoTask('t5', 'done', 'c4', 4);
+    t5.steps = [{ text: 'generate the 10k-entry fixture', status: 'done', expected_output: 'the committed fixture' }];
+    t5.criteria = [{ text: 'snapshot stays under 2 MB', status: 'satisfied' }];
+    t5.evidence = [{ criterion: 'snapshot stays under 2 MB', summary: 'measured 1.9 MB at 10k entries', command: 'cargo test -p tau-protocol snapshot', passed: true }];
+    return [t1, t2, t3, t4, t5];
   }
 
   // Two live child streams: generated at 47 ms, flushed (coalesced) at
