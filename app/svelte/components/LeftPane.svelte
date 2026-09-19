@@ -90,7 +90,16 @@
     const q = pane(ws);
     if (!q) return false;
     if (q.openGroups.includes(sid)) return true;
-    return q.openGroups.length === 0 && active?.meta.id === sid;
+    if (q.openGroups.length !== 0) return false;
+    // Default view: the group containing the active session — the parent
+    // itself, or an ancestor while a (nested) child of it is active, so the
+    // row the user just opened stays visible.
+    let a: SessionState | null = active;
+    while (a) {
+      if (a.meta.id === sid) return true;
+      a = a.parent ? (store.sessions[a.parent] ?? null) : null;
+    }
+    return false;
   }
   function toggleGroup(sid: string): void {
     const q = pane(ws);
