@@ -609,13 +609,13 @@ fn main() {
 
 fn dump_sessions(cwd: &Path, dest: &str) {
     use std::io::Write;
-    if let Some(dir) = cwd.join(".tau").join("sessions").read_dir().ok() {
+    if let Ok(dir) = cwd.join(".tau").join("sessions").read_dir() {
         for e in dir.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if let Ok(data) = std::fs::read(e.path()) {
-                if let Ok(mut f) = std::fs::File::create(format!("{dest}-{name}")) {
-                    let _ = f.write_all(&data);
-                }
+            if let Ok(data) = std::fs::read(e.path())
+                && let Ok(mut f) = std::fs::File::create(format!("{dest}-{name}"))
+            {
+                let _ = f.write_all(&data);
             }
         }
     }
