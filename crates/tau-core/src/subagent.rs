@@ -175,6 +175,11 @@ pub struct Child {
     state: Mutex<ChildState>,
     nudge_sent: AtomicBool,
     last_message: Mutex<Option<String>>,
+    /// Drive generation: each drive spawn bumps it; a superseded drive's
+    /// loop sees the mismatch and bails before running another round (the
+    /// stop-then-resume window between `drive()` returning and the loop's
+    /// state check — two drives must never run the child concurrently).
+    drive_gen: AtomicUsize,
 }
 
 impl Child {
@@ -236,6 +241,11 @@ pub trait ChildDriver: Send + Sync {
 /// child cannot spawn) is structural, not a check.
 pub struct Supervisor {
     parent_session: String,
+    /// This session's depth (top-level = 0): a child's depth is depth + 1,
+    /// capped by `max_depth` (spawn fails when it would exceed it). The
+    /// structural cap (a child carries no supervisor) already bounds v0
+    /// depth to 1; this knob additionally disables spawning at 0.
+    depth: u32,
     /// Set after the parent's own loop is constructed (the constructor
     /// cannot close over its owner).
     parent: Mutex<Option<Arc<AgentSession>>>,
@@ -267,6 +277,9 @@ pub struct SupervisorParams {
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
     pub caps: SubAgents,
+    /// The session's depth (top-level = 0); a spawn fails when the child's
+    /// depth (depth + 1) would exceed `max_depth`.
+    pub depth: u32,
     pub bridge: Arc<dyn SubagentBridge>,
     pub driver: Arc<dyn ChildDriver>,
 }
@@ -303,6 +316,7 @@ impl Supervisor {
             children: Mutex::new(HashMap::new()),
             next: AtomicUsize::new(0),
             caps: p.caps,
+            depth: p.depth,
             cwd: p.cwd,
             provider: p.provider,
             model: p.model,
@@ -369,6 +383,12 @@ impl Supervisor {
         if agent_type != "general" {
             return Err(format!(
                 "subagent_spawn: unknown agent type {agent_type:?} (v0 has the built-in \"general\")"
+            ));
+        }
+        if self.depth + 1 > self.caps.max_depth {
+            return Err(format!(
+                "subagent_spawn: depth cap reached (max_depth {}; this session is at depth {})",
+                self.caps.max_depth, self.depth
             ));
         }
         self.check_cap(true)?;
@@ -481,6 +501,7 @@ impl Supervisor {
             state: Mutex::new(ChildState::Running),
             nudge_sent: AtomicBool::new(false),
             last_message: Mutex::new(Some(brief.to_owned())),
+            drive_gen: AtomicUsize::new(0),
         });
         self.children
             .lock()
@@ -496,7 +517,8 @@ impl Supervisor {
 
         // The brief is the child's first turn (the handoff-in, ADR-0001).
         child.agent.send(brief, Lane::FollowUp);
-        let drive = tokio::spawn(Self::drive_loop(Arc::clone(self), child));
+        let drive_gen = child.drive_gen.fetch_add(1, Ordering::SeqCst) + 1;
+        let drive = tokio::spawn(Self::drive_loop(Arc::clone(self), child, drive_gen));
         Ok(Spawned {
             handle,
             session_id,
@@ -518,8 +540,14 @@ impl Supervisor {
     /// auto-resumes). `done`, `stopped`, and `failed` end the drive — a
     /// done child is quiescent (no polling task held for the session's
     /// life), and the resume path starts a fresh drive for each.
-    async fn drive_loop(sup: Arc<Supervisor>, child: Arc<Child>) {
+    async fn drive_loop(sup: Arc<Supervisor>, child: Arc<Child>, drive_gen: usize) {
         loop {
+            // A newer drive was spawned while this one was between rounds
+            // (stop + resume in the window after `drive()` returned): the
+            // old loop bails before touching the child again.
+            if child.drive_gen.load(Ordering::SeqCst) != drive_gen {
+                break;
+            }
             match child.state() {
                 ChildState::Running => {}
                 ChildState::Idle { .. } => {
@@ -556,6 +584,12 @@ impl Supervisor {
             // state: the loop's head sleeps until a resume.
             if !matches!(child.state(), ChildState::Running) {
                 continue;
+            }
+            // The nudge sits inside this iteration (after `drive()` returns,
+            // before the loop's head): a superseded drive must not burn the
+            // budget the fresh drive's work period just reset.
+            if child.drive_gen.load(Ordering::SeqCst) != drive_gen {
+                break;
             }
             // A turn ended without `parent_notify`: the one-shot nudge.
             if !child.nudge_sent.swap(true, Ordering::SeqCst) {
@@ -764,7 +798,8 @@ impl Supervisor {
                 // wakes on its own). The nudge budget resets with the new
                 // work period.
                 if was_quiescent {
-                    tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone()));
+                    let drive_gen = child.drive_gen.fetch_add(1, Ordering::SeqCst) + 1;
+                    tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone(), drive_gen));
                 }
                 child.nudge_sent.store(false, Ordering::SeqCst);
                 Ok(format!("resumed sub-agent {handle}"))
@@ -1144,6 +1179,7 @@ mod tests {
             tool_batch_on_force: ToolBatchPolicy::Complete,
             turn: TurnConfig::default(),
             caps,
+            depth: 0,
             bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
             driver: Arc::new(TestDriver),
         });
@@ -1726,6 +1762,174 @@ mod tests {
             sup.spawn("planner", "x", ContextMode::Fresh, None, "c2")
                 .is_err()
         );
+    }
+
+    /// `max_depth` is enforced at spawn: a session at the cap refuses to
+    /// spawn, and `max_depth: 0` disables spawning outright (the
+    /// structural child-carries-no-supervisor rule already bounds v0 depth
+    /// to 1, so depth 0 is the only reachable check in a live tree).
+    #[tokio::test]
+    async fn the_depth_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let sup = |depth: u32, max_depth: u32| -> Arc<Supervisor> {
+            let bridge = Arc::new(TestBridge::default());
+            let factory = Arc::new(CannedFactory {
+                scripts: vec![],
+                delays: vec![],
+                created: AtomicUsize::new(0),
+                calls: Arc::new(AtomicUsize::new(0)),
+            });
+            Supervisor::new(SupervisorParams {
+                parent_session: "parent".into(),
+                cwd: dir.path().to_path_buf(),
+                provider: factory,
+                model: "test-model".into(),
+                system_prompt: "be terse".into(),
+                om: Om::default(),
+                om_model: String::new(),
+                tool_batch_on_force: ToolBatchPolicy::Complete,
+                turn: TurnConfig::default(),
+                caps: SubAgents {
+                    max_depth,
+                    max_concurrent: None,
+                },
+                depth,
+                bridge: bridge as Arc<dyn SubagentBridge>,
+                driver: Arc::new(TestDriver),
+            })
+        };
+        // At the cap: refused with a clear diagnostic.
+        let at_cap = sup(1, 1);
+        let err = at_cap
+            .spawn("general", "x", ContextMode::Fresh, None, "c0")
+            .expect_err("a session at the depth cap cannot spawn");
+        assert!(err.contains("depth cap"), "{err}");
+        // max_depth 0 disables spawning for a top-level session.
+        let zero = sup(0, 0);
+        let err = zero
+            .spawn("general", "x", ContextMode::Fresh, None, "c0")
+            .expect_err("max_depth 0 disables spawning");
+        assert!(err.contains("depth cap"), "{err}");
+        // Below the cap the depth check passes (spawn then fails only on
+        // the missing parent attachment, not on depth).
+        let below = sup(0, 1);
+        let err = below
+            .spawn("general", "x", ContextMode::Fresh, None, "c0")
+            .expect_err("no parent attached in this bare harness");
+        assert!(!err.contains("depth cap"), "{err}");
+    }
+
+    /// The drive-generation guard (review N1): stop + resume landing in the
+    /// window after the in-flight `drive()` returns must not let the old
+    /// drive consume the child's nudge budget and run rounds alongside the
+    /// fresh drive. A notify-gated driver makes the window deterministic:
+    /// both drives are in flight when the test releases them at once — the
+    /// fresh drive legitimately consumes the nudge budget (its own turn);
+    /// without the guard the superseded drive would race it for the budget
+    /// and its loser marks the child `failed` (nudge exhausted).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
+        /// Each `drive()` blocks until the test's notify fires.
+        struct NotifyingDriver {
+            notify: Arc<tokio::sync::Notify>,
+            calls: AtomicUsize,
+        }
+        impl ChildDriver for NotifyingDriver {
+            fn drive(&self, _session: &str, _agent: &Arc<AgentSession>) -> BoxedDrive {
+                let notify = Arc::clone(&self.notify);
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move {
+                    notify.notified().await;
+                    Ok(())
+                })
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let bridge = Arc::new(TestBridge::default());
+        let factory = Arc::new(CannedFactory {
+            scripts: vec![],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let driver = Arc::new(NotifyingDriver {
+            notify: Arc::new(tokio::sync::Notify::new()),
+            calls: AtomicUsize::new(0),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: "parent".into(),
+            cwd: dir.path().to_path_buf(),
+            provider: factory as Arc<dyn ChildProviderFactory>,
+            model: "test-model".into(),
+            system_prompt: "be terse".into(),
+            om: Om::default(),
+            om_model: String::new(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            caps: SubAgents::default(),
+            depth: 0,
+            bridge: bridge as Arc<dyn SubagentBridge>,
+            driver: Arc::clone(&driver) as Arc<dyn ChildDriver>,
+        });
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.create().unwrap();
+        let parent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: Arc::new(ScriptedProvider::new(vec![sse("", &[])])),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        sup.attach_parent(parent);
+
+        // Drive #1 is in flight; stop + resume then spawn drive #2, which
+        // is in flight too — the window opens when the notify releases
+        // both rounds at once.
+        let spawned = sup
+            .spawn("general", "work", ContextMode::Fresh, None, "c0")
+            .unwrap();
+        wait_for(|| driver.calls.load(Ordering::SeqCst) == 1);
+        sup.stop(&spawned.handle, StoppedBy::User).unwrap();
+        sup.message(&spawned.handle, Some("go".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| driver.calls.load(Ordering::SeqCst) == 2);
+        driver.notify.notify_waiters();
+        // The superseded drive ends here, on the generation mismatch.
+        spawned.drive.await.unwrap();
+        assert!(
+            !matches!(
+                sup.state_info(&spawned.handle).unwrap().state,
+                ChildState::Failed { .. }
+            ),
+            "the superseded drive must not exhaust the nudge budget"
+        );
+        let mut store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        store.open().unwrap();
+        let entries = store.entries_range(0, usize::MAX).unwrap();
+        let nudges = entries
+            .iter()
+            .filter(|e| {
+                e.kind == "system"
+                    && e.payload
+                        .get("note")
+                        .and_then(|n| n.as_str())
+                        .map(|n| n.starts_with("nudge"))
+                        .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(
+            nudges, 1,
+            "exactly the fresh drive's nudge; the superseded drive added none"
+        );
+        // Cleanup: the fresh drive's next round is gated; stop the child.
+        sup.stop(&spawned.handle, StoppedBy::User).unwrap();
     }
 
     // ── context modes ───────────────────────────────────────────────────
