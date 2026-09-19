@@ -22,7 +22,7 @@ export interface DemoSession {
 }
 
 const N = 10000;
-const T0 = 1758100000000; // epoch ms, the prototype's base
+const T0 = Date.now() - N * 47000; // relative to now — the MRU column renders 'Xd' ago, not 8815h
 
 function userPayload(text: string): unknown {
   return { text, lane: 'follow_up' };

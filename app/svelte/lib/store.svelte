@@ -133,6 +133,7 @@
       pending: [],
       parent: parentSid,
       state,
+      waiting_on: state === 'idle' ? waitingOn : null,
       archived: false,
       mru,
       subagents: [],
@@ -530,7 +531,8 @@
     const ws: Workspace = { id: `w-demo-${n}`, name: `demo ${n}`, cwd: `~/git/tau${n}` };
     store.workspaces.push(ws);
     const { meta, entries, views } = buildDemoSession();
-    const m2 = { ...meta, id: ws.id, workspace: ws.id, title: `Demo session ${n}` };
+    // Its own session id (not the workspace's — the bar showed `ses w-demo-2`).
+    const m2 = { ...meta, id: `ses-${ws.id}`, workspace: ws.id, title: `Demo session ${n}` };
     demoViews = views;
     store.current = m2.id;
     store.sessions[m2.id] = {
