@@ -116,8 +116,12 @@ pub enum CommandOutput {
     Subagents {
         subagents: Vec<SubagentInfo>,
     },
-    Subagent(SubagentInfo),
-    File(FileText),
+    Subagent {
+        subagent: SubagentInfo,
+    },
+    File {
+        file: FileText,
+    },
 }
 
 /// A command from any transport client to the core (spec §8, settled #10).
@@ -781,8 +785,8 @@ mod tests {
             CommandOutput::Subagents {
                 subagents: vec![sub.clone()],
             },
-            CommandOutput::Subagent(sub),
-            CommandOutput::File(file),
+            CommandOutput::Subagent { subagent: sub },
+            CommandOutput::File { file },
         ];
         for out in &outputs {
             let json = serde_json::to_string(out).unwrap();

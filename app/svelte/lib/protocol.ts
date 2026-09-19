@@ -236,6 +236,8 @@ export type CommandOutput =
   | { kind: 'entries'; entries: ViewEntry[] }
   | { kind: 'providers'; providers: Array<{ name: string; base_url: string; models: string[] }> }
   | { kind: 'agents'; agents: Array<{ name: string; description: string; builtin: boolean }> }
+  | { kind: 'subagent'; subagent: SubagentInfo }
+  | { kind: 'subagents'; subagents: SubagentInfo[] }
   | { kind: 'file'; file: { text: string; truncated: boolean } };
 
 export type SessionEventKind =

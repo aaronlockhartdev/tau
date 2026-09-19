@@ -1134,7 +1134,7 @@ impl Core {
                     .ok_or_else(|| ProtocolError::NotFound {
                         what: format!("subagent {handle}"),
                     })?;
-                Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+                Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
             }
             Command::SubagentSpawn {
                 session,
@@ -1164,7 +1164,7 @@ impl Core {
                                 .ok_or_else(|| ProtocolError::Other {
                                     message: "child vanished after spawn".into(),
                                 })?;
-                        Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+                        Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
                     }
                     Err(e) => Err(ProtocolError::Other { message: e }),
                 }
@@ -1185,7 +1185,7 @@ impl Core {
                     .ok_or_else(|| ProtocolError::NotFound {
                         what: format!("subagent {handle}"),
                     })?;
-                Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+                Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
             }
             Command::SubagentStop { handle } => {
                 let session = handle
@@ -1203,7 +1203,7 @@ impl Core {
                     .ok_or_else(|| ProtocolError::NotFound {
                         what: format!("subagent {handle}"),
                     })?;
-                Ok(CommandOutput::Subagent(info_to_protocol(&info)))
+                Ok(CommandOutput::Subagent { subagent: info_to_protocol(&info) })
             }
             Command::TaskCreate { session, title } => {
                 let live = self.live(&session)?;
@@ -1354,10 +1354,10 @@ impl Core {
                 // A short file is not truncation: only the cap marks lost
                 // content.
                 let body = taken.join("\n");
-                Ok(CommandOutput::File(FileText {
+                Ok(CommandOutput::File { file: FileText {
                     text: body,
                     truncated,
-                }))
+                }})
             }
         }
     }
@@ -1764,7 +1764,7 @@ mod tests {
             .await
             .unwrap();
         match out {
-            CommandOutput::File(f) => {
+            CommandOutput::File { file: f } => {
                 assert_eq!(f.text, "l2");
                 assert!(!f.truncated);
             }
@@ -2439,7 +2439,7 @@ mod tests {
             .await
             .unwrap()
         {
-            CommandOutput::Subagent(i) => i,
+            CommandOutput::Subagent { subagent: i } => i,
             other => panic!("expected a subagent: {other:?}"),
         };
         // The child's scripted done-notify must wake the parent: the

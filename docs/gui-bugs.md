@@ -49,6 +49,20 @@ bugs below.
 8. **`__tau` verification seam was demo-only** — made mode-agnostic
    (`applyEvents` + null-safe `liveTexts`) so the live wire path is
    testable from the page.
+9. **`Subagent` / `File` newtype variants + a two-variant TS mirror gap**
+   — same flattening class as #3 (the `file` member declared nested
+   while the wire was flat), and the TS `CommandOutput` union was
+   missing `subagent` and `subagents` entirely. Converted both Rust
+   variants to struct variants and added the two TS members, so the
+   mirror is field-for-field on all twelve variants.
+10. **`openWorkspace` double-open race** — the open's own
+    `workspace_opened` event re-entered the store via `syncWorkspaces`
+    mid-open (no in-flight guard); on an empty workspace the two
+    `session_new` calls created a phantom duplicate session. An
+    in-flight marker now guards both entry points.
+11. **Side-pane tab headers vanished in the no-workspace empty state** —
+    the pane bodies (and their tab rows) were guarded by `{#if p}`; the
+    tab rows now render disabled outside the guard.
 
 ## Environmental (not code)
 
@@ -64,8 +78,6 @@ bugs below.
   in-memory and boot never reconstructs workspaces from the on-disk
   sessions (`{project}/.tau/sessions/`), so a restart puts the user
   back at "no workspace open" with the + button.
-- **Side panes render no tabs at all until a session exists** — the
-  pane headers disappear with the empty state; the demo never hits this
   path.
 - **Console-error monitoring unverified** — the display locked mid-run
   and the console-monitor log came back empty; the live journey was

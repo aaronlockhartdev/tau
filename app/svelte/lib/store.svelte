@@ -224,7 +224,6 @@
     store.sessions[meta.id].usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000 };
     for (const c of demoChildren()) store.sessions[c.meta.id] = c;
     startDemoStreams();
-    // In-browser test seam (demo only): the wire-shape checks feed the exact
   }
 
   // Verification seam (both modes): feed wire-shaped events through
@@ -510,12 +509,21 @@
   }
 
 
+  // In-flight marker: the open's own workspace_opened event re-enters the
+  // store via syncWorkspaces; without the marker it re-opens mid-flight,
+  // and on an empty workspace the two session_new calls create a phantom
+  // duplicate session.
+  let opening = false;
+
   export async function openWorkspace(ws: Workspace): Promise<void> {
-    if (store.demo) return;
+    if (store.demo || opening) return;
+    opening = true;
     try {
       await openWorkspaceInner(ws);
     } catch (e) {
       store.error = e instanceof Error ? e.message : String(e);
+    } finally {
+      opening = false;
     }
   }
 
@@ -538,14 +546,18 @@
     await switchSession(sid);
   }
 
-  // The v0 protocol has no "open folder" command (a workspace is a project
-  // directory the core opens); the + menu's items are the demo's stand-in.
+  // A workspace is a project directory the core opens: the live + item
+  // picks one with the native folder dialog, the demo one is a fixture.
   export async function addWorkspace(): Promise<void> {
     if (!store.demo) {
-      const dir = await pickDirectory({ directory: true, multiple: false });
-      if (typeof dir !== 'string' || dir === '') return; // the user cancelled
-      const name = dir.split('/').filter(Boolean).pop() ?? dir;
-      void openWorkspace({ id: 'w-pending', name, cwd: dir });
+      try {
+        const dir = await pickDirectory({ directory: true, multiple: false });
+        if (typeof dir !== 'string' || dir === '') return; // the user cancelled
+        const name = dir.split('/').filter(Boolean).pop() ?? dir;
+        void openWorkspace({ id: 'w-pending', name, cwd: dir });
+      } catch (e) {
+        store.error = e instanceof Error ? e.message : String(e);
+      }
       return;
     }
     const n = store.workspaces.length + 1;
@@ -577,7 +589,7 @@
   // window, a remote backend): the store re-reads the list and, if nothing
   // is open yet, opens the first one — the boot rule, applied live.
   async function syncWorkspaces(): Promise<void> {
-    if (store.demo) return;
+    if (store.demo || opening) return;
     try {
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') return;
