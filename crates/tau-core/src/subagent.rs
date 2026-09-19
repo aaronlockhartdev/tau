@@ -2310,4 +2310,139 @@ mod tests {
                 .contains("waiting_on must be")
         );
     }
+
+    /// The acceptance flow (ticket #24): the parent creates a task and
+    /// assigns it to a compacted child; the child works it — evidence,
+    /// then a gated finish — and ends via parent_notify; the child's
+    /// session is the live record (done, with the evidence) and the
+    /// parent's copy is the status pointer.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.create().unwrap();
+        crate::task::create(
+            &mut store,
+            "task-1",
+            "write the docs",
+            vec![],
+            vec![crate::task::Criterion {
+                text: "docs exist".into(),
+                status: crate::task::CriterionStatus::Pending,
+            }],
+        )
+        .unwrap();
+        let bridge = Arc::new(TestBridge::default());
+        let factory = Arc::new(CannedFactory {
+            scripts: vec![vec![sse(
+                "",
+                &[
+                    (
+                        "task_evidence".into(),
+                        "e1".into(),
+                        r#"{"task":"task-1","criterion":"docs exist","summary":"they do"}"#.into(),
+                    ),
+                    (
+                        "task_finish".into(),
+                        "f1".into(),
+                        r#"{"task":"task-1"}"#.into(),
+                    ),
+                    (
+                        "parent_notify".into(),
+                        "n1".into(),
+                        r#"{"text":"finished","done":true,"output":{"result":"the docs"}}"#.into(),
+                    ),
+                ],
+            )]],
+            delays: vec![Duration::from_millis(200)],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: "parent".into(),
+            cwd: dir.path().to_path_buf(),
+            provider: factory,
+            model: "test-model".into(),
+            system_prompt: "be terse".into(),
+            om: Om::default(),
+            om_model: String::new(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            caps: SubAgents::default(),
+            depth: 0,
+            types: vec![crate::agent_type::builtin_general()],
+            bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+            driver: Arc::new(TestDriver),
+        });
+        let parent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::agent_tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: crate::provider::canned(sse("", &[]).as_str()),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        sup.attach_parent(parent.clone());
+        let spawned = sup
+            .spawn(
+                "general",
+                "work task-1",
+                Some(ContextMode::Compacted),
+                Some("task-1"),
+                "c0",
+            )
+            .expect("the compacted spawn");
+        // The assignment copies the record into the child's session (the
+        // child becomes the live record); the 200 ms child delay gives it
+        // time to land before the child's first turn.
+        let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
+        parent_store.open().unwrap();
+        let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        child_store.open().unwrap();
+        crate::task::assign(
+            &mut parent_store,
+            &mut child_store,
+            "task-1",
+            &spawned.session_id,
+            "parent",
+        )
+        .expect("the assignment");
+        wait_for(|| {
+            matches!(
+                sup.state_info(&spawned.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        // The child's session is the live record: done, with the evidence.
+        let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        child_store.open().unwrap();
+        let child_tasks =
+            crate::task::fold_entries(&child_store.entries_range(0, usize::MAX).unwrap());
+        let t = &child_tasks[0];
+        assert_eq!(t.id, "task-1");
+        assert_eq!(t.status, crate::task::STATUS_DONE);
+        assert_eq!(
+            t.criteria[0].status,
+            crate::task::CriterionStatus::Satisfied
+        );
+        // The parent's copy is the status pointer to the child.
+        let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
+        parent_store.open().unwrap();
+        let parent_tasks =
+            crate::task::fold_entries(&parent_store.entries_range(0, usize::MAX).unwrap());
+        let p = &parent_tasks[0];
+        assert_eq!(p.worker.as_ref().unwrap().session, spawned.session_id);
+        // The parent was woken by the notify.
+        let wakes = bridge.wakes.lock().unwrap();
+        assert!(
+            wakes.iter().any(|w| w.child == spawned.session_id),
+            "the parent was woken by the child's notify"
+        );
+    }
 }
