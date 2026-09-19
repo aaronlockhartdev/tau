@@ -18,8 +18,8 @@ if [ "$(uname)" = "Darwin" ]; then
   (cd app && npx tauri build --bundles app)
   echo ""
   echo "Build complete. Artifact:"
-  echo "  app/src-tauri/target/release/bundle/macos/Tau.app"
-  echo "Run: open app/src-tauri/target/release/bundle/macos/Tau.app"
+  echo "  target/release/bundle/macos/Tau.app"
+  echo "Run: open target/release/bundle/macos/Tau.app"
 else
   # Linux (spec §13: macOS first, Linux second): the tauri crate needs the
   # webkit system libraries to link, which the base CI image does not have —

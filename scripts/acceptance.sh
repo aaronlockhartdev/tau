@@ -60,17 +60,19 @@ echo ""
 # -- a: fresh install (the build) + the app launches ----------------------
 if [ "$(uname)" = "Darwin" ]; then
   if ./build > /tmp/tau-acceptance-build.log 2>&1; then
-    app=app/src-tauri/target/release/bundle/macos/Tau.app
-    bin="$app/Contents/MacOS/Tau"
+    app=target/release/bundle/macos/Tau.app
+    bin="$app/Contents/MacOS/tau-app"
     if [ ! -x "$bin" ]; then
       report a FAIL "the build reported success but $bin is missing"
     else
       "$bin" >/dev/null 2>&1 &
       pid=$!
-      up=0
+      up=1
       i=0
       while [ $i -lt 15 ]; do
-        if kill -0 "$pid" 2>/dev/null; then up=1; fi
+        # survival is judged at the FINAL check only: a startup panic must
+        # fail the leg, not pass it on an early "alive" sample
+        kill -0 "$pid" 2>/dev/null || up=0
         i=$((i + 1))
         sleep 1
       done
@@ -79,7 +81,7 @@ if [ "$(uname)" = "Darwin" ]; then
       if [ $up -eq 1 ]; then
         report a PASS "the built Tau.app launched and stayed up 15 s (smoke)"
       else
-        report a FAIL "the app exited within 15 s of launch"
+        report a FAIL "the app exited before 15 s of launch"
       fi
     fi
   else

@@ -15,7 +15,7 @@ cd tau
 `./build` does the release cargo build, the Svelte build (with `svelte-check`), and the Tauri bundle. It prints where the artifact lands:
 
 ```
-app/src-tauri/target/release/bundle/macos/Tau.app
+target/release/bundle/macos/Tau.app
 ```
 
 Point the app at a model, then run it:
@@ -23,7 +23,7 @@ Point the app at a model, then run it:
 ```sh
 mkdir -p ~/.config/tau
 cp dev/config.toml ~/.config/tau/config.toml
-open app/src-tauri/target/release/bundle/macos/Tau.app
+open target/release/bundle/macos/Tau.app
 ```
 
 `dev/config.toml` targets the project's test endpoint (`https://llms.aaronlockhart.dev/v1`, model `qwen3.8-27b`). To use your own provider, edit that file (or drop a `.tau/config.toml` into a project — the project layer wins per provider name): each `[providers.<name>]` entry is a `base_url` + `key_env` (the name of an environment variable holding the key) + `models`; `[om].om_model` names the compaction model. Tau speaks the OpenAI-compatible `responses` endpoint only.

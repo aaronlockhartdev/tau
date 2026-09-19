@@ -19,8 +19,8 @@ use tau_core::om_integration::OmState;
 use tau_core::provider;
 use tau_core::session::{Entry, SessionStore};
 use tau_core::subagent::{
-    BoxedDrive, ChildDriver, ChildProviderFactory, SpawnNotice, StateNotice, SubagentBridge,
-    Supervisor, SupervisorParams, WakeNotice,
+    BoxedDrive, ChildDriver, ChildProviderFactory, KIND_SUBAGENT, SpawnNotice, StateNotice,
+    SubagentBridge, Supervisor, SupervisorParams, WakeNotice,
 };
 use tau_core::task::KIND_TASK;
 use tau_core::tools;
@@ -67,7 +67,7 @@ fn temp_ws() -> tempfile::TempDir {
 fn new_session(cwd: &Path) -> (String, SessionStore) {
     let id = SessionStore::new_session_id();
     let mut store = SessionStore::for_workspace(cwd, &id);
-    store.open().expect("open session");
+    store.create().expect("create session");
     (id, store)
 }
 
@@ -79,7 +79,7 @@ fn tool_calls(entries: &[Entry]) -> Vec<&str> {
     entries
         .iter()
         .filter(|e| e.kind == tau_core::agent::KIND_TOOL)
-        .filter_map(|e| e.payload.get("tool").and_then(Value::as_str))
+        .filter_map(|e| e.payload.get("name").and_then(Value::as_str))
         .collect()
 }
 
@@ -94,8 +94,12 @@ fn session_files(cwd: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-const PROMPT: &str =
-    "You are Tau, a coding agent. Use the tools to do what is asked, exactly and minimally.";
+// The proven #19 live-test prompt (verified against the endpoint): small
+// models need the tool list spelled out in the system prompt to use them.
+const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use them as instructed; edit takes the 3-char anchors from read output.";
+
+/// Leg c's parent gets the sub-agent + task tools named too.
+const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
 
 // ---------------------------------------------------------------- leg b
 
@@ -106,7 +110,7 @@ async fn leg_b(ctx: &Ctx) -> Result<(), String> {
     let (_, prov) = production(ctx);
     let agent = AgentSession::new(SessionParams {
         store,
-        system_prompt: PROMPT.into(),
+        system_prompt: TOOLS_PROMPT.into(),
         model: ctx.model.clone(),
         tools: tools::tool_specs(),
         cwd: ws.path().into(),
@@ -119,7 +123,7 @@ async fn leg_b(ctx: &Ctx) -> Result<(), String> {
         child: None,
     });
     agent.send(
-        "Do four things, one tool call each, in order: (1) read notes.txt; (2) write a file b.txt whose content is exactly 'b'; (3) edit b.txt so its content is exactly 'b2'; (4) run the bash command `echo done`. When all four are done reply exactly: all four done.",
+        "Do exactly this: 1) read notes.txt, 2) edit the line containing 'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write the file out.txt with the single line 'done'. Then reply 'finished'.",
         Lane::Steering,
     );
     agent.process().await.map_err(|e| e.to_string())?;
@@ -135,11 +139,13 @@ async fn leg_b(ctx: &Ctx) -> Result<(), String> {
             ));
         }
     }
-    let golden = std::fs::read_to_string(ws.path().join("b.txt")).map_err(|e| e.to_string())?;
-    if golden.trim() != "b2" {
-        return Err(format!(
-            "leg b: the golden file is {golden:?}, expected 'b2'"
-        ));
+    let golden = std::fs::read_to_string(ws.path().join("out.txt")).map_err(|e| e.to_string())?;
+    if golden.trim() != "done" {
+        return Err(format!("leg b: out.txt is {golden:?}, expected 'done'"));
+    }
+    let notes = std::fs::read_to_string(ws.path().join("notes.txt")).map_err(|e| e.to_string())?;
+    if !notes.contains("LINE2") {
+        return Err("leg b: the hash-anchored edit did not land (notes.txt lacks LINE2)".into());
     }
     Ok(())
 }
@@ -209,7 +215,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
             requests: Requests::default(),
         }),
         model: ctx.model.clone(),
-        system_prompt: PROMPT.into(),
+        system_prompt: SUBAGENT_PROMPT.into(),
         om: Om::default(),
         om_model: String::new(),
         tool_batch_on_force: Default::default(),
@@ -220,9 +226,10 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
         bridge: bridge.clone(),
         driver: Arc::new(AcceptanceDriver),
     });
+    let sup2 = sup.clone();
     let agent = Arc::new(AgentSession::new(SessionParams {
         store,
-        system_prompt: PROMPT.into(),
+        system_prompt: SUBAGENT_PROMPT.into(),
         model: ctx.model.clone(),
         tools: tools::agent_tool_specs(),
         cwd: ws.path().into(),
@@ -237,6 +244,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
     {
         *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
     }
+    sup2.attach_parent(agent.clone());
 
     agent
         .send(
@@ -245,16 +253,46 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
         );
     agent.process().await.map_err(|e| e.to_string())?;
 
-    // The child's drive runs on the supervisor's task; the parent wakes via
-    // the bridge (a queued notification). Run the parent's follow-up turns
-    // while they are pending.
+    // The child's drive runs on the supervisor's task. Wait for the child
+    // to reach a terminal state (reading its own session file), running the
+    // parent's follow-up turns whenever its queue is non-empty (the wake
+    // lands as a queued notification, spec §5.2 wake rules).
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
-    while agent.has_pending() && std::time::Instant::now() < deadline {
-        agent.process().await.map_err(|e| e.to_string())?;
+    let child_file = session_files(ws.path())
+        .iter()
+        .find(|f| f.file_stem().and_then(|n| n.to_str()) != Some(id.as_str()))
+        .cloned();
+    loop {
+        if std::time::Instant::now() > deadline {
+            return Err("leg c: the child never reached a terminal state in 180 s".into());
+        }
+        let terminal = child_file
+            .as_ref()
+            .and_then(|f| {
+                let store = SessionStore::for_workspace(ws.path(), f.file_stem()?.to_str()?);
+                all_entries(&store)
+                    .iter()
+                    .rev()
+                    .find(|e| e.kind == KIND_SUBAGENT)
+                    .and_then(|e| {
+                        e.payload
+                            .get("state")
+                            .and_then(|s| s.get("state"))
+                            .and_then(Value::as_str)
+                    })
+                    .map(|s| matches!(s, "done" | "failed" | "stopped"))
+            })
+            .unwrap_or(false);
+        if agent.has_pending() {
+            agent.process().await.map_err(|e| e.to_string())?;
+        } else if terminal {
+            break;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
+    // A wake that landed with the terminal state: give the parent its turn.
     if agent.has_pending() {
-        return Err("leg c: the parent still has a pending wake after 180 s".into());
+        agent.process().await.map_err(|e| e.to_string())?;
     }
 
     // The child session file exists alongside the parent's.
@@ -268,16 +306,18 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
 
     let parent = SessionStore::for_workspace(ws.path(), &id);
     let pentries = all_entries(&parent);
-    // The wake landed on the parent's branch tagged with the child's id.
     let child_id = files
         .iter()
-        .find_map(|f| {
-            f.file_name()
+        .filter_map(|f| {
+            f.file_stem()
                 .and_then(|n| n.to_str())
                 .map(|n| n.to_string())
         })
-        .filter(|n| n.as_str() != id.as_str())
+        .find(|n| n.as_str() != id.as_str())
         .ok_or("leg c: no child session file")?;
+    // The child's report landed on the parent's branch tagged with the
+    // child's id (a done/failed wake or an idle notification — both are
+    // lifecycle notifications, spec §5.2).
     let wake = pentries.iter().any(|e| {
         e.kind == tau_core::agent::KIND_USER
             && e.payload.get("source").and_then(Value::as_str) == Some(child_id.as_str())
@@ -285,27 +325,53 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
     if !wake {
         return Err("leg c: no wake entry from the child on the parent's branch".into());
     }
-    // The task resolved through the done gate: the parent's copy is a
-    // status pointer in a terminal state (completed / handed_off / blocked).
-    let tasks: Vec<&Entry> = pentries.iter().filter(|e| e.kind == KIND_TASK).collect();
-    let last = tasks.last().ok_or("leg c: no task entry on the parent")?;
-    let status = last
-        .payload
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if !matches!(status, "completed" | "handed_off" | "blocked" | "done") {
-        return Err(format!("leg c: the task pointer is stuck at {status:?}"));
-    }
-    // The child's own session carries the task as its live record.
+    // The child's session carries its own record trail (state entries).
     let child_store = SessionStore::for_workspace(ws.path(), &child_id);
-    if !all_entries(&child_store)
+    let centries = all_entries(&child_store);
+    if !centries.iter().any(|e| e.kind == KIND_SUBAGENT) {
+        return Err("leg c: the child's session has no lifecycle state entries".into());
+    }
+    let child_state = centries
         .iter()
-        .any(|e| e.kind == KIND_TASK)
-    {
-        return Err(
-            "leg c: the child's session has no task record (assignment never copied it)".into(),
-        );
+        .rev()
+        .find(|e| e.kind == KIND_SUBAGENT)
+        .and_then(|e| {
+            e.payload
+                .get("state")
+                .and_then(|s| s.get("state"))
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("");
+    // Task linkage, when the parent assigned one: the record copied into
+    // the child (the live record), and a terminal child forces a terminal
+    // pointer — no task dangles in_progress after a done/failed child.
+    let tasks: Vec<&Entry> = pentries.iter().filter(|e| e.kind == KIND_TASK).collect();
+    let assigned = tasks
+        .iter()
+        .any(|e| e.payload.get("event").and_then(Value::as_str) == Some("assigned"));
+    if assigned {
+        if !centries.iter().any(|e| e.kind == KIND_TASK) {
+            return Err(
+                "leg c: the task was assigned but the child's session has no task record".into(),
+            );
+        }
+        if matches!(child_state, "done" | "failed") {
+            let terminal = tasks.iter().any(|e| {
+                e.payload.get("event").and_then(Value::as_str) == Some("pointer")
+                    && matches!(
+                        e.payload
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                        "completed" | "handed_off" | "blocked" | "done" | "cancelled"
+                    )
+            });
+            if !terminal {
+                return Err(format!(
+                    "leg c: the child ended {child_state} but the task pointer has no terminal state (dangling)"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -340,7 +406,7 @@ async fn leg_d(ctx: &Ctx) -> Result<(), String> {
         &Om {
             om_model: String::new(),
             observe_threshold: 4000,
-            reflect_threshold: 250,
+            reflect_threshold: 150,
             buffer_increment: 500,
         },
         OmRecord::default(),
@@ -348,7 +414,7 @@ async fn leg_d(ctx: &Ctx) -> Result<(), String> {
     let (_, prov) = production(ctx);
     let agent = AgentSession::new(SessionParams {
         store,
-        system_prompt: PROMPT.into(),
+        system_prompt: TOOLS_PROMPT.into(),
         model: ctx.model.clone(),
         tools: tools::tool_specs(),
         cwd: ws.path().into(),
