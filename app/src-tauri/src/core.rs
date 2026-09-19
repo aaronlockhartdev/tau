@@ -226,7 +226,16 @@ impl CoreBuilder {
             configs: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             custom: self.custom,
-            client: reqwest::Client::new(),
+            // Test builds use a no-pool client: a pooled keep-alive connection
+            // keeps the tokio runtime alive after the test, hanging teardown.
+            client: if self.custom {
+                reqwest::Client::builder()
+                    .pool_max_idle_per_host(0)
+                    .build()
+                    .expect("client")
+            } else {
+                reqwest::Client::new()
+            },
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             coalesce_ms: 25,

@@ -518,7 +518,6 @@ impl Supervisor {
     /// auto-resumes). `done`, `stopped`, and `failed` end the drive — a
     /// done child is quiescent (no polling task held for the session's
     /// life), and the resume path starts a fresh drive for each.
-
     async fn drive_loop(sup: Arc<Supervisor>, child: Arc<Child>) {
         loop {
             match child.state() {

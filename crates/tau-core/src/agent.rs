@@ -1016,7 +1016,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
         let provider = crate::provider::production(
-            &reqwest::Client::new(),
+            &crate::provider::tests::test_client(),
             &crate::config::Provider {
                 base_url: base,
                 key_env: String::new(),
