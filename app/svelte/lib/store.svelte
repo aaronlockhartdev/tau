@@ -240,7 +240,10 @@
     applyEvents,
     store: () => store,
     liveTexts: () =>
-      (store.sessions['demo']?.live ?? []).map((l) => l.text.length)
+      (store.sessions['demo']?.live ?? []).map((l) => l.text.length),
+    // send/stop are module exports the rig drives directly; hoisted above.
+    send,
+    stop
   };
   // The #26 pane dataset (the prototype's): six sub-agent sessions under
   // the demo session (TWO running), a nested pair under the idle one as
@@ -686,25 +689,37 @@
       if (out.kind !== 'entries') return;
       views = out.entries;
     }
+    mergeHydrated(s, views);
+  }
+
+  // The same logical entry appears in two id namespaces: streamed under its
+  // call_id, persisted under a file counter. The ids are not comparable
+  // across namespaces, so hydration never orders by id: a file entry that
+  // matches a streamed twin (already promoted to entries, or still live in
+  // s.live mid-turn) is dropped — the streamed copy is canonical — and a
+  // file entry with no twin appends in arrival order.
+  function mergeHydrated(s: SessionState, views: ViewEntry[]): void {
+    const isTwin = (e: { id: string; text?: string }, v: ViewEntry, next: Entry) => {
+      if (!e.id.includes('-')) return false;
+      if (next.kind === 'tool') {
+        return e.id === String((v.payload as Record<string, unknown>).call_id ?? '');
+      }
+      return Boolean(next.text) && e.text === next.text;
+    };
     for (const v of views) {
       const next = toEntry(v);
       const i = s.entries.findIndex((e) => e.id === v.id);
-      if (i < 0) {
-        // The store has no entry for this id — the live path streams the
-        // assistant under its call_id and never receives the user entry the
-        // core appended, so hydrated reads insert what the stream missed.
-        // The text dedup keeps the streamed assistant (same content, call_id
-        // id) from appearing twice against its file id.
-        if (next.text && s.entries.some((e) => e.text === next.text)) continue;
-        const at = s.entries.findIndex((e) => e.id > v.id);
-        if (at < 0) s.entries.push(next);
-        else s.entries.splice(at, 0, next);
+      if (i >= 0) {
+        const old = s.entries[i];
+        if (old.text !== next.text || old.output !== next.output || old.status !== next.status) {
+          s.entries[i] = next;
+        }
         continue;
       }
-      const old = s.entries[i];
-      if (old.text !== next.text || old.output !== next.output || old.status !== next.status) {
-        s.entries[i] = next;
+      if (s.entries.some((e) => isTwin(e, v, next)) || s.live.some((e) => isTwin(e, v, next))) {
+        continue;
       }
+      s.entries.push(next);
     }
   }
 
@@ -747,6 +762,9 @@
       ]);
       return;
     }
+    // The user bubble appears at send time; the core's file copy of the
+    // same entry hydrates later and is dropped against this one (twin).
+    s.entries.push({ id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: 'user', text });
     try {
       await command({
         type: 'message_send',
@@ -818,6 +836,7 @@
           }
           s.live.push(le);
           callStartMs.set(ev.call_id, Date.now());
+          s.tps = 0;
           s.turn = 'running';
           break;
         }
@@ -848,13 +867,20 @@
             }
           }
           if (le) {
-            s.entries.push({
+            const done: Entry = {
               id: le.id,
               kind: ev.interrupted ? 'interrupted' : 'message',
               text: le.text,
               reasoning: le.reasoning || undefined,
               usage: ev.usage ?? undefined
-            });
+            };
+            // The paged read can hydrate this entry's file copy during the
+            // turn; that copy is canonical, so only push the streamed one
+            // when no file twin exists.
+            const dup = s.entries.some(
+              (e) => !e.id.includes('-') && e.kind === done.kind && e.text === done.text
+            );
+            if (!dup) s.entries.push(done);
           }
           if (ev.usage) {
             s.usage = ev.usage;
