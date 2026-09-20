@@ -700,6 +700,8 @@
 
   // Paged read around the viewport (spec §8): the GUI decides the window,
   // the core serves the slice. The demo answers from its in-memory views.
+  // Views keep the file's own id — the snapshot and this paged read must
+  // share one id namespace or their copies of an entry never match.
   export async function fetchWindow(sid: string, start: number, count: number): Promise<void> {
     const s = store.sessions[sid];
     if (!s || count <= 0) return;
@@ -719,7 +721,7 @@
     mergeHydrated(s, views);
   }
 
-  // One logical entry appears under two ids: streamed under its call_id / u-
+  // One logical entry appears under two id namespaces: streamed under its call_id / u-
   // prefix / provider tool_call_id, persisted under the file's counter. The
   // namespaces are not comparable, so the streamed slot is canonical: a file
   // entry whose twin is streamed (in entries, live mid-turn, or a duplicate

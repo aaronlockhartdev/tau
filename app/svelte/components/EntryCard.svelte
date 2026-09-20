@@ -39,8 +39,8 @@
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
-  // Tool outputs are long (command transcripts); the collapsed card shows a
-  // length-limited preview.
+  // Tool outputs are long (command transcripts); the collapsed card caps the
+  // preview at 200 chars.
   const preview = $derived(
     entry.output && entry.output.length > 200 ? entry.output.slice(0, 200) + ' …' : entry.output ?? ''
   );
@@ -71,7 +71,6 @@
         <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
           {outputOpen ? '▾ hide output' : '▸ full output (' + entry.output.length + ' chars)'}
         </button>
-        <!-- length-limited by default; the expando shows the full output -->
         <div class="out"><pre>{outputOpen ? entry.output : preview}</pre></div>
       {/if}
     </div>
