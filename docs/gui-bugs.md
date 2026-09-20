@@ -63,6 +63,23 @@ bugs below.
 11. **Side-pane tab headers vanished in the no-workspace empty state** —
     the pane bodies (and their tab rows) were guarded by `{#if p}`; the
     tab rows now render disabled outside the guard.
+12. **Live transcript corruption on hydration** — snapshot entries and
+    streamed entries live in two id namespaces (file counter vs
+    call_id) that the merge compared as if one ordered space: a paged
+    read hydrating the assistant's file copy mid-turn produced a
+    duplicate against the streamed copy at turn end, and a second
+    turn's file entries inserted before the first turn's answer
+    (reviewer-confirmed, rig at the two-turn session). The hydration
+    merge now drops a file entry that matches a streamed twin (by text
+    for message/user, by the shared call_id for tools — in entries or
+    live) and appends twin-less entries in arrival order; the user
+    bubble appears at send time instead of only after the turn.
+13. **Live display gaps (six, user-reported)** — tool calls invisible
+    after a turn (payloads never hydrated), reasoning title floating
+    away from its block with a cursor that stayed on after completion,
+    a model that only saw 5 of the 16 v0 tools, an idle send queuing
+    instead of starting, and no TPS / prefix-cache segments in the bar.
+    All fixed in 698e691; verified live and by the two-turn rig.
 
 ## Environmental (not code)
 
