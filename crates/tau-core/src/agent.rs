@@ -280,6 +280,19 @@ impl AgentSession {
     /// store — the session-scoped task store a parent and a child share.
     fn task_tool(&self, tc: &tools::ToolCall) -> String {
         let mut inner = self.inner.lock().unwrap();
+        // A child is a leaf: create/assign/cancel act on a parent's
+        // planning state, never on the assigned record (spec §5.3).
+        if inner.child.is_some()
+            && matches!(
+                tc.name.as_str(),
+                "task_create" | "task_assign" | "task_cancel"
+            )
+        {
+            return format!(
+                "{}: not available in a child session — work the task your parent assigned",
+                tc.name
+            );
+        }
         crate::task::tool_call(&mut inner.store, &tc.name, &tc.args)
     }
     /// The session store's header timestamp (epoch ms).

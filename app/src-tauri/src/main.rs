@@ -19,7 +19,17 @@ async fn tau_command(
     state: State<'_, CoreState>,
     command: Command,
 ) -> Result<CommandOutput, ProtocolError> {
-    state.0.dispatch(command).await
+    // Dispatch is synchronous under the hood. Run it on a blocking thread
+    // so a command wedged on a lock ties up a throwaway thread, not a
+    // runtime worker — the drive tasks, the event pump, and the provider
+    // timeouts must keep polling while any command blocks (a deadlocked
+    // worker pool wedges the whole app, including every in-flight turn).
+    let core = state.0.clone();
+    tokio::task::spawn_blocking(move || core.dispatch(command))
+        .await
+        .map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?
 }
 
 fn main() {

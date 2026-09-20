@@ -29,7 +29,6 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
         })
-        .await
         .unwrap()
     {
         CommandOutput::Workspace { workspace: w } => w,
@@ -40,7 +39,6 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
             workspace: workspace.id,
             title: None,
         })
-        .await
         .unwrap()
     {
         CommandOutput::Session { session: m } => m,
@@ -64,7 +62,6 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .dispatch(Command::SessionOpen {
             session: session.id.clone(),
         })
-        .await
         .unwrap()
     {
         CommandOutput::Snapshot { snapshot: s } => s,
@@ -113,7 +110,6 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
             since: Some(snapshot.cursor),
             range: None,
         })
-        .await
         .unwrap()
     {
         CommandOutput::Entries { entries } => entries,
@@ -132,7 +128,6 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
                 count: 100,
             }),
         })
-        .await
         .unwrap()
     {
         CommandOutput::Entries { entries } => entries,

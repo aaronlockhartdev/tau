@@ -254,6 +254,39 @@
     startDemoStreams();
   }
 
+  // The snapshot is the sole source of a session's live meta (tasks,
+  // sub-agents, queue, turn): a task created mid-session is invisible to
+  // the tasks tab until the next refresh (spec §8 — the snapshot is
+  // metadata; hydrated entry payloads are not re-fetched). Every 2 s the
+  // current session is re-snapshotted and only its meta fields are
+  // updated, guarded so a steady state never churns the store.
+  setInterval(() => {
+    if (store.demo) return;
+    const sid = store.current;
+    if (!sid) return;
+    const s = store.sessions[sid];
+    if (!s) return;
+    void (async () => {
+      try {
+        const out = await command({ type: 'session_open', session: sid });
+        if (out.kind !== 'snapshot') return;
+        const snap = out.snapshot;
+        if (s.meta.id !== snap.session.id) return;
+        if (JSON.stringify(s.tasks) !== JSON.stringify(snap.live.tasks)) {
+          s.tasks = snap.live.tasks;
+        }
+        if (JSON.stringify(s.subagents) !== JSON.stringify(snap.live.subagents)) {
+          s.subagents = snap.live.subagents;
+        }
+        s.pending = snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
+        const t = snap.live.turn === 'running' ? 'running' : 'idle';
+        if (s.turn !== t) s.turn = t;
+      } catch {
+        // Silent: the next tick retries.
+      }
+    })();
+  }, 2000);
+
   // Verification seam (both modes): feed wire-shaped events through
   // applyEvents and read the store's live-stream lengths (store level — the
   // virtualized DOM only shows the window, one stream card can sit outside it).

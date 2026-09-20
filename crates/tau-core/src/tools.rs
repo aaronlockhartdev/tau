@@ -296,15 +296,29 @@ pub fn agent_tool_specs() -> Vec<ToolSpec> {
     v
 }
 
-/// A child session's tool set: the core tools + parent_notify + tasks — no
-/// sub-agent tools (a child cannot spawn, ADR-0001 depth cap).
+/// The worker side of the task tools: a child works the record its parent
+/// assigned — it starts, evidences, blocks, and finishes it (spec §5.3).
+pub fn worker_task_tool_specs() -> Vec<ToolSpec> {
+    const WORKER: &[&str] = &["task_start", "task_evidence", "task_block", "task_finish"];
+    task_tool_specs()
+        .into_iter()
+        .filter(|s| WORKER.contains(&s.name.as_str()))
+        .collect()
+}
+
+/// A child session's tool set: the core tools + parent_notify + the
+/// worker-side task tools — no sub-agent tools (a child cannot spawn,
+/// ADR-0001 depth cap), and no create/assign/cancel: a child is a leaf, so
+/// a task it created itself would be invisible to the parent and would die
+/// with it (spec §5.3).
 pub fn child_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.push(parent_notify_spec());
-    v.extend(task_tool_specs());
+    v.extend(worker_task_tool_specs());
     v
 }
 
+/// Dispatch one tool call. Never panics on bad input — the diagnostic is the
 /// Dispatch one tool call. Never panics on bad input — the diagnostic is the
 /// result (the model's only recovery path).
 pub async fn dispatch(cwd: &Path, call: &ToolCall) -> ToolOutput {

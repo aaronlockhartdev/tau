@@ -1250,7 +1250,7 @@ impl Core {
 
     // ── the dispatch surface ─────────────────────────────────────────────
 
-    pub async fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
+    pub fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
         match cmd {
             Command::WorkspaceOpen { cwd } => Ok(CommandOutput::Workspace {
                 workspace: self.open_workspace(&cwd)?,
@@ -2124,13 +2124,11 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: "/tmp/w".into(),
             })
-            .await
             .unwrap();
         let w2 = core
             .dispatch(Command::WorkspaceOpen {
                 cwd: "/tmp/w".into(),
             })
-            .await
             .unwrap();
         match (w1, w2) {
             (
@@ -2155,7 +2153,6 @@ mod tests {
             .dispatch(Command::SubagentState {
                 handle: "h-1".into(),
             })
-            .await
             .unwrap_err();
         assert!(matches!(err, ProtocolError::NotFound { .. }));
         // The task commands are live (ticket #24): an unknown session's
@@ -2165,7 +2162,6 @@ mod tests {
                 session: "s".into(),
                 title: "t".into(),
             })
-            .await
             .unwrap_err();
         assert!(matches!(err, ProtocolError::NotFound { .. }));
     }
@@ -2178,7 +2174,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2192,7 +2187,6 @@ mod tests {
                 offset: Some(1),
                 limit: Some(1),
             })
-            .await
             .unwrap();
         match out {
             CommandOutput::File { file: f } => {
@@ -2212,7 +2206,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2223,7 +2216,6 @@ mod tests {
                 workspace: workspace.id,
                 title: None,
             })
-            .await
             .unwrap_err();
         assert!(matches!(err, ProtocolError::Other { .. }));
         let _ = tmp;
@@ -2240,7 +2232,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2251,7 +2242,6 @@ mod tests {
                 workspace: workspace.id,
                 title: None,
             })
-            .await
             .unwrap()
         {
             CommandOutput::Session { session: m } => m,
@@ -2263,7 +2253,6 @@ mod tests {
                 since: None,
                 range: None,
             })
-            .await
             .unwrap_err();
         assert!(
             matches!(err, ProtocolError::Other { .. }),
@@ -2288,7 +2277,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2314,7 +2302,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2343,7 +2330,6 @@ mod tests {
             text: "first".into(),
             lane: MessageLane::Steering,
         })
-        .await
         .unwrap();
 
         // In flight: the first deltas have landed.
@@ -2351,7 +2337,6 @@ mod tests {
         core.dispatch(Command::SessionClose {
             session: session_id.clone(),
         })
-        .await
         .unwrap();
 
         // The sink cuts the stream at the next delta (≤ 600 ms); the turn
@@ -2469,7 +2454,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2503,7 +2487,6 @@ mod tests {
             text: "do the thing".into(),
             lane: MessageLane::Steering,
         })
-        .await
         .unwrap();
 
         // The canned turn is fast; give the pump a bounded time to flush.
@@ -2590,7 +2573,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2621,7 +2603,6 @@ mod tests {
             text: "first".into(),
             lane: MessageLane::Steering,
         })
-        .await
         .unwrap();
 
         // Mid-stream of call 1: the first deltas have arrived, the stream
@@ -2632,7 +2613,6 @@ mod tests {
             text: "second".into(),
             lane: MessageLane::Steering,
         })
-        .await
         .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
@@ -2687,7 +2667,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2722,7 +2701,6 @@ mod tests {
             text: "Reply with exactly the word: pong".into(),
             lane: MessageLane::Steering,
         })
-        .await
         .unwrap();
 
         // The thinking model can burn the 200-token cap on reasoning; the
@@ -2836,7 +2814,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: tmp.path().to_string_lossy().into_owned(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace: w } => w,
@@ -2847,7 +2824,6 @@ mod tests {
                 workspace: workspace.id.clone(),
                 title: None,
             })
-            .await
             .unwrap()
         {
             CommandOutput::Session { session: m } => m,
@@ -2860,7 +2836,6 @@ mod tests {
                 brief: "do the thing".into(),
                 context_mode: ContextMode::Fresh,
             })
-            .await
             .unwrap()
         {
             CommandOutput::Subagent { subagent: i } => i,
@@ -2924,7 +2899,6 @@ mod tests {
             .dispatch(Command::WorkspaceOpen {
                 cwd: cwd.display().to_string(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Workspace { workspace } => workspace,
@@ -2942,7 +2916,6 @@ mod tests {
                 workspace: w.id.clone(),
                 title: None,
             })
-            .await
             .unwrap()
         {
             CommandOutput::Session { session } => session,
@@ -2960,7 +2933,6 @@ mod tests {
         }
         let list = match core
             .dispatch(Command::SessionList { workspace: w.id })
-            .await
             .unwrap()
         {
             CommandOutput::Sessions { sessions } => sessions,
@@ -2989,7 +2961,6 @@ mod tests {
                 workspace: w.id.clone(),
                 title: None,
             })
-            .await
             .unwrap()
         {
             CommandOutput::Session { session } => session,
@@ -2999,13 +2970,11 @@ mod tests {
             session: live.id.clone(),
             title: "Renamed".into(),
         })
-        .await
         .unwrap();
         // Re-opening serves the snapshot from the live meta; the rename must
         // not revert (the B1 regression).
         let snap = match core
             .dispatch(Command::SessionOpen { session: live.id })
-            .await
             .unwrap()
         {
             CommandOutput::Snapshot { snapshot } => snapshot,
@@ -3029,7 +2998,6 @@ mod tests {
             session: id.clone(),
             title: "After".into(),
         })
-        .await
         .unwrap();
         let header =
             std::fs::read_to_string(cwd.path().join(".tau/sessions").join(format!("{id}.jsonl")))
@@ -3058,7 +3026,6 @@ mod tests {
             .dispatch(Command::SessionOpen {
                 session: id.clone(),
             })
-            .await
             .unwrap()
         {
             CommandOutput::Snapshot { snapshot } => snapshot,
@@ -3077,7 +3044,6 @@ mod tests {
                     count: 10,
                 }),
             })
-            .await
             .unwrap();
         match out {
             CommandOutput::Entries { entries } => assert!(!entries.is_empty()),
@@ -3102,7 +3068,7 @@ mod tests {
         let core = CoreBuilder::custom(providers())
             .with_system_dir(sys.path().into())
             .build();
-        let list = match core.dispatch(Command::WorkspaceList).await.unwrap() {
+        let list = match core.dispatch(Command::WorkspaceList).unwrap() {
             CommandOutput::Workspaces { workspaces } => workspaces,
             other => panic!("expected workspaces: {other:?}"),
         };

@@ -407,8 +407,15 @@ impl Supervisor {
     /// record copies into the child's session, which becomes the live
     /// record; the creator's copy becomes the status pointer. Both sides
     /// run through the sessions' own stores — one writer per session,
-    /// never a second store on a live file (review B3).
-    pub fn assign_task(&self, task_id: &str, worker_session: &str) -> Result<(), String> {
+    /// never a second store on a live file (review B3). The copy is then
+    /// delivered through the child's message path: a running child takes
+    /// it as a steering round on its next call, a non-running child
+    /// resumes with it (ADR-0001) — a bare copy races a running loop.
+    pub fn assign_task(
+        self: &Arc<Self>,
+        task_id: &str,
+        worker_session: &str,
+    ) -> Result<(), String> {
         if task_id.is_empty() {
             return Err("task_assign: missing \"task\"".into());
         }
@@ -440,6 +447,21 @@ impl Supervisor {
                     )
                 })
             })
+            .map(|_| ())?;
+        let title = parent
+            .with_task_store(|store| {
+                crate::task::fold_entries(&store.entries_range(0, usize::MAX).unwrap_or_default())
+                    .into_iter()
+                    .find(|t| t.id == task_id)
+                    .map(|t| t.title)
+            })
+            .unwrap_or_default();
+        let note = if title.is_empty() {
+            format!("Assigned task {task_id}")
+        } else {
+            format!("Assigned {task_id}: {title}")
+        };
+        self.message(&child.handle, Some(note), Lane::Steering)
             .map(|_| ())
     }
 
@@ -2597,5 +2619,207 @@ mod tests {
             wakes.iter().any(|w| w.child == spawned.session_id),
             "the parent was woken by the child's notify"
         );
+    }
+
+    /// A child is a leaf (spec §5.3): task_create/assign/cancel are not in
+    /// its tool set, and a model that calls one anyway gets the guard's
+    /// refusal — no phantom record lands in its session.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_child_cannot_create_assign_or_cancel_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.create().unwrap();
+        let bridge = Arc::new(TestBridge::default());
+        let factory = Arc::new(CannedFactory {
+            scripts: vec![vec![
+                sse(
+                    "",
+                    &[(
+                        "task_create".into(),
+                        "c1".into(),
+                        r#"{"title":"phantom"}"#.into(),
+                    )],
+                ),
+                sse(
+                    "",
+                    &[(
+                        "parent_notify".into(),
+                        "n1".into(),
+                        r#"{"text":"done","done":true,"output":{"result":"ok"}}"#.into(),
+                    )],
+                ),
+            ]],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: "parent".into(),
+            cwd: dir.path().to_path_buf(),
+            provider: factory,
+            model: "test-model".into(),
+            system_prompt: "be terse".into(),
+            om: Om::default(),
+            om_model: String::new(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            caps: SubAgents::default(),
+            depth: 0,
+            types: vec![crate::agent_type::builtin_general()],
+            bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+            driver: Arc::new(TestDriver),
+        });
+        let parent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::agent_tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: crate::provider::canned(sse("", &[]).as_str()),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        sup.attach_parent(parent.clone());
+        let spawned = sup
+            .spawn("general", "go", None, None, "c0")
+            .expect("the spawn");
+        wait_for(|| {
+            matches!(
+                sup.state_info(&spawned.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        // The refusal is the model's only view: the tool result says so,
+        // and no task record of the child's own exists in its session.
+        let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        child_store.open().unwrap();
+        let entries = child_store.entries_range(0, usize::MAX).unwrap();
+        let refusal = entries
+            .iter()
+            .filter(|e| e.kind == crate::agent::KIND_TOOL)
+            .filter_map(|e| e.payload.get("output"))
+            .filter_map(Value::as_str)
+            .find(|o| o.contains("not available in a child session"));
+        assert!(
+            refusal.is_some(),
+            "the child's task_create was refused by the guard"
+        );
+        let tasks = crate::task::fold_entries(&entries);
+        assert!(
+            tasks.iter().all(|t| t.created_in.is_some()),
+            "a child cannot create a task of its own: {tasks:?}"
+        );
+    }
+
+    /// An assign is delivery, not just a copy (the spawn-race fix): the
+    /// child's message path carries "Assigned {id}: {title}" — a running
+    /// child takes it on its next round, an idle child resumes with it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn an_assign_to_a_running_child_delivers_a_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.create().unwrap();
+        crate::task::create(
+            &mut store,
+            "task-1",
+            "write the docs",
+            vec![],
+            vec![crate::task::Criterion {
+                text: "docs exist".into(),
+                status: crate::task::CriterionStatus::Pending,
+            }],
+        )
+        .unwrap();
+        let bridge = Arc::new(TestBridge::default());
+        let factory = Arc::new(CannedFactory {
+            scripts: vec![vec![
+                sse(
+                    "",
+                    &[(
+                        "task_evidence".into(),
+                        "e1".into(),
+                        r#"{"task":"task-1","criterion":"docs exist","summary":"they do"}"#.into(),
+                    )],
+                ),
+                sse(
+                    "",
+                    &[(
+                        "parent_notify".into(),
+                        "n1".into(),
+                        r#"{"text":"finished","done":true,"output":{"result":"the docs"}}"#.into(),
+                    )],
+                ),
+            ]],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: "parent".into(),
+            cwd: dir.path().to_path_buf(),
+            provider: factory,
+            model: "test-model".into(),
+            system_prompt: "be terse".into(),
+            om: Om::default(),
+            om_model: String::new(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            caps: SubAgents::default(),
+            depth: 0,
+            types: vec![crate::agent_type::builtin_general()],
+            bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+            driver: Arc::new(TestDriver),
+        });
+        let parent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::agent_tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: crate::provider::canned(sse("", &[]).as_str()),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        sup.attach_parent(parent.clone());
+        // A spawn without a task: the child is running before the assign
+        // lands — the exact race that used to leave it guessing.
+        let spawned = sup
+            .spawn("general", "working", None, None, "c0")
+            .expect("the spawn");
+        let agent = sup.child_agent(&spawned.handle).expect("the child agent");
+        sup.assign_task("task-1", &spawned.session_id)
+            .expect("the assign");
+        wait_for(|| agent.has_pending());
+        wait_for(|| {
+            matches!(
+                sup.state_info(&spawned.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        // The delivery reached the child as a message, and the record it
+        // worked is the parent's task (no phantom of its own).
+        let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        child_store.open().unwrap();
+        let entries = child_store.entries_range(0, usize::MAX).unwrap();
+        assert!(
+            entries.iter().any(|e| e.kind == crate::agent::KIND_USER
+                && e.payload
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|t| t.contains("Assigned task-1: write the docs"))),
+            "the assignment was delivered to the child as a message"
+        );
+        let tasks = crate::task::fold_entries(&entries);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "task-1");
+        assert_eq!(tasks[0].status, crate::task::STATUS_DONE);
     }
 }

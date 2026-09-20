@@ -13,13 +13,11 @@
     entry,
     heightKey,
     heights,
-    streaming = false,
     sourceLabel = ''
   }: {
     entry: Entry;
     heightKey: string;
     heights: Map<string, number>;
-    streaming?: boolean;
     sourceLabel?: string;
   } = $props();
 
@@ -180,8 +178,7 @@
       <div class="reasonblock" class:reasononly={!cardRenders}>
         <div class="reasontitle">reasoning</div>
         <div class="md reason">
-          {#if streaming}<span class="cursor"></span>
-          {/if}{@html reasonMd}
+          {@html reasonMd}
         </div>
         {#if entry.usage}
           <div class="reasonmeta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
@@ -307,7 +304,8 @@
     color: var(--tx);
   }
   .reasonblock {
-    margin: 0 0 6px;
+    /* Same gap as the cards: the reasoning block is one of the turn's cards. */
+    margin: 0 0 10px;
     border: 1px solid rgba(181, 140, 255, 0.16);
     border-left: 2px solid rgba(181, 140, 255, 0.35);
     border-radius: 8px;
@@ -337,19 +335,6 @@
     color: #9a8fb8;
     font-size: 12px;
     word-break: break-word;
-  }
-  .cursor {
-    display: inline-block;
-    width: 6px;
-    height: 12px;
-    background: var(--acc);
-    animation: pulse 1s infinite;
-    vertical-align: text-bottom;
-  }
-  @keyframes pulse {
-    50% {
-      opacity: 0.3;
-    }
   }
   .out {
     margin-top: 6px;
