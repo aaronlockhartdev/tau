@@ -700,7 +700,9 @@
   // file entry with no twin appends in arrival order.
   function mergeHydrated(s: SessionState, views: ViewEntry[]): void {
     const isTwin = (e: { id: string; text?: string }, v: ViewEntry, next: Entry) => {
-      if (!e.id.includes('-')) return false;
+      // Streamed ids are non-numeric (call_id, u-…, the provider's
+      // tool_call_id); file ids are the zero-padded counter.
+      if (/^\d+$/.test(e.id)) return false;
       if (next.kind === 'tool') {
         return e.id === String((v.payload as Record<string, unknown>).call_id ?? '');
       }
@@ -878,7 +880,7 @@
             // turn; that copy is canonical, so only push the streamed one
             // when no file twin exists.
             const dup = s.entries.some(
-              (e) => !e.id.includes('-') && e.kind === done.kind && e.text === done.text
+              (e) => /^\d+$/.test(e.id) && e.kind === done.kind && e.text === done.text
             );
             if (!dup) s.entries.push(done);
           }
@@ -901,17 +903,21 @@
           s.meta.leaf = le?.id ?? s.meta.leaf;
           break;
         }
+        // Tool entries key on the provider's tool_call_id (not the stream
+        // call_id): that is the id persisted in the file payload, so the
+        // hydration twin matches, and two tools in one assistant call no
+        // longer collapse into one card.
         case 'tool_start': {
-          const existing = s.entries.find((e) => e.id === ev.call_id);
+          const existing = s.entries.find((e) => e.id === ev.tool_call_id);
           if (existing) {
             existing.status = 'running';
           } else {
-            s.entries.push({ id: ev.call_id, kind: 'tool', name: ev.name, status: 'running' });
+            s.entries.push({ id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
           }
           break;
         }
         case 'tool_end': {
-          const e = s.entries.find((x) => x.id === ev.call_id);
+          const e = s.entries.find((x) => x.id === ev.tool_call_id);
           if (e) {
             e.status = 'ok';
             e.output = ev.output === undefined ? undefined : String(ev.output);
