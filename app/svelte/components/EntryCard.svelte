@@ -34,7 +34,9 @@
     if (el) heights.set(heightKey, el.offsetHeight);
   });
 
-  const md = $derived(renderMarkdown(entry.text ?? ''));
+  // Provider text arrives with decorative leading/trailing newlines;
+  // pre-wrap would render them as blank lines inside the card.
+  const md = $derived(renderMarkdown((entry.text ?? '').trim()));
   let reasoningOpen = $state(true);
   let outputOpen = $state(false);
 
@@ -76,7 +78,7 @@
         {#if reasoningOpen}
           <div class="reason">
             {#if streaming}<span class="cursor"></span>
-            {/if}{entry.reasoning}
+            {/if}{entry.reasoning.trim()}
           </div>
         {/if}
       </div>
