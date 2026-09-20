@@ -278,7 +278,10 @@
         if (JSON.stringify(s.subagents) !== JSON.stringify(snap.live.subagents)) {
           s.subagents = snap.live.subagents;
         }
-        s.pending = snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
+        const pending = snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
+        if (JSON.stringify(s.pending) !== JSON.stringify(pending)) {
+          s.pending = pending;
+        }
         const t = snap.live.turn === 'running' ? 'running' : 'idle';
         if (s.turn !== t) s.turn = t;
       } catch {

@@ -1634,13 +1634,9 @@ impl Core {
                 // both sides on the sessions' own stores.
                 sup.assign_task(&task, &worker_session)
                     .map_err(|e| ProtocolError::Other { message: e })?;
-                let brief = format!(
-                    "You were assigned task {task} (\"{}\"). Work it: record evidence for each criterion, then call task_finish.",
-                    task
-                );
-                // The assignment brief starts (or resumes) the worker.
-                sup.message(&worker, Some(brief), tau_core::agent::Lane::Steering)
-                    .map_err(|e| ProtocolError::Other { message: e })?;
+                // The assign already delivered the "Assigned {id}: {title}"
+                // message to the worker (a running child takes it as a
+                // steering round, a parked one resumes with it).
                 Ok(CommandOutput::None)
             }
             Command::TaskEvidence {

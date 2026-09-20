@@ -319,7 +319,6 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
 }
 
 /// Dispatch one tool call. Never panics on bad input — the diagnostic is the
-/// Dispatch one tool call. Never panics on bad input — the diagnostic is the
 /// result (the model's only recovery path).
 pub async fn dispatch(cwd: &Path, call: &ToolCall) -> ToolOutput {
     match call.name.as_str() {

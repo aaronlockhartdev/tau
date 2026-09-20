@@ -2716,10 +2716,12 @@ mod tests {
     }
 
     /// An assign is delivery, not just a copy (the spawn-race fix): the
-    /// child's message path carries "Assigned {id}: {title}" — a running
-    /// child takes it on its next round, an idle child resumes with it.
+    /// child's message path carries "Assigned {id}: {title}". The child
+    /// parks after its first turn, so the assign deterministically takes
+    /// the resume branch: the record copy precedes the resuming message,
+    /// and the child's evidence lands on the parent's record.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn an_assign_to_a_running_child_delivers_a_message() {
+    async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = SessionStore::for_workspace(dir.path(), "parent");
         store.create().unwrap();
@@ -2737,6 +2739,18 @@ mod tests {
         let bridge = Arc::new(TestBridge::default());
         let factory = Arc::new(CannedFactory {
             scripts: vec![vec![
+                // Turn 1: park — the child rests until the assign, so
+                // the copy can land neither before nor after its work.
+                sse(
+                    "kicking off",
+                    &[(
+                        "parent_notify".into(),
+                        "n0".into(),
+                        r#"{"text":"kicking off","done":false,"waiting_on":"parent"}"#.into(),
+                    )],
+                ),
+                // The resume turn: the record is already in the child's
+                // session — the evidence lands on the parent's task.
                 sse(
                     "",
                     &[(
@@ -2789,15 +2803,20 @@ mod tests {
             child: None,
         }));
         sup.attach_parent(parent.clone());
-        // A spawn without a task: the child is running before the assign
-        // lands — the exact race that used to leave it guessing.
+        // A spawn without a task, then the assign: the child parks after
+        // its first turn and rests until the assign moves it — the only
+        // ordering that can't race.
         let spawned = sup
             .spawn("general", "working", None, None, "c0")
             .expect("the spawn");
-        let agent = sup.child_agent(&spawned.handle).expect("the child agent");
+        wait_for(|| {
+            matches!(
+                sup.state_info(&spawned.handle).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        });
         sup.assign_task("task-1", &spawned.session_id)
             .expect("the assign");
-        wait_for(|| agent.has_pending());
         wait_for(|| {
             matches!(
                 sup.state_info(&spawned.handle).unwrap().state,

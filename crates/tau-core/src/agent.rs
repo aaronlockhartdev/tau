@@ -280,18 +280,8 @@ impl AgentSession {
     /// store — the session-scoped task store a parent and a child share.
     fn task_tool(&self, tc: &tools::ToolCall) -> String {
         let mut inner = self.inner.lock().unwrap();
-        // A child is a leaf: create/assign/cancel act on a parent's
-        // planning state, never on the assigned record (spec §5.3).
-        if inner.child.is_some()
-            && matches!(
-                tc.name.as_str(),
-                "task_create" | "task_assign" | "task_cancel"
-            )
-        {
-            return format!(
-                "{}: not available in a child session — work the task your parent assigned",
-                tc.name
-            );
+        if let Some(r) = Self::task_child_refusal(inner.child.is_some(), &tc.name) {
+            return r;
         }
         crate::task::tool_call(&mut inner.store, &tc.name, &tc.args)
     }
@@ -312,7 +302,24 @@ impl AgentSession {
     /// task commands; the model's dispatch uses `task_tool`).
     pub fn task_tool_call(&self, name: &str, args: &Value) -> String {
         let mut inner = self.inner.lock().unwrap();
+        if let Some(r) = Self::task_child_refusal(inner.child.is_some(), name) {
+            return r;
+        }
         crate::task::tool_call(&mut inner.store, name, args)
+    }
+
+    /// A child is a leaf: create/assign/cancel act on a parent's planning
+    /// state, never on the assigned record (spec §5.3); the refusal is the
+    /// caller's only view. Shared by the model's dispatch and the app's
+    /// task-command surface — the same rule on both paths.
+    fn task_child_refusal(is_child: bool, name: &str) -> Option<String> {
+        if is_child && matches!(name, "task_create" | "task_assign" | "task_cancel") {
+            Some(format!(
+                "{name}: not available in a child session — work the task your parent assigned"
+            ))
+        } else {
+            None
+        }
     }
 
     #[cfg(test)]
