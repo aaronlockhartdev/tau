@@ -1,7 +1,7 @@
 <script lang="ts">
   // One transcript card. Code segments are protected from markdown
-  // interpretation by renderMarkdown; reasoning is viewable and
-  // collapsible, visible by default (gui.reasoning_visible default).
+  // interpretation by renderMarkdown; reasoning is always open (the
+  // collapse will come as a keybind, not a per-card toggle).
   // The card measures itself on mount and on content change; the
   // transcript windowing consumes the measurement through `heights`.
 
@@ -32,26 +32,98 @@
     void entry.text;
     void entry.reasoning;
     void entry.output;
+    void toolOut;
+    void entry.args;
     void outputOpen;
+    void argsOpen;
     if (el) heights.set(heightKey, el.offsetHeight);
   });
 
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
-  // Tool outputs are long (command transcripts); the collapsed card caps the
-  // preview at 200 chars.
-  const preview = $derived(
-    entry.output && entry.output.length > 200 ? entry.output.slice(0, 200) + ' …' : entry.output ?? ''
+  // The user-facing tool output: for bash, the command is prepended to
+  // the result, and the combined text is what gets truncated.
+  const toolOut = $derived(
+    entry.kind === 'tool'
+      ? [
+          entry.name === 'bash'
+            ? safeArgs(entry.args)?.command ?? ''
+            : '',
+          entry.output ?? ''
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      : ''
   );
-  let reasoningOpen = $state(true);
+  // Sub-agent entries carry the raw payload as JSON; the block renders it
+  // as plain key: value lines with the delimiters stripped.
+  const sublines = $derived(
+    entry.kind === 'subagent'
+      ? structuredSub(entry.text ?? '')
+      : []
+  );
+  // Tool outputs are long (command transcripts); a card under the cap shows
+  // the full text with no expando.
+  const preview = $derived(
+    toolOut && toolOut.length > 200 ? toolOut.slice(0, 200) + ' …' : toolOut
+  );
+  const outputLong = $derived(toolOut.length > 200);
   let outputOpen = $state(false);
+  // Long tool-call bodies collapse to the args line; a click opens the
+  // full JSON under the tool name.
+  let argsOpen = $state(false);
+  // Note 5: a fully empty entry (a pure tool request whose payload has
+  // not arrived) renders nothing, so no shell margin gap is left behind.
+  const hasContent = $derived(
+    Boolean(
+      (entry.text ?? '').trim() ||
+        entry.reasoning ||
+        entry.kind === 'interrupted' ||
+        (entry.kind === 'tool' && (Boolean(entry.args) || toolOut.length > 0))
+    )
+  );
 
   function fmt(n: number): string {
     return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
   }
+  function structuredSub(text: string): string[] {
+    const lines: string[] = [];
+    const walk = (v: unknown, indent: number) => {
+      if (Array.isArray(v)) {
+        for (const x of v) walk(x, indent);
+      } else if (v && typeof v === 'object') {
+        for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+          if (x && typeof x === 'object') {
+            lines.push(' '.repeat(indent) + k + ':');
+            walk(x, indent + 2);
+          } else {
+            lines.push(' '.repeat(indent) + k + ': ' + (x === null || x === undefined ? '' : String(x)));
+          }
+        }
+      } else if (v !== null && v !== undefined && v !== '') {
+        lines.push(' '.repeat(indent) + String(v));
+      }
+    };
+    try {
+      const p = JSON.parse(text);
+      walk(p, 0);
+    } catch {
+      lines.push(text);
+    }
+    return lines;
+  }
+  function safeArgs(a: string | undefined): { command?: string } | null {
+    if (!a) return null;
+    try {
+      return JSON.parse(a) as { command?: string };
+    } catch {
+      return null;
+    }
+  }
 </script>
 
+{#if hasContent}
 <div class="wrap" bind:this={el}>
   {#if entry.kind === 'user'}
     <div class="card user">
@@ -62,36 +134,49 @@
     <div class="toolrow">
       <span class="ticon">⚒</span>
       <span class="tname">{entry.name}</span>
-      <span class="targs" title={entry.args}>{entry.args}</span>
+      <button class="targs" type="button" title={entry.args} onclick={() => (argsOpen = !argsOpen)}>{entry.args}</button>
       <span class="tstatus" class:ok={entry.status === 'ok'} class:err={entry.status === 'error'}>
         {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'}
       </span>
     </div>
-      {#if entry.output}
-        <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
-          {outputOpen ? '▾ hide output' : '▸ full output (' + entry.output.length + ' chars)'}
-        </button>
-        <div class="out"><pre>{outputOpen ? entry.output : preview}</pre></div>
+      {#if argsOpen && entry.args}
+        <pre class="argsbody">{entry.args}</pre>
+      {/if}
+      {#if toolOut}
+        {#if outputLong}
+          <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
+            {outputOpen ? '▾ hide output' : '▸ full output (' + toolOut.length + ' chars)'}
+          </button>
+        {/if}
+        <div class="out"><pre>{outputOpen ? toolOut : preview}</pre></div>
       {/if}
     </div>
   {:else}
     {#if entry.reasoning}
-      <div class="reasonblock" class:open={reasoningOpen}>
-        <button class="reasontitle" onclick={() => (reasoningOpen = !reasoningOpen)}>
-          {reasoningOpen ? '▾' : '▸'} reasoning
-        </button>
-        {#if reasoningOpen}
-          <div class="reason">
-            {#if streaming}<span class="cursor"></span>
-            {/if}{entry.reasoning.trim()}
-          </div>
+      <div class="reasonblock">
+        <div class="reasontitle">reasoning</div>
+        <div class="reason">
+          {#if streaming}<span class="cursor"></span>
+          {/if}{entry.reasoning.trim()}
+        </div>
+        {#if entry.usage}
+          <div class="reasonmeta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
         {/if}
       </div>
     {/if}
     {#if entry.kind === 'om'}
-      <div class="card">
-        <div class="klabel">observation log</div>
-        <div class="md">{@html md}</div>
+      <div class="obsblock">
+        <div class="obstitle">observation</div>
+        <div class="obstext">{@html md}</div>
+      </div>
+    {:else if entry.kind === 'subagent'}
+      <div class="subblock">
+        <div class="subtitle">sub-agent</div>
+        {#each sublines as line}
+          <div class="subtext">{line}</div>
+        {:else}
+          <div class="subtext">{entry.text}</div>
+        {/each}
       </div>
     {:else if entry.kind === 'spawn-snapshot'}
       <div class="card">
@@ -103,19 +188,17 @@
         <div class="klabel">system</div>
         <div class="md">{@html md}</div>
       </div>
-    {:else if entry.text || entry.usage || entry.kind === 'interrupted'}
+    {:else if (entry.text && entry.text.trim()) || entry.kind === 'interrupted'}
       <div class="card" class:interrupted={entry.kind === 'interrupted'}>
         {#if entry.kind === 'interrupted'}
           <div class="intmark">⚡ interrupted</div>
         {/if}
         <div class="md">{@html md}</div>
-        {#if entry.usage}
-          <div class="meta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
-        {/if}
       </div>
     {/if}
   {/if}
 </div>
+{/if}
 
 <style>
   .wrap {
@@ -157,10 +240,29 @@
   }
   .targs {
     color: var(--dim);
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    text-align: left;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     flex: 1;
+    cursor: pointer;
+  }
+  .argsbody {
+    margin: 8px 0 0;
+    padding: 8px 10px;
+    background: #0c0e12;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: 12px var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 320px;
+    overflow: auto;
+    color: var(--dim);
   }
   .tstatus {
     color: var(--dim);
@@ -190,18 +292,16 @@
   .reasontitle {
     display: block;
     width: 100%;
-    padding: 4px 10px;
-    text-align: left;
-    background: transparent;
-    border: 0;
-    cursor: pointer;
+    padding: 8px 10px 4px;
     font: 10.5px var(--mono);
     text-transform: uppercase;
     letter-spacing: 0.08em;
     color: var(--purple);
   }
-  .reasontitle:hover {
-    color: #b58cff;
+  .reasonmeta {
+    padding: 0 10px 6px;
+    font: 10px var(--mono);
+    color: #4d5462;
   }
   .reason {
     margin: 0;
@@ -209,8 +309,6 @@
     color: #9a8fb8;
     font-size: 12px;
     white-space: pre-wrap;
-    max-height: 160px;
-    overflow-y: auto;
   }
   .cursor {
     display: inline-block;
@@ -234,8 +332,6 @@
     background: #0c0e12;
     border-radius: 6px;
     font: 11.5px/1.5 var(--mono);
-    overflow-x: auto;
-    max-height: 240px;
     white-space: pre-wrap;
   }
   .klabel {
@@ -249,11 +345,6 @@
     font: 11px var(--mono);
     color: var(--amber);
     margin-bottom: 4px;
-  }
-  .meta {
-    margin-top: 6px;
-    font: 10.5px var(--mono);
-    color: #4d5462;
   }
   .md {
     white-space: pre-wrap;
@@ -302,5 +393,53 @@
   }
   :global(.md .lk) {
     color: var(--acc);
+  }
+  .obsblock {
+    margin: 0 0 6px;
+    border: 1px solid rgba(94, 200, 160, 0.16);
+    border-left: 2px solid rgba(94, 200, 160, 0.35);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .obstitle {
+    display: block;
+    width: 100%;
+    padding: 8px 10px 4px;
+    font: 10.5px var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #5ec8a0;
+  }
+  .obstext {
+    margin: 0;
+    padding: 0 10px 8px;
+    color: #7d948c;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .subblock {
+    margin: 0 0 6px;
+    border: 1px solid rgba(232, 180, 90, 0.16);
+    border-left: 2px solid rgba(232, 180, 90, 0.35);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .subtitle {
+    display: block;
+    width: 100%;
+    padding: 8px 10px 4px;
+    font: 10.5px var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--amber);
+  }
+  .subtext {
+    margin: 0;
+    padding: 0 10px 8px;
+    color: #b8a888;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 </style>

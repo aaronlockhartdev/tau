@@ -212,10 +212,16 @@ export function toEntry(v: ViewEntry): Entry {
     }
     case 'om': {
       const o = p as { active_observations?: string };
+      // The record's active_observations is the whole managed suffix; the
+      // block shows what this entry added — the newest observation, past
+      // its message boundary.
+      const all = o.active_observations ?? String(p as unknown as string);
+      const m = all.lastIndexOf('--- message boundary (');
+      const nl = m >= 0 ? all.indexOf('\n\n', m) : -1;
       return {
         id: v.id,
         kind: 'om',
-        text: o.active_observations ?? String(p as unknown as string),
+        text: nl > 0 ? all.slice(nl + 2).trim() : all.trim(),
         status: 'ok'
       };
     }
@@ -258,6 +264,7 @@ export function buildDemoSession(): DemoSession {
     id: 'demo',
     workspace: 'w-demo',
     title: 'Protocol crate: messages & events (10k fixture)',
+    parent: null,
     created: T0,
     leaf: raw[raw.length - 1].id,
     model: 'vllm/qwen3.8-27b',

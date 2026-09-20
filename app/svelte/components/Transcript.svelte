@@ -42,6 +42,14 @@
   ]);
 
   function hOf(e: Entry): number {
+    // A fully empty entry renders nothing (EntryCard's hasContent).
+    if (
+      !((e.text ?? '').trim() ||
+        e.reasoning ||
+        e.kind === 'interrupted' ||
+        (e.kind === 'tool' && (Boolean(e.args) || Boolean(e.output))))
+    )
+      return 0;
     if (cur) {
       const m = heights.get(`${cur}:${e.id}`);
       if (m !== undefined) return m;
@@ -118,26 +126,36 @@
     // return; stream growth does not fire scroll events, so a pinned view
     // stays pinned between ticks.
     let pinned = true;
+    // The rAF below forces the tail while pinned; a wheel-up would be
+    // overwritten before its scroll event can release the pin, so the
+    // wheel is watched directly (intent precedes the scrollTop change).
+    let wheelUntil = 0;
     const onScroll = () => {
       scroll.top = node.scrollTop;
       scroll.h = node.clientHeight;
       pinned = node.scrollHeight - node.scrollTop - node.clientHeight <= 8;
     };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) pinned = false;
+      wheelUntil = Date.now() + 200;
+    };
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
+    node.addEventListener('wheel', onWheel, { passive: true });
     node.scrollTo({ top: node.scrollHeight });
     // Follow the tail while pinned. rAF, not a timer: the stream grows at
     // the 25 ms coalesce cadence, so a coarser tick steps the view in
-    // visible jumps; per-frame tracking is smooth and a no-op when the
-    // height hasn't changed.
+    // visible jumps. A wheel-up suspends the follow (see onWheel) so a
+    // slow scroll is never fought.
     let raf = 0;
     const follow = () => {
-      if (pinned) node.scrollTop = node.scrollHeight;
+      if (pinned && Date.now() > wheelUntil) node.scrollTop = node.scrollHeight;
       raf = requestAnimationFrame(follow);
     };
     raf = requestAnimationFrame(follow);
     return () => {
       node.removeEventListener('scroll', onScroll);
+      node.removeEventListener('wheel', onWheel);
       cancelAnimationFrame(raf);
     };
   });

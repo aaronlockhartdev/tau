@@ -22,8 +22,11 @@ pub struct SessionMeta {
     pub id: String,
     /// The owning workspace's id.
     pub workspace: String,
-    /// v0 sessions carry no title yet; the GUI derives one.
+    /// The display name (the file header's title; adjective-noun for fresh
+    /// top-level sessions, "Sub-agent: …" for children).
     pub title: Option<String>,
+    /// The creator session (a sub-agent's parent); absent for top-level.
+    pub parent: Option<String>,
     /// The header's created timestamp (epoch ms).
     pub created: u64,
     /// The active branch's leaf entry id.

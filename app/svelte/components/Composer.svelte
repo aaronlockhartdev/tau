@@ -1,8 +1,9 @@
 <script lang="ts">
   // Composer with the 3-way lane selector (spec §9): one control
-  // picking force / steering / follow-up. Enter sends; force interrupts
-  // the in-flight turn, steering delivers at the next tool-call
-  // opportunity, follow-up after the model finishes.
+  // picking force / steering / follow-up. Enter sends; shift+enter
+  // breaks the line; force interrupts the in-flight turn, steering
+  // delivers at the next tool-call opportunity, follow-up after the
+  // model finishes.
 
   import { store, send, type PendingMsg } from '../lib/store.svelte';
 
@@ -19,44 +20,64 @@
     store.current ? store.sessions[store.current].turn === 'running' : false
   );
 
+  let inputEl = $state<HTMLTextAreaElement | null>(null);
+
+  // The box grows with the text up to the cap, then scrolls.
+  function fit(): void {
+    if (!inputEl) return;
+    inputEl.style.height = 'auto';
+    inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + 'px';
+  }
+
   function submit(): void {
     const t = text.trim();
     if (!t) return;
     text = '';
+    if (inputEl) inputEl.style.height = '';
     void send(t, lane);
   }
 </script>
 
 <div class="composer">
-  <div class="lanes">
-    {#each lanes as l (l.id)}
-      <button
-        class="lane"
-        class:active={lane === l.id}
-        title={l.title}
-        onclick={() => (lane = l.id)}
-      >
-        {l.label}
-      </button>
-    {/each}
-  </div>
-  <input
+  <textarea
     class="input"
+    bind:this={inputEl}
     bind:value={text}
-    placeholder="message — enter sends"
-    onkeydown={(e) => e.key === 'Enter' && submit()}
-  />
-  <button class="send" class:disabled={!text.trim()} onclick={submit}>
-    {running && lane === 'force' ? '⚡' : '↑'}
-  </button>
+    rows="3"
+    placeholder="Message Tau — enter sends, shift+enter for a new line"
+    onkeydown={(e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        submit();
+      }
+    }}
+    oninput={fit}
+  ></textarea>
+  <div class="row">
+    <div class="lanes">
+      {#each lanes as l (l.id)}
+        <button
+          class="lane"
+          class:active={lane === l.id}
+          title={l.title}
+          onclick={() => (lane = l.id)}
+        >
+          {l.label}
+        </button>
+      {/each}
+    </div>
+    <button class="send" class:disabled={!text.trim()} onclick={submit}>
+      {running && lane === 'force' ? '⚡' : '↑'}
+    </button>
+  </div>
 </div>
 
 <style>
   .composer {
     display: flex;
-    align-items: center;
+    flex-direction: column;
     gap: 8px;
-    padding: 10px 16px;
+    padding: 12px 16px;
     border-top: 1px solid var(--line);
     background: var(--panel);
     flex: none;
@@ -85,24 +106,34 @@
     color: var(--acc);
   }
   .input {
-    flex: 1;
+    width: 100%;
+    min-height: 66px;
+    max-height: 160px;
+    resize: none;
+    overflow-y: auto;
     background: #0c0e12;
     border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 13.5px;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font: 13.5px/1.45 var(--sans, system-ui);
     outline: none;
   }
   .input:focus {
     border-color: rgba(76, 194, 255, 0.4);
   }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
   .send {
-    width: 34px;
-    height: 34px;
+    margin-left: auto;
+    width: 32px;
+    height: 32px;
     border-radius: 6px;
     background: var(--acc);
     color: #081018;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 700;
     flex: none;
   }

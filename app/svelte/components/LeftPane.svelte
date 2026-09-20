@@ -6,7 +6,15 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, openSessionById, type PaneState } from '../lib/store.svelte';
+  import {
+    store,
+    pane,
+    ensurePane,
+    openSessionById,
+    renameSession,
+    type PaneState
+  } from '../lib/store.svelte';
+  import { tick } from 'svelte';
   import type { SessionState } from '../lib/store.svelte';
 
   const ws = $derived(store.current ? store.sessions[store.current]?.meta.workspace ?? null : null);
@@ -22,6 +30,26 @@
   const top = $derived(sessions.filter((s) => !s.parent && !s.archived).sort((a, b) => b.mru - a.mru));
   const archived = $derived(sessions.filter((s) => s.archived).sort((a, b) => b.mru - a.mru));
   const active = $derived(store.current ? store.sessions[store.current] : null);
+  // Inline rename: a double-clicked title becomes an input (Enter/blur
+  // commits, Esc cancels).
+  let renaming: string | null = $state(null);
+  let renameText = $state('');
+  let renameInput: HTMLInputElement | undefined = $state(undefined);
+  function startRename(s: SessionState): void {
+    renaming = s.meta.id;
+    renameText = s.meta.title ?? '';
+    // Double-click leaves focus on the row; pull it into the input so
+    // typing works immediately.
+    void tick().then(() => {
+      renameInput?.focus();
+      renameInput?.select();
+    });
+  }
+  function commitRename(id: string): void {
+    if (renaming !== id) return;
+    renaming = null;
+    void renameSession(id, renameText);
+  }
 
   // The demo's file tree (the prototype's fixture). The v0 protocol has a
   // file_read command but no directory listing, so the live pane shows a
@@ -163,7 +191,7 @@
       <div class="sec">
         <div class="tree">
           {#if top.length === 0}
-            <div class="empty"><span class="big">no sessions yet</span></div>
+            <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
             {#each top as s (s.meta.id)}
               <div class="node">
@@ -174,6 +202,7 @@
                   tabindex="0"
                   onclick={() => openSessionById(s.meta.id)}
                   onkeydown={onKey(() => openSessionById(s.meta.id))}
+                  ondblclick={() => startRename(s)}
                 >
                   <button
                     class="chev"
@@ -186,7 +215,24 @@
                   >
                     {childrenOf(s.meta.id).length > 0 ? (groupOpen(s.meta.id) ? '▾' : '▸') : ''}
                   </button>
-                  <span class="t">{s.meta.title ?? s.meta.id}</span>
+                  {#if renaming === s.meta.id}
+                    <input
+                      class="t rename"
+                      bind:this={renameInput}
+                      aria-label="rename session"
+                      value={renameText}
+                      onblur={() => commitRename(s.meta.id)}
+                      onkeydown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') commitRename(s.meta.id);
+                        else if (e.key === 'Escape') renaming = null;
+                      }}
+                      onmousedown={(e) => e.stopPropagation()}
+                      onclick={(e) => e.stopPropagation()}
+                    />
+                  {:else}
+                    <span class="t">{s.meta.title ?? s.meta.id}</span>
+                  {/if}
                   {#if sessionRunning(s)}<span class="badge running"><span class="dot"></span>running</span>{/if}
                   <span class="mru">{fmtAgo(s.mru)}</span>
                 </div>
@@ -199,8 +245,26 @@
                       tabindex="0"
                       onclick={() => openSessionById(c.meta.id)}
                       onkeydown={onKey(() => openSessionById(c.meta.id))}
+                      ondblclick={() => startRename(c)}
                     >
-                      <span class="t">{c.meta.title ?? c.meta.id}</span>
+                      {#if renaming === c.meta.id}
+                        <input
+                          class="t rename"
+                          bind:this={renameInput}
+                          aria-label="rename session"
+                          value={renameText}
+                          onblur={() => commitRename(c.meta.id)}
+                          onkeydown={(e) => {
+                            e.stopPropagation();
+                            if (e.key === 'Enter') commitRename(c.meta.id);
+                            else if (e.key === 'Escape') renaming = null;
+                          }}
+                          onmousedown={(e) => e.stopPropagation()}
+                          onclick={(e) => e.stopPropagation()}
+                        />
+                      {:else}
+                        <span class="t">{c.meta.title ?? c.meta.id}</span>
+                      {/if}
                       <span class="badge {c.state}"><span class="dot"></span>{c.state}{childInfo(c)?.waiting_on ? ` · ${childInfo(c)?.waiting_on}` : ''}</span>
                       <span class="mru">{fmtAgo(c.mru)}</span>
                     </div>
@@ -212,8 +276,26 @@
                         tabindex="0"
                         onclick={() => openSessionById(gc.meta.id)}
                         onkeydown={onKey(() => openSessionById(gc.meta.id))}
+                        ondblclick={() => startRename(gc)}
                       >
-                        <span class="t">{gc.meta.title ?? gc.meta.id}</span>
+                        {#if renaming === gc.meta.id}
+                          <input
+                            class="t rename"
+                            bind:this={renameInput}
+                            aria-label="rename session"
+                            value={renameText}
+                            onblur={() => commitRename(gc.meta.id)}
+                            onkeydown={(e) => {
+                              e.stopPropagation();
+                              if (e.key === 'Enter') commitRename(gc.meta.id);
+                              else if (e.key === 'Escape') renaming = null;
+                            }}
+                            onmousedown={(e) => e.stopPropagation()}
+                            onclick={(e) => e.stopPropagation()}
+                          />
+                        {:else}
+                          <span class="t">{gc.meta.title ?? gc.meta.id}</span>
+                        {/if}
                         <span class="badge {gc.state}"><span class="dot"></span>{gc.state}{childInfo(gc)?.waiting_on ? ` · ${childInfo(gc)?.waiting_on}` : ''}</span>
                         <span class="mru">{fmtAgo(gc.mru)}</span>
                       </div>
@@ -240,8 +322,26 @@
                   tabindex="0"
                   onclick={() => openSessionById(s.meta.id)}
                   onkeydown={onKey(() => openSessionById(s.meta.id))}
+                  ondblclick={() => startRename(s)}
                 >
-                  <span class="t">{s.meta.title ?? s.meta.id}</span>
+                  {#if renaming === s.meta.id}
+                    <input
+                      class="t rename"
+                      bind:this={renameInput}
+                      aria-label="rename session"
+                      value={renameText}
+                      onblur={() => commitRename(s.meta.id)}
+                      onkeydown={(e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter') commitRename(s.meta.id);
+                        else if (e.key === 'Escape') renaming = null;
+                      }}
+                      onmousedown={(e) => e.stopPropagation()}
+                      onclick={(e) => e.stopPropagation()}
+                    />
+                  {:else}
+                    <span class="t">{s.meta.title ?? s.meta.id}</span>
+                  {/if}
                   <span class="mru">{fmtAgo(s.mru)}</span>
                 </div>
               {/each}
@@ -356,6 +456,14 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .srow .t.rename {
+    padding: 1px 4px;
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    background: var(--panel);
+    color: var(--fg);
+    font: inherit;
   }
   .srow .t.none {
     color: #4d5462;

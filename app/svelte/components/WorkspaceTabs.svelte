@@ -1,6 +1,6 @@
 <script lang="ts">
-  // Workspace tabs on top (spec §9): one tab per open workspace, the
-  // active one closed by its ×, a + to open a new workspace, and the
+  // Workspace tags on top (spec §9): one tag per open workspace with a
+  // visible × on every tag, a + to open a new workspace, and the
   // focus-mode toggle that hides both side panes (spec: chat is always
   // central; focus mode is a deliberate collapse, not a different app).
 
@@ -19,17 +19,15 @@
       <button class="tabname" onclick={() => openWorkspace(w)}>
         <span class="dot"></span>{w.name}
       </button>
-      {#if store.current && store.sessions[store.current]?.meta.workspace === w.id}
-        <button class="x" aria-label="close workspace" onclick={() => closeWorkspace(w)}>×</button>
-      {/if}
+      <button class="x" aria-label="Close workspace" onclick={() => closeWorkspace(w)}>×</button>
     </div>
   {/each}
   <div class="addwrap">
-    <button class="add" title="open a workspace" onclick={() => (menuOpen = !menuOpen)}>+</button>
+    <button class="add" title="Open a workspace" onclick={() => (menuOpen = !menuOpen)}>+</button>
     {#if menuOpen}
       <div class="menu">
         <button class="mi" onclick={() => { menuOpen = false; void addWorkspace(); }}>
-          {store.demo ? 'new window' : 'open folder…'}
+          {store.demo ? 'New window' : 'Open folder…'}
         </button>
       </div>
     {/if}
@@ -38,7 +36,7 @@
   <button
     class="focus"
     class:on={store.focus}
-    title="focus mode: hide side panes"
+    title="Focus mode: hide side panes"
     onclick={() => (store.focus = !store.focus)}
   >
     ⤢
@@ -65,10 +63,10 @@
   .tab {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
+    gap: 7px;
+    padding: 4px 6px 4px 10px;
     border-radius: 6px;
-    font-size: 12.5px;
+    font-size: 12px;
     color: var(--dim);
     border: 1px solid transparent;
   }
@@ -78,8 +76,8 @@
   }
   .tab.active {
     color: var(--tx);
-    background: var(--panel2);
-    border-color: var(--line);
+    background: rgba(76, 194, 255, 0.10);
+    border-color: rgba(76, 194, 255, 0.28);
   }
   .tab .tabname {
     display: inline-flex;
@@ -87,8 +85,8 @@
     gap: 6px;
   }
   .tab .dot {
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: #3a4150;
   }
@@ -96,13 +94,20 @@
     background: var(--green);
   }
   .x {
-    margin-left: 4px;
-    padding: 0 3px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     color: var(--dim);
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 1;
   }
   .x:hover {
     color: var(--red);
+    background: rgba(255, 90, 90, 0.12);
   }
   .addwrap {
     position: relative;

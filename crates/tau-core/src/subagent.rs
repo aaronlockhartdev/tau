@@ -504,6 +504,11 @@ impl Supervisor {
                 store
             }
         };
+        // The header carries the parent link too, so the nesting survives a
+        // restart (the spawn record below is the entry-level provenance).
+        store
+            .set_parent(&self.parent_session)
+            .map_err(|e| format!("subagent_spawn: {e}"))?;
 
         // The spawn record: the parent link (session id + originating tool
         // call id) is the child's durable provenance (ADR-0001).
@@ -562,6 +567,12 @@ impl Supervisor {
             self.parent_session,
             self.next.fetch_add(1, Ordering::SeqCst) + 1
         );
+        // A child session keeps a readable name in its header too, so it
+        // survives a restart like a top-level one.
+        let name = format!("Sub-agent: {}", ty.name);
+        store
+            .set_title(&name)
+            .map_err(|e| format!("subagent_spawn: {e}"))?;
         let provider = self.provider.create(&session_id);
         // The type configures the child (spec §5.5): `general` inherits
         // the session's prompt, tools, and model; a `.md` type brings its
@@ -714,7 +725,7 @@ impl Supervisor {
             if !child.nudge_sent.swap(true, Ordering::SeqCst) {
                 let _ = child.agent.append_entry(
                     crate::agent::KIND_SYSTEM,
-                    json!({ "note": "nudge: state what you are waiting for, or finish" }),
+                    json!({ "note": "Nudge: state what you are waiting for, or finish" }),
                 );
                 child.agent.send(NUDGE, Lane::FollowUp);
                 continue;
@@ -1640,7 +1651,7 @@ mod tests {
             .filter(|e| {
                 e.kind == crate::agent::KIND_SYSTEM
                     && e.payload["note"].as_str()
-                        == Some("nudge: state what you are waiting for, or finish")
+                        == Some("Nudge: state what you are waiting for, or finish")
             })
             .collect();
         assert_eq!(nudges.len(), 1, "one nudge per parked state, no loops");
@@ -2219,7 +2230,7 @@ mod tests {
                     && e.payload
                         .get("note")
                         .and_then(|n| n.as_str())
-                        .map(|n| n.starts_with("nudge"))
+                        .map(|n| n.starts_with("Nudge"))
                         .unwrap_or(false)
             })
             .count();

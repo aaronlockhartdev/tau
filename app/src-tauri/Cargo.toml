@@ -17,6 +17,7 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 xxhash-rust = { workspace = true }
+names = { workspace = true }
 # the agent-tools dev bridge (debug builds only; wired in main.rs)
 tiny_http = "0.12"
 scopeguard = "1"

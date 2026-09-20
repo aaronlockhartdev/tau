@@ -16,3 +16,4 @@ toml = "1"
 tempfile = "3"
 zstd = "0.14"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
+names = { version = "0.14", default-features = false }

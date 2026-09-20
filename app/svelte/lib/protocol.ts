@@ -24,6 +24,7 @@ export interface SessionMeta {
   id: string;
   workspace: string;
   title: string | null;
+  parent: string | null;
   created: number;
   leaf: string | null;
   model: string | null;
@@ -201,6 +202,7 @@ export type Command =
   | { type: 'workspace_list' }
   | { type: 'session_list'; workspace: string }
   | { type: 'session_new'; workspace: string; title: string | null }
+  | { type: 'session_rename'; session: string; title: string }
   | { type: 'session_open'; session: string }
   | { type: 'session_close'; session: string }
   | { type: 'session_delete'; session: string }

@@ -186,7 +186,7 @@ try {
       }), 200);
     })`);
     check('status bar shows the render stats (range · ms · streams · model)', /\d+–\d+ of \d+/.test(ui.bar) && /·\s*\d+(\.\d+)?\s*ms/.test(ui.bar), ui.bar.replace(/\n/g, ' | '));
-    check('usage renders real numbers (no undefined/NaN)', ui.metas.length > 0 && ui.metas.every((m) => /^\d+(\.\dk)? in · \d+(\.\dk)? out$/.test(m)), ui.metas.join(' / '));
+    check('usage renders real numbers (no undefined/NaN)', /\d+(\.\dk)? in · \d+(\.\dk)? out · \d+(\.\dk)? total/.test(ui.bar), ui.bar.replace(/\n/g, ' | '));
     check('focus mode applies the class', ui.focusOn === true, ui.focus);
     await evalPage(wsUrl, `document.querySelector('.focus').click()`); // toggle back
 
@@ -213,8 +213,8 @@ try {
     check('right pane: the two tabs are tasks and sub-agents',
       JSON.stringify(panes.rightTabs) === JSON.stringify(['tasks', 'sub-agents']),
       panes.rightTabs.join(' / '));
-    check('right pane: tasks default to the open filter (3 not-done of 5)',
-      panes.taskRows.length === 3 && panes.taskRows.some((t) => t.includes('Harden provider')) && panes.taskRows.some((t) => t.includes('Protocol surface')),
+    check('right pane: tasks default to the all filter (5 of 5)',
+      panes.taskRows.length === 5 && panes.taskRows.some((t) => t.includes('Harden provider')) && panes.taskRows.some((t) => t.includes('Protocol surface')),
       `${panes.taskRows.length} rows: ${panes.taskRows.join(' | ').slice(0, 120)}`);
 
     // expand a task → labeled detail with the resume contract
@@ -240,8 +240,8 @@ try {
         });
       }, 150);
     })`);
-    check('sub-agents: the open filter shows the 5 not-done roots',
-      subs.roots.length === 5 && !subs.roots.some((r) => r.includes('done')),
+    check('sub-agents: the default all filter shows all 6 roots',
+      subs.roots.length === 6 && subs.roots.some((r) => r.includes('done')),
       subs.roots.map((r) => r.slice(0, 24)).join(' | '));
     const subsAll = await evalPage(wsUrl, `new Promise((res) => {
       const [left, right] = [...document.querySelectorAll('.pane')];

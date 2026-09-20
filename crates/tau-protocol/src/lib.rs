@@ -144,6 +144,12 @@ pub enum Command {
         workspace: String,
         title: Option<String>,
     },
+    /// Rename the session: the new title replaces the header's (the file
+    /// keeps its id; the title is a display name).
+    SessionRename {
+        session: String,
+        title: String,
+    },
     SessionOpen {
         session: String,
     },
@@ -451,6 +457,10 @@ mod tests {
                 workspace: "w1".into(),
                 title: None,
             },
+            Command::SessionRename {
+                session: "s1".into(),
+                title: "Brave Otter".into(),
+            },
             Command::SessionOpen {
                 session: "s1".into(),
             },
@@ -716,6 +726,7 @@ mod tests {
             id: "s1".into(),
             workspace: "w1".into(),
             title: None,
+            parent: None,
             created: 1,
             leaf: None,
             model: None,

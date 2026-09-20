@@ -97,11 +97,13 @@
   export function ensurePane(ws: string): PaneState {
     const prev = store.pane[ws];
     if (prev) return prev;
+    // The filters default to 'all': a done sub-agent or task that the user
+    // just watched finish is what they expect to see, not an empty tab.
     const p: PaneState = {
       ltab: 'sessions',
       rtab: 'tasks',
-      tFilter: 'open',
-      sFilter: 'open',
+      tFilter: 'all',
+      sFilter: 'all',
       expandedTasks: [],
       openGroups: [],
       archOpen: false,
@@ -126,7 +128,7 @@
       return;
     }
     store.sessions[childSid] = {
-      meta: { id: childSid, workspace: ws, title: null, created: mru, leaf: null, model: null, usage: null },
+      meta: { id: childSid, workspace: ws, title: null, parent: parentSid, created: mru, leaf: null, model: null, usage: null },
       entries: [],
       live: [],
       usage: null,
@@ -272,6 +274,7 @@
       id,
       workspace: 'w-demo',
       title,
+      parent: null,
       created,
       leaf: null,
       model: 'vllm/qwen3.8-27b',
@@ -575,6 +578,30 @@
       store.workspaces.push(real);
     }
     const list = await command({ type: 'session_list', workspace: real.id });
+    // The listed sessions materialize as stubs so the pane shows them all;
+    // entries hydrate lazily when one is opened.
+    if (list.kind === 'sessions') {
+      for (const m of list.sessions) {
+        if (!store.sessions[m.id]) {
+          store.sessions[m.id] = {
+            meta: m,
+            entries: [],
+            live: [],
+            usage: null,
+            tps: 0,
+            turn: 'idle',
+            pending: [],
+            parent: m.parent ?? null,
+            state: 'idle',
+            waiting_on: null,
+            archived: false,
+            mru: m.created,
+            subagents: [],
+            tasks: []
+          };
+        }
+      }
+    }
     const sid =
       list.kind === 'sessions' && list.sessions.length > 0
         ? list.sessions[0].id
@@ -664,6 +691,19 @@
     if (cur && store.sessions[cur]?.meta.workspace === ws.id) {
       store.current = null;
     }
+  }
+
+  export async function renameSession(sid: string, title: string): Promise<void> {
+    const t = title.trim();
+    if (!t) return;
+    try {
+      await command({ type: 'session_rename', session: sid, title: t });
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    const s = store.sessions[sid];
+    if (s) s.meta.title = t;
   }
 
   export async function switchSession(sid: string): Promise<void> {
@@ -984,7 +1024,7 @@
             // assistant state land even if their events raced the stream.
             void fetchWindow(sid, Math.max(0, s.entries.length - 50), 50);
           }
-          s.meta.leaf = le?.id ?? s.meta.leaf;
+          s.meta.leaf = le?.id ?? s.entries[s.entries.length - 1]?.id ?? s.meta.leaf;
           break;
         }
         // Tool entries key on the provider's tool_call_id (not the stream
@@ -992,6 +1032,18 @@
         // hydration twin matches, and two tools in one assistant call no
         // longer collapse into one card.
         case 'tool_start': {
+          // A tool call follows the assistant text that requested it: settle
+          // the streaming entry into the list first so the card lands after
+          // that text, not after the response that follows it.
+          for (const le of s.live) {
+            s.entries.push({
+              id: le.id,
+              kind: 'message',
+              text: le.text,
+              reasoning: le.reasoning || undefined
+            });
+          }
+          s.live = [];
           const existing = s.entries.find((e) => e.id === ev.tool_call_id);
           if (existing) {
             existing.status = 'running';

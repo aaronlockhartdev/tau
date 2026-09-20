@@ -18,7 +18,7 @@
   const loading = $derived(store.loading);
   const error = $derived(store.error);
   const focus = $derived(store.focus);
-  const title = $derived(cur?.meta.title ?? cur?.meta.id ?? 'new session');
+  const title = $derived(cur?.meta.title ?? cur?.meta.id ?? 'New session');
   const model = $derived(cur?.meta.model ?? '');
 </script>
 
@@ -46,7 +46,7 @@
         <div class="err">⚠ {error}</div>
       {/if}
       {#if loading}
-        <div class="empty"><span class="big">loading…</span></div>
+        <div class="empty"><span class="big">Loading…</span></div>
       {:else if cur}
         {#key store.current}
         <Transcript />
@@ -55,8 +55,8 @@
         <Composer />
       {:else}
         <div class="empty">
-          <span class="big">no workspace open</span>
-          <span>use the + tab to open one, or run with ?demo=1 for the 10k fixture</span>
+          <span class="big">No workspace open</span>
+          <span>Use the + tab to open one, or run with ?demo=1 for the 10k fixture</span>
         </div>
       {/if}
     </main>

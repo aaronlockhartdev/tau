@@ -336,7 +336,7 @@ impl AgentSession {
                     KIND_SYSTEM,
                     json!({
                         "note": format!(
-                            "stopped after {MAX_ROUNDS} tool rounds without the model ending the turn"
+                            "Stopped after {MAX_ROUNDS} tool rounds without the model ending the turn"
                         )
                     }),
                 )?;

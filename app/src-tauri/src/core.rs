@@ -326,7 +326,8 @@ impl SubagentBridge for AppSubagentBridge {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),
                 workspace: self.workspace.clone(),
-                title: Some(format!("sub-agent {}", n.handle)),
+                title: Some(format!("Sub-agent: {}", n.agent_type)),
+                parent: Some(n.parent.clone()),
                 created: store.created(),
                 leaf: None,
                 model: Some(n.model.clone()),
@@ -496,6 +497,12 @@ impl CoreBuilder {
         self
     }
 
+    /// A test seam: a custom system dir (the workspaces.json location).
+    pub fn with_system_dir(mut self, dir: PathBuf) -> Self {
+        self.system_dir = Some(dir);
+        self
+    }
+
     pub fn build(self) -> Arc<Core> {
         let (events_tx, rx) = mpsc::channel(1024);
         let core = Arc::new(Core {
@@ -539,7 +546,74 @@ impl CoreBuilder {
             config.providers.insert(name, p);
         }
         core.configs.lock().unwrap().insert(String::new(), config);
+        // The workspaces a previous run opened: re-register the ones whose
+        // folder still exists (sessions are read from disk on demand).
+        for e in core.load_workspace_index() {
+            if Path::new(&e.cwd).is_dir() {
+                let w = Workspace {
+                    id: e.id,
+                    name: e.name,
+                    cwd: e.cwd,
+                };
+                core.workspaces
+                    .lock()
+                    .unwrap()
+                    .entry(w.id.clone())
+                    .or_insert(w);
+            }
+        }
     }
+}
+
+/// A readable session name: adjective-noun from the `names` crate's
+/// dictionaries, title-cased ("Rusty Nail").
+fn session_name() -> String {
+    let raw = names::Generator::default()
+        .next()
+        .expect("the generator yields a name");
+    raw.split('-')
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                _ => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Draw a session name that is fresh against the workspace's existing
+/// titles; after eight colliding draws (the dictionary is effectively
+/// exhausted) the name is numbered until it is unique (note 8). The draw
+/// function is a parameter so the fallback is testable without the
+/// randomness.
+fn unique_name(titles: &[String], mut draw: impl FnMut() -> String) -> String {
+    let mut name = draw();
+    for _ in 0..8 {
+        if !titles.contains(&name) {
+            return name;
+        }
+        name = draw();
+    }
+    let mut n = 2u32;
+    loop {
+        let suffixed = format!("{name} {n}");
+        if !titles.contains(&suffixed) || n >= 100 {
+            return suffixed;
+        }
+        n += 1;
+    }
+}
+
+/// The workspace index (`{system dir}/workspaces.json`): the folders this
+/// machine has opened; restored at boot so a restart reopens the world and
+/// its sessions.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WorkspaceIndexEntry {
+    id: String,
+    name: String,
+    cwd: String,
 }
 
 impl Core {
@@ -602,6 +676,7 @@ impl Core {
                 cwd: workspace.cwd.clone(),
             },
         });
+        self.upsert_workspace_index(&workspace);
         Ok(workspace)
     }
 
@@ -614,6 +689,117 @@ impl Core {
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("workspace {id} is not open"),
             })
+    }
+
+    /// The workspace's on-disk sessions (the files, not just the live
+    /// ones): one header-line read per session, so a cold listing stays
+    /// cheap. Live sessions win over their file copies on merge.
+    fn disk_sessions(&self, workspace: &Workspace) -> Vec<SessionMeta> {
+        #[derive(serde::Deserialize)]
+        struct DiskHeader {
+            #[serde(rename = "type")]
+            kind: String,
+            id: String,
+            created: u64,
+            #[serde(default)]
+            leaf: Option<String>,
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            parent: Option<String>,
+        }
+        let dir = Path::new(&workspace.cwd).join(".tau").join("sessions");
+        let Ok(names) = std::fs::read_dir(&dir).map(|d| {
+            d.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".jsonl"))
+                .collect::<Vec<_>>()
+        }) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for name in names {
+            let path = dir.join(&name);
+            let Ok(first) = std::fs::File::open(&path).and_then(|f| {
+                use std::io::BufRead;
+                let mut line = String::new();
+                std::io::BufReader::new(f)
+                    .read_line(&mut line)
+                    .map(|_| line)
+            }) else {
+                continue;
+            };
+            let Ok(h) = serde_json::from_str::<DiskHeader>(first.trim()) else {
+                continue;
+            };
+            if h.kind != "session" || h.id != name.trim_end_matches(".jsonl") {
+                continue;
+            }
+            out.push(SessionMeta {
+                id: h.id,
+                workspace: workspace.id.clone(),
+                title: h.title,
+                parent: h.parent,
+                created: h.created,
+                leaf: h.leaf,
+                model: None,
+                usage: None,
+            });
+        }
+        out
+    }
+
+    /// A name free of collisions among the workspace's sessions (the file is
+    /// the record, so the check is against the disk titles).
+    fn fresh_session_name(&self, workspace: &Workspace) -> String {
+        let titles = self
+            .disk_sessions(workspace)
+            .iter()
+            .filter_map(|m| m.title.clone())
+            .collect::<Vec<_>>();
+        unique_name(&titles, session_name)
+    }
+
+    fn load_workspace_index(&self) -> Vec<WorkspaceIndexEntry> {
+        let Some(dir) = &self.system_dir else {
+            return Vec::new();
+        };
+        let Ok(raw) = std::fs::read_to_string(dir.join("workspaces.json")) else {
+            return Vec::new();
+        };
+        serde_json::from_str(&raw).unwrap_or_default()
+    }
+
+    fn save_workspace_index(&self, entries: &[WorkspaceIndexEntry]) {
+        let Some(dir) = &self.system_dir else {
+            return;
+        };
+        if let Ok(raw) = serde_json::to_vec_pretty(entries) {
+            // Note 7: a torn plain write costs every workspace tab on the
+            // next boot; the temp-file rename makes the index all-or-nothing.
+            let _ = std::fs::create_dir_all(dir);
+            let path = dir.join("workspaces.json");
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let tmp = dir.join(format!("workspaces.json.tmp-{nanos:016x}"));
+            if std::fs::write(&tmp, raw).is_ok() {
+                let _ = std::fs::rename(&tmp, path);
+            }
+        }
+    }
+
+    fn upsert_workspace_index(&self, w: &Workspace) {
+        let mut entries = self.load_workspace_index();
+        entries.retain(|e| e.cwd != w.cwd);
+        entries.push(WorkspaceIndexEntry {
+            id: w.id.clone(),
+            name: w.name.clone(),
+            cwd: w.cwd.clone(),
+        });
+        entries.sort_by(|a, b| a.cwd.cmp(&b.cwd));
+        self.save_workspace_index(&entries);
     }
 
     fn workspace_config(&self, workspace: &Workspace) -> Config {
@@ -695,6 +881,15 @@ impl Core {
             message: e.to_string(),
         })?;
         let created = store.created();
+        // A fresh session gets a readable name (adjective noun) persisted in
+        // the header, so it survives restarts; an explicit title wins.
+        let title = match title {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => self.fresh_session_name(workspace),
+        };
+        store.set_title(&title).map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
 
         // The per-session OM record (ticket #22): reconstructed from the
         // file on open; a fresh session starts with the default record.
@@ -787,7 +982,8 @@ impl Core {
         let meta = SessionMeta {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),
-            title,
+            title: Some(title),
+            parent: None,
             created,
             leaf: None,
             model: Some(model),
@@ -831,25 +1027,8 @@ impl Core {
             .find(|e| e.kind == tau_core::agent::KIND_ASSISTANT)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
-        let entries = entries
-            .iter()
-            .map(|e| EntryMeta {
-                id: e.id.clone(),
-                parent: e.parent.clone(),
-                kind: e.kind.clone(),
-                timestamp: e.timestamp,
-                size: serde_json::to_vec(e).map(|v| v.len() as u64).unwrap_or(0),
-                preview: preview(e),
-                first_kept: e.first_kept_entry_id.clone(),
-                status: if e.kind == tau_core::agent::KIND_ASSISTANT
-                    && e.payload.get("interrupted") == Some(&Value::Bool(true))
-                {
-                    EntryStatus::Interrupted
-                } else {
-                    EntryStatus::Ok
-                },
-            })
-            .collect();
+        let tasks = tasks_of(&entries);
+        let entries = entries.iter().map(entry_meta).collect();
         let meta = live.meta.lock().unwrap().clone();
         Ok(Snapshot {
             workspace,
@@ -879,25 +1058,7 @@ impl Core {
                     .unwrap_or_default(),
                 // The session's tasks (per-session store, spec §5.3): the
                 // GUI's tasks panel; active ones ride their resume contract.
-                tasks: store
-                    .entries_range(0, usize::MAX)
-                    .map(|entries| {
-                        tau_core::task::fold_entries(&entries)
-                            .into_iter()
-                            .map(|t| {
-                                let mut v = serde_json::to_value(&t).unwrap_or(Value::Null);
-                                if t.status == tau_core::task::STATUS_IN_PROGRESS
-                                    || t.status == tau_core::task::STATUS_BLOCKED
-                                {
-                                    v["resume_contract"] =
-                                        serde_json::to_value(tau_core::task::resume_contract(&t))
-                                            .unwrap_or(Value::Null);
-                                }
-                                v
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                tasks,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -953,6 +1114,115 @@ impl Core {
             .collect())
     }
 
+    /// A closed session is a file: open it read-only and project it the way
+    /// a live session is (idle live state, no OM, no queue).
+    fn snapshot_from_disk(&self, id: &str) -> Result<Snapshot, ProtocolError> {
+        let (workspace, meta) = self
+            .workspaces
+            .lock()
+            .unwrap()
+            .values()
+            .find_map(|w| {
+                self.disk_sessions(w)
+                    .into_iter()
+                    .find(|m| m.id == id)
+                    .map(|m| (w.clone(), m))
+            })
+            .ok_or_else(|| ProtocolError::Other {
+                message: "unknown session".into(),
+            })?;
+        let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), id);
+        store.open().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        let entries = store
+            .entries_range(0, usize::MAX)
+            .map_err(|e| ProtocolError::Other {
+                message: e.to_string(),
+            })?;
+        let usage = entries
+            .iter()
+            .rev()
+            .find(|e| e.kind == tau_core::agent::KIND_ASSISTANT)
+            .and_then(|e| e.payload.get("usage"))
+            .and_then(usage_of);
+        let leaf = store.leaf().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        Ok(Snapshot {
+            workspace,
+            session: SessionMeta { usage, ..meta },
+            entries: entries.iter().map(entry_meta).collect(),
+            om: Value::Null,
+            live: LiveState {
+                queue: vec![],
+                turn: TurnState::Idle,
+                subagents: vec![],
+                tasks: tasks_of(&entries),
+            },
+            cursor: leaf.map(|e| e.id).unwrap_or_default(),
+        })
+    }
+
+    /// Paged reads of a closed session's file: same semantics as the live
+    /// path (exactly one of since/range).
+    fn entries_from_disk(
+        &self,
+        id: &str,
+        since: Option<String>,
+        range: Option<tau_protocol::snapshot::EntryRange>,
+    ) -> Result<Vec<ViewEntry>, ProtocolError> {
+        let cwd = self
+            .workspaces
+            .lock()
+            .unwrap()
+            .values()
+            .find(|w| self.disk_sessions(w).iter().any(|m| m.id == id))
+            .map(|w| w.cwd.clone())
+            .ok_or_else(|| ProtocolError::Other {
+                message: "unknown session".into(),
+            })?;
+        let mut store = SessionStore::for_workspace(Path::new(&cwd), id);
+        store.open().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        let entries = match (since, range) {
+            (Some(cursor), None) => {
+                store
+                    .entries_since(&cursor)
+                    .map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?
+            }
+            (None, Some(r)) => store
+                .entries_range(r.start, r.start + r.count)
+                .map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?,
+            _ => {
+                return Err(ProtocolError::Other {
+                    message: "exactly one of since/range is required".into(),
+                });
+            }
+        };
+        Ok(entries
+            .iter()
+            .map(|e| ViewEntry {
+                id: e.id.clone(),
+                parent: e.parent.clone(),
+                kind: e.kind.clone(),
+                timestamp: e.timestamp,
+                payload: e.payload.clone(),
+                blob: e.blob.as_ref().map(|b| tau_protocol::snapshot::BlobRef {
+                    id: b.id.clone(),
+                    size: b.size,
+                    hash: b.hash.clone(),
+                }),
+                first_kept: e.first_kept_entry_id.clone(),
+            })
+            .collect())
+    }
+
     // ── the dispatch surface ─────────────────────────────────────────────
 
     pub async fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
@@ -966,16 +1236,23 @@ impl Core {
 
             Command::SessionList { workspace } => {
                 let workspace = self.workspace(&workspace)?;
-                Ok(CommandOutput::Sessions {
-                    sessions: self
-                        .sessions
-                        .lock()
-                        .unwrap()
-                        .values()
-                        .filter(|s| s.meta.lock().unwrap().workspace == workspace.id)
-                        .map(|s| s.meta.lock().unwrap().clone())
-                        .collect(),
-                })
+                let mut sessions = self
+                    .sessions
+                    .lock()
+                    .unwrap()
+                    .values()
+                    .filter(|s| s.meta.lock().unwrap().workspace == workspace.id)
+                    .map(|s| s.meta.lock().unwrap().clone())
+                    .collect::<Vec<_>>();
+                // The file is the record: sessions closed since boot (or
+                // from a previous run) still list; the live copy wins.
+                for m in self.disk_sessions(&workspace) {
+                    if !sessions.iter().any(|s| s.id == m.id) {
+                        sessions.push(m);
+                    }
+                }
+                sessions.sort_by_key(|s| std::cmp::Reverse(s.created));
+                Ok(CommandOutput::Sessions { sessions })
             }
             Command::SessionNew { workspace, title } => {
                 let workspace = self.workspace(&workspace)?;
@@ -983,11 +1260,47 @@ impl Core {
                     session: self.session_new(&workspace, title)?,
                 })
             }
+            Command::SessionRename { session, title } => {
+                // The title lives in the file header, so the same write
+                // works for a live and a closed session alike.
+                let cwd = match self.live(&session) {
+                    Ok(l) => {
+                        // Keep the in-memory meta in sync; snapshot() and
+                        // session_list() serve it, so a re-open must not
+                        // revert the rename.
+                        l.meta.lock().unwrap().title = Some(title.clone());
+                        l.cwd.clone()
+                    }
+                    Err(_) => self
+                        .workspaces
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .find(|w| self.disk_sessions(w).iter().any(|m| m.id == session))
+                        .map(|w| PathBuf::from(w.cwd.clone()))
+                        .ok_or_else(|| ProtocolError::Other {
+                            message: "unknown session".into(),
+                        })?,
+                };
+                let mut store = SessionStore::for_workspace(&cwd, &session);
+                store.open().map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+                store.set_title(&title).map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+                Ok(CommandOutput::None)
+            }
             Command::SessionOpen { session } => {
-                let live = self.live(&session)?;
-                Ok(CommandOutput::Snapshot {
-                    snapshot: self.snapshot(&live)?,
-                })
+                match self.live(&session) {
+                    Ok(live) => Ok(CommandOutput::Snapshot {
+                        snapshot: self.snapshot(&live)?,
+                    }),
+                    // A closed session is a file: read-only snapshot.
+                    Err(_) => Ok(CommandOutput::Snapshot {
+                        snapshot: self.snapshot_from_disk(&session)?,
+                    }),
+                }
             }
             Command::SessionClose { session } => {
                 // Closing stops any in-flight turn: a closed session must
@@ -1034,10 +1347,11 @@ impl Core {
                 since,
                 range,
             } => {
-                let live = self.live(&session)?;
-                Ok(CommandOutput::Entries {
-                    entries: self.entries(&live, since, range)?,
-                })
+                let entries = match self.live(&session) {
+                    Ok(live) => self.entries(&live, since, range)?,
+                    Err(_) => self.entries_from_disk(&session, since, range)?,
+                };
+                Ok(CommandOutput::Entries { entries })
             }
 
             Command::MessageSend {
@@ -1658,6 +1972,45 @@ fn preview(entry: &Entry) -> String {
     out
 }
 
+/// One file entry's snapshot projection (the metadata the GUI renders
+/// before a paged read supplies payloads).
+fn entry_meta(e: &Entry) -> EntryMeta {
+    EntryMeta {
+        id: e.id.clone(),
+        parent: e.parent.clone(),
+        kind: e.kind.clone(),
+        timestamp: e.timestamp,
+        size: serde_json::to_vec(e).map(|v| v.len() as u64).unwrap_or(0),
+        preview: preview(e),
+        first_kept: e.first_kept_entry_id.clone(),
+        status: if e.kind == tau_core::agent::KIND_ASSISTANT
+            && e.payload.get("interrupted") == Some(&Value::Bool(true))
+        {
+            EntryStatus::Interrupted
+        } else {
+            EntryStatus::Ok
+        },
+    }
+}
+
+/// The session's tasks folded from its entries; the active ones ride their
+/// resume contract.
+fn tasks_of(entries: &[Entry]) -> Vec<Value> {
+    tau_core::task::fold_entries(entries)
+        .into_iter()
+        .map(|t| {
+            let mut v = serde_json::to_value(&t).unwrap_or(Value::Null);
+            if t.status == tau_core::task::STATUS_IN_PROGRESS
+                || t.status == tau_core::task::STATUS_BLOCKED
+            {
+                v["resume_contract"] = serde_json::to_value(tau_core::task::resume_contract(&t))
+                    .unwrap_or(Value::Null);
+            }
+            v
+        })
+        .collect()
+}
+
 fn usage_of(value: &Value) -> Option<Usage> {
     let u: CoreUsage = serde_json::from_value(value.clone()).ok()?;
     Some(Usage {
@@ -2025,6 +2378,7 @@ mod tests {
                 id: provider.session.clone(),
                 workspace: workspace.id.clone(),
                 title: None,
+                parent: None,
                 created,
                 leaf: None,
                 model: Some("model".into()),
@@ -2497,5 +2851,216 @@ mod tests {
             "the child's live session was not registered"
         );
         drop(core);
+    }
+
+    #[test]
+    fn unique_name_returns_a_free_draw() {
+        assert_eq!(unique_name(&[], || "Rusty Nail".into()), "Rusty Nail");
+    }
+
+    #[test]
+    fn unique_name_numbers_past_the_collisions() {
+        let titles = vec![
+            "Rusty Nail".into(),
+            "Rusty Nail 2".into(),
+            "Rusty Nail 3".into(),
+        ];
+        assert_eq!(unique_name(&titles, || "Rusty Nail".into()), "Rusty Nail 4");
+    }
+
+    /// The tokio tests share this: open a workspace rooted at a temp dir.
+    async fn open_ws(core: &Arc<Core>, cwd: &std::path::Path) -> Workspace {
+        match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: cwd.display().to_string(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace } => workspace,
+            other => panic!("expected workspace: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn session_list_merges_live_and_disk_sessions() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let live = match core
+            .dispatch(Command::SessionNew {
+                workspace: w.id.clone(),
+                title: None,
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected session: {other:?}"),
+        };
+        // A closed session: created on disk, never registered with this core.
+        let closed_id = SessionStore::new_session_id();
+        {
+            let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &closed_id);
+            store.create().unwrap();
+            store.set_title("Closed One").unwrap();
+            store
+                .append("user", json!({ "text": "hello" }), None)
+                .unwrap();
+        }
+        let list = match core
+            .dispatch(Command::SessionList { workspace: w.id })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Sessions { sessions } => sessions,
+            other => panic!("expected sessions: {other:?}"),
+        };
+        assert_eq!(list.len(), 2, "live and closed both listed: {list:?}");
+        assert!(
+            list.iter()
+                .any(|s| s.id == live.id && s.title == live.title),
+            "the live session is listed: {list:?}"
+        );
+        let closed = list
+            .iter()
+            .find(|s| s.id == closed_id)
+            .expect("the closed session is listed");
+        assert_eq!(closed.title.as_deref(), Some("Closed One"));
+    }
+
+    #[tokio::test]
+    async fn session_rename_syncs_the_live_meta() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let live = match core
+            .dispatch(Command::SessionNew {
+                workspace: w.id.clone(),
+                title: None,
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected session: {other:?}"),
+        };
+        core.dispatch(Command::SessionRename {
+            session: live.id.clone(),
+            title: "Renamed".into(),
+        })
+        .await
+        .unwrap();
+        // Re-opening serves the snapshot from the live meta; the rename must
+        // not revert (the B1 regression).
+        let snap = match core
+            .dispatch(Command::SessionOpen { session: live.id })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected snapshot: {other:?}"),
+        };
+        assert_eq!(snap.session.title.as_deref(), Some("Renamed"));
+    }
+
+    #[tokio::test]
+    async fn session_rename_updates_a_closed_session_header() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let id = SessionStore::new_session_id();
+        {
+            let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+            store.create().unwrap();
+            store.set_title("Before").unwrap();
+        }
+        core.dispatch(Command::SessionRename {
+            session: id.clone(),
+            title: "After".into(),
+        })
+        .await
+        .unwrap();
+        let header =
+            std::fs::read_to_string(cwd.path().join(".tau/sessions").join(format!("{id}.jsonl")))
+                .unwrap()
+                .lines()
+                .next()
+                .unwrap()
+                .to_owned();
+        assert!(header.contains("\"After\""), "header: {header}");
+    }
+
+    #[tokio::test]
+    async fn closed_session_serves_snapshot_and_entries_from_disk() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let id = SessionStore::new_session_id();
+        {
+            let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+            store.create().unwrap();
+            store
+                .append("user", json!({ "text": "hello" }), None)
+                .unwrap();
+        }
+        let snap = match core
+            .dispatch(Command::SessionOpen {
+                session: id.clone(),
+            })
+            .await
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected snapshot: {other:?}"),
+        };
+        assert!(
+            !snap.entries.is_empty(),
+            "the disk entries are in the snapshot"
+        );
+        let out = core
+            .dispatch(Command::SessionEntries {
+                session: id,
+                since: None,
+                range: Some(tau_protocol::snapshot::EntryRange {
+                    start: 0,
+                    count: 10,
+                }),
+            })
+            .await
+            .unwrap();
+        match out {
+            CommandOutput::Entries { entries } => assert!(!entries.is_empty()),
+            other => panic!("expected entries: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn workspace_index_survives_a_restart() {
+        let sys = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        {
+            let core = CoreBuilder::custom(providers())
+                .with_system_dir(sys.path().into())
+                .build();
+            open_ws(&core, cwd.path()).await;
+            assert!(
+                sys.path().join("workspaces.json").exists(),
+                "the index was written"
+            );
+        }
+        let core = CoreBuilder::custom(providers())
+            .with_system_dir(sys.path().into())
+            .build();
+        let list = match core.dispatch(Command::WorkspaceList).await.unwrap() {
+            CommandOutput::Workspaces { workspaces } => workspaces,
+            other => panic!("expected workspaces: {other:?}"),
+        };
+        assert_eq!(
+            list.len(),
+            1,
+            "the previous run's workspace is restored: {list:?}"
+        );
+        assert_eq!(list[0].cwd, cwd.path().display().to_string());
     }
 }
