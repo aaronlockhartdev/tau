@@ -42,6 +42,8 @@
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
+  // Reasoning renders as markdown like the output; the muted color stays.
+  const reasonMd = $derived(entry.reasoning ? renderMarkdown(entry.reasoning.trim()) : '');
   // The user-facing tool output: for bash, the command is prepended to
   // the result, and the combined text is what gets truncated.
   const toolOut = $derived(
@@ -134,7 +136,11 @@
     <div class="toolrow">
       <span class="ticon">⚒</span>
       <span class="tname">{entry.name}</span>
-      <button class="targs" type="button" title={entry.args} onclick={() => (argsOpen = !argsOpen)}>{entry.args}</button>
+      {#if argsOpen && entry.args}
+        <button class="targs" type="button" onclick={() => (argsOpen = false)}>▾ collapse args</button>
+      {:else}
+        <button class="targs" type="button" title={entry.args} onclick={() => (argsOpen = true)}>{entry.args}</button>
+      {/if}
       <span class="tstatus" class:ok={entry.status === 'ok'} class:err={entry.status === 'error'}>
         {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'}
       </span>
@@ -155,9 +161,9 @@
     {#if entry.reasoning}
       <div class="reasonblock">
         <div class="reasontitle">reasoning</div>
-        <div class="reason">
+        <div class="md reason">
           {#if streaming}<span class="cursor"></span>
-          {/if}{entry.reasoning.trim()}
+          {/if}{@html reasonMd}
         </div>
         {#if entry.usage}
           <div class="reasonmeta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
@@ -308,7 +314,7 @@
     padding: 4px 10px 8px;
     color: #9a8fb8;
     font-size: 12px;
-    white-space: pre-wrap;
+    word-break: break-word;
   }
   .cursor {
     display: inline-block;

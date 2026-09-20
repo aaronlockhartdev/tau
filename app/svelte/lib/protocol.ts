@@ -169,7 +169,7 @@ export interface SubagentInfo {
 }
 
 export type SubagentEventKind =
-  | { kind: 'spawned'; handle: string; child: string; agent_type: string; context_mode: ContextMode }
+  | { kind: 'spawned'; handle: string; child: string; agent_type: string; context_mode: ContextMode; title: string }
   | { kind: 'state'; handle: string; child: string; state: string; detail: unknown; note: string | null }
   | { kind: 'notified'; child: string; wake: string; text: string; output: unknown };
 

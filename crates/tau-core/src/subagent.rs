@@ -567,9 +567,13 @@ impl Supervisor {
             self.parent_session,
             self.next.fetch_add(1, Ordering::SeqCst) + 1
         );
-        // A child session keeps a readable name in its header too, so it
-        // survives a restart like a top-level one.
-        let name = format!("Sub-agent: {}", ty.name);
+        // A child session keeps a readable, unique name in its header (the
+        // type plus a generated adjective-noun, so same-type children don't
+        // collide), so it survives a restart like a top-level one.
+        let noun = names::Generator::default()
+            .next()
+            .expect("the generator yields a name");
+        let name = format!("sub-agent-{}-{}", ty.name, noun);
         store
             .set_title(&name)
             .map_err(|e| format!("subagent_spawn: {e}"))?;

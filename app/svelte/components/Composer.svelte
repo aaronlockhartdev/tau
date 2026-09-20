@@ -112,6 +112,7 @@
     resize: none;
     overflow-y: auto;
     background: #0c0e12;
+    color: var(--tx);
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 10px 12px;

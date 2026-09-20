@@ -358,6 +358,9 @@ pub enum SubagentEventKind {
         child: String,
         agent_type: String,
         context_mode: ContextMode,
+        /// The child's header title, so the GUI can name the session stub
+        /// at spawn time without a roundtrip.
+        title: String,
     },
     /// A lifecycle transition (all five states, incl. stop and its
     /// provenance); `detail` carries the state's payload (done's output,
@@ -680,6 +683,7 @@ mod tests {
                     child: "s2".into(),
                     agent_type: "general".into(),
                     context_mode: ContextMode::Compacted,
+                    title: "sub-agent-rusty-nail".into(),
                 },
             },
             Event::SubagentEvent {

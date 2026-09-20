@@ -283,16 +283,6 @@ struct AppSubagentBridge {
 }
 impl SubagentBridge for AppSubagentBridge {
     fn spawned(&self, n: &SpawnNotice) {
-        self.core.emit(Event::SubagentEvent {
-            workspace: self.workspace.clone(),
-            session: n.parent.clone(),
-            kind: SubagentEventKind::Spawned {
-                handle: n.handle.clone(),
-                child: n.child.clone(),
-                agent_type: n.agent_type.clone(),
-                context_mode: mode_to_protocol(n.context_mode),
-            },
-        });
         // Register the child as a live session so the GUI can open it and
         // the driver can feed it turns.
         let Some(agent) = self
@@ -312,6 +302,20 @@ impl SubagentBridge for AppSubagentBridge {
         if store.open().is_err() {
             return; // the spawn failed after the notice; nothing to register
         }
+        // The core set the child's header title at spawn (type + adjective-noun);
+        // the event carries it so the GUI's stub gets the real name.
+        let title = store.title().unwrap_or("sub-agent").to_string();
+        self.core.emit(Event::SubagentEvent {
+            workspace: self.workspace.clone(),
+            session: n.parent.clone(),
+            kind: SubagentEventKind::Spawned {
+                handle: n.handle.clone(),
+                child: n.child.clone(),
+                agent_type: n.agent_type.clone(),
+                context_mode: mode_to_protocol(n.context_mode),
+                title,
+            },
+        });
         let provider = Arc::new(ForwardingProvider {
             inner: provider::production(&self.client, &self.provider, &self.requests),
             tx: self.core.events_tx.clone(),
@@ -326,7 +330,7 @@ impl SubagentBridge for AppSubagentBridge {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),
                 workspace: self.workspace.clone(),
-                title: Some(format!("Sub-agent: {}", n.agent_type)),
+                title: store.title().map(str::to_string),
                 parent: Some(n.parent.clone()),
                 created: store.created(),
                 leaf: None,
@@ -566,21 +570,11 @@ impl CoreBuilder {
 }
 
 /// A readable session name: adjective-noun from the `names` crate's
-/// dictionaries, title-cased ("Rusty Nail").
+/// dictionaries, lowercase and hyphenated ("rusty-nail").
 fn session_name() -> String {
-    let raw = names::Generator::default()
+    names::Generator::default()
         .next()
-        .expect("the generator yields a name");
-    raw.split('-')
-        .map(|w| {
-            let mut c = w.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                _ => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+        .expect("the generator yields a name")
 }
 
 /// Draw a session name that is fresh against the workspace's existing

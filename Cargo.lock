@@ -3620,6 +3620,7 @@ dependencies = [
 name = "tau-core"
 version = "0.1.0"
 dependencies = [
+ "names",
  "reqwest",
  "serde",
  "serde_json",

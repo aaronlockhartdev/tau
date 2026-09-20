@@ -117,7 +117,7 @@
   // so the session tree can group it; a later session_open replaces the
   // stub with the real snapshot (keeping the parent link, which the child's
   // own snapshot does not carry).
-  function touchChild(parentSid: string, childSid: string, state: SessionState['state'], mru: number, waitingOn: string | null = null): void {
+  function touchChild(parentSid: string, childSid: string, state: SessionState['state'], mru: number, waitingOn: string | null = null, title: string | null = null): void {
     const parent = store.sessions[parentSid];
     const ws = parent?.meta.workspace ?? '';
     const prev = store.sessions[childSid];
@@ -125,10 +125,13 @@
       prev.state = state;
       prev.mru = mru;
       if (waitingOn !== null) prev.waiting_on = waitingOn;
+      // A late title (the spawn event) fills the stub's blank name; a real
+      // name already set (from a snapshot) wins.
+      if (title !== null && prev.meta.title === null) prev.meta.title = title;
       return;
     }
     store.sessions[childSid] = {
-      meta: { id: childSid, workspace: ws, title: null, parent: parentSid, created: mru, leaf: null, model: null, usage: null },
+      meta: { id: childSid, workspace: ws, title, parent: parentSid, created: mru, leaf: null, model: null, usage: null },
       entries: [],
       live: [],
       usage: null,
@@ -722,6 +725,12 @@
       next.mru = Date.now();
     }
     store.sessions[sid] = next;
+    // Self-heal the child stubs: the snapshot's sub-agent list carries the
+    // child session ids, so a lost spawn event can't keep a child out of
+    // the tree.
+    for (const sub of next.subagents) {
+      if (!store.sessions[sub.child]) touchChild(sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
+    }
   }
 
   // A pane action (session tree row / sub-agent double-click): the child is
@@ -1089,7 +1098,7 @@
             };
             s.subagents = s.subagents.filter((x) => x.handle !== k.handle);
             s.subagents.push(info);
-            touchChild(ev.session, k.child, 'running', now);
+            touchChild(ev.session, k.child, 'running', now, null, k.title);
             break;
           }
           if (k.kind === 'state') {

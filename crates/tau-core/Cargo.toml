@@ -12,6 +12,8 @@ reqwest = { workspace = true }
 toml = { workspace = true }
 zstd = { workspace = true }
 xxhash-rust = { workspace = true }
+# Adjective-noun session names (top-level and sub-agent children).
+names = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
