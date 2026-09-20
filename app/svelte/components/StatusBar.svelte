@@ -65,6 +65,7 @@
     font: 11px var(--mono);
     color: var(--dim);
     user-select: none;
+    overflow: hidden;
   }
   .seg {
     display: inline-flex;
@@ -74,6 +75,9 @@
     height: 100%;
     white-space: nowrap;
     overflow: hidden;
+    /* flex items refuse to shrink below content without this; the bar must
+       never push the app wider than the window */
+    min-width: 0;
   }
   .s1 {
     flex: 1.4;

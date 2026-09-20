@@ -43,10 +43,13 @@
   }
 </script>
 
-<div class="card" bind:this={el} class:user={entry.kind === 'user'} class:tool={entry.kind === 'tool'} class:interrupted={entry.kind === 'interrupted'}>
+<div class="wrap" bind:this={el}>
   {#if entry.kind === 'user'}
-    <div class="userbubble">{entry.text}</div>
+    <div class="card user">
+      <div class="userbubble">{entry.text}</div>
+    </div>
   {:else if entry.kind === 'tool'}
+    <div class="card tool">
     <div class="toolrow">
       <span class="ticon">⚒</span>
       <span class="tname">{entry.name}</span>
@@ -55,25 +58,16 @@
         {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'}
       </span>
     </div>
-    {#if entry.output}
-      <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
-        {outputOpen ? '▾' : '▸'} output
-      </button>
-      {#if outputOpen}
-        <div class="out"><pre>{entry.output}</pre></div>
+      {#if entry.output}
+        <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
+          {outputOpen ? '▾' : '▸'} output
+        </button>
+        {#if outputOpen}
+          <div class="out"><pre>{entry.output}</pre></div>
+        {/if}
       {/if}
-    {/if}
+    </div>
   {:else}
-    {#if entry.kind === 'interrupted'}
-      <div class="intmark">⚡ interrupted</div>
-    {/if}
-    {#if entry.kind === 'om'}
-      <div class="klabel">observation log</div>
-    {:else if entry.kind === 'spawn-snapshot'}
-      <div class="klabel">spawn snapshot</div>
-    {:else if entry.kind === 'system'}
-      <div class="klabel">system</div>
-    {/if}
     {#if entry.reasoning}
       <div class="reasonblock" class:open={reasoningOpen}>
         <button class="reasontitle" onclick={() => (reasoningOpen = !reasoningOpen)}>
@@ -87,16 +81,41 @@
         {/if}
       </div>
     {/if}
-    <div class="md">{@html md}</div>
-    {#if entry.usage}
-      <div class="meta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
+    {#if entry.kind === 'om'}
+      <div class="card">
+        <div class="klabel">observation log</div>
+        <div class="md">{@html md}</div>
+      </div>
+    {:else if entry.kind === 'spawn-snapshot'}
+      <div class="card">
+        <div class="klabel">spawn snapshot</div>
+        <div class="md">{@html md}</div>
+      </div>
+    {:else if entry.kind === 'system'}
+      <div class="card">
+        <div class="klabel">system</div>
+        <div class="md">{@html md}</div>
+      </div>
+    {:else if entry.text || entry.usage || entry.kind === 'interrupted'}
+      <div class="card" class:interrupted={entry.kind === 'interrupted'}>
+        {#if entry.kind === 'interrupted'}
+          <div class="intmark">⚡ interrupted</div>
+        {/if}
+        <div class="md">{@html md}</div>
+        {#if entry.usage}
+          <div class="meta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
+        {/if}
+      </div>
     {/if}
   {/if}
 </div>
 
 <style>
-  .card {
+  .wrap {
     margin: 0 16px 10px;
+  }
+  .card {
+    margin: 0;
     padding: 10px 14px;
     background: var(--panel);
     border: 1px solid var(--line);
@@ -155,11 +174,11 @@
     color: var(--tx);
   }
   .reasonblock {
-    margin: 0 0 5px;
+    margin: 0 16px 6px;
     border: 1px solid rgba(181, 140, 255, 0.16);
     border-left: 2px solid rgba(181, 140, 255, 0.35);
-    border-radius: 6px;
-    background: rgba(181, 140, 255, 0.04);
+    border-radius: 8px;
+    background: var(--panel);
   }
   .reasontitle {
     display: block;

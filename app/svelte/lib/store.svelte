@@ -162,6 +162,24 @@
     return s;
   }
 
+  // Rejections can be plain objects (a serialized core error) — String()
+  // of one is "[object Object]".
+  function errText(e: unknown): string {
+    if (e instanceof Error) return e.message;
+    if (typeof e === 'string') return e;
+    if (e && typeof e === 'object') {
+      const o = e as { message?: unknown; label?: unknown };
+      if (typeof o.message === 'string') return o.message;
+      if (typeof o.label === 'string') return o.label;
+      try {
+        return JSON.stringify(e);
+      } catch {
+        return String(e);
+      }
+    }
+    return String(e);
+  }
+
   function laneOf(l: QueuedItem['lane']): PendingMsg['lane'] {
     return l === 'follow_up' ? 'follow-up' : l;
   }
@@ -194,7 +212,7 @@
       if (first === null) return;
       await openWorkspace(first);
     } catch (e) {
-      store.error = e instanceof Error ? e.message : String(e);
+      store.error = errText(e);
     } finally {
       store.loading = false;
     }
@@ -241,9 +259,11 @@
     store: () => store,
     liveTexts: () =>
       (store.sessions['demo']?.live ?? []).map((l) => l.text.length),
-    // send/stop are module exports the rig drives directly; hoisted above.
+    // send/stop/openWorkspace are module exports the rig drives directly;
+    // hoisted above.
     send,
-    stop
+    stop,
+    openWorkspace
   };
   // The #26 pane dataset (the prototype's): six sub-agent sessions under
   // the demo session (TWO running), a nested pair under the idle one as
@@ -503,7 +523,12 @@
       // replaces it with the payload.
       entries: snap.entries.map((m) => ({
         id: m.id,
-        kind: m.kind === 'assistant' && m.status === 'interrupted' ? 'interrupted' : m.kind,
+        kind:
+          m.kind === 'assistant'
+            ? m.status === 'interrupted'
+              ? 'interrupted'
+              : 'message'
+            : m.kind,
         text: m.preview
       })),
       live: [],
@@ -534,26 +559,30 @@
     try {
       await openWorkspaceInner(ws);
     } catch (e) {
-      store.error = e instanceof Error ? e.message : String(e);
+      store.error = errText(e);
     } finally {
       opening = false;
     }
   }
 
   async function openWorkspaceInner(ws: Workspace): Promise<void> {
-    if (!store.workspaces.some((w) => w.id === ws.id)) store.workspaces.push(ws);
+    // The core keys workspaces by cwd (deterministic id), so re-opening a
+    // folder returns the same workspace; the store keeps one tab per cwd.
     const opened = await command({ type: 'workspace_open', cwd: ws.cwd });
-    if (opened.kind === 'workspace') {
-      const i = store.workspaces.findIndex((w) => w.id === ws.id);
-      if (i >= 0) store.workspaces[i] = opened.workspace;
+    const real = opened.kind === 'workspace' ? opened.workspace : ws;
+    const i = store.workspaces.findIndex((w) => w.cwd === real.cwd);
+    if (i >= 0) {
+      store.workspaces[i] = real;
+    } else {
+      store.workspaces.push(real);
     }
-    const list = await command({ type: 'session_list', workspace: ws.id });
+    const list = await command({ type: 'session_list', workspace: real.id });
     const sid =
       list.kind === 'sessions' && list.sessions.length > 0
         ? list.sessions[0].id
         : ((await command({
             type: 'session_new',
-            workspace: ws.id,
+            workspace: real.id,
             title: null
           })) as { kind: 'session'; session: SessionMeta }).session.id;
     await switchSession(sid);
@@ -569,7 +598,7 @@
         const name = dir.split('/').filter(Boolean).pop() ?? dir;
         void openWorkspace({ id: 'w-pending', name, cwd: dir });
       } catch (e) {
-        store.error = e instanceof Error ? e.message : String(e);
+        store.error = errText(e);
       }
       return;
     }
@@ -613,7 +642,7 @@
         if (first) await openWorkspace(first);
       }
     } catch (e) {
-      store.error = e instanceof Error ? e.message : String(e);
+      store.error = errText(e);
     }
   }
   export async function closeWorkspace(ws: Workspace): Promise<void> {
@@ -713,7 +742,15 @@
       const i = s.entries.findIndex((e) => e.id === v.id);
       if (i >= 0) {
         const old = s.entries[i];
-        if (old.text !== next.text || old.output !== next.output || old.status !== next.status) {
+        if (
+          old.kind !== next.kind ||
+          old.text !== next.text ||
+          old.reasoning !== next.reasoning ||
+          old.output !== next.output ||
+          old.status !== next.status ||
+          old.name !== next.name ||
+          old.args !== next.args
+        ) {
           s.entries[i] = next;
         }
         continue;
@@ -775,7 +812,7 @@
         lane: lane === 'follow-up' ? 'follow_up' : lane
       });
     } catch (e) {
-      store.error = e instanceof Error ? e.message : String(e);
+      store.error = errText(e);
     }
   }
 
@@ -786,7 +823,7 @@
     try {
       await command({ type: 'message_stop', session: sid });
     } catch (e) {
-      store.error = e instanceof Error ? e.message : String(e);
+      store.error = errText(e);
     }
   }
 

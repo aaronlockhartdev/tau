@@ -112,23 +112,33 @@
   onMount(() => {
     const node = el;
     if (!node) return;
+    // The pin re-arms only at the end (a few px): proximity within the old
+    // 200 px window snapped the view while the user was reading near the
+    // tail. A manual scroll away from the end releases it until they
+    // return; stream growth does not fire scroll events, so a pinned view
+    // stays pinned between ticks.
+    let pinned = true;
     const onScroll = () => {
       scroll.top = node.scrollTop;
       scroll.h = node.clientHeight;
+      pinned = node.scrollHeight - node.scrollTop - node.clientHeight <= 8;
     };
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
     node.scrollTo({ top: node.scrollHeight });
-    // Follow the tail while the user is near it. The hysteresis must exceed
-    // the growth per tick (a live stream adds ~100 px every 300 ms), or the
-    // tail drifts off-screen and the pin never re-arms.
-    const t = setInterval(() => {
-      const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 200;
-      if (atBottom) node.scrollTop = node.scrollHeight;
-    }, 300);
+    // Follow the tail while pinned. rAF, not a timer: the stream grows at
+    // the 25 ms coalesce cadence, so a coarser tick steps the view in
+    // visible jumps; per-frame tracking is smooth and a no-op when the
+    // height hasn't changed.
+    let raf = 0;
+    const follow = () => {
+      if (pinned) node.scrollTop = node.scrollHeight;
+      raf = requestAnimationFrame(follow);
+    };
+    raf = requestAnimationFrame(follow);
     return () => {
       node.removeEventListener('scroll', onScroll);
-      clearInterval(t);
+      cancelAnimationFrame(raf);
     };
   });
 
