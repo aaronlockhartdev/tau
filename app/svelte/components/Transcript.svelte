@@ -150,6 +150,13 @@
     }
   });
 
+  // A new send jumps the view to the fresh user entry; the scroll event
+  // re-arms the tail pin, so the turn is followed as it is written.
+  $effect(() => {
+    void store.tailJump;
+    if (el) el.scrollTop = el.scrollHeight;
+  });
+
   // Paged read around the viewport (spec §8): the window's slice is
   // requested from the core; the response replaces the skeleton cards.
   $effect(() => {

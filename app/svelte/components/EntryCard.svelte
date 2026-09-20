@@ -31,12 +31,19 @@
   $effect(() => {
     void entry.text;
     void entry.reasoning;
+    void entry.output;
+    void outputOpen;
     if (el) heights.set(heightKey, el.offsetHeight);
   });
 
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
+  // Tool outputs are long (command transcripts); the collapsed card shows a
+  // length-limited preview.
+  const preview = $derived(
+    entry.output && entry.output.length > 200 ? entry.output.slice(0, 200) + ' …' : entry.output ?? ''
+  );
   let reasoningOpen = $state(true);
   let outputOpen = $state(false);
 
@@ -62,11 +69,10 @@
     </div>
       {#if entry.output}
         <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
-          {outputOpen ? '▾' : '▸'} output
+          {outputOpen ? '▾ hide output' : '▸ full output (' + entry.output.length + ' chars)'}
         </button>
-        {#if outputOpen}
-          <div class="out"><pre>{entry.output}</pre></div>
-        {/if}
+        <!-- length-limited by default; the expando shows the full output -->
+        <div class="out"><pre>{outputOpen ? entry.output : preview}</pre></div>
       {/if}
     </div>
   {:else}

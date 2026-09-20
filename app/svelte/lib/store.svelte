@@ -26,11 +26,6 @@
   import { buildDemoSession, toEntry } from './fixture';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
 
-  export interface LiveEntry {
-    id: string;
-    text: string;
-    reasoning: string;
-  }
 
   export interface PendingMsg {
     text: string;
@@ -40,7 +35,7 @@
   export interface SessionState {
     meta: SessionMeta;
     entries: Entry[];
-    live: LiveEntry[];
+    live: Entry[];
     usage: Usage | null;
     // Output tokens/second of the session's most recent turn (status bar).
     tps: number;
@@ -65,6 +60,9 @@
     focus: false,
     workspaces: [] as Workspace[],
     current: null as string | null,
+    // Bumped by send: the transcript jumps to the new user entry and follows
+    // the turn, so blocks appear while they are written.
+    tailJump: 0,
     sessions: {} as Record<string, SessionState>,
     loading: false,
     error: null as string | null,
@@ -258,7 +256,7 @@
     applyEvents,
     store: () => store,
     liveTexts: () =>
-      (store.sessions['demo']?.live ?? []).map((l) => l.text.length),
+      (store.sessions['demo']?.live ?? []).map((l) => (l.text ?? '').length),
     // send/stop/openWorkspace are module exports the rig drives directly;
     // hoisted above.
     send,
@@ -721,26 +719,62 @@
     mergeHydrated(s, views);
   }
 
-  // The same logical entry appears in two id namespaces: streamed under its
-  // call_id, persisted under a file counter. The ids are not comparable
-  // across namespaces, so hydration never orders by id: a file entry that
-  // matches a streamed twin (already promoted to entries, or still live in
-  // s.live mid-turn) is dropped — the streamed copy is canonical — and a
-  // file entry with no twin appends in arrival order.
+  // One logical entry appears under two ids: streamed under its call_id / u-
+  // prefix / provider tool_call_id, persisted under the file's counter. The
+  // namespaces are not comparable, so the streamed slot is canonical: a file
+  // entry whose twin is streamed (in entries, live mid-turn, or a duplicate
+  // file copy from the snapshot) hydrates that slot in place and the file
+  // copy is dropped. A file entry with no twin takes its own id and appends
+  // in arrival order.
   function mergeHydrated(s: SessionState, views: ViewEntry[]): void {
     const isTwin = (e: { id: string; text?: string }, v: ViewEntry, next: Entry) => {
       // Streamed ids are non-numeric (call_id, u-…, the provider's
-      // tool_call_id); file ids are the zero-padded counter.
+      // tool_call_id); a file-counter id is a snapshot copy, never a twin.
       if (/^\d+$/.test(e.id)) return false;
       if (next.kind === 'tool') {
         return e.id === String((v.payload as Record<string, unknown>).call_id ?? '');
       }
       return Boolean(next.text) && e.text === next.text;
     };
+    const hydrate = (e: Entry, next: Entry): Entry => ({
+      ...e,
+      kind: next.kind,
+      text: next.text,
+      reasoning: next.reasoning,
+      output: next.output,
+      status: next.status,
+      name: next.name,
+      args: next.args,
+      usage: next.usage
+    });
     for (const v of views) {
       const next = toEntry(v);
       const i = s.entries.findIndex((e) => e.id === v.id);
       if (i >= 0) {
+        // A file copy is already present (snapshot). If the streamed twin of
+        // the same logical entry exists too, collapse: the streamed slot
+        // keeps its position and id, adopts the file's payload, and the
+        // file copy is removed — otherwise the entry renders twice.
+        const ti = s.entries.findIndex((e, j) => j !== i && isTwin(e, v, next));
+        if (ti >= 0) {
+          // Assign only on a real change: an unconditional replace makes the
+          // merge reactive every 25 ms fetch and the window effect re-enters
+          // forever.
+          const t = s.entries[ti];
+          if (
+            t.kind !== next.kind ||
+            t.text !== next.text ||
+            t.reasoning !== next.reasoning ||
+            t.output !== next.output ||
+            t.status !== next.status ||
+            t.name !== next.name ||
+            t.args !== next.args
+          ) {
+            s.entries[ti] = hydrate(t, next);
+          }
+          s.entries.splice(i, 1);
+          continue;
+        }
         const old = s.entries[i];
         if (
           old.kind !== next.kind ||
@@ -755,9 +789,19 @@
         }
         continue;
       }
-      if (s.entries.some((e) => isTwin(e, v, next)) || s.live.some((e) => isTwin(e, v, next))) {
+      const li = s.live.findIndex((e) => isTwin(e, v, next));
+      if (li >= 0) {
+        // Mid-turn: the live slot adopts the file's payload but keeps its
+        // streamed id, so the promoted entry keeps its position. Guarded on
+        // a real change — the 25 ms fetch re-enters while the turn runs and
+        // an unconditional replace never converges.
+        const l = s.live[li];
+        if (l.text !== next.text || l.reasoning !== next.reasoning) {
+          s.live[li] = { ...next, id: l.id };
+        }
         continue;
       }
+      if (s.entries.some((e) => isTwin(e, v, next))) continue;
       s.entries.push(next);
     }
   }
@@ -804,6 +848,7 @@
     // The user bubble appears at send time; the core's file copy of the
     // same entry hydrates later and is dropped against this one (twin).
     s.entries.push({ id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: 'user', text });
+    store.tailJump++;
     try {
       await command({
         type: 'message_send',
@@ -866,7 +911,7 @@
       if (!s) continue;
       switch (ev.type) {
         case 'stream_start': {
-          const le = { id: ev.call_id, text: '', reasoning: '' };
+          const le: Entry = { id: ev.call_id, kind: 'message', text: '', reasoning: '' };
           const pd = pendingDeltas.get(ev.call_id);
           if (pd) {
             le.text = pd.text;
@@ -902,7 +947,7 @@
             const pd = pendingDeltas.get(ev.call_id);
             if (pd) {
               pendingDeltas.delete(ev.call_id);
-              le = { id: ev.call_id, text: pd.text, reasoning: pd.reasoning };
+              le = { id: ev.call_id, kind: 'message', text: pd.text, reasoning: pd.reasoning };
             }
           }
           if (le) {
