@@ -174,7 +174,7 @@
     color: var(--tx);
   }
   .reasonblock {
-    margin: 0 16px 6px;
+    margin: 0 0 6px;
     border: 1px solid rgba(181, 140, 255, 0.16);
     border-left: 2px solid rgba(181, 140, 255, 0.35);
     border-radius: 8px;
