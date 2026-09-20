@@ -180,9 +180,7 @@ export interface LiveState {
   queue: QueuedItem[];
   turn: TurnState;
   subagents: SubagentInfo[];
-  // v0 has no task event group in the Event enum — the tasks panel is
-  // snapshot-fed and re-fetched on task commands; a live task event group is
-  // a recorded v1 candidate (not built in #26).
+  // Tasks are event-driven (task_changed) and snapshot-fed.
   tasks: Task[];
 }
 
@@ -264,7 +262,8 @@ export type Event =
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
   | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind }
-  | { type: 'subagent_event'; workspace: string; session: string; kind: SubagentEventKind };
+  | { type: 'subagent_event'; workspace: string; session: string; kind: SubagentEventKind }
+  | { type: 'task_changed'; workspace: string; session: string; tasks: Task[] };
 
 export type ProtocolError =
   | { kind: 'unsupported'; message: string }

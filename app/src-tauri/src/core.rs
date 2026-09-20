@@ -1601,6 +1601,7 @@ impl Core {
                 if out.starts_with("task_create:") {
                     return Err(ProtocolError::Other { message: out });
                 }
+                self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
             Command::TaskUpdate {
@@ -1612,6 +1613,7 @@ impl Core {
                 live.agent
                     .with_task_store(|store| tau_core::task::note(store, &task, &note))
                     .map_err(|e| ProtocolError::Other { message: e })?;
+                self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
             Command::TaskAssign {
@@ -1637,6 +1639,7 @@ impl Core {
                 // The assign already delivered the "Assigned {id}: {title}"
                 // message to the worker (a running child takes it as a
                 // steering round, a parked one resumes with it).
+                self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
             Command::TaskEvidence {
@@ -1659,6 +1662,7 @@ impl Core {
                 if out.starts_with("task_evidence:") {
                     return Err(ProtocolError::Other { message: out });
                 }
+                self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
             Command::TaskCancel { session, task } => {
@@ -1669,6 +1673,7 @@ impl Core {
                 if out.starts_with("task_cancel:") {
                     return Err(ProtocolError::Other { message: out });
                 }
+                self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
 
@@ -1821,6 +1826,7 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     let session = live.meta.lock().unwrap().id.clone();
     let mut assistant_index = 0usize;
     let mut queue_changed = false;
+    let mut task_touched = false;
     for entry in &new {
         match entry.kind.as_str() {
             // A delivered message leaves the GUI's queue (full-state
@@ -1923,6 +1929,9 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     output: entry.payload.get("output").cloned().unwrap_or(Value::Null),
                 });
             }
+            tau_core::task::KIND_TASK => {
+                task_touched = true;
+            }
             _ => {}
         }
         if let Some(first_kept) = &entry.first_kept_entry_id {
@@ -1962,6 +1971,17 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     if queue_changed {
         core.emit_queue(&live);
     }
+    // Task entries fold into the session's task list (spec §8): the event
+    // carries the full list derived from the file — a projection, never a
+    // second source of truth; the store replaces on receive.
+    if task_touched {
+        let all = store.entries_range(0, usize::MAX).unwrap_or_default();
+        core.emit(Event::TaskChanged {
+            workspace: workspace.clone(),
+            session: session.clone(),
+            tasks: tasks_of(&all),
+        });
+    }
     live.turn.store(false, Ordering::SeqCst);
 }
 
@@ -1981,6 +2001,27 @@ impl Core {
             workspace,
             session,
             items,
+        });
+    }
+
+    /// The session's task list, folded from its file, as a task_changed
+    /// event (spec §8): the payload is a projection of the file, never a
+    /// second source of truth; the store replaces on receive, so the GUI
+    /// converges on the file's state without polling.
+    fn emit_task_changed(&self, live: &LiveSession, session: &str) {
+        let (workspace, cwd) = {
+            let meta = live.meta.lock().unwrap();
+            (meta.workspace.clone(), live.cwd.clone())
+        };
+        let mut store = SessionStore::for_workspace(&cwd, session);
+        if store.open().is_err() {
+            return; // the file is gone; the next open rebuilds from nothing
+        }
+        let entries = store.entries_range(0, usize::MAX).unwrap_or_default();
+        self.emit(Event::TaskChanged {
+            workspace,
+            session: session.to_owned(),
+            tasks: tasks_of(&entries),
         });
     }
 }
@@ -2364,6 +2405,68 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, Event::StreamStart { .. })),
             "no stream ever started"
+        );
+    }
+
+    /// A task command emits a task_changed event carrying the file's
+    /// folded task list — the GUI's tasks tab is event-driven (spec §8),
+    /// never polled; the payload is a projection of the file.
+    #[tokio::test]
+    async fn task_commands_emit_a_task_changed_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session: m } => m,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let sink = Arc::clone(&collected);
+        tokio::spawn(pump(Arc::clone(&core), move |batch| {
+            sink.lock().unwrap().extend(batch.iter().cloned());
+        }));
+
+        core.dispatch(Command::TaskCreate {
+            session: session.id.clone(),
+            title: "work".into(),
+        })
+        .unwrap();
+
+        // The pump is a separate task: give it a bounded window to deliver.
+        let mut tasks = None;
+        for _ in 0..50 {
+            let found = collected.lock().unwrap().iter().find_map(|e| match e {
+                Event::TaskChanged {
+                    session: s, tasks, ..
+                } if *s == session.id => Some(tasks.clone()),
+                _ => None,
+            });
+            if let Some(t) = found {
+                tasks = Some(t);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let tasks = tasks.expect("the task command never emitted a task_changed event");
+        assert_eq!(tasks.len(), 1, "the file holds exactly one task");
+        assert_eq!(tasks[0].get("title").and_then(Value::as_str), Some("work"));
+        assert_eq!(
+            tasks[0].get("status").and_then(Value::as_str),
+            Some("pending")
         );
     }
 

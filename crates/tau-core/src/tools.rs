@@ -113,7 +113,7 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "subagent_spawn".into(),
-            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its handle. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
+            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its handle. If the work is already a task, pass task — the child starts with it assigned; a separate assign costs an extra round trip. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -205,7 +205,7 @@ pub fn task_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "task_assign".into(),
-            description: "Assign a task to a worker session: its record copies into that session, which becomes the live one; this session's copy becomes a status pointer. worker is a session id.".into(),
+            description: "Assign a task to a worker session: its record copies into that session, which becomes the live one; this session's copy becomes a status pointer. worker is a session id. Prefer passing the task at spawn time; use this when the worker already exists.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {

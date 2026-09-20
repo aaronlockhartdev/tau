@@ -345,6 +345,16 @@ pub enum Event {
         session: String,
         kind: SubagentEventKind,
     },
+    /// The session's task records changed (spec §8): full-state
+    /// replacement of the task list — idempotent by construction, a lost
+    /// batch self-heals on the next snapshot. Emitted on every task
+    /// mutation (the model's tools and the app's task commands), so the
+    /// GUI's tasks tab is event-driven, never polled.
+    TaskChanged {
+        workspace: String,
+        session: String,
+        tasks: Vec<Value>,
+    },
 }
 
 /// Sub-agent-group events (spec §8): lifecycle transitions and wakes.
@@ -706,6 +716,11 @@ mod tests {
                     text: "finished".into(),
                     output: Some(json!({ "result": "ok" })),
                 },
+            },
+            Event::TaskChanged {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                tasks: vec![json!({ "id": "t-1", "status": "pending" })],
             },
         ];
         for ev in &events {
