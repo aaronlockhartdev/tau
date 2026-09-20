@@ -853,6 +853,51 @@ impl Core {
         workspace: &Workspace,
         title: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
+        let cwd = PathBuf::from(&workspace.cwd);
+        let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
+        store.create().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        let created = store.created();
+        // A fresh session gets a readable name (adjective noun) persisted in
+        // the header, so it survives restarts; an explicit title wins.
+        let title = match title {
+            Some(t) if !t.trim().is_empty() => t,
+            _ => self.fresh_session_name(workspace),
+        };
+        store.set_title(&title).map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        self.build_live(workspace, store, Some(title), created)
+    }
+
+    /// Re-register an existing session file as live (a restart drops the
+    /// in-memory live map; the file is the source, spec §3).
+    fn session_reopen(
+        &self,
+        workspace: &Workspace,
+        id: &str,
+    ) -> Result<SessionMeta, ProtocolError> {
+        let cwd = PathBuf::from(&workspace.cwd);
+        let mut store = SessionStore::for_workspace(&cwd, id);
+        store.open().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        let title = store.title().map(str::to_string);
+        let created = store.created();
+        self.build_live(workspace, store, title, created)
+    }
+
+    /// The shared live-registration path (fresh create and re-open): builds
+    /// the provider, the supervisor, and the agent around the given store.
+    fn build_live(
+        &self,
+        workspace: &Workspace,
+        mut store: SessionStore,
+        title: Option<String>,
+        created: u64,
+    ) -> Result<SessionMeta, ProtocolError> {
+        let parent = store.parent().map(str::to_string);
         let config = self.workspace_config(workspace);
         let (name, provider) = config
             .providers
@@ -870,20 +915,6 @@ impl Core {
                 message: format!("provider {name} has no models"),
             })?;
         let cwd = PathBuf::from(&workspace.cwd);
-        let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
-        store.create().map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
-        let created = store.created();
-        // A fresh session gets a readable name (adjective noun) persisted in
-        // the header, so it survives restarts; an explicit title wins.
-        let title = match title {
-            Some(t) if !t.trim().is_empty() => t,
-            _ => self.fresh_session_name(workspace),
-        };
-        store.set_title(&title).map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
 
         // The per-session OM record (ticket #22): reconstructed from the
         // file on open; a fresh session starts with the default record.
@@ -976,8 +1007,8 @@ impl Core {
         let meta = SessionMeta {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),
-            title: Some(title),
-            parent: None,
+            title,
+            parent,
             created,
             leaf: None,
             model: Some(model),
@@ -1290,10 +1321,35 @@ impl Core {
                     Ok(live) => Ok(CommandOutput::Snapshot {
                         snapshot: self.snapshot(&live)?,
                     }),
-                    // A closed session is a file: read-only snapshot.
-                    Err(_) => Ok(CommandOutput::Snapshot {
-                        snapshot: self.snapshot_from_disk(&session)?,
-                    }),
+                    // A closed session is a file: re-register it as live so
+                    // it can be resumed (a restart drops the in-memory live
+                    // map); if no known workspace owns it, serve read-only.
+                    Err(_) => {
+                        let ws = self
+                            .workspaces
+                            .lock()
+                            .unwrap()
+                            .values()
+                            .find(|w| {
+                                Path::new(&w.cwd)
+                                    .join(".tau")
+                                    .join("sessions")
+                                    .join(format!("{session}.jsonl"))
+                                    .exists()
+                            })
+                            .cloned();
+                        if let Some(ws) = ws
+                            && let Ok(_meta) = self.session_reopen(&ws, &session)
+                            && let Ok(live) = self.live(&session)
+                        {
+                            return Ok(CommandOutput::Snapshot {
+                                snapshot: self.snapshot(&live)?,
+                            });
+                        }
+                        Ok(CommandOutput::Snapshot {
+                            snapshot: self.snapshot_from_disk(&session)?,
+                        })
+                    }
                 }
             }
             Command::SessionClose { session } => {

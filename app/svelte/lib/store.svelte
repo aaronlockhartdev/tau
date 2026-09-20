@@ -731,6 +731,24 @@
     for (const sub of next.subagents) {
       if (!store.sessions[sub.child]) touchChild(sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
     }
+    // A disk-restored child has no live supervisor listing it: synthesize
+    // the tab entry from the child stub so the sub-agents tab is never
+    // empty; a real spawn/state event (matched by child) replaces it.
+    for (const child of Object.values(store.sessions)) {
+      if (child.parent !== sid || next.subagents.some((x) => x.child === child.meta.id)) continue;
+      next.subagents.push({
+        handle: child.meta.id,
+        child: child.meta.id,
+        agent_type: 'general',
+        context_mode: 'fresh',
+        state: child.state,
+        waiting_on: child.waiting_on ?? null,
+        last_message: null,
+        usage: child.usage,
+        task: null,
+        resume_contract: null
+      });
+    }
   }
 
   // A pane action (session tree row / sub-agent double-click): the child is
@@ -778,14 +796,18 @@
   // copy is dropped. A file entry with no twin takes its own id and appends
   // in arrival order.
   function mergeHydrated(s: SessionState, views: ViewEntry[]): void {
-    const isTwin = (e: { id: string; text?: string }, v: ViewEntry, next: Entry) => {
+    const isTwin = (e: { id: string; text?: string; reasoning?: string }, v: ViewEntry, next: Entry) => {
       // Streamed ids are non-numeric (call_id, u-…, the provider's
       // tool_call_id); a file-counter id is a snapshot copy, never a twin.
       if (/^\d+$/.test(e.id)) return false;
       if (next.kind === 'tool') {
         return e.id === String((v.payload as Record<string, unknown>).call_id ?? '');
       }
-      return Boolean(next.text) && e.text === next.text;
+      // An empty-text assistant (reasoning-only) has no text to match on:
+      // its reasoning is the identity — the streamed copy and the file copy
+      // carry byte-identical reasoning.
+      if (!next.text) return Boolean(next.reasoning) && e.reasoning === next.reasoning;
+      return e.text === next.text;
     };
     const hydrate = (e: Entry, next: Entry): Entry => ({
       ...e,
@@ -796,7 +818,8 @@
       status: next.status,
       name: next.name,
       args: next.args,
-      usage: next.usage
+      usage: next.usage,
+      source: next.source
     });
     for (const v of views) {
       const next = toEntry(v);
@@ -819,7 +842,8 @@
             t.output !== next.output ||
             t.status !== next.status ||
             t.name !== next.name ||
-            t.args !== next.args
+            t.args !== next.args ||
+            t.source !== next.source
           ) {
             s.entries[ti] = hydrate(t, next);
           }
@@ -834,7 +858,8 @@
           old.output !== next.output ||
           old.status !== next.status ||
           old.name !== next.name ||
-          old.args !== next.args
+          old.args !== next.args ||
+          old.source !== next.source
         ) {
           s.entries[i] = next;
         }
@@ -1057,7 +1082,15 @@
           if (existing) {
             existing.status = 'running';
           } else {
-            s.entries.push({ id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
+            // The end-of-turn pump can deliver this after a later turn's
+            // entries have already landed: place the card right after the
+            // assistant call that made it, not at the tail.
+            const ai = s.entries.findIndex((x) => x.id === ev.call_id);
+            if (ai >= 0) {
+              s.entries.splice(ai + 1, 0, { id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
+            } else {
+              s.entries.push({ id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
+            }
           }
           break;
         }
@@ -1077,7 +1110,7 @@
           if (ev.kind.kind === 'branch_move') s.meta.leaf = ev.kind.leaf;
           break;
         }
-        case 'subagent': {
+        case 'subagent_event': {
           // Idempotent-cumulative (spec §8): each event carries the full
           // state of one handle; a lost batch self-heals on the next
           // snapshot.
@@ -1096,7 +1129,7 @@
               task: null,
               resume_contract: null
             };
-            s.subagents = s.subagents.filter((x) => x.handle !== k.handle);
+            s.subagents = s.subagents.filter((x) => x.handle !== k.handle && x.child !== k.child);
             s.subagents.push(info);
             touchChild(ev.session, k.child, 'running', now, null, k.title);
             break;

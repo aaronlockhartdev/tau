@@ -743,9 +743,16 @@ fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
         match entry.kind.as_str() {
             KIND_USER => {
                 if let Some(text) = entry.payload.get("text").and_then(Value::as_str) {
+                    // A wake message from a child (ticket #23) is stored as a
+                    // user entry with its source: the prefix keeps the parent
+                    // from reading the child's words as the user's.
+                    let content = match entry.payload.get("source").and_then(Value::as_str) {
+                        Some(source) => format!("Sub-agent {source}: {text}"),
+                        None => text.to_owned(),
+                    };
                     out.push(InputEntry::Message(InputMessage {
                         role: "user".into(),
-                        content: text.to_owned(),
+                        content,
                     }));
                 }
             }

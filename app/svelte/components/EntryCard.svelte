@@ -13,12 +13,14 @@
     entry,
     heightKey,
     heights,
-    streaming = false
+    streaming = false,
+    sourceLabel = ''
   }: {
     entry: Entry;
     heightKey: string;
     heights: Map<string, number>;
     streaming?: boolean;
+    sourceLabel?: string;
   } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
@@ -44,6 +46,15 @@
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
   // Reasoning renders as markdown like the output; the muted color stays.
   const reasonMd = $derived(entry.reasoning ? renderMarkdown(entry.reasoning.trim()) : '');
+  // Whether a body block follows the reasoning block in this entry.
+  const cardRenders = $derived(
+    Boolean(entry.text && entry.text.trim()) ||
+      entry.kind === 'interrupted' ||
+      entry.kind === 'om' ||
+      entry.kind === 'subagent' ||
+      entry.kind === 'spawn-snapshot' ||
+      entry.kind === 'system'
+  );
   // The user-facing tool output: for bash, the command is prepended to
   // the result, and the combined text is what gets truncated.
   const toolOut = $derived(
@@ -128,9 +139,16 @@
 {#if hasContent}
 <div class="wrap" bind:this={el}>
   {#if entry.kind === 'user'}
-    <div class="card user">
-      <div class="userbubble">{entry.text}</div>
-    </div>
+    {#if entry.source}
+      <div class="subblock">
+        <div class="subtitle">sub-agent{sourceLabel ? `: ${sourceLabel}` : ''}</div>
+        <div class="subtext">{entry.text}</div>
+      </div>
+    {:else}
+      <div class="card user">
+        <div class="userbubble">{entry.text}</div>
+      </div>
+    {/if}
   {:else if entry.kind === 'tool'}
     <div class="card tool">
     <div class="toolrow">
@@ -159,7 +177,7 @@
     </div>
   {:else}
     {#if entry.reasoning}
-      <div class="reasonblock">
+      <div class="reasonblock" class:reasononly={!cardRenders}>
         <div class="reasontitle">reasoning</div>
         <div class="md reason">
           {#if streaming}<span class="cursor"></span>
@@ -294,6 +312,10 @@
     border-left: 2px solid rgba(181, 140, 255, 0.35);
     border-radius: 8px;
     background: var(--panel);
+  }
+  /* No card follows: the wrap's own 10 px is the gap — the block adds none. */
+  .reasonblock.reasononly {
+    margin-bottom: 0;
   }
   .reasontitle {
     display: block;

@@ -68,6 +68,9 @@ export interface Entry {
   id: string;
   kind: string;
   text?: string;
+  // The child session that produced this wake message (a sub-agent
+  // notification is a user entry carrying its source, ticket #23).
+  source?: string;
   reasoning?: string;
   name?: string;
   args?: string;
@@ -261,7 +264,7 @@ export type Event =
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
   | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind }
-  | { type: 'subagent'; workspace: string; session: string; kind: SubagentEventKind };
+  | { type: 'subagent_event'; workspace: string; session: string; kind: SubagentEventKind };
 
 export type ProtocolError =
   | { kind: 'unsupported'; message: string }

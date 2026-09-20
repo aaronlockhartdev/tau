@@ -188,7 +188,13 @@ export function toEntry(v: ViewEntry): Entry {
     'usage' in (p as object) ? (p.usage as Entry['usage']) : undefined;
   switch (v.kind) {
     case 'user':
-      return { id: v.id, kind: 'user', text: String(p.text ?? ''), usage };
+      return {
+        id: v.id,
+        kind: 'user',
+        text: String(p.text ?? ''),
+        source: p.source ? String(p.source) : undefined,
+        usage
+      };
     case 'assistant': {
       const interrupted = Boolean(p.interrupted);
       return {

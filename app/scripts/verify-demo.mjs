@@ -259,8 +259,8 @@ try {
       const t = window.__tau;
       if (!t) return res({ missing: 'no __tau seam' });
       t.applyEvents([
-        { type: 'subagent', workspace: 'w-demo', session: 'demo', kind: { kind: 'state', handle: 'b', child: 'c2', state: 'idle', detail: { waiting_on: 'user' }, note: null } },
-        { type: 'subagent', workspace: 'w-demo', session: 'demo', kind: { kind: 'state', handle: 'e', child: 'c5', state: 'stopped', detail: { by: 'user', resume_contract: { task: 't5' } }, note: null } }
+        { type: 'subagent_event', workspace: 'w-demo', session: 'demo', kind: { kind: 'state', handle: 'b', child: 'c2', state: 'idle', detail: { waiting_on: 'user' }, note: null } },
+        { type: 'subagent_event', workspace: 'w-demo', session: 'demo', kind: { kind: 'state', handle: 'e', child: 'c5', state: 'stopped', detail: { by: 'user', resume_contract: { task: 't5' } }, note: null } }
       ]);
       setTimeout(() => {
         const [left] = [...document.querySelectorAll('.pane')];
