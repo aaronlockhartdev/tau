@@ -3411,6 +3411,83 @@ mod tests {
         );
     }
 
+    /// A skill discovered into the registry, then removed from disk before
+    /// the send: the send rejects with an error naming the cause, and no
+    /// partial entry is recorded.
+    #[tokio::test]
+    async fn a_skill_removed_from_disk_before_send_rejects_the_send() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/alpha",
+            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
+        );
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        // Discovered while the file exists: it is now in the registry.
+        match core
+            .dispatch(Command::SkillList {
+                workspace: workspace.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Skills { skills } => {
+                assert!(skills.iter().any(|s| s.name == "alpha"));
+            }
+            other => panic!("expected skills: {other:?}"),
+        }
+        // Then the SKILL.md disappears before the send.
+        std::fs::remove_file(
+            tmp.path()
+                .join(".agents")
+                .join("skills")
+                .join("alpha")
+                .join("SKILL.md"),
+        )
+        .unwrap();
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned(&canned_body()),
+            TurnConfig::default(),
+        );
+        let session_id = live.meta.lock().unwrap().id.clone();
+        let err = core
+            .dispatch(Command::MessageSend {
+                session: session_id.clone(),
+                text: "/skill:alpha do it".into(),
+                lane: MessageLane::Steering,
+            })
+            .unwrap_err();
+        match &err {
+            ProtocolError::Other { message } => {
+                assert!(
+                    message.contains("reading"),
+                    "the error names the read failure: {message}"
+                );
+                assert!(
+                    message.contains("alpha"),
+                    "the error names the skill file: {message}"
+                );
+            }
+            other => panic!("expected a read-failure rejection, got: {other:?}"),
+        }
+        let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), &session_id);
+        store.open().unwrap();
+        assert!(
+            store.entries_range(0, 100).unwrap().is_empty(),
+            "a rejected send records nothing"
+        );
+    }
+
     /// A valid `/skill:<name>` records the expansion template exactly
     /// (the no-args variant omits the final line), with the payload
     /// marker; a non-skill leading `/…` message is recorded verbatim.

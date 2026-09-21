@@ -9,6 +9,7 @@
 //! user's `/skill:` invocation is its only door.
 
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,8 +104,7 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<Skill>) {
         if depth + 1 > MAX_DEPTH {
             continue;
         }
-        let skill_md = d.join("SKILL.md");
-        if skill_md.is_file()
+        if let Some(skill_md) = skill_md_in(&d)
             && let Ok(raw) = std::fs::read_to_string(&skill_md)
             && let Some(s) = parse(&raw, &skill_md)
         {
@@ -115,37 +115,46 @@ fn walk(dir: &Path, depth: usize, out: &mut Vec<Skill>) {
     }
 }
 
+/// The `SKILL.md` in `dir`, matched against the enumerated entry name
+/// byte-for-byte. A `join("SKILL.md")` + `is_file()` check would accept
+/// `skill.md` on a case-insensitive filesystem (the macOS default), which
+/// the standard's "named exactly `SKILL.md`" excludes.
+fn skill_md_in(dir: &Path) -> Option<PathBuf> {
+    let entries = std::fs::read_dir(dir).ok()?;
+    for e in entries.flatten() {
+        if e.file_name() == OsStr::new("SKILL.md") && e.path().is_file() {
+            return Some(e.path());
+        }
+    }
+    None
+}
+
 /// A `SKILL.md`: `---` frontmatter over the body. Lenient per the
 /// integrate guide: unparseable frontmatter skips the skill; a missing
 /// description skips it; a name violation (uppercase, over 64, …)
 /// warns but loads.
 fn parse(raw: &str, location: &Path) -> Option<Skill> {
     let Some(fields) = frontmatter_fields(raw) else {
-        eprintln!(
-            "skill at {}: unparseable frontmatter — skipped",
-            location.display()
-        );
+        eprintln!("{}", skip_message(location, "unparseable frontmatter"));
         return None;
     };
     let Some(name) = fields.get("name").cloned().filter(|n| !n.is_empty()) else {
         eprintln!(
-            "skill at {}: no name in the frontmatter — skipped",
-            location.display()
+            "{}",
+            skip_message(location, "missing required field 'name'")
         );
         return None;
     };
     let description = fields.get("description").cloned().unwrap_or_default();
     if description.is_empty() {
         eprintln!(
-            "skill {name} at {}: missing or empty description — skipped",
-            location.display()
+            "{}",
+            skip_message(location, "missing required field 'description'")
         );
         return None;
     }
     if !valid_name(&name) {
-        eprintln!(
-            "skill {name}: the name violates 1–64 of [a-z0-9-] with no leading/trailing/consecutive hyphens — loaded anyway"
-        );
+        eprintln!("{}", name_violation_message(location, &name));
     }
     Some(Skill {
         name,
@@ -155,6 +164,20 @@ fn parse(raw: &str, location: &Path) -> Option<Skill> {
             .get("disable-model-invocation")
             .is_some_and(|v| v == "true"),
     })
+}
+
+/// A skip diagnostic: the offending file's path, then the specific cause.
+fn skip_message(location: &Path, detail: &str) -> String {
+    format!("{}: {detail} — skipped", location.display())
+}
+
+/// A name violation: the file's path and the offending name; the skill is
+/// loaded anyway, per the lenient rule.
+fn name_violation_message(location: &Path, name: &str) -> String {
+    format!(
+        "{}: name '{name}' violates [a-z0-9-] (loaded anyway)",
+        location.display()
+    )
 }
 
 fn valid_name(n: &str) -> bool {
@@ -469,6 +492,39 @@ mod tests {
         assert_eq!(
             body("---\nname: s\ndescription: d\n---\n\nBody text.\n"),
             "Body text."
+        );
+    }
+
+    #[test]
+    fn a_non_exact_case_skill_md_is_not_discovered() {
+        let root = tempfile::tempdir().unwrap();
+        // Named `skill.md`, not the standard's `SKILL.md`; written by name so
+        // a case-insensitive filesystem cannot paper over the mismatch.
+        let dir = root.path().join(".agents").join("skills").join("lower");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("skill.md"), skill("lower", "d")).unwrap();
+        // A correctly-cased sibling is still discovered, so the scan itself
+        // is proven to work.
+        write_skill(root.path(), ".agents/skills/ok", &skill("ok", "d"));
+        let skills = discover(None, root.path());
+        let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["ok"]);
+    }
+
+    #[test]
+    fn diagnostics_carry_the_path_and_the_failed_field() {
+        let p = Path::new("/proj/.agents/skills/broken/SKILL.md");
+        assert_eq!(
+            skip_message(p, "missing required field 'description'"),
+            "/proj/.agents/skills/broken/SKILL.md: missing required field 'description' — skipped"
+        );
+        assert_eq!(
+            skip_message(p, "unparseable frontmatter"),
+            "/proj/.agents/skills/broken/SKILL.md: unparseable frontmatter — skipped"
+        );
+        assert_eq!(
+            name_violation_message(p, "My-Skill"),
+            "/proj/.agents/skills/broken/SKILL.md: name 'My-Skill' violates [a-z0-9-] (loaded anyway)"
         );
     }
 }
