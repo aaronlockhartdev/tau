@@ -3,6 +3,7 @@
 //! the binary's `main` (ADR-0002 library boundary).
 
 pub mod core;
+mod watch;
 
 use std::sync::Arc;
 

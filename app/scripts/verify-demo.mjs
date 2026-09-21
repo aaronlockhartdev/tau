@@ -364,6 +364,38 @@ try {
       skillStore.disabled.includes('nightly-build'),
       skillStore.disabled.join(' | '));
 
+    // --- ticket #31: skill_list_changed (wire shape, B3 pattern) ---
+    // The demo never sees the live watcher, so feed the EXACT object the
+    // live core emits (core.rs refresh_skills): a session-less
+    // full-state replacement. The store's !sid branch must replace the
+    // per-workspace cache, and a repeat must be a no-op (change guard).
+    const skillChanged = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      if (!t) return res({ missing: 'no __tau seam' });
+      const before = t.store().skills['w-demo'].map((s) => s.name);
+      const updated = [
+        { name: 'tauri-app-creator', description: 'Scaffold a Tauri v2 app with a Svelte frontend.', location: '/home/user/git/tau/.agents/skills/tauri-app-creator/SKILL.md', model_invocation: true },
+        { name: 'newly-added', description: 'Watched in from the file system.', location: '/home/user/git/tau/.agents/skills/newly-added/SKILL.md', model_invocation: true }
+      ];
+      const ev = { type: 'skill_list_changed', workspace: 'w-demo', skills: updated };
+      t.applyEvents([ev]);
+      t.applyEvents([ev]); // the repeat: the change guard makes it a no-op
+      const replaced = t.store().skills['w-demo'].map((s) => s.name);
+      // Restore the demo's own registry (the later dropdown check reads it).
+      const restore = { type: 'skill_list_changed', workspace: 'w-demo', skills: [
+        { name: 'tauri-app-creator', description: 'Scaffold a Tauri v2 app with a Svelte frontend.', location: '/home/user/git/tau/.agents/skills/tauri-app-creator/SKILL.md', model_invocation: true },
+        { name: 'tauri-app-sql', description: 'Wire the SQL plugin: migrations, permissions, queries.', location: '/home/user/git/tau/.agents/skills/tauri-app-sql/SKILL.md', model_invocation: true },
+        { name: 'nightly-build', description: 'Runs the nightly build — user-invoked only.', location: '/home/user/git/tau/.agents/skills/nightly-build/SKILL.md', model_invocation: false }
+      ] };
+      t.applyEvents([restore]);
+      const restored = t.store().skills['w-demo'].map((s) => s.name);
+      setTimeout(() => res({ before, replaced, restored, error: t.store().error }), 50);
+    })`);
+    check('skill_list_changed: a session-less event replaces the per-workspace cache',
+      JSON.stringify(skillChanged.replaced) === JSON.stringify(['tauri-app-creator', 'newly-added']) &&
+        JSON.stringify(skillChanged.restored) === JSON.stringify(skillChanged.before),
+      `before: ${skillChanged.before.join(' | ')} → replaced: ${skillChanged.replaced.join(' | ')}${skillChanged.error ? ' [error: ' + skillChanged.error + ']' : ''}`);
+
     // Block rendering: the fixture's /skill: entry (mid-session) renders
     // the green block — name header, collapsed 200-char preview, working
     // expando. The earlier checks left an archived session open, so the

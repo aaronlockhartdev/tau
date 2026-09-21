@@ -376,6 +376,14 @@ pub enum Event {
         session: String,
         tasks: Vec<Value>,
     },
+    /// The workspace's skill registry changed (the file watcher, ticket
+    /// #31): full-state replacement, idempotent by construction; a lost
+    /// batch self-heals on the next `skill_list`. Session-less: the
+    /// registry is per workspace, not per session.
+    SkillListChanged {
+        workspace: String,
+        skills: Vec<SkillInfo>,
+    },
 }
 
 /// Sub-agent-group events (spec §8): lifecycle transitions and wakes.
@@ -745,6 +753,15 @@ mod tests {
                 workspace: "w1".into(),
                 session: "s1".into(),
                 tasks: vec![json!({ "id": "t-1", "status": "pending" })],
+            },
+            Event::SkillListChanged {
+                workspace: "w1".into(),
+                skills: vec![SkillInfo {
+                    name: "s".into(),
+                    description: "d".into(),
+                    location: "/p/.agents/skills/s/SKILL.md".into(),
+                    model_invocation: true,
+                }],
             },
         ];
         for ev in &events {

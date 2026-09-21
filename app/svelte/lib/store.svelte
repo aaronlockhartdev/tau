@@ -988,11 +988,20 @@
 
   export function applyEvents(evts: Event[]): void {
     for (const ev of evts) {
-      const sid = ev.session;
+      // Session-less events (the system group, skill_list_changed) carry
+      // no `session` key at all — the presence check narrows the union.
+      const sid = 'session' in ev ? ev.session : null;
       if (!sid) {
         if (ev.type === 'system') {
           store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
           if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
+        }
+        if (ev.type === 'skill_list_changed') {
+          // Full-state replacement (ticket #31, the task_changed pattern):
+          // the change guard keeps an unchanged re-emit a no-op.
+          if (JSON.stringify(store.skills[ev.workspace] ?? []) !== JSON.stringify(ev.skills)) {
+            store.skills[ev.workspace] = ev.skills;
+          }
         }
         continue;
       }

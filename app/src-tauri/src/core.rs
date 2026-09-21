@@ -13,7 +13,7 @@ use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use tau_core::agent::{AgentSession, Lane, SessionParams, TurnConfig};
@@ -39,6 +39,14 @@ use tau_protocol::{
     ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo, SystemEventKind, Usage,
 };
 use tokio::sync::mpsc;
+
+use crate::watch::{Batch, Watcher};
+
+/// The watcher's debounce window (design #30): a save burst (a temp-write
+/// followed by an atomic rename) ends well inside it; downstream work (a
+/// few directory reads, depth ≤ 4) is trivial, so there is nothing to
+/// gain from a longer window, and 500 ms reads as instant in the GUI.
+const WATCH_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// A live session: the loop plus the binding's view of its lanes, the
 /// stop flag, and the provider (kept here so a turn can be diffed against
@@ -445,9 +453,20 @@ pub struct Core {
     workspaces: Mutex<BTreeMap<String, Workspace>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     configs: Mutex<HashMap<String, Config>>,
-    /// Per-workspace skill registry (ticket #28): built at session open,
-    /// consulted by the message_send boundary and `skill_list`.
+    /// Per-workspace skill registry (tickets #28/#31): built at session
+    /// open and refreshed by the file watcher; consulted by the
+    /// message_send boundary and `skill_list`.
     skills: Mutex<HashMap<String, Vec<SkillInfo>>>,
+    /// The home-level skill roots (`{system}/skills` + `{home}/.agents/skills`),
+    /// watched once globally (ticket #31): identical for every workspace, so
+    /// one watcher re-discovers all open workspaces. A `None` seam (the test
+    /// shape) is a no-op — there are no roots to watch.
+    home_watcher: Mutex<Option<Watcher>>,
+    /// The per-workspace project roots (the `.tau/skills` + `.agents/skills`
+    /// pair), created at the first `open_workspace`; a batch re-discovers
+    /// that workspace. The watchers live until process exit — no
+    /// workspace-close command exists (design #30).
+    project_watchers: Mutex<HashMap<String, Watcher>>,
     system_dir: Option<PathBuf>,
     /// The user's home dir (the home-level `.agents/skills/` root; the
     /// `system_dir` seam's sibling for tests).
@@ -530,6 +549,8 @@ impl CoreBuilder {
             sessions: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
             skills: Mutex::new(HashMap::new()),
+            home_watcher: Mutex::new(None),
+            project_watchers: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             home: self.home.clone(),
             custom: self.custom,
@@ -583,6 +604,9 @@ impl CoreBuilder {
                     .or_insert(w);
             }
         }
+        // The home-level roots are watched once globally (ticket #31); a
+        // `None` seam (the test shape) is a no-op.
+        core.start_home_watcher();
     }
 }
 
@@ -688,6 +712,7 @@ impl Core {
             },
         });
         self.upsert_workspace_index(&workspace);
+        self.start_project_watcher(&workspace);
         Ok(workspace)
     }
 
@@ -703,25 +728,46 @@ impl Core {
     }
 
     /// The workspace's skill registry (ticket #28): the per-workspace
-    /// cache built at session open; a workspace with no session opened
-    /// yet is discovered on demand (skill_list at workspace open).
+    /// cache; a workspace with no session opened yet is discovered on
+    /// demand (skill_list at workspace open). The watcher refreshes the
+    /// slot between opens (ticket #31), so a stale list never outlives a
+    /// change.
     fn skills_of(&self, ws: &Workspace) -> Vec<SkillInfo> {
         if let Some(reg) = self.skills.lock().unwrap().get(&ws.id) {
             return reg.clone();
         }
-        let reg: Vec<SkillInfo> = tau_core::skills::discover(
+        self.refresh_skills(ws);
+        self.skills
+            .lock()
+            .unwrap()
+            .get(&ws.id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Re-run discovery for `ws`, replace its registry slot, and emit the
+    /// full-state `SkillListChanged` (ticket #31; the `task_changed`
+    /// pattern — idempotent by construction, a lost batch self-heals on
+    /// the next `skill_list`). Shared by the watcher's consumer and
+    /// `build_live`: the slot is the one the dropdown and the `/skill:`
+    /// lookup read. A running session's prompt is not touched (frozen at
+    /// build); new sessions pick up the change at their own build.
+    fn refresh_skills(&self, ws: &Workspace) -> Vec<tau_core::skills::Skill> {
+        let skills = tau_core::skills::discover(
             self.system_dir.as_deref(),
             self.home.as_deref(),
             Path::new(&ws.cwd),
-        )
-        .iter()
-        .map(skill_info)
-        .collect();
+        );
+        let reg: Vec<SkillInfo> = skills.iter().map(skill_info).collect();
         self.skills
             .lock()
             .unwrap()
             .insert(ws.id.clone(), reg.clone());
-        reg
+        self.emit(Event::SkillListChanged {
+            workspace: ws.id.clone(),
+            skills: reg,
+        });
+        skills
     }
 
     /// A leading `/skill:<name> [args]` expands at the message_send
@@ -1006,17 +1052,13 @@ impl Core {
         let layers = context::discover(&cwd, &self.system_dir_of());
         let mut system_prompt = context::assemble("You are Tau, a coding agent.", &layers);
 
-        // Skills (ticket #28): discovery runs at session open/reopen (no
-        // file watching in v0). The catalog is the last layer — after the
-        // context files, so a user AGENTS.md is never drowned — and a
-        // spawned child inherits it through this prompt. The per-workspace
-        // registry feeds skill_list and the /skill: expansion.
-        let skills =
-            tau_core::skills::discover(self.system_dir.as_deref(), self.home.as_deref(), &cwd);
-        self.skills.lock().unwrap().insert(
-            workspace.id.clone(),
-            skills.iter().map(skill_info).collect(),
-        );
+        // Skills (tickets #28/#31): discovery runs at session open/reopen
+        // — the catalog is frozen at that moment (a running session's prompt
+        // is not re-derived; new sessions pick up watcher changes at their
+        // own build). The catalog is the last layer — after the context
+        // files, so a user AGENTS.md is never drowned — and a spawned child
+        // inherits it through this prompt.
+        let skills = self.refresh_skills(workspace);
         if let Some(catalog) = tau_core::skills::catalog(&skills) {
             system_prompt.push_str("\n\n");
             system_prompt.push_str(&catalog);
@@ -2140,8 +2182,99 @@ impl Core {
             tasks: tasks_of(&entries),
         });
     }
+
+    /// The home-level roots are identical for every workspace (design #30):
+    /// one global watcher; a batch re-discovers all open workspaces, each
+    /// getting its own `SkillListChanged`. A `None` seam (the test shape)
+    /// watches nothing — the watcher is a no-op.
+    fn start_home_watcher(self: &Arc<Self>) {
+        let mut roots = Vec::new();
+        if let Some(dir) = &self.system_dir {
+            roots.push(dir.join("skills"));
+        }
+        if let Some(home) = &self.home {
+            roots.push(home.join(".agents").join("skills"));
+        }
+        if roots.is_empty() {
+            return;
+        }
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        for root in &roots {
+            watcher.add(root);
+        }
+        self.home_watcher.lock().unwrap().replace(watcher);
+        let core = Arc::clone(self);
+        spawn_watcher_consumer(core, rx, move |core| {
+            for ws in core.workspaces.lock().unwrap().values() {
+                core.refresh_skills(ws);
+            }
+        });
+    }
+
+    /// The workspace's project roots (the `.tau/skills` + `.agents/skills`
+    /// pair), watched from the first `open_workspace`; a batch re-discovers
+    /// that workspace. The watcher lives until process exit (no
+    /// workspace-close command — design #30); the map grows at most one
+    /// entry per distinct workspace. A missing project dir has no roots to
+    /// watch.
+    fn start_project_watcher(&self, workspace: &Workspace) {
+        if !Path::new(&workspace.cwd).is_dir() {
+            return;
+        }
+        let mut map = self.project_watchers.lock().unwrap();
+        if map.contains_key(&workspace.id) {
+            return;
+        }
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        let cwd = Path::new(&workspace.cwd);
+        watcher.add(&cwd.join(".tau").join("skills"));
+        watcher.add(&cwd.join(".agents").join("skills"));
+        map.insert(workspace.id.clone(), watcher);
+        drop(map);
+        let Some(core) = self.self_arc() else {
+            return;
+        };
+        let id = workspace.id.clone();
+        spawn_watcher_consumer(core, rx, move |core| {
+            if let Ok(ws) = core.workspace(&id) {
+                core.refresh_skills(&ws);
+            }
+        });
+    }
 }
 
+/// The watcher's consumer task (ticket #31): drain the batch channel on
+/// the app's runtime and run the per-batch handler. The handler gets a
+/// fresh `Arc` per batch; the `Weak` keeps the task from pinning the core
+/// — the test's drop joins the thread through the watcher's `stop()`. An
+/// empty batch is a rescan trigger: the handler treats it as every watched
+/// root being affected. The files-pane ticket (#32) runs the same shape
+/// with its own handler.
+fn spawn_watcher_consumer(
+    core: Arc<Core>,
+    mut rx: mpsc::UnboundedReceiver<Batch>,
+    handler: impl Fn(Arc<Core>) + Send + 'static,
+) {
+    let weak = Arc::downgrade(&core);
+    tokio::spawn(async move {
+        while let Some(_batch) = rx.recv().await {
+            let Some(core) = weak.upgrade() else {
+                break;
+            };
+            handler(core);
+        }
+    });
+}
+
+/// The watchers live until process exit (no workspace-close command —
+/// design #30); the drop is the test teardown, and it joins each
+/// debouncer thread (the `Watcher`'s own drop does the joining).
+impl Drop for Core {
+    fn drop(&mut self) {
+        self.home_watcher.lock().unwrap().take();
+        self.project_watchers.lock().unwrap().clear();
+    }
+}
 fn lane_to_lane(lane: MessageLane) -> Lane {
     match lane {
         MessageLane::Force => Lane::Force,
@@ -3716,5 +3849,190 @@ mod tests {
             .unwrap();
         assert_eq!(user.payload["text"], "/not-a-skill");
         assert!(user.payload.get("skill").is_none());
+    }
+
+    /// The pump into a collected-events `Mutex<Vec<Event>>` (the app's
+    /// transport stand-in, ADR-0006).
+    fn collect_events(core: &Arc<Core>) -> Arc<Mutex<Vec<Event>>> {
+        let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let sink = Arc::clone(&collected);
+        tokio::spawn(pump(Arc::clone(core), move |batch| {
+            sink.lock().unwrap().extend(batch.iter().cloned());
+        }));
+        collected
+    }
+
+    /// Bounded wait (generous, 5 s) for the latest `SkillListChanged` for
+    /// `ws` whose registry satisfies `ok`; returns that registry. The
+    /// event is a full-state replacement, so the latest match is the final
+    /// state — the tests assert that, never the event sequence.
+    async fn wait_for_skill_list_changed(
+        collected: &Arc<Mutex<Vec<Event>>>,
+        ws: &str,
+        ok: impl Fn(&[SkillInfo]) -> bool,
+    ) -> Vec<SkillInfo> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(skills) = collected
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find_map(|e| match e {
+                    Event::SkillListChanged { workspace, skills } if workspace == ws => {
+                        Some(skills.clone())
+                    }
+                    _ => None,
+                })
+                && ok(&skills)
+            {
+                return skills;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no qualifying skill_list_changed for {ws} within 5 s"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// A skill added to a watched project root mid-session reaches the
+    /// registry and the GUI cache without a workspace open/switch
+    /// (ticket #31): the final registry state carries the new skill.
+    #[tokio::test]
+    async fn a_skill_added_to_a_project_root_updates_the_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = open_ws(&core, tmp.path()).await;
+        let collected = collect_events(&core);
+        write_skill_fixture(
+            tmp.path(),
+            ".tau/skills/added",
+            "---\nname: added\ndescription: added mid-session\n---\nBody.\n",
+        );
+        let skills = wait_for_skill_list_changed(&collected, &workspace.id, |s| {
+            s.iter().any(|x| x.name == "added")
+        })
+        .await;
+        assert_eq!(
+            skills.len(),
+            1,
+            "the full state is the new skill alone: {skills:?}"
+        );
+        assert_eq!(skills[0].name, "added");
+    }
+
+    /// Editing a skill's frontmatter (a name change) replaces the registry
+    /// entry: the final state carries the new name and the old one is gone.
+    #[tokio::test]
+    async fn an_edited_skill_name_replaces_the_registry_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/s",
+            "---\nname: old\ndescription: the old name\n---\nBody.\n",
+        );
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = open_ws(&core, tmp.path()).await;
+        let collected = collect_events(&core);
+        std::fs::write(
+            tmp.path().join(".agents/skills/s/SKILL.md"),
+            "---\nname: new\ndescription: the new name\n---\nBody.\n",
+        )
+        .unwrap();
+        let skills = wait_for_skill_list_changed(&collected, &workspace.id, |s| {
+            s.iter().any(|x| x.name == "new") && !s.iter().any(|x| x.name == "old")
+        })
+        .await;
+        assert_eq!(
+            skills.len(),
+            1,
+            "the final state has the renamed skill only: {skills:?}"
+        );
+        assert_eq!(skills[0].description, "the new name");
+    }
+
+    /// Deleting a skill's SKILL.md empties the workspace's registry: the
+    /// final state is the empty list (a lost batch self-heals on the next
+    /// `skill_list`).
+    #[tokio::test]
+    async fn a_deleted_skill_leaves_an_empty_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/gone",
+            "---\nname: gone\ndescription: to be deleted\n---\nBody.\n",
+        );
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = open_ws(&core, tmp.path()).await;
+        let collected = collect_events(&core);
+        std::fs::remove_file(tmp.path().join(".agents/skills/gone/SKILL.md")).unwrap();
+        let skills = wait_for_skill_list_changed(&collected, &workspace.id, |s| s.is_empty()).await;
+        assert!(skills.is_empty());
+    }
+
+    /// A home-root change fans out to every open workspace (design #30):
+    /// the two home roots are watched once globally, and each workspace
+    /// gets its own `SkillListChanged` carrying the shared skill.
+    #[tokio::test]
+    async fn a_home_root_change_fans_out_to_all_open_workspaces() {
+        let tmp1 = tempfile::tempdir().unwrap();
+        let tmp2 = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let sys = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers())
+            .with_system_dir(sys.path().to_path_buf())
+            .with_home(home.path().to_path_buf())
+            .build();
+        let w1 = open_ws(&core, tmp1.path()).await;
+        let w2 = open_ws(&core, tmp2.path()).await;
+        let collected = collect_events(&core);
+        write_skill_fixture(
+            home.path(),
+            ".agents/skills/shared",
+            "---\nname: shared\ndescription: from the home .agents\n---\nBody.\n",
+        );
+        let expect = |s: &[SkillInfo]| s.iter().any(|x| x.name == "shared");
+        let s1 = wait_for_skill_list_changed(&collected, &w1.id, expect).await;
+        let s2 = wait_for_skill_list_changed(&collected, &w2.id, expect).await;
+        for skills in [&s1, &s2] {
+            assert_eq!(
+                skills.len(),
+                1,
+                "each registry is the shared skill alone: {skills:?}"
+            );
+            assert!(
+                skills[0]
+                    .location
+                    .starts_with(home.path().to_str().unwrap()),
+                "the home file's location: {}",
+                skills[0].location
+            );
+        }
+    }
+
+    /// The `None` seam (the `custom` test shape) makes the home watcher a
+    /// no-op — there is no global watcher — while the project roots of an
+    /// open workspace are still watched.
+    #[tokio::test]
+    async fn none_seams_make_the_home_watcher_a_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        assert!(
+            core.home_watcher.lock().unwrap().is_none(),
+            "the None seam has no home roots to watch"
+        );
+        let workspace = open_ws(&core, tmp.path()).await;
+        let collected = collect_events(&core);
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/proj",
+            "---\nname: proj\ndescription: from the project .agents\n---\nBody.\n",
+        );
+        let skills = wait_for_skill_list_changed(&collected, &workspace.id, |s| {
+            s.iter().any(|x| x.name == "proj")
+        })
+        .await;
+        assert_eq!(skills.len(), 1);
     }
 }

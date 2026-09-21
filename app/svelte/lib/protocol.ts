@@ -278,7 +278,10 @@ export type Event =
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
   | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind }
   | { type: 'subagent_event'; workspace: string; session: string; kind: SubagentEventKind }
-  | { type: 'task_changed'; workspace: string; session: string; tasks: Task[] };
+  | { type: 'task_changed'; workspace: string; session: string; tasks: Task[] }
+  // The workspace's skill registry changed (the file watcher, ticket #31):
+  // full-state replacement, idempotent; session-less like the system group.
+  | { type: 'skill_list_changed'; workspace: string; skills: SkillInfo[] };
 
 export type ProtocolError =
   | { kind: 'unsupported'; message: string }
