@@ -696,11 +696,15 @@ impl Core {
         if let Some(reg) = self.skills.lock().unwrap().get(&ws.id) {
             return reg.clone();
         }
-        let reg: Vec<SkillInfo> = tau_core::skills::discover(self.system_dir.as_deref(), Path::new(&ws.cwd))
-            .iter()
-            .map(skill_info)
-            .collect();
-        self.skills.lock().unwrap().insert(ws.id.clone(), reg.clone());
+        let reg: Vec<SkillInfo> =
+            tau_core::skills::discover(self.system_dir.as_deref(), Path::new(&ws.cwd))
+                .iter()
+                .map(skill_info)
+                .collect();
+        self.skills
+            .lock()
+            .unwrap()
+            .insert(ws.id.clone(), reg.clone());
         reg
     }
 
@@ -1519,7 +1523,8 @@ impl Core {
                 }
                 match skill {
                     Some((name, location)) => {
-                        live.agent.send_skill(expanded, lane_to_lane(lane), &name, &location)
+                        live.agent
+                            .send_skill(expanded, lane_to_lane(lane), &name, &location)
                     }
                     None => live.agent.send(expanded, lane_to_lane(lane)),
                 }
@@ -3298,12 +3303,21 @@ mod tests {
     async fn skill_list_serves_the_workspace_registry_with_project_wins() {
         let tmp = tempfile::tempdir().unwrap();
         let system = tempfile::tempdir().unwrap();
-        write_skill_fixture(system.path(), "skills/shared",
-            "---\nname: shared\ndescription: system shared\n---\nBody.\n");
-        write_skill_fixture(tmp.path(), ".tau/skills/shared",
-            "---\nname: shared\ndescription: project shared\n---\nBody.\n");
-        write_skill_fixture(tmp.path(), ".agents/skills/other",
-            "---\nname: other\ndescription: from .agents\ndisable-model-invocation: true\n---\nBody.\n");
+        write_skill_fixture(
+            system.path(),
+            "skills/shared",
+            "---\nname: shared\ndescription: system shared\n---\nBody.\n",
+        );
+        write_skill_fixture(
+            tmp.path(),
+            ".tau/skills/shared",
+            "---\nname: shared\ndescription: project shared\n---\nBody.\n",
+        );
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/other",
+            "---\nname: other\ndescription: from .agents\ndisable-model-invocation: true\n---\nBody.\n",
+        );
         let core = CoreBuilder::custom(providers())
             .with_system_dir(system.path().to_path_buf())
             .build();
@@ -3316,7 +3330,12 @@ mod tests {
             CommandOutput::Workspace { workspace: w } => w,
             other => panic!("expected a workspace: {other:?}"),
         };
-        match core.dispatch(Command::SkillList { workspace: workspace.id }).unwrap() {
+        match core
+            .dispatch(Command::SkillList {
+                workspace: workspace.id,
+            })
+            .unwrap()
+        {
             CommandOutput::Skills { skills } => {
                 assert_eq!(skills.len(), 2);
                 let shared = skills.iter().find(|s| s.name == "shared").unwrap();
@@ -3351,8 +3370,11 @@ mod tests {
     #[tokio::test]
     async fn a_misspelled_skill_name_rejects_the_send() {
         let tmp = tempfile::tempdir().unwrap();
-        write_skill_fixture(tmp.path(), ".agents/skills/alpha",
-            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n");
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/alpha",
+            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
+        );
         let core = CoreBuilder::custom(providers()).build();
         let workspace = match core
             .dispatch(Command::WorkspaceOpen {
@@ -3395,8 +3417,11 @@ mod tests {
     #[tokio::test]
     async fn a_skill_invocation_records_the_expanded_entry() {
         let tmp = tempfile::tempdir().unwrap();
-        write_skill_fixture(tmp.path(), ".agents/skills/alpha",
-            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n");
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/alpha",
+            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
+        );
         let core = CoreBuilder::custom(providers()).build();
         let workspace = match core
             .dispatch(Command::WorkspaceOpen {
