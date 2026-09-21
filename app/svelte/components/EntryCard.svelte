@@ -375,7 +375,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 4px 2px;
+    padding: 0 2px;
     font: 12px var(--sans);
     color: var(--faint);
     cursor: pointer;
