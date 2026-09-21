@@ -36,6 +36,7 @@
     void entry.args;
     void outputOpen;
     void argsOpen;
+    void skillOpen;
     if (el) heights.set(heightKey, el.offsetHeight);
   });
 
@@ -81,6 +82,13 @@
   );
   const outputLong = $derived(toolOut.length > 200);
   let outputOpen = $state(false);
+  // The /skill: block (ticket #28): the body collapses to the usual
+  // 200-char preview with an expando (the tool-output mechanism).
+  let skillOpen = $state(false);
+  const skillLong = $derived((entry.text ?? '').length > 200);
+  const skillPreview = $derived(
+    skillLong ? (entry.text ?? '').slice(0, 200) + ' …' : (entry.text ?? '')
+  );
   // Long tool-call bodies collapse to the args line; a click opens the
   // full JSON under the tool name.
   let argsOpen = $state(false);
@@ -137,7 +145,17 @@
 {#if hasContent}
 <div class="wrap" bind:this={el}>
   {#if entry.kind === 'user'}
-    {#if entry.source}
+    {#if entry.skill}
+      <div class="skillblock">
+        <div class="skilltitle">skill - {entry.skill.name}</div>
+        {#if skillLong}
+          <button class="expando" onclick={() => (skillOpen = !skillOpen)}>
+            {skillOpen ? '▾ hide' : '▸ full (' + (entry.text ?? '').length + ' chars)'}
+          </button>
+        {/if}
+        <div class="skillbody">{skillOpen ? (entry.text ?? '') : skillPreview}</div>
+      </div>
+    {:else if entry.source}
       <div class="subblock">
         <div class="subtitle">sub-agent{sourceLabel ? `: ${sourceLabel}` : ''}</div>
         <div class="subtext">{entry.text}</div>
@@ -451,6 +469,30 @@
     margin: 0;
     padding: 0 10px 8px;
     color: #b8a888;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .skillblock {
+    margin: 0 0 6px;
+    border: 1px solid rgba(87, 217, 122, 0.16);
+    border-left: 2px solid rgba(87, 217, 122, 0.35);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .skilltitle {
+    display: block;
+    width: 100%;
+    padding: 8px 10px 4px;
+    font: 10.5px var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--green);
+  }
+  .skillbody {
+    margin: 0;
+    padding: 0 10px 8px;
+    color: #88b394;
     font-size: 12px;
     white-space: pre-wrap;
     word-break: break-word;

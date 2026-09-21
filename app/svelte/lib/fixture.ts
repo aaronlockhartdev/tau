@@ -4,8 +4,7 @@
 // crates/tau-core/tests/large_session.rs (~200 B chained payloads) with the
 // entry mix of the prototype; the markdown edge cases are the prototype's.
 
-import type { Entry, SessionMeta, ViewEntry } from './protocol';
-
+import type { Entry, SessionMeta, SkillInfo, ViewEntry } from './protocol';
 interface FixtureEntry {
   id: string;
   parent: string | null;
@@ -158,7 +157,19 @@ function specialEntries(): FixtureEntry[] {
       range: 'g1–g12',
       log: "frozen prefix: the parent's observation log verbatim (never re-observed, never re-reflected)"
     }),
-    mk(9998, 'user', userPayload('Park and wait for the sub-agent benchmark.')),
+    // A /skill: invocation (ticket #28): the entry records the expansion
+    // template and carries the skill marker — the green block's source.
+    mk(9998, 'user', {
+      text:
+        'Skill `tauri-app-creator` — follow the instructions below. The skill directory is /home/user/git/tau/.agents/skills/tauri-app-creator; resolve relative paths in the instructions against it.\n\n' +
+        'Scaffold a Tauri v2 application with the Svelte frontend: 1) run `npm create tauri-app` choosing the Svelte template, 2) wire the plugin permissions into tauri.conf.json, 3) verify with `cargo build` and the dev server, then hand back the tree layout.\n\n' +
+        'User request: set up a new tauri + svelte workspace',
+      lane: 'steering',
+      skill: {
+        name: 'tauri-app-creator',
+        location: '/home/user/git/tau/.agents/skills/tauri-app-creator/SKILL.md'
+      }
+    }),
     mk(
       9999,
       'assistant',
@@ -187,14 +198,17 @@ export function toEntry(v: ViewEntry): Entry {
   const usage =
     'usage' in (p as object) ? (p.usage as Entry['usage']) : undefined;
   switch (v.kind) {
-    case 'user':
+    case 'user': {
+      const sk = p.skill as { name?: unknown; location?: unknown } | undefined;
       return {
         id: v.id,
         kind: 'user',
         text: String(p.text ?? ''),
         source: p.source ? String(p.source) : undefined,
+        skill: sk ? { name: String(sk.name ?? ''), location: String(sk.location ?? '') } : undefined,
         usage
       };
+    }
     case 'assistant': {
       const interrupted = Boolean(p.interrupted);
       return {
@@ -278,4 +292,30 @@ export function buildDemoSession(): DemoSession {
   };
 
   return { meta, entries, views };
+}
+
+// The demo's skill registry (the store's demo-mode stand-in for the
+// skill_list command): one catalog skill and one model-invocation-disabled
+// skill — the dropdown is that one's only door.
+export function demoSkills(): SkillInfo[] {
+  return [
+    {
+      name: 'tauri-app-creator',
+      description: 'Scaffold a Tauri v2 app with a Svelte frontend.',
+      location: '/home/user/git/tau/.agents/skills/tauri-app-creator/SKILL.md',
+      model_invocation: true
+    },
+    {
+      name: 'tauri-app-sql',
+      description: 'Wire the SQL plugin: migrations, permissions, queries.',
+      location: '/home/user/git/tau/.agents/skills/tauri-app-sql/SKILL.md',
+      model_invocation: true
+    },
+    {
+      name: 'nightly-build',
+      description: 'Runs the nightly build — user-invoked only.',
+      location: '/home/user/git/tau/.agents/skills/nightly-build/SKILL.md',
+      model_invocation: false
+    }
+  ];
 }

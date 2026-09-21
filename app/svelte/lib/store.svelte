@@ -16,6 +16,7 @@
     type Event,
     type QueuedItem,
     type SessionMeta,
+    type SkillInfo,
     type Snapshot,
     type SubagentInfo,
     type Task,
@@ -23,7 +24,7 @@
     type ViewEntry,
     type Workspace
   } from './protocol';
-  import { buildDemoSession, toEntry } from './fixture';
+  import { buildDemoSession, demoSkills, toEntry } from './fixture';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
 
 
@@ -70,6 +71,9 @@
     // The transcript's last window computation (spec §9 seg3 render stats).
     renderRange: '',
     renderMs: 0,
+    // The skill registry, cached per workspace (ticket #28): the
+    // composer's /skill: autocomplete data source.
+    skills: {} as Record<string, SkillInfo[]>,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>
@@ -226,6 +230,7 @@
     const { meta, entries, views } = buildDemoSession();
     demoViews = views;
     store.workspaces = [{ id: 'w-demo', name: 'tau', cwd: '~/git/tau' }];
+    store.skills['w-demo'] = demoSkills();
     store.current = meta.id;
     store.sessions[meta.id] = {
       meta,
@@ -575,6 +580,11 @@
     // folder returns the same workspace; the store keeps one tab per cwd.
     const opened = await command({ type: 'workspace_open', cwd: ws.cwd });
     const real = opened.kind === 'workspace' ? opened.workspace : ws;
+    // The skill registry refreshes per open/switch (ticket #28): discovery
+    // is cheap and the cache keys on the workspace, so a stale list never
+    // outlives a tab.
+    const skillsOut = await command({ type: 'skill_list', workspace: real.id });
+    if (skillsOut.kind === 'skills') store.skills[real.id] = skillsOut.skills;
     const i = store.workspaces.findIndex((w) => w.cwd === real.cwd);
     if (i >= 0) {
       store.workspaces[i] = real;
@@ -634,6 +644,7 @@
     const n = store.workspaces.length + 1;
     const ws: Workspace = { id: `w-demo-${n}`, name: `demo ${n}`, cwd: `~/git/tau${n}` };
     store.workspaces.push(ws);
+    store.skills[ws.id] = demoSkills();
     const { meta, entries, views } = buildDemoSession();
     // Its own session id (not the workspace's — the bar showed `ses w-demo-2`).
     const m2 = { ...meta, id: `ses-${ws.id}`, workspace: ws.id, title: `Demo session ${n}` };
@@ -686,6 +697,7 @@
         }
       }
     }
+    delete store.skills[ws.id];
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];

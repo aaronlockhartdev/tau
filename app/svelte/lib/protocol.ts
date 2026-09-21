@@ -13,6 +13,16 @@ export interface Workspace {
   cwd: string;
 }
 
+// A discovered skill (the composer autocomplete's data source):
+// location is the absolute SKILL.md path; model_invocation: false marks
+// a catalog-excluded skill — the dropdown is its only door.
+export interface SkillInfo {
+  name: string;
+  description: string;
+  location: string;
+  model_invocation: boolean;
+}
+
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
@@ -71,6 +81,9 @@ export interface Entry {
   // The child session that produced this wake message (a sub-agent
   // notification is a user entry carrying its source, ticket #23).
   source?: string;
+  // A /skill: invocation (ticket #28): the user entry records the
+  // expanded template and carries the skill's identity for the block.
+  skill?: { name: string; location: string };
   reasoning?: string;
   name?: string;
   args?: string;
@@ -224,6 +237,7 @@ export type Command =
   | { type: 'task_assign'; session: string; task: string; worker: string }
   | { type: 'task_evidence'; session: string; task: string; criterion: string; summary: string; passed: boolean | null }
   | { type: 'task_cancel'; session: string; task: string }
+  | { type: 'skill_list'; workspace: string }
   | { type: 'provider_list' }
   | { type: 'provider_add'; name: string; base_url: string; key_env: string; models: string[] }
   | { type: 'provider_set'; name: string; base_url: string; key_env: string; models: string[] }
@@ -240,6 +254,7 @@ export type CommandOutput =
   | { kind: 'entries'; entries: ViewEntry[] }
   | { kind: 'providers'; providers: Array<{ name: string; base_url: string; models: string[] }> }
   | { kind: 'agents'; agents: Array<{ name: string; description: string; builtin: boolean }> }
+  | { kind: 'skills'; skills: SkillInfo[] }
   | { kind: 'subagent'; subagent: SubagentInfo }
   | { kind: 'subagents'; subagents: SubagentInfo[] }
   | { kind: 'file'; file: { text: string; truncated: boolean } };
