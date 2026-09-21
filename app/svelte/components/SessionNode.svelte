@@ -106,19 +106,22 @@
       class="chev"
       type="button"
       class:has={kids.length > 0}
+      class:open={groupOpen(session.meta.id)}
       onclick={(e) => {
         e.stopPropagation();
         if (kids.length > 0) toggleGroup(session.meta.id);
       }}
     >
-      {kids.length > 0 ? (groupOpen(session.meta.id) ? '▾' : '▸') : ''}
+      {#if kids.length > 0}
+        <svg class="ci" width="11" height="11"><use href="#i-chev"/></svg>
+      {/if}
     </button>
     {#if pane(ws)?.renamingId === session.meta.id}
       <input
         class="t rename"
         bind:this={renameInput}
+        bind:value={renameText}
         aria-label="rename session"
-        value={renameText}
         onblur={() => commitRename()}
         onkeydown={(e) => {
           e.stopPropagation();
@@ -182,6 +185,13 @@
     color: var(--dim);
     width: 10px;
     flex: none;
+  }
+  .srow .chev .ci {
+    display: block;
+    transition: transform 0.12s;
+  }
+  .srow .chev:not(.open) .ci {
+    transform: rotate(-90deg);
   }
   .srow .chev:not(.has) {
     visibility: hidden;
