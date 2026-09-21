@@ -7,6 +7,7 @@
 import './app.css';
 import { mount } from 'svelte';
 import { mockIPC } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
 import App from './App.svelte';
 import { store, init, applyEvents } from './lib/store.svelte';
 import {
@@ -83,14 +84,25 @@ function snapshotFor(sid: string): Snapshot {
   };
 }
 
-function mockBackend(cmd: string, args?: unknown): CommandOutput {
+function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
+  // The File → Open Folder… picker (ticket #29 B1): the demo entry mocks the
+  // dialog plugin's command with a fixed folder; the store's openWorkspace
+  // runs unmodified against it.
+  if (cmd === 'plugin:dialog|open') return '/tmp/tau-rig-ws';
   const c = (args as { command?: Command } | undefined)?.command;
   if (cmd !== 'tau_command' || !c) throw new Error(`demo entry: unmocked IPC ${cmd}`);
   switch (c.type) {
     case 'workspace_list':
       return { kind: 'workspaces', workspaces: [WS] };
-    case 'workspace_open':
+    case 'workspace_open': {
+      // The core keys workspaces by cwd; echo a stable id for non-demo
+      // folders (the File → Open Folder… rig check).
+      if (c.cwd !== WS.cwd) {
+        const name = c.cwd.split(/[\\/]/).filter(Boolean).pop() ?? c.cwd;
+        return { kind: 'workspace', workspace: { id: 'w-rig', name, cwd: c.cwd } };
+      }
       return { kind: 'workspace', workspace: WS };
+    }
     case 'skill_list':
       return { kind: 'skills', skills: demoSkills() };
     // The fixture session first: the boot rule opens the list's head.
@@ -198,11 +210,16 @@ function startStreams(): void {
   }, 25);
 }
 
-mockIPC(mockBackend);
+mockIPC(mockBackend, { shouldMockEvents: true });
 init().then(() => {
   seedKids();
   startStreams();
 });
+// The rig drives File → Open Folder…'s store-side path (ticket #29 B1):
+// the native menu emits, mockIPC's event mock carries it to the listener
+// the store registered in init().
+const seam = (window as unknown as { __tau?: { openFolderRequest?: () => void } }).__tau;
+if (seam) seam.openFolderRequest = () => void emit('open_folder_requested');
 
 const root = document.getElementById('app');
 if (!root) throw new Error('missing #app element');

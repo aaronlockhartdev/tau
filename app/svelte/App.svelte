@@ -56,7 +56,7 @@
       {:else}
         <div class="empty">
           <span class="big">No workspace open</span>
-          <span>Workspaces are remembered from previous runs</span>
+          <span>Open a project with File → Open Folder… (⌘O); workspaces are remembered from previous runs</span>
         </div>
       {/if}
     </main>

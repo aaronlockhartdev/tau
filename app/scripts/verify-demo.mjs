@@ -155,21 +155,28 @@ try {
       return true;
     })()`);
     if (setMid && setMid.missing) throw new Error('no .scroll — ' + setMid.missing);
-    await sleep(300);
-    const mid = await evalPage(wsUrl, `(() => {
-      const sc = document.querySelector('.scroll');
-      return {
-        scrollTop: sc.scrollTop,
-        scrollH: sc.scrollHeight,
-        trackH: document.querySelector('.track')?.offsetHeight ?? 0,
-        domCards: document.querySelectorAll('.card').length,
-        visible: [...document.querySelectorAll('.card')].filter((c) => {
-          const r = c.getBoundingClientRect();
-          const v = sc.getBoundingClientRect();
-          return r.bottom > v.top && r.top < v.bottom && r.height > 0;
-        }).length
-      };
-    })()`);
+    // The render window settles a frame after the scroll; sample with a
+    // bounded retry so a slow machine doesn't read the gap (the original
+    // single sample raced the window under load).
+    let mid = null;
+    for (let i = 0; i < 10 && (!mid || mid.visible === 0); i++) {
+      mid = await evalPage(wsUrl, `(() => {
+        const sc = document.querySelector('.scroll');
+        return {
+          scrollTop: sc.scrollTop,
+          scrollH: sc.scrollHeight,
+          trackH: document.querySelector('.track')?.offsetHeight ?? 0,
+          domCards: document.querySelectorAll('.card').length,
+          visible: [...document.querySelectorAll('.card')].filter((c) => {
+            const r = c.getBoundingClientRect();
+            const v = sc.getBoundingClientRect();
+            return r.bottom > v.top && r.top < v.bottom && r.height > 0;
+          }).length
+        };
+      })()`);
+      if (mid.visible > 0) break;
+      await sleep(200);
+    }
     check('mid-session: cards visible in the viewport', mid.visible > 0, `${mid.visible} visible, scrollTop=${Math.round(mid.scrollTop)}`);
     check('mid-session: track height ≈ 1× (no 2× inflation)', top.trackH > 0 && mid.scrollH <= top.trackH * 1.2, `scrollH=${mid.scrollH}, trackH=${top.trackH}, ratio=${(mid.scrollH / top.trackH).toFixed(2)}`);
     check('mid-session: DOM is windowed', mid.domCards > 0 && mid.domCards <= 60, `${mid.domCards} cards in DOM`);
@@ -503,6 +510,22 @@ try {
       collapsed.focus && collapsed.widths.every((w) => w === 0),
       JSON.stringify(collapsed));
     await evalPage(wsUrl, `document.querySelector('.focus').click()`); // toggle back
+
+    // File → Open Folder… (ticket #29 B1): the native menu emits; in the
+    // demo entry mockIPC's event mock carries it and the dialog plugin
+    // command answers with a fixed folder — the store's listener and
+    // openWorkspace run unmodified.
+    await evalPage(wsUrl, `window.__tau.openFolderRequest()`);
+    let rigWs = false;
+    for (let i = 0; i < 30 && !rigWs; i++) {
+      await sleep(100);
+      rigWs = await evalPage(wsUrl, `window.__tau.store().workspaces.some((w) => w.cwd === '/tmp/tau-rig-ws')`);
+    }
+    check('File → Open Folder…: the picked folder opens a workspace', rigWs,
+      'workspaces ' + JSON.stringify(await evalPage(wsUrl, `window.__tau.store().workspaces.map((w) => w.cwd)`)));
+    // Restore the demo workspace (the mock dialog always picks the same folder).
+    await evalPage(wsUrl, `window.__tau.openWorkspace(window.__tau.store().workspaces.find((w) => w.cwd === '~/git/tau'))`);
+    await sleep(200);
   } finally {
     preview.kill('SIGTERM');
   }

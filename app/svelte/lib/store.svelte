@@ -25,6 +25,8 @@
     type Workspace
   } from './protocol';
   import { toEntry } from './fixture';
+  import { listen } from '@tauri-apps/api/event';
+  import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
 
 
   export interface PendingMsg {
@@ -200,6 +202,16 @@
         store.error = 'no Tauri window — run the app';
         return;
       }
+      // File → Open Folder… (native menu, ticket #29 B1): the picker runs
+      // the dialog plugin's proven path (incl. scope handling); the store
+      // just opens the result as a workspace.
+      void listen('open_folder_requested', async () => {
+        const picked = await pickDirectory({ directory: true, multiple: false });
+        const dir = Array.isArray(picked) ? picked[0] : picked;
+        if (typeof dir !== 'string' || dir === '') return;
+        const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
+        openWorkspace({ id: '', name, cwd: dir });
+      });
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') throw new Error('unexpected workspace_list output');
       store.workspaces = out.workspaces;
