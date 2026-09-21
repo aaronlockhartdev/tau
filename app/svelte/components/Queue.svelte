@@ -36,14 +36,14 @@
 <style>
   .queue {
     flex: none;
-    padding: 8px 16px;
-    border-top: 1px solid var(--line);
+    margin: 0 16px 10px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
     background: var(--panel);
   }
   .qlabel {
-    font: 10px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font: 10.5px var(--mono);
     color: var(--dim);
     margin: 4px 0;
   }

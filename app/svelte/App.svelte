@@ -12,8 +12,18 @@
   import Queue from './components/Queue.svelte';
   import Composer from './components/Composer.svelte';
   import StatusBar from './components/StatusBar.svelte';
-  import { store } from './lib/store.svelte';
-
+  import { onMount, onDestroy } from 'svelte';
+  import { store, toggleAllReasoning } from './lib/store.svelte';
+  // 'r' toggles every reasoning line at once (V2 thinking lines); skipped
+  // while a field has focus so it never fights the composer.
+  function onKeydown(e: KeyboardEvent): void {
+    if (e.key !== 'r' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    toggleAllReasoning();
+  }
+  onMount(() => window.addEventListener('keydown', onKeydown));
+  onDestroy(() => window.removeEventListener('keydown', onKeydown));
   const cur = $derived(store.current ? store.sessions[store.current] : null);
   const loading = $derived(store.loading);
   const error = $derived(store.error);
@@ -23,6 +33,16 @@
 </script>
 
 <div class="shell">
+  <svg class="sprites" width="0" height="0" aria-hidden="true">
+    <symbol id="i-spark" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.8 5.8 1.9-5.8 1.9L12 18.4l-1.9-5.8L4.3 10.7l5.8-1.9z"/></symbol>
+    <symbol id="i-bot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="10" rx="2"/><path d="M12 8V4M9 13h.01M15 13h.01"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11a3 3 0 013 3v13H8a3 3 0 01-3-3z"/><path d="M5 4v13"/></symbol>
+    <symbol id="i-term" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l4 4-4 4M11 15h6"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M15 15l5 5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0114 0"/></symbol>
+  </svg>
   <WorkspaceTabs />
   <div class="body" class:focus={focus}>
     <aside class="left">
@@ -126,7 +146,7 @@
   .chead .m {
     margin-left: auto;
     font: 10.5px var(--mono);
-    color: #4d5462;
+    color: var(--faint);
   }
   .badge {
     display: inline-flex;
@@ -147,7 +167,7 @@
   }
   .badge.running {
     color: var(--acc);
-    border-color: rgba(76, 194, 255, 0.4);
+    border-color: color-mix(in srgb, var(--acc) 40%, transparent);
   }
   .badge.running .dot {
     background: var(--acc);
@@ -155,20 +175,20 @@
   }
   /* The child header's own state tag (the badge rule is top-level only). */
   .badge.idle {
-    color: #e5c07b;
-    border-color: rgba(229, 192, 123, 0.4);
+    color: var(--amber);
+    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
   }
   .badge.done {
-    color: #7ec97e;
-    border-color: rgba(126, 201, 126, 0.4);
+    color: var(--green);
+    border-color: color-mix(in srgb, var(--green) 40%, transparent);
   }
   .badge.failed {
     color: var(--red);
-    border-color: rgba(240, 109, 109, 0.4);
+    border-color: color-mix(in srgb, var(--red) 40%, transparent);
   }
   .badge.stopped {
-    color: #9aa4b5;
-    border-color: rgba(154, 164, 181, 0.4);
+    color: var(--dim);
+    border-color: color-mix(in srgb, var(--dim) 40%, transparent);
   }
   @keyframes pulse {
     50% {
@@ -179,7 +199,7 @@
     padding: 6px 16px;
     font: 11.5px var(--mono);
     color: var(--red);
-    background: rgba(239, 106, 106, 0.08);
+    background: color-mix(in srgb, var(--red) 8%, transparent);
     border-bottom: 1px solid var(--line);
   }
   .empty {

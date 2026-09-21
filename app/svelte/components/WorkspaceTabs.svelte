@@ -53,7 +53,7 @@
     align-items: center;
     gap: 7px;
     padding: 4px 6px 4px 10px;
-    border-radius: 6px;
+    border-radius: 8px;
     font-size: 12px;
     color: var(--dim);
     border: 1px solid transparent;
@@ -64,8 +64,8 @@
   }
   .tab.active {
     color: var(--tx);
-    background: rgba(76, 194, 255, 0.10);
-    border-color: rgba(76, 194, 255, 0.28);
+    background: color-mix(in srgb, var(--acc) 10%, transparent);
+    border-color: color-mix(in srgb, var(--acc) 28%, transparent);
   }
   .tab .tabname {
     display: inline-flex;
@@ -76,7 +76,7 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #3a4150;
+    background: var(--faint);
   }
   .tab.active .dot {
     background: var(--green);
@@ -95,7 +95,7 @@
   }
   .x:hover {
     color: var(--red);
-    background: rgba(255, 90, 90, 0.12);
+    background: color-mix(in srgb, var(--red) 12%, transparent);
   }
   .spacer {
     flex: 1;
@@ -113,6 +113,6 @@
   }
   .focus.on {
     color: var(--acc);
-    background: rgba(76, 194, 255, 0.12);
+    background: color-mix(in srgb, var(--acc) 12%, transparent);
   }
 </style>

@@ -145,7 +145,7 @@ try {
     const top = await evalPage(wsUrl, `(() => {
       const sc = document.querySelector('.scroll');
       if (!sc) return { missing: document.body.innerText.slice(0, 300) };
-      return { scrollH: sc.scrollHeight, trackH: document.querySelector('.track')?.offsetHeight ?? 0, cards: document.querySelectorAll('.card').length };
+      return { scrollH: sc.scrollHeight, trackH: document.querySelector('.track')?.offsetHeight ?? 0, cards: document.querySelectorAll('.card2').length };
     })()`);
     if (top.missing) throw new Error('no .scroll in DOM — ' + top.missing);
 
@@ -167,7 +167,7 @@ try {
       mid = await evalPage(wsUrl, `(() => {
         const sc = document.querySelector('.scroll');
         const v = sc.getBoundingClientRect();
-        const cs = [...document.querySelectorAll('.card')];
+        const cs = [...document.querySelectorAll('.card2')];
         return {
           scrollTop: sc.scrollTop,
           scrollH: sc.scrollHeight,
@@ -191,7 +191,7 @@ try {
 
     const ui = await evalPage(wsUrl, `new Promise((res) => {
       const bar = [...document.querySelectorAll('.bar')].pop()?.innerText ?? '';
-      const metas = [...document.querySelectorAll('.card .meta')].map((m) => m.textContent).slice(0, 5);
+      const metas = [...document.querySelectorAll('.think .meta')].map((m) => m.textContent).slice(0, 5);
       const body = document.querySelector('.body');
       document.querySelector('.focus')?.click();
       setTimeout(() => res({
@@ -229,9 +229,20 @@ try {
     check('right pane: the two tabs are tasks and sub-agents',
       JSON.stringify(panes.rightTabs) === JSON.stringify(['tasks', 'sub-agents']),
       panes.rightTabs.join(' / '));
-    check('right pane: tasks default to the all filter (5 of 5)',
-      panes.taskRows.length === 5 && panes.taskRows.some((t) => t.includes('Harden provider')) && panes.taskRows.some((t) => t.includes('Protocol surface')),
+    check('right pane: the tasks tab shows the 3 active rows with history collapsed',
+      panes.taskRows.length === 3 && panes.taskRows.some((t) => t.includes('Harden provider')) && panes.taskRows.some((t) => t.includes('Protocol surface')),
       `${panes.taskRows.length} rows: ${panes.taskRows.join(' | ').slice(0, 120)}`);
+    const tasksAll = await evalPage(wsUrl, `new Promise((res) => {
+      const [left, right] = [...document.querySelectorAll('.pane')];
+      const h = [...right.querySelectorAll('.ghead')].find((c) => c.textContent.includes('history'));
+      h?.click();
+      setTimeout(() => {
+        const n = [...right.querySelectorAll('.lrow')].length;
+        h?.click(); // close it again — historyOpen is shared with the subs tab
+        res(n);
+      }, 150);
+    })`);
+    check('right pane: opening history shows all 5 tasks', tasksAll === 5, `${tasksAll} rows`);
 
     // expand a task → labeled detail with the resume contract
     const detail = await evalPage(wsUrl, `new Promise((res) => {
@@ -256,15 +267,15 @@ try {
         });
       }, 150);
     })`);
-    check('sub-agents: the default all filter shows all 6 roots',
-      subs.roots.length === 6 && subs.roots.some((r) => r.includes('done')),
+    check('sub-agents: the live group shows the 3 running/idle roots',
+      subs.roots.length === 3 && subs.roots.some((r) => r.includes('idle')),
       subs.roots.map((r) => r.slice(0, 24)).join(' | '));
     const subsAll = await evalPage(wsUrl, `new Promise((res) => {
       const [left, right] = [...document.querySelectorAll('.pane')];
-      [...right.querySelectorAll('.fchip')].find((c) => c.textContent.trim() === 'all').click();
+      [...right.querySelectorAll('.ghead')].find((c) => c.textContent.includes('history'))?.click();
       setTimeout(() => res([...right.querySelectorAll('.srow2')].filter((r) => !r.classList.contains('d2')).length), 150);
     })`);
-    check('sub-agents: the all filter shows all 6', subsAll === 6, `${subsAll} roots`);
+    check('sub-agents: opening history shows all 6', subsAll === 6, `${subsAll} roots`);
     check('sub-agents: nesting renders (2 under the idle child)',
       subs.nested.length === 2, subs.nested.map((r) => r.slice(0, 24)).join(' | '));
 
@@ -451,28 +462,29 @@ try {
       await sleep(150);
     }
     const skillBlock = await evalPage(wsUrl, `(() => {
-      const b = document.querySelector('.skillblock');
-      if (!b) return { missing: 'no .skillblock in the window' };
-      const title = b.querySelector('.skilltitle')?.textContent ?? '';
-      const body = b.querySelector('.skillbody')?.textContent ?? '';
+      const o = document.querySelector('.card2 .hd.skill');
+      const b = o?.closest('.card2');
+      if (!b) return { missing: 'no skill card in the window' };
+      const title = o.textContent.trim();
+      const body = b.querySelector('.txt2')?.textContent ?? '';
       return {
         title,
         collapsedLen: body.length,
         endsEllipsis: body.endsWith('…'),
-        full: b.querySelector('.skillbody').textContent,
+        full: b.querySelector('.txt2').textContent,
         hasExpando: Boolean(b.querySelector('.expando'))
       };
     })()`);
     if (skillBlock.missing) throw new Error(skillBlock.missing);
     check('the skill entry renders the green block with the name header',
-      skillBlock.title === 'skill - tauri-app-creator',
+      skillBlock.title === 'skill · tauri-app-creator',
       skillBlock.title);
     check('the skill body is collapsed to the 200-char preview with an expando',
       skillBlock.collapsedLen <= 202 && skillBlock.endsEllipsis && skillBlock.hasExpando,
       'preview ' + skillBlock.collapsedLen + ' chars' + (skillBlock.endsEllipsis ? ' …' : ''));
-    await evalPage(wsUrl, `document.querySelector('.skillblock .expando').click()`);
+    await evalPage(wsUrl, `document.querySelector('.card2 .hd.skill').closest('.card2').querySelector('.expando').click()`);
     await sleep(100);
-    const skillExpanded = await evalPage(wsUrl, `document.querySelector('.skillblock .skillbody').textContent`);
+    const skillExpanded = await evalPage(wsUrl, `document.querySelector('.card2 .hd.skill').closest('.card2').querySelector('.txt2').textContent`);
     check('the skill block expando reveals the full body',
       skillExpanded.length > 200 && !skillExpanded.endsWith('…') && skillExpanded.includes('User request:'),
       'expanded ' + skillExpanded.length + ' chars');

@@ -1,11 +1,13 @@
 <script lang="ts">
-  // One transcript card. Code segments are protected from markdown
-  // interpretation by renderMarkdown; reasoning is always open (the
-  // collapse will come as a keybind, not a per-card toggle).
+  // One transcript entry, V2 presentation: the user entry is a bubble; the
+  // other kinds are unified cards whose header is an icon plus a quiet
+  // label; reasoning is a cardless grey "thinking" line. Tool calls are a
+  // chip row that expands to structured key/value args plus the output.
   // The card measures itself on mount and on content change; the
   // transcript windowing consumes the measurement through `heights`.
 
   import { onMount } from 'svelte';
+  import { store } from '../lib/store.svelte';
   import { md as renderMarkdown } from '../lib/markdown';
   import type { Entry } from '../lib/protocol';
 
@@ -13,12 +15,14 @@
     entry,
     heightKey,
     heights,
-    sourceLabel = ''
+    sourceLabel = '',
+    turn = ''
   }: {
     entry: Entry;
     heightKey: string;
     heights: Map<string, number>;
     sourceLabel?: string;
+    turn?: 'you' | 'agent' | '';
   } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
@@ -28,6 +32,20 @@
   });
 
   // live streams grow the card; re-measure as content changes.
+  let thinkOpen = $state(false);
+  let thinkSynced = $state(false);
+  // The 'r' keybind toggles every reasoning line at once (store global);
+  // a click toggles only this one. The effect syncs the local state when
+  // the global changes, so the keybind wins on its next press.
+  $effect(() => {
+    void store.reasoningOpen;
+    if (store.reasoningOpen !== thinkSynced) {
+      thinkOpen = store.reasoningOpen;
+      thinkSynced = store.reasoningOpen;
+    }
+  });
+  let toolOpen = $state(false);
+  let outputOpen = $state(false);
   $effect(() => {
     void entry.text;
     void entry.reasoning;
@@ -35,32 +53,23 @@
     void toolOut;
     void entry.args;
     void outputOpen;
-    void argsOpen;
-    void skillOpen;
+    void toolOpen;
+    void thinkOpen;
     if (el) heights.set(heightKey, el.offsetHeight);
   });
 
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
-  // Reasoning renders as markdown like the output; the muted color stays.
   const reasonMd = $derived(entry.reasoning ? renderMarkdown(entry.reasoning.trim()) : '');
-  // Whether a body block follows the reasoning block in this entry.
-  const cardRenders = $derived(
-    Boolean(entry.text && entry.text.trim()) ||
-      entry.kind === 'interrupted' ||
-      entry.kind === 'om' ||
-      entry.kind === 'subagent' ||
-      entry.kind === 'spawn-snapshot' ||
-      entry.kind === 'system'
-  );
+
   // The user-facing tool output: for bash, the command is prepended to
   // the result, and the combined text is what gets truncated.
   const toolOut = $derived(
     entry.kind === 'tool'
       ? [
           entry.name === 'bash'
-            ? safeArgs(entry.args)?.command ?? ''
+            ? parseArgs(entry.args)?.command ?? ''
             : '',
           entry.output ?? ''
         ]
@@ -68,20 +77,46 @@
           .join('\n\n')
       : ''
   );
-  // Sub-agent entries carry the raw payload as JSON; the block renders it
-  // as plain key: value lines with the delimiters stripped.
-  const sublines = $derived(
-    entry.kind === 'subagent'
-      ? structuredSub(entry.text ?? '')
-      : []
+  // The chip's one-line summary: the argument that names the operation.
+  const toolSummary = $derived.by(() => {
+    if (entry.kind !== 'tool') return '';
+    const a = parseArgs(entry.args);
+    if (!a) return entry.args ?? '';
+    const pick = (a as Record<string, unknown>);
+    const v =
+      pick.command ?? pick.file_path ?? pick.task ?? pick.query ?? pick.task_id ?? pick.title ?? pick.message;
+    const s = typeof v === 'string' ? v : '';
+    return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : entry.args ?? '';
+  });
+  // Expanded args as key/value lines; non-scalar values collapse to JSON.
+  const toolKv = $derived.by((): Array<[string, string]> => {
+    if (entry.kind !== 'tool') return [];
+    const a = parseArgs(entry.args);
+    if (!a) return entry.args ? [['', entry.args]] : [];
+    return Object.entries(a as Record<string, unknown>).map(([k, v]) => [
+      k,
+      typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)
+    ]);
+  });
+  const toolIcon = $derived(
+    entry.kind === 'tool'
+      ? (['read', 'write', 'edit'].includes(entry.name ?? '')
+          ? 'i-file'
+          : entry.name?.startsWith('subagent_') || entry.name === 'parent_notify'
+            ? 'i-bot'
+            : entry.name === 'recall'
+              ? 'i-search'
+              : entry.name?.startsWith('task_')
+                ? 'i-check'
+                : 'i-term')
+      : 'i-term'
   );
-  // Tool outputs are long (command transcripts); a card under the cap shows
-  // the full text with no expando.
+
   const preview = $derived(
     toolOut && toolOut.length > 200 ? toolOut.slice(0, 200) + ' …' : toolOut
   );
   const outputLong = $derived(toolOut.length > 200);
-  let outputOpen = $state(false);
+
   // The /skill: block (ticket #28): the body collapses to the usual
   // 200-char preview with an expando (the tool-output mechanism).
   let skillOpen = $state(false);
@@ -89,10 +124,16 @@
   const skillPreview = $derived(
     skillLong ? (entry.text ?? '').slice(0, 200) + ' …' : (entry.text ?? '')
   );
-  // Long tool-call bodies collapse to the args line; a click opens the
-  // full JSON under the tool name.
-  let argsOpen = $state(false);
-  // Note 5: a fully empty entry (a pure tool request whose payload has
+
+  // Sub-agent entries carry the raw payload as JSON; the card renders it
+  // as plain key: value lines with the delimiters stripped.
+  const sublines = $derived(
+    entry.kind === 'subagent'
+      ? structuredSub(entry.text ?? '')
+      : []
+  );
+
+  // A fully empty entry (a pure tool request whose payload has
   // not arrived) renders nothing, so no shell margin gap is left behind.
   const hasContent = $derived(
     Boolean(
@@ -103,6 +144,14 @@
     )
   );
 
+  function parseArgs(a: string | undefined): { command?: string } | null {
+    if (!a) return null;
+    try {
+      return JSON.parse(a) as { command?: string };
+    } catch {
+      return null;
+    }
+  }
   function fmt(n: number): string {
     return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
   }
@@ -132,107 +181,124 @@
     }
     return lines;
   }
-  function safeArgs(a: string | undefined): { command?: string } | null {
-    if (!a) return null;
-    try {
-      return JSON.parse(a) as { command?: string };
-    } catch {
-      return null;
-    }
+  function onKey(fn: () => void) {
+    return (e: KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        fn();
+      }
+    };
   }
 </script>
 
 {#if hasContent}
 <div class="wrap" bind:this={el}>
+  {#if turn}
+    <div class="thd">{turn}</div>
+  {/if}
   {#if entry.kind === 'user'}
     {#if entry.skill}
-      <div class="skillblock">
-        <div class="skilltitle">skill - {entry.skill.name}</div>
+      <div class="card2">
+        <div class="hd skill"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>skill · {entry.skill.name}</div>
+        <div class="txt2 dim">{skillOpen ? (entry.text ?? '') : skillPreview}</div>
         {#if skillLong}
           <button class="expando" onclick={() => (skillOpen = !skillOpen)}>
             {skillOpen ? '▾ hide' : '▸ full (' + (entry.text ?? '').length + ' chars)'}
           </button>
         {/if}
-        <div class="skillbody">{skillOpen ? (entry.text ?? '') : skillPreview}</div>
       </div>
     {:else if entry.source}
-      <div class="subblock">
-        <div class="subtitle">sub-agent{sourceLabel ? `: ${sourceLabel}` : ''}</div>
-        <div class="subtext">{entry.text}</div>
+      <div class="card2">
+        <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>sub-agent{sourceLabel ? ` · ${sourceLabel}` : ''}</div>
+        <div class="txt2 dim">{entry.text}</div>
       </div>
     {:else}
-      <div class="card user">
-        <div class="userbubble">{entry.text}</div>
-      </div>
+      <div class="tuser"><span class="bubble">{entry.text}</span></div>
     {/if}
   {:else if entry.kind === 'tool'}
-    <div class="card tool">
-    <div class="toolrow">
-      <span class="ticon">⚒</span>
-      <span class="tname">{entry.name}</span>
-      {#if argsOpen && entry.args}
-        <button class="targs" type="button" onclick={() => (argsOpen = false)}>▾ collapse args</button>
-      {:else}
-        <button class="targs" type="button" title={entry.args} onclick={() => (argsOpen = true)}>{entry.args}</button>
-      {/if}
-      <span class="tstatus" class:ok={entry.status === 'ok'} class:err={entry.status === 'error'}>
-        {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'}
-      </span>
-    </div>
-      {#if argsOpen && entry.args}
-        <pre class="argsbody">{entry.args}</pre>
-      {/if}
-      {#if toolOut}
-        {#if outputLong}
-          <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
-            {outputOpen ? '▾ hide output' : '▸ full output (' + toolOut.length + ' chars)'}
-          </button>
-        {/if}
-        <div class="out"><pre>{outputOpen ? toolOut : preview}</pre></div>
+    <div class="tool" class:open={toolOpen}>
+      <div
+        class="chip"
+        role="button"
+        tabindex="0"
+        onclick={() => (toolOpen = !toolOpen)}
+        onkeydown={onKey(() => (toolOpen = !toolOpen))}
+      >
+        <svg class="ic" width="13" height="13"><use href={`#${toolIcon}`}/></svg>
+        <span class="nm">{entry.name}</span>
+        <span class="sum">{toolSummary}</span>
+        <span class="st {entry.status === 'ok' ? 'ok' : entry.status === 'error' ? 'err' : 'pend'}">
+          {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'}
+        </span>
+        <span class="caret">▾</span>
+      </div>
+      {#if toolOpen}
+        <div class="x">
+          {#each toolKv as [k, v]}
+            <div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>
+          {/each}
+          {#if toolOut}
+            <div class="out"><pre>{outputOpen ? toolOut : preview}</pre></div>
+            {#if outputLong}
+              <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
+                {outputOpen ? '▾ hide output' : '▸ full output (' + toolOut.length + ' chars)'}
+              </button>
+            {/if}
+          {/if}
+        </div>
       {/if}
     </div>
   {:else}
     {#if entry.reasoning}
-      <div class="reasonblock" class:reasononly={!cardRenders}>
-        <div class="reasontitle">reasoning</div>
-        <div class="md reason">
-          {@html reasonMd}
-        </div>
+      <div
+        class="think"
+        class:open={thinkOpen}
+        role="button"
+        tabindex="0"
+        aria-expanded={thinkOpen}
+        onclick={() => (thinkOpen = !thinkOpen)}
+        onkeydown={onKey(() => (thinkOpen = !thinkOpen))}
+      >
+        <svg class="ic" width="13" height="13"><use href="#i-spark"/></svg>
+        <span>thinking</span>
         {#if entry.usage}
-          <div class="reasonmeta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</div>
+          <span class="meta">{fmt(entry.usage.input_tokens)} in · {fmt(entry.usage.output_tokens)} out</span>
         {/if}
       </div>
+      {#if thinkOpen}
+        <div class="thinkbody md">{@html reasonMd}</div>
+      {/if}
     {/if}
     {#if entry.kind === 'om'}
-      <div class="obsblock">
-        <div class="obstitle">observation</div>
-        <div class="obstext">{@html md}</div>
+      <div class="card2">
+        <div class="hd obs"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation</div>
+        <div class="txt2 dim">{@html md}</div>
       </div>
     {:else if entry.kind === 'subagent'}
-      <div class="subblock">
-        <div class="subtitle">sub-agent</div>
+      <div class="card2">
+        <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>sub-agent</div>
         {#each sublines as line}
-          <div class="subtext">{line}</div>
+          <div class="txt2 dim">{line}</div>
         {:else}
-          <div class="subtext">{entry.text}</div>
+          <div class="txt2 dim">{entry.text}</div>
         {/each}
       </div>
     {:else if entry.kind === 'spawn-snapshot'}
-      <div class="card">
-        <div class="klabel">spawn snapshot</div>
-        <div class="md">{@html md}</div>
+      <div class="card2">
+        <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>spawn snapshot</div>
+        <div class="txt2">{@html md}</div>
       </div>
     {:else if entry.kind === 'system'}
-      <div class="card">
-        <div class="klabel">system</div>
-        <div class="md">{@html md}</div>
+      <div class="card2">
+        <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-term"/></svg>system</div>
+        <div class="txt2 dim">{@html md}</div>
       </div>
     {:else if (entry.text && entry.text.trim()) || entry.kind === 'interrupted'}
-      <div class="card" class:interrupted={entry.kind === 'interrupted'}>
+      <div class="card2" class:interrupted={entry.kind === 'interrupted'}>
         {#if entry.kind === 'interrupted'}
           <div class="intmark">⚡ interrupted</div>
         {/if}
-        <div class="md">{@html md}</div>
+        <div class="txt2">{@html md}</div>
       </div>
     {/if}
   {/if}
@@ -243,74 +309,166 @@
   .wrap {
     margin: 0 16px 10px;
   }
-  .card {
-    margin: 0;
-    padding: 10px 14px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    font-size: 13.5px;
-    line-height: 1.45;
-  }
-  .card.user {
-    background: var(--panel2);
-    border-color: #2e3340;
-  }
-  .card.tool {
-    background: transparent;
-    border-color: #22262f;
-    padding: 8px 12px;
-  }
-  .userbubble {
-    white-space: pre-wrap;
-  }
-  .toolrow {
+  .thd {
     display: flex;
     align-items: center;
     gap: 8px;
+    font: 10px var(--mono);
+    letter-spacing: 0.08em;
+    color: var(--faint);
+    margin: 10px 2px 6px;
+  }
+  .thd::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--line);
+    opacity: 0.6;
+  }
+  .tuser {
+    font-size: 13.5px;
+  }
+  .bubble {
+    display: inline-block;
+    background: var(--panel2);
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    padding: 8px 12px;
+    white-space: pre-wrap;
+  }
+  .card2 {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  }
+  .hd {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font: 10.5px var(--mono);
+    letter-spacing: 0.04em;
+    color: var(--dim);
+    margin-bottom: 6px;
+  }
+  .hd .ic {
+    color: var(--purple);
+  }
+  .hd.sub .ic {
+    color: var(--amber);
+  }
+  .hd.skill .ic,
+  .hd.obs .ic {
+    color: var(--green);
+  }
+  .txt2 {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .txt2.dim {
+    color: var(--dim);
+    font-size: 12.5px;
+  }
+  .think {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 2px 2px;
+    font: 12px var(--sans);
+    color: var(--faint);
+    cursor: pointer;
+  }
+  .think .ic {
+    color: var(--purple);
+    opacity: 0.7;
+  }
+  .think .meta {
+    margin-left: auto;
+    font: 10px var(--mono);
+  }
+  .thinkbody {
+    margin: 2px 2px 0;
+    color: var(--dim);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .tool .chip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+    cursor: pointer;
+  }
+  .tool .chip .ic {
+    color: var(--dim);
+  }
+  .tool .chip .nm {
+    color: var(--tx);
+    font-weight: 600;
     font: 12px var(--mono);
   }
-  .ticon {
-    color: var(--dim);
-  }
-  .tname {
-    color: var(--acc);
-    font-weight: 600;
-  }
-  .targs {
-    color: var(--dim);
-    background: none;
-    border: none;
-    padding: 0;
-    font: inherit;
-    text-align: left;
+  .tool .chip .sum {
+    flex: 1;
+    color: var(--faint);
+    font: 11px var(--mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    flex: 1;
-    cursor: pointer;
   }
-  .argsbody {
-    margin: 8px 0 0;
-    padding: 8px 10px;
-    background: #0c0e12;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    font: 12px var(--mono);
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 320px;
-    overflow: auto;
-    color: var(--dim);
+  .tool .chip .st {
+    font-size: 12px;
+    color: var(--faint);
   }
-  .tstatus {
-    color: var(--dim);
-  }
-  .tstatus.ok {
+  .tool .chip .st.ok {
     color: var(--green);
   }
-  .tstatus.err {
+  .tool .chip .st.err {
     color: var(--red);
+  }
+  .tool .chip .caret {
+    color: var(--faint);
+    font-size: 10px;
+    transition: transform 0.12s;
+  }
+  .tool.open .chip .caret {
+    transform: rotate(90deg);
+  }
+  .tool .x {
+    margin: 6px 0 0 18px;
+    padding: 8px 10px;
+    border-left: 2px solid var(--line2);
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: 110px 1fr;
+    gap: 2px 10px;
+    font: 11.5px var(--mono);
+    margin-bottom: 6px;
+  }
+  .kv .k {
+    color: var(--faint);
+  }
+  .kv .v {
+    color: var(--dim);
+    word-break: break-word;
+  }
+  .out {
+    margin-top: 6px;
+  }
+  .out pre {
+    margin: 0;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: 11.5px/1.5 var(--mono);
+    white-space: pre-wrap;
+    color: var(--dim);
   }
   .expando {
     display: inline-block;
@@ -321,70 +479,16 @@
   .expando:hover {
     color: var(--tx);
   }
-  .reasonblock {
-    /* Same gap as the cards: the reasoning block is one of the turn's cards. */
-    margin: 0 0 10px;
-    border: 1px solid rgba(181, 140, 255, 0.16);
-    border-left: 2px solid rgba(181, 140, 255, 0.35);
-    border-radius: 8px;
-    background: var(--panel);
-  }
-  /* No card follows: the wrap's own 10 px is the gap — the block adds none. */
-  .reasonblock.reasononly {
-    margin-bottom: 0;
-  }
-  .reasontitle {
-    display: block;
-    width: 100%;
-    padding: 8px 10px 4px;
-    font: 10.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--purple);
-  }
-  .reasonmeta {
-    padding: 0 10px 6px;
-    font: 10px var(--mono);
-    color: #4d5462;
-  }
-  .reason {
-    margin: 0;
-    padding: 4px 10px 8px;
-    color: #9a8fb8;
-    font-size: 12px;
-    word-break: break-word;
-  }
-  .out {
-    margin-top: 6px;
-  }
-  .out pre {
-    margin: 0;
-    padding: 8px;
-    background: #0c0e12;
-    border-radius: 6px;
-    font: 11.5px/1.5 var(--mono);
-    white-space: pre-wrap;
-  }
-  .klabel {
-    font: 9.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--purple);
-    margin-bottom: 3px;
-  }
   .intmark {
     font: 11px var(--mono);
     color: var(--amber);
     margin-bottom: 4px;
   }
-  .md {
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
   /* The renderer's output arrives via @html, outside scoping. */
   :global(.md pre) {
     padding: 10px;
-    background: #0c0e12;
+    background: var(--bg);
+    border: 1px solid var(--line);
     border-radius: 6px;
     font: 12px/1.5 var(--mono);
     overflow-x: auto;
@@ -401,7 +505,7 @@
     color: #fff;
   }
   :global(.md i) {
-    color: #9a94b0;
+    color: var(--dim);
   }
   :global(.md .mh) {
     font-weight: 700;
@@ -424,77 +528,5 @@
   }
   :global(.md .lk) {
     color: var(--acc);
-  }
-  .obsblock {
-    margin: 0 0 6px;
-    border: 1px solid rgba(94, 200, 160, 0.16);
-    border-left: 2px solid rgba(94, 200, 160, 0.35);
-    border-radius: 8px;
-    background: var(--panel);
-  }
-  .obstitle {
-    display: block;
-    width: 100%;
-    padding: 8px 10px 4px;
-    font: 10.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: #5ec8a0;
-  }
-  .obstext {
-    margin: 0;
-    padding: 0 10px 8px;
-    color: #7d948c;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .subblock {
-    margin: 0 0 6px;
-    border: 1px solid rgba(232, 180, 90, 0.16);
-    border-left: 2px solid rgba(232, 180, 90, 0.35);
-    border-radius: 8px;
-    background: var(--panel);
-  }
-  .subtitle {
-    display: block;
-    width: 100%;
-    padding: 8px 10px 4px;
-    font: 10.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--amber);
-  }
-  .subtext {
-    margin: 0;
-    padding: 0 10px 8px;
-    color: #b8a888;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .skillblock {
-    margin: 0 0 6px;
-    border: 1px solid rgba(87, 217, 122, 0.16);
-    border-left: 2px solid rgba(87, 217, 122, 0.35);
-    border-radius: 8px;
-    background: var(--panel);
-  }
-  .skilltitle {
-    display: block;
-    width: 100%;
-    padding: 8px 10px 4px;
-    font: 10.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--green);
-  }
-  .skillbody {
-    margin: 0;
-    padding: 0 10px 8px;
-    color: #88b394;
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
   }
 </style>

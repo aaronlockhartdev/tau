@@ -60,7 +60,7 @@
     display: flex;
     align-items: center;
     height: 26px;
-    background: #0b0c10;
+    background: var(--bg);
     border-top: 1px solid var(--line);
     font: 11px var(--mono);
     color: var(--dim);
@@ -92,7 +92,7 @@
     justify-content: flex-end;
   }
   .k {
-    color: #454c59;
+    color: var(--faint);
     text-transform: uppercase;
     font-size: 9.5px;
   }

@@ -1,8 +1,10 @@
 <script lang="ts">
-  // Right pane (spec §9, the #11 verdict): tabbed tasks | sub-agents. Both
-  // panels are status-filtered (default: not-done) and last-modified
-  // sorted. The tasks panel shows only the currently opened session's
-  // tasks (per-session tasks, spec §5.3); a task row expands into labeled
+  // Right pane (spec §9, the #11 verdict): tabbed tasks | sub-agents.
+  // F3: no filter chips — each tab groups rows by lifecycle (active/live
+  // on top, history collapsed behind a count header; the per-row badge
+  // already carries the exact state). Last-modified sorted.
+  // The tasks panel shows only the currently opened session's tasks
+  // (per-session tasks, spec §5.3); a task row expands into labeled
   // detail sections. The sub-agents panel renders a tree (nesting
   // supported) — double-click opens the sub-agent's session, which is an
   // ordinary session (a tab opens for it).
@@ -17,26 +19,28 @@
   });
 
   const tasks = $derived(cur ? cur.tasks : []);
-  const tFilter = $derived(p?.tFilter ?? 'open');
-  const filteredTasks = $derived(
-    tasks
-      .filter((t) => tFilter === 'all' || (tFilter === 'open' ? t.status !== 'done' : t.status === tFilter))
-      .sort((a, b) => b.updated - a.updated)
-  );
+  // F3 grouping: active = not done; history = done. The history section
+  // collapses behind its count header (p.historyOpen).
+  const byUpdated = (a: Task, b: Task) => b.updated - a.updated;
+  const liveTasks = $derived(tasks.filter((t) => t.status !== 'done').sort(byUpdated));
+  const histTasks = $derived(tasks.filter((t) => t.status === 'done').sort(byUpdated));
 
   const subs = $derived(cur ? cur.subagents : []);
-  const sFilter = $derived(p?.sFilter ?? 'open');
-  const pass = (i: SubagentInfo) =>
-    sFilter === 'all' || (sFilter === 'open' ? i.state !== 'done' : i.state === sFilter);
-  const roots = $derived(subs.filter(pass).sort((a, b) => childMru(b) - childMru(a)));
-  const grandchildren = $derived.by(() => {
+  const isLive = (i: SubagentInfo) => i.state === 'running' || i.state === 'idle';
+  const byMru = (a: SubagentInfo, b: SubagentInfo) => childMru(b) - childMru(a);
+  const liveSubs = $derived(subs.filter(isLive).sort(byMru));
+  const histSubs = $derived(subs.filter((i) => !isLive(i)).sort(byMru));
+  const grandOf = (list: SubagentInfo[], liveOnly: boolean) => {
     const map: Record<string, SubagentInfo[]> = {};
-    for (const r of roots) {
+    for (const r of list) {
       const child = store.sessions[r.child];
-      map[r.handle] = (child?.subagents ?? []).filter(pass);
+      const kids = child?.subagents ?? [];
+      map[r.handle] = (liveOnly ? kids.filter(isLive) : kids.filter((i) => !isLive(i))).sort(byMru);
     }
     return map;
-  });
+  };
+  const liveGrand = $derived.by(() => grandOf(liveSubs, true));
+  const histGrand = $derived.by(() => grandOf(histSubs, false));
 
   function childMru(i: SubagentInfo): number {
     return store.sessions[i.child]?.mru ?? 0;
@@ -48,13 +52,9 @@
     const q = pane(ws);
     if (q) q.rtab = t;
   }
-  function setTFilter(f: PaneState['tFilter']): void {
+  function toggleHist(): void {
     const q = pane(ws);
-    if (q) q.tFilter = f;
-  }
-  function setSFilter(f: PaneState['sFilter']): void {
-    const q = pane(ws);
-    if (q) q.sFilter = f;
+    if (q) q.historyOpen = !q.historyOpen;
   }
   function toggleTask(id: string): void {
     const q = pane(ws);
@@ -75,23 +75,6 @@
     const m = (Date.now() - ms) / 60000;
     return m < 1 ? 'just now' : m < 60 ? `${Math.round(m)}m` : `${Math.round(m / 60)}h`;
   };
-  const T_CHIPS: Array<[PaneState['tFilter'], string]> = [
-    ['open', 'open'],
-    ['all', 'all'],
-    ['in-progress', 'in-progress'],
-    ['blocked', 'blocked'],
-    ['pending', 'pending'],
-    ['done', 'done']
-  ];
-  const S_CHIPS: Array<[PaneState['sFilter'], string]> = [
-    ['open', 'open'],
-    ['all', 'all'],
-    ['running', 'running'],
-    ['idle', 'idle'],
-    ['failed', 'failed'],
-    ['stopped', 'stopped'],
-    ['done', 'done']
-  ];
   function contractText(t: Task): string {
     const rc = t.resume_contract;
     if (!rc) return '';
@@ -111,16 +94,14 @@
   </div>
   {#if p}
   {#if p.rtab === 'tasks'}
-    <div class="filters">
-      {#each T_CHIPS as [key, label] (key)}
-        <button class="fchip" class:on={tFilter === key} onclick={() => setTFilter(key)}>{label}</button>
-      {/each}
-    </div>
     <div class="list">
-      {#if filteredTasks.length === 0}
+      {#if liveTasks.length === 0 && histTasks.length === 0}
         <div class="lrow"><span class="lm">none</span></div>
       {:else}
-        {#each filteredTasks as t (t.id)}
+        {#if liveTasks.length > 0}
+          <div class="ghead">active · {liveTasks.length}</div>
+        {/if}
+        {#each liveTasks as t (t.id)}
           <div
             class="lrow"
             class:open={p.expandedTasks.includes(t.id)}
@@ -179,19 +160,76 @@
             {/if}
           </div>
         {/each}
+        {#if histTasks.length > 0}
+          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
+            <span class="chev">{p.historyOpen ? '▾' : '▸'}</span>history · {histTasks.length}
+          </div>
+          {#if p.historyOpen}
+            {#each histTasks as t (t.id)}
+              <div class="lrow" class:open={p.expandedTasks.includes(t.id)} role="button" tabindex="0" onclick={() => toggleTask(t.id)} onkeydown={onKey(() => toggleTask(t.id))}>
+                <div class="lh">
+                  <span class="chev">{p.expandedTasks.includes(t.id) ? '▾' : '▸'}</span>
+                  <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
+                    <span class="dot"></span>{t.status}
+                  </span>
+                  <span class="ln">{t.title}</span>
+                  <span class="lm">{t.worker?.session ?? ''}</span>
+                </div>
+                {#if p.expandedTasks.includes(t.id)}
+                  <div class="ld">
+                    {#if t.steps.length > 0}
+                      <div class="dl">steps — {t.steps.filter((s) => s.status === 'done').length}/{t.steps.length} done</div>
+                      {#each t.steps as s (s.text)}
+                        <div class="step {s.status}">
+                          <span class="mk">{s.status === 'done' ? '✓' : s.status === 'active' ? '▸' : '○'}</span>{s.text}
+                          {#if s.expected_output}<span class="eo">→ {s.expected_output}</span>{/if}
+                        </div>
+                      {/each}
+                    {/if}
+                    {#if t.criteria.length > 0}
+                      <div class="dl">acceptance criteria</div>
+                      {#each t.criteria as c (c.text)}
+                        {@const sat = c.status === 'satisfied'}
+                        <div class="ev"><span class:ok={sat} class:pend={!sat}>{sat ? '✓' : '…'}</span> {c.text}</div>
+                      {/each}
+                    {/if}
+                    {#if t.evidence.length > 0}
+                      <div class="dl">evidence</div>
+                      {#each t.evidence as e (e.summary)}
+                        <div class="ev"><span class:ok={e.passed} class:pend={!e.passed}>{e.passed ? '✓' : '…'}</span>
+                          {e.summary}{e.command ? ` — ${e.command}` : ''}</div>
+                      {/each}
+                    {/if}
+                    {#if t.blockers.length > 0}
+                      <div class="dl">blocker</div>
+                      <div class="block">
+                        ⛔ {t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
+                      </div>
+                    {/if}
+                    {#if t.resume_contract}
+                      <div class="dl">resume contract</div>
+                      <pre class="rc">{contractText(t)}</pre>
+                    {/if}
+                    <div class="a">
+                      {t.worker ? `assigned: ${t.worker.session} (${t.worker.status})` : 'unassigned'} · modified {fmtAgo(t.updated)}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          {/if}
+        {/if}
       {/if}
     </div>
   {:else}
-    <div class="filters">
-      {#each S_CHIPS as [key, label] (key)}
-        <button class="fchip" class:on={sFilter === key} onclick={() => setSFilter(key)}>{label}</button>
-      {/each}
-    </div>
     <div class="list">
-      {#if roots.length === 0}
+      {#if liveSubs.length === 0 && histSubs.length === 0}
         <div class="lrow"><span class="lm">none</span></div>
       {:else}
-        {#each roots as r (r.handle)}
+        {#if liveSubs.length > 0}
+          <div class="ghead">live · {liveSubs.length}</div>
+        {/if}
+        {#each liveSubs as r (r.handle)}
           <div
             class="srow2"
             class:sel={p.selSub === r.handle}
@@ -205,7 +243,7 @@
             <span class="ln">{titleOf(r)}</span>
             <span class="lm">{r.task?.id ?? ''}</span>
           </div>
-          {#each grandchildren[r.handle] ?? [] as g (g.handle)}
+          {#each liveGrand[r.handle] ?? [] as g (g.handle)}
             <div
               class="srow2 d2"
               class:sel={p.selSub === g.handle}
@@ -221,6 +259,43 @@
             </div>
           {/each}
         {/each}
+        {#if histSubs.length > 0}
+          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
+            <span class="chev">{p.historyOpen ? '▾' : '▸'}</span>history · {histSubs.length}
+          </div>
+          {#if p.historyOpen}
+            {#each histSubs as r (r.handle)}
+              <div
+                class="srow2"
+                class:sel={p.selSub === r.handle}
+                role="button"
+                tabindex="0"
+                onclick={() => selectSub(r.handle)}
+                onkeydown={onKey(() => selectSub(r.handle))}
+                ondblclick={() => openSessionById(r.child)}
+              >
+                <span class="badge {r.state}"><span class="dot"></span>{r.state}{r.waiting_on ? ` · ${r.waiting_on}` : ''}</span>
+                <span class="ln">{titleOf(r)}</span>
+                <span class="lm">{r.task?.id ?? ''}</span>
+              </div>
+              {#each histGrand[r.handle] ?? [] as g (g.handle)}
+                <div
+                  class="srow2 d2"
+                  class:sel={p.selSub === g.handle}
+                  role="button"
+                  tabindex="0"
+                  onclick={() => selectSub(g.handle)}
+                  onkeydown={onKey(() => selectSub(g.handle))}
+                  ondblclick={() => openSessionById(g.child)}
+                >
+                  <span class="badge {g.state}"><span class="dot"></span>{g.state}{g.waiting_on ? ` · ${g.waiting_on}` : ''}</span>
+                  <span class="ln">{titleOf(g)}</span>
+                  <span class="lm">{g.task?.id ?? ''}</span>
+                </div>
+              {/each}
+            {/each}
+          {/if}
+        {/if}
       {/if}
     </div>
   {/if}
@@ -252,24 +327,24 @@
     color: var(--acc);
     box-shadow: inset 0 -2px 0 var(--acc);
   }
-  .filters {
+  .ghead {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 6px;
     padding: 8px 12px 4px;
-    flex-wrap: wrap;
-    flex: none;
+    font: 10px var(--mono);
+    letter-spacing: 0.08em;
+    color: var(--faint);
   }
-  .fchip {
-    font: 10.5px var(--mono);
-    border: 1px solid var(--line);
-    border-radius: 11px;
-    padding: 2px 9px;
-    color: var(--dim);
+  .ghead[role='button'] {
+    cursor: pointer;
   }
-  .fchip.on {
-    color: var(--acc);
-    border-color: rgba(76, 194, 255, 0.5);
-    background: rgba(76, 194, 255, 0.08);
+  .ghead .chev {
+    font-size: 9px;
+    transition: transform 0.12s;
+  }
+  .ghead.open .chev {
+    transform: rotate(90deg);
   }
   .list {
     padding: 4px 0;
@@ -280,7 +355,7 @@
   .lrow {
     padding: 7px 14px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(38, 42, 51, 0.5);
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
   }
   .lrow:hover {
     background: var(--panel2);
@@ -299,7 +374,7 @@
   }
   .lrow .lm {
     font: 9.5px var(--mono);
-    color: #4d5462;
+    color: var(--faint);
   }
   .lrow .chev {
     font-size: 9px;
@@ -313,7 +388,7 @@
     font: 9.5px var(--mono);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #4d5462;
+    color: var(--faint);
     margin: 6px 0 2px;
   }
   .ld .dl:first-child {
@@ -339,7 +414,7 @@
     color: var(--green);
   }
   .ld .step .eo {
-    color: #4d5462;
+    color: var(--faint);
   }
   .ld .ev {
     font: 10.5px var(--mono);
@@ -357,24 +432,24 @@
     font-size: 12px;
   }
   .ld .rc {
-    background: #0c0d10;
+    background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 6px;
     padding: 8px 10px;
     font: 10.5px/1.55 var(--mono);
-    color: #9aa3b2;
+    color: var(--dim);
     white-space: pre-wrap;
     margin: 0;
   }
   .ld .a {
     margin-top: 6px;
     font: 10.5px var(--mono);
-    color: #4d5462;
+    color: var(--faint);
   }
   .srow2 {
     padding: 7px 14px;
     cursor: pointer;
-    border-bottom: 1px solid rgba(38, 42, 51, 0.5);
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -383,7 +458,7 @@
     background: var(--panel2);
   }
   .srow2.sel {
-    background: rgba(76, 194, 255, 0.12);
+    background: color-mix(in srgb, var(--acc) 12%, transparent);
   }
   .srow2 .ln {
     flex: 1;
@@ -394,7 +469,7 @@
   }
   .srow2 .lm {
     font: 9.5px var(--mono);
-    color: #4d5462;
+    color: var(--faint);
   }
   .srow2.d2 {
     padding-left: 34px;
@@ -420,7 +495,7 @@
   .badge.running,
   .badge.in-progress {
     color: var(--acc);
-    border-color: rgba(76, 194, 255, 0.4);
+    border-color: color-mix(in srgb, var(--acc) 40%, transparent);
   }
   .badge.running .dot,
   .badge.in-progress .dot {
@@ -429,14 +504,14 @@
   }
   .badge.done {
     color: var(--green);
-    border-color: rgba(87, 217, 122, 0.4);
+    border-color: color-mix(in srgb, var(--green) 40%, transparent);
   }
   .badge.done .dot {
     background: var(--green);
   }
   .badge.idle {
     color: var(--amber);
-    border-color: rgba(232, 182, 76, 0.4);
+    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
   }
   .badge.idle .dot {
     background: var(--amber);
@@ -444,7 +519,7 @@
   .badge.failed,
   .badge.blocked {
     color: var(--red);
-    border-color: rgba(239, 106, 106, 0.45);
+    border-color: color-mix(in srgb, var(--red) 45%, transparent);
   }
   .badge.failed .dot {
     background: var(--red);

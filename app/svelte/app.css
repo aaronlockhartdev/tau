@@ -1,15 +1,18 @@
 :root {
-  --bg: #101115;
-  --panel: #16181d;
-  --panel2: #1c1f26;
-  --line: #262a33;
-  --tx: #d7dae0;
-  --dim: #7d8494;
-  --acc: #4cc2ff;
-  --green: #57d97a;
-  --amber: #e8b64c;
-  --red: #ef6a6a;
-  --purple: #b58cff;
+  --bg: #08090b;
+  --panel: #0c0d0f;
+  --panel2: #111215;
+  --panel3: #17181c;
+  --line: rgba(160, 166, 176, 0.16);
+  --line2: rgba(160, 166, 176, 0.28);
+  --tx: #dbdce0;
+  --dim: #7e838d;
+  --faint: #4b4f58;
+  --acc: #5f9de0;
+  --green: #4f9d6f;
+  --amber: #b98a3e;
+  --red: #d95c5c;
+  --purple: #9d8ae6;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
   --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
@@ -45,6 +48,14 @@ input {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c313c;
+  background: var(--line2);
   border-radius: 5px;
+}
+
+/* The icon sprite mounted in App.svelte: zero-size, out of layout. */
+.sprites {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
 }

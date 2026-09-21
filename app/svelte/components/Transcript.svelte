@@ -183,6 +183,16 @@
     const c = cur;
     if (c) void fetchWindow(c, start, end - start);
   });
+  // V2 turn headers: 'you' on the user's own messages, 'agent' on the first
+  // entry of a response block. The label renders inside the card's measured
+  // wrap, so the virtualized height math stays exact.
+  function turnLabel(idx: number): 'you' | 'agent' | '' {
+    const i = win.start + idx;
+    const e = all[i];
+    if (e.kind === 'user' && !e.source && !e.skill) return 'you';
+    const prev = all[i - 1];
+    return prev && prev.kind === 'user' ? 'agent' : '';
+  }
 </script>
 
 <div class="scroll" bind:this={el} class:empty={all.length === 0}>
@@ -194,8 +204,8 @@
   {:else}
     <div class="track" style="height: {total}px">
       <div class="inner" style="transform: translateY({win.offset}px)">
-        {#each all.slice(win.start, win.end) as e (e.id)}
-          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} sourceLabel={sourceLabelFor(e)} />
+        {#each all.slice(win.start, win.end) as e, idx (e.id)}
+          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} sourceLabel={sourceLabelFor(e)} turn={turnLabel(idx)} />
         {/each}
       </div>
     </div>
@@ -224,7 +234,7 @@
   .ph .sub {
     margin-top: 6px;
     font-size: 12px;
-    color: #4d5462;
+    color: var(--faint);
   }
   .track {
     position: relative;

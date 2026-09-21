@@ -30,17 +30,19 @@ interface Seg {
 }
 
 export function md(t: string): string {
-  const rest = esc(t);
+  // Fences are split from the RAW text: text segments are escaped here, code
+  // segments are escaped exactly once by hl() — escaping the fence text up
+  // front and again in hl() double-encodes (& becomes &amp;amp;).
   const segs: Seg[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
   const fenceRe = /```(\w*)\n([\s\S]*?)```/g;
-  while ((m = fenceRe.exec(rest))) {
-    if (m.index > 0) segs.push({ txt: rest.slice(last, m.index) });
+  while ((m = fenceRe.exec(t))) {
+    if (m.index > 0) segs.push({ txt: esc(t.slice(last, m.index)) });
     segs.push({ code: m[2], lang: m[1] });
     last = m.index + m[0].length;
   }
-  if (last < rest.length) segs.push({ txt: rest.slice(last) });
+  if (last < t.length) segs.push({ txt: esc(t.slice(last)) });
 
   let out = '';
   for (const sg of segs) {

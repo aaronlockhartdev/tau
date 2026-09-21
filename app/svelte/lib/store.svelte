@@ -60,6 +60,8 @@
 
   export const store = $state({
     focus: false,
+    // 'r' keybind (App.svelte): every reasoning block opens/closes at once.
+    reasoningOpen: false,
     workspaces: [] as Workspace[],
     current: null as string | null,
     // Bumped by send: the transcript jumps to the new user entry and follows
@@ -82,10 +84,15 @@
   export interface PaneState {
     ltab: 'files' | 'sessions';
     rtab: 'tasks' | 'subs';
-    tFilter: 'open' | 'all' | 'in-progress' | 'blocked' | 'pending' | 'done';
-    sFilter: 'open' | 'all' | 'running' | 'idle' | 'failed' | 'stopped' | 'done';
+    // F3: the right-pane history section (done/failed/stopped rows) starts
+    // collapsed; per-row badges carry the exact state, so no filter exists.
+    historyOpen: boolean;
     expandedTasks: string[];
-    openGroups: string[];
+    // null = the default view (the group containing the active session
+    // expanded); an array = the explicit set the user has toggled.
+    openGroups: string[] | null;
+    // The session row being renamed (double-click), per pane.
+    renamingId: string | null;
     archOpen: boolean;
     selSub: string | null;
   }
@@ -106,15 +113,20 @@
     const p: PaneState = {
       ltab: 'sessions',
       rtab: 'tasks',
-      tFilter: 'all',
-      sFilter: 'all',
+      historyOpen: false,
       expandedTasks: [],
-      openGroups: [],
+      openGroups: null,
+      renamingId: null,
       archOpen: false,
       selSub: null
     };
     store.pane[ws] = p;
     return p;
+    return p;
+  }
+
+  export function toggleAllReasoning(): void {
+    store.reasoningOpen = !store.reasoningOpen;
   }
 
   // A spawn/state event for a child we haven't opened yet: register a stub

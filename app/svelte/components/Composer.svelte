@@ -195,7 +195,7 @@
   .lanes {
     display: flex;
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: 8px;
     overflow: hidden;
     flex: none;
   }
@@ -212,7 +212,7 @@
     color: var(--tx);
   }
   .lane.active {
-    background: rgba(76, 194, 255, 0.12);
+    background: color-mix(in srgb, var(--acc) 12%, transparent);
     color: var(--acc);
   }
   .input {
@@ -221,16 +221,16 @@
     max-height: 160px;
     resize: none;
     overflow-y: auto;
-    background: #0c0e12;
+    background: var(--bg);
     color: var(--tx);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 10px 12px;
     font: 13.5px/1.45 var(--sans, system-ui);
     outline: none;
   }
   .input:focus {
-    border-color: rgba(76, 194, 255, 0.4);
+    border-color: color-mix(in srgb, var(--acc) 40%, transparent);
   }
   .row {
     display: flex;
@@ -243,7 +243,7 @@
     height: 32px;
     border-radius: 6px;
     background: var(--acc);
-    color: #081018;
+    color: var(--bg);
     font-size: 15px;
     font-weight: 700;
     flex: none;
@@ -272,7 +272,7 @@
     cursor: pointer;
   }
   .opt.sel {
-    background: rgba(76, 194, 255, 0.12);
+    background: color-mix(in srgb, var(--acc) 12%, transparent);
   }
   .oname {
     font: 12px var(--mono);
