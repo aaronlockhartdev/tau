@@ -97,6 +97,9 @@ const proc = spawn(CHROME, [
   `--remote-debugging-port=${CDP}`,
   '--no-first-run',
   '--no-default-browser-check',
+  // A realistic window: at headless's default 800×600 the app's 100vh flex
+  // chain can settle into a collapsed .scroll (clientH ~14) that never recovers.
+  '--window-size=1440,900',
   `--user-data-dir=${fs.mkdtempSync(path.join(os.tmpdir(), 'tau-verify-'))}`,
   'about:blank',
 ],
@@ -155,29 +158,34 @@ try {
       return true;
     })()`);
     if (setMid && setMid.missing) throw new Error('no .scroll — ' + setMid.missing);
-    // The render window settles a frame after the scroll; sample with a
-    // bounded retry so a slow machine doesn't read the gap (the original
-    // single sample raced the window under load).
+    // The render window settles a frame after the scroll; on headless the
+    // container can sit in a collapsed layout state (clientH ~14 — the 100vh
+    // flex chain unsettled), which the 200 ms sampling window rides out.
+    // Sample with a bounded retry; diag is reported on failure for triage.
     let mid = null;
-    for (let i = 0; i < 10 && (!mid || mid.visible === 0); i++) {
+    for (let i = 0; i < 25 && (!mid || mid.visible === 0); i++) {
       mid = await evalPage(wsUrl, `(() => {
         const sc = document.querySelector('.scroll');
+        const v = sc.getBoundingClientRect();
+        const cs = [...document.querySelectorAll('.card')];
         return {
           scrollTop: sc.scrollTop,
           scrollH: sc.scrollHeight,
           trackH: document.querySelector('.track')?.offsetHeight ?? 0,
-          domCards: document.querySelectorAll('.card').length,
-          visible: [...document.querySelectorAll('.card')].filter((c) => {
+          domCards: cs.length,
+          visible: cs.filter((c) => {
             const r = c.getBoundingClientRect();
-            const v = sc.getBoundingClientRect();
             return r.bottom > v.top && r.top < v.bottom && r.height > 0;
-          }).length
+          }).length,
+          diag: { clientH: sc.clientHeight, viewTop: Math.round(v.top), viewBottom: Math.round(v.bottom),
+            rects: cs.slice(0, 4).map((c) => { const r = c.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.bottom)]; }),
+            bar: [...document.querySelectorAll('.bar')].pop()?.innerText?.slice(0, 120) }
         };
       })()`);
       if (mid.visible > 0) break;
       await sleep(200);
     }
-    check('mid-session: cards visible in the viewport', mid.visible > 0, `${mid.visible} visible, scrollTop=${Math.round(mid.scrollTop)}`);
+    check('mid-session: cards visible in the viewport', mid.visible > 0, `${mid.visible} visible, clientH=${mid.diag.clientH}, scrollTop=${Math.round(mid.scrollTop)}${mid.visible === 0 ? ' diag=' + JSON.stringify(mid.diag) : ''}`);
     check('mid-session: track height ≈ 1× (no 2× inflation)', top.trackH > 0 && mid.scrollH <= top.trackH * 1.2, `scrollH=${mid.scrollH}, trackH=${top.trackH}, ratio=${(mid.scrollH / top.trackH).toFixed(2)}`);
     check('mid-session: DOM is windowed', mid.domCards > 0 && mid.domCards <= 60, `${mid.domCards} cards in DOM`);
 
