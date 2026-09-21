@@ -71,3 +71,31 @@ export function md(t: string): string {
 }
 
 export { esc };
+
+// A sub-agent's message to the parent (and a parent's message to a child)
+// conventionally carries a JSON payload after the prose ("hi — {"word":"hi"}").
+// Split it out so the GUI can render the payload as kv lines, the way the
+// expanded tool call does. Returns null when the text has no parseable
+// trailing object.
+export function splitJsonPayload(
+  text: string
+): { prose: string; kv: [string, string][] } | null {
+  const t = text.trimEnd();
+  if (!t.endsWith('}')) return null;
+  for (let i = t.length - 1; i >= 0; i--) {
+    if (t[i] !== '{') continue;
+    let obj: unknown;
+    try {
+      obj = JSON.parse(t.slice(i));
+    } catch {
+      continue;
+    }
+    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) continue;
+    const kv = Object.entries(obj).map(
+      ([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)] as [string, string]
+    );
+    if (!kv.length) continue;
+    return { prose: t.slice(0, i).replace(/[\s—–\-·:]+$/, ''), kv };
+  }
+  return null;
+}

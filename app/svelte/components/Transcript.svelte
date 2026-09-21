@@ -27,6 +27,12 @@
   // A sub-agent notification's label: the child session's own title.
   const sourceLabelFor = (e: Entry): string =>
     e.source ? (store.sessions[e.source]?.meta.title ?? '') : '';
+  // The parent → child direction: a user entry inside a child session is
+  // the parent's message (task assignment, steering, follow-up).
+  const parentLabel = $derived.by(() => {
+    const p = cur ? store.sessions[cur]?.meta.parent : null;
+    return p ? store.sessions[p]?.meta.title ?? '' : '';
+  });
 
   // Live entries sit at the tail of the virtual list (the running message is
   // the most recent thing in the session).
@@ -205,7 +211,7 @@
     <div class="track" style="height: {total}px">
       <div class="inner" style="transform: translateY({win.offset}px)">
         {#each all.slice(win.start, win.end) as e, idx (e.id)}
-          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} sourceLabel={sourceLabelFor(e)} turn={turnLabel(idx)} />
+          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} sourceLabel={sourceLabelFor(e)} parentLabel={parentLabel} turn={turnLabel(idx)} />
         {/each}
       </div>
     </div>

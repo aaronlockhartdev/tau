@@ -8,7 +8,7 @@
 
   import { onMount } from 'svelte';
   import { store } from '../lib/store.svelte';
-  import { md as renderMarkdown } from '../lib/markdown';
+  import { md as renderMarkdown, splitJsonPayload } from '../lib/markdown';
   import type { Entry } from '../lib/protocol';
 
   let {
@@ -16,12 +16,14 @@
     heightKey,
     heights,
     sourceLabel = '',
+    parentLabel = '',
     turn = ''
   }: {
     entry: Entry;
     heightKey: string;
     heights: Map<string, number>;
     sourceLabel?: string;
+    parentLabel?: string;
     turn?: 'you' | 'agent' | '';
   } = $props();
 
@@ -133,6 +135,15 @@
       : []
   );
 
+  // A sub-agent's message (child → parent) and the parent's message to a
+  // child: prose with a JSON payload, rendered as kv lines the way an
+  // expanded tool call does.
+  const msg = $derived(
+    entry.kind === 'user' && (entry.source || parentLabel)
+      ? splitJsonPayload(entry.text ?? '')
+      : null
+  );
+
   // A fully empty entry (a pure tool request whose payload has
   // not arrived) renders nothing, so no shell margin gap is left behind.
   const hasContent = $derived(
@@ -210,7 +221,36 @@
     {:else if entry.source}
       <div class="card2">
         <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>sub-agent{sourceLabel ? ` · ${sourceLabel}` : ''}</div>
-        <div class="txt2 dim">{entry.text}</div>
+        {#if msg && msg.prose}
+          <div class="txt2 dim">{msg.prose}</div>
+        {/if}
+        {#if msg && msg.kv.length}
+          <div class="kvblock">
+            {#each msg.kv as [k, v]}
+              <div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>
+            {/each}
+          </div>
+        {/if}
+        {#if !msg}
+          <div class="txt2 dim">{entry.text}</div>
+        {/if}
+      </div>
+    {:else if parentLabel}
+      <div class="card2">
+        <div class="hd par"><svg class="ic" width="13" height="13"><use href="#i-user"/></svg>parent{parentLabel ? ` · ${parentLabel}` : ''}</div>
+        {#if msg && msg.prose}
+          <div class="txt2 dim">{msg.prose}</div>
+        {/if}
+        {#if msg && msg.kv.length}
+          <div class="kvblock">
+            {#each msg.kv as [k, v]}
+              <div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>
+            {/each}
+          </div>
+        {/if}
+        {#if !msg}
+          <div class="txt2 dim">{entry.text}</div>
+        {/if}
       </div>
     {:else}
       <div class="tuser"><span class="bubble">{entry.text}</span></div>
@@ -358,6 +398,9 @@
   }
   .hd.sub .ic {
     color: var(--amber);
+  }
+  .hd.par .ic {
+    color: var(--acc);
   }
   .hd.skill .ic,
   .hd.obs .ic {
