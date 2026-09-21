@@ -69,6 +69,16 @@ pub struct FileText {
     pub truncated: bool,
 }
 
+/// One entry of a directory listing (the files pane's tree, ticket #32).
+/// `path` is relative to the workspace root (the root itself is `.`), so
+/// the GUI never sees host paths and can refetch any listed dir by name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub dir: bool,
+    pub size: u64,
+}
 /// A dispatch error, serializable so any transport can return it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -136,6 +146,9 @@ pub enum CommandOutput {
     },
     File {
         file: FileText,
+    },
+    Files {
+        files: Vec<FileEntry>,
     },
 }
 
@@ -287,6 +300,14 @@ pub enum Command {
         /// Maximum lines to return.
         limit: Option<usize>,
     },
+    /// List one directory of the workspace's tree (ticket #32): the pane
+    /// fetches a dir on expand — the lazy, invalidation-driven tree.
+    FileList {
+        workspace: String,
+        /// The directory to list: absolute, or relative to the workspace
+        /// root (`.` for the root itself).
+        path: String,
+    },
 }
 
 /// An event pushed from the core to clients (spec §8). Every event carries
@@ -383,6 +404,16 @@ pub enum Event {
     SkillListChanged {
         workspace: String,
         skills: Vec<SkillInfo>,
+    },
+    /// A watched dir of the workspace changed (the files-pane watcher,
+    /// ticket #32): `changed` holds the stale dir paths (workspace-relative)
+    /// as stale-dir invalidation — the client refetches the affected listed
+    /// dirs, it never receives a tree. Session-less: the tree is per
+    /// workspace, not per session. A lost batch self-heals on the next
+    /// expand (every fetch is a fresh read).
+    FileTreeChanged {
+        workspace: String,
+        changed: Vec<String>,
     },
 }
 
@@ -607,6 +638,10 @@ mod tests {
                 offset: None,
                 limit: None,
             },
+            Command::FileList {
+                workspace: "w1".into(),
+                path: "src".into(),
+            },
         ];
         for cmd in &commands {
             let json = serde_json::to_string(cmd).unwrap();
@@ -763,6 +798,10 @@ mod tests {
                     model_invocation: true,
                 }],
             },
+            Event::FileTreeChanged {
+                workspace: "w1".into(),
+                changed: vec!["src".into(), "src/core".into()],
+            },
         ];
         for ev in &events {
             let json = serde_json::to_string(ev).unwrap();
@@ -869,6 +908,14 @@ mod tests {
             },
             CommandOutput::Subagent { subagent: sub },
             CommandOutput::File { file },
+            CommandOutput::Files {
+                files: vec![FileEntry {
+                    name: "d".into(),
+                    path: "d".into(),
+                    dir: true,
+                    size: 0,
+                }],
+            },
         ];
         for out in &outputs {
             let json = serde_json::to_string(out).unwrap();

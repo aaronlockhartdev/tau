@@ -22,7 +22,6 @@ export interface SkillInfo {
   location: string;
   model_invocation: boolean;
 }
-
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
@@ -211,6 +210,13 @@ export interface EntryRange {
   count: number;
 }
 
+export interface FileEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  size: number;
+}
+
 export type Command =
   | { type: 'workspace_open'; cwd: string }
   | { type: 'workspace_list' }
@@ -241,8 +247,8 @@ export type Command =
   | { type: 'provider_list' }
   | { type: 'provider_add'; name: string; base_url: string; key_env: string; models: string[] }
   | { type: 'provider_set'; name: string; base_url: string; key_env: string; models: string[] }
-  | { type: 'provider_delete'; name: string }
-  | { type: 'file_read'; workspace: string; path: string; offset: number | null; limit: number | null };
+  | { type: 'file_read'; workspace: string; path: string; offset: number | null; limit: number | null }
+  | { type: 'file_list'; workspace: string; path: string };
 
 export type CommandOutput =
   | { kind: 'none' }
@@ -257,7 +263,8 @@ export type CommandOutput =
   | { kind: 'skills'; skills: SkillInfo[] }
   | { kind: 'subagent'; subagent: SubagentInfo }
   | { kind: 'subagents'; subagents: SubagentInfo[] }
-  | { kind: 'file'; file: { text: string; truncated: boolean } };
+  | { kind: 'file'; file: { text: string; truncated: boolean } }
+  | { kind: 'files'; files: FileEntry[] };
 
 export type SessionEventKind =
   | { kind: 'branch_move'; leaf: string }
@@ -281,7 +288,11 @@ export type Event =
   | { type: 'task_changed'; workspace: string; session: string; tasks: Task[] }
   // The workspace's skill registry changed (the file watcher, ticket #31):
   // full-state replacement, idempotent; session-less like the system group.
-  | { type: 'skill_list_changed'; workspace: string; skills: SkillInfo[] };
+  | { type: 'skill_list_changed'; workspace: string; skills: SkillInfo[] }
+  // The workspace's tree changed (the file watcher, ticket #32): the stale
+  // dir paths (workspace-relative; `.` is the root) — the store refetches
+  // the affected listed dirs. Session-less like the system group.
+  | { type: 'file_tree_changed'; workspace: string; changed: string[] };
 
 export type ProtocolError =
   | { kind: 'unsupported'; message: string }

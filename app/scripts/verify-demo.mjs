@@ -423,6 +423,54 @@ try {
         JSON.stringify(skillChanged.restored) === JSON.stringify(skillChanged.before),
       `before: ${skillChanged.before.join(' | ')} → replaced: ${skillChanged.replaced.join(' | ')}${skillChanged.error ? ' [error: ' + skillChanged.error + ']' : ''}`);
 
+    // --- ticket #32: file_list + file_tree_changed (wire shape, B3 pattern) ---
+    // The demo never sees the live watcher, so seed the store's per-workspace
+    // tree directly (the stand-in for the command) and feed the EXACT object
+    // the live core emits (core.rs start_tree_watcher): a session-less
+    // stale-dir list. The store must coalesce the burst, keep listed dirs,
+    // and leave the rendered tree intact.
+    const fileTree = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      if (!t) return res({ missing: 'no __tau seam' });
+      const files = {
+        '.': [
+          { name: 'src', path: 'src', dir: true, size: 0 },
+          { name: 'README.md', path: 'README.md', dir: false, size: 12 }
+        ],
+        'src': [
+          { name: 'main.rs', path: 'src/main.rs', dir: false, size: 42 }
+        ]
+      };
+      t.store().files['w-demo'] = files;
+      const pane = t.store().pane['w-demo'];
+      if (pane) pane.ltab = 'files';
+      const burst1 = { type: 'file_tree_changed', workspace: 'w-demo', changed: ['src'] };
+      const burst2 = { type: 'file_tree_changed', workspace: 'w-demo', changed: ['src', 'unlisted'] };
+      t.applyEvents([burst1, burst2]);
+      setTimeout(() => {
+        const rows = Array.from(document.querySelectorAll('.frow .name')).map((n) => n.textContent);
+        const cur = t.store().files['w-demo'];
+        res({
+          rows,
+          intact: cur && JSON.stringify(cur['.']) === JSON.stringify(files['.']) && cur['src'] !== undefined,
+          error: t.store().error
+        });
+      }, 400);
+    })`);
+    // Restore the sessions tab: the later checks (the mid-session block
+    // rendering, the archive) read session rows from the left pane.
+    await evalPage(wsUrl, `(() => {
+      const pane = window.__tau?.store()?.pane['w-demo'];
+      if (pane) pane.ltab = 'sessions';
+      return true;
+    })()`);
+    check('file_list: the store\'s per-workspace tree renders as the files tab',
+      fileTree.rows.includes('README.md') && fileTree.rows.includes('src') && fileTree.rows.includes('main.rs'),
+      'rows: ' + fileTree.rows.join(' | '));
+    check('file_tree_changed: a burst of session-less invalidations coalesces and leaves the tree intact',
+      fileTree.intact && !fileTree.error,
+      `intact: ${fileTree.intact}${fileTree.error ? ' [error: ' + fileTree.error + ']' : ''}`);
+
     // Block rendering: the fixture's /skill: entry (mid-session) renders
     // the green block — name header, collapsed 200-char preview, working
     // expando. The earlier checks left an archived session open, so the

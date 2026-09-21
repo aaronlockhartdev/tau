@@ -8,6 +8,7 @@
   // rows keep their full lifecycle tags.
   import { store, pane, ensurePane, type PaneState } from '../lib/store.svelte';
   import SessionNode from './SessionNode.svelte';
+  import FileNode from './FileNode.svelte';
 
   const ws = $derived(store.current ? store.sessions[store.current]?.meta.workspace ?? null : null);
   const p = $derived<PaneState | null>(pane(ws));
@@ -36,7 +37,15 @@
   {#if p && ws}
     {#if p.ltab === 'files'}
       <div class="sec">
-        <div class="note">v0 has no directory-listing command.</div>
+        {#if ws && store.files[ws]?.['.']}
+          <div class="tree">
+            {#each store.files[ws]['.'] as f (f.path)}
+              <FileNode entry={f} ws={ws} />
+            {/each}
+          </div>
+        {:else}
+          <div class="note">No files listed yet.</div>
+        {/if}
       </div>
     {:else}
       <div class="sec">

@@ -14,6 +14,7 @@
     isTauri,
     type Entry,
     type Event,
+    type FileEntry,
     type QueuedItem,
     type SessionMeta,
     type SkillInfo,
@@ -76,6 +77,11 @@
     // The skill registry, cached per workspace (ticket #28): the
     // composer's /skill: autocomplete data source.
     skills: {} as Record<string, SkillInfo[]>,
+    // The files pane (ticket #32), per workspace: the listed dirs and
+    // their entries. A dir appears here once fetched (workspace open
+    // lists the root, expansion lists its children); FileTreeChanged
+    // marks a listed dir stale and a coalesced refetch wave replaces it.
+    files: {} as Record<string, Record<string, FileEntry[]>>,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>
@@ -352,6 +358,9 @@
         }
       }
     }
+    // The pane's first listing (ticket #32): the root, listed on open —
+    // every other dir is fetched on expansion.
+    fetchDir(real.id, '.');
     const sid =
       list.kind === 'sessions' && list.sessions.length > 0
         ? list.sessions[0].id
@@ -361,6 +370,70 @@
             title: null
           })) as { kind: 'session'; session: SessionMeta }).session.id;
     await switchSession(sid);
+  }
+
+  // --- The files pane (ticket #32): listed dirs, lazy expansion, invalidation.
+
+  // One directory's listing into the store. The change guard keeps an
+  // unchanged refetch a no-op (no reactive churn, no re-render).
+  async function fetchDir(ws: string, path: string): Promise<void> {
+    let out;
+    try {
+      out = await command({ type: 'file_list', workspace: ws, path });
+    } catch {
+      // The workspace may be closing mid-flight: a fetch for a gone
+      // workspace is dropped, not an error.
+      return;
+    }
+    if (out.kind !== 'files') return;
+    const cur = store.files[ws];
+    if (!cur) return;
+    if (JSON.stringify(cur[path] ?? []) === JSON.stringify(out.files)) return;
+    cur[path] = out.files;
+  }
+
+  // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
+  // fetch on first expand. A dir is listed only while expanded, so the
+  // tree's memory tracks what is on screen.
+  export function toggleFileDir(ws: string, path: string): void {
+    const cur = store.files[ws];
+    if (!cur) return;
+    if (cur[path]) {
+      delete cur[path];
+      return;
+    }
+    cur[path] = [];
+    void fetchDir(ws, path);
+  }
+
+  // Invalidation (the design's lost-events case, client side): a burst of
+  // file_tree_changed events coalesces into one refetch wave — the 300 ms
+  // timer collapses bursts, and only listed (expanded) dirs are refetched:
+  // a change in an unlisted dir is fetched the moment the user expands it.
+  const refetchPending = new Map<string, Set<string>>();
+  let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function scheduleRefetch(ws: string, dirs: string[]): void {
+    const cur = store.files[ws];
+    if (!cur) return;
+    let set = refetchPending.get(ws);
+    if (!set) {
+      set = new Set();
+      refetchPending.set(ws, set);
+    }
+    for (const d of dirs) {
+      if (cur[d]) set.add(d);
+    }
+    if (refetchTimer) clearTimeout(refetchTimer);
+    refetchTimer = setTimeout(flushRefetch, 300);
+  }
+
+  function flushRefetch(): void {
+    refetchTimer = null;
+    for (const [ws, dirs] of refetchPending) {
+      refetchPending.delete(ws);
+      for (const d of dirs) void fetchDir(ws, d);
+    }
   }
 
   // A workspace can be opened by any client (this window, a future second
@@ -643,6 +716,9 @@
           if (JSON.stringify(store.skills[ev.workspace] ?? []) !== JSON.stringify(ev.skills)) {
             store.skills[ev.workspace] = ev.skills;
           }
+        }
+        if (ev.type === 'file_tree_changed') {
+          scheduleRefetch(ev.workspace, ev.changed);
         }
         continue;
       }

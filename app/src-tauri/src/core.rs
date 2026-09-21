@@ -35,8 +35,9 @@ use tau_protocol::snapshot::{
     Workspace,
 };
 use tau_protocol::{
-    AgentType, Command, CommandOutput, ContextMode, Event, FileText, MessageLane, ProtocolError,
-    ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo, SystemEventKind, Usage,
+    AgentType, Command, CommandOutput, ContextMode, Event, FileEntry, FileText, MessageLane,
+    ProtocolError, ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo, SystemEventKind,
+    Usage,
 };
 use tokio::sync::mpsc;
 
@@ -47,6 +48,19 @@ use crate::watch::{Batch, Watcher};
 /// few directory reads, depth ≤ 4) is trivial, so there is nothing to
 /// gain from a longer window, and 500 ms reads as instant in the GUI.
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(500);
+/// The files pane's excluded dir names (design #30): a hard requirement,
+/// not an optimization — on Linux inotify a recursive watch is one
+/// descriptor per directory (this repo: 4,471, 3,777 under `target/`).
+const TREE_EXCLUDES: &[&str] = &[
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    ".venv",
+    "__pycache__",
+];
 
 /// A live session: the loop plus the binding's view of its lanes, the
 /// stop flag, and the provider (kept here so a turn can be diffed against
@@ -467,6 +481,10 @@ pub struct Core {
     /// that workspace. The watchers live until process exit — no
     /// workspace-close command exists (design #30).
     project_watchers: Mutex<HashMap<String, Watcher>>,
+    /// The per-workspace tree watcher (the files pane, ticket #32): the
+    /// second consumer of the shared `Watcher` plumbing, watching the
+    /// workspace cwd with the design's exclusions.
+    tree_watchers: Mutex<HashMap<String, Watcher>>,
     system_dir: Option<PathBuf>,
     /// The user's home dir (the home-level `.agents/skills/` root; the
     /// `system_dir` seam's sibling for tests).
@@ -551,6 +569,7 @@ impl CoreBuilder {
             skills: Mutex::new(HashMap::new()),
             home_watcher: Mutex::new(None),
             project_watchers: Mutex::new(HashMap::new()),
+            tree_watchers: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             home: self.home.clone(),
             custom: self.custom,
@@ -713,6 +732,7 @@ impl Core {
         });
         self.upsert_workspace_index(&workspace);
         self.start_project_watcher(&workspace);
+        self.start_tree_watcher(&workspace);
         Ok(workspace)
     }
 
@@ -1900,6 +1920,18 @@ impl Core {
                     },
                 })
             }
+            Command::FileList { workspace, path } => {
+                let workspace = self.workspace(&workspace)?;
+                let full = PathBuf::from(&path);
+                let dir = if full.is_absolute() {
+                    full
+                } else {
+                    Path::new(&workspace.cwd).join(full)
+                };
+                Ok(CommandOutput::Files {
+                    files: list_dir(Path::new(&workspace.cwd), &dir),
+                })
+            }
         }
     }
 }
@@ -2204,7 +2236,8 @@ impl Core {
         }
         self.home_watcher.lock().unwrap().replace(watcher);
         let core = Arc::clone(self);
-        spawn_watcher_consumer(core, rx, move |core| {
+        spawn_watcher_consumer(core, rx, move |_core, _batch| {
+            let core = _core;
             for ws in core.workspaces.lock().unwrap().values() {
                 core.refresh_skills(ws);
             }
@@ -2235,9 +2268,48 @@ impl Core {
             return;
         };
         let id = workspace.id.clone();
-        spawn_watcher_consumer(core, rx, move |core| {
+        spawn_watcher_consumer(core, rx, move |_core, _batch| {
+            let core = _core;
             if let Ok(ws) = core.workspace(&id) {
                 core.refresh_skills(&ws);
+            }
+        });
+    }
+
+    /// The workspace's tree watcher (the files pane, ticket #32): the second
+    /// consumer of the shared `Watcher` plumbing — a per-workspace watch on
+    /// the cwd with the design's exclusions. A batch maps to the stale dir
+    /// paths (workspace-relative) and emits `FileTreeChanged`: the client
+    /// refetches the affected listed dirs, and any fetch is a fresh read, so
+    /// a lost batch self-heals on the next expand.
+    fn start_tree_watcher(&self, workspace: &Workspace) {
+        let cwd = Path::new(&workspace.cwd);
+        if !cwd.is_dir() {
+            return;
+        }
+        let mut map = self.tree_watchers.lock().unwrap();
+        if map.contains_key(&workspace.id) {
+            return;
+        }
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        watcher.add_excluded(cwd, TREE_EXCLUDES);
+        map.insert(workspace.id.clone(), watcher);
+        drop(map);
+        let Some(core) = self.self_arc() else {
+            return;
+        };
+        let id = workspace.id.clone();
+        let cwd = workspace.cwd.clone();
+        spawn_watcher_consumer(core, rx, move |core, batch| {
+            let Some(ws) = core.workspaces.lock().unwrap().get(&id).cloned() else {
+                return;
+            };
+            let changed = tree_changed_dirs(&cwd, &batch);
+            if !changed.is_empty() {
+                core.emit(Event::FileTreeChanged {
+                    workspace: ws.id,
+                    changed,
+                });
             }
         });
     }
@@ -2248,23 +2320,23 @@ impl Core {
 /// rather than `tokio::spawn`: both call sites are outside a runtime (the home
 /// watcher is built before `.run()`, the project watcher from a command on
 /// `spawn_blocking`), where a bare `tokio::spawn` panics. The handler gets a
-/// fresh `Arc` per batch; the `Weak` keeps the task from pinning the core
-/// — the test's drop joins the thread through the watcher's `stop()`. An
-/// empty batch is a rescan trigger: the handler treats it as every watched
-/// root being affected. The files-pane ticket (#32) runs the same shape
-/// with its own handler.
+/// fresh `Arc` per batch (and the batch itself); the `Weak` keeps the task
+/// from pinning the core — the test's drop joins the thread through the
+/// watcher's `stop()`. An empty batch is a rescan trigger: a consumer that
+/// cares about which paths changed treats it as every watched root being
+/// affected.
 fn spawn_watcher_consumer(
     core: Arc<Core>,
     mut rx: mpsc::UnboundedReceiver<Batch>,
-    handler: impl Fn(Arc<Core>) + Send + 'static,
+    handler: impl Fn(Arc<Core>, Batch) + Send + 'static,
 ) {
     let weak = Arc::downgrade(&core);
     tauri::async_runtime::spawn(async move {
-        while let Some(_batch) = rx.recv().await {
+        while let Some(batch) = rx.recv().await {
             let Some(core) = weak.upgrade() else {
                 break;
             };
-            handler(core);
+            handler(core, batch);
         }
     });
 }
@@ -2276,8 +2348,102 @@ impl Drop for Core {
     fn drop(&mut self) {
         self.home_watcher.lock().unwrap().take();
         self.project_watchers.lock().unwrap().clear();
+        self.tree_watchers.lock().unwrap().clear();
     }
 }
+/// One debounced batch's stale dir paths, workspace-relative (the files
+/// pane, ticket #32): each changed path contributes itself (if it is a
+/// dir) and its parent (the dir that now lists it), excluded subtrees
+/// dropped, the root reported as `.`. An empty batch is a rescan trigger
+/// (the design's lost-events case): the root is stale. A path we cannot
+/// attribute to the workspace (the OS resolved a symlink the cwd string
+/// does not carry, e.g. macOS `/var` → `/private/var`) marks the whole
+/// tree stale: a superset, and the client coalesces it to one refetch
+/// wave — silence would leave the pane permanently blind.
+fn tree_changed_dirs(cwd: &str, batch: &Batch) -> Vec<String> {
+    let cwd = Path::new(cwd);
+    if batch.is_empty() {
+        return vec![".".to_string()];
+    }
+    let mut out = Vec::new();
+    let mut unmatched = false;
+    for path in batch {
+        let rel = match path.strip_prefix(cwd) {
+            Ok(r) => r,
+            Err(_) => {
+                unmatched = true;
+                continue;
+            }
+        };
+        let mut components = rel.components();
+        // A change inside an excluded subtree is not the pane's business.
+        if components
+            .clone()
+            .any(|c| matches!(c.as_os_str().to_str().unwrap_or_default(), n if TREE_EXCLUDES.contains(&n)))
+        {
+            continue;
+        }
+        let mut parts: Vec<String> = components
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        out.push(if parts.is_empty() {
+            ".".into()
+        } else {
+            parts.join("/")
+        });
+        parts.pop();
+        out.push(if parts.is_empty() {
+            ".".into()
+        } else {
+            parts.join("/")
+        });
+    }
+    if unmatched {
+        out.push(".".to_string());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// One directory's listing (the files pane, ticket #32): the excluded names
+/// dropped, paths workspace-relative (the root is `.`), dirs first, then
+/// name — the pane's top-down reading order. A vanished dir lists empty: a
+/// refetch after a delete is how the tree forgets it.
+fn list_dir(cwd: &Path, dir: &Path) -> Vec<FileEntry> {
+    let mut out = Vec::new();
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for ent in read.flatten() {
+        let name = ent.file_name().to_string_lossy().into_owned();
+        if TREE_EXCLUDES.contains(&name.as_ref()) {
+            continue;
+        }
+        let path = ent.path();
+        let is_dir = path.is_dir();
+        let size = if is_dir {
+            0
+        } else {
+            ent.metadata().map(|m| m.len()).unwrap_or(0)
+        };
+        let rel = path.strip_prefix(cwd).unwrap_or(path.as_path());
+        let rel = if rel.as_os_str().is_empty() {
+            ".".into()
+        } else {
+            rel.to_string_lossy().into_owned()
+        };
+        out.push(FileEntry {
+            name,
+            path: rel,
+            dir: is_dir,
+            size,
+        });
+    }
+    out.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));
+    out
+}
+
 fn lane_to_lane(lane: MessageLane) -> Lane {
     match lane {
         MessageLane::Force => Lane::Force,
@@ -4037,5 +4203,156 @@ mod tests {
         })
         .await;
         assert_eq!(skills.len(), 1);
+    }
+
+    /// The listing's shape (ticket #32): dirs first, then name; paths
+    /// workspace-relative; the design's exclusions never appear.
+    #[test]
+    fn file_list_lists_a_dir_with_exclusions_applied() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path();
+        std::fs::create_dir_all(cwd.join("src/core")).unwrap();
+        std::fs::write(cwd.join("README.md"), "hi").unwrap();
+        std::fs::write(cwd.join("src/core/main.rs"), "fn main() {}").unwrap();
+        for ex in [
+            ".git",
+            "node_modules",
+            "target",
+            "dist",
+            "build",
+            "out",
+            ".venv",
+            "__pycache__",
+        ] {
+            std::fs::create_dir_all(cwd.join(ex)).unwrap();
+            std::fs::write(cwd.join(ex).join("inside"), "x").unwrap();
+        }
+        let files = list_dir(cwd, cwd);
+        let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
+        // Dirs first (src), then the file; no excluded names.
+        assert_eq!(names, vec!["src", "README.md"]);
+        let src = &files[0];
+        assert!(src.dir);
+        assert_eq!(src.path, "src");
+        assert_eq!(files[1].path, "README.md");
+        assert_eq!(files[1].size, 2);
+        // A nested listing carries full relative paths.
+        let nested = list_dir(cwd, &cwd.join("src"));
+        assert_eq!(
+            nested.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            vec!["src/core"]
+        );
+    }
+
+    /// The acceptance bar measured on this repo (ticket #32): listing the
+    /// repo root yields zero `target/` entries — 3,777 of its 4,471 dirs
+    /// sit under it, so the exclusion is what keeps the listing usable.
+    #[test]
+    fn the_repo_root_listing_carries_no_target_entries() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let files = list_dir(&repo, &repo);
+        assert!(
+            !files.iter().any(|f| f.name == "target"),
+            "target leaked into the listing: {:?}",
+            files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>()
+        );
+        // The repo root is not empty.
+        assert!(!files.is_empty());
+    }
+
+    /// A batch's stale-dir mapping (ticket #32): a file change names its
+    /// parent, a dir change names itself, excluded paths drop, an empty
+    /// batch is the rescan root, an unattributable path marks the whole
+    /// tree stale.
+    #[test]
+    fn tree_changed_dirs_maps_paths_to_stale_dirs() {
+        let cwd = "/w";
+        let empty: Batch = vec![];
+        assert_eq!(tree_changed_dirs(cwd, &empty), vec![".".to_string()]);
+        let batch: Batch = vec![
+            PathBuf::from("/w/src/a.rs"),
+            PathBuf::from("/w/src/core"),
+            PathBuf::from("/w"),
+            PathBuf::from("/w/target/release"),
+            PathBuf::from("/elsewhere/x"),
+        ];
+        assert_eq!(
+            tree_changed_dirs(cwd, &batch),
+            vec![
+                ".".to_string(),
+                "src".to_string(),
+                "src/a.rs".to_string(),
+                "src/core".to_string()
+            ]
+        );
+    }
+
+    /// A write under a watched dir produces `FileTreeChanged` and the
+    /// refetch sees it — the pane's live path end-to-end (ticket #32),
+    /// asserting the final tree state, never the event sequence.
+    #[tokio::test]
+    async fn a_write_under_a_watched_dir_invalidates_and_refetches() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Canonical: the OS may report the watched root through a resolved
+        // symlink (macOS /var -> /private/var), and the stale-dir mapping
+        // attributes paths by string prefix.
+        let cwd = tmp.path().canonicalize().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = open_ws(&core, &cwd).await;
+        let collected = collect_events(&core);
+        let sub = cwd.join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("new.rs"), "fn main() {}").unwrap();
+        let changed =
+            wait_for_file_tree_changed(&collected, &workspace.id, |c| c.iter().any(|d| d == "src"))
+                .await;
+        // The refetch (what the store does on invalidation) lists the new file.
+        let files = match core
+            .dispatch(Command::FileList {
+                workspace: workspace.id.clone(),
+                path: "src".into(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Files { files } => files,
+            other => panic!("expected files: {other:?}"),
+        };
+        assert!(files.iter().any(|f| f.name == "new.rs"));
+        assert!(
+            changed.iter().any(|d| d == "src"),
+            "the stale dir is src: {changed:?}"
+        );
+    }
+
+    /// Bounded wait (generous, 5 s) for the latest `FileTreeChanged` for
+    /// `ws` whose stale dirs satisfy `ok`; returns that dir list.
+    async fn wait_for_file_tree_changed(
+        collected: &Arc<Mutex<Vec<Event>>>,
+        ws: &str,
+        ok: impl Fn(&[String]) -> bool,
+    ) -> Vec<String> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(changed) = collected
+                .lock()
+                .unwrap()
+                .iter()
+                .rev()
+                .find_map(|e| match e {
+                    Event::FileTreeChanged { workspace, changed } if workspace == ws => {
+                        Some(changed.clone())
+                    }
+                    _ => None,
+                })
+                && ok(&changed)
+            {
+                return changed;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no qualifying file_tree_changed for {ws} within 5 s"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 }
