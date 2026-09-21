@@ -316,7 +316,7 @@
     font: 10px var(--mono);
     letter-spacing: 0.08em;
     color: var(--faint);
-    margin: 10px 2px 6px;
+    margin: 14px 2px 8px;
   }
   .thd::after {
     content: '';
@@ -375,7 +375,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 2px 2px;
+    padding: 4px 2px;
     font: 12px var(--sans);
     color: var(--faint);
     cursor: pointer;
