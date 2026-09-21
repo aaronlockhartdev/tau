@@ -2244,7 +2244,10 @@ impl Core {
 }
 
 /// The watcher's consumer task (ticket #31): drain the batch channel on
-/// the app's runtime and run the per-batch handler. The handler gets a
+/// Tauri's async runtime and run the per-batch handler. `async_runtime::spawn`
+/// rather than `tokio::spawn`: both call sites are outside a runtime (the home
+/// watcher is built before `.run()`, the project watcher from a command on
+/// `spawn_blocking`), where a bare `tokio::spawn` panics. The handler gets a
 /// fresh `Arc` per batch; the `Weak` keeps the task from pinning the core
 /// — the test's drop joins the thread through the watcher's `stop()`. An
 /// empty batch is a rescan trigger: the handler treats it as every watched
@@ -2256,7 +2259,7 @@ fn spawn_watcher_consumer(
     handler: impl Fn(Arc<Core>) + Send + 'static,
 ) {
     let weak = Arc::downgrade(&core);
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         while let Some(_batch) = rx.recv().await {
             let Some(core) = weak.upgrade() else {
                 break;
