@@ -1975,12 +1975,16 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // carries the full list derived from the file — a projection, never a
     // second source of truth; the store replaces on receive.
     if task_touched {
-        let all = store.entries_range(0, usize::MAX).unwrap_or_default();
-        core.emit(Event::TaskChanged {
-            workspace: workspace.clone(),
-            session: session.clone(),
-            tasks: tasks_of(&all),
-        });
+        // A read that fails (a torn-append race) must not emit an
+        // authoritative empty list — skip; the next emission or the
+        // open/switch snapshot converges.
+        if let Ok(all) = store.entries_range(0, usize::MAX) {
+            core.emit(Event::TaskChanged {
+                workspace: workspace.clone(),
+                session: session.clone(),
+                tasks: tasks_of(&all),
+            });
+        }
     }
     live.turn.store(false, Ordering::SeqCst);
 }
@@ -2017,7 +2021,9 @@ impl Core {
         if store.open().is_err() {
             return; // the file is gone; the next open rebuilds from nothing
         }
-        let entries = store.entries_range(0, usize::MAX).unwrap_or_default();
+        let Ok(entries) = store.entries_range(0, usize::MAX) else {
+            return; // a failed read is not an empty task list (torn-append race)
+        };
         self.emit(Event::TaskChanged {
             workspace,
             session: session.to_owned(),
