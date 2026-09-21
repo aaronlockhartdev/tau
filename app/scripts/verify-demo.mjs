@@ -423,39 +423,43 @@ try {
         JSON.stringify(skillChanged.restored) === JSON.stringify(skillChanged.before),
       `before: ${skillChanged.before.join(' | ')} → replaced: ${skillChanged.replaced.join(' | ')}${skillChanged.error ? ' [error: ' + skillChanged.error + ']' : ''}`);
 
-    // --- ticket #32: file_list + file_tree_changed (wire shape, B3 pattern) ---
-    // The demo never sees the live watcher, so seed the store's per-workspace
-    // tree directly (the stand-in for the command) and feed the EXACT object
-    // the live core emits (core.rs start_tree_watcher): a session-less
-    // stale-dir list. The store must coalesce the burst, keep listed dirs,
-    // and leave the rendered tree intact.
+    // --- ticket #32: the files pane's data surface, end-to-end through
+    // the demo's file_list mock (no hand-seeding the store) ---
+    // Boot: the store's openWorkspace lists the root. The rig then expands
+    // a dir (the lazy fetch), mutates the fixture, and fires the session-less
+    // invalidation batch the live watcher emits — the refetch wave must
+    // bring in the new content.
     const fileTree = await evalPage(wsUrl, `new Promise((res) => {
       const t = window.__tau;
       if (!t) return res({ missing: 'no __tau seam' });
-      const files = {
-        '.': [
-          { name: 'src', path: 'src', dir: true, size: 0 },
-          { name: 'README.md', path: 'README.md', dir: false, size: 12 }
-        ],
-        'src': [
-          { name: 'main.rs', path: 'src/main.rs', dir: false, size: 42 }
-        ]
-      };
-      t.store().files['w-demo'] = files;
       const pane = t.store().pane['w-demo'];
       if (pane) pane.ltab = 'files';
-      const burst1 = { type: 'file_tree_changed', workspace: 'w-demo', changed: ['src'] };
-      const burst2 = { type: 'file_tree_changed', workspace: 'w-demo', changed: ['src', 'unlisted'] };
-      t.applyEvents([burst1, burst2]);
       setTimeout(() => {
-        const rows = Array.from(document.querySelectorAll('.frow .name')).map((n) => n.textContent);
-        const cur = t.store().files['w-demo'];
-        res({
-          rows,
-          intact: cur && JSON.stringify(cur['.']) === JSON.stringify(files['.']) && cur['src'] !== undefined,
-          error: t.store().error
-        });
-      }, 400);
+        // Expand 'src' (the lazy per-dir fetch).
+        const srcRow = [...document.querySelectorAll('.frow')].find(
+          (r) => r.querySelector('.name')?.textContent === 'src'
+        );
+        srcRow?.click();
+        setTimeout(() => {
+          // Mutate the fixture, then fire the EXACT object the live core
+          // emits (core.rs start_tree_watcher): a session-less stale-dir list.
+          const f = t.demoFiles;
+          f['.'].push({ name: 'notes', path: 'notes', dir: true, size: 0 });
+          f.src.push({ name: 'new.txt', path: 'src/new.txt', dir: false, size: 3 });
+          t.applyEvents([{ type: 'file_tree_changed', workspace: 'w-demo', changed: ['.', 'src'] }]);
+          setTimeout(() => {
+            const rows = Array.from(document.querySelectorAll('.frow .name')).map((n) => n.textContent);
+            const cur = t.store().files['w-demo'];
+            res({
+              rows,
+              updated: Boolean(cur && cur['.'].some((e) => e.name === 'notes') && cur.src.some((e) => e.name === 'new.txt')),
+              intact: Boolean(cur && cur['.'].some((e) => e.name === 'README.md') && cur.src.some((e) => e.name === 'main.rs')),
+              expanded: rows.includes('main.rs'),
+              error: t.store().error
+            });
+          }, 400);
+        }, 250);
+      }, 100);
     })`);
     // Restore the sessions tab: the later checks (the mid-session block
     // rendering, the archive) read session rows from the left pane.
@@ -464,12 +468,12 @@ try {
       if (pane) pane.ltab = 'sessions';
       return true;
     })()`);
-    check('file_list: the store\'s per-workspace tree renders as the files tab',
-      fileTree.rows.includes('README.md') && fileTree.rows.includes('src') && fileTree.rows.includes('main.rs'),
+    check("file_list: opening the workspace lists the root and expanding a dir fetches it (no hand-seeding)",
+      fileTree.rows.includes('README.md') && fileTree.rows.includes('src') && fileTree.expanded,
       'rows: ' + fileTree.rows.join(' | '));
-    check('file_tree_changed: a burst of session-less invalidations coalesces and leaves the tree intact',
-      fileTree.intact && !fileTree.error,
-      `intact: ${fileTree.intact}${fileTree.error ? ' [error: ' + fileTree.error + ']' : ''}`);
+    check('file_tree_changed: the coalesced refetch wave brings in the changed content',
+      fileTree.updated && fileTree.intact && !fileTree.error,
+      `updated: ${fileTree.updated}, intact: ${fileTree.intact}${fileTree.error ? ' [error: ' + fileTree.error + ']' : ''}`);
 
     // Block rendering: the fixture's /skill: entry (mid-session) renders
     // the green block — name header, collapsed 200-char preview, working

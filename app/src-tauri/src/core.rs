@@ -2375,7 +2375,7 @@ fn tree_changed_dirs(cwd: &str, batch: &Batch) -> Vec<String> {
                 continue;
             }
         };
-        let mut components = rel.components();
+        let components = rel.components();
         // A change inside an excluded subtree is not the pane's business.
         if components
             .clone()

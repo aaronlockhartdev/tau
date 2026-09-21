@@ -360,6 +360,7 @@
     }
     // The pane's first listing (ticket #32): the root, listed on open —
     // every other dir is fetched on expansion.
+    store.files[real.id] ??= {};
     fetchDir(real.id, '.');
     const sid =
       list.kind === 'sessions' && list.sessions.length > 0
@@ -432,7 +433,10 @@
     refetchTimer = null;
     for (const [ws, dirs] of refetchPending) {
       refetchPending.delete(ws);
-      for (const d of dirs) void fetchDir(ws, d);
+      // A dir collapsed inside the 300 ms window is no longer listed: drop
+      // it here, not at schedule time (the listed? guard must be fresh).
+      const cur = store.files[ws];
+      for (const d of dirs) if (cur?.[d]) void fetchDir(ws, d);
     }
   }
 
@@ -464,6 +468,7 @@
       }
     }
     delete store.skills[ws.id];
+    delete store.files[ws.id];
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];

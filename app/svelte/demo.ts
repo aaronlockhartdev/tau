@@ -20,6 +20,7 @@ import {
 import type {
   Command,
   CommandOutput,
+  FileEntry,
   EntryMeta,
   Event,
   Snapshot,
@@ -28,6 +29,16 @@ import type {
 } from './lib/protocol';
 
 const WS: Workspace = { id: 'w-demo', name: 'tau', cwd: '~/git/tau' };
+// The files-pane fixture listing (ticket #32): the demo answers file_list
+// from this table, and the rig mutates it to prove the invalidation wave
+// refetches content, not just re-renders.
+export const demoFiles: Record<string, FileEntry[]> = {
+  '.': [
+    { name: 'src', path: 'src', dir: true, size: 0 },
+    { name: 'README.md', path: 'README.md', dir: false, size: 12 }
+  ],
+  src: [{ name: 'main.rs', path: 'src/main.rs', dir: false, size: 42 }]
+};
 const { meta, entries, views } = buildDemoSession();
 const kids = demoChildren();
 // The bar's usage segment: the fixture parent's usage is the sum of its
@@ -131,6 +142,8 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
     case 'message_send':
     case 'message_stop':
       return { kind: 'none' };
+    case 'file_list':
+      return { kind: 'files', files: demoFiles[c.path] ?? [] };
     default:
       throw new Error(`demo entry: unmocked command ${c.type}`);
   }
@@ -218,8 +231,13 @@ init().then(() => {
 // The rig drives File → Open Folder…'s store-side path (ticket #29 B1):
 // the native menu emits, mockIPC's event mock carries it to the listener
 // the store registered in init().
-const seam = (window as unknown as { __tau?: { openFolderRequest?: () => void } }).__tau;
-if (seam) seam.openFolderRequest = () => void emit('open_folder_requested');
+const seam = (window as unknown as {
+  __tau?: { openFolderRequest?: () => void; demoFiles?: Record<string, FileEntry[]> };
+}).__tau;
+if (seam) {
+  seam.openFolderRequest = () => void emit('open_folder_requested');
+  seam.demoFiles = demoFiles;
+}
 
 const root = document.getElementById('app');
 if (!root) throw new Error('missing #app element');
