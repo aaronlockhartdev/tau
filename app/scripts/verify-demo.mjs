@@ -346,6 +346,116 @@ try {
     check('B5: opening the older archived session bumps it to the MRU head of the archive list',
       archAfter.length === 2 && archAfter[0].includes('first session store'), archAfter.join(' | '));
 
+    // --- ticket #28: skills ---
+    // skill_list: the store fetched the demo workspace's registry (the
+    // demo's stand-in for the command) and cached it per workspace; a
+    // disable-model-invocation skill is listed (the dropdown is its door).
+    const skillStore = await evalPage(wsUrl, `(() => {
+      const skills = window.__tau.store().skills['w-demo'] ?? [];
+      return {
+        names: skills.map((s) => s.name),
+        disabled: skills.filter((s) => !s.model_invocation).map((s) => s.name)
+      };
+    })()`);
+    check('skill_list: the store cache lists the demo skills per workspace',
+      skillStore.names.includes('tauri-app-creator') && skillStore.names.includes('tauri-app-sql'),
+      skillStore.names.join(' | '));
+    check('skill_list: a disable-model-invocation skill is listed (the dropdown is its only door)',
+      skillStore.disabled.includes('nightly-build'),
+      skillStore.disabled.join(' | '));
+
+    // Block rendering: the fixture's /skill: entry (mid-session) renders
+    // the green block — name header, collapsed 200-char preview, working
+    // expando. The earlier checks left an archived session open, so the
+    // demo session's transcript comes back first.
+    await evalPage(wsUrl, `(() => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      const row = [...left.querySelectorAll('.srow')].find((r) => r.textContent.includes('Protocol crate'));
+      if (!row) return false;
+      row.click();
+      return true;
+    })()`);
+    await sleep(400);
+    // The skill entry sits at index 5000. Scroll to mid, then jump up one
+    // viewport at a time until the render window covers it (the bar shows
+    // the live window range).
+    await evalPage(wsUrl, `(() => {
+      const sc = document.querySelector('.scroll');
+      sc.scrollTop = sc.scrollHeight / 2;
+      sc.dispatchEvent(new Event('scroll'));
+      return true;
+    })()`);
+    for (let step = 0; step < 40; step++) {
+      const covered = await evalPage(wsUrl, `(() => {
+        const bar = [...document.querySelectorAll('.bar')].pop();
+        const t = bar ? (bar.innerText || '').replace(/\\n/g, ' ') : '';
+        const nums = (t.split('RENDER')[1] || '').match(/[0-9]+/g) || [];
+        return nums.length >= 2 && Number(nums[0]) <= 5000 && Number(nums[1]) >= 5000;
+      })()`);
+      if (covered) break;
+      await evalPage(wsUrl, `(() => {
+        const sc = document.querySelector('.scroll');
+        sc.scrollTop = Math.max(0, sc.scrollTop - 800);
+        sc.dispatchEvent(new Event('scroll'));
+        return true;
+      })()`);
+      await sleep(300);
+    }
+    const skillBlock = await evalPage(wsUrl, `(() => {
+      const b = document.querySelector('.skillblock');
+      if (!b) return { missing: 'no .skillblock in the window' };
+      const title = b.querySelector('.skilltitle')?.textContent ?? '';
+      const body = b.querySelector('.skillbody')?.textContent ?? '';
+      return {
+        title,
+        collapsedLen: body.length,
+        endsEllipsis: body.endsWith('…'),
+        full: b.querySelector('.skillbody').textContent,
+        hasExpando: Boolean(b.querySelector('.expando'))
+      };
+    })()`);
+    if (skillBlock.missing) throw new Error(skillBlock.missing);
+    check('the skill entry renders the green block with the name header',
+      skillBlock.title === 'skill - tauri-app-creator',
+      skillBlock.title);
+    check('the skill body is collapsed to the 200-char preview with an expando',
+      skillBlock.collapsedLen <= 202 && skillBlock.endsEllipsis && skillBlock.hasExpando,
+      'preview ' + skillBlock.collapsedLen + ' chars' + (skillBlock.endsEllipsis ? ' …' : ''));
+    await evalPage(wsUrl, `document.querySelector('.skillblock .expando').click()`);
+    await sleep(100);
+    const skillExpanded = await evalPage(wsUrl, `document.querySelector('.skillblock .skillbody').textContent`);
+    check('the skill block expando reveals the full body',
+      skillExpanded.length > 200 && !skillExpanded.endsWith('…') && skillExpanded.includes('User request:'),
+      'expanded ' + skillExpanded.length + ' chars');
+
+    // The composer's / autocomplete: a leading / lists the skills (the
+    // disabled one too), Enter completes to /skill:<name> .
+    const dropdown = await evalPage(wsUrl, `new Promise((res) => {
+      const ta = document.querySelector('.composer textarea');
+      ta.focus();
+      ta.value = '/';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(() => {
+        const opts = [...document.querySelectorAll('.dropdown .opt')].map((o) => o.querySelector('.oname')?.textContent ?? '');
+        res(opts);
+      }, 100);
+    })`);
+    check('typing / opens the autocomplete with all the workspace skills (incl. the disabled one)',
+      dropdown.includes('/tauri-app-creator') && dropdown.includes('/tauri-app-sql') && dropdown.includes('/nightly-build'),
+      dropdown.join(' | '));
+    const completed = await evalPage(wsUrl, `new Promise((res) => {
+      const ta = document.querySelector('.composer textarea');
+      ta.value = '/ta';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(() => {
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        setTimeout(() => res({ value: ta.value, open: Boolean(document.querySelector('.dropdown')) }), 100);
+      }, 100);
+    })`);
+    check('Enter completes the open dropdown to /skill:<name> (and it stays plain text)',
+      completed.value === '/skill:tauri-app-creator ' && !completed.open,
+      completed.value + (completed.open ? ' [dropdown still open]' : ''));
+
     // focus mode collapses both panes
     const collapsed = await evalPage(wsUrl, `new Promise((res) => {
       const body = document.querySelector('.body');

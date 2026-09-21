@@ -107,20 +107,23 @@ function genPayload(i: number): unknown {
 
 // The markdown edge cases the prototype verified, as real entries at the
 // tail (the side-by-side check against prototype/gui-ia/index.html).
-function specialEntries(): FixtureEntry[] {
-  const mk = (
-    id: number,
-    kind: string,
-    payload: unknown,
-    first_kept: string | null = null
-  ): FixtureEntry => ({
+function mk(
+  id: number,
+  kind: string,
+  payload: unknown,
+  first_kept: string | null = null
+): FixtureEntry {
+  return {
     id: String(id).padStart(8, '0'),
     parent: String(id - 1).padStart(8, '0'),
     kind,
     timestamp: T0 + id * 47000,
     payload,
     first_kept
-  });
+  };
+}
+
+function specialEntries(): FixtureEntry[] {
   return [
     mk(9990, 'user', userPayload('Show me the SSE parser edge case you found.')),
     mk(
@@ -157,19 +160,7 @@ function specialEntries(): FixtureEntry[] {
       range: 'g1–g12',
       log: "frozen prefix: the parent's observation log verbatim (never re-observed, never re-reflected)"
     }),
-    // A /skill: invocation (ticket #28): the entry records the expansion
-    // template and carries the skill marker — the green block's source.
-    mk(9998, 'user', {
-      text:
-        'Skill `tauri-app-creator` — follow the instructions below. The skill directory is /home/user/git/tau/.agents/skills/tauri-app-creator; resolve relative paths in the instructions against it.\n\n' +
-        'Scaffold a Tauri v2 application with the Svelte frontend: 1) run `npm create tauri-app` choosing the Svelte template, 2) wire the plugin permissions into tauri.conf.json, 3) verify with `cargo build` and the dev server, then hand back the tree layout.\n\n' +
-        'User request: set up a new tauri + svelte workspace',
-      lane: 'steering',
-      skill: {
-        name: 'tauri-app-creator',
-        location: '/home/user/git/tau/.agents/skills/tauri-app-creator/SKILL.md'
-      }
-    }),
+    mk(9998, 'user', userPayload('Park and wait for the sub-agent benchmark.')),
     mk(
       9999,
       'assistant',
@@ -271,6 +262,23 @@ export function buildDemoSession(): DemoSession {
   const specials = specialEntries();
   raw[N - 10] = specials[0];
   for (let k = 0; k < 9; k++) raw[N - 10 + 1 + k] = specials[1 + k];
+
+  // Mid-session (index 5000): a /skill: invocation (ticket #28) — the
+  // entry records the expansion template and carries the skill marker,
+  // the green block's source. Mid, not at the tail: the demo streams
+  // keep appending after the 10k fixture.
+  const skillEntry = mk(5000, 'user', {
+    text:
+      'Skill `tauri-app-creator` — follow the instructions below. The skill directory is /home/user/git/tau/.agents/skills/tauri-app-creator; resolve relative paths in the instructions against it.\n\n' +
+      'Scaffold a Tauri v2 application with the Svelte frontend: 1) run `npm create tauri-app` choosing the Svelte template, 2) wire the plugin permissions into tauri.conf.json, 3) verify with `cargo build` and the dev server, then hand back the tree layout.\n\n' +
+      'User request: set up a new tauri + svelte workspace',
+    lane: 'steering',
+    skill: {
+      name: 'tauri-app-creator',
+      location: '/home/user/git/tau/.agents/skills/tauri-app-creator/SKILL.md'
+    }
+  });
+  raw[5000] = skillEntry;
 
   const views = raw.map(view);
   const entries: Entry[] = views.map((v) => {
