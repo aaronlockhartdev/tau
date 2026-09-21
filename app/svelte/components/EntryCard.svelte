@@ -316,7 +316,7 @@
     font: 10px var(--mono);
     letter-spacing: 0.08em;
     color: var(--faint);
-    margin: 14px 2px 8px;
+    margin: 0 2px 8px;
   }
   .thd::after {
     content: '';
