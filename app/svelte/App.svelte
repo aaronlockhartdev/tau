@@ -56,7 +56,7 @@
       {:else}
         <div class="empty">
           <span class="big">No workspace open</span>
-          <span>Use the + tab to open one, or run with ?demo=1 for the 10k fixture</span>
+          <span>Workspaces are remembered from previous runs</span>
         </div>
       {/if}
     </main>

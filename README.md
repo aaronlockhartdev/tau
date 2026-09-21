@@ -37,15 +37,15 @@ On Linux, `./build` builds the core and the frontend (the app bundle needs the w
 TAU_LIVE=1 ./scripts/acceptance.sh
 ```
 
-The script proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per leg: the built app launches (macOS), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the 10k-entry performance demo (two live 25 ms streams, 25 ms coalescing) passes. Live legs are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
+The script proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per leg: the built app launches (macOS), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the 10k-entry demo entry (two live 25 ms streams, 25 ms coalescing) passes. Live legs are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
 
-The performance bar is the GUI's `?demo=1` mode (`app/verify-demo.mjs` is its committed, re-runnable verification):
+The performance bar is a dev-only demo entry — the 10k-entry fixture + two 25 ms streams behind `app/demo.html`, excluded from the release build (`app/scripts/verify-demo.mjs` is its committed, re-runnable verification):
 
 ```sh
 node app/scripts/verify-demo.mjs
 ```
 
-and a human click-through: open the built app, append `?demo=1` to the window URL (dev mode: `npm run dev` in `app/`), and scroll the 10k-entry session while the two streams run — the status bar shows the render range, render time, and stream count.
+and a human click-through: `npm run dev` in `app/`, open `http://localhost:5173/demo.html`, and scroll the 10k-entry session while the two streams run — the status bar shows the render range, render time, and stream count.
 
 ## Repository layout
 

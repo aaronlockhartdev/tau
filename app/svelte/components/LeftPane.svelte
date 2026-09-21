@@ -51,44 +51,6 @@
     void renameSession(id, renameText);
   }
 
-  // The demo's file tree (the prototype's fixture). The v0 protocol has a
-  // file_read command but no directory listing, so the live pane shows a
-  // note instead of a fake tree.
-  type FileNode = { n?: string; d?: number; ch?: FileNode[]; f?: string };
-  const DEMO_TREE: FileNode[] = [
-    {
-      n: 'src',
-      d: 1,
-      ch: [
-        { n: 'protocol', d: 1, ch: [{ f: 'message.rs' }, { f: 'sse.rs' }, { f: 'envelope.rs' }] },
-        { f: 'loop.rs' },
-        { f: 'main.rs' }
-      ]
-    },
-    {
-      n: 'docs',
-      d: 1,
-      ch: [
-        {
-          n: 'adr',
-          d: 1,
-          ch: [
-            { f: '0001-native-subagents-and-task-handoff.md' },
-            { f: '0004-om-based-compaction.md' },
-            { f: '0006-core-gui-protocol-single-message-crate.md' }
-          ]
-        },
-        { f: 'v0.md' }
-      ]
-    },
-    { f: 'CONTEXT.md' },
-    { f: 'AGENTS.md' },
-    { f: 'Cargo.toml' }
-  ];
-  let openDirs = new Set<string>(['src/', 'src/protocol/', 'docs/']);
-  function toggleDir(path: string): void {
-    openDirs.has(path) ? openDirs.delete(path) : openDirs.add(path);
-  }
   const onKey = (fn: () => void) => (e: KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
@@ -145,47 +107,7 @@
   {#if p}
     {#if p.ltab === 'files'}
       <div class="sec">
-        {#if store.demo}
-          <div class="fbox">
-            {#each DEMO_TREE as it, i (i)}
-              {#if it.d}
-                {@const path = it.n + '/'}
-                <div class="frow">
-                  <button class="chev" type="button" onclick={() => toggleDir(path)}
-                    >{openDirs.has(path) ? '▾' : '▸'}</button
-                  ><span class="dir">{it.n}/</span>
-                </div>
-                {#if openDirs.has(path) && it.ch}
-                  <div class="fbox">
-                    {#each it.ch as sub, j (j)}
-                      {#if sub.d}
-                        {@const spath = path + sub.n + '/'}
-                        <div class="frow d1">
-                          <button class="chev" type="button" onclick={() => toggleDir(spath)}
-                            >{openDirs.has(spath) ? '▾' : '▸'}</button
-                          ><span class="dir">{sub.n}/</span>
-                        </div>
-                        {#if openDirs.has(spath) && sub.ch}
-                          <div class="fbox d2">
-                            {#each sub.ch as leaf, k (k)}
-                              <div class="frow d2"><span class="chev hide"></span><span class="fn">{leaf.f}</span></div>
-                            {/each}
-                          </div>
-                        {/if}
-                      {:else}
-                        <div class="frow d1"><span class="chev hide"></span><span class="fn">{sub.f}</span></div>
-                      {/if}
-                    {/each}
-                  </div>
-                {/if}
-              {:else}
-                <div class="frow"><span class="chev hide"></span><span class="fn">{it.f}</span></div>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <div class="note">v0 has no directory-listing command — the file tree shows in the demo only.</div>
-        {/if}
+        <div class="note">v0 has no directory-listing command.</div>
       </div>
     {:else}
       <div class="sec">
@@ -382,41 +304,6 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
-  }
-  .fbox {
-    padding-left: 12px;
-  }
-  .frow {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2.5px 12px;
-    font-size: 12px;
-    color: var(--dim);
-  }
-  .frow.d1 {
-    padding-left: 26px;
-  }
-  .frow.d2 {
-    padding-left: 40px;
-  }
-  .frow .dir {
-    color: var(--dim);
-  }
-  .frow .fn {
-    color: var(--tx);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .frow .chev {
-    font-size: 9px;
-    color: var(--dim);
-    width: 10px;
-    flex: none;
-  }
-  .frow .chev.hide {
-    visibility: hidden;
   }
   .note {
     padding: 14px;

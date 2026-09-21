@@ -289,7 +289,7 @@ export type ProtocolError =
   | { kind: 'other'; message: string };
 
 // Transport #1 (ADR-0002: tau-core/tau-protocol are free of Tauri types; the
-// GUI is the one place that sees them). The demo path (no Tauri window)
+// GUI is the one place that sees them). The dev-only entry (no Tauri window)
 // never calls these.
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
@@ -308,7 +308,7 @@ export function onEvents(cb: (events: Event[]) => void): Promise<UnlistenFn> {
   return listen<Event[]>('tau://event', (e) => cb(e.payload));
 }
 
-// Tauri transport detection (ADR-0006): the browser demo path (?demo=1)
+// Tauri transport detection (ADR-0006): a plain browser page
 // runs without the Tauri window.
 export function isTauri(): boolean {
   return '__TAURI_INTERNALS__' in window;

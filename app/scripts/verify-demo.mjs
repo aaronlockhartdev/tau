@@ -1,6 +1,7 @@
 // Acceptance verification for ticket #25 (one line: `node scripts/verify-demo.mjs`).
-// Builds, serves the demo, and drives headless Chrome over CDP (no deps —
-// Node's built-in WebSocket). MIDDLE-of-session visibility is the bar:
+// Builds the dev-only demo entry, serves it with vite preview, and drives
+// headless Chrome over CDP (no deps — Node's built-in WebSocket).
+// MIDDLE-of-session visibility is the bar:
 // visible cards in the viewport, track height ≈ 1× the real sum (not 2×),
 // windowed DOM, render stats in the bar, focus mode, usage numbers,
 // and the 25 ms demo streams flowing.
@@ -103,7 +104,7 @@ const proc = spawn(CHROME, [
   { shell: process.platform !== 'darwin' });
 
 try {
-  await run('npm', ['run', 'build']);
+  await run('npx', ['vite', 'build', '--mode', 'demo']);
   const preview = spawn('npx', ['vite', 'preview', '--port', String(PORT), '--strictPort', '--host', '127.0.0.1'], {
     cwd: ROOT,
     stdio: 'pipe'
@@ -125,7 +126,7 @@ try {
         await sleep(200);
       }
     }
-    const url = encodeURIComponent(`http://127.0.0.1:${PORT}/?demo=1`);
+    const url = encodeURIComponent(`http://127.0.0.1:${PORT}/demo.html`);
     const target = await http('PUT', `http://127.0.0.1:${CDP}/json/new?${url}`);
     const wsUrl = target.webSocketDebuggerUrl;
     await sleep(2500); // demo load + first coalesced stream flushes
@@ -347,8 +348,8 @@ try {
       archAfter.length === 2 && archAfter[0].includes('first session store'), archAfter.join(' | '));
 
     // --- ticket #28: skills ---
-    // skill_list: the store fetched the demo workspace's registry (the
-    // demo's stand-in for the command) and cached it per workspace; a
+    // skill_list: the demo entry loaded the fixture's registry into the
+    // store's per-workspace cache (the stand-in for the command); a
     // disable-model-invocation skill is listed (the dropdown is its door).
     const skillStore = await evalPage(wsUrl, `(() => {
       const skills = window.__tau.store().skills['w-demo'] ?? [];
@@ -408,30 +409,31 @@ try {
       return true;
     })()`);
     await sleep(400);
-    // The skill entry sits at index 5000. Scroll to mid, then jump up one
-    // viewport at a time until the render window covers it (the bar shows
-    // the live window range).
+    // The skill entry sits at index 5000. Scroll to mid, then steer the
+    // render window onto it (the bar shows the live window range); the
+    // step is smaller than the window, so the boundary can't be jumped.
     await evalPage(wsUrl, `(() => {
       const sc = document.querySelector('.scroll');
       sc.scrollTop = sc.scrollHeight / 2;
       sc.dispatchEvent(new Event('scroll'));
       return true;
     })()`);
-    for (let step = 0; step < 40; step++) {
-      const covered = await evalPage(wsUrl, `(() => {
+    for (let step = 0; step < 80; step++) {
+      const range = await evalPage(wsUrl, `(() => {
         const bar = [...document.querySelectorAll('.bar')].pop();
         const t = bar ? (bar.innerText || '').replace(/\\n/g, ' ') : '';
         const nums = (t.split('RENDER')[1] || '').match(/[0-9]+/g) || [];
-        return nums.length >= 2 && Number(nums[0]) <= 5000 && Number(nums[1]) >= 5000;
+        return { start: Number(nums[0]), end: Number(nums[1]) };
       })()`);
-      if (covered) break;
+      if (range.start <= 5000 && range.end >= 5000) break;
+      const delta = range.start > 5000 ? -200 : 200;
       await evalPage(wsUrl, `(() => {
         const sc = document.querySelector('.scroll');
-        sc.scrollTop = Math.max(0, sc.scrollTop - 800);
+        sc.scrollTop = Math.max(0, sc.scrollTop + ${delta});
         sc.dispatchEvent(new Event('scroll'));
         return true;
       })()`);
-      await sleep(300);
+      await sleep(150);
     }
     const skillBlock = await evalPage(wsUrl, `(() => {
       const b = document.querySelector('.skillblock');

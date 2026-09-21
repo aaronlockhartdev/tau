@@ -1,12 +1,10 @@
 <script lang="ts">
   // Workspace tags on top (spec §9): one tag per open workspace with a
-  // visible × on every tag, a + to open a new workspace, and the
+  // visible × on every tag, and the
   // focus-mode toggle that hides both side panes (spec: chat is always
   // central; focus mode is a deliberate collapse, not a different app).
 
-  import { store, openWorkspace, closeWorkspace, addWorkspace } from '../lib/store.svelte';
-
-  let menuOpen = $state(false);
+  import { store, openWorkspace, closeWorkspace } from '../lib/store.svelte';
 </script>
 
 <div class="bar">
@@ -22,16 +20,6 @@
       <button class="x" aria-label="Close workspace" onclick={() => closeWorkspace(w)}>×</button>
     </div>
   {/each}
-  <div class="addwrap">
-    <button class="add" title="Open a workspace" onclick={() => (menuOpen = !menuOpen)}>+</button>
-    {#if menuOpen}
-      <div class="menu">
-        <button class="mi" onclick={() => { menuOpen = false; void addWorkspace(); }}>
-          {store.demo ? 'New window' : 'Open folder…'}
-        </button>
-      </div>
-    {/if}
-  </div>
   <span class="spacer"></span>
   <button
     class="focus"
@@ -108,44 +96,6 @@
   .x:hover {
     color: var(--red);
     background: rgba(255, 90, 90, 0.12);
-  }
-  .addwrap {
-    position: relative;
-  }
-  .add {
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
-    color: var(--dim);
-    font-size: 15px;
-  }
-  .add:hover {
-    color: var(--tx);
-    background: var(--panel2);
-  }
-  .menu {
-    position: absolute;
-    top: 30px;
-    left: 0;
-    background: var(--panel2);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 4px;
-    z-index: 10;
-    min-width: 140px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-  }
-  .mi {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 6px 10px;
-    border-radius: 4px;
-    font-size: 12.5px;
-    color: var(--tx);
-  }
-  .mi:hover {
-    background: rgba(76, 194, 255, 0.1);
   }
   .spacer {
     flex: 1;

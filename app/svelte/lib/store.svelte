@@ -24,8 +24,7 @@
     type ViewEntry,
     type Workspace
   } from './protocol';
-  import { buildDemoSession, demoSkills, toEntry } from './fixture';
-  import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
+  import { toEntry } from './fixture';
 
 
   export interface PendingMsg {
@@ -67,7 +66,6 @@
     sessions: {} as Record<string, SessionState>,
     loading: false,
     error: null as string | null,
-    demo: false,
     // The transcript's last window computation (spec §9 seg3 render stats).
     renderRange: '',
     renderMs: 0,
@@ -160,8 +158,6 @@
   let callStartMs = new Map<string, number>();
   const PENDING_CAP = 64 * 1024;
 
-  let demoViews: ViewEntry[] = [];
-  let demoStreamsStarted = false;
 
   function sessionOf(sid: string): SessionState {
     const s = store.sessions[sid];
@@ -198,14 +194,10 @@
     store.error = null;
     try {
       const params = new URLSearchParams(window.location.search);
-      if (params.get('demo') === '1') {
-        startDemo();
-        return;
-      }
       // Outside the Tauri shell there is no core to talk to; invoke would
-      // hang forever, so fail fast with the one way to run in a browser.
+      // hang forever, so fail fast.
       if (!isTauri()) {
-        store.error = 'no Tauri window — run the app, or open with ?demo=1 for the browser demo';
+        store.error = 'no Tauri window — run the app';
         return;
       }
       const out = await command({ type: 'workspace_list' });
@@ -225,305 +217,21 @@
     }
   }
 
-  function startDemo(): void {
-    store.demo = true;
-    const { meta, entries, views } = buildDemoSession();
-    demoViews = views;
-    store.workspaces = [{ id: 'w-demo', name: 'tau', cwd: '~/git/tau' }];
-    store.skills['w-demo'] = demoSkills();
-    store.current = meta.id;
-    store.sessions[meta.id] = {
-      meta,
-      entries,
-      live: [],
-      usage: meta.usage,
-      tps: 0,
-      turn: 'idle',
-      pending: [
-        { text: 'use the 62-char alphabet, not base36', lane: 'steering' },
-        { text: 'before you finish, run cargo fmt', lane: 'steering' },
-        { text: 'also update CONTEXT.md with the new terms', lane: 'follow-up' }
-      ],
-      parent: null,
-      state: 'idle',
-      waiting_on: null,
-      archived: false,
-      mru: meta.created,
-      subagents: demoSubagents(),
-      tasks: demoTasks()
-    };
-    // The demo parent's usage: the sum of its children's (the bar's usage
-    // segment shows real tokens, not undefined).
-    store.sessions[meta.id].usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000, cached_prompt_tokens: 0 };
-    for (const c of demoChildren()) store.sessions[c.meta.id] = c;
-    startDemoStreams();
-  }
-
-
-  // Verification seam (both modes): feed wire-shaped events through
-  // applyEvents and read the store's live-stream lengths (store level — the
+  // Verification seam (the dev rig): feed wire-shaped events through
+  // applyEvents and read the current session's live-stream lengths (store level — the
   // virtualized DOM only shows the window, one stream card can sit outside it).
   (window as unknown as { __tau?: unknown }).__tau = {
     applyEvents,
     store: () => store,
     liveTexts: () =>
-      (store.sessions['demo']?.live ?? []).map((l) => (l.text ?? '').length),
+      (store.current ? store.sessions[store.current]?.live ?? [] : []).map((l) => (l.text ?? '').length),
     // send/stop/openWorkspace are module exports the rig drives directly;
     // hoisted above.
     send,
     stop,
     openWorkspace
   };
-  // The #26 pane dataset (the prototype's): six sub-agent sessions under
-  // the demo session (TWO running), a nested pair under the idle one as
-  // real store sessions, two archived top-level sessions, and the five
-  // tasks with steps/criteria/evidence.
-  function demoMeta(id: string, title: string, created: number): SessionMeta {
-    return {
-      id,
-      workspace: 'w-demo',
-      title,
-      parent: null,
-      created,
-      leaf: null,
-      model: 'vllm/qwen3.8-27b',
-      usage: null
-    };
-  }
 
-  function demoChild(
-    id: string,
-    title: string,
-    handle: string | null,
-    parent: string | null,
-    state: SubagentInfo['state'],
-    waitingOn: SubagentInfo['waiting_on'],
-    lastMessage: string | null,
-    usage: Usage,
-    created: number,
-    mru: number,
-    subagents: SubagentInfo[],
-    tasks: Task[],
-    archived = false
-  ): SessionState {
-    return {
-      meta: demoMeta(id, title, created),
-      entries: [],
-      live: [],
-      usage,
-      tps: 0,
-      turn: state === 'running' ? 'running' : 'idle',
-      pending: [],
-      parent,
-      state,
-      waiting_on: state === 'idle' ? waitingOn : null,
-      archived,
-      mru,
-      subagents,
-      tasks
-    };
-  }
-
-  function demoChildren(): SessionState[] {
-    const now = Date.now();
-    return [
-      demoChild('c1', 'provider hardening', 'a', 'demo', 'running', null, 'retry loop done, writing backoff tests', { input_tokens: 41200, output_tokens: 8900, total_tokens: 50100, cached_prompt_tokens: 0 }, now - 3600e3, now - 60e3, [], [demoTask('t1', 'in_progress', 'c1', 0)]),
-      demoChild('c2', 'protocol surface', 'b', 'demo', 'idle', 'parent', 'types drafted — needs review sign-off', { input_tokens: 88000, output_tokens: 31000, total_tokens: 119000, cached_prompt_tokens: 0 }, now - 7200e3, now - 180e3, [
-        demoSub('g1', 'cg1', 'fresh', 'idle', 'subagent', 'waiting on the field renames'),
-        demoSub('g2', 'cg2', 'compacted', 'running', null, 'renaming the event groups')
-      ], [demoTask('t4', 'blocked', 'c2', 1)]),
-      demoChild('c3', 'config loader', 'c', 'demo', 'done', null, 'loader passes all tests', { input_tokens: 12400, output_tokens: 6100, total_tokens: 18500, cached_prompt_tokens: 0 }, now - 14400e3, now - 3600e3, [], [demoTask('t2', 'done', 'c3', 0)]),
-      demoChild('c4', 'fixture generator', 'd', 'demo', 'failed', null, 'provider rejected the degenerate observation run', { input_tokens: 30100, output_tokens: 9400, total_tokens: 39500, cached_prompt_tokens: 0 }, now - 21600e3, now - 5400e3, [], [demoTask('t5', 'done', 'c4', 0)]),
-      demoChild('c5', 'doc sweep', 'e', 'demo', 'stopped', null, 'stopped by user mid-sweep', { input_tokens: 5200, output_tokens: 2100, total_tokens: 7300, cached_prompt_tokens: 0 }, now - 28800e3, now - 7200e3, [], []),
-      // The prototype's 6th child — TWO running, so the badge rule is testable.
-      demoChild('c6', 'snapshot benchmark', 'f', 'demo', 'running', null, 'measuring the 10k snapshot size', { input_tokens: 15600, output_tokens: 3400, total_tokens: 19000, cached_prompt_tokens: 0 }, now - 1800e3, now - 30e3, [], []),
-      // The nested pair as real store sessions (depth 2) — double-click opens them.
-      demoChild('cg1', 'event renames', 'g1', 'c2', 'idle', 'subagent', 'waiting on the field renames', { input_tokens: 1200, output_tokens: 400, total_tokens: 1600, cached_prompt_tokens: 0 }, now - 3600e3, now - 120e3, [], []),
-      demoChild('cg2', 'event groups', 'g2', 'c2', 'running', null, 'renaming the event groups', { input_tokens: 2100, output_tokens: 900, total_tokens: 3000, cached_prompt_tokens: 0 }, now - 3000e3, now - 90e3, [], []),
-      // Two archived top-level sessions (the prototype's a1/a2).
-      demoChild('a1', 'old: provider spike', null, null, 'done', null, 'archived after the spike closed', { input_tokens: 9800, output_tokens: 2400, total_tokens: 12200, cached_prompt_tokens: 0 }, now - 86400e3 * 30, now - 86400e3 * 5, [], [], true),
-      demoChild('a2', 'old: first session store', null, null, 'done', null, 'archived — superseded by the JSONL store', { input_tokens: 14300, output_tokens: 5100, total_tokens: 19400, cached_prompt_tokens: 0 }, now - 86400e3 * 45, now - 86400e3 * 10, [], [], true)
-    ];
-  }
-
-  function demoSub(handle: string, child: string, mode: SubagentInfo['context_mode'], state: SubagentInfo['state'], waitingOn: SubagentInfo['waiting_on'], lastMessage: string | null): SubagentInfo {
-    return {
-      handle,
-      child,
-      agent_type: 'general',
-      context_mode: mode,
-      state,
-      waiting_on: waitingOn,
-      last_message: lastMessage,
-      usage: { input_tokens: 1200, output_tokens: 400, total_tokens: 1600, cached_prompt_tokens: 0 },
-      task: null,
-      resume_contract: null
-    };
-  }
-
-  function demoSubagents(): SubagentInfo[] {
-    return [
-      demoSub('a', 'c1', 'compacted', 'running', null, 'writing backoff tests'),
-      demoSub('b', 'c2', 'fork', 'idle', 'parent', 'types drafted — needs review sign-off'),
-      demoSub('c', 'c3', 'fresh', 'done', null, 'loader passes all tests'),
-      demoSub('d', 'c4', 'compacted', 'failed', null, 'provider rejected the degenerate run'),
-      demoSub('e', 'c5', 'fresh', 'stopped', null, 'stopped by user mid-sweep'),
-      demoSub('f', 'c6', 'compacted', 'running', null, 'measuring the 10k snapshot size')
-    ];
-  }
-
-  function demoTask(id: string, status: Task['status'], worker: string, skip: number): Task {
-    const now = Date.now();
-    const base: Task = {
-      id,
-      title: { t1: 'Harden provider retry/backoff', t2: 'Config loader with layering', t3: 'Migrate tests to the 62-char alphabet', t4: 'Protocol surface: types & events', t5: '10k-entry fixture generator' }[id] ?? id,
-      status,
-      steps: [],
-      criteria: [],
-      evidence: [],
-      blockers: [],
-      notes: [],
-      worker: { session: worker, status },
-      created_in: 'demo',
-      updated: now - 60e3 * (skip + 1),
-      resume_contract: undefined,
-      decisions: []
-    };
-    return base;
-  }
-
-  function demoTasks(): Task[] {
-    const now = Date.now();
-    const t1 = demoTask('t1', 'in_progress', 'c1', 0);
-    t1.steps = [
-      { text: 'inventory the retry paths', status: 'done', expected_output: 'retry-path list in the session' },
-      { text: 'add backoff + jitter tests', status: 'active', expected_output: 'hardened retry/backoff tests' },
-      { text: 'run the live acceptance', status: 'pending', expected_output: 'green live run log' }
-    ];
-    t1.criteria = [
-      { text: 'retries on mid-stream provider errors', status: 'satisfied' },
-      { text: 'backoff is capped', status: 'satisfied' },
-      { text: 'live run passes', status: 'pending' }
-    ];
-    t1.evidence = [
-      { criterion: 'retries on mid-stream provider errors', summary: 'mid-stream error preserves partial output', command: 'cargo test -p tau-core sse', passed: true },
-      { criterion: 'backoff is capped', summary: 'backoff capped at 64 s', command: 'cargo test -p tau-core backoff', passed: true }
-    ];
-    t1.resume_contract = {
-      task: 't1',
-      title: t1.title,
-      status: 'in_progress',
-      current_step: { text: t1.steps[1].text, expected_output: t1.steps[1].expected_output },
-      steps: t1.steps,
-      evidence: t1.evidence,
-      gaps: ['timeout path untested'],
-      blockers: [],
-      next_action: 'finish the backoff test, then the live acceptance'
-    };
-    const t2 = demoTask('t2', 'done', 'c3', 1);
-    t2.steps = [
-      { text: 'parse the TOML layers', status: 'done', expected_output: 'layering rules' },
-      { text: 'reject unknown keys', status: 'done', expected_output: 'unknown-key test' }
-    ];
-    t2.criteria = [
-      { text: 'project layer wins on collision', status: 'satisfied' },
-      { text: 'unknown keys rejected', status: 'satisfied' }
-    ];
-    t2.evidence = [{ criterion: 'project layer wins on collision', summary: 'collision + unknown-key tests green', command: 'cargo test -p tau-core config', passed: true }];
-    t2.decisions = [{ question: 'wholesale or field-level layering?', decision: 'field-level fallback per entry', decided_by: 'user' }];
-    const t3 = demoTask('t3', 'pending', 'c1', 2);
-    t3.steps = [
-      { text: 'map base36 call sites', status: 'pending', expected_output: 'call-site list' },
-      { text: 'port to the 62-char alphabet', status: 'pending', expected_output: 'ported + retested' }
-    ];
-    t3.criteria = [{ text: 'all tests green on the new alphabet', status: 'pending' }];
-    t3.worker = undefined;
-    const t4 = demoTask('t4', 'blocked', 'c2', 3);
-    t4.steps = [
-      { text: 'mirror the Rust types', status: 'done', expected_output: 'protocol.ts surface' },
-      { text: 'wire the event groups', status: 'active', expected_output: 'subagent + task event cases' }
-    ];
-    t4.criteria = [
-      { text: 'type-mirrors the crate field-for-field', status: 'satisfied' },
-      { text: 'review sign-off', status: 'pending' }
-    ];
-    t4.evidence = [{ criterion: 'type-mirrors the crate field-for-field', summary: 'svelte-check green against the crate', passed: true }];
-    t4.blockers = [{ reason: 'protocol types rejected in review', needs: 'resubmit after the N1 note' }];
-    t4.resume_contract = {
-      task: 't4',
-      title: t4.title,
-      status: 'blocked',
-      current_step: { text: t4.steps[1].text, expected_output: t4.steps[1].expected_output },
-      steps: t4.steps,
-      evidence: t4.evidence,
-      gaps: ['SubagentInfo shape pending review'],
-      blockers: t4.blockers,
-      next_action: 'address the review note, resubmit the types'
-    };
-    const t5 = demoTask('t5', 'done', 'c4', 4);
-    t5.steps = [{ text: 'generate the 10k-entry fixture', status: 'done', expected_output: 'the committed fixture' }];
-    t5.criteria = [{ text: 'snapshot stays under 2 MB', status: 'satisfied' }];
-    t5.evidence = [{ criterion: 'snapshot stays under 2 MB', summary: 'measured 1.9 MB at 10k entries', command: 'cargo test -p tau-protocol snapshot', passed: true }];
-    return [t1, t2, t3, t4, t5];
-  }
-
-  // Two live child streams: generated at 47 ms, flushed (coalesced) at
-  // 25 ms — the prototype's exact cadence, through the real consumer.
-  function startDemoStreams(): void {
-    if (demoStreamsStarted) return;
-    demoStreamsStarted = true;
-    const ws = 'w-demo';
-    const sid = 'demo';
-    const lines = [
-      '  let buf = &mut self.buf;',
-      '  while let Some((i, line)) = scan_line(buf) {',
-      '      match self.state {',
-      '          St::Sse => self.on_line(line)?,',
-      '          St::Json => self.on_chunk(line)?,',
-      '      }',
-      '  }',
-      '  Ok(())'
-    ];
-    const streams = [
-      { call: 'demo-live-1', tok: 0, buf: '', sent: 0, started: false },
-      { call: 'demo-live-2', tok: 3, buf: '', sent: 0, started: false }
-    ];
-    const dirty = new Set<string>();
-    setInterval(() => {
-      for (const s of streams) {
-        s.buf += (s.buf ? '\n' : '') + lines[s.tok % lines.length];
-        s.tok++;
-        dirty.add(s.call);
-      }
-    }, 47);
-    setInterval(() => {
-      if (dirty.size === 0) return;
-      const batch: Event[] = [];
-      for (const c of dirty) {
-        const s = streams.find((x) => x.call === c)!;
-        if (!s.started) {
-          s.started = true;
-          batch.push({ type: 'stream_start', workspace: ws, session: sid, call_id: s.call });
-        }
-        // Deltas are incremental (appended since the last flush, spec §8);
-        // the consumer accumulates.
-        const inc = s.buf.slice(s.sent);
-        s.sent = s.buf.length;
-        if (inc) {
-          batch.push({
-            type: 'stream_delta',
-            workspace: ws,
-            session: sid,
-            call_id: s.call,
-            text: inc,
-            reasoning: null
-          });
-        }
-      }
-      dirty.clear();
-      applyEvents(batch);
-    }, 25);
-  }
 
   function snapshotToState(snap: Snapshot): SessionState {
     const meta = snap.session;
@@ -564,7 +272,7 @@
   let opening = false;
 
   export async function openWorkspace(ws: Workspace): Promise<void> {
-    if (store.demo || opening) return;
+    if (opening) return;
     opening = true;
     try {
       await openWorkspaceInner(ws);
@@ -627,52 +335,11 @@
     await switchSession(sid);
   }
 
-  // A workspace is a project directory the core opens: the live + item
-  // picks one with the native folder dialog, the demo one is a fixture.
-  export async function addWorkspace(): Promise<void> {
-    if (!store.demo) {
-      try {
-        const dir = await pickDirectory({ directory: true, multiple: false });
-        if (typeof dir !== 'string' || dir === '') return; // the user cancelled
-        const name = dir.split('/').filter(Boolean).pop() ?? dir;
-        void openWorkspace({ id: 'w-pending', name, cwd: dir });
-      } catch (e) {
-        store.error = errText(e);
-      }
-      return;
-    }
-    const n = store.workspaces.length + 1;
-    const ws: Workspace = { id: `w-demo-${n}`, name: `demo ${n}`, cwd: `~/git/tau${n}` };
-    store.workspaces.push(ws);
-    store.skills[ws.id] = demoSkills();
-    const { meta, entries, views } = buildDemoSession();
-    // Its own session id (not the workspace's — the bar showed `ses w-demo-2`).
-    const m2 = { ...meta, id: `ses-${ws.id}`, workspace: ws.id, title: `Demo session ${n}` };
-    demoViews = views;
-    store.current = m2.id;
-    store.sessions[m2.id] = {
-      meta: m2,
-      entries,
-      live: [],
-      usage: m2.usage,
-      tps: 0,
-      turn: 'idle',
-      pending: [],
-      parent: null,
-      state: 'idle',
-      waiting_on: null,
-      archived: false,
-      mru: m2.created,
-      subagents: [],
-      tasks: []
-    };
-  }
-
   // A workspace can be opened by any client (this window, a future second
   // window, a remote backend): the store re-reads the list and, if nothing
   // is open yet, opens the first one — the boot rule, applied live.
   async function syncWorkspaces(): Promise<void> {
-    if (store.demo || opening) return;
+    if (opening) return;
     try {
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') return;
@@ -686,15 +353,13 @@
     }
   }
   export async function closeWorkspace(ws: Workspace): Promise<void> {
-    if (!store.demo) {
-      const list = await command({ type: 'session_list', workspace: ws.id }).catch(() => ({
-        kind: 'sessions' as const,
-        sessions: []
-      }));
-      if (list.kind === 'sessions') {
-        for (const s of list.sessions) {
-          await command({ type: 'session_close', session: s.id }).catch(() => {});
-        }
+    const list = await command({ type: 'session_list', workspace: ws.id }).catch(() => ({
+      kind: 'sessions' as const,
+      sessions: []
+    }));
+    if (list.kind === 'sessions') {
+      for (const s of list.sessions) {
+        await command({ type: 'session_close', session: s.id }).catch(() => {});
       }
     }
     delete store.skills[ws.id];
@@ -765,40 +430,26 @@
   }
 
   // A pane action (session tree row / sub-agent double-click): the child is
-  // an ordinary session — opening it switches the current view. The demo
-  // serves it from the prebuilt dataset; the live path fetches the snapshot.
+  // an ordinary session — opening it switches the current view.
   export async function openSessionById(sid: string): Promise<void> {
-    if (store.demo) {
-      if (store.sessions[sid]) {
-        store.sessions[sid].mru = Date.now();
-        store.current = sid;
-      }
-      return;
-    }
     await switchSession(sid);
   }
 
   // Paged read around the viewport (spec §8): the GUI decides the window,
-  // the core serves the slice. The demo answers from its in-memory views.
-  // Views keep the file's own id — the snapshot and this paged read must
-  // share one id namespace or their copies of an entry never match.
+  // the core serves the slice. Views keep the file's own id — the snapshot
+  // and this paged read must share one id namespace or their copies of an
+  // entry never match.
   export async function fetchWindow(sid: string, start: number, count: number): Promise<void> {
     const s = store.sessions[sid];
     if (!s || count <= 0) return;
-    let views: ViewEntry[];
-    if (store.demo) {
-      views = demoViews.slice(start, start + count);
-    } else {
-      const out = await command({
-        type: 'session_entries',
-        session: sid,
-        since: null,
-        range: { start, count }
-      });
-      if (out.kind !== 'entries') return;
-      views = out.entries;
-    }
-    mergeHydrated(s, views);
+    const out = await command({
+      type: 'session_entries',
+      session: sid,
+      since: null,
+      range: { start, count }
+    });
+    if (out.kind !== 'entries') return;
+    mergeHydrated(s, out.entries);
   }
 
   // One logical entry appears under two id namespaces: streamed under its call_id / u-
@@ -900,40 +551,6 @@
     if (sid === null || text.trim() === '') return;
     const s = sessionOf(sid);
     s.pending = s.pending.filter((p) => !(p.text === text && p.lane === lane));
-    if (store.demo) {
-      // The demo answers with one canned streamed turn through the same
-      // event consumer the live path uses.
-      const n = demoViews.length;
-      const id = String(n).padStart(8, '0');
-      const userView: ViewEntry = {
-        id,
-        parent: s.meta.leaf,
-        kind: 'user',
-        timestamp: Date.now(),
-        payload: { text, lane: lane === 'follow-up' ? 'follow_up' : lane },
-        blob: null,
-        first_kept: null
-      };
-      demoViews.push(userView);
-      s.entries.push(toEntry(userView));
-      s.meta.leaf = id;
-      const callId = 'demo-reply-' + id;
-      const answer = 'On it. ' + text + '\n```rust\nlet n = 0;\n```\nDone — **verified**.';
-      const usage: Usage = { input_tokens: 1200, output_tokens: 40, total_tokens: 1240, cached_prompt_tokens: 0 };
-      applyEvents([
-        { type: 'stream_start', workspace: s.meta.workspace, session: sid, call_id: callId },
-        { type: 'stream_delta', workspace: s.meta.workspace, session: sid, call_id: callId, text: answer, reasoning: null },
-        {
-          type: 'stream_end',
-          workspace: s.meta.workspace,
-          session: sid,
-          call_id: callId,
-          interrupted: false,
-          usage
-        }
-      ]);
-      return;
-    }
     // The user bubble appears at send time; the core's file copy of the
     // same entry hydrates later and is dropped against this one (twin).
     s.entries.push({ id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: 'user', text });
@@ -953,7 +570,6 @@
   export async function stop(): Promise<void> {
     const sid = store.current;
     if (sid === null) return;
-    if (store.demo) return;
     try {
       await command({ type: 'message_stop', session: sid });
     } catch (e) {
@@ -975,7 +591,6 @@
       if (p.text !== text || p.lane !== lane) return true;
       return seen++ !== idx;
     });
-    if (store.demo) return;
     try {
       const out = await command({ type: 'session_open', session: sid });
       if (out.kind === 'snapshot') {
@@ -1167,14 +782,12 @@
             const info = s.subagents.find((x) => x.handle === k.handle);
             // The live bridge sends detail as an object (core.rs: {waiting_on}
             // for idle, {by, resume_contract?} for stopped, {output},
-            // {reason}, null for running); the demo sends the bare string.
-            const d = k.detail as { waiting_on?: unknown } | string | null;
+            // {reason}, null for running).
+            const d = k.detail as { waiting_on?: unknown } | null;
             const waitingOn =
-              typeof d === 'string'
-                ? d
-                : d && typeof d === 'object' && typeof d.waiting_on === 'string'
-                  ? d.waiting_on
-                  : null;
+              d && typeof d === 'object' && typeof d.waiting_on === 'string'
+                ? d.waiting_on
+                : null;
             if (info) {
               info.state = st;
               if (waitingOn !== null) info.waiting_on = waitingOn;
