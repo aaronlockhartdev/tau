@@ -303,8 +303,8 @@ export function buildDemoSession(): DemoSession {
 }
 
 // The demo's skill registry (the store's demo-mode stand-in for the
-// skill_list command): one catalog skill and one model-invocation-disabled
-// skill — the dropdown is that one's only door.
+// skill_list command): two catalog skills and one
+// model-invocation-disabled skill — the dropdown is that one's only door.
 export function demoSkills(): SkillInfo[] {
   return [
     {

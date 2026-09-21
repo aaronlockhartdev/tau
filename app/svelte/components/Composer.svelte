@@ -7,7 +7,7 @@
   //
   // A leading `/` opens the /skill: autocomplete (ticket #28): arrows
   // navigate, Enter completes while the dropdown is open (sends while
-  // closed), Tab completes, Esc dismisses, and the mouse works. A
+  // closed), Tab completes, Esc or losing focus dismisses, and the mouse
   // completion is plain text until send; the expansion happens at the
   // message_send boundary, not here.
   import { store, send, type PendingMsg } from '../lib/store.svelte';
@@ -133,6 +133,7 @@
           aria-selected={i === sel}
           tabindex="-1"
           onmouseenter={() => (sel = i)}
+          onmousedown={(e) => e.preventDefault()}
           onkeydown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
@@ -154,6 +155,7 @@
     rows="3"
     placeholder="Message Tau — enter sends, shift+enter for a new line"
     onkeydown={onKey}
+    onblur={() => (completed = true)}
     oninput={() => {
       completed = false;
       sel = 0;
