@@ -84,6 +84,9 @@ struct Queued {
     /// Provenance: the child session that produced this wake message
     /// (ticket #23) — a child notification is a user entry with a `source`.
     source: Option<String>,
+    /// A skill invocation (ticket #28): the entry's payload carries
+    /// `(name, location)` so the GUI renders its green block.
+    skill: Option<(String, String)>,
 }
 
 fn lane_name(lane: Lane) -> &'static str {
@@ -187,6 +190,27 @@ impl AgentSession {
             text: text.into(),
             lane,
             source: None,
+            skill: None,
+        };
+        if lane == Lane::Force {
+            self.kill.store(true, Ordering::SeqCst);
+            inner.queue.push_front(msg);
+        } else {
+            inner.queue.push_back(msg);
+        }
+    }
+
+    /// A `/skill:` invocation expanded at the app's `message_send` boundary
+    /// (ticket #28): `text` is already the expansion template; the payload
+    /// carries the skill's identity for the GUI's block.
+    pub fn send_skill(&self, text: impl Into<String>, lane: Lane, name: &str, location: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        self.stop.store(false, Ordering::SeqCst);
+        let msg = Queued {
+            text: text.into(),
+            lane,
+            source: None,
+            skill: Some((name.to_owned(), location.to_owned())),
         };
         if lane == Lane::Force {
             self.kill.store(true, Ordering::SeqCst);
@@ -206,6 +230,7 @@ impl AgentSession {
             text: text.into(),
             lane: Lane::FollowUp,
             source: Some(source),
+            skill: None,
         });
     }
 
@@ -673,6 +698,9 @@ impl AgentSession {
         let mut payload = json!({ "text": msg.text, "lane": lane_name(msg.lane) });
         if let Some(source) = &msg.source {
             payload["source"] = json!(source);
+        }
+        if let Some((name, location)) = &msg.skill {
+            payload["skill"] = json!({ "name": name, "location": location });
         }
         self.append(KIND_USER, payload)
     }
