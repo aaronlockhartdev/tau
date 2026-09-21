@@ -89,7 +89,7 @@
   };
 </script>
 
-<div class="node" style:padding-left="{depth * 18}px">
+<div class="node" style:--indent="{depth * 10}px">
   <div
     class="srow"
     class:sel={store.current === session.meta.id}
@@ -155,8 +155,8 @@
   .srow {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 4.5px 12px;
+    gap: 5px;
+    padding: 4.5px 8px 4.5px calc(var(--indent, 0px) + 8px);
     cursor: pointer;
     font-size: 12.5px;
   }

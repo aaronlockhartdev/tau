@@ -427,8 +427,6 @@
       next.parent = prev.parent;
       next.state = prev.state;
       next.archived = prev.archived;
-      // Opening is a user action: it bumps the session to the MRU head.
-      next.mru = Date.now();
     }
     store.sessions[sid] = next;
     // Self-heal the child stubs: the snapshot's sub-agent list carries the

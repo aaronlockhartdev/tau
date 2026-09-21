@@ -353,7 +353,7 @@ try {
     const bar2 = await evalPage(wsUrl, `(() => [...document.querySelectorAll('.bar')].pop()?.innerText ?? '')()`);
     check('B4: the bar shows a usage segment with real tokens', /\d+(\.\d+k)? in · \d+(\.\d+k)? out/.test(bar2.replace(/\n/g, ' ')), bar2.replace(/\n/g, ' | '));
 
-    // --- B5: opening a session bumps it to the MRU head (archive folder).
+    // --- B5: opening a session keeps the list order stable (no MRU bump — the tree must not reorder under the pointer mid-click).
     const archClick = await evalPage(wsUrl, `new Promise((res) => {
       const [left] = [...document.querySelectorAll('.pane')];
       left.querySelector('.arch-h').click();
@@ -370,8 +370,8 @@ try {
       const [left] = [...document.querySelectorAll('.pane')];
       return [...left.querySelectorAll('.arch .srow')].map((r) => r.textContent.trim());
     })()`);
-    check('B5: opening the older archived session bumps it to the MRU head of the archive list',
-      archAfter.length === 2 && archAfter[0].includes('first session store'), archAfter.join(' | '));
+    check('B5: opening the older archived session keeps the archive list order stable',
+      archAfter.length === 2 && archAfter[1].includes('first session store'), archAfter.join(' | '));
 
     // --- ticket #28: skills ---
     // skill_list: the demo entry loaded the fixture's registry into the
