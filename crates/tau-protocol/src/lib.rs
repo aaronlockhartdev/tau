@@ -50,6 +50,18 @@ pub struct AgentType {
     pub builtin: bool,
 }
 
+/// A skill as the GUI sees it (the autocomplete's data source): `location`
+/// is the absolute path to the `SKILL.md`; a skill with
+/// `model_invocation: false` is absent from the catalog and the dropdown
+/// is its only door.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkillInfo {
+    pub name: String,
+    pub description: String,
+    pub location: String,
+    pub model_invocation: bool,
+}
+
 /// A file read for the GUI (the left pane's files tab).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileText {
@@ -112,6 +124,9 @@ pub enum CommandOutput {
     },
     Agents {
         agents: Vec<AgentType>,
+    },
+    Skills {
+        skills: Vec<SkillInfo>,
     },
     Subagents {
         subagents: Vec<SubagentInfo>,
@@ -238,6 +253,12 @@ pub enum Command {
     TaskCancel {
         session: String,
         task: String,
+    },
+
+    /// The workspace's skill registry (discovery at command time; the GUI
+    /// fetches on workspace open/switch and caches per workspace).
+    SkillList {
+        workspace: String,
     },
 
     ProviderList,
@@ -555,6 +576,9 @@ mod tests {
                 session: "s1".into(),
                 task: "t1".into(),
             },
+            Command::SkillList {
+                workspace: "w1".into(),
+            },
             Command::ProviderList,
             Command::ProviderAdd {
                 name: "p".into(),
@@ -814,6 +838,14 @@ mod tests {
             },
             CommandOutput::Agents {
                 agents: vec![agent],
+            },
+            CommandOutput::Skills {
+                skills: vec![SkillInfo {
+                    name: "s".into(),
+                    description: "d".into(),
+                    location: "/p/.agents/skills/s/SKILL.md".into(),
+                    model_invocation: false,
+                }],
             },
             CommandOutput::Subagents {
                 subagents: vec![sub.clone()],
