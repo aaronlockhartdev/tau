@@ -17,5 +17,6 @@ tempfile = "3"
 zstd = "0.14"
 xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
 names = { version = "0.14", default-features = false }
+rand = "0.10"
 notify = "8.2"
 notify-debouncer-full = "0.7"

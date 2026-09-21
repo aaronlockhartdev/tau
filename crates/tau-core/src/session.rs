@@ -7,6 +7,7 @@
 //! the last entry line; the choice lives in the header, which is rewritten
 //! atomically (entry lines are never touched — branching is always an append).
 
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -624,14 +625,14 @@ impl SessionStore {
         Ok(target)
     }
 
-    /// A new session id: nanosecond clock, 16 hex digits (a collision needs
-    /// two creations in the same nanosecond on the same machine).
+    /// A new session id: 12 hex digits (48 bits) of random. The id only
+    /// needs to be unique — the namespace is per machine (the file lives
+    /// under the workspace's .tau/sessions/), and the session list sorts on
+    /// the created timestamp, not the id. The birthday bound on 2^48 is
+    /// negligible at machine-scale session counts.
     pub fn new_session_id() -> String {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        format!("{:016x}", nanos)
+        let bytes: [u8; 6] = rand::rng().random();
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// Paged read by 0-based entry index (the header is not an entry).
@@ -1117,9 +1118,9 @@ mod tests {
     #[test]
     fn session_ids_are_distinct_and_well_formed() {
         let a = SessionStore::new_session_id();
-        std::thread::sleep(std::time::Duration::from_millis(1));
         let b = SessionStore::new_session_id();
         assert_ne!(a, b);
-        assert_eq!(a.len(), 16);
+        assert_eq!(a.len(), 12);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

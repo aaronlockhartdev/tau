@@ -3722,6 +3722,7 @@ name = "tau-core"
 version = "0.1.0"
 dependencies = [
  "names",
+ "rand 0.10.2",
  "reqwest",
  "serde",
  "serde_json",

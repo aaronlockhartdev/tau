@@ -14,6 +14,7 @@ zstd = { workspace = true }
 xxhash-rust = { workspace = true }
 # Adjective-noun session names (top-level and sub-agent children).
 names = { workspace = true }
+rand = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
