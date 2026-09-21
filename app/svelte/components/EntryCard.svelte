@@ -388,6 +388,10 @@
     margin-left: auto;
     font: 10px var(--mono);
   }
+  .think + .card2,
+  .thinkbody + .card2 {
+    margin-top: 10px;
+  }
   .thinkbody {
     margin: 2px 2px 0;
     color: var(--dim);
