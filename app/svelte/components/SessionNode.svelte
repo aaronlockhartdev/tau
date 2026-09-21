@@ -1,12 +1,13 @@
 <script lang="ts">
-  // One node of the session tree (the left pane's sessions tab): the row
-  // (chevron, title, badge, mru) plus its children rendered recursively.
-  // Collapse state is the pane's openGroups — null is the default view
-  // (the group containing the active session expanded), an array is the
-  // explicit set the user has toggled.
+  // One node of the session tree (the left pane's sessions tab): the row's
+  // content (title, badge, mru) plus its children rendered recursively. The
+  // row shell is the shared TreeNode. Collapse state is the pane's
+  // openGroups — null is the default view (the group containing the active
+  // session expanded), an array is the explicit set the user has toggled.
   import { store, pane, openSessionById, renameSession, type SessionState } from '../lib/store.svelte';
   import { tick } from 'svelte';
   import SessionNode from './SessionNode.svelte';
+  import TreeNode from './TreeNode.svelte';
 
   let {
     session,
@@ -70,13 +71,6 @@
     void renameSession(session.meta.id, renameText);
   }
 
-  const onKey = (fn: () => void) => (e: KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      fn();
-    }
-  };
-
   function sessionRunning(s: SessionState): boolean {
     return s.turn === 'running' || s.subagents.some((x) => x.state === 'running');
   }
@@ -89,112 +83,73 @@
   };
 </script>
 
-<div class="node" style:--indent="{depth * 10}px">
-  <div
-    class="srow"
-    class:sel={store.current === session.meta.id}
-    role="button"
-    tabindex="0"
-    onclick={() => openSessionById(session.meta.id)}
-    onkeydown={onKey(() => openSessionById(session.meta.id))}
-    ondblclick={() => {
-      const q = pane(ws);
-      if (q) q.renamingId = session.meta.id;
-    }}
-  >
-    <button
-      class="chev"
-      type="button"
-      class:has={kids.length > 0}
-      class:open={groupOpen(session.meta.id)}
-      onclick={(e) => {
+{#snippet rowLabel()}
+  {#if pane(ws)?.renamingId === session.meta.id}
+    <input
+      class="t rename"
+      bind:this={renameInput}
+      bind:value={renameText}
+      aria-label="rename session"
+      onblur={() => commitRename()}
+      onkeydown={(e) => {
         e.stopPropagation();
-        if (kids.length > 0) toggleGroup(session.meta.id);
+        if (e.key === 'Enter') commitRename();
+        else if (e.key === 'Escape') {
+          const q = pane(ws);
+          if (q) q.renamingId = null;
+        }
       }}
-    >
-      {#if kids.length > 0}
-        <svg class="ci" width="11" height="11"><use href="#i-chev"/></svg>
-      {/if}
-    </button>
-    {#if pane(ws)?.renamingId === session.meta.id}
-      <input
-        class="t rename"
-        bind:this={renameInput}
-        bind:value={renameText}
-        aria-label="rename session"
-        onblur={() => commitRename()}
-        onkeydown={(e) => {
-          e.stopPropagation();
-          if (e.key === 'Enter') commitRename();
-          else if (e.key === 'Escape') {
-            const q = pane(ws);
-            if (q) q.renamingId = null;
-          }
-        }}
-        onmousedown={(e) => e.stopPropagation()}
-        onclick={(e) => e.stopPropagation()}
-      />
-    {:else}
-      <span class="t">{session.meta.title ?? session.meta.id}</span>
-    {/if}
-    {#if depth === 0}
-      {#if sessionRunning(session)}<span class="badge running"><span class="dot"></span>running</span>{/if}
-    {:else}
-      <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
-    {/if}
-    <span class="mru">{fmtAgo(session.mru)}</span>
-  </div>
-  {#if kids.length > 0 && groupOpen(session.meta.id)}
+      onmousedown={(e) => e.stopPropagation()}
+      onclick={(e) => e.stopPropagation()}
+    />
+  {:else}
+    <span class="t">{session.meta.title ?? session.meta.id}</span>
+  {/if}
+  {#if depth === 0}
+    {#if sessionRunning(session)}<span class="badge running"><span class="dot"></span>running</span>{/if}
+  {:else}
+    <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
+  {/if}
+  <span class="mru">{fmtAgo(session.mru)}</span>
+{/snippet}
+<TreeNode
+  {depth}
+  expanded={kids.length > 0 ? groupOpen(session.meta.id) : null}
+  selected={store.current === session.meta.id}
+  onRow={() => openSessionById(session.meta.id)}
+  onRowDbl={() => {
+    const q = pane(ws);
+    if (q) q.renamingId = session.meta.id;
+  }}
+  onToggle={kids.length > 0 ? () => toggleGroup(session.meta.id) : undefined}
+  label={rowLabel}
+/>
+{#if kids.length > 0 && groupOpen(session.meta.id)}
+  <div class="kids">
     {#each kids as c (c.meta.id)}
       <SessionNode session={c} depth={depth + 1} ws={ws} sessions={sessions} />
     {/each}
-  {/if}
-</div>
+  </div>
+{/if}
 
 <style>
-  .srow {
+  .kids {
     display: flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4.5px 8px 4.5px calc(var(--indent, 0px) + 8px);
-    cursor: pointer;
-    font-size: 12.5px;
+    flex-direction: column;
   }
-  .srow:hover {
-    background: var(--panel2);
-  }
-  .srow.sel {
-    background: color-mix(in srgb, var(--acc) 8%, transparent);
-  }
-  .srow .t {
+  .t {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .srow .t.rename {
+  .t.rename {
     padding: 1px 4px;
     border: 1px solid var(--acc);
     border-radius: 3px;
     background: var(--panel);
     color: var(--tx);
     font: inherit;
-  }
-  .srow .chev {
-    font-size: 9px;
-    color: var(--dim);
-    width: 10px;
-    flex: none;
-  }
-  .srow .chev .ci {
-    display: block;
-    transition: transform 0.12s;
-  }
-  .srow .chev:not(.open) .ci {
-    transform: rotate(-90deg);
-  }
-  .srow .chev:not(.has) {
-    visibility: hidden;
   }
   .mru {
     font: 9.5px var(--mono);

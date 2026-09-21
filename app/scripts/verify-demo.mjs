@@ -210,8 +210,8 @@ try {
     const panes = await evalPage(wsUrl, `(() => {
       const [left, right] = [...document.querySelectorAll('.pane')];
       if (!left || !right) return { missing: document.body.innerText.slice(0, 300) };
-      const leftRows = [...left.querySelectorAll('.srow')].map((r) => r.textContent.trim());
-      const badges = [...left.querySelectorAll('.srow .badge')].map((b) => b.textContent.trim());
+      const leftRows = [...left.querySelectorAll('.trow')].map((r) => r.textContent.trim());
+      const badges = [...left.querySelectorAll('.trow .badge')].map((b) => b.textContent.trim());
       const rightTabs = [...right.querySelectorAll('.tab')].map((t) => t.textContent.trim());
       const taskRows = [...right.querySelectorAll('.lrow')].map((r) => r.textContent.trim());
       return { leftRows, badges, rightTabs, taskRows };
@@ -291,7 +291,7 @@ try {
       ]);
       setTimeout(() => {
         const [left] = [...document.querySelectorAll('.pane')];
-        res({ badges: [...left.querySelectorAll('.srow .badge')].map((b) => b.textContent.trim()) });
+        res({ badges: [...left.querySelectorAll('.trow .badge')].map((b) => b.textContent.trim()) });
       }, 200);
     })`);
     check('B3 wire shape: a state event with OBJECT detail populates the waiting_on annotation',
@@ -301,7 +301,7 @@ try {
     // child with a RUNNING nested child shows its own state, not the badge.
     const openChild = (title) => evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
-      const row = [...left.querySelectorAll('.srow')].find((r) => r.textContent.includes(${JSON.stringify(title)}));
+      const row = [...left.querySelectorAll('.trow')].find((r) => r.textContent.includes(${JSON.stringify(title)}));
       if (!row) return { missing: true };
       row.click();
       return true;
@@ -344,7 +344,7 @@ try {
     // user just clicked stays visible in the tree).
     const treeRows = await evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
-      return [...left.querySelectorAll('.srow')].map((r) => r.textContent.trim());
+      return [...left.querySelectorAll('.trow')].map((r) => r.textContent.trim());
     })()`);
     check('N1: the parent group stays expanded while its child is active',
       treeRows.length >= 7 && treeRows.some((t) => t.includes('provider hardening')), `${treeRows.length} rows`);
@@ -357,18 +357,18 @@ try {
     const archClick = await evalPage(wsUrl, `new Promise((res) => {
       const [left] = [...document.querySelectorAll('.pane')];
       left.querySelector('.arch-h').click();
-      setTimeout(() => res([...left.querySelectorAll('.arch .srow')].map((r) => r.textContent.trim())), 200);
+      setTimeout(() => res([...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim())), 200);
     })`);
     check('the archive folder lists the 2 archived sessions', archClick.length === 2, archClick.join(' | '));
     await evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
-      [...left.querySelectorAll('.arch .srow')].find((r) => r.textContent.includes('first session store'))?.click();
+      [...left.querySelectorAll('.arch .trow')].find((r) => r.textContent.includes('first session store'))?.click();
       return true;
     })()`);
     await sleep(350);
     const archAfter = await evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
-      return [...left.querySelectorAll('.arch .srow')].map((r) => r.textContent.trim());
+      return [...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim());
     })()`);
     check('B5: opening the older archived session keeps the archive list order stable',
       archAfter.length === 2 && archAfter[1].includes('first session store'), archAfter.join(' | '));
@@ -436,7 +436,7 @@ try {
       if (pane) pane.ltab = 'files';
       setTimeout(() => {
         // Expand 'src' (the lazy per-dir fetch).
-        const srcRow = [...document.querySelectorAll('.frow')].find(
+        const srcRow = [...document.querySelectorAll('.trow')].find(
           (r) => r.querySelector('.name')?.textContent === 'src'
         );
         srcRow?.click();
@@ -448,7 +448,7 @@ try {
           f.src.push({ name: 'new.txt', path: 'src/new.txt', dir: false, size: 3 });
           t.applyEvents([{ type: 'file_tree_changed', workspace: 'w-demo', changed: ['.', 'src'] }]);
           setTimeout(() => {
-            const rows = Array.from(document.querySelectorAll('.frow .name')).map((n) => n.textContent);
+            const rows = Array.from(document.querySelectorAll('.trow .name')).map((n) => n.textContent);
             const cur = t.store().files['w-demo'];
             res({
               rows,
@@ -481,7 +481,7 @@ try {
     // demo session's transcript comes back first.
     await evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
-      const row = [...left.querySelectorAll('.srow')].find((r) => r.textContent.includes('Protocol crate'));
+      const row = [...left.querySelectorAll('.trow')].find((r) => r.textContent.includes('Protocol crate'));
       if (!row) return false;
       row.click();
       return true;

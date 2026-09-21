@@ -94,6 +94,8 @@
     text-align: center;
     padding: 8px;
     font: 11px var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
     color: var(--dim);
   }
   .tab.on {
