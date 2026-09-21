@@ -449,6 +449,9 @@ pub struct Core {
     /// consulted by the message_send boundary and `skill_list`.
     skills: Mutex<HashMap<String, Vec<SkillInfo>>>,
     system_dir: Option<PathBuf>,
+    /// The user's home dir (the home-level `.agents/skills/` root; the
+    /// `system_dir` seam's sibling for tests).
+    home: Option<PathBuf>,
     custom: bool,
     client: reqwest::Client,
     events_tx: mpsc::Sender<Event>,
@@ -464,6 +467,7 @@ pub struct Core {
 
 pub struct CoreBuilder {
     system_dir: Option<PathBuf>,
+    home: Option<PathBuf>,
     /// A custom root carries an explicit provider list (no system layer);
     /// a production root gets full file-level layering (spec §12).
     custom: bool,
@@ -481,6 +485,7 @@ impl CoreBuilder {
             .expect("HOME set");
         Self {
             system_dir: Some(home.join(".config").join("tau")),
+            home: Some(home),
             custom: false,
             providers: BTreeMap::new(),
             child_factory: None,
@@ -491,6 +496,7 @@ impl CoreBuilder {
     pub fn custom(providers: BTreeMap<String, tau_core::config::Provider>) -> Self {
         Self {
             system_dir: None,
+            home: None,
             custom: true,
             providers,
             child_factory: None,
@@ -510,6 +516,12 @@ impl CoreBuilder {
         self
     }
 
+    /// A test seam: a custom home (the home-level `.agents/skills/` root).
+    pub fn with_home(mut self, home: PathBuf) -> Self {
+        self.home = Some(home);
+        self
+    }
+
     pub fn build(self) -> Arc<Core> {
         let (events_tx, rx) = mpsc::channel(1024);
         let core = Arc::new(Core {
@@ -519,6 +531,7 @@ impl CoreBuilder {
             configs: Mutex::new(HashMap::new()),
             skills: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
+            home: self.home.clone(),
             custom: self.custom,
             // Test builds use a no-pool client: a pooled keep-alive connection
             // keeps the tokio runtime alive after the test, hanging teardown.
@@ -696,11 +709,14 @@ impl Core {
         if let Some(reg) = self.skills.lock().unwrap().get(&ws.id) {
             return reg.clone();
         }
-        let reg: Vec<SkillInfo> =
-            tau_core::skills::discover(self.system_dir.as_deref(), Path::new(&ws.cwd))
-                .iter()
-                .map(skill_info)
-                .collect();
+        let reg: Vec<SkillInfo> = tau_core::skills::discover(
+            self.system_dir.as_deref(),
+            self.home.as_deref(),
+            Path::new(&ws.cwd),
+        )
+        .iter()
+        .map(skill_info)
+        .collect();
         self.skills
             .lock()
             .unwrap()
@@ -995,7 +1011,8 @@ impl Core {
         // context files, so a user AGENTS.md is never drowned — and a
         // spawned child inherits it through this prompt. The per-workspace
         // registry feeds skill_list and the /skill: expansion.
-        let skills = tau_core::skills::discover(self.system_dir.as_deref(), &cwd);
+        let skills =
+            tau_core::skills::discover(self.system_dir.as_deref(), self.home.as_deref(), &cwd);
         self.skills.lock().unwrap().insert(
             workspace.id.clone(),
             skills.iter().map(skill_info).collect(),
@@ -3350,6 +3367,116 @@ mod tests {
             }
             other => panic!("expected skills: {other:?}"),
         }
+    }
+
+    /// The home-level `.agents/skills/` is part of the system scope (the
+    /// cross-client convention exists at both levels); a project
+    /// `.agents/skills/` skill of the same name shadows it.
+    #[tokio::test]
+    async fn skill_list_lists_the_home_agents_skill_and_the_project_one_wins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        write_skill_fixture(
+            home.path(),
+            ".agents/skills/shared",
+            "---\nname: shared\ndescription: from the home .agents\n---\nBody.\n",
+        );
+        write_skill_fixture(
+            home.path(),
+            ".agents/skills/user-only",
+            "---\nname: user-only\ndescription: only in the home .agents\n---\nBody.\n",
+        );
+        write_skill_fixture(
+            tmp.path(),
+            ".agents/skills/shared",
+            "---\nname: shared\ndescription: from the project .agents\n---\nBody.\n",
+        );
+        let core = CoreBuilder::custom(providers())
+            .with_home(home.path().to_path_buf())
+            .build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        match core
+            .dispatch(Command::SkillList {
+                workspace: workspace.id,
+            })
+            .unwrap()
+        {
+            CommandOutput::Skills { skills } => {
+                assert_eq!(skills.len(), 2);
+                let shared = skills.iter().find(|s| s.name == "shared").unwrap();
+                assert_eq!(
+                    shared.description, "from the project .agents",
+                    "the project .agents skill shadows the home one"
+                );
+                let user_only = skills.iter().find(|s| s.name == "user-only").unwrap();
+                assert!(
+                    user_only
+                        .location
+                        .starts_with(home.path().to_str().unwrap()),
+                    "the home file's location: {}",
+                    user_only.location
+                );
+            }
+            other => panic!("expected skills: {other:?}"),
+        }
+    }
+
+    /// `build_live` appends the skill catalog as the last layer of the
+    /// assembled prompt — after the context files, so a user AGENTS.md is
+    /// never drowned.
+    #[tokio::test]
+    async fn build_live_puts_the_catalog_after_the_context_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("AGENTS.md"), "project context").unwrap();
+        write_skill_fixture(
+            tmp.path(),
+            ".tau/skills/alpha",
+            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
+        );
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id,
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let live = core.live(&session.id).unwrap();
+        let prompt = live.agent.system_prompt().to_owned();
+        let ctx = prompt
+            .find("project context")
+            .expect("the project's AGENTS.md layer is present");
+        let cat = prompt
+            .find("<available_skills>")
+            .expect("the catalog is present");
+        assert!(
+            ctx < cat,
+            "the catalog lands after the context layer:\n{prompt}"
+        );
+        assert!(
+            prompt.ends_with("</available_skills>"),
+            "the catalog is the last layer:\n{prompt}"
+        );
     }
 
     async fn wait_for_user_entry(workspace: &Workspace, session: &str) -> Vec<Entry> {

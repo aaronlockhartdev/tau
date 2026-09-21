@@ -1,8 +1,9 @@
 //! Skills (the spec's "Not in v0" entry; ticket #28): the Agent Skills
 //! standard — a directory containing `SKILL.md` (YAML frontmatter + a
 //! markdown body). Discovery is per workspace, project wins: the system
-//! `~/.config/tau/skills/`, then the project's `.tau/skills/` and the
-//! cross-client `.agents/skills/` convention. Validation is lenient per
+//! `~/.config/tau/skills/` and the home's cross-client `~/.agents/skills/`,
+//! then the project's `.tau/skills/` and the cross-client `.agents/skills/`
+//! convention. Validation is lenient per
 //! the integrate guide: a missing description or unparseable frontmatter
 //! skips the skill, a name violation only warns. A skill with
 //! `disable-model-invocation: true` is excluded from the catalog — the
@@ -24,16 +25,27 @@ pub struct Skill {
     pub model_invocation: bool,
 }
 
-/// Discover the workspace's registry: the system scope first, then the
-/// project's (its `.tau/skills/`, then the cross-client
+/// Discover the workspace's registry: the system scope first (the config
+/// dir's `skills/`, then the home's cross-client `.agents/skills/`), then
+/// the project's (its `.tau/skills/`, then the cross-client
 /// `.agents/skills/`). Project wins over system; within a scope the
 /// first in the sorted scan wins and the shadow is logged.
-pub fn discover(system_dir: Option<&Path>, project_root: &Path) -> Vec<Skill> {
+pub fn discover(
+    system_dir: Option<&Path>,
+    user_home: Option<&Path>,
+    project_root: &Path,
+) -> Vec<Skill> {
     // Scope rank for collisions: project (1) beats system (0); within a
     // scope the first in the sorted scan wins — the shadow is logged.
     let mut reg: BTreeMap<String, (usize, Skill)> = BTreeMap::new();
-    if let Some(dir) = system_dir.map(|d| d.join("skills")) {
-        for s in scan(&dir) {
+    for root in [
+        system_dir.map(|d| d.join("skills")),
+        user_home.map(|h| h.join(".agents").join("skills")),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        for s in scan(&root) {
             insert(&mut reg, 0, s);
         }
     }
@@ -131,8 +143,8 @@ fn skill_md_in(dir: &Path) -> Option<PathBuf> {
 
 /// A `SKILL.md`: `---` frontmatter over the body. Lenient per the
 /// integrate guide: unparseable frontmatter skips the skill; a missing
-/// description skips it; a name violation (uppercase, over 64, …)
-/// warns but loads.
+/// description skips it; a name violation (uppercase, over 64, …) or a
+/// description over the standard's 1024-char cap only warns.
 fn parse(raw: &str, location: &Path) -> Option<Skill> {
     let Some(fields) = frontmatter_fields(raw) else {
         eprintln!("{}", skip_message(location, "unparseable frontmatter"));
@@ -156,6 +168,9 @@ fn parse(raw: &str, location: &Path) -> Option<Skill> {
     if !valid_name(&name) {
         eprintln!("{}", name_violation_message(location, &name));
     }
+    if description.chars().count() > 1024 {
+        eprintln!("{}", description_violation_message(location));
+    }
     Some(Skill {
         name,
         description,
@@ -176,6 +191,15 @@ fn skip_message(location: &Path, detail: &str) -> String {
 fn name_violation_message(location: &Path, name: &str) -> String {
     format!(
         "{}: name '{name}' violates [a-z0-9-] (loaded anyway)",
+        location.display()
+    )
+}
+
+/// A description over the standard's 1024-char cap: the file's path; the
+/// skill is loaded anyway, per the lenient posture.
+fn description_violation_message(location: &Path) -> String {
+    format!(
+        "{}: description exceeds 1024 chars (loaded anyway)",
         location.display()
     )
 }
@@ -338,7 +362,7 @@ mod tests {
             ".agents/skills/agents",
             &skill("agents-skill", "from .agents"),
         );
-        let skills = discover(Some(&system), &project);
+        let skills = discover(Some(&system), None, &project);
         let get = |n: &str| skills.iter().find(|s| s.name == n).unwrap();
         assert_eq!(get("shared").description, "tau shared");
         assert_eq!(get("tau-skill").description, "from .tau");
@@ -352,7 +376,7 @@ mod tests {
         // `b` declares the name first in write order; `a` sorts first.
         write_skill(root.path(), ".agents/skills/b", &skill("dup", "second"));
         write_skill(root.path(), ".agents/skills/a", &skill("dup", "first"));
-        let skills = discover(None, root.path());
+        let skills = discover(None, None, root.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "first");
     }
@@ -386,7 +410,7 @@ mod tests {
         let p = root.path().join(".agents").join("skills");
         std::fs::create_dir_all(&p).unwrap();
         std::fs::write(p.join("SKILL.md"), skill("root-md", "no")).unwrap();
-        let skills = discover(None, root.path());
+        let skills = discover(None, None, root.path());
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["deep-ok"]);
     }
@@ -395,7 +419,7 @@ mod tests {
     fn missing_description_is_skipped() {
         let root = tempfile::tempdir().unwrap();
         write_skill(root.path(), ".tau/skills/s", "---\nname: s\n---\nBody.\n");
-        assert!(discover(None, root.path()).is_empty());
+        assert!(discover(None, None, root.path()).is_empty());
     }
 
     #[test]
@@ -406,7 +430,7 @@ mod tests {
             ".tau/skills/s",
             "---\nname s\ndescription: d\n---\nBody.\n",
         );
-        assert!(discover(None, root.path()).is_empty());
+        assert!(discover(None, None, root.path()).is_empty());
     }
 
     #[test]
@@ -417,7 +441,7 @@ mod tests {
             ".tau/skills/s",
             "---\nname: s\ndescription: Use this when: the user asks for it\n---\nBody.\n",
         );
-        let skills = discover(None, root.path());
+        let skills = discover(None, None, root.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].description, "Use this when: the user asks for it");
     }
@@ -430,7 +454,7 @@ mod tests {
             ".tau/skills/s",
             "---\nname: PDF-Processing\ndescription: d\n---\nBody.\n",
         );
-        let skills = discover(None, root.path());
+        let skills = discover(None, None, root.path());
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].name, "PDF-Processing");
     }
@@ -443,7 +467,7 @@ mod tests {
             ".tau/skills/s",
             "---\nname: s\ndescription: d\ndisable-model-invocation: true\n---\nBody.\n",
         );
-        let skills = discover(None, root.path());
+        let skills = discover(None, None, root.path());
         assert!(!skills[0].model_invocation);
         assert!(catalog(&skills).is_none());
     }
@@ -506,7 +530,7 @@ mod tests {
         // A correctly-cased sibling is still discovered, so the scan itself
         // is proven to work.
         write_skill(root.path(), ".agents/skills/ok", &skill("ok", "d"));
-        let skills = discover(None, root.path());
+        let skills = discover(None, None, root.path());
         let names: Vec<&str> = skills.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, vec!["ok"]);
     }
@@ -526,5 +550,58 @@ mod tests {
             name_violation_message(p, "My-Skill"),
             "/proj/.agents/skills/broken/SKILL.md: name 'My-Skill' violates [a-z0-9-] (loaded anyway)"
         );
+        assert_eq!(
+            description_violation_message(p),
+            "/proj/.agents/skills/broken/SKILL.md: description exceeds 1024 chars (loaded anyway)"
+        );
+    }
+
+    #[test]
+    fn a_user_level_agents_skill_is_discovered() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        write_skill(
+            &home,
+            ".agents/skills/user",
+            &skill("user", "from the home .agents"),
+        );
+        let skills = discover(None, Some(&home), &project);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "from the home .agents");
+    }
+
+    #[test]
+    fn a_project_agents_skill_shadows_the_user_level_one() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home");
+        let project = root.path().join("project");
+        write_skill(
+            &home,
+            ".agents/skills/shared",
+            &skill("shared", "from the home .agents"),
+        );
+        write_skill(
+            &project,
+            ".agents/skills/shared",
+            &skill("shared", "from the project .agents"),
+        );
+        let skills = discover(None, Some(&home), &project);
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description, "from the project .agents");
+    }
+
+    #[test]
+    fn a_description_over_the_cap_warns_but_loads() {
+        let root = tempfile::tempdir().unwrap();
+        let long = "d".repeat(1025);
+        write_skill(
+            root.path(),
+            ".tau/skills/s",
+            &format!("---\nname: s\ndescription: {long}\n---\nBody.\n"),
+        );
+        let skills = discover(None, None, root.path());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].description.chars().count(), 1025);
     }
 }

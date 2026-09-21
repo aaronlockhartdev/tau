@@ -2098,6 +2098,67 @@ mod tests {
         let child = children.get(&spawned.handle).unwrap();
         assert_eq!(child.context_mode, ContextMode::Fresh);
     }
+
+    /// A `general` child inherits the session's prompt (spec §5.5) —
+    /// including the skill catalog that `build_live` appended as the last
+    /// layer (ticket #28).
+    #[tokio::test]
+    async fn a_general_child_inherits_the_catalog_carrying_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill = crate::skills::Skill {
+            name: "alpha".into(),
+            description: "does alpha".into(),
+            location: dir.path().join(".agents/skills/alpha/SKILL.md"),
+            model_invocation: true,
+        };
+        let catalog = crate::skills::catalog(&[skill]).unwrap();
+        let prompt = format!("You are Tau, a coding agent.\n\n{catalog}");
+        let bridge = Arc::new(TestBridge::default());
+        let factory = Arc::new(CannedFactory {
+            scripts: vec![vec![sse("done", &[])]],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        });
+        let sup = Supervisor::new(SupervisorParams {
+            parent_session: "parent".into(),
+            cwd: dir.path().to_path_buf(),
+            provider: factory,
+            model: "test-model".into(),
+            system_prompt: prompt.clone(),
+            om: Om::default(),
+            om_model: String::new(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            caps: SubAgents::default(),
+            depth: 0,
+            types: crate::agent_type::discover(None, dir.path()),
+            bridge: bridge as Arc<dyn SubagentBridge>,
+            driver: Arc::new(TestDriver),
+        });
+        let mut store = SessionStore::for_workspace(dir.path(), "parent");
+        store.create().unwrap();
+        let parent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: prompt.clone(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: crate::provider::canned(sse("ok", &[]).as_str()),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: None,
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        sup.attach_parent(parent);
+        let spawned = sup
+            .spawn("general", "look", None, None, "c0")
+            .expect("general always spawns");
+        // The session's prompt verbatim — the catalog rides along with it.
+        assert_eq!(spawned.agent.system_prompt(), prompt);
+    }
     /// `max_depth` is enforced at spawn: a session at the cap refuses to
     /// spawn, and `max_depth: 0` disables spawning outright (the
     /// structural child-carries-no-supervisor rule already bounds v0 depth
