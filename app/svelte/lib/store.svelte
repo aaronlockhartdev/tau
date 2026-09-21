@@ -206,11 +206,15 @@
       // the dialog plugin's proven path (incl. scope handling); the store
       // just opens the result as a workspace.
       void listen('open_folder_requested', async () => {
-        const picked = await pickDirectory({ directory: true, multiple: false });
-        const dir = Array.isArray(picked) ? picked[0] : picked;
-        if (typeof dir !== 'string' || dir === '') return;
-        const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
-        openWorkspace({ id: '', name, cwd: dir });
+        try {
+          const picked = await pickDirectory({ directory: true, multiple: false });
+          const dir = Array.isArray(picked) ? picked[0] : picked;
+          if (typeof dir !== 'string' || dir === '') return;
+          const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
+          openWorkspace({ id: '', name, cwd: dir });
+        } catch (e) {
+          store.error = errText(e);
+        }
       });
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') throw new Error('unexpected workspace_list output');

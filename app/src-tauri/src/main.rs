@@ -86,7 +86,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
     )?;
     let window = Submenu::with_id_and_items(
         app,
-        "window",
+        tauri::menu::WINDOW_SUBMENU_ID,
         "Window",
         true,
         &[
@@ -99,7 +99,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
     )?;
     let help = Submenu::with_id_and_items(
         app,
-        "help",
+        tauri::menu::HELP_SUBMENU_ID,
         "Help",
         true,
         &[

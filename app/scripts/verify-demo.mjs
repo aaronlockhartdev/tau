@@ -1,4 +1,4 @@
-// Acceptance verification for ticket #25 (one line: `node scripts/verify-demo.mjs`).
+// Acceptance verification for the demo rig (one line: `node scripts/verify-demo.mjs`).
 // Builds the dev-only demo entry, serves it with vite preview, and drives
 // headless Chrome over CDP (no deps — Node's built-in WebSocket).
 // MIDDLE-of-session visibility is the bar:
