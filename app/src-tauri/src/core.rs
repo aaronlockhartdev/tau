@@ -36,7 +36,7 @@ use tau_protocol::snapshot::{
 };
 use tau_protocol::{
     AgentType, Command, CommandOutput, ContextMode, Event, FileText, MessageLane, ProtocolError,
-    ProviderInfo, SubagentEventKind, SubagentInfo, SystemEventKind, Usage,
+    ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo, SystemEventKind, Usage,
 };
 use tokio::sync::mpsc;
 
@@ -445,6 +445,9 @@ pub struct Core {
     workspaces: Mutex<BTreeMap<String, Workspace>>,
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     configs: Mutex<HashMap<String, Config>>,
+    /// Per-workspace skill registry (ticket #28): built at session open,
+    /// consulted by the message_send boundary and `skill_list`.
+    skills: Mutex<HashMap<String, Vec<SkillInfo>>>,
     system_dir: Option<PathBuf>,
     custom: bool,
     client: reqwest::Client,
@@ -514,6 +517,7 @@ impl CoreBuilder {
             workspaces: Mutex::new(BTreeMap::new()),
             sessions: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
+            skills: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             custom: self.custom,
             // Test builds use a no-pool client: a pooled keep-alive connection
@@ -683,6 +687,59 @@ impl Core {
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("workspace {id} is not open"),
             })
+    }
+
+    /// The workspace's skill registry (ticket #28): the per-workspace
+    /// cache built at session open; a workspace with no session opened
+    /// yet is discovered on demand (skill_list at workspace open).
+    fn skills_of(&self, ws: &Workspace) -> Vec<SkillInfo> {
+        if let Some(reg) = self.skills.lock().unwrap().get(&ws.id) {
+            return reg.clone();
+        }
+        let reg: Vec<SkillInfo> = tau_core::skills::discover(self.system_dir.as_deref(), Path::new(&ws.cwd))
+            .iter()
+            .map(skill_info)
+            .collect();
+        self.skills.lock().unwrap().insert(ws.id.clone(), reg.clone());
+        reg
+    }
+
+    /// A leading `/skill:<name> [args]` expands at the message_send
+    /// boundary, before the entry is recorded (ticket #28): the text
+    /// becomes the expansion template (body + skill directory + the args
+    /// line), and the skill's identity rides back for the payload marker.
+    /// A misspelled name rejects the send — nothing is recorded. Any
+    /// other leading `/…` is prose and passes through untouched.
+    fn expand_skill(
+        &self,
+        live: &LiveSession,
+        text: &str,
+    ) -> Result<(String, Option<(String, String)>), ProtocolError> {
+        let Some(rest) = text.strip_prefix("/skill:") else {
+            return Ok((text.to_owned(), None));
+        };
+        let (name, args) = match rest.split_once(char::is_whitespace) {
+            Some((n, a)) => (n, a.trim()),
+            None => (rest, ""),
+        };
+        let ws = self.workspace(&live.meta.lock().unwrap().workspace)?;
+        let Some(skill) = self.skills_of(&ws).into_iter().find(|s| s.name == name) else {
+            return Err(ProtocolError::Other {
+                message: format!("unknown skill '{name}' — the send was not recorded"),
+            });
+        };
+        // The body is read at send time, not cached: a skill edited since
+        // discovery takes effect on the next invocation.
+        let raw = std::fs::read_to_string(&skill.location).map_err(|e| ProtocolError::Other {
+            message: format!("reading {}: {e}", skill.location),
+        })?;
+        let dir = Path::new(&skill.location)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        let args = if args.is_empty() { None } else { Some(args) };
+        let text = tau_core::skills::expand(&skill.name, &tau_core::skills::body(&raw), &dir, args);
+        Ok((text, Some((skill.name, skill.location))))
     }
 
     /// The workspace's on-disk sessions (the files, not just the live
@@ -927,7 +984,22 @@ impl Core {
         // The loop assembles no context of its own: base prompt + context
         // files (spec §10) are built here, once, at session creation.
         let layers = context::discover(&cwd, &self.system_dir_of());
-        let system_prompt = context::assemble("You are Tau, a coding agent.", &layers);
+        let mut system_prompt = context::assemble("You are Tau, a coding agent.", &layers);
+
+        // Skills (ticket #28): discovery runs at session open/reopen (no
+        // file watching in v0). The catalog is the last layer — after the
+        // context files, so a user AGENTS.md is never drowned — and a
+        // spawned child inherits it through this prompt. The per-workspace
+        // registry feeds skill_list and the /skill: expansion.
+        let skills = tau_core::skills::discover(self.system_dir.as_deref(), &cwd);
+        self.skills.lock().unwrap().insert(
+            workspace.id.clone(),
+            skills.iter().map(skill_info).collect(),
+        );
+        if let Some(catalog) = tau_core::skills::catalog(&skills) {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&catalog);
+        }
 
         let provider = ForwardingProvider {
             inner: provider::production(&self.client, &provider, &config.requests),
@@ -1412,6 +1484,10 @@ impl Core {
                 let live = self.live(&session)?;
                 // A new send clears the stop flag: the previous turn is over.
                 live.stop.store(false, Ordering::SeqCst);
+                // A leading /skill: expands at this boundary, before the
+                // entry is recorded (ticket #28); a misspelled name
+                // rejects the send — nothing is recorded.
+                let (expanded, skill) = self.expand_skill(&live, &text)?;
                 // A child session takes messages through its supervisor
                 // (the parent's subagent_message semantics: a running
                 // child gets a steering-lane message; a non-running one is
@@ -1441,7 +1517,12 @@ impl Core {
                         .map_err(|e| ProtocolError::Other { message: e })?;
                     return Ok(CommandOutput::None);
                 }
-                live.agent.send(text.clone(), lane_to_lane(lane));
+                match skill {
+                    Some((name, location)) => {
+                        live.agent.send_skill(expanded, lane_to_lane(lane), &name, &location)
+                    }
+                    None => live.agent.send(expanded, lane_to_lane(lane)),
+                }
                 // Turn start is a check-and-set on the turn flag (spec §8
                 // single writer). A send that lands while a turn is in flight
                 // is the queued one: it shows in the GUI's queue and the
@@ -1675,6 +1756,13 @@ impl Core {
                 }
                 self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
+            }
+
+            Command::SkillList { workspace } => {
+                let ws = self.workspace(&workspace)?;
+                Ok(CommandOutput::Skills {
+                    skills: self.skills_of(&ws),
+                })
             }
 
             Command::ProviderList => {
@@ -2037,6 +2125,17 @@ fn lane_to_lane(lane: MessageLane) -> Lane {
         MessageLane::Force => Lane::Force,
         MessageLane::Steering => Lane::Steering,
         MessageLane::FollowUp => Lane::FollowUp,
+    }
+}
+
+/// The protocol's mirror of a discovered skill (the location as a string,
+/// the GUI never sees host paths as `Path`).
+fn skill_info(s: &tau_core::skills::Skill) -> SkillInfo {
+    SkillInfo {
+        name: s.name.clone(),
+        description: s.description.clone(),
+        location: s.location.to_string_lossy().into_owned(),
+        model_invocation: s.model_invocation,
     }
 }
 
@@ -3183,5 +3282,210 @@ mod tests {
             "the previous run's workspace is restored: {list:?}"
         );
         assert_eq!(list[0].cwd, cwd.path().display().to_string());
+    }
+
+    fn write_skill_fixture(project: &Path, rel: &str, raw: &str) {
+        let path = project.join(rel).join("SKILL.md");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, raw).unwrap();
+    }
+
+    /// `skill_list` serves the workspace's registry (discovered at command
+    /// time — no session needs to be open): project beats system, and a
+    /// `disable-model-invocation` skill stays listed (the dropdown is its
+    /// only door).
+    #[tokio::test]
+    async fn skill_list_serves_the_workspace_registry_with_project_wins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let system = tempfile::tempdir().unwrap();
+        write_skill_fixture(system.path(), "skills/shared",
+            "---\nname: shared\ndescription: system shared\n---\nBody.\n");
+        write_skill_fixture(tmp.path(), ".tau/skills/shared",
+            "---\nname: shared\ndescription: project shared\n---\nBody.\n");
+        write_skill_fixture(tmp.path(), ".agents/skills/other",
+            "---\nname: other\ndescription: from .agents\ndisable-model-invocation: true\n---\nBody.\n");
+        let core = CoreBuilder::custom(providers())
+            .with_system_dir(system.path().to_path_buf())
+            .build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        match core.dispatch(Command::SkillList { workspace: workspace.id }).unwrap() {
+            CommandOutput::Skills { skills } => {
+                assert_eq!(skills.len(), 2);
+                let shared = skills.iter().find(|s| s.name == "shared").unwrap();
+                assert_eq!(shared.description, "project shared");
+                assert!(
+                    shared.location.starts_with(tmp.path().to_str().unwrap()),
+                    "the project file's location: {}",
+                    shared.location
+                );
+                let other = skills.iter().find(|s| s.name == "other").unwrap();
+                assert!(!other.model_invocation);
+            }
+            other => panic!("expected skills: {other:?}"),
+        }
+    }
+
+    async fn wait_for_user_entry(workspace: &Workspace, session: &str) -> Vec<Entry> {
+        let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), session);
+        store.open().unwrap();
+        for _ in 0..100 {
+            let entries = store.entries_range(0, 100).unwrap();
+            if entries.iter().any(|e| e.kind == tau_core::agent::KIND_USER) {
+                return entries;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        store.entries_range(0, 100).unwrap()
+    }
+
+    /// A misspelled `/skill:` name rejects the send (a GUI error) and
+    /// records nothing; the session file stays empty.
+    #[tokio::test]
+    async fn a_misspelled_skill_name_rejects_the_send() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill_fixture(tmp.path(), ".agents/skills/alpha",
+            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n");
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned(&canned_body()),
+            TurnConfig::default(),
+        );
+        let session_id = live.meta.lock().unwrap().id.clone();
+        let err = core
+            .dispatch(Command::MessageSend {
+                session: session_id.clone(),
+                text: "/skill:alphax do it".into(),
+                lane: MessageLane::Steering,
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, ProtocolError::Other { .. }),
+            "expected a rejection, got: {err:?}"
+        );
+        let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), &session_id);
+        store.open().unwrap();
+        assert!(
+            store.entries_range(0, 100).unwrap().is_empty(),
+            "a rejected send records nothing"
+        );
+    }
+
+    /// A valid `/skill:<name>` records the expansion template exactly
+    /// (the no-args variant omits the final line), with the payload
+    /// marker; a non-skill leading `/…` message is recorded verbatim.
+    #[tokio::test]
+    async fn a_skill_invocation_records_the_expanded_entry() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_skill_fixture(tmp.path(), ".agents/skills/alpha",
+            "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n");
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = match core
+            .dispatch(Command::WorkspaceOpen {
+                cwd: tmp.path().to_string_lossy().into_owned(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Workspace { workspace: w } => w,
+            other => panic!("expected a workspace: {other:?}"),
+        };
+        let dir = tmp.path().join(".agents").join("skills").join("alpha");
+        let location = dir.join("SKILL.md").to_string_lossy().into_owned();
+
+        // With args: the template plus the `User request:` line.
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned(&canned_body()),
+            TurnConfig::default(),
+        );
+        let s1 = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: s1.clone(),
+            text: "/skill:alpha do it".into(),
+            lane: MessageLane::Steering,
+        })
+        .unwrap();
+        let entries = wait_for_user_entry(&workspace, &s1).await;
+        let user = entries
+            .iter()
+            .find(|e| e.kind == tau_core::agent::KIND_USER)
+            .unwrap();
+        assert_eq!(
+            user.payload["text"],
+            format!(
+                "Skill `alpha` — follow the instructions below. The skill directory is {}; resolve relative paths in the instructions against it.\n\nDo alpha.\n\nUser request: do it",
+                dir.display()
+            )
+        );
+        assert_eq!(user.payload["skill"]["name"], "alpha");
+        assert_eq!(user.payload["skill"]["location"], location);
+
+        // Bare invocation: the final line is omitted.
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned(&canned_body()),
+            TurnConfig::default(),
+        );
+        let s2 = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: s2.clone(),
+            text: "/skill:alpha".into(),
+            lane: MessageLane::Steering,
+        })
+        .unwrap();
+        let entries = wait_for_user_entry(&workspace, &s2).await;
+        let user = entries
+            .iter()
+            .find(|e| e.kind == tau_core::agent::KIND_USER)
+            .unwrap();
+        assert_eq!(
+            user.payload["text"],
+            format!(
+                "Skill `alpha` — follow the instructions below. The skill directory is {}; resolve relative paths in the instructions against it.\n\nDo alpha.",
+                dir.display()
+            )
+        );
+
+        // A non-skill leading slash is prose: recorded verbatim.
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned(&canned_body()),
+            TurnConfig::default(),
+        );
+        let s3 = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: s3.clone(),
+            text: "/not-a-skill".into(),
+            lane: MessageLane::Steering,
+        })
+        .unwrap();
+        let entries = wait_for_user_entry(&workspace, &s3).await;
+        let user = entries
+            .iter()
+            .find(|e| e.kind == tau_core::agent::KIND_USER)
+            .unwrap();
+        assert_eq!(user.payload["text"], "/not-a-skill");
+        assert!(user.payload.get("skill").is_none());
     }
 }
