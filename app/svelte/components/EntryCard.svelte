@@ -29,8 +29,16 @@
 
   let el = $state<HTMLDivElement | null>(null);
 
+  // Write only on change: the heights map is reactive, and a repeat of the
+  // same value would re-lay the transcript for nothing.
+  function measure() {
+    if (!el) return;
+    const h = el.offsetHeight;
+    if (heights.get(heightKey) !== h) heights.set(heightKey, h);
+  }
+
   onMount(() => {
-    if (el) heights.set(heightKey, el.offsetHeight);
+    measure();
   });
 
   // live streams grow the card; re-measure as content changes.
@@ -59,7 +67,7 @@
     void toolOpen;
     void taskOpen;
     void thinkOpen;
-    if (el) heights.set(heightKey, el.offsetHeight);
+    measure();
   });
 
   // Provider text arrives with decorative leading/trailing newlines;

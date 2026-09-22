@@ -1,6 +1,8 @@
 <script module lang="ts">
   // key: `${session}:${entryId}` — heights persist across remounts.
-  export const heights = new Map<string, number>();
+  // $state: a measurement write re-lays the track in the same flush as the
+  // content that grew it, so the tail follow never chases a stale total.
+  export const heights = $state(new Map<string, number>());
 </script>
 
 <script lang="ts">
@@ -15,13 +17,17 @@
   import type { Entry } from '../lib/protocol';
 
   const BUFFER = 600;
+  // A viewport within this of the measured bottom counts as "at the bottom".
+  const THRESHOLD = 8;
 
   const cur = $derived(store.current);
 
 
   let el = $state<HTMLDivElement | null>(null);
   let scroll = $state({ top: 0, h: 0 });
-
+  // Plain, not reactive: the scroll handler and the send effect own it;
+  // no derived may read it.
+  let pinned = true;
   const entries = $derived(cur ? store.sessions[cur].entries : []);
   const live = $derived(cur ? store.sessions[cur].live : []);
   // A sub-agent notification's label: the child session's own title.
@@ -123,45 +129,54 @@
   // Scroll bookkeeping lives on the DOM, not in the reactive graph: a
   // scroll listener that writes $state from an effect re-triggers itself
   // in this Svelte. onMount registers once; the deriveds just read.
+  //
+  // The follow is one flag: pinned while the viewport sits within THRESHOLD
+  // of the measured bottom. The scroll handler alone flips it — a scroll-up
+  // walks past the threshold and unpins, a scroll-to-bottom re-pins, and
+  // the follow's own catch-up lands at distance 0. No wheel/touch listeners
+  // (the old wheelUntil timer suspended the follow for 200 ms, then caught
+  // up in one visible jump): a user scroll-up reaches the handler before
+  // the next rAF, so the follow can never overtake it.
   onMount(() => {
     const node = el;
     if (!node) return;
-    // The pin re-arms only at the end (a few px): proximity within the old
-    // 200 px window snapped the view while the user was reading near the
-    // tail. A manual scroll away from the end releases it until they
-    // return; stream growth does not fire scroll events, so a pinned view
-    // stays pinned between ticks.
-    let pinned = true;
-    // The rAF below forces the tail while pinned; a wheel-up would be
-    // overwritten before its scroll event can release the pin, so the
-    // wheel is watched directly (intent precedes the scrollTop change).
-    let wheelUntil = 0;
+    // Transition classification (the virtuoso atBottom scan): compare the
+    // movement against the last processed position, not the absolute
+    // distance. A pending scroll event's scrollTop can be stale against a
+    // bottom that has since grown (the send's jump fires after the first
+    // stream growth) — re-classifying that as "scrolled away" would drop
+    // the pin for the whole turn. Only a real upward move past the
+    // threshold unpins; a downward move re-pins on arrival at the bottom.
+    let lastTop = node.scrollTop;
     const onScroll = () => {
       scroll.top = node.scrollTop;
       scroll.h = node.clientHeight;
-      pinned = node.scrollHeight - node.scrollTop - node.clientHeight <= 8;
-    };
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0) pinned = false;
-      wheelUntil = Date.now() + 200;
+      const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
+      if (node.scrollTop > lastTop) {
+        if (dist <= THRESHOLD) pinned = true;
+      } else if (node.scrollTop < lastTop) {
+        if (dist > THRESHOLD) pinned = false;
+      }
+      lastTop = node.scrollTop;
     };
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
-    node.addEventListener('wheel', onWheel, { passive: true });
     node.scrollTo({ top: node.scrollHeight });
-    // Follow the tail while pinned. rAF, not a timer: the stream grows at
-    // the 25 ms coalesce cadence, so a coarser tick steps the view in
-    // visible jumps. A wheel-up suspends the follow (see onWheel) so a
-    // slow scroll is never fought.
+    // While pinned, one catch-up per frame to the measured bottom, and only
+    // when behind (rAF runs after the flush that re-laid the track, so a
+    // growth and its catch-up land in the same frame — one monotonic step,
+    // no up/down fight, no smooth-scroll mix).
     let raf = 0;
     const follow = () => {
-      if (pinned && Date.now() > wheelUntil) node.scrollTop = node.scrollHeight;
+      if (pinned) {
+        const top = node.scrollHeight - node.clientHeight;
+        if (node.scrollTop < top) node.scrollTop = top;
+      }
       raf = requestAnimationFrame(follow);
     };
     raf = requestAnimationFrame(follow);
     return () => {
       node.removeEventListener('scroll', onScroll);
-      node.removeEventListener('wheel', onWheel);
       cancelAnimationFrame(raf);
     };
   });
@@ -174,11 +189,15 @@
     }
   });
 
-  // A new send jumps the view to the fresh user entry; the scroll event
-  // re-arms the tail pin, so the turn is followed as it is written.
+  // A new send jumps the view to the fresh user entry and re-arms the pin
+  // (explicitly: a no-op jump fires no scroll event), so the turn is
+  // followed as it is written.
   $effect(() => {
     void store.tailJump;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+      pinned = true;
+    }
   });
 
   // Paged read around the viewport (spec §8): the window's slice is
