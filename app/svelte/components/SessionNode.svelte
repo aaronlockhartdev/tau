@@ -82,9 +82,14 @@
   // An archived row is non-interactive (no open, rename, or archive):
   // the right-click menu is its only affordance — restore.
   let ctx = $state<{ x: number; y: number } | null>(null);
+  // The rendered position: the raw click point, clamped inside the
+  // viewport after the first render.
+  let ctxPos = $state({ x: 0, y: 0 });
+  let ctxMenu: HTMLDivElement | undefined = $state(undefined);
   function onContext(e: MouseEvent): void {
     e.preventDefault();
     ctx = { x: e.clientX, y: e.clientY };
+    ctxPos = { x: e.clientX, y: e.clientY };
   }
   $effect(() => {
     if (!ctx) return;
@@ -94,6 +99,18 @@
     };
     document.addEventListener('click', close);
     document.addEventListener('keydown', onKey);
+    // The menu is position:fixed at the raw clientX/clientY: a right-click
+    // near the bottom/right edge would render off-screen, so after it
+    // renders, measure it and shift it inside the window bounds.
+    void tick().then(() => {
+      const el = ctxMenu;
+      if (!ctx || !el) return;
+      const r = el.getBoundingClientRect();
+      ctxPos = {
+        x: Math.max(0, Math.min(ctx.x, window.innerWidth - r.width - 4)),
+        y: Math.max(0, Math.min(ctx.y, window.innerHeight - r.height - 4))
+      };
+    });
     return () => {
       document.removeEventListener('click', close);
       document.removeEventListener('keydown', onKey);
@@ -115,6 +132,7 @@
   {#if pane(ws)?.renamingId === session.meta.id}
     <input
       class="name rename"
+      maxlength={200}
       bind:this={renameInput}
       bind:value={renameText}
       aria-label="rename session"
@@ -174,7 +192,7 @@
   label={rowLabel}
 />
 {#if ctx}
-  <div class="ctxmenu" role="menu" style:left="{ctx.x}px" style:top="{ctx.y}px">
+  <div class="ctxmenu" role="menu" bind:this={ctxMenu} style:left="{ctxPos.x}px" style:top="{ctxPos.y}px">
     <button
       type="button"
       role="menuitem"
