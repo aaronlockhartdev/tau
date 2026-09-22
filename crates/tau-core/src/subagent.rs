@@ -162,6 +162,9 @@ pub enum WakeKind {
     /// idle with `waiting_on: parent` — a parked parent is woken with the
     /// child's stated need.
     Waiting,
+    /// stopped — the parent is told the child was stopped (the note names
+    /// who), so its model sees the child as stopped, not running.
+    Stopped,
 }
 
 /// The parent-side seam the supervisor calls across (the dispatch
@@ -374,13 +377,20 @@ impl Supervisor {
     }
 
     /// A child's concurrency slot: every child that is not done holds one
-    /// (a done child is quiescent; resuming it re-acquires a slot).
+    /// A child's concurrency slot: every child with a live drive holds
+    /// one; a quiescent child (done/stopped/failed — its drive is gone)
+    /// holds none, and a resume of it re-acquires a slot.
     fn live_children(&self) -> Vec<Arc<Child>> {
         self.children
             .lock()
             .unwrap()
             .values()
-            .filter(|c| !matches!(c.state(), ChildState::Done { .. }))
+            .filter(|c| !matches!(
+                c.state(),
+                ChildState::Done { .. }
+                    | ChildState::Stopped { .. }
+                    | ChildState::Failed { .. }
+            ))
             .cloned()
             .collect()
     }
@@ -1005,15 +1015,17 @@ impl Supervisor {
                 // Resume from any non-running state (ADR-0001 supplement:
                 // all non-running states are deliberately resumable; the
                 // only asymmetry is the provenance the stop recorded).
-                if matches!(child.state(), ChildState::Done { .. }) {
-                    self.check_cap(true)?;
-                }
                 let was_quiescent = matches!(
                     *child.state.lock().unwrap(),
                     ChildState::Stopped { .. }
                         | ChildState::Failed { .. }
                         | ChildState::Done { .. }
                 );
+                // A quiescent child holds no slot; the resume re-acquires
+                // one against the cap.
+                if was_quiescent {
+                    self.check_cap(true)?;
+                }
                 let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
                 child.set_state(ChildState::Running, Some(text.clone()))?;
                 child.wake.notify_one();
@@ -1040,9 +1052,12 @@ impl Supervisor {
         }
     }
 
-    /// `subagent_stop` (and the GUI's stop, and a parent's
-    /// close/delete of its children): soft pause — the in-flight stream is
-    /// cut, the partial kept, provenance recorded, all states resumable.
+    /// `subagent_stop` (and the GUI's stop): a running child is stopped —
+    /// the in-flight stream is cut, the partial kept, a terminal `Stopped{by}`
+    /// recorded (ADR-0001: deliberately resumable), its concurrency slot
+    /// freed, and the parent woken. A non-running child is a no-op with a
+    /// clear message — it already rests in the state that records how it
+    /// got there, and a second stop would overwrite it.
     pub fn stop(self: &Arc<Self>, handle: &str, by: StoppedBy) -> Result<String, String> {
         let child = self
             .children
@@ -1051,13 +1066,20 @@ impl Supervisor {
             .get(handle)
             .cloned()
             .ok_or_else(|| format!("subagent_stop: no sub-agent {handle} in this session"))?;
-        if matches!(child.state(), ChildState::Running) {
-            // Cuts the child's stream at the next delta; the loop records
-            // the partial as an interrupted entry.
-            child.agent.stop();
+        if !matches!(child.state(), ChildState::Running) {
+            return match child.state() {
+                ChildState::Idle { .. } => {
+                    Ok(format!("sub-agent {handle} is parked — a message resumes it"))
+                }
+                other => Ok(format!("sub-agent {handle} is already {}", other.kind())),
+            };
         }
+        // Cuts the child's stream at the next delta; the loop records
+        // the partial as an interrupted entry.
+        child.agent.stop();
         let note = format!("stopped by {}", by.as_str());
         child.set_state(ChildState::Stopped { by }, Some(note.clone()))?;
+        // The drive of a running child is live; it ends at its loop head.
         child.wake.notify_one();
         // A stopped child with an assigned task carries the task's resume
         // contract in the stop event (spec §5.2).
@@ -1077,8 +1099,18 @@ impl Supervisor {
             handle: child.handle.clone(),
             child: child.session_id.clone(),
             state: ChildState::Stopped { by },
-            note: Some(note),
+            note: Some(note.clone()),
             resume_contract: resume_contract.clone(),
+        });
+        // The parent is told the child is stopped: its model's view of the
+        // delegation must not keep the child running.
+        self.bridge.wake(&WakeNotice {
+            parent: self.parent_session.clone(),
+            child: child.session_id.clone(),
+            kind: WakeKind::Stopped,
+            text: note,
+            waiting_on: None,
+            output: None,
         });
         match resume_contract {
             Some(rc) => Ok(format!(
@@ -1886,6 +1918,59 @@ mod tests {
         );
     }
 
+    /// The done-display invariant (the user's 'done shows idle' report):
+    /// the Done transition is the child's final state event — the wake
+    /// that follows it never resets the record, and `state_info` (the
+    /// snapshot's and the GUI badge's source) keeps saying done.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_done_child_stays_done_after_its_wake() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sup, bridge) = harness(
+            dir.path(),
+            vec![sse("parent keeps working", &[]), sse("second parent turn", &[])],
+            vec![vec![sse(
+                "",
+                &[notify_call("n1", "done", true, Some(json!({ "ok": true })), None)],
+            )]],
+            SubAgents::default(),
+        );
+        let s = sup
+            .spawn("general", "finish", Some(ContextMode::Fresh), None, "c0")
+            .unwrap();
+        s.drive.await.unwrap();
+        assert!(
+            matches!(
+                sup.state_info(&s.handle).unwrap().state,
+                ChildState::Done { .. }
+            ),
+            "the record must keep saying done"
+        );
+        // The state stream for the handle ends at Done: nothing the wake
+        // triggers may overwrite it.
+        let states: Vec<&str> = bridge
+            .states
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|n| n.handle == s.handle)
+            .map(|n| n.state.kind())
+            .collect();
+        assert_eq!(
+            states.last().copied(),
+            Some("done"),
+            "the child's last state event is the done one: {states:?}"
+        );
+        assert!(
+            bridge
+                .wakes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|w| w.kind == WakeKind::Done),
+            "done wakes the parent"
+        );
+    }
+
     // ── stop / resume ───────────────────────────────────────────────────
 
     /// A running child is soft-stopped (the stream cut, the partial kept
@@ -1969,8 +2054,186 @@ mod tests {
         );
     }
 
-    // ── caps and structural depth ───────────────────────────────────────
+    /// A running child is stopped: the partial kept, the terminal Stopped
+    /// recorded, the parent woken, and the concurrency slot freed — a
+    /// second spawn at the cap succeeds while the stopped child rests.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_running_child_is_stopped_and_releases_its_slot() {
+        let dir = tempfile::tempdir().unwrap();
+        let slow = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
+        );
+        let (sup, bridge, _) = harness_full(
+            dir.path(),
+            vec![sse("spawning", &[])],
+            vec![
+                vec![slow.to_owned(), sse("", &[])],
+                vec![
+                    sse(
+                        "",
+                        &[notify_call(
+                            "n1",
+                            "done",
+                            true,
+                            Some(json!({ "ok": true })),
+                            None,
+                        )],
+                    ),
+                    sse("", &[]),
+                ],
+            ],
+            vec![Duration::from_millis(200), Duration::ZERO],
+            SubAgents {
+                max_depth: 1,
+                max_concurrent: Some(1),
+            },
+        );
+        let first = sup
+            .spawn("general", "slow", Some(ContextMode::Fresh), None, "c0")
+            .unwrap();
+        let drive = first.drive;
+        // Let the slow stream start, then stop it.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let out = sup.stop(&first.handle, StoppedBy::User).unwrap();
+        assert!(out.contains("stopped"), "{out}");
+        drive.await.unwrap();
+        assert!(
+            matches!(
+                sup.state_info(&first.handle).unwrap().state,
+                ChildState::Stopped {
+                    by: StoppedBy::User
+                }
+            ),
+            "the stopped state is recorded with its provenance"
+        );
+        assert!(
+            bridge
+                .states
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| n.state == ChildState::Stopped { by: StoppedBy::User })
+        );
+        assert!(
+            bridge
+                .wakes
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|w| w.kind == WakeKind::Stopped),
+            "the stop wakes the parent"
+        );
+        // A second stop of the stopped child is a no-op.
+        let out = sup.stop(&first.handle, StoppedBy::User).unwrap();
+        assert!(out.contains("already stopped"), "{out}");
+        // The slot is freed: a second child spawns at the cap and finishes.
+        let second = sup
+            .spawn("general", "second", Some(ContextMode::Fresh), None, "c1")
+            .unwrap();
+        second.drive.await.unwrap();
+        assert!(
+            matches!(
+                sup.state_info(&second.handle).unwrap().state,
+                ChildState::Done { .. }
+            ),
+            "the freed slot carried a real spawn"
+        );
+    }
 
+    /// A stop of a non-running child is a no-op with a clear message:
+    /// the state that records how it got there (done's output, the stop's
+    /// provenance) is never overwritten.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_non_running_child_refuses_a_second_stop() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sup, bridge) = harness(
+            dir.path(),
+            vec![sse("spawning", &[])],
+            vec![
+                vec![sse(
+                    "",
+                    &[notify_call(
+                        "n1",
+                        "done",
+                        true,
+                        Some(json!({ "ok": true })),
+                        None,
+                    )],
+                )],
+                vec![
+                    sse(
+                        "",
+                        &[notify_call("n1", "parked", false, None, Some("user"))],
+                    ),
+                    sse(
+                        "",
+                        &[notify_call(
+                            "n2",
+                            "done",
+                            true,
+                            Some(json!({ "ok": true })),
+                            None,
+                        )],
+                    ),
+                ],
+            ],
+            SubAgents::default(),
+        );
+        let done_child = sup
+            .spawn("general", "one", Some(ContextMode::Fresh), None, "c0")
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&done_child.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        let out = sup.stop(&done_child.handle, StoppedBy::User).unwrap();
+        assert!(out.contains("already done"), "{out}");
+        let parked = sup
+            .spawn("general", "two", Some(ContextMode::Fresh), None, "c1")
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&parked.handle).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        });
+        // A parked child is not running: the stop is a no-op and the park
+        // stands.
+        let out = sup.stop(&parked.handle, StoppedBy::User).unwrap();
+        assert!(out.contains("parked"), "{out}");
+        assert!(
+            matches!(
+                sup.state_info(&parked.handle).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        );
+        // A message resumes it; its next scripted turn finishes the child.
+        sup.message(&parked.handle, Some("go".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&parked.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        let out = sup.stop(&parked.handle, StoppedBy::User).unwrap();
+        assert!(out.contains("already done"), "{out}");
+        // The done child's record is untouched: exactly one state event.
+        let done_states: Vec<&str> = bridge
+            .states
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|n| n.handle == done_child.handle)
+            .map(|n| n.state.kind())
+            .collect();
+        assert_eq!(done_states, vec!["done"], "{done_states:?}");
+    }
+
+    // ── caps and structural depth ───────────────────────────────────────
     /// The concurrency cap is enforced; a child's tool set carries no
     /// spawn tool (the depth cap is structural).
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

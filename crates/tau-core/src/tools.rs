@@ -141,7 +141,7 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "subagent_stop".into(),
-            description: "Soft-stop a sub-agent: its in-flight stream is cut (the partial is kept) and it parks; it stays resumable.".into(),
+            description: "Stop a running sub-agent: its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already parked/done/failed/stopped) and is left alone.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {"handle": {"type": "string"}},
