@@ -8,7 +8,7 @@
 
   import { onMount } from 'svelte';
   import { store } from '../lib/store.svelte';
-  import { md as renderMarkdown, splitJsonPayload, argsLines } from '../lib/markdown';
+  import { md as renderMarkdown, splitJsonPayload, argsLines, valueLinesOf } from '../lib/markdown';
   import type { Entry } from '../lib/protocol';
 
   let {
@@ -156,6 +156,35 @@
       ? splitJsonPayload(entry.text ?? '')
       : null
   );
+  // Task lifecycle records (created / started / evidence / finished / ...)
+  // carry the raw payload as JSON; render it as a quiet system card with
+  // an event label and structured kv lines (like a tool's args).
+  const taskKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
+    if (entry.kind !== 'task') return [];
+    try {
+      const p = JSON.parse(entry.text ?? '') as Record<string, unknown>;
+      return Object.entries(p)
+        .filter(([k]) => k !== 'event')
+        .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
+    } catch {
+      return entry.text ? [{ k: '', lines: [entry.text] }] : [];
+    }
+  });
+  const taskLabel = $derived.by(() => {
+    if (entry.kind !== 'task') return '';
+    try {
+      const p = JSON.parse(entry.text ?? '') as Record<string, any>;
+      if (p.event === 'created') return `task: ${p.title ?? p.id}`;
+      if (p.event === 'started') return `task started · ${p.id}`;
+      if (p.event === 'evidence') return `evidence · ${p.evidence?.criterion ?? p.id}`;
+      if (p.event === 'finished') return `task done · ${p.id}`;
+      if (p.event === 'blocked') return `task blocked · ${p.id}`;
+      if (p.event === 'assigned') return `task assigned · ${p.id}`;
+      return p.event ?? 'task';
+    } catch {
+      return 'task';
+    }
+  });
 
   // A fully empty entry (a pure tool request whose payload has
   // not arrived) renders nothing, so no shell margin gap is left behind.
@@ -356,6 +385,16 @@
       <div class="card2">
         <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-term"/></svg>system</div>
         <div class="txt2 dim">{@html md}</div>
+      </div>
+    {:else if entry.kind === 'task'}
+      <div class="card2">
+        <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-check"/></svg>{taskLabel}</div>
+        {#each taskKv as row (row.k)}
+          <div class="kv"><span class="k">{row.k}</span><span class="v">{row.lines[0] ?? ''}</span></div>
+          {#each row.lines.slice(1) as ln (ln)}
+            <div class="kv sub"><span class="v">{ln}</span></div>
+          {/each}
+        {/each}
       </div>
     {:else if (entry.text && entry.text.trim()) || entry.kind === 'interrupted'}
       <div class="card2" class:interrupted={entry.kind === 'interrupted'}>

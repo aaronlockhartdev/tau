@@ -105,10 +105,10 @@ export function splitJsonPayload(
 // structure instead of a raw JSON blob (the task tools' steps and
 // criteria used to render as JSON text).
 export function argsLines(a: Record<string, unknown>): Array<{ k: string; lines: string[] }> {
-  return Object.entries(a).map(([k, v]) => ({ k, lines: valueLines(v, 1) }));
+  return Object.entries(a).map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
 }
 
-function valueLines(v: unknown, depth: number): string[] {
+export function valueLinesOf(v: unknown, depth: number): string[] {
   if (Array.isArray(v)) {
     return v.flatMap((x) =>
       x === null
@@ -127,7 +127,7 @@ function objLines(o: Record<string, unknown>, depth: number): string[] {
   for (const [k, v] of Object.entries(o)) {
     if (Array.isArray(v) || (typeof v === 'object' && v !== null)) {
       out.push(bullet(depth, `${k}:`));
-      out.push(...valueLines(v, depth + 1));
+      out.push(...valueLinesOf(v, depth + 1));
     } else {
       out.push(bullet(depth, `${k}: ${v === null ? '' : String(v)}`));
     }
