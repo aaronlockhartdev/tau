@@ -128,15 +128,20 @@
   );
 
   // Sub-agent entries carry the raw payload as JSON; the card renders it
-  // as plain key: value lines with the delimiters stripped. In a child's
-  // own session these are its own lifecycle records (spawn, report to
-  // parent, state change) — rendered as quiet system lines, not amber
-  // sub-agent cards (the amber card is the parent's view of a child).
-  const sublines = $derived(
-    entry.kind === 'subagent'
-      ? structuredSub(entry.text ?? '')
-      : []
-  );
+  // with the shared structured kv rows (field name on its own line with a
+  // colon, value below). In a child's own session these are its own
+  // lifecycle records (spawn, report to parent, state change) — rendered
+  // as quiet system rows, not amber sub-agent cards (the amber card is the
+  // parent's view of a child).
+  const subKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
+    if (entry.kind !== 'subagent') return [];
+    try {
+      const p = JSON.parse(entry.text ?? '') as Record<string, unknown>;
+      return Object.entries(p).map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
+    } catch {
+      return entry.text ? [{ k: '', lines: [entry.text] }] : [];
+    }
+  });
   const subLabel = $derived.by(() => {
     if (entry.kind !== 'subagent') return '';
     try {
@@ -167,11 +172,7 @@
       const p = JSON.parse(entry.text ?? '') as Record<string, unknown>;
       return Object.entries(p)
         .filter(([k]) => k !== 'event')
-        .map(([k, v]) => ({
-          k,
-          lines: valueLinesOf(v, 1),
-          nested: Array.isArray(v) || (typeof v === 'object' && v !== null)
-        }));
+        .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
     } catch {
       return entry.text ? [{ k: '', lines: [entry.text] }] : [];
     }
@@ -214,32 +215,6 @@
   function fmt(n: number): string {
     return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
   }
-  function structuredSub(text: string): string[] {
-    const lines: string[] = [];
-    const walk = (v: unknown, indent: number) => {
-      if (Array.isArray(v)) {
-        for (const x of v) walk(x, indent);
-      } else if (v && typeof v === 'object') {
-        for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-          if (x && typeof x === 'object') {
-            lines.push(' '.repeat(indent) + k + ':');
-            walk(x, indent + 2);
-          } else {
-            lines.push(' '.repeat(indent) + k + ': ' + (x === null || x === undefined ? '' : String(x)));
-          }
-        }
-      } else if (v !== null && v !== undefined && v !== '') {
-        lines.push(' '.repeat(indent) + String(v));
-      }
-    };
-    try {
-      const p = JSON.parse(text);
-      walk(p, 0);
-    } catch {
-      lines.push(text);
-    }
-    return lines;
-  }
   function onKey(fn: () => void) {
     return (e: KeyboardEvent) => {
       if (e.key === 'Enter' || e.key === ' ') {
@@ -250,16 +225,14 @@
   }
 </script>
 
-{#snippet kvRows(rows: Array<{ k: string; lines: string[]; nested?: boolean }>)}
+{#snippet kvRows(rows: Array<{ k: string; lines: string[] }>)}
   {#each rows as row (row.k)}
-    {#if row.nested}
+    {#if row.k}
       <div class="kv"><span class="k">{row.k}:</span></div>
-      {#each row.lines as ln (ln)}
-        <div class="kv sub"><span class="v">{ln}</span></div>
-      {/each}
-    {:else}
-      <div class="kv"><span class="k">{row.k}</span><span class="v">{row.lines[0] ?? ''}</span></div>
     {/if}
+    {#each row.lines as ln (ln)}
+      <div class="kv sub"><span class="v">{ln}</span></div>
+    {/each}
   {/each}
 {/snippet}
 {#if hasContent}
@@ -367,16 +340,12 @@
     {:else if entry.kind === 'subagent' && parentLabel}
       <div class="card2">
         <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{subLabel}</div>
-        {#each sublines as line}
-          <div class="txt2 dim">{line}</div>
-        {/each}
+        {@render kvRows(subKv)}
       </div>
     {:else if entry.kind === 'subagent'}
       <div class="card2">
         <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>sub-agent</div>
-        {#each sublines as line}
-          <div class="txt2 dim">{line}</div>
-        {/each}
+        {@render kvRows(subKv)}
       </div>
     {:else if entry.kind === 'spawn-snapshot'}
       <div class="card2">

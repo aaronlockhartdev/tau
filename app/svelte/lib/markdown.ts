@@ -79,7 +79,7 @@ export { esc };
 // trailing object.
 export function splitJsonPayload(
   text: string
-): { prose: string; kv: Array<{ k: string; lines: string[]; nested: boolean }> } | null {
+): { prose: string; kv: Array<{ k: string; lines: string[] }> } | null {
   const t = text.trimEnd();
   if (!t.endsWith('}')) return null;
   for (let i = t.length - 1; i >= 0; i--) {
@@ -93,8 +93,7 @@ export function splitJsonPayload(
     if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) continue;
     const kv = Object.entries(obj).map(([k, v]) => ({
       k,
-      lines: valueLinesOf(v, 1),
-      nested: Array.isArray(v) || (typeof v === 'object' && v !== null)
+      lines: valueLinesOf(v, 1)
     }));
     if (!kv.length) continue;
     return { prose: t.slice(0, i).replace(/[\s—–\-·:]+$/, ''), kv };
@@ -102,18 +101,12 @@ export function splitJsonPayload(
   return null;
 }
 
-// Structured lines for a tool's arguments: scalars inline, objects and
-// arrays as indented bullet lines, so an expanded tool shows readable
-// structure instead of a raw JSON blob (the task tools' steps and
-// criteria used to render as JSON text).
-export function argsLines(a: Record<string, unknown>): Array<
-  { k: string; lines: string[]; nested: boolean }
-> {
-  return Object.entries(a).map(([k, v]) => ({
-    k,
-    lines: valueLinesOf(v, 1),
-    nested: Array.isArray(v) || (typeof v === 'object' && v !== null)
-  }));
+// Structured lines for a tool's arguments: each field's name on its own
+// line with a colon, the value on the lines below (scalars a single line,
+// objects and arrays as indented bullets), so nothing renders as a raw
+// JSON blob.
+export function argsLines(a: Record<string, unknown>): Array<{ k: string; lines: string[] }> {
+  return Object.entries(a).map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
 }
 
 export function valueLinesOf(v: unknown, depth: number): string[] {
