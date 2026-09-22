@@ -128,7 +128,6 @@
     };
     store.pane[ws] = p;
     return p;
-    return p;
   }
 
   export function toggleAllReasoning(): void {
@@ -153,7 +152,7 @@
       return;
     }
     store.sessions[childSid] = {
-      meta: { id: childSid, workspace: ws, title, parent: parentSid, created: mru, leaf: null, model: null, usage: null },
+      meta: { id: childSid, workspace: ws, title, parent: parentSid, created: mru, leaf: null, model: null, usage: null, archived: false },
       entries: [],
       live: [],
       usage: null,
@@ -293,7 +292,7 @@
       parent: null,
       state: snap.live.turn === 'running' ? 'running' : 'idle',
       waiting_on: null,
-      archived: false,
+      archived: meta.archived,
       mru: meta.created,
       subagents: snap.live.subagents,
       tasks: snap.live.tasks
@@ -338,28 +337,7 @@
     const list = await command({ type: 'session_list', workspace: real.id });
     // The listed sessions materialize as stubs so the pane shows them all;
     // entries hydrate lazily when one is opened.
-    if (list.kind === 'sessions') {
-      for (const m of list.sessions) {
-        if (!store.sessions[m.id]) {
-          store.sessions[m.id] = {
-            meta: m,
-            entries: [],
-            live: [],
-            usage: null,
-            tps: 0,
-            turn: 'idle',
-            pending: [],
-            parent: m.parent ?? null,
-            state: 'idle',
-            waiting_on: null,
-            archived: false,
-            mru: m.created,
-            subagents: [],
-            tasks: []
-          };
-        }
-      }
-    }
+    if (list.kind === 'sessions') applySessionList(list.sessions);
     // The pane's first listing (ticket #32): the root, listed on open —
     // every other dir is fetched on expansion.
     store.files[real.id] ??= {};
@@ -495,6 +473,83 @@
     if (s) s.meta.title = t;
   }
 
+  // Archive (ADR-0005): one-way, off the live read/write path. The core
+  // stops a running child first and archives the session's children with
+  // it; the row keeps its state (a message resumes it) and moves to the
+  // archive folder, the children's rows converge on the refetched list.
+  export async function archiveSession(sid: string): Promise<void> {
+    try {
+      const out = await command({ type: 'session_archive', session: sid });
+      if (out.kind === 'session') {
+        const s = store.sessions[sid];
+        if (s) {
+          s.meta = out.session;
+          s.archived = out.session.archived;
+        }
+      }
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    const wsid = store.sessions[sid]?.meta.workspace;
+    if (wsid) {
+      try {
+        const list = await command({ type: 'session_list', workspace: wsid });
+        if (list.kind === 'sessions') applySessionList(list.sessions);
+      } catch (e) {
+        store.error = errText(e);
+      }
+    }
+  }
+
+  // Merge a session_list into the store: an existing row adopts the list's
+  // archive flag (the list is the flag's authority — a row archived while
+  // listed, or listed after a restart, converges on the file's state); a
+  // new id materializes as a stub (entries hydrate lazily on open).
+  function applySessionList(sessions: SessionMeta[]): void {
+    for (const m of sessions) {
+      const existing = store.sessions[m.id];
+      if (existing) {
+        existing.archived = m.archived;
+      } else {
+        store.sessions[m.id] = {
+          meta: m,
+          entries: [],
+          live: [],
+          usage: null,
+          tps: 0,
+          turn: 'idle',
+          pending: [],
+          parent: m.parent ?? null,
+          state: 'idle',
+          waiting_on: null,
+          archived: m.archived,
+          mru: m.created,
+          subagents: [],
+          tasks: []
+        };
+      }
+    }
+  }
+
+  // Restore (ADR-0005): the file moves back from the archive dir (the core
+  // restores a parent's children with it); the rows converge on the
+  // refetched list, the archive flag's authority.
+  export async function restoreSession(ws: string, sid: string): Promise<void> {
+    try {
+      await command({ type: 'session_restore', workspace: ws, session: sid });
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    try {
+      const list = await command({ type: 'session_list', workspace: ws });
+      if (list.kind === 'sessions') applySessionList(list.sessions);
+    } catch (e) {
+      store.error = errText(e);
+    }
+  }
+
   export async function switchSession(sid: string): Promise<void> {
     store.current = sid;
     const out = await command({ type: 'session_open', session: sid });
@@ -509,11 +564,18 @@
       next.archived = prev.archived;
     }
     store.sessions[sid] = next;
-    // Self-heal the child stubs: the snapshot's sub-agent list carries the
-    // child session ids, so a lost spawn event can't keep a child out of
-    // the tree.
+    // Self-heal the child stubs: the snapshot's sub-agent list is the
+    // supervisor's ground truth, so it both fills a lost spawn and
+    // corrects a stale stub (a done child must not keep its pre-wake
+    // state). A corrected stub keeps its own mru, so the sort is stable.
     for (const sub of next.subagents) {
-      if (!store.sessions[sub.child]) touchChild(sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
+      const existing = store.sessions[sub.child];
+      if (!existing) {
+        touchChild(sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
+      } else {
+        touchChild(sid, sub.child, sub.state, existing.mru, sub.waiting_on, null);
+        if (sub.waiting_on === null && sub.state !== 'idle') existing.waiting_on = null;
+      }
     }
     // A disk-restored child has no live supervisor listing it: synthesize
     // the tab entry from the child stub so the sub-agents tab is never
@@ -917,18 +979,24 @@
             touchChild(ev.session, k.child, st, now, waitingOn);
             break;
           }
-          // notified: a child notification reached the parent.
+          // notified: a child notification reached the parent. The wake
+          // kind maps onto a terminal state (done/failed/stopped) — a
+          // stopped child must not read back as idle.
+          const st =
+            k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : k.wake === 'stopped' ? 'stopped' : 'idle';
           const child = store.sessions[k.child];
           if (child) child.mru = now;
           const info = s.subagents.find((x) => x.child === k.child);
           if (info) {
             info.last_message = k.text;
-            info.state = k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : 'idle';
-            if (info.state === 'idle' && info.waiting_on === null) info.waiting_on = 'parent';
+            info.state = st;
+            if (st === 'idle' && info.waiting_on === null) info.waiting_on = 'parent';
+            if (st !== 'idle') info.waiting_on = null;
           }
           if (child) {
-            child.state = k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : 'idle';
-            if (child.state === 'idle' && child.waiting_on === null) child.waiting_on = 'parent';
+            child.state = st;
+            if (st === 'idle' && child.waiting_on === null) child.waiting_on = 'parent';
+            if (st !== 'idle') child.waiting_on = null;
           }
           break;
         }

@@ -62,6 +62,12 @@ const TREE_EXCLUDES: &[&str] = &[
     "__pycache__",
 ];
 
+/// A title's cap: the archive listing reads the header line bounded
+/// (4 KiB), so a title must stay far below that — an oversized title
+/// would overflow the read and the entry would silently drop from the
+/// archive list, losing its only restore row (review N3).
+const MAX_TITLE_LEN: usize = 200;
+
 /// A live session: the loop plus the binding's view of its lanes, the
 /// stop flag, and the provider (kept here so a turn can be diffed against
 /// the calls it started).
@@ -358,6 +364,7 @@ impl SubagentBridge for AppSubagentBridge {
                 leaf: None,
                 model: Some(n.model.clone()),
                 usage: None,
+                archived: false,
             }),
             agent: agent.clone(),
             stop: agent.stop_flag(),
@@ -416,6 +423,7 @@ impl SubagentBridge for AppSubagentBridge {
                     WakeKind::Done => "done",
                     WakeKind::Failed => "failed",
                     WakeKind::Waiting => "waiting",
+                    WakeKind::Stopped => "stopped",
                 }
                 .into(),
                 text: n.text.clone(),
@@ -881,6 +889,63 @@ impl Core {
                 leaf: h.leaf,
                 model: None,
                 usage: None,
+                archived: false,
+            });
+        }
+        out
+    }
+
+    /// The workspace's archived sessions (ADR-0005): the `archive/` dir's
+    /// zstd files, listed like disk sessions with the `archived` flag.
+    fn archived_sessions(&self, workspace: &Workspace) -> Vec<SessionMeta> {
+        #[derive(serde::Deserialize)]
+        struct ArchHeader {
+            #[serde(rename = "type")]
+            kind: String,
+            id: String,
+            created: u64,
+            #[serde(default)]
+            leaf: Option<String>,
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            parent: Option<String>,
+        }
+        let dir = Path::new(&workspace.cwd).join(".tau").join("archive");
+        let Ok(names) = std::fs::read_dir(&dir).map(|d| {
+            d.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".jsonl.zst"))
+                .collect::<Vec<_>>()
+        }) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for name in names {
+            let id = name.trim_end_matches(".jsonl.zst").to_owned();
+            let store = SessionStore::for_workspace(Path::new(&workspace.cwd), &id);
+            // Bounded first-line read (ADR-0005): the header is a short JSON
+            // line, so a big archived transcript costs one small read, not
+            // a full decode.
+            let Ok(first) = store.archive_header_line() else {
+                continue;
+            };
+            let Ok(h) = serde_json::from_str::<ArchHeader>(&first) else {
+                continue;
+            };
+            if h.kind != "session" || h.id != id {
+                continue;
+            }
+            out.push(SessionMeta {
+                id: h.id,
+                workspace: workspace.id.clone(),
+                title: h.title,
+                parent: h.parent,
+                created: h.created,
+                leaf: h.leaf,
+                model: None,
+                usage: None,
+                archived: true,
             });
         }
         out
@@ -991,11 +1056,118 @@ impl Core {
             })
     }
 
+    /// The write refusal for an archived session (ADR-0005): its live
+    /// file is gone, so an append would recreate it headerless (the
+    /// restore would then refuse it) — every write command checks this
+    /// before it mutates anything.
+    fn live_unarchived(&self, session: &str) -> Result<Arc<LiveSession>, ProtocolError> {
+        let live = self.live(session)?;
+        let (archived, has_parent) = {
+            let meta = live.meta.lock().unwrap();
+            (meta.archived, meta.parent.is_some())
+        };
+        if archived {
+            return Err(ProtocolError::Other {
+                message: if has_parent {
+                    format!(
+                        "session {session} is archived with its parent — restore the parent first"
+                    )
+                } else {
+                    format!("session {session} is archived — restore it first")
+                },
+            });
+        }
+        Ok(live)
+    }
+
+    /// The direct-archive refusal for a sub-agent: the invariant's route
+    /// is to archive the parent, which archives the child with it — and
+    /// the message must name the route that actually works, since a
+    /// closed parent is itself refused as "not open".
+    fn archive_refusal_for_child(
+        &self,
+        child: &str,
+        workspace: &str,
+        parent: &Option<String>,
+    ) -> String {
+        let Some(parent) = parent.as_deref() else {
+            return format!(
+                "session {child} is a sub-agent — archive its parent session to archive it"
+            );
+        };
+        if self.sessions.lock().unwrap().contains_key(parent) {
+            return format!(
+                "session {child} is a sub-agent — archive its parent session {parent} to archive it"
+            );
+        }
+        let Ok(ws) = self.workspace(workspace) else {
+            return format!(
+                "session {child} is a sub-agent — the parent session {parent} is not open — reopen it and archive it, which archives this sub-agent with it"
+            );
+        };
+        let mut store = SessionStore::for_workspace(Path::new(&ws.cwd), parent);
+        if store.path().exists() {
+            let title = store
+                .open()
+                .ok()
+                .and_then(|_| store.title().map(str::to_string));
+            return format!(
+                "session {child} is a sub-agent — the parent session {parent} ({}) is not open — reopen it and archive it, which archives this sub-agent with it",
+                title.as_deref().unwrap_or(parent)
+            );
+        }
+        if store.archive_path().exists() {
+            return format!(
+                "session {child} is a sub-agent — its parent session {parent} is archived — restore it, which restores this sub-agent with it"
+            );
+        }
+        format!(
+            "session {child} is a sub-agent — its parent session {parent} is not open and has no session file"
+        )
+    }
+
+    /// The archive's post-detach re-check (ADR-0005): a wake that grabbed
+    /// the session's Arc before the detach can CAS its turn in the window
+    /// — a refused archive re-inserts the detached session and mutates
+    /// nothing, so the file never moves mid-write.
+    fn archive_turn_recheck(
+        &self,
+        session: &str,
+        live: &Arc<LiveSession>,
+    ) -> Result<(), ProtocolError> {
+        if live.turn.load(Ordering::SeqCst) {
+            self.sessions
+                .lock()
+                .unwrap()
+                .insert(session.to_owned(), live.clone());
+            return Err(ProtocolError::Other {
+                message: format!(
+                    "session {session} started a turn while archiving — stop it and retry"
+                ),
+            });
+        }
+        Ok(())
+    }
+
     fn session_new(
         &self,
         workspace: &Workspace,
         title: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
+        // The same cap as a rename: the archive listing reads the header
+        // line bounded, so an oversized title would drop the entry from
+        // the list. The check runs before the file is created — a refused
+        // request mutates nothing.
+        if let Some(t) = &title
+            && t.chars().count() > MAX_TITLE_LEN
+        {
+            return Err(ProtocolError::Other {
+                message: format!(
+                    "title is {} characters — the maximum is {MAX_TITLE_LEN}",
+                    t.chars().count()
+                ),
+            });
+        }
         let cwd = PathBuf::from(&workspace.cwd);
         let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
         store.create().map_err(|e| ProtocolError::Other {
@@ -1168,6 +1340,7 @@ impl Core {
             leaf: None,
             model: Some(model),
             usage: None,
+            archived: false,
         };
         let live = Arc::new(LiveSession {
             meta: Mutex::new(meta.clone()),
@@ -1431,6 +1604,13 @@ impl Core {
                         sessions.push(m);
                     }
                 }
+                // Archived sessions (their file lives in `archive/`): the
+                // GUI's archive folder lists them, flagged.
+                for m in self.archived_sessions(&workspace) {
+                    if !sessions.iter().any(|s| s.id == m.id) {
+                        sessions.push(m);
+                    }
+                }
                 sessions.sort_by_key(|s| std::cmp::Reverse(s.created));
                 Ok(CommandOutput::Sessions { sessions })
             }
@@ -1441,6 +1621,14 @@ impl Core {
                 })
             }
             Command::SessionRename { session, title } => {
+                if title.chars().count() > MAX_TITLE_LEN {
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "title is {} characters — the maximum is {MAX_TITLE_LEN}",
+                            title.chars().count()
+                        ),
+                    });
+                }
                 // The title lives in the file header, so the same write
                 // works for a live and a closed session alike.
                 let cwd = match self.live(&session) {
@@ -1509,18 +1697,287 @@ impl Core {
             }
             Command::SessionClose { session } => {
                 // Closing stops any in-flight turn: a closed session must
-                // not keep streaming (review N7).
+                // not keep streaming (review N7) — and its children keep no
+                // work running for a session that no longer exists (their
+                // files stay; they remain resumable as standalone sessions).
                 if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
                     live.stop.store(true, Ordering::SeqCst);
+                    if let Some(sup) = live.agent.subagents() {
+                        sup.stop_all(StoppedBy::User);
+                    }
                 }
                 Ok(CommandOutput::None)
             }
             Command::SessionDelete { session } => {
                 if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
                     live.stop.store(true, Ordering::SeqCst);
+                    if let Some(sup) = live.agent.subagents() {
+                        sup.stop_all(StoppedBy::User);
+                    }
                     delete_session_files(&live.cwd, &session);
                 }
                 Ok(CommandOutput::None)
+            }
+            Command::SessionArchive { session } => {
+                let live = self.live(&session)?;
+                // Only top-level sessions archive: a sub-agent archives with
+                // its parent (ADR-0005), so a child id is refused outright.
+                if live.agent.child_link().is_some() {
+                    let meta = live.meta.lock().unwrap();
+                    return Err(ProtocolError::Other {
+                        message: self.archive_refusal_for_child(
+                            &session,
+                            &meta.workspace,
+                            &meta.parent,
+                        ),
+                    });
+                }
+                // A running session's file is being written: archiving
+                // mid-turn would tear it (ADR-0005 keeps the archive off
+                // the live path).
+                if live.turn.load(Ordering::SeqCst) {
+                    return Err(ProtocolError::Other {
+                        message: format!("session {session} is running — stop it first"),
+                    });
+                }
+                // The children that archive with this session (ADR-0005):
+                // the supervisor's, the live, and the ones closed on
+                // disk. One already archived stays archived. A running
+                // one is refused BEFORE anything is quiesced: a stop is
+                // terminal, so a refused request must mutate nothing.
+                let workspace = self.workspace(&live.meta.lock().unwrap().workspace)?;
+                let mut children = std::collections::BTreeSet::new();
+                if let Some(sup) = live.agent.subagents() {
+                    for handle in sup.handles() {
+                        let Some(info) = sup.state_info(&handle) else {
+                            continue;
+                        };
+                        // A supervisor child's run is the supervisor's
+                        // state (its live shell's turn flag only tracks
+                        // GUI sends): it blocks the archive too, before
+                        // anything is quiesced.
+                        if matches!(info.state, tau_core::subagent::ChildState::Running) {
+                            return Err(ProtocolError::Other {
+                                message: format!(
+                                    "child session {} is running — stop it first",
+                                    info.child
+                                ),
+                            });
+                        }
+                        children.insert(info.child);
+                    }
+                }
+                for (id, s) in self.sessions.lock().unwrap().iter() {
+                    if s.meta.lock().unwrap().parent.as_deref() == Some(session.as_str()) {
+                        children.insert(id.clone());
+                    }
+                }
+                for m in self
+                    .disk_sessions(&workspace)
+                    .into_iter()
+                    .filter(|m| m.parent.as_deref() == Some(session.as_str()))
+                {
+                    children.insert(m.id);
+                }
+                for m in self
+                    .archived_sessions(&workspace)
+                    .into_iter()
+                    .filter(|m| m.parent.as_deref() == Some(session.as_str()))
+                {
+                    children.remove(&m.id);
+                }
+                for child in &children {
+                    if let Some(cl) = self.sessions.lock().unwrap().get(child)
+                        && cl.turn.load(Ordering::SeqCst)
+                    {
+                        return Err(ProtocolError::Other {
+                            message: format!("child session {child} is running — stop it first"),
+                        });
+                    }
+                }
+                // Detach from the live map while the children are stopped:
+                // a stop's parent-wake must not start a turn on the file
+                // being archived (the wake looks the parent up by id).
+                self.sessions.lock().unwrap().remove(&session);
+                // A wake that looked the parent up before the detach holds
+                // the shared session and will CAS the turn and spawn a turn
+                // (its map read predates the removal): re-check after the
+                // removal and abort if a turn started in the window — the
+                // file must not move mid-write.
+                self.archive_turn_recheck(&session, &live)?;
+                // This session's children: a running one is stopped and its
+                // drive quiesced before any file moves (its wake would
+                // write the parent file mid-archive), and a parked one's
+                // sleeping drive ends with the parent.
+                if let Some(sup) = live.agent.subagents() {
+                    sup.stop_all(StoppedBy::User);
+                    for handle in sup.handles() {
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(5);
+                        while !sup.drive_quiescent(&handle) && std::time::Instant::now() < deadline
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                        // The deadline is a window: a drive that never
+                        // exited is still running (a stop is terminal, so
+                        // it will not exit), and the child's live-shell
+                        // turn flag only tracks GUI sends — the
+                        // supervisor's state is the source of truth here.
+                        if sup.child_running(&handle) {
+                            self.sessions
+                                .lock()
+                                .unwrap()
+                                .insert(session.clone(), live.clone());
+                            let child = sup
+                                .state_info(&handle)
+                                .map(|i| i.child)
+                                .unwrap_or_else(|| handle.clone());
+                            return Err(ProtocolError::Other {
+                                message: format!(
+                                    "child session {child} is still running — stop it and retry"
+                                ),
+                            });
+                        }
+                    }
+                }
+                // The quiesce waits are a window (up to 5 s per child): a
+                // child outside the supervisor's reach — stop_all drives
+                // only the supervisor's children — may have started a turn
+                // in it; abort, as the parent's own wake check does, so no
+                // file moves mid-write.
+                for child in &children {
+                    if let Some(cl) = self.sessions.lock().unwrap().get(child)
+                        && cl.turn.load(Ordering::SeqCst)
+                    {
+                        self.sessions
+                            .lock()
+                            .unwrap()
+                            .insert(session.clone(), live.clone());
+                        return Err(ProtocolError::Other {
+                            message: format!(
+                                "child session {child} started a turn while archiving — stop it and retry"
+                            ),
+                        });
+                    }
+                }
+                for child in &children {
+                    let cstore = SessionStore::for_workspace(&live.cwd, child);
+                    if !cstore.path().exists() {
+                        continue;
+                    }
+                    // The flag goes in before the child's own move, like
+                    // the parent's: a child's turn that starts in the
+                    // window dies at its first append. A failed move
+                    // reverts it — a refused archive mutates nothing.
+                    let live_child = self.sessions.lock().unwrap().get(child).cloned();
+                    if let Some(cl) = &live_child {
+                        cl.meta.lock().unwrap().archived = true;
+                    }
+                    // I/O failure: the parent's in-memory session (queue,
+                    // supervisor) comes back into the live map; children
+                    // already archived stay archived — the next
+                    // archive/restore converges on the file state.
+                    if let Err(e) = cstore.archive() {
+                        if let Some(cl) = &live_child {
+                            cl.meta.lock().unwrap().archived = false;
+                        }
+                        self.sessions
+                            .lock()
+                            .unwrap()
+                            .insert(session.clone(), live.clone());
+                        return Err(ProtocolError::Other {
+                            message: e.to_string(),
+                        });
+                    }
+                }
+                // The last possible moment before the parent's file moves:
+                // the window above is wide enough for a wake that grabbed
+                // the session's Arc before the detach to CAS a turn here —
+                // and append_line opens with create(true), so a deleted
+                // live file would be recreated headerless (unopenable).
+                self.archive_turn_recheck(&session, &live)?;
+                // The commit: from here the archive only moves files, so
+                // the flag goes in before the parent's move — a turn that
+                // starts in the remaining window reads it at its first
+                // append (run_turn) and dies clean: no headerless file, no
+                // partial turn in the archive.
+                let was_archived = live.meta.lock().unwrap().archived;
+                live.meta.lock().unwrap().archived = true;
+                let mut store = SessionStore::for_workspace(&live.cwd, &session);
+                if let Err(e) = store.open().and_then(|()| store.archive()) {
+                    live.meta.lock().unwrap().archived = was_archived;
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .insert(session.clone(), live.clone());
+                    return Err(ProtocolError::Other {
+                        message: e.to_string(),
+                    });
+                }
+                self.sessions
+                    .lock()
+                    .unwrap()
+                    .insert(session.clone(), live.clone());
+                Ok(CommandOutput::Session {
+                    session: live.meta.lock().unwrap().clone(),
+                })
+            }
+            Command::SessionRestore { workspace, session } => {
+                let workspace = self.workspace(&workspace)?;
+                let cwd = PathBuf::from(&workspace.cwd);
+                let mut store = SessionStore::for_workspace(&cwd, &session);
+                if !store.archive_path().exists() {
+                    return Err(ProtocolError::Other {
+                        message: format!("no archive for session {session}"),
+                    });
+                }
+                if store.path().exists() {
+                    return Err(ProtocolError::Other {
+                        message: format!("session {session} already has a live file"),
+                    });
+                }
+                store.unarchive().map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+                // The session's sub-agent children, archived with it, restore
+                // with it (their files are stable — off the live path, no
+                // turn can write them).
+                for m in self
+                    .archived_sessions(&workspace)
+                    .into_iter()
+                    .filter(|m| m.parent.as_deref() == Some(session.as_str()))
+                {
+                    let cstore = SessionStore::for_workspace(&cwd, &m.id);
+                    if cstore.path().exists() {
+                        continue;
+                    }
+                    cstore.unarchive().map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
+                    if let Some(cl) = self.sessions.lock().unwrap().get(&m.id) {
+                        cl.meta.lock().unwrap().archived = false;
+                    }
+                }
+                if let Some(pl) = self.sessions.lock().unwrap().get(&session) {
+                    pl.meta.lock().unwrap().archived = false;
+                }
+                // The response is a fresh meta from the restored file (the
+                // list and any snapshot converge on it).
+                store.open().map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+                let meta = SessionMeta {
+                    id: session,
+                    workspace: workspace.id.clone(),
+                    title: store.title().map(str::to_string),
+                    parent: store.parent().map(str::to_string),
+                    created: store.created(),
+                    leaf: store.leaf().ok().flatten().map(|e| e.id),
+                    model: None,
+                    usage: None,
+                    archived: false,
+                };
+                Ok(CommandOutput::Session { session: meta })
             }
             Command::SessionFork { session, at } | Command::SessionBranch { session, at } => {
                 let live = self.live(&session)?;
@@ -1564,7 +2021,7 @@ impl Core {
                 text,
                 lane,
             } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 // A new send clears the stop flag: the previous turn is over.
                 live.stop.store(false, Ordering::SeqCst);
                 // A leading /skill: expands at this boundary, before the
@@ -1631,6 +2088,28 @@ impl Core {
             }
             Command::MessageStop { session } => {
                 let live = self.live(&session)?;
+                // A child session stops through its supervisor: the
+                // terminal Stopped state, the freed slot, the parent's
+                // wake. A bare stream cut would leave the child running —
+                // the nudge path resumes it.
+                if let Some(link) = live.agent.child_link() {
+                    let parent = link
+                        .handle()
+                        .rsplit_once('-')
+                        .map(|(s, _)| s.to_owned())
+                        .unwrap_or_default();
+                    let parent_live = self.live(&parent)?;
+                    let sup =
+                        parent_live
+                            .agent
+                            .subagents()
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "child's parent has no supervisor".into(),
+                            })?;
+                    sup.stop(link.handle(), StoppedBy::User)
+                        .map_err(|e| ProtocolError::Other { message: e })?;
+                    return Ok(CommandOutput::None);
+                }
                 live.stop.store(true, Ordering::SeqCst);
                 Ok(CommandOutput::None)
             }
@@ -1687,7 +2166,7 @@ impl Core {
                 brief,
                 context_mode,
             } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
                 })?;
@@ -1721,7 +2200,7 @@ impl Core {
                     .rsplit_once('-')
                     .map(|(s, _)| s.to_owned())
                     .unwrap_or_default();
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
                 })?;
@@ -1741,7 +2220,7 @@ impl Core {
                     .rsplit_once('-')
                     .map(|(s, _)| s.to_owned())
                     .unwrap_or_default();
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
                 })?;
@@ -1757,7 +2236,7 @@ impl Core {
                 })
             }
             Command::TaskCreate { session, title } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 // Routed through the session's own store (one writer per
                 // session, review B3); the id rule lives in the tool path.
                 let out = live
@@ -1774,7 +2253,7 @@ impl Core {
                 task,
                 note,
             } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 live.agent
                     .with_task_store(|store| tau_core::task::note(store, &task, &note))
                     .map_err(|e| ProtocolError::Other { message: e })?;
@@ -1786,7 +2265,7 @@ impl Core {
                 task,
                 worker,
             } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 // The worker is a child handle: resolve it to a session.
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no supervisor (it is a child itself)".into(),
@@ -1814,7 +2293,7 @@ impl Core {
                 summary,
                 passed,
             } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 let out = live.agent.task_tool_call(
                     "task_evidence",
                     &json!({
@@ -1831,7 +2310,7 @@ impl Core {
                 Ok(CommandOutput::None)
             }
             Command::TaskCancel { session, task } => {
-                let live = self.live(&session)?;
+                let live = self.live_unarchived(&session)?;
                 let out = live
                     .agent
                     .task_tool_call("task_cancel", &json!({ "task": task }));
@@ -1988,13 +2467,40 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         live.turn.store(false, Ordering::SeqCst);
         return;
     }
+    // The archive sets the meta flag before its file moves (ADR-0005):
+    // a turn that started in that window dies here, at its first write —
+    // no headerless file, no partial turn in the archive.
+    if live.meta.lock().unwrap().archived {
+        let (workspace, id) = {
+            let meta = live.meta.lock().unwrap();
+            (meta.workspace.clone(), meta.id.clone())
+        };
+        core.emit(Event::System {
+            workspace,
+            session: Some(id.clone()),
+            kind: SystemEventKind::Error {
+                message: format!(
+                    "session {id} was archived while this turn was starting — the turn was not run"
+                ),
+            },
+        });
+        live.turn.store(false, Ordering::SeqCst);
+        return;
+    }
     let start = store.leaf().ok().flatten().map(|e| e.id);
     let calls_before = live.provider.calls.lock().unwrap().len();
 
     if let Err(e) = live.agent.process().await {
+        // One locked scope: two meta locks in one expression would be a
+        // same-thread re-entrant deadlock (the first guard lives until the
+        // statement ends).
+        let (workspace, id) = {
+            let meta = live.meta.lock().unwrap();
+            (meta.workspace.clone(), meta.id.clone())
+        };
         core.emit(Event::System {
-            workspace: live.meta.lock().unwrap().workspace.clone(),
-            session: Some(live.meta.lock().unwrap().id.clone()),
+            workspace,
+            session: Some(id),
             kind: SystemEventKind::Error {
                 message: e.to_string(),
             },
@@ -2477,6 +2983,7 @@ fn preview(entry: &Entry) -> String {
         .payload
         .get("text")
         .or_else(|| entry.payload.get("note"))
+        .or_else(|| entry.payload.get("state"))
         .or_else(|| entry.payload.get("output"))
         .and_then(Value::as_str)
         .unwrap_or_default();
@@ -2946,6 +3453,7 @@ mod tests {
                 leaf: None,
                 model: Some("model".into()),
                 usage: None,
+                archived: false,
             }),
             agent: agent.clone(),
             stop: provider.stop.clone(),
@@ -3278,45 +3786,90 @@ mod tests {
     /// its scripted `parent_notify {done}` turn, the supervisor resolves it,
     /// and the parent is woken — the notification lands on the parent's
     /// active branch and a `Notified` event reaches the stream.
+    /// A child provider that replays one canned body per call (the
+    /// scripted sub-agent turns of the dispatch tests).
+    struct CannedChild {
+        body: String,
+        index: AtomicUsize,
+    }
+    impl TurnProvider for CannedChild {
+        fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+            let body = self.body.clone();
+            self.index.fetch_add(1, Ordering::SeqCst);
+            let (events, calls) = provider::decode_stream(&body).unwrap();
+            Box::pin(async move {
+                let mut result = provider::TurnResult::default();
+                for event in &events {
+                    if !sink.event(event.clone()) {
+                        break;
+                    }
+                    provider::fold_event(event, &mut result);
+                }
+                result.calls = calls.into_iter().map(|(_, c)| c).collect();
+                Ok(result)
+            })
+        }
+    }
+    struct CannedChildFactory {
+        body: String,
+    }
+    impl ChildProviderFactory for CannedChildFactory {
+        fn create(&self, _child: &str) -> TurnProviderRef {
+            Arc::new(CannedChild {
+                body: self.body.clone(),
+                index: AtomicUsize::new(0),
+            })
+        }
+    }
+
+    /// A child provider that sleeps between events: the turn stays
+    /// running long enough to observe (the archive's running-child
+    /// refusal, review N4).
+    struct SlowChild {
+        body: String,
+        delay_ms: u64,
+    }
+    impl TurnProvider for SlowChild {
+        fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+            let body = self.body.clone();
+            let delay = self.delay_ms;
+            Box::pin(async move {
+                let (events, calls) = provider::decode_stream(&body).unwrap();
+                let mut result = provider::TurnResult::default();
+                for event in &events {
+                    if !sink.event(event.clone()) {
+                        break;
+                    }
+                    provider::fold_event(event, &mut result);
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                }
+                result.calls = calls.into_iter().map(|(_, c)| c).collect();
+                Ok(result)
+            })
+        }
+    }
+    struct SlowChildFactory {
+        body: String,
+        delay_ms: u64,
+    }
+    impl ChildProviderFactory for SlowChildFactory {
+        fn create(&self, _child: &str) -> TurnProviderRef {
+            Arc::new(SlowChild {
+                body: self.body.clone(),
+                delay_ms: self.delay_ms,
+            })
+        }
+    }
+
+    /// One scripted turn with no `parent_notify`: the child ends the turn
+    /// (the nudge path), so a slow provider keeps it running.
+    fn plain_body() -> String {
+        let data = r#"data: {"type":"response.output_text.delta","delta":"working on it"}"#;
+        format!("{data}\n\ndata: [DONE]\n\n")
+    }
+
     #[tokio::test]
     async fn a_spawned_child_finishes_and_wakes_the_parent() {
-        struct CannedChild {
-            body: String,
-            index: AtomicUsize,
-        }
-        impl TurnProvider for CannedChild {
-            fn call<'a>(
-                &self,
-                _req: &ResponseRequest,
-                sink: &'a mut dyn TurnSink,
-            ) -> ProviderTurn<'a> {
-                let body = self.body.clone();
-                self.index.fetch_add(1, Ordering::SeqCst);
-                let (events, calls) = provider::decode_stream(&body).unwrap();
-                Box::pin(async move {
-                    let mut result = provider::TurnResult::default();
-                    for event in &events {
-                        if !sink.event(event.clone()) {
-                            break;
-                        }
-                        provider::fold_event(event, &mut result);
-                    }
-                    result.calls = calls.into_iter().map(|(_, c)| c).collect();
-                    Ok(result)
-                })
-            }
-        }
-        struct CannedChildFactory {
-            body: String,
-        }
-        impl ChildProviderFactory for CannedChildFactory {
-            fn create(&self, _child: &str) -> TurnProviderRef {
-                Arc::new(CannedChild {
-                    body: self.body.clone(),
-                    index: AtomicUsize::new(0),
-                })
-            }
-        }
         // One scripted turn: parent_notify done with a structured output.
         let call_id = "c1".to_string();
         let args = json!({
@@ -3329,7 +3882,7 @@ mod tests {
             "type": "function_call",
             "name": "parent_notify",
             "call_id": call_id,
-            "arguments": args,
+            "arguments": args.to_string(),
         });
         let data = format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}");
         let body = format!("{data}\n\ndata: [DONE]\n\n");
@@ -3377,13 +3930,11 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             if let Ok(Some(ev)) =
                 tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
-                && matches!(
-                    ev,
-                    Event::SubagentEvent {
-                        kind: SubagentEventKind::Notified { .. },
-                        ..
-                    }
-                )
+                && let Event::SubagentEvent {
+                    kind: SubagentEventKind::Notified { wake, .. },
+                    ..
+                } = ev
+                && wake == "done"
             {
                 notified = true;
                 break;
@@ -3403,6 +3954,1028 @@ mod tests {
             core.sessions.lock().unwrap().get(&info.child).is_some(),
             "the child's live session was not registered"
         );
+        drop(core);
+    }
+
+    /// The archive command: the file moves to `archive/` (ADR-0005), the
+    /// metadata carries the flag, `session_list` lists it flagged, and a
+    /// running session refuses (the archive is off the live write path).
+    #[tokio::test]
+    async fn a_session_archives_and_lists_with_the_flag() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        // A session in flight refuses: the archive would tear the file.
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned_slow(&canned_body(), 600),
+            TurnConfig::default(),
+        );
+        let session_id = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: session_id.clone(),
+            text: "work".into(),
+            lane: MessageLane::Steering,
+        })
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: session_id.clone(),
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, ProtocolError::Other { .. }),
+            "a running session must refuse: {err:?}"
+        );
+        // Let the turn end, then archive.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while core
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&session_id)
+            .is_some_and(|l| l.turn.load(Ordering::SeqCst))
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: session_id.clone(),
+            })
+            .unwrap();
+        let meta = match out {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        assert!(meta.archived, "the archive flag rides the metadata");
+        let root = Path::new(&workspace.cwd);
+        assert!(
+            !root
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{session_id}.jsonl"))
+                .exists(),
+            "the live file is gone"
+        );
+        assert!(
+            root.join(".tau")
+                .join("archive")
+                .join(format!("{session_id}.jsonl.zst"))
+                .exists(),
+            "the file is in the archive dir"
+        );
+        // The list carries the flagged session (the live copy wins over
+        // the disk listing).
+        let list = match core
+            .dispatch(Command::SessionList {
+                workspace: workspace.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Sessions { sessions } => sessions,
+            other => panic!("expected sessions: {other:?}"),
+        };
+        let listed = list
+            .iter()
+            .find(|m| m.id == session_id)
+            .expect("the archived session still lists");
+        assert!(listed.archived, "the list carries the flag");
+        // A second archive is refused: the archive already exists.
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: session_id,
+            })
+            .unwrap_err();
+        assert!(matches!(err, ProtocolError::Other { .. }), "{err:?}");
+        // The fresh (idle) session archives on the same path.
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: session.id,
+            })
+            .unwrap();
+        match out {
+            CommandOutput::Session { session } => assert!(session.archived),
+            other => panic!("expected a session: {other:?}"),
+        }
+    }
+
+    /// One scripted turn: parent_notify done with a structured output.
+    fn done_body() -> String {
+        let call_id = "c1".to_string();
+        let args = json!({
+            "text": "the work is done",
+            "done": true,
+            "output": { "result": "ok" },
+        });
+        let item = json!({
+            "id": call_id,
+            "type": "function_call",
+            "name": "parent_notify",
+            "call_id": call_id,
+            "arguments": args.to_string(),
+        });
+        let data = format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}");
+        format!("{data}\n\ndata: [DONE]\n\n")
+    }
+
+    /// Spawn one scripted child on the parent and wait for its done state
+    /// and the parent's wake turn to settle (a done child always wakes the
+    /// parent, ADR-0001; a running parent's archive is refused, so the
+    /// archive tests need the parent at rest). Bounded — a hung drive or
+    /// wake is a test failure, not a wait.
+    async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> SubagentInfo {
+        let info = match core
+            .dispatch(Command::SubagentSpawn {
+                session: parent_id.into(),
+                agent_type: "general".into(),
+                brief: "do the thing".into(),
+                context_mode: ContextMode::Fresh,
+            })
+            .unwrap()
+        {
+            CommandOutput::Subagent { subagent } => subagent,
+            other => panic!("expected a subagent: {other:?}"),
+        };
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut last: String;
+        loop {
+            let out = core
+                .dispatch(Command::SubagentState {
+                    handle: info.handle.clone(),
+                })
+                .unwrap();
+            let state = match &out {
+                CommandOutput::Subagent { subagent } => subagent.state.clone(),
+                _ => String::new(),
+            };
+            if state == "done" {
+                break;
+            }
+            last = state;
+            if tokio::time::Instant::now() > deadline {
+                panic!("the child never finished (last state: {last})");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        // The done wake: wait for the parent's turn to start (the wake's
+        // CAS) and then to settle.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let running = core
+                .sessions
+                .lock()
+                .unwrap()
+                .get(parent_id)
+                .is_some_and(|l| l.turn.load(Ordering::SeqCst));
+            if running {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("the done wake never started the parent's turn");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let running = core
+                .sessions
+                .lock()
+                .unwrap()
+                .get(parent_id)
+                .is_some_and(|l| l.turn.load(Ordering::SeqCst));
+            if !running {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("the parent's wake turn never settled");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        info
+    }
+
+    /// A child is not directly archivable: the archive is parent-only, so a
+    /// child id is refused with a pointer at the parent, and the child's
+    /// file stays on the live path (ADR-0005).
+    #[tokio::test]
+    async fn a_child_session_refuses_a_direct_archive() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = spawn_done_child(&core, &parent.id).await;
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: info.child.clone(),
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(
+            msg.contains("sub-agent") && msg.contains("archive its parent"),
+            "the refusal points at the parent: {msg}"
+        );
+        assert!(
+            Path::new(&workspace.cwd)
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{}.jsonl", info.child))
+                .exists(),
+            "the child's live file is untouched"
+        );
+        drop(core);
+    }
+
+    /// Archiving the parent archives all its sub-agent children with it
+    /// (ADR-0005): each child's file moves to archive/ and the list flags
+    /// it, the parent link kept so the GUI groups it under the parent.
+    #[tokio::test]
+    async fn a_parent_archive_archives_its_children() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = spawn_done_child(&core, &parent.id).await;
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: parent.id.clone(),
+            })
+            .unwrap();
+        let meta = match out {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        assert!(
+            meta.archived,
+            "the parent's archive flag rides its metadata"
+        );
+        let root = Path::new(&workspace.cwd);
+        for id in [&parent.id, &info.child] {
+            assert!(
+                !root
+                    .join(".tau")
+                    .join("sessions")
+                    .join(format!("{id}.jsonl"))
+                    .exists(),
+                "the live file of {id} is gone"
+            );
+            assert!(
+                root.join(".tau")
+                    .join("archive")
+                    .join(format!("{id}.jsonl.zst"))
+                    .exists(),
+                "the file of {id} is in the archive dir"
+            );
+        }
+        let list = match core
+            .dispatch(Command::SessionList {
+                workspace: workspace.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Sessions { sessions } => sessions,
+            other => panic!("expected sessions: {other:?}"),
+        };
+        let listed = list
+            .iter()
+            .find(|m| m.id == info.child)
+            .expect("the archived child still lists");
+        assert!(listed.archived, "the list carries the child's flag");
+        assert_eq!(
+            listed.parent.as_deref(),
+            Some(parent.id.as_str()),
+            "the child's parent link survives the archive"
+        );
+        drop(core);
+    }
+
+    /// A child already closed at archive time has a stable file: the
+    /// parent's archive moves it to archive/ too (the old hard-fail path —
+    /// archiving a child whose parent was closed — no longer exists).
+    #[tokio::test]
+    async fn a_parent_archive_archives_a_closed_child() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = spawn_done_child(&core, &parent.id).await;
+        core.dispatch(Command::SessionClose {
+            session: info.child.clone(),
+        })
+        .unwrap();
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: parent.id.clone(),
+            })
+            .unwrap();
+        let meta = match out {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        assert!(
+            meta.archived,
+            "the parent's archive flag rides its metadata"
+        );
+        let root = Path::new(&workspace.cwd);
+        assert!(
+            !root
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{}.jsonl", info.child))
+                .exists(),
+            "the closed child's live file is gone"
+        );
+        assert!(
+            root.join(".tau")
+                .join("archive")
+                .join(format!("{}.jsonl.zst", info.child))
+                .exists(),
+            "the closed child's file is in the archive dir"
+        );
+        drop(core);
+    }
+
+    /// Restore round-trip: a parent and the children archived with it come
+    /// back to sessions/ (decompressed, flags cleared, parent link kept),
+    /// and the parent can archive again — the cycle is repeatable.
+    #[tokio::test]
+    async fn a_restore_round_trips_a_parent_and_its_children() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = spawn_done_child(&core, &parent.id).await;
+        core.dispatch(Command::SessionArchive {
+            session: parent.id.clone(),
+        })
+        .unwrap();
+        // Restore: the parent's file and the child's come back, and the
+        // response meta carries the cleared flag.
+        let out = core
+            .dispatch(Command::SessionRestore {
+                workspace: workspace.id.clone(),
+                session: parent.id.clone(),
+            })
+            .unwrap();
+        let meta = match out {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        assert!(!meta.archived, "the restore clears the parent's flag");
+        let root = Path::new(&workspace.cwd);
+        for id in [&parent.id, &info.child] {
+            assert!(
+                root.join(".tau")
+                    .join("sessions")
+                    .join(format!("{id}.jsonl"))
+                    .exists(),
+                "the file of {id} is back in sessions/"
+            );
+            assert!(
+                !root
+                    .join(".tau")
+                    .join("archive")
+                    .join(format!("{id}.jsonl.zst"))
+                    .exists(),
+                "the archive of {id} is removed"
+            );
+        }
+        let list = match core
+            .dispatch(Command::SessionList {
+                workspace: workspace.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Sessions { sessions } => sessions,
+            other => panic!("expected sessions: {other:?}"),
+        };
+        let listed = list
+            .iter()
+            .find(|m| m.id == info.child)
+            .expect("the restored child still lists");
+        assert!(!listed.archived, "the list clears the child's flag");
+        assert_eq!(
+            listed.parent.as_deref(),
+            Some(parent.id.as_str()),
+            "the child's parent link survives the round trip"
+        );
+        // The cycle repeats: archive the parent again (the child goes with
+        // it), then restore again.
+        core.dispatch(Command::SessionArchive {
+            session: parent.id.clone(),
+        })
+        .unwrap();
+        assert!(
+            root.join(".tau")
+                .join("archive")
+                .join(format!("{}.jsonl.zst", info.child))
+                .exists(),
+            "the child archives with the parent on the second cycle"
+        );
+        core.dispatch(Command::SessionRestore {
+            workspace: workspace.id.clone(),
+            session: parent.id.clone(),
+        })
+        .unwrap();
+        // Restoring a session that has no archive is refused.
+        let err = core
+            .dispatch(Command::SessionRestore {
+                workspace: workspace.id.clone(),
+                session: parent.id,
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(msg.contains("no archive"), "{msg}");
+        drop(core);
+    }
+
+    /// A refused archive must not mutate: with a running child, the
+    /// refusal fires before any quiescing, so the child stays running
+    /// (a stop is terminal — the old order left it stopped, review N4).
+    #[tokio::test]
+    async fn a_running_child_refusal_leaves_the_child_running() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(SlowChildFactory {
+                body: plain_body(),
+                delay_ms: 1200,
+            }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = match core
+            .dispatch(Command::SubagentSpawn {
+                session: parent.id.clone(),
+                agent_type: "general".into(),
+                brief: "do the thing".into(),
+                context_mode: ContextMode::Fresh,
+            })
+            .unwrap()
+        {
+            CommandOutput::Subagent { subagent } => subagent,
+            other => panic!("expected a subagent: {other:?}"),
+        };
+        // Wait for the child to be running in its supervisor.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let out = core
+                .dispatch(Command::SubagentState {
+                    handle: info.handle.clone(),
+                })
+                .unwrap();
+            let state = match out {
+                CommandOutput::Subagent { subagent } => subagent.state,
+                _ => String::new(),
+            };
+            if state == "running" {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("the child never started running (last: {state})");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: parent.id.clone(),
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(
+            msg.contains("is running") && msg.contains(&info.child),
+            "the refusal names the running child: {msg}"
+        );
+        // The refusal fired before any quiescing: the child is still
+        // running (a stop is terminal — the old order left it stopped).
+        let out = core
+            .dispatch(Command::SubagentState {
+                handle: info.handle.clone(),
+            })
+            .unwrap();
+        let state = match out {
+            CommandOutput::Subagent { subagent } => subagent.state,
+            other => panic!("expected a subagent: {other:?}"),
+        };
+        assert_eq!(
+            state, "running",
+            "the refusal must not have stopped the child"
+        );
+        // The parent is untouched: still live, file in place.
+        assert!(
+            core.sessions.lock().unwrap().contains_key(&parent.id),
+            "the parent must not be left detached from the live map"
+        );
+        let root = Path::new(&workspace.cwd);
+        assert!(
+            root.join(".tau")
+                .join("sessions")
+                .join(format!("{}.jsonl", parent.id))
+                .exists(),
+            "the parent's live file is untouched"
+        );
+        // Let the child's scripted life end (the nudge exhausts and it
+        // fails, waking the parent) before the core drops.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            let out = core
+                .dispatch(Command::SubagentState {
+                    handle: info.handle.clone(),
+                })
+                .unwrap();
+            let state = match out {
+                CommandOutput::Subagent { subagent } => subagent.state,
+                _ => String::new(),
+            };
+            if state != "running" {
+                break;
+            }
+            if tokio::time::Instant::now() > deadline {
+                panic!("the child never left running (last: {state})");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        drop(core);
+    }
+
+    /// A rename over the cap is refused (the header is read back bounded,
+    /// so an oversized title would silently drop the entry from the
+    /// archive list, review N3); the exact cap is accepted, and the
+    /// refusal writes nothing to the header.
+    #[tokio::test]
+    async fn session_rename_caps_the_title_length() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let live = match core
+            .dispatch(Command::SessionNew {
+                workspace: w.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected session: {other:?}"),
+        };
+        let long = "t".repeat(201);
+        let err = core
+            .dispatch(Command::SessionRename {
+                session: live.id.clone(),
+                title: long,
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(msg.contains("200"), "the refusal names the cap: {msg}");
+        // The refusal writes nothing: the header's title is untouched.
+        let header = std::fs::read_to_string(
+            cwd.path()
+                .join(".tau/sessions")
+                .join(format!("{}.jsonl", live.id)),
+        )
+        .unwrap()
+        .lines()
+        .next()
+        .unwrap()
+        .to_owned();
+        assert!(
+            !header.contains(&"t".repeat(100)),
+            "the oversized title never reached the header: {header}"
+        );
+        // The cap itself is acceptable.
+        core.dispatch(Command::SessionRename {
+            session: live.id,
+            title: "u".repeat(200),
+        })
+        .unwrap();
+    }
+
+    /// A sub-agent whose parent is closed cannot be archived directly, and
+    /// the refusal must give the real route: a closed parent is refused as
+    /// "not open", so "archive its parent" is not a route — reopening the
+    /// parent and archiving it archives the child with it (review N7).
+    #[tokio::test]
+    async fn a_child_refusal_names_the_reopen_route_for_a_closed_parent() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = spawn_done_child(&core, &parent.id).await;
+        core.dispatch(Command::SessionClose {
+            session: parent.id.clone(),
+        })
+        .unwrap();
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: info.child.clone(),
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(
+            msg.contains("is not open") && msg.contains("reopen it and archive it"),
+            "the refusal gives the real route: {msg}"
+        );
+        assert!(
+            msg.contains(&parent.id),
+            "the refusal names the parent: {msg}"
+        );
+        drop(core);
+    }
+
+    /// An archive that fails on I/O (the parent's live file vanished) leaves
+    /// the parent in the live map: its in-memory session (queue, supervisor)
+    /// survives the refusal — the next archive/restore converges, but the
+    /// session is never detached (review N2).
+    #[tokio::test]
+    async fn an_archive_io_failure_keeps_the_session_live() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected session: {other:?}"),
+        };
+        // Kill the live file under the session: the archive's read fails.
+        std::fs::remove_file(
+            cwd.path()
+                .join(".tau/sessions")
+                .join(format!("{}.jsonl", session.id)),
+        )
+        .unwrap();
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: session.id.clone(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, ProtocolError::Other { .. }), "{err:?}");
+        assert!(
+            core.sessions.lock().unwrap().contains_key(&session.id),
+            "the session must not be left detached from the live map"
+        );
+        drop(core);
+    }
+
+    /// The archive's post-detach re-check (ADR-0005): a turn that CAS'd in
+    /// the window aborts the archive — the exact live session re-inserts,
+    /// and a refused archive leaves the archived flag unset. The check is
+    /// separable, so it runs directly on the preconditions the archive
+    /// leaves at that point (turn set, session detached by the archive).
+    #[tokio::test]
+    async fn an_archive_turn_started_in_the_window_aborts_with_reinsertion() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned(&canned_body()),
+            TurnConfig::default(),
+        );
+        let id = live.meta.lock().unwrap().id.clone();
+        // A wake that grabbed the Arc before the detach set the turn; the
+        // detach removed the session from the live map.
+        live.turn.store(true, Ordering::SeqCst);
+        core.sessions.lock().unwrap().remove(&id);
+        let err = core.archive_turn_recheck(&id, &live).unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(
+            msg.contains("started a turn while archiving"),
+            "the refusal names the race: {msg}"
+        );
+        // Exact re-insertion: the very Arc is back in the live map, and a
+        // refused archive never sets the flag.
+        {
+            let map = core.sessions.lock().unwrap();
+            assert!(
+                Arc::ptr_eq(&map[&id], &live),
+                "the same live session re-inserts"
+            );
+        }
+        assert!(!live.meta.lock().unwrap().archived, "the flag stays unset");
+    }
+
+    /// A send to an archived session is refused before it appends
+    /// (ADR-0005): the live file stays gone — an append would have
+    /// recreated it headerless, and the restore would then have refused
+    /// it.
+    #[tokio::test]
+    async fn a_send_to_an_archived_session_is_refused() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        core.dispatch(Command::SessionArchive {
+            session: session.id.clone(),
+        })
+        .unwrap();
+        let err = core
+            .dispatch(Command::MessageSend {
+                session: session.id.clone(),
+                text: "hello".into(),
+                lane: MessageLane::Steering,
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(
+            msg.contains("is archived") && msg.contains("restore"),
+            "the refusal names the route: {msg}"
+        );
+        // The refusal mutated nothing: the live file is still absent, the
+        // archive file is in place.
+        let root = cwd.path();
+        assert!(
+            !root
+                .join(".tau/sessions")
+                .join(format!("{}.jsonl", session.id))
+                .exists(),
+            "a refused send does not recreate the live file"
+        );
+        assert!(
+            root.join(".tau/archive")
+                .join(format!("{}.jsonl.zst", session.id))
+                .exists()
+        );
+        drop(core);
+    }
+
+    /// A child-archive I/O failure mid-archive leaves the half-archived
+    /// state live and consistent — the parent un-flagged in the live map,
+    /// the first child archived, the failed child untouched — and the next
+    /// archive + restore converges everything (review N2). The failure is
+    /// forced deterministically: the second child's archive target already
+    /// exists (a junk file that lists nowhere — no session header).
+    #[tokio::test]
+    async fn a_half_archived_session_converges_on_the_next_archive() {
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let child_a = spawn_done_child(&core, &parent.id).await;
+        let child_b = spawn_done_child(&core, &parent.id).await;
+        // The children set iterates in id order: the junk target lands on
+        // the later id, so the earlier child archives first.
+        let (first, second) = if child_a.child < child_b.child {
+            (child_a.child.clone(), child_b.child.clone())
+        } else {
+            (child_b.child.clone(), child_a.child.clone())
+        };
+        let archive_dir = cwd.path().join(".tau").join("archive");
+        std::fs::create_dir_all(&archive_dir).unwrap();
+        std::fs::write(
+            archive_dir.join(format!("{second}.jsonl.zst")),
+            "not a session archive",
+        )
+        .unwrap();
+
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: parent.id.clone(),
+            })
+            .unwrap_err();
+        assert!(matches!(err, ProtocolError::Other { .. }), "{err:?}");
+        // The half-archived state: the parent is live and un-flagged, the
+        // first child archived, the failed child untouched.
+        let flag = |id: &str| {
+            core.sessions
+                .lock()
+                .unwrap()
+                .get(id)
+                .map(|l| l.meta.lock().unwrap().archived)
+                .unwrap_or(false)
+        };
+        assert!(
+            core.sessions.lock().unwrap().contains_key(&parent.id),
+            "the parent is back in the live map"
+        );
+        assert!(
+            !flag(&parent.id),
+            "a refused archive leaves the parent's flag unset"
+        );
+        let root = cwd.path();
+        assert!(
+            root.join(".tau/sessions")
+                .join(format!("{}.jsonl", parent.id))
+                .exists(),
+            "the parent's live file stays"
+        );
+        assert!(
+            !root
+                .join(".tau/sessions")
+                .join(format!("{}.jsonl", first))
+                .exists(),
+            "the first child's file moved"
+        );
+        assert!(flag(&first), "the archived child stays archived");
+        assert!(
+            root.join(".tau/sessions")
+                .join(format!("{}.jsonl", second))
+                .exists(),
+            "the failed child's file stays"
+        );
+        assert!(!flag(&second), "the failed child's flag reverts");
+
+        // The next archive: clear the forced failure and it converges —
+        // both children and the parent move.
+        std::fs::remove_file(archive_dir.join(format!("{second}.jsonl.zst"))).unwrap();
+        core.dispatch(Command::SessionArchive {
+            session: parent.id.clone(),
+        })
+        .unwrap();
+        for id in [&parent.id, &first, &second] {
+            assert!(flag(id), "the archive flags {id}");
+        }
+
+        // And the restore brings the whole set back to the live path, every
+        // flag cleared.
+        core.dispatch(Command::SessionRestore {
+            workspace: workspace.id.clone(),
+            session: parent.id.clone(),
+        })
+        .unwrap();
+        for id in [&parent.id, &first, &second] {
+            assert!(
+                root.join(".tau/sessions")
+                    .join(format!("{}.jsonl", id))
+                    .exists(),
+                "the file of {id} is back"
+            );
+            assert!(
+                !root
+                    .join(".tau/archive")
+                    .join(format!("{id}.jsonl.zst"))
+                    .exists(),
+                "the archive of {id} is gone"
+            );
+            assert!(!flag(id), "the flag of {id} is cleared");
+        }
+        drop(core);
+    }
+
+    /// SessionNew's explicit title takes the rename's cap (the GUI always
+    /// passes null, but the protocol is open): over the cap is refused
+    /// before the session file is created, at the cap it is accepted.
+    #[tokio::test]
+    async fn session_new_caps_an_explicit_title() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let err = core
+            .dispatch(Command::SessionNew {
+                workspace: w.id.clone(),
+                title: Some("t".repeat(201)),
+            })
+            .unwrap_err();
+        let msg = match &err {
+            ProtocolError::Other { message } => message.as_str(),
+            other => panic!("expected a plain refusal: {other:?}"),
+        };
+        assert!(msg.contains("200"), "the refusal names the cap: {msg}");
+        // The refusal created nothing.
+        assert_eq!(
+            std::fs::read_dir(cwd.path().join(".tau/sessions"))
+                .map(|d| d.count())
+                .unwrap_or(0),
+            0,
+            "a refused SessionNew leaves no file"
+        );
+        // The cap itself is acceptable.
+        let out = core
+            .dispatch(Command::SessionNew {
+                workspace: w.id,
+                title: Some("u".repeat(200)),
+            })
+            .unwrap();
+        match out {
+            CommandOutput::Session { session } => {
+                assert_eq!(
+                    session.title.as_deref(),
+                    Some("u".repeat(200).as_str()),
+                    "the cap-sized title is accepted"
+                )
+            }
+            other => panic!("expected a session: {other:?}"),
+        }
         drop(core);
     }
 

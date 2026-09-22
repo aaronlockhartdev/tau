@@ -45,7 +45,7 @@ The memory model introduced by Mastra that tau's compaction is built on (ADR-000
 _Avoid_: "the OM feature", "memory feature"
 
 **Sub-agent**:
-A concurrent agent-loop instance in `tau-core` working a delegated task in its own session file linked to the parent. Always asynchronous (opaque handle); a child is an *ordinary* session — openable, steerable, branchable in the GUI. States: running · idle (explicit wait) · done · failed · stopped — all deliberately resumable; nothing auto-resumes (ADR-0001, ADR-0006).
+A concurrent agent-loop instance in `tau-core` working a delegated task in its own session file linked to the parent. Always asynchronous (the spawn returns the child's name; the session id stays the machine key); a child is an *ordinary* session — openable, steerable, branchable in the GUI. States: running · idle (explicit wait) · done · failed · stopped — all deliberately resumable; nothing auto-resumes (ADR-0001, ADR-0006).
 _Avoid_: child agent, worker (implies a generic process)
 
 **Task**:

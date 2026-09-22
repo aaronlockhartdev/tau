@@ -381,10 +381,11 @@ try {
     const bar2 = await evalPage(wsUrl, `(() => [...document.querySelectorAll('.bar')].pop()?.innerText ?? '')()`);
     check('B4: the bar shows a usage segment with real tokens', /\d+(\.\d+k)? in · \d+(\.\d+k)? out/.test(bar2.replace(/\n/g, ' ')), bar2.replace(/\n/g, ' | '));
 
-    // --- B5: opening a session keeps the list order stable (no MRU bump — the tree must not reorder under the pointer mid-click).
+    // --- B5: an archived row is non-interactive: a click opens nothing
+    // (the center keeps the last session) and the list order stays stable.
     const archClick = await evalPage(wsUrl, `new Promise((res) => {
       const [left] = [...document.querySelectorAll('.pane')];
-      left.querySelector('.arch-h').click();
+      left.querySelector('.arch-h')?.click();
       setTimeout(() => res([...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim())), 200);
     })`);
     check('the archive folder lists the 2 archived sessions', archClick.length === 2, archClick.join(' | '));
@@ -396,10 +397,14 @@ try {
     await sleep(350);
     const archAfter = await evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
-      return [...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim());
+      return {
+        rows: [...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim()),
+        head: document.querySelector('.chead .n')?.textContent ?? ''
+      };
     })()`);
-    check('B5: opening the older archived session keeps the archive list order stable',
-      archAfter.length === 2 && archAfter[1].includes('first session store'), archAfter.join(' | '));
+    check('B5: an archived row click is a no-op (no open, list order stable)',
+      archAfter.rows.length === 2 && archAfter.rows[1].includes('first session store') && archAfter.head === 'event renames',
+      `head: ${archAfter.head} | rows: ${archAfter.rows.join(' | ')}`);
 
     // --- live display ordering: the final call's tool card (regression: the
     // subagent_stop card rendered after the model's final response until
@@ -485,6 +490,32 @@ try {
       toolOrder.da >= 0 && toolOrder.dt === toolOrder.da + 1 && toolOrder.db === toolOrder.dt + 1,
       `dom: twin=${toolOrder.da} tool=${toolOrder.dt} final=${toolOrder.db}`);
 
+    // The right-click menu is the archived row's only affordance: restore.
+    // It moves the row back to the live tree (the list refetch converges
+    // the flag) and the archive count drops.
+    const ctxMenu = await evalPage(wsUrl, `new Promise((res) => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      const row = [...left.querySelectorAll('.arch .trow')].find((r) => r.textContent.includes('provider spike'));
+      if (!row) return res({ missing: true });
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 320 }));
+      setTimeout(() => {
+        const menu = document.querySelector('.ctxmenu');
+        res({ items: menu ? [...menu.querySelectorAll('button')].map((b) => b.textContent.trim()) : null });
+      }, 150);
+    })`);
+    check('archived row: right-click offers restore', ctxMenu.items?.join(' ') === 'restore', JSON.stringify(ctxMenu.items ?? ctxMenu));
+    await evalPage(wsUrl, `document.querySelector('.ctxmenu button')?.click()`);
+    await sleep(500);
+    const restored = await evalPage(wsUrl, `(() => {
+      const [left] = [...document.querySelectorAll('.pane')];
+      return {
+        arch: [...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim()),
+        live: [...left.querySelectorAll('.tree .trow')].map((r) => r.textContent.trim())
+      };
+    })()`);
+    check('archived row: restore moves the row back to the live tree',
+      !restored.arch.some((t) => t.includes('provider spike')) && restored.live.some((t) => t.includes('provider spike')),
+      `arch: ${restored.arch.join(' | ')} | live rows: ${restored.live.length}`);
     // --- ticket #28: skills ---
     // skill_list: the demo entry loaded the fixture's registry into the
     // store's per-workspace cache (the stand-in for the command); a
@@ -589,8 +620,8 @@ try {
 
     // Block rendering: the fixture's /skill: entry (mid-session) renders
     // the green block — name header, collapsed 200-char preview, working
-    // expando. The earlier checks left an archived session open, so the
-    // demo session's transcript comes back first.
+    // expando. A child was left open by the earlier checks, so the demo
+    // session's transcript comes back on the next open.
     await evalPage(wsUrl, `(() => {
       const [left] = [...document.querySelectorAll('.pane')];
       const row = [...left.querySelectorAll('.trow')].find((r) => r.textContent.includes('Protocol crate'));

@@ -34,6 +34,10 @@ pub struct SessionMeta {
     pub model: Option<String>,
     /// The last assistant entry's usage.
     pub usage: Option<crate::Usage>,
+    /// The session is archived (ADR-0005): its file lives in the
+    /// workspace's `archive/` dir; the GUI's archive folder lists it.
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// One entry's metadata: everything the entry tree needs, no payload
