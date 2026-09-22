@@ -244,6 +244,18 @@
   }
 </script>
 
+{#snippet kvRows(rows: Array<{ k: string; lines: string[] }>)}
+  {#each rows as row (row.k)}
+    {#if row.lines.length > 1}
+      <div class="kv"><span class="k">{row.k}:</span></div>
+      {#each row.lines as ln (ln)}
+        <div class="kv sub"><span class="v">{ln}</span></div>
+      {/each}
+    {:else}
+      <div class="kv"><span class="k">{row.k}</span><span class="v">{row.lines[0] ?? ''}</span></div>
+    {/if}
+  {/each}
+{/snippet}
 {#if hasContent}
 <div class="wrap" bind:this={el}>
   {#if turn}
@@ -316,15 +328,7 @@
       </div>
       {#if toolOpen}
         <div class="x">
-          {#each toolKv as row (row.k)}
-            <div class="kv">
-              <span class="k">{row.k}</span>
-              <span class="v">{row.lines[0] ?? ''}</span>
-            </div>
-            {#each row.lines.slice(1) as ln (ln)}
-              <div class="kv sub"><span class="v">{ln}</span></div>
-            {/each}
-          {/each}
+          {@render kvRows(toolKv)}
           {#if toolOut}
             <div class="out"><pre>{outputOpen ? toolOut : preview}</pre></div>
             {#if outputLong}
@@ -389,12 +393,7 @@
     {:else if entry.kind === 'task'}
       <div class="card2">
         <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-check"/></svg>{taskLabel}</div>
-        {#each taskKv as row (row.k)}
-          <div class="kv"><span class="k">{row.k}</span><span class="v">{row.lines[0] ?? ''}</span></div>
-          {#each row.lines.slice(1) as ln (ln)}
-            <div class="kv sub"><span class="v">{ln}</span></div>
-          {/each}
-        {/each}
+        {@render kvRows(taskKv)}
       </div>
     {:else if (entry.text && entry.text.trim()) || entry.kind === 'interrupted'}
       <div class="card2" class:interrupted={entry.kind === 'interrupted'}>
@@ -569,6 +568,7 @@
   }
   .kv.sub {
     grid-template-columns: 1fr;
+    margin-left: 14px;
   }
   .kv.sub .v {
     white-space: pre-wrap;
