@@ -760,7 +760,7 @@ mod tests {
                     child: "s2".into(),
                     agent_type: "general".into(),
                     context_mode: ContextMode::Compacted,
-                    title: "sub-agent-rusty-nail".into(),
+                    title: "rusty-nail".into(),
                 },
             },
             Event::SubagentEvent {

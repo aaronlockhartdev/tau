@@ -144,7 +144,9 @@
     white-space: nowrap;
   }
   .name.rename {
-    padding: 1px 4px;
+    box-sizing: border-box;
+    height: 1em;
+    padding: 0 4px;
     border: 1px solid var(--acc);
     border-radius: 3px;
     background: var(--panel);

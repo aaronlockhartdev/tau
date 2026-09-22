@@ -96,7 +96,7 @@
   {#if p.rtab === 'tasks'}
     <div class="list">
       {#if liveTasks.length === 0 && histTasks.length === 0}
-        <div class="lrow"><span class="lm">none</span></div>
+        <div class="emptyc">No tasks — ask the agent to make one</div>
       {:else}
         {#if liveTasks.length > 0}
           <div class="ghead">active · {liveTasks.length}</div>
@@ -224,7 +224,7 @@
   {:else}
     <div class="list">
       {#if liveSubs.length === 0 && histSubs.length === 0}
-        <div class="lrow"><span class="lm">none</span></div>
+        <div class="emptyc">No sub-agents — ask the agent to spawn one</div>
       {:else}
         {#if liveSubs.length > 0}
           <div class="ghead">live · {liveSubs.length}</div>
@@ -347,10 +347,22 @@
     transform: rotate(90deg);
   }
   .list {
+    display: flex;
+    flex-direction: column;
     padding: 4px 0;
     overflow-y: auto;
     min-height: 0;
     flex: 1;
+  }
+  .emptyc {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font: 11px var(--mono);
+    color: var(--faint);
+    text-align: center;
+    padding: 0 16px;
   }
   .lrow {
     padding: 7px 14px;

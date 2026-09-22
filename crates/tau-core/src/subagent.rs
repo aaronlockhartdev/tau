@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::future::Future;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -590,12 +591,21 @@ impl Supervisor {
             self.next.fetch_add(1, Ordering::SeqCst) + 1
         );
         // A child session keeps a readable, unique name in its header (the
-        // type plus a generated adjective-noun, so same-type children don't
-        // collide), so it survives a restart like a top-level one.
-        let noun = names::Generator::default()
-            .next()
-            .expect("the generator yields a name");
-        let name = format!("sub-agent-{}-{}", ty.name, noun);
+        // adjective-noun pair, like a top-level session), so it survives a
+        // restart; retry while it collides with a title already on disk in
+        // this workspace.
+        let draw = || {
+            names::Generator::default()
+                .next()
+                .expect("the generator yields a name")
+        };
+        let mut name = draw();
+        for _ in 0..8 {
+            if !title_on_disk(&self.cwd, &name) {
+                break;
+            }
+            name = draw();
+        }
         store
             .set_title(&name)
             .map_err(|e| format!("subagent_spawn: {e}"))?;
@@ -1242,6 +1252,26 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
     }
 }
 
+/// True when a session file in the workspace already carries this title
+/// (the header is the record, so the check reads the disk).
+fn title_on_disk(cwd: &Path, title: &str) -> bool {
+    let dir = cwd.join(".tau").join("sessions");
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return false;
+    };
+    rd.filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
+        .any(|e| {
+            let id = e
+                .file_name()
+                .to_string_lossy()
+                .to_string()
+                .trim_end_matches(".jsonl")
+                .to_string();
+            let mut s = SessionStore::for_workspace(cwd, &id);
+            s.open().is_ok() && s.title() == Some(title)
+        })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
