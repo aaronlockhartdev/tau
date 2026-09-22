@@ -47,6 +47,7 @@
     }
   });
   let toolOpen = $state(false);
+  let taskOpen = $state(false);
   let outputOpen = $state(false);
   $effect(() => {
     void entry.text;
@@ -56,6 +57,7 @@
     void entry.args;
     void outputOpen;
     void toolOpen;
+    void taskOpen;
     void thinkOpen;
     if (el) heights.set(heightKey, el.offsetHeight);
   });
@@ -165,7 +167,11 @@
       const p = JSON.parse(entry.text ?? '') as Record<string, unknown>;
       return Object.entries(p)
         .filter(([k]) => k !== 'event')
-        .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
+        .map(([k, v]) => ({
+          k,
+          lines: valueLinesOf(v, 1),
+          nested: Array.isArray(v) || (typeof v === 'object' && v !== null)
+        }));
     } catch {
       return entry.text ? [{ k: '', lines: [entry.text] }] : [];
     }
@@ -244,9 +250,9 @@
   }
 </script>
 
-{#snippet kvRows(rows: Array<{ k: string; lines: string[] }>)}
+{#snippet kvRows(rows: Array<{ k: string; lines: string[]; nested?: boolean }>)}
   {#each rows as row (row.k)}
-    {#if row.lines.length > 1}
+    {#if row.nested}
       <div class="kv"><span class="k">{row.k}:</span></div>
       {#each row.lines as ln (ln)}
         <div class="kv sub"><span class="v">{ln}</span></div>
@@ -279,11 +285,7 @@
           <div class="txt2 dim">{msg.prose}</div>
         {/if}
         {#if msg && msg.kv.length}
-          <div class="kvblock">
-            {#each msg.kv as [k, v]}
-              <div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>
-            {/each}
-          </div>
+          <div class="kvblock">{@render kvRows(msg.kv)}</div>
         {/if}
         {#if !msg}
           <div class="txt2 dim">{entry.text}</div>
@@ -296,11 +298,7 @@
           <div class="txt2 dim">{msg.prose}</div>
         {/if}
         {#if msg && msg.kv.length}
-          <div class="kvblock">
-            {#each msg.kv as [k, v]}
-              <div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>
-            {/each}
-          </div>
+          <div class="kvblock">{@render kvRows(msg.kv)}</div>
         {/if}
         {#if !msg}
           <div class="txt2 dim">{entry.text}</div>
@@ -391,9 +389,21 @@
         <div class="txt2 dim">{@html md}</div>
       </div>
     {:else if entry.kind === 'task'}
-      <div class="card2">
-        <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-check"/></svg>{taskLabel}</div>
-        {@render kvRows(taskKv)}
+      <div class="card2" class:collapsed={!taskOpen}>
+        <div
+          class="hd sys"
+          role="button"
+          tabindex="0"
+          aria-expanded={taskOpen}
+          onclick={() => (taskOpen = !taskOpen)}
+          onkeydown={onKey(() => (taskOpen = !taskOpen))}
+        >
+          <svg class="ic" width="13" height="13"><use href="#i-check"/></svg>{taskLabel}
+          <span class="caret">{taskOpen ? '▾' : '▸'}</span>
+        </div>
+        {#if taskOpen}
+          {@render kvRows(taskKv)}
+        {/if}
       </div>
     {:else if (entry.text && entry.text.trim()) || entry.kind === 'interrupted'}
       <div class="card2" class:interrupted={entry.kind === 'interrupted'}>
@@ -454,6 +464,9 @@
     letter-spacing: 0.04em;
     color: var(--dim);
     margin-bottom: 6px;
+  }
+  .card2.collapsed .hd {
+    margin-bottom: 0;
   }
   .hd .ic {
     color: var(--purple);
@@ -561,6 +574,14 @@
   }
   .kv .k {
     color: var(--faint);
+  }
+  .hd .caret {
+    margin-left: auto;
+    color: var(--faint);
+    font-size: 10px;
+  }
+  .hd[role='button'] {
+    cursor: pointer;
   }
   .kv .v {
     color: var(--dim);

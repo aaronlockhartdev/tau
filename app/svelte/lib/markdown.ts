@@ -79,7 +79,7 @@ export { esc };
 // trailing object.
 export function splitJsonPayload(
   text: string
-): { prose: string; kv: [string, string][] } | null {
+): { prose: string; kv: Array<{ k: string; lines: string[]; nested: boolean }> } | null {
   const t = text.trimEnd();
   if (!t.endsWith('}')) return null;
   for (let i = t.length - 1; i >= 0; i--) {
@@ -91,9 +91,11 @@ export function splitJsonPayload(
       continue;
     }
     if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) continue;
-    const kv = Object.entries(obj).map(
-      ([k, v]) => [k, typeof v === 'string' ? v : JSON.stringify(v)] as [string, string]
-    );
+    const kv = Object.entries(obj).map(([k, v]) => ({
+      k,
+      lines: valueLinesOf(v, 1),
+      nested: Array.isArray(v) || (typeof v === 'object' && v !== null)
+    }));
     if (!kv.length) continue;
     return { prose: t.slice(0, i).replace(/[\s—–\-·:]+$/, ''), kv };
   }
@@ -104,8 +106,14 @@ export function splitJsonPayload(
 // arrays as indented bullet lines, so an expanded tool shows readable
 // structure instead of a raw JSON blob (the task tools' steps and
 // criteria used to render as JSON text).
-export function argsLines(a: Record<string, unknown>): Array<{ k: string; lines: string[] }> {
-  return Object.entries(a).map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
+export function argsLines(a: Record<string, unknown>): Array<
+  { k: string; lines: string[]; nested: boolean }
+> {
+  return Object.entries(a).map(([k, v]) => ({
+    k,
+    lines: valueLinesOf(v, 1),
+    nested: Array.isArray(v) || (typeof v === 'object' && v !== null)
+  }));
 }
 
 export function valueLinesOf(v: unknown, depth: number): string[] {
