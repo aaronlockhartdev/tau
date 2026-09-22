@@ -20,11 +20,12 @@ import {
 import type {
   Command,
   CommandOutput,
-  FileEntry,
   EntryMeta,
   Event,
+  FileEntry,
   Snapshot,
   Usage,
+  ViewEntry,
   Workspace
 } from './lib/protocol';
 
@@ -232,11 +233,18 @@ init().then(() => {
 // the native menu emits, mockIPC's event mock carries it to the listener
 // the store registered in init().
 const seam = (window as unknown as {
-  __tau?: { openFolderRequest?: () => void; demoFiles?: Record<string, FileEntry[]> };
+  __tau?: {
+    openFolderRequest?: () => void;
+    demoFiles?: Record<string, FileEntry[]>;
+    demoViews?: ViewEntry[];
+  };
 }).__tau;
 if (seam) {
   seam.openFolderRequest = () => void emit('open_folder_requested');
   seam.demoFiles = demoFiles;
+  // The fixture's payload views: the rig appends file copies of streamed
+  // entries to it — the paged-read mock serves this same array.
+  seam.demoViews = views;
 }
 
 const root = document.getElementById('app');

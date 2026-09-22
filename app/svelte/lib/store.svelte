@@ -259,11 +259,13 @@
     store: () => store,
     liveTexts: () =>
       (store.current ? store.sessions[store.current]?.live ?? [] : []).map((l) => (l.text ?? '').length),
-    // send/stop/openWorkspace are module exports the rig drives directly;
-    // hoisted above.
+    // send/stop/openWorkspace/switchSession/fetchWindow are module exports
+    // the rig drives directly; hoisted above.
     send,
     stop,
-    openWorkspace
+    openWorkspace,
+    switchSession,
+    fetchWindow
   };
 
 
@@ -582,6 +584,7 @@
       kind: next.kind,
       text: next.text,
       reasoning: next.reasoning,
+      calls: next.calls,
       output: next.output,
       status: next.status,
       name: next.name,
@@ -828,8 +831,18 @@
           } else {
             // The end-of-turn pump can deliver this after a later turn's
             // entries have already landed: place the card right after the
-            // assistant call that made it, not at the tail.
-            const ai = s.entries.findIndex((x) => x.id === ev.call_id);
+            // assistant call that made it, not at the tail. The id match
+            // covers the streamed copy (id = the stream's call_id); once the
+            // entry's file twin owns the slot, its id is the file counter
+            // (the stream_end dedupe drops the streamed copy against a
+            // numeric twin of identical text), so fall back to the call
+            // reference the entry carries. The tail append is last resort.
+            let ai = s.entries.findIndex((x) => x.id === ev.call_id);
+            if (ai < 0) {
+              ai = s.entries.findIndex(
+                (x) => (x.kind === 'message' || x.kind === 'interrupted') && x.calls?.includes(ev.tool_call_id)
+              );
+            }
             if (ai >= 0) {
               s.entries.splice(ai + 1, 0, { id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
             } else {
