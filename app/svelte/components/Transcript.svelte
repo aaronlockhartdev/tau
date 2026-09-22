@@ -1,8 +1,10 @@
 <script module lang="ts">
-  // key: `${session}:${entryId}` — heights persist across remounts.
-  // $state: a measurement write re-lays the track in the same flush as the
-  // content that grew it, so the tail follow never chases a stale total.
-  export const heights = $state(new Map<string, number>());
+  // key: `${session}:${entryId}` — heights persist across remounts. A plain
+  // Map: Svelte 5.57 does not deep-proxy Maps, so the map never tracks on
+  // its own; gen is the reactive trigger — a changed measurement bumps it,
+  // and the total/window deriveds read it and re-sum.
+  const heights = new Map<string, number>();
+  const heightsGen = $state({ gen: 0 });
 </script>
 
 <script lang="ts">
@@ -75,9 +77,13 @@
     return lines * 21 + 36;
   }
 
-  const total = $derived(all.reduce((sum, e) => sum + hOf(e), 0));
+  const total = $derived.by(() => {
+    void heightsGen.gen;
+    return all.reduce((sum, e) => sum + hOf(e), 0);
+  });
 
   function computeWin() {
+    void heightsGen.gen;
     const t0 = performance.now();
     const { top, h } = scroll;
     const view = h || 600;
@@ -142,14 +148,17 @@
   // re-pins. The input-intent flag stamps the last user scroll input and
   // the scroll handler consults it for both directions. That gate is what
   // keeps boot churn (the estimate→measured correction clamps the viewport
-  // up with no input behind it) and the stream's own growth (scroll
-  // anchoring nudges scrollTop as heights land) from flipping the follow.
+  // up with no input behind it) and the follow's own catch-up (its
+  // scrollTop write fires a downward scroll event the old unconditional
+  // re-pin read as a user arrival) from flipping the follow.
   onMount(() => {
     const node = el;
     if (!node) return;
     // Input intent: the last user scroll input (wheel, touch, scrollbar
-    // drag, scroll key), performance.now() time-stamped. The pin/unpin
-    // consume it; the TTL expires an arm the scroll never spent.
+    // drag, scroll key), performance.now() time-stamped. The unpin branch
+    // consumes it; a re-pin leaves it live (a wheel up within the TTL
+    // unpins in its listener regardless). The TTL expires an arm the
+    // scroll never spent.
     let inputIntent = 0;
     const INPUT_TTL = 200;
     const onWheel = (e: WheelEvent) => {
@@ -201,9 +210,10 @@
     // stream growth) — re-classifying that as "scrolled away" would drop
     // the pin for the whole turn. Both directions additionally require the
     // input intent to be live: a downward move with no input behind it is
-    // scroll anchoring (heights landing above the viewport nudge scrollTop),
-    // and letting it re-pin is what made a slow scroll up jitter — the pin
-    // re-armed and the catch-up snapped the view back.
+    // the follow's own catch-up write (overflow-anchor is off, so native
+    // anchoring plays no part), and letting it re-pin is what made a slow
+    // scroll up jitter — the pin re-armed and the catch-up snapped the
+    // view back.
     let lastTop = node.scrollTop;
     const onScroll = () => {
       scroll.top = node.scrollTop;
@@ -307,7 +317,20 @@
     <div class="track" style="height: {total}px">
       <div class="inner" style="transform: translateY({win.offset}px)">
         {#each all.slice(win.start, win.end) as e, idx (e.id)}
-          <EntryCard entry={e} heightKey={cur ? `${cur}:${e.id}` : e.id} heights={heights} sourceLabel={sourceLabelFor(e)} parentLabel={parentLabel} turn={turnLabel(idx)} />
+          {@const hk = cur ? `${cur}:${e.id}` : e.id}
+          <EntryCard
+            entry={e}
+            heightKey={hk}
+            report={(h) => {
+              if (heights.get(hk) !== h) {
+                heights.set(hk, h);
+                heightsGen.gen++;
+              }
+            }}
+            sourceLabel={sourceLabelFor(e)}
+            parentLabel={parentLabel}
+            turn={turnLabel(idx)}
+          />
         {/each}
       </div>
     </div>

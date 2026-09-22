@@ -3,8 +3,8 @@
   // other kinds are unified cards whose header is an icon plus a quiet
   // label; reasoning is a cardless grey "thinking" line. Tool calls are a
   // chip row that expands to structured key/value args plus the output.
-  // The card measures itself on mount and on content change; the
-  // transcript windowing consumes the measurement through `heights`.
+  // The card reports its rendered height on mount and on content change;
+  // the transcript owns the heights map and the track relayout.
 
   import { onMount } from 'svelte';
   import { store } from '../lib/store.svelte';
@@ -14,14 +14,14 @@
   let {
     entry,
     heightKey,
-    heights,
+    report,
     sourceLabel = '',
     parentLabel = '',
     turn = ''
   }: {
     entry: Entry;
     heightKey: string;
-    heights: Map<string, number>;
+    report?: (h: number) => void;
     sourceLabel?: string;
     parentLabel?: string;
     turn?: 'you' | 'agent' | '';
@@ -29,12 +29,8 @@
 
   let el = $state<HTMLDivElement | null>(null);
 
-  // Write only on change: the heights map is reactive, and a repeat of the
-  // same value would re-lay the transcript for nothing.
   function measure() {
-    if (!el) return;
-    const h = el.offsetHeight;
-    if (heights.get(heightKey) !== h) heights.set(heightKey, h);
+    if (el && report) report(el.offsetHeight);
   }
 
   onMount(() => {
@@ -62,8 +58,9 @@
     open[slot] = next;
   }
   // The 'r' keybind toggles every reasoning line at once (store global);
-  // a click stores a per-entry override. The effect syncs when the global
-  // changes, so the keybind wins on its next press.
+  // a click stores a per-entry override that then wins: the effect syncs
+  // only entries without an override, so a clicked line keeps its state
+  // across global flips.
   let thinkSynced = $state(false);
   $effect(() => {
     void store.reasoningOpen;
