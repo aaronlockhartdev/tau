@@ -111,7 +111,7 @@
             onkeydown={onKey(() => toggleTask(t.id))}
           >
             <div class="lh">
-              <span class="chev">{p.expandedTasks.includes(t.id) ? '▾' : '▸'}</span>
+              <svg class="chev" class:open={p.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
               <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
                 <span class="dot"></span>{t.status}
               </span>
@@ -162,13 +162,13 @@
         {/each}
         {#if histTasks.length > 0}
           <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
-            <span class="chev">{p.historyOpen ? '▾' : '▸'}</span>history · {histTasks.length}
+            <svg class="chev"><use href="#i-chev"/></svg>history · {histTasks.length}
           </div>
           {#if p.historyOpen}
             {#each histTasks as t (t.id)}
               <div class="lrow" class:open={p.expandedTasks.includes(t.id)} role="button" tabindex="0" onclick={() => toggleTask(t.id)} onkeydown={onKey(() => toggleTask(t.id))}>
                 <div class="lh">
-                  <span class="chev">{p.expandedTasks.includes(t.id) ? '▾' : '▸'}</span>
+                  <svg class="chev" class:open={p.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
                   <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
                     <span class="dot"></span>{t.status}
                   </span>
@@ -261,7 +261,7 @@
         {/each}
         {#if histSubs.length > 0}
           <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
-            <span class="chev">{p.historyOpen ? '▾' : '▸'}</span>history · {histSubs.length}
+            <svg class="chev"><use href="#i-chev"/></svg>history · {histSubs.length}
           </div>
           {#if p.historyOpen}
             {#each histSubs as r (r.handle)}
@@ -340,7 +340,9 @@
     cursor: pointer;
   }
   .ghead .chev {
-    font-size: 9px;
+    width: 10px;
+    height: 10px;
+    flex: none;
     transition: transform 0.12s;
   }
   .ghead.open .chev {
@@ -389,9 +391,14 @@
     color: var(--faint);
   }
   .lrow .chev {
-    font-size: 9px;
-    color: var(--dim);
     width: 10px;
+    height: 10px;
+    flex: none;
+    color: var(--dim);
+    transition: transform 0.12s;
+  }
+  .lrow .chev.open {
+    transform: rotate(90deg);
   }
   .lrow .ld {
     margin-top: 8px;

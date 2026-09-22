@@ -60,7 +60,7 @@
         </div>
         <div class="arch">
           <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }}>
-            <svg class="ci" width="11" height="11" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev" /></svg> ARCHIVE
+            <svg class="ci" width="10" height="10" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev" /></svg> archive · {archived.length}
           </button>
           {#if p.archOpen}
             {#if archived.length === 0}
@@ -141,13 +141,13 @@
   .arch-h {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     width: 100%;
     text-align: left;
-    padding: 8px 12px;
-    font: 10.5px var(--mono);
+    padding: 8px 12px 4px;
+    font: 10px var(--mono);
     letter-spacing: 0.08em;
-    color: var(--dim);
+    color: var(--faint);
   }
   .arch-h .ci {
     display: block;

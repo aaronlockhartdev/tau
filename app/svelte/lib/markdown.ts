@@ -99,3 +99,60 @@ export function splitJsonPayload(
   }
   return null;
 }
+
+// Structured lines for a tool's arguments: scalars inline, objects and
+// arrays as indented bullet lines, so an expanded tool shows readable
+// structure instead of a raw JSON blob (the task tools' steps and
+// criteria used to render as JSON text).
+export function argsLines(a: Record<string, unknown>): Array<{ k: string; lines: string[] }> {
+  return Object.entries(a).map(([k, v]) => ({ k, lines: valueLines(v, 1) }));
+}
+
+function valueLines(v: unknown, depth: number): string[] {
+  if (Array.isArray(v)) {
+    return v.flatMap((x) =>
+      x === null
+        ? [bullet(depth, '–')]
+        : typeof x === 'object'
+          ? itemLines(x as Record<string, unknown>, depth)
+          : [bullet(depth, String(x))]
+    );
+  }
+  if (typeof v === 'object' && v !== null) return objLines(v as Record<string, unknown>, depth);
+  return [String(v)];
+}
+
+function objLines(o: Record<string, unknown>, depth: number): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(o)) {
+    if (Array.isArray(v) || (typeof v === 'object' && v !== null)) {
+      out.push(bullet(depth, `${k}:`));
+      out.push(...valueLines(v, depth + 1));
+    } else {
+      out.push(bullet(depth, `${k}: ${v === null ? '' : String(v)}`));
+    }
+  }
+  return out;
+}
+
+// A bullet line; an object item leads with its text/summary/id when it
+// has one and folds its remaining scalars onto the same line.
+function itemLines(o: Record<string, unknown>, depth: number): string[] {
+  const head = o.text ?? o.summary ?? o.id ?? o.command;
+  if (typeof head === 'string') {
+    const headKey = (['text', 'summary', 'id', 'command'] as const).find(
+      (k) => o[k] === head
+    );
+    const rest = Object.entries(o).filter(([k, v]) => k !== headKey && v !== null);
+    const tail = rest
+      .filter(([, v]) => typeof v !== 'object')
+      .map(([k, v]) => `${k}: ${v}`)
+      .join(', ');
+    return [bullet(depth, tail ? `${head} — ${tail}` : head)];
+  }
+  return objLines(o, depth);
+}
+
+function bullet(depth: number, text: string): string {
+  return '  '.repeat(depth) + '• ' + text;
+}

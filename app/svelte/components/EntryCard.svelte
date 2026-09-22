@@ -8,7 +8,7 @@
 
   import { onMount } from 'svelte';
   import { store } from '../lib/store.svelte';
-  import { md as renderMarkdown, splitJsonPayload } from '../lib/markdown';
+  import { md as renderMarkdown, splitJsonPayload, argsLines } from '../lib/markdown';
   import type { Entry } from '../lib/protocol';
 
   let {
@@ -90,15 +90,13 @@
     const s = typeof v === 'string' ? v : '';
     return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : entry.args ?? '';
   });
-  // Expanded args as key/value lines; non-scalar values collapse to JSON.
-  const toolKv = $derived.by((): Array<[string, string]> => {
+  // Expanded args as structured key/value lines (nested values as
+  // indented bullets, not a raw JSON blob).
+  const toolKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
     if (entry.kind !== 'tool') return [];
     const a = parseArgs(entry.args);
-    if (!a) return entry.args ? [['', entry.args]] : [];
-    return Object.entries(a as Record<string, unknown>).map(([k, v]) => [
-      k,
-      typeof v === 'object' && v !== null ? JSON.stringify(v) : String(v)
-    ]);
+    if (!a) return entry.args ? [{ k: '', lines: [entry.args] }] : [];
+    return argsLines(a as Record<string, unknown>);
   });
   const toolIcon = $derived(
     entry.kind === 'tool'
@@ -128,12 +126,27 @@
   );
 
   // Sub-agent entries carry the raw payload as JSON; the card renders it
-  // as plain key: value lines with the delimiters stripped.
+  // as plain key: value lines with the delimiters stripped. In a child's
+  // own session these are its own lifecycle records (spawn, report to
+  // parent, state change) — rendered as quiet system lines, not amber
+  // sub-agent cards (the amber card is the parent's view of a child).
   const sublines = $derived(
     entry.kind === 'subagent'
       ? structuredSub(entry.text ?? '')
       : []
   );
+  const subLabel = $derived.by(() => {
+    if (entry.kind !== 'subagent') return '';
+    try {
+      const p = JSON.parse(entry.text ?? '') as Record<string, any>;
+      if (p.event === 'spawn') return 'spawn';
+      if (p.event === 'notify') return 'reported to parent';
+      if (p.event === 'state') return `state: ${p.state?.state ?? ''}`;
+      return 'sub-agent';
+    } catch {
+      return 'sub-agent';
+    }
+  });
 
   // A sub-agent's message (child → parent) and the parent's message to a
   // child: prose with a JSON payload, rendered as kv lines the way an
@@ -274,8 +287,14 @@
       </div>
       {#if toolOpen}
         <div class="x">
-          {#each toolKv as [k, v]}
-            <div class="kv"><span class="k">{k}</span><span class="v">{v}</span></div>
+          {#each toolKv as row (row.k)}
+            <div class="kv">
+              <span class="k">{row.k}</span>
+              <span class="v">{row.lines[0] ?? ''}</span>
+            </div>
+            {#each row.lines.slice(1) as ln (ln)}
+              <div class="kv sub"><span class="v">{ln}</span></div>
+            {/each}
           {/each}
           {#if toolOut}
             <div class="out"><pre>{outputOpen ? toolOut : preview}</pre></div>
@@ -314,13 +333,18 @@
         <div class="hd obs"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation</div>
         <div class="txt2 dim">{@html md}</div>
       </div>
+    {:else if entry.kind === 'subagent' && parentLabel}
+      <div class="card2">
+        <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{subLabel}</div>
+        {#each sublines as line}
+          <div class="txt2 dim">{line}</div>
+        {/each}
+      </div>
     {:else if entry.kind === 'subagent'}
       <div class="card2">
         <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>sub-agent</div>
         {#each sublines as line}
           <div class="txt2 dim">{line}</div>
-        {:else}
-          <div class="txt2 dim">{entry.text}</div>
         {/each}
       </div>
     {:else if entry.kind === 'spawn-snapshot'}
@@ -503,6 +527,12 @@
   .kv .v {
     color: var(--dim);
     word-break: break-word;
+  }
+  .kv.sub {
+    grid-template-columns: 1fr;
+  }
+  .kv.sub .v {
+    white-space: pre-wrap;
   }
   .out {
     margin-top: 6px;

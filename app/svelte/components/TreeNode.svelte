@@ -67,7 +67,7 @@
   .trow {
     display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 7px;
     padding: 4.5px 8px 4.5px calc(var(--indent, 0px) + 8px);
     cursor: pointer;
     font-size: 12.5px;
