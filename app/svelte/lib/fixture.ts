@@ -230,6 +230,11 @@ export function toEntry(v: ViewEntry): Entry {
         kind: interrupted ? 'interrupted' : 'message',
         text: String(p.text ?? ''),
         reasoning: p.reasoning ? String(p.reasoning) : undefined,
+        calls: Array.isArray(p.calls)
+          ? p.calls
+              .map((c) => String((c as { call_id?: unknown }).call_id ?? ''))
+              .filter(Boolean)
+          : undefined,
         usage
       };
     }

@@ -401,6 +401,90 @@ try {
     check('B5: opening the older archived session keeps the archive list order stable',
       archAfter.length === 2 && archAfter[1].includes('first session store'), archAfter.join(' | '));
 
+    // --- live display ordering: the final call's tool card (regression: the
+    // subagent_stop card rendered after the model's final response until
+    // reload) ---
+    // Adversarial ordering: the file twin of the final tool-call assistant
+    // (textless — its reasoning is the twin identity) is hydrated by a paged
+    // read BEFORE the store processes its stream_end, so stream_end's dedupe
+    // drops the streamed copy against the numeric twin and the survivor
+    // carries the file id, not the stream's call_id. The end-of-turn pump
+    // then delivers the tool events after the final response has landed.
+    const toolOrder = await evalPage(wsUrl, `new Promise(async (res) => {
+      const t = window.__tau;
+      if (!t) return res({ missing: 'no __tau seam' });
+      const sid = 'demo';
+      const views = t.demoViews;
+      const ev = (type, extra) => Object.assign({ type, workspace: 'w-demo', session: sid }, extra);
+      try {
+        await t.switchSession(sid);
+        t.applyEvents([ev('stream_start', { call_id: 'call-A' })]);
+        t.applyEvents([ev('stream_delta', { call_id: 'call-A', text: '', reasoning: 'R1' })]);
+        views.push({
+          id: '00010001',
+          parent: '00009999',
+          kind: 'assistant',
+          timestamp: Date.now(),
+          payload: {
+            text: '',
+            reasoning: 'R1R2',
+            interrupted: false,
+            usage: null,
+            calls: [{ call_id: 'call-T', name: 'subagent_stop', id: 'tc1', arguments: '{}' }]
+          },
+          blob: null,
+          first_kept: null
+        });
+        await t.fetchWindow(sid, views.length - 1, 1);
+        t.applyEvents([ev('stream_delta', { call_id: 'call-A', text: '', reasoning: 'R2' })]);
+        t.applyEvents([ev('stream_end', { call_id: 'call-A', interrupted: false, usage: null })]);
+        t.applyEvents([ev('stream_start', { call_id: 'call-B' })]);
+        t.applyEvents([ev('stream_delta', { call_id: 'call-B', text: 'RIG-FINAL-RESPONSE', reasoning: null })]);
+        t.applyEvents([ev('stream_end', { call_id: 'call-B', interrupted: false, usage: null })]);
+        t.applyEvents([
+          ev('tool_start', { call_id: 'call-A', tool_call_id: 'call-T', name: 'subagent_stop' }),
+          ev('tool_end', { call_id: 'call-A', tool_call_id: 'call-T', name: 'subagent_stop', output: 'stopped' })
+        ]);
+        const entries = t.store().sessions[sid].entries;
+        const ia = entries.findIndex((e) => e.id === '00010001');
+        const it = entries.findIndex((e) => e.id === 'call-T');
+        const ib = entries.findIndex((e) => e.id === 'call-B');
+        const sc = document.querySelector('.scroll');
+        if (sc) {
+          sc.scrollTop = sc.scrollHeight;
+          sc.dispatchEvent(new Event('scroll'));
+        }
+        // One .wrap row per entry: the twin renders as a collapsed 'thinking'
+        // line (its body mounts only when opened), the tool as a chip row,
+        // the final response as the usual card.
+        const poll = (tries) => {
+          const rows = [...document.querySelectorAll('.track .inner > .wrap')];
+          rows.forEach((r) => {
+            const th = r.querySelector('.think');
+            if (th && !th.classList.contains('open')) th.click();
+          });
+          setTimeout(() => {
+            const r2 = [...document.querySelectorAll('.track .inner > .wrap')];
+            const da = r2.findIndex((r) => (r.querySelector('.thinkbody')?.textContent ?? '').includes('R1R2'));
+            const dt = r2.findIndex((r) => (r.querySelector('.tool .nm')?.textContent ?? '').includes('subagent_stop'));
+            const db = r2.findIndex((r) => r.textContent.includes('RIG-FINAL-RESPONSE'));
+            if (da >= 0 && dt >= 0 && db >= 0) return res({ ia, it, ib, n: entries.length, da, dt, db });
+            if (tries <= 0) return res({ ia, it, ib, n: entries.length, da, dt, db });
+            setTimeout(() => poll(tries - 1), 200);
+          }, 250);
+        };
+        poll(5);
+      } catch (e) {
+        res({ error: String(e) });
+      }
+    })`);
+    check('tool order: the store places the final-call tool card right after its assistant entry (the survivor carries the file id, not the stream call_id)',
+      toolOrder.it === toolOrder.ia + 1 && toolOrder.ib === toolOrder.it + 1,
+      `entries: twin=${toolOrder.ia} tool=${toolOrder.it} final=${toolOrder.ib} of ${toolOrder.n}${toolOrder.error ? ' [error: ' + toolOrder.error + ']' : ''}`);
+    check('tool order: the DOM renders twin → tool card → final response in that order',
+      toolOrder.da >= 0 && toolOrder.dt === toolOrder.da + 1 && toolOrder.db === toolOrder.dt + 1,
+      `dom: twin=${toolOrder.da} tool=${toolOrder.dt} final=${toolOrder.db}`);
+
     // --- ticket #28: skills ---
     // skill_list: the demo entry loaded the fixture's registry into the
     // store's per-workspace cache (the stand-in for the command); a

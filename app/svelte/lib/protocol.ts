@@ -84,6 +84,10 @@ export interface Entry {
   // expanded template and carries the skill's identity for the block.
   skill?: { name: string; location: string };
   reasoning?: string;
+  // The provider tool_call_ids this assistant message issued (the file
+  // payload's calls[].call_id): the reference a tool card anchors to when
+  // the entry's id is the file counter, not the stream's call_id.
+  calls?: string[];
   name?: string;
   args?: string;
   status?: 'ok' | 'running' | 'error';
