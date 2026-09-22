@@ -113,7 +113,7 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "subagent_spawn".into(),
-            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its handle. If the work is already a task, pass task — the child starts with it assigned; a separate assign costs an extra round trip. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
+            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its name — how you address it in the other sub-agent tools. If the work is already a task, pass task — the child starts with it assigned; a separate assign costs an extra round trip. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
@@ -128,34 +128,34 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "subagent_message".into(),
-            description: "Message a sub-agent by handle. A running child takes it on its steering lane; a non-running child is resumed with it. Omit text for a pure resume (\"continue from where you stopped\").".into(),
+            description: "Message a sub-agent by name (its displayed title; its session id is accepted too). A running child takes it on its steering lane; a non-running child is resumed with it. Omit text for a pure resume (\"continue from where you stopped\").".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "handle": {"type": "string"},
+                    "name": {"type": "string"},
                     "text": {"type": "string"}
                 },
-                "required": ["handle"]
+                "required": ["name"]
             }),
         },
         ToolSpec {
             kind: ToolKind::Function,
             name: "subagent_stop".into(),
-            description: "Stop a running sub-agent: its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already parked/done/failed/stopped) and is left alone.".into(),
+            description: "Stop a running sub-agent by name (its displayed title; its session id is accepted too): its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already parked/done/failed/stopped) and is left alone.".into(),
             parameters: json!({
                 "type": "object",
-                "properties": {"handle": {"type": "string"}},
-                "required": ["handle"]
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"]
             }),
         },
         ToolSpec {
             kind: ToolKind::Function,
             name: "subagent_state".into(),
-            description: "Inspect a sub-agent by handle: lifecycle state, what it is waiting for, its last message, usage, and its session id.".into(),
+            description: "Inspect a sub-agent by name (its displayed title; its session id is accepted too): lifecycle state, what it is waiting for, its last message, usage, and its session id.".into(),
             parameters: json!({
                 "type": "object",
-                "properties": {"handle": {"type": "string"}},
-                "required": ["handle"]
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"]
             }),
         },
     ]

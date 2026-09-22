@@ -129,10 +129,12 @@
 
   // Sub-agent entries carry the raw payload as JSON; the card renders it
   // with the shared structured kv rows (field name on its own line with a
-  // colon, value below). In a child's own session these are its own
-  // lifecycle records (spawn, report to parent, state change) — rendered
-  // as quiet system rows, not amber sub-agent cards (the amber card is the
-  // parent's view of a child).
+  // colon, value below). State transitions are the exception: one quiet
+  // line, no card shell, no kv body — the record is the discriminant plus
+  // the non-output variant fields, and the output lives in the notify
+  // record (the report), which keeps its card. In a child's own session
+  // these are its own lifecycle records — not amber sub-agent cards (the
+  // amber card is the parent's view of a child).
   const subKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
     if (entry.kind !== 'subagent') return [];
     try {
@@ -142,13 +144,27 @@
       return entry.text ? [{ k: '', lines: [entry.text] }] : [];
     }
   });
+  // The state line: `state: done`, `state: idle · {waiting_on}`,
+  // `state: failed · {reason}`, `state: stopped`.
+  const subState = $derived.by(() => {
+    if (entry.kind !== 'subagent') return '';
+    try {
+      const p = JSON.parse(entry.text ?? '') as Record<string, any>;
+      if (p.event !== 'state') return '';
+      const st = typeof p.state === 'string' ? p.state : (p.state?.state ?? '');
+      if (st === 'idle' && p.waiting_on) return `state: ${st} · ${p.waiting_on}`;
+      if (st === 'failed' && p.reason) return `state: ${st} · ${p.reason}`;
+      return `state: ${st}`;
+    } catch {
+      return '';
+    }
+  });
   const subLabel = $derived.by(() => {
     if (entry.kind !== 'subagent') return '';
     try {
       const p = JSON.parse(entry.text ?? '') as Record<string, any>;
       if (p.event === 'spawn') return 'spawn';
       if (p.event === 'notify') return 'reported to parent';
-      if (p.event === 'state') return `state: ${p.state?.state ?? ''}`;
       return 'sub-agent';
     } catch {
       return 'sub-agent';
@@ -337,6 +353,8 @@
         <div class="hd obs"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation</div>
         <div class="txt2 dim">{@html md}</div>
       </div>
+    {:else if entry.kind === 'subagent' && subState}
+      <div class="stline"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{subState}</div>
     {:else if entry.kind === 'subagent' && parentLabel}
       <div class="card2">
         <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{subLabel}</div>
@@ -474,6 +492,20 @@
   .think .meta {
     margin-left: auto;
     font: 10px var(--mono);
+  }
+  /* The state line: a quiet system line (the thinking line's look,
+     without its interactivity). */
+  .stline {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 2px;
+    font: 12px var(--sans);
+    color: var(--faint);
+  }
+  .stline .ic {
+    color: var(--purple);
+    opacity: 0.7;
   }
   .think + .card2,
   .thinkbody + .card2 {

@@ -178,6 +178,10 @@ pub trait SubagentBridge: Send + Sync {
 /// One child's live record.
 pub struct Child {
     pub handle: String,
+    /// The child's displayed name (its session header title): the name
+    /// the agent and the GUI address it by; the session id stays the
+    /// machine key.
+    pub name: String,
     pub session_id: String,
     pub agent_type: String,
     pub context_mode: ContextMode,
@@ -206,13 +210,32 @@ impl Child {
         self.state.lock().unwrap().clone()
     }
 
-    fn set_state(&self, state: ChildState, note: Option<String>) -> Result<(), String> {
+    fn set_state(&self, state: ChildState) -> Result<(), String> {
         *self.state.lock().unwrap() = state.clone();
+        // The record carries the discriminant plus the non-output variant
+        // fields only: done's output lives in the notify record (the
+        // report), not twice.
+        let payload = match &state {
+            ChildState::Running => json!({ "event": "state", "state": "running" }),
+            ChildState::Idle { waiting_on } => json!({
+                "event": "state",
+                "state": "idle",
+                "waiting_on": waiting_on.as_str(),
+            }),
+            ChildState::Done { .. } => json!({ "event": "state", "state": "done" }),
+            ChildState::Failed { reason } => json!({
+                "event": "state",
+                "state": "failed",
+                "reason": reason,
+            }),
+            ChildState::Stopped { by } => json!({
+                "event": "state",
+                "state": "stopped",
+                "by": by.as_str(),
+            }),
+        };
         self.agent
-            .append_entry(
-                KIND_SUBAGENT,
-                json!({ "event": "state", "state": state, "note": note }),
-            )
+            .append_entry(KIND_SUBAGENT, payload)
             .map_err(|e| format!("subagent state entry failed: {e}"))
     }
 
@@ -331,6 +354,9 @@ impl std::fmt::Debug for Spawned {
 
 pub struct Spawned {
     pub handle: String,
+    /// The child's displayed name (spawn addresses it by this; the
+    /// session id is the machine key).
+    pub name: String,
     pub session_id: String,
     pub agent: Arc<AgentSession>,
     pub provider: TurnProviderRef,
@@ -409,6 +435,20 @@ impl Supervisor {
             }
             _ => Ok(()),
         }
+    }
+
+    /// Addressing (name-based, the session id stays the machine key):
+    /// the child's name (its displayed title, exact match) first, then
+    /// the session id, then the internal handle (the GUI's protocol
+    /// commands pass it).
+    fn resolve(&self, name_or_id: &str) -> Option<Arc<Child>> {
+        let children = self.children.lock().unwrap();
+        children
+            .values()
+            .find(|c| c.name == name_or_id)
+            .or_else(|| children.values().find(|c| c.session_id == name_or_id))
+            .or_else(|| children.get(name_or_id))
+            .cloned()
     }
 
     /// The child's live agent (the dispatch registers it as an ordinary
@@ -665,6 +705,7 @@ impl Supervisor {
         let stop = agent.stop_flag();
         let child = Arc::new(Child {
             handle: handle.clone(),
+            name: name.clone(),
             session_id: session_id.clone(),
             agent_type: agent_type.to_owned(),
             context_mode,
@@ -695,6 +736,7 @@ impl Supervisor {
         let drive = tokio::spawn(Self::drive_loop(Arc::clone(self), child, drive_gen));
         Ok(Spawned {
             handle,
+            name,
             session_id,
             agent,
             provider,
@@ -726,13 +768,7 @@ impl Supervisor {
                 ChildState::Running => {}
                 ChildState::Idle { .. } => {
                     if child.agent.has_pending() {
-                        if child
-                            .set_state(
-                                ChildState::Running,
-                                Some("resumed by a queued message".into()),
-                            )
-                            .is_err()
-                        {
+                        if child.set_state(ChildState::Running).is_err() {
                             sup.mark_failed(&child, "state entry failed".into());
                             break;
                         }
@@ -801,12 +837,9 @@ impl Supervisor {
     fn mark_failed(&self, child: &Arc<Child>, reason: String) {
         // The state entry itself can fail (storage down): nothing further
         // to do — the in-memory state already says failed.
-        if let Err(e) = child.set_state(
-            ChildState::Failed {
-                reason: reason.clone(),
-            },
-            None,
-        ) {
+        if let Err(e) = child.set_state(ChildState::Failed {
+            reason: reason.clone(),
+        }) {
             eprintln!("subagent state entry failed: {e}");
         }
         self.bridge.state(&StateNotice {
@@ -893,12 +926,9 @@ impl Supervisor {
             self.resolve_assigned_task(&child, &output);
             // Quiescence, not death (ADR-0001): the loop ends, the
             // concurrency slot frees, and the parent is woken always.
-            if let Err(e) = child.set_state(
-                ChildState::Done {
-                    output: output.clone(),
-                },
-                None,
-            ) {
+            if let Err(e) = child.set_state(ChildState::Done {
+                output: output.clone(),
+            }) {
                 return e;
             }
             self.bridge.state(&StateNotice {
@@ -924,8 +954,7 @@ impl Supervisor {
             // A note parks the child. The declared (or default) wait
             // target decides the wake (ADR-0001 wake rules).
             let waiting_on = waiting_on.unwrap_or(WaitingOn::Parent);
-            if let Err(e) = child.set_state(ChildState::Idle { waiting_on }, Some(text.to_owned()))
-            {
+            if let Err(e) = child.set_state(ChildState::Idle { waiting_on }) {
                 return e;
             }
             self.bridge.state(&StateNotice {
@@ -999,29 +1028,27 @@ impl Supervisor {
     }
     /// `subagent_message` (and the GUI's send to a child): running → the
     /// text queues on the child's lane; non-running → resume (text omitted
-    /// = a pure resume). One tool, state decides (ADR-0006).
+    /// = a pure resume). One tool, state decides (ADR-0006). The reference
+    /// is the child's name (its displayed title), with the session id and
+    /// the internal handle accepted as fallbacks.
     pub fn message(
         self: &Arc<Self>,
-        handle: &str,
+        name_or_id: &str,
         text: Option<String>,
         lane: Lane,
     ) -> Result<String, String> {
-        let child = self
-            .children
-            .lock()
-            .unwrap()
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| format!("subagent_message: no sub-agent {handle} in this session"))?;
+        let child = self.resolve(name_or_id).ok_or_else(|| {
+            format!("subagent_message: no sub-agent {name_or_id} in this session")
+        })?;
         match child.state() {
             ChildState::Running => match &text {
                 Some(text) => {
                     child.agent.send(text.clone(), lane);
                     child.set_last_message(text);
                     child.wake.notify_one();
-                    Ok(format!("delivered to {handle}"))
+                    Ok(format!("delivered to {}", child.name))
                 }
-                None => Ok(format!("sub-agent {handle} is already running")),
+                None => Ok(format!("sub-agent {} is already running", child.name)),
             },
             _ => {
                 // Resume from any non-running state (ADR-0001 supplement:
@@ -1039,7 +1066,7 @@ impl Supervisor {
                     self.check_cap(true)?;
                 }
                 let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
-                child.set_state(ChildState::Running, Some(text.clone()))?;
+                child.set_state(ChildState::Running)?;
                 child.wake.notify_one();
                 self.bridge.state(&StateNotice {
                     parent: self.parent_session.clone(),
@@ -1059,7 +1086,7 @@ impl Supervisor {
                     tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone(), drive_gen));
                 }
                 child.nudge_sent.store(false, Ordering::SeqCst);
-                Ok(format!("resumed sub-agent {handle}"))
+                Ok(format!("resumed sub-agent {}", child.name))
             }
         }
     }
@@ -1070,20 +1097,21 @@ impl Supervisor {
     /// freed, and the parent woken. A non-running child is a no-op with a
     /// clear message — it already rests in the state that records how it
     /// got there, and a second stop would overwrite it.
-    pub fn stop(self: &Arc<Self>, handle: &str, by: StoppedBy) -> Result<String, String> {
+    pub fn stop(self: &Arc<Self>, name_or_id: &str, by: StoppedBy) -> Result<String, String> {
         let child = self
-            .children
-            .lock()
-            .unwrap()
-            .get(handle)
-            .cloned()
-            .ok_or_else(|| format!("subagent_stop: no sub-agent {handle} in this session"))?;
+            .resolve(name_or_id)
+            .ok_or_else(|| format!("subagent_stop: no sub-agent {name_or_id} in this session"))?;
         if !matches!(child.state(), ChildState::Running) {
             return match child.state() {
                 ChildState::Idle { .. } => Ok(format!(
-                    "sub-agent {handle} is parked — a message resumes it"
+                    "sub-agent {} is parked — a message resumes it",
+                    child.name
                 )),
-                other => Ok(format!("sub-agent {handle} is already {}", other.kind())),
+                other => Ok(format!(
+                    "sub-agent {} is already {}",
+                    child.name,
+                    other.kind()
+                )),
             };
         }
         // Cuts the child's stream at the next delta; the loop records
@@ -1097,9 +1125,9 @@ impl Supervisor {
     /// drive's wake, the state event (with the task's resume contract),
     /// and the parent's wake.
     fn finish_stop(&self, child: &Arc<Child>, by: StoppedBy) -> Result<String, String> {
-        let handle = child.handle.clone();
+        let name = child.name.clone();
         let note = format!("stopped by {}", by.as_str());
-        child.set_state(ChildState::Stopped { by }, Some(note.clone()))?;
+        child.set_state(ChildState::Stopped { by })?;
         // The drive ends at its loop head (running: after the interrupted
         // entry lands; parked: it wakes from its sleep and exits).
         child.wake.notify_one();
@@ -1136,9 +1164,9 @@ impl Supervisor {
         });
         match resume_contract {
             Some(rc) => Ok(format!(
-                "stopped sub-agent {handle}; its assigned task stays live (resume contract: {rc})"
+                "stopped sub-agent {name}; its assigned task stays live (resume contract: {rc})"
             )),
-            None => Ok(format!("stopped sub-agent {handle}")),
+            None => Ok(format!("stopped sub-agent {name}")),
         }
     }
 
@@ -1175,8 +1203,8 @@ impl Supervisor {
 
     /// A child's structured inspection (the `subagent_state` tool and the
     /// protocol's `subagent_state` command).
-    pub fn state_info(&self, handle: &str) -> Option<SubagentInfo> {
-        let child = self.children.lock().unwrap().get(handle)?.clone();
+    pub fn state_info(&self, name_or_id: &str) -> Option<SubagentInfo> {
+        let child = self.resolve(name_or_id)?.clone();
         let (state, waiting_on) = match child.state() {
             ChildState::Idle { waiting_on } => (ChildState::Idle { waiting_on }, Some(waiting_on)),
             other => (other, None),
@@ -1270,51 +1298,61 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
                     });
             let task = tc.args.get("task").and_then(Value::as_str);
             match sup.spawn(agent_type, brief, context_mode, task, &tc.id) {
-                Ok(s) => format!(
-                    "spawned sub-agent {} (session {}); it reports back via parent_notify",
-                    s.handle, s.session_id
-                ),
+                Ok(s) => {
+                    // The spawn reports the child's name: the model refers
+                    // to it by name in the sub-agent tools that follow
+                    // (the session id stays the machine key, internal).
+                    format!(
+                        "spawned sub-agent {}; it reports back via parent_notify",
+                        s.name
+                    )
+                }
                 Err(e) => e,
             }
         }
         "subagent_message" => {
-            let Some(handle) = tc.args.get("handle").and_then(Value::as_str) else {
-                return "subagent_message: missing \"handle\"".into();
+            let Some(name) = tc.args.get("name").and_then(Value::as_str) else {
+                return "subagent_message: missing \"name\"".into();
             };
             let text = tc
                 .args
                 .get("text")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            match sup.message(handle, text, Lane::Steering) {
+            match sup.message(name, text, Lane::Steering) {
                 Ok(s) => s,
                 Err(e) => e,
             }
         }
         "subagent_stop" => {
-            let Some(handle) = tc.args.get("handle").and_then(Value::as_str) else {
-                return "subagent_stop: missing \"handle\"".into();
+            let Some(name) = tc.args.get("name").and_then(Value::as_str) else {
+                return "subagent_stop: missing \"name\"".into();
             };
-            match sup.stop(handle, StoppedBy::Parent) {
+            match sup.stop(name, StoppedBy::Parent) {
                 Ok(s) => s,
                 Err(e) => e,
             }
         }
         "subagent_state" => {
-            let Some(handle) = tc.args.get("handle").and_then(Value::as_str) else {
-                return "subagent_state: missing \"handle\"".into();
+            let Some(name) = tc.args.get("name").and_then(Value::as_str) else {
+                return "subagent_state: missing \"name\"".into();
             };
-            match sup.state_info(handle) {
-                Some(info) => format!(
-                    "{}: {}{} — session {}",
-                    info.handle,
-                    info.state.kind(),
-                    info.waiting_on
-                        .map(|w| format!(" (waiting on {})", w.as_str()))
-                        .unwrap_or_default(),
-                    info.child
-                ),
-                None => format!("subagent_state: no sub-agent {handle} in this session"),
+            match sup.state_info(name) {
+                Some(info) => {
+                    let name = sup
+                        .resolve(name)
+                        .map(|c| c.name.clone())
+                        .unwrap_or_else(|| info.child.clone());
+                    format!(
+                        "{name}: {}{} — session {}",
+                        info.state.kind(),
+                        info.waiting_on
+                            .map(|w| format!(" (waiting on {})", w.as_str()))
+                            .unwrap_or_default(),
+                        info.child
+                    )
+                }
+                None => format!("subagent_state: no sub-agent {name} in this session"),
             }
         }
         // The core tools route through the loop's normal dispatch.
@@ -1939,10 +1977,23 @@ mod tests {
             .filter(|e| {
                 e.kind == KIND_SUBAGENT
                     && e.payload["event"] == json!("state")
-                    && e.payload["state"] == json!({ "state": "done", "output": { "ok": true } })
+                    && e.payload["state"] == json!("done")
             })
             .collect();
         assert_eq!(done_entries.len(), 1, "exactly one Done state entry");
+        // De-duped (the notify record is the report): the state record is
+        // the discriminant alone; the output lives in the notify record.
+        assert_eq!(
+            done_entries[0].payload,
+            json!({ "event": "state", "state": "done" })
+        );
+        let notify = store
+            .entries_range(0, usize::MAX)
+            .unwrap()
+            .into_iter()
+            .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!("notify"))
+            .expect("the notify record");
+        assert_eq!(notify.payload["output"], json!({ "ok": true }));
         assert_eq!(
             bridge
                 .wakes
@@ -2096,7 +2147,7 @@ mod tests {
         assert!(
             entries.iter().any(|e| e.kind == KIND_SUBAGENT
                 && e.payload["event"] == json!("state")
-                && e.payload["state"] == json!({"state": "running"})),
+                && e.payload["state"] == json!("running")),
             "the resume transition is recorded"
         );
     }
@@ -3235,5 +3286,234 @@ mod tests {
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].id, "task-1");
         assert_eq!(tasks[0].status, crate::task::STATUS_DONE);
+    }
+
+    /// The state record carries the discriminant plus the non-output
+    /// variant fields only — done's output lives in the notify record (the
+    /// report), never duplicated in the state record.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn state_records_carry_the_discriminant_and_variant_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        // One child: a slow stream cut by a stop, then a parked note, then
+        // a done — one of each non-running record to inspect.
+        let slow = concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
+        );
+        let (sup, bridge, _) = harness_full(
+            dir.path(),
+            vec![sse("spawning", &[])],
+            vec![vec![
+                slow.to_owned(),
+                sse(
+                    "",
+                    &[notify_call(
+                        "n1",
+                        "parked for the user",
+                        false,
+                        None,
+                        Some("user"),
+                    )],
+                ),
+                sse(
+                    "",
+                    &[notify_call(
+                        "n2",
+                        "done",
+                        true,
+                        Some(json!({ "r": 1 })),
+                        None,
+                    )],
+                ),
+                sse("", &[]),
+            ]],
+            vec![Duration::from_millis(200)],
+            SubAgents::default(),
+        );
+        let s = sup
+            .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
+            .unwrap();
+        // Running → stopped (user): the terminal record carries the by.
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        sup.stop(&s.handle, StoppedBy::User).unwrap();
+        // Resumed → parked: the idle record carries the waiting_on.
+        sup.message(&s.handle, Some("continue".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&s.handle).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        });
+        // Resumed → done: the done record is the discriminant alone.
+        sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&s.handle).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+        // The drive is gone before the file is read from a second store.
+        wait_for(|| sup.drive_quiescent(&s.handle));
+        let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
+        store.open().unwrap();
+        let states: Vec<Value> = store
+            .entries_range(0, usize::MAX)
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!("state"))
+            .map(|e| e.payload.clone())
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                json!({ "event": "state", "state": "stopped", "by": "user" }),
+                json!({ "event": "state", "state": "running" }),
+                json!({ "event": "state", "state": "idle", "waiting_on": "user" }),
+                json!({ "event": "state", "state": "running" }),
+                json!({ "event": "state", "state": "done" }),
+            ]
+        );
+        // The output is the notify record's, exactly once.
+        let notify: Vec<Value> = store
+            .entries_range(0, usize::MAX)
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!("notify"))
+            .map(|e| e.payload.clone())
+            .collect();
+        assert_eq!(
+            notify.iter().filter(|p| p.get("output").is_some()).count(),
+            1,
+            "the output is the notify record's, not the state record's: {notify:?}"
+        );
+        // The state stream (the GUI's source) is untouched by the de-dup.
+        assert!(
+            bridge
+                .states
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|n| matches!(n.state, ChildState::Done { .. }))
+        );
+    }
+
+    /// The sub-agent tools address a child by its displayed name (the
+    /// session id stays the machine key, accepted as a fallback): stop,
+    /// message, and state all resolve a name; the spawn reports the name;
+    /// an unknown name is refused naming what was looked up.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_subagent_tools_address_a_child_by_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let child_scripts = vec![vec![
+            sse(
+                "",
+                &[notify_call("n1", "parked", false, None, Some("user"))],
+            ),
+            sse(
+                "",
+                &[notify_call(
+                    "n2",
+                    "done",
+                    true,
+                    Some(json!({ "ok": true })),
+                    None,
+                )],
+            ),
+            sse("", &[]),
+        ]];
+        let (sup, _) = harness(
+            dir.path(),
+            vec![sse("spawning", &[])],
+            child_scripts,
+            SubAgents::default(),
+        );
+        let s = sup
+            .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
+            .unwrap();
+        assert_ne!(
+            s.name, s.session_id,
+            "the name and the id are different keys"
+        );
+        wait_for(|| {
+            matches!(
+                sup.state_info(&s.name).unwrap().state,
+                ChildState::Idle { .. }
+            )
+        });
+
+        // The name resolves: a stop of the parked child is a no-op that
+        // names it.
+        let out = sup.stop(&s.name, StoppedBy::Parent).unwrap();
+        assert!(out.contains(&s.name), "{out}");
+
+        // The session id is the machine key: accepted as a fallback.
+        sup.message(&s.session_id, Some("go".into()), Lane::Steering)
+            .unwrap();
+        wait_for(|| {
+            matches!(
+                sup.state_info(&s.name).unwrap().state,
+                ChildState::Done { .. }
+            )
+        });
+
+        // The handle (the GUI's protocol surface) resolves too.
+        let info = sup.state_info(&s.handle).expect("the handle resolves");
+        assert_eq!(info.child, s.session_id);
+
+        // The subagent_state tool reports by name, not by handle.
+        let out = route_parent(
+            &sup,
+            &tools::ToolCall {
+                id: "c1".into(),
+                name: "subagent_state".into(),
+                args: json!({ "name": s.name }),
+            },
+        );
+        assert!(out.starts_with(&s.name), "{out}");
+        assert!(
+            !out.contains(&s.handle),
+            "the handle is not the model's view: {out}"
+        );
+
+        // The spawn reports the child's name — the new session's title,
+        // and never its raw id.
+        let out = route_parent(
+            &sup,
+            &tools::ToolCall {
+                id: "c9".into(),
+                name: "subagent_spawn".into(),
+                args: json!({ "type": "general", "brief": "second", "context_mode": "fresh" }),
+            },
+        );
+        let name = out
+            .strip_prefix("spawned sub-agent ")
+            .and_then(|r| r.split_once("; it reports back via parent_notify"))
+            .expect("the spawn reports the name")
+            .0
+            .to_owned();
+        let new = sup
+            .children
+            .lock()
+            .unwrap()
+            .values()
+            .find(|c| c.session_id != s.session_id)
+            .expect("the second child")
+            .clone();
+        assert_eq!(new.name, name, "{out}");
+        assert!(
+            !out.contains(&new.session_id),
+            "the raw id stays internal: {out}"
+        );
+
+        // An unknown name is refused, naming what was looked up.
+        let err = sup.stop("nobody", StoppedBy::Parent).unwrap_err();
+        assert!(err.contains("no sub-agent nobody"), "{err}");
+        let err = sup
+            .message("nobody", Some("hi".into()), Lane::Steering)
+            .unwrap_err();
+        assert!(err.contains("no sub-agent nobody"), "{err}");
+        assert!(sup.state_info("nobody").is_none());
     }
 }

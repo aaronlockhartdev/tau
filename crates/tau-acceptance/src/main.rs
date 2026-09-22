@@ -275,12 +275,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
                     .iter()
                     .rev()
                     .find(|e| e.kind == KIND_SUBAGENT)
-                    .and_then(|e| {
-                        e.payload
-                            .get("state")
-                            .and_then(|s| s.get("state"))
-                            .and_then(Value::as_str)
-                    })
+                    .and_then(|e| e.payload.get("state").and_then(Value::as_str))
                     .map(|s| matches!(s, "done" | "failed" | "stopped"))
             })
             .unwrap_or(false);
@@ -336,12 +331,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
         .iter()
         .rev()
         .find(|e| e.kind == KIND_SUBAGENT)
-        .and_then(|e| {
-            e.payload
-                .get("state")
-                .and_then(|s| s.get("state"))
-                .and_then(Value::as_str)
-        })
+        .and_then(|e| e.payload.get("state").and_then(Value::as_str))
         .unwrap_or("");
     // Task linkage, when the parent assigned one: the record copied into
     // the child (the live record), and a terminal child forces a terminal

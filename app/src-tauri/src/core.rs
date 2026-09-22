@@ -2664,6 +2664,7 @@ fn preview(entry: &Entry) -> String {
         .payload
         .get("text")
         .or_else(|| entry.payload.get("note"))
+        .or_else(|| entry.payload.get("state"))
         .or_else(|| entry.payload.get("output"))
         .and_then(Value::as_str)
         .unwrap_or_default();
