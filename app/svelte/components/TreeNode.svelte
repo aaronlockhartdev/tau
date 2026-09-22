@@ -9,19 +9,24 @@
     depth = 0,
     expanded = null,
     selected = false,
+    dimmed = false,
     label,
     onRow,
     onRowDbl,
-    onToggle
+    onToggle,
+    onContext
   }: {
     depth?: number;
     // null = no children (no chevron); true/false = group open/closed.
     expanded?: boolean | null;
     selected?: boolean;
+    // A non-interactive row (an archived session): no open/rename, dimmed.
+    dimmed?: boolean;
     label: Snippet;
     onRow?: () => void;
     onRowDbl?: () => void;
     onToggle?: () => void;
+    onContext?: (e: MouseEvent) => void;
   } = $props();
 
   function onKey(e: KeyboardEvent): void {
@@ -37,11 +42,13 @@
   <div
     class="trow"
     class:sel={selected}
+    class:dimmed={dimmed}
     role="button"
     tabindex={0}
     aria-expanded={expanded === null ? undefined : expanded}
-    onclick={onRow}
-    ondblclick={onRowDbl}
+    onclick={dimmed ? undefined : onRow}
+    ondblclick={dimmed ? undefined : onRowDbl}
+    oncontextmenu={onContext}
     onkeydown={onKey}
   >
     <button
@@ -78,6 +85,13 @@
   }
   .trow.sel {
     background: color-mix(in srgb, var(--acc) 8%, transparent);
+  }
+  .trow.dimmed {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .trow.dimmed:hover {
+    background: none;
   }
   .trow .chev {
     width: 10px;

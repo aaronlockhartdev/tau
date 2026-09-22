@@ -187,11 +187,19 @@ pub enum Command {
     SessionDelete {
         session: String,
     },
-    /// Archive the session: its file is zstd-compressed into the
-    /// workspace's `archive/` dir (ADR-0005 — one-way, off the live
-    /// read/write path) and the session's metadata carries `archived`,
-    /// which the GUI's archive folder lists.
+    /// Archive a top-level session (ADR-0005): its file is zstd-compressed
+    /// into the workspace's `archive/` dir, the metadata carries `archived`
+    /// (which the GUI's archive folder lists), and every sub-agent child of
+    /// the session archives with it. A child id is refused (archive the
+    /// parent); off the live read/write path — a running session refuses.
     SessionArchive {
+        session: String,
+    },
+    /// Restore an archived session: the file moves back from `archive/` to
+    /// `sessions/` (decompressed) and its `archived` flag clears; the
+    /// session's sub-agent children, archived with it, restore with it.
+    SessionRestore {
+        workspace: String,
         session: String,
     },
     /// Create a new branch from entry `at` within the same session file
@@ -551,6 +559,10 @@ mod tests {
                 session: "s1".into(),
             },
             Command::SessionArchive {
+                session: "s1".into(),
+            },
+            Command::SessionRestore {
+                workspace: "w1".into(),
                 session: "s1".into(),
             },
             Command::SessionFork {

@@ -118,13 +118,33 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
       return { kind: 'skills', skills: demoSkills() };
     // The fixture session first: the boot rule opens the list's head.
     case 'session_list':
-      return { kind: 'sessions', sessions: [meta, ...kids.map((k) => k.meta)] };
+      // The store's rows are the archive flag's authority (restore/archive
+      // converge on refetch), so the list echoes them.
+      return {
+        kind: 'sessions',
+        sessions: [meta, ...kids.map((k) => k.meta)].map(
+          (m) => store.sessions[m.id]?.meta ?? m
+        )
+      };
     case 'session_archive':
       // The one-way move (ADR-0005): the demo just flags the row.
       return {
         kind: 'session',
         session: { ...(store.sessions[c.session]?.meta ?? meta), archived: true }
       };
+    case 'session_restore': {
+      // The inverse move: the flag clears (the core restores a parent's
+      // children with it; the demo's archived rows are top-level).
+      const s = store.sessions[c.session];
+      if (s) {
+        s.meta = { ...s.meta, archived: false };
+        s.archived = false;
+      }
+      return {
+        kind: 'session',
+        session: { ...(s?.meta ?? meta), archived: false }
+      };
+    }
     case 'session_open': {
       const snap = snapshotFor(c.session);
       // switchSession keeps only parent/state/archived from the previous

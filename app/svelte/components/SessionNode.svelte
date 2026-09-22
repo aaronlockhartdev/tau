@@ -4,7 +4,15 @@
   // row shell is the shared TreeNode. Collapse state is the pane's
   // openGroups — null is the default view (the group containing the active
   // session expanded), an array is the explicit set the user has toggled.
-  import { store, pane, openSessionById, renameSession, archiveSession, type SessionState } from '../lib/store.svelte';
+  import {
+    store,
+    pane,
+    openSessionById,
+    renameSession,
+    archiveSession,
+    restoreSession,
+    type SessionState
+  } from '../lib/store.svelte';
   import { tick } from 'svelte';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -71,6 +79,26 @@
     void renameSession(session.meta.id, renameText);
   }
 
+  // An archived row is non-interactive (no open, rename, or archive):
+  // the right-click menu is its only affordance — restore.
+  let ctx = $state<{ x: number; y: number } | null>(null);
+  function onContext(e: MouseEvent): void {
+    e.preventDefault();
+    ctx = { x: e.clientX, y: e.clientY };
+  }
+  $effect(() => {
+    if (!ctx) return;
+    const close = () => (ctx = null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') close();
+    };
+    document.addEventListener('click', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  });
   function sessionRunning(s: SessionState): boolean {
     return s.turn === 'running' || s.subagents.some((x) => x.state === 'running');
   }
@@ -131,14 +159,34 @@
   {depth}
   expanded={kids.length > 0 ? groupOpen(session.meta.id) : null}
   selected={store.current === session.meta.id}
-  onRow={() => openSessionById(session.meta.id)}
-  onRowDbl={() => {
-    const q = pane(ws);
-    if (q) q.renamingId = session.meta.id;
-  }}
+  dimmed={session.archived}
+  onRow={session.archived ? undefined : () => openSessionById(session.meta.id)}
+  onRowDbl={
+    session.archived
+      ? undefined
+      : () => {
+          const q = pane(ws);
+          if (q) q.renamingId = session.meta.id;
+        }
+  }
   onToggle={kids.length > 0 ? () => toggleGroup(session.meta.id) : undefined}
+  onContext={session.archived ? onContext : undefined}
   label={rowLabel}
 />
+{#if ctx}
+  <div class="ctxmenu" role="menu" style:left="{ctx.x}px" style:top="{ctx.y}px">
+    <button
+      type="button"
+      role="menuitem"
+      onclick={() => {
+        ctx = null;
+        void restoreSession(ws, session.meta.id);
+      }}
+    >
+      restore
+    </button>
+  </div>
+{/if}
 {#if kids.length > 0 && groupOpen(session.meta.id)}
   <div class="kids">
     {#each kids as c (c.meta.id)}
@@ -188,7 +236,31 @@
   .arch-b:hover,
   .arch-b:focus-visible {
     opacity: 1;
+  }
+  .ctxmenu {
+    position: fixed;
+    z-index: 20;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+    padding: 3px;
+  }
+  .ctxmenu button {
+    display: block;
+    width: 100%;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    background: none;
     color: var(--tx);
+    font: 12px var(--mono);
+    text-align: left;
+    cursor: pointer;
+  }
+  .ctxmenu button:hover,
+  .ctxmenu button:focus-visible {
+    background: color-mix(in srgb, var(--acc) 12%, transparent);
   }
   .badge {
     flex: none;

@@ -230,6 +230,7 @@ export type Command =
   | { type: 'session_close'; session: string }
   | { type: 'session_delete'; session: string }
   | { type: 'session_archive'; session: string }
+  | { type: 'session_restore'; workspace: string; session: string }
   | { type: 'session_fork'; session: string; at: string }
   | { type: 'session_branch'; session: string; at: string }
   | { type: 'session_snapshot'; session: string }

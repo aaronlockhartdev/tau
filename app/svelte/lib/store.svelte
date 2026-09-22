@@ -128,7 +128,6 @@
     };
     store.pane[ws] = p;
     return p;
-    return p;
   }
 
   export function toggleAllReasoning(): void {
@@ -336,33 +335,7 @@
     const list = await command({ type: 'session_list', workspace: real.id });
     // The listed sessions materialize as stubs so the pane shows them all;
     // entries hydrate lazily when one is opened.
-    if (list.kind === 'sessions') {
-      for (const m of list.sessions) {
-        const existing = store.sessions[m.id];
-        if (existing) {
-          // The list is the archive flag's authority: a row archived while
-          // listed (or listed after a restart) converges on the file's state.
-          existing.archived = m.archived;
-        } else {
-          store.sessions[m.id] = {
-            meta: m,
-            entries: [],
-            live: [],
-            usage: null,
-            tps: 0,
-            turn: 'idle',
-            pending: [],
-            parent: m.parent ?? null,
-            state: 'idle',
-            waiting_on: null,
-            archived: m.archived,
-            mru: m.created,
-            subagents: [],
-            tasks: []
-          };
-        }
-      }
-    }
+    if (list.kind === 'sessions') applySessionList(list.sessions);
     // The pane's first listing (ticket #32): the root, listed on open —
     // every other dir is fetched on expansion.
     store.files[real.id] ??= {};
@@ -499,8 +472,9 @@
   }
 
   // Archive (ADR-0005): one-way, off the live read/write path. The core
-  // stops a running child first and returns the flagged meta; the row keeps
-  // its state (a message resumes it) and moves to the archive folder.
+  // stops a running child first and archives the session's children with
+  // it; the row keeps its state (a message resumes it) and moves to the
+  // archive folder, the children's rows converge on the refetched list.
   export async function archiveSession(sid: string): Promise<void> {
     try {
       const out = await command({ type: 'session_archive', session: sid });
@@ -511,6 +485,64 @@
           s.archived = out.session.archived;
         }
       }
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    const wsid = store.sessions[sid]?.meta.workspace;
+    if (wsid) {
+      try {
+        const list = await command({ type: 'session_list', workspace: wsid });
+        if (list.kind === 'sessions') applySessionList(list.sessions);
+      } catch (e) {
+        store.error = errText(e);
+      }
+    }
+  }
+
+  // Merge a session_list into the store: an existing row adopts the list's
+  // archive flag (the list is the flag's authority — a row archived while
+  // listed, or listed after a restart, converges on the file's state); a
+  // new id materializes as a stub (entries hydrate lazily on open).
+  function applySessionList(sessions: SessionMeta[]): void {
+    for (const m of sessions) {
+      const existing = store.sessions[m.id];
+      if (existing) {
+        existing.archived = m.archived;
+      } else {
+        store.sessions[m.id] = {
+          meta: m,
+          entries: [],
+          live: [],
+          usage: null,
+          tps: 0,
+          turn: 'idle',
+          pending: [],
+          parent: m.parent ?? null,
+          state: 'idle',
+          waiting_on: null,
+          archived: m.archived,
+          mru: m.created,
+          subagents: [],
+          tasks: []
+        };
+      }
+    }
+  }
+
+  // Restore (ADR-0005): the file moves back from the archive dir (the core
+  // restores a parent's children with it); the rows converge on the
+  // refetched list, the archive flag's authority.
+  export async function restoreSession(ws: string, sid: string): Promise<void> {
+    try {
+      await command({ type: 'session_restore', workspace: ws, session: sid });
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    try {
+      const list = await command({ type: 'session_list', workspace: ws });
+      if (list.kind === 'sessions') applySessionList(list.sessions);
     } catch (e) {
       store.error = errText(e);
     }
