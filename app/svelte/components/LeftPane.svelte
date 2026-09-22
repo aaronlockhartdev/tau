@@ -59,8 +59,8 @@
           {/if}
         </div>
         <div class="arch">
-          <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }}>
-            archive {p.archOpen ? '▾' : '▸'}
+          <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }} style="display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;">
+            Archive <svg width="12" height="12" style="display: inline-block; vertical-align: -1.5px; transition: transform 0.12s;" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev-d" /></svg>
           </button>
           {#if p.archOpen}
             {#if archived.length === 0}
