@@ -58,20 +58,18 @@
             {/each}
           {/if}
         </div>
+        {#if archived.length}
         <div class="arch">
           <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }}>
             <svg class="ci" width="10" height="10" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev" /></svg> archive · {archived.length}
           </button>
           {#if p.archOpen}
-            {#if archived.length === 0}
-              <div class="srow"><span class="name none">nothing archived</span></div>
-            {:else}
-              {#each archived as s (s.meta.id)}
-                <SessionNode session={s} depth={1} ws={ws} sessions={sessions} />
-              {/each}
-            {/if}
+            {#each archived as s (s.meta.id)}
+              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} />
+            {/each}
           {/if}
         </div>
+        {/if}
       </div>
     {/if}
   {/if}
@@ -115,23 +113,6 @@
   }
   .tree {
     padding-top: 4px;
-  }
-  .srow {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4.5px 12px;
-    cursor: pointer;
-    font-size: 12.5px;
-  }
-  .srow .name {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .srow .name.none {
-    color: var(--faint);
   }
   .arch {
     border-top: 1px solid var(--line);
