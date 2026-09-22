@@ -138,8 +138,8 @@
   // of the measured bottom. The scroll handler alone flips it — a scroll-up
   // walks past the threshold and unpins, a scroll-to-bottom re-pins, and
   // the follow's own catch-up lands at distance 0. The unpin is guarded by
-  // an input-intent flag: a passive wheel/touch listener (capture, no
-  // preventDefault) stamps the last upward user scroll, and the handler
+  // an input-intent flag: passive wheel/touch/scrollbar-drag listeners
+  // (capture, no
   // unpins only while that flag is live. Boot churn (the estimate→measured
   // correction shrinks the track, the browser clamps the viewport up, and
   // the first stream growth re-lays it — all one coalesced scroll event)
@@ -164,6 +164,11 @@
       const y = e.touches[0]?.clientY ?? 0;
       if (y < touchY) upIntent = performance.now();
       touchY = y;
+    };
+    // A scrollbar drag fires no wheel/touch event; a pointerdown on the
+    // element itself is the drag (content clicks target their own nodes).
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target === node) upIntent = performance.now();
     };
     // Transition classification (the virtuoso atBottom scan): compare the
     // movement against the last processed position, not the absolute
@@ -191,6 +196,7 @@
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
     node.addEventListener('wheel', onWheelUp, { capture: true, passive: true });
+    node.addEventListener('pointerdown', onPointerDown, { capture: true, passive: true });
     node.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
     node.addEventListener('touchmove', onTouchMove, { capture: true, passive: true });
     node.scrollTo({ top: node.scrollHeight });
@@ -210,6 +216,7 @@
     return () => {
       node.removeEventListener('scroll', onScroll);
       node.removeEventListener('wheel', onWheelUp, { capture: true });
+      node.removeEventListener('pointerdown', onPointerDown, { capture: true });
       node.removeEventListener('touchstart', onTouchStart, { capture: true });
       node.removeEventListener('touchmove', onTouchMove, { capture: true });
       cancelAnimationFrame(raf);
