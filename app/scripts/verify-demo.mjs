@@ -149,10 +149,38 @@ try {
     })()`);
     if (top.missing) throw new Error('no .scroll in DOM — ' + top.missing);
 
+    // Boot tail-distance (B1): the boot pin must survive the boot churn —
+    // the estimate→measured correction shrinks the track, the browser
+    // clamps the viewport up, and the stream growth re-lays it, all one
+    // coalesced scroll event. Pinned, the distance sits at 0; a stuck view
+    // runs away with the growing tail. Sample over a few seconds of stream.
+    const bootDist = await evalPage(wsUrl, `new Promise((res) => {
+      const sc = document.querySelector('.scroll');
+      if (!sc) return res({ missing: true });
+      const ds = [];
+      const t0 = performance.now();
+      const tick = () => {
+        ds.push(sc.scrollHeight - sc.scrollTop - sc.clientHeight);
+        if (performance.now() - t0 < 4000) requestAnimationFrame(tick);
+        else res(ds);
+      };
+      tick();
+    })`);
+    check(
+      'boot: the view stays pinned at the tail (distance-to-bottom ≤ 80px as the streams run)',
+      Array.isArray(bootDist) && bootDist[bootDist.length - 1] <= 80,
+      'dist ' +
+        (Array.isArray(bootDist)
+          ? bootDist.filter((_, i) => i % 40 === 0 || i === bootDist.length - 1)
+          : String(bootDist))
+    );
     // Scroll to the MIDDLE of the session — the reviewer's failure case.
     const setMid = await evalPage(wsUrl, `(() => {
       const sc = document.querySelector('.scroll');
       if (!sc) return { missing: document.body.innerText.slice(0, 300) };
+      // Arm the input-intent flag the way a user's scroll-up would: the
+      // unpin branch requires a recent wheel/touch-up.
+      sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true }));
       sc.scrollTop = sc.scrollHeight / 2;
       sc.dispatchEvent(new Event('scroll'));
       return true;
@@ -492,6 +520,7 @@ try {
     // step is smaller than the window, so the boundary can't be jumped.
     await evalPage(wsUrl, `(() => {
       const sc = document.querySelector('.scroll');
+      sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true }));
       sc.scrollTop = sc.scrollHeight / 2;
       sc.dispatchEvent(new Event('scroll'));
       return true;
@@ -507,6 +536,7 @@ try {
       const delta = range.start > 5000 ? -200 : 200;
       await evalPage(wsUrl, `(() => {
         const sc = document.querySelector('.scroll');
+        if (${delta} < 0) sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true }));
         sc.scrollTop = Math.max(0, sc.scrollTop + ${delta});
         sc.dispatchEvent(new Event('scroll'));
         return true;

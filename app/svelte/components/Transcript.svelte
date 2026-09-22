@@ -21,6 +21,10 @@
   const THRESHOLD = 8;
 
   const cur = $derived(store.current);
+  // This mount's session. A plain const, not the derived: at destroy the
+  // derived re-reads store.current (already the next session), which made
+  // the prune below a dead branch.
+  const mountedFor = store.current;
 
 
   let el = $state<HTMLDivElement | null>(null);
@@ -133,20 +137,42 @@
   // The follow is one flag: pinned while the viewport sits within THRESHOLD
   // of the measured bottom. The scroll handler alone flips it — a scroll-up
   // walks past the threshold and unpins, a scroll-to-bottom re-pins, and
-  // the follow's own catch-up lands at distance 0. No wheel/touch listeners
-  // (the old wheelUntil timer suspended the follow for 200 ms, then caught
-  // up in one visible jump): a user scroll-up reaches the handler before
-  // the next rAF, so the follow can never overtake it.
+  // the follow's own catch-up lands at distance 0. The unpin is guarded by
+  // an input-intent flag: a passive wheel/touch listener (capture, no
+  // preventDefault) stamps the last upward user scroll, and the handler
+  // unpins only while that flag is live. Boot churn (the estimate→measured
+  // correction shrinks the track, the browser clamps the viewport up, and
+  // the first stream growth re-lays it — all one coalesced scroll event)
+  // reads as a scroll-up past the threshold with no input behind it;
+  // without the guard it unpins the follow for the whole turn.
   onMount(() => {
     const node = el;
     if (!node) return;
+    // Input intent (see the comment above): the last upward user wheel/touch,
+    // performance.now() time-stamped. The unpin consumes it; the TTL expires
+    // an arm the scroll never spent.
+    let upIntent = 0;
+    const UP_INTENT_TTL = 200;
+    const onWheelUp = (e: WheelEvent) => {
+      if (e.deltaY < 0) upIntent = performance.now();
+    };
+    let touchY = 0;
+    const onTouchStart = (e: TouchEvent) => {
+      touchY = e.touches[0]?.clientY ?? 0;
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const y = e.touches[0]?.clientY ?? 0;
+      if (y < touchY) upIntent = performance.now();
+      touchY = y;
+    };
     // Transition classification (the virtuoso atBottom scan): compare the
     // movement against the last processed position, not the absolute
     // distance. A pending scroll event's scrollTop can be stale against a
     // bottom that has since grown (the send's jump fires after the first
     // stream growth) — re-classifying that as "scrolled away" would drop
-    // the pin for the whole turn. Only a real upward move past the
-    // threshold unpins; a downward move re-pins on arrival at the bottom.
+    // the pin for the whole turn. The unpin additionally requires the
+    // intent flag to be live; a downward move re-pins on arrival at the
+    // bottom.
     let lastTop = node.scrollTop;
     const onScroll = () => {
       scroll.top = node.scrollTop;
@@ -155,12 +181,18 @@
       if (node.scrollTop > lastTop) {
         if (dist <= THRESHOLD) pinned = true;
       } else if (node.scrollTop < lastTop) {
-        if (dist > THRESHOLD) pinned = false;
+        if (dist > THRESHOLD && performance.now() - upIntent <= UP_INTENT_TTL) {
+          upIntent = 0;
+          pinned = false;
+        }
       }
       lastTop = node.scrollTop;
     };
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
+    node.addEventListener('wheel', onWheelUp, { capture: true, passive: true });
+    node.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    node.addEventListener('touchmove', onTouchMove, { capture: true, passive: true });
     node.scrollTo({ top: node.scrollHeight });
     // While pinned, one catch-up per frame to the measured bottom, and only
     // when behind (rAF runs after the flush that re-laid the track, so a
@@ -177,15 +209,19 @@
     raf = requestAnimationFrame(follow);
     return () => {
       node.removeEventListener('scroll', onScroll);
+      node.removeEventListener('wheel', onWheelUp, { capture: true });
+      node.removeEventListener('touchstart', onTouchStart, { capture: true });
+      node.removeEventListener('touchmove', onTouchMove, { capture: true });
       cancelAnimationFrame(raf);
     };
   });
 
   onDestroy(() => {
-    // A closed workspace (not a session switch) drops this session's
-    // cached heights so the module map stays bounded.
-    if (store.current !== cur) {
-      for (const k of [...heights.keys()]) if (k.startsWith(`${cur}:`)) heights.delete(k);
+    // A closed workspace drops its sessions from the store — that is when
+    // this session's cached heights go with it (a plain session switch
+    // keeps the row, so the heights persist across remounts).
+    if (mountedFor !== null && store.current !== mountedFor && !store.sessions[mountedFor]) {
+      for (const k of [...heights.keys()]) if (k.startsWith(`${mountedFor}:`)) heights.delete(k);
     }
   });
 
