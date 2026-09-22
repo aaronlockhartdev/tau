@@ -217,6 +217,74 @@ try {
     check('mid-session: track height ≈ 1× (no 2× inflation)', top.trackH > 0 && mid.scrollH <= top.trackH * 1.2, `scrollH=${mid.scrollH}, trackH=${top.trackH}, ratio=${(mid.scrollH / top.trackH).toFixed(2)}`);
     check('mid-session: DOM is windowed', mid.domCards > 0 && mid.domCards <= 60, `${mid.domCards} cards in DOM`);
 
+    // Slow scroll up from the bottom: any upward user input releases the
+    // follow immediately — a sub-threshold step must not read as "still at
+    // the bottom" (the old model's catch-up snapped the view back, so a
+    // slow scroll up jittered without moving). Dist settles at the step
+    // size plus whatever the stream grows; the old pin holds it at ~0.
+    const slowUp = await evalPage(wsUrl, `new Promise((res) => {
+      const sc = document.querySelector('.scroll');
+      if (!sc) return res({ missing: true });
+      sc.scrollTop = sc.scrollHeight;
+      sc.dispatchEvent(new Event('scroll'));
+      setTimeout(() => {
+        sc.dispatchEvent(new WheelEvent('wheel', { deltaY: -24, bubbles: true }));
+        sc.scrollTop = Math.max(0, sc.scrollTop - 4);
+        sc.dispatchEvent(new Event('scroll'));
+        setTimeout(() => {
+          const dist = sc.scrollHeight - sc.scrollTop - sc.clientHeight;
+          sc.scrollTop = sc.scrollHeight;
+          sc.dispatchEvent(new Event('scroll'));
+          res(dist);
+        }, 600);
+      }, 250);
+    })`);
+    check('slow scroll up from the bottom releases the follow (no snap-back)', typeof slowUp === 'number' && slowUp >= 4, 'dist ' + slowUp);
+
+    // Expansion state lives in the store keyed per entry: a card the window
+    // unmounts (scrolled far out of view) remounts still expanded —
+    // scrolling to the bottom no longer collapses the cards above.
+    const expandSurvive = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      const sc = document.querySelector('.scroll');
+      if (!sc) return res({ missing: true });
+      const fracs = [0.5, 0.25, 0.75, 0.9, 0.1];
+      const look = (i) => {
+        if (i >= fracs.length) return res({ noChip: true });
+        sc.scrollTop = sc.scrollHeight * fracs[i];
+        sc.dispatchEvent(new Event('scroll'));
+        setTimeout(() => {
+          const chip = [...document.querySelectorAll('.tool .chip')][0];
+          if (!chip) return look(i + 1);
+          const y0 = chip.getBoundingClientRect().top + sc.scrollTop;
+          chip.click();
+          setTimeout(() => {
+            // Re-query: a re-render may have replaced the node we clicked.
+            const same = [...document.querySelectorAll('.tool .chip')].find((c) => Math.abs(c.getBoundingClientRect().top + sc.scrollTop - y0) < 120);
+            const opened = same ? same.closest('.tool').classList.contains('open') : false;
+            const key = [...t.store().entryOpen.keys()].find((k) => k.endsWith(':tool'));
+            const y = y0;
+            sc.scrollTop = 0;
+            sc.dispatchEvent(new Event('scroll'));
+            setTimeout(() => {
+              const near = (el) => Math.abs(el.getBoundingClientRect().top + sc.scrollTop - y) < 120;
+              const gone = ![...document.querySelectorAll('.tool .chip')].some(near);
+              sc.scrollTop = Math.max(0, y - sc.clientHeight / 2);
+              sc.dispatchEvent(new Event('scroll'));
+              setTimeout(() => {
+                const remounted = [...document.querySelectorAll('.tool .chip')].find(near);
+                res({ opened, key, gone, remounted: !!remounted, openAfter: remounted ? remounted.closest('.tool').classList.contains('open') : null });
+              }, 700);
+            }, 700);
+          }, 300);
+        }, 500);
+      };
+      look(0);
+    })`);
+    check('expanded card: unmounted off-screen and remounted still expanded',
+      expandSurvive.opened === true && expandSurvive.gone === true && expandSurvive.openAfter === true,
+      `opened=${expandSurvive.opened} gone=${expandSurvive.gone} openAfter=${expandSurvive.openAfter} key=${expandSurvive.key ?? 'none'}`);
+
     const ui = await evalPage(wsUrl, `new Promise((res) => {
       const bar = [...document.querySelectorAll('.bar')].pop()?.innerText ?? '';
       const metas = [...document.querySelectorAll('.think .meta')].map((m) => m.textContent).slice(0, 5);

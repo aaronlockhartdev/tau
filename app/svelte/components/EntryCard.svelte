@@ -41,32 +41,52 @@
     measure();
   });
 
-  // live streams grow the card; re-measure as content changes.
-  let thinkOpen = $state(false);
-  let thinkSynced = $state(false);
+  // Expansion state: the store map is the persistence layer (the window
+  // unmounts off-screen cards, so a purely local state would reset to
+  // collapsed on remount — scrolling to the bottom collapsed every
+  // expanded card); this local object is the reactive layer, seeded from
+  // the map on mount. (Svelte 5.57 deep-proxies plain objects and arrays
+  // in $state, but not Maps — the store map alone does not track.)
+  const okey = (slot: string) => `${heightKey}:${slot}`;
+  let open = $state({
+    tool: !!store.entryOpen.get(okey('tool')),
+    task: !!store.entryOpen.get(okey('task')),
+    output: !!store.entryOpen.get(okey('output')),
+    skill: !!store.entryOpen.get(okey('skill')),
+    think: store.entryOpen.get(okey('think')) ?? false
+  });
+  function setOpen(slot: 'tool' | 'task' | 'output' | 'skill' | 'think') {
+    const k = okey(slot);
+    const next = !(store.entryOpen.get(k) ?? (slot === 'think' ? store.reasoningOpen : false));
+    store.entryOpen.set(k, next);
+    open[slot] = next;
+  }
   // The 'r' keybind toggles every reasoning line at once (store global);
-  // a click toggles only this one. The effect syncs the local state when
-  // the global changes, so the keybind wins on its next press.
+  // a click stores a per-entry override. The effect syncs when the global
+  // changes, so the keybind wins on its next press.
+  let thinkSynced = $state(false);
   $effect(() => {
     void store.reasoningOpen;
     if (store.reasoningOpen !== thinkSynced) {
-      thinkOpen = store.reasoningOpen;
       thinkSynced = store.reasoningOpen;
+      open.think = store.entryOpen.get(okey('think')) ?? store.reasoningOpen;
     }
   });
-  let toolOpen = $state(false);
-  let taskOpen = $state(false);
-  let outputOpen = $state(false);
+  let thinkOpen = $derived(open.think);
+  let toolOpen = $derived(open.tool);
+  let taskOpen = $derived(open.task);
+  let outputOpen = $derived(open.output);
+  let skillOpen = $derived(open.skill);
   $effect(() => {
     void entry.text;
     void entry.reasoning;
     void entry.output;
     void toolOut;
-    void entry.args;
-    void outputOpen;
-    void toolOpen;
-    void taskOpen;
-    void thinkOpen;
+    void open.output;
+    void open.tool;
+    void open.task;
+    void open.think;
+    void thinkSynced;
     measure();
   });
 
@@ -129,7 +149,6 @@
 
   // The /skill: block (ticket #28): the body collapses to the usual
   // 200-char preview with an expando (the tool-output mechanism).
-  let skillOpen = $state(false);
   const skillLong = $derived((entry.text ?? '').length > 200);
   const skillPreview = $derived(
     skillLong ? (entry.text ?? '').slice(0, 200) + ' …' : (entry.text ?? '')
@@ -270,7 +289,7 @@
         <div class="hd skill"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>skill · {entry.skill.name}</div>
         <div class="txt2 dim">{skillOpen ? (entry.text ?? '') : skillPreview}</div>
         {#if skillLong}
-          <button class="expando" onclick={() => (skillOpen = !skillOpen)}>
+          <button class="expando" onclick={() => setOpen('skill')}>
             {skillOpen ? '▾ hide' : '▸ full (' + (entry.text ?? '').length + ' chars)'}
           </button>
         {/if}
@@ -310,8 +329,8 @@
         class="chip"
         role="button"
         tabindex="0"
-        onclick={() => (toolOpen = !toolOpen)}
-        onkeydown={onKey(() => (toolOpen = !toolOpen))}
+        onclick={() => setOpen('tool')}
+        onkeydown={onKey(() => setOpen('tool'))}
       >
         <svg class="ic" width="13" height="13"><use href={`#${toolIcon}`}/></svg>
         <span class="nm">{entry.name}</span>
@@ -327,7 +346,7 @@
           {#if toolOut}
             <div class="out"><pre>{outputOpen ? toolOut : preview}</pre></div>
             {#if outputLong}
-              <button class="expando" onclick={() => (outputOpen = !outputOpen)}>
+              <button class="expando" onclick={() => setOpen('output')}>
                 {outputOpen ? '▾ hide output' : '▸ full output (' + toolOut.length + ' chars)'}
               </button>
             {/if}
@@ -343,8 +362,8 @@
         role="button"
         tabindex="0"
         aria-expanded={thinkOpen}
-        onclick={() => (thinkOpen = !thinkOpen)}
-        onkeydown={onKey(() => (thinkOpen = !thinkOpen))}
+        onclick={() => setOpen('think')}
+        onkeydown={onKey(() => setOpen('think'))}
       >
         <svg class="ic" width="13" height="13"><use href="#i-spark"/></svg>
         <span>thinking</span>
@@ -390,8 +409,8 @@
           role="button"
           tabindex="0"
           aria-expanded={taskOpen}
-          onclick={() => (taskOpen = !taskOpen)}
-          onkeydown={onKey(() => (taskOpen = !taskOpen))}
+          onclick={() => setOpen('task')}
+          onkeydown={onKey(() => setOpen('task'))}
         >
           <svg class="ic" width="13" height="13"><use href="#i-check"/></svg>{taskLabel}
           <span class="caret">{taskOpen ? '▾' : '▸'}</span>

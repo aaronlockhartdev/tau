@@ -135,26 +135,26 @@
   // in this Svelte. onMount registers once; the deriveds just read.
   //
   // The follow is one flag: pinned while the viewport sits within THRESHOLD
-  // of the measured bottom. The scroll handler alone flips it — a scroll-up
-  // walks past the threshold and unpins, a scroll-to-bottom re-pins, and
-  // the follow's own catch-up lands at distance 0. The unpin is guarded by
-  // an input-intent flag: passive wheel/touch/scrollbar-drag listeners
-  // (capture, no
-  // unpins only while that flag is live. Boot churn (the estimate→measured
-  // correction shrinks the track, the browser clamps the viewport up, and
-  // the first stream growth re-lays it — all one coalesced scroll event)
-  // reads as a scroll-up past the threshold with no input behind it;
-  // without the guard it unpins the follow for the whole turn.
+  // of the measured bottom, and only user input moves the flag — any
+  // upward input (wheel up, a touch moving up, a scrollbar drag pulled up,
+  // a scroll key up) unpins immediately, so a slow scroll up from the
+  // bottom can never fight the catch-up; a downward arrival at the bottom
+  // re-pins. The input-intent flag stamps the last user scroll input and
+  // the scroll handler consults it for both directions. That gate is what
+  // keeps boot churn (the estimate→measured correction clamps the viewport
+  // up with no input behind it) and the stream's own growth (scroll
+  // anchoring nudges scrollTop as heights land) from flipping the follow.
   onMount(() => {
     const node = el;
     if (!node) return;
-    // Input intent (see the comment above): the last upward user wheel/touch,
-    // performance.now() time-stamped. The unpin consumes it; the TTL expires
-    // an arm the scroll never spent.
-    let upIntent = 0;
-    const UP_INTENT_TTL = 200;
-    const onWheelUp = (e: WheelEvent) => {
-      if (e.deltaY < 0) upIntent = performance.now();
+    // Input intent: the last user scroll input (wheel, touch, scrollbar
+    // drag, scroll key), performance.now() time-stamped. The pin/unpin
+    // consume it; the TTL expires an arm the scroll never spent.
+    let inputIntent = 0;
+    const INPUT_TTL = 200;
+    const onWheel = (e: WheelEvent) => {
+      inputIntent = performance.now();
+      if (e.deltaY < 0) pinned = false;
     };
     let touchY = 0;
     const onTouchStart = (e: TouchEvent) => {
@@ -162,32 +162,59 @@
     };
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0]?.clientY ?? 0;
-      if (y < touchY) upIntent = performance.now();
+      inputIntent = performance.now();
+      if (y < touchY) pinned = false;
       touchY = y;
     };
     // A scrollbar drag fires no wheel/touch event; a pointerdown on the
     // element itself is the drag (content clicks target their own nodes).
+    let dragY: number | null = null;
     const onPointerDown = (e: PointerEvent) => {
-      if (e.target === node) upIntent = performance.now();
+      if (e.target === node) {
+        inputIntent = performance.now();
+        dragY = e.clientY;
+      }
+    };
+    // A native scrollbar drag may fire no pointermove; the flag armed at
+    // pointerdown plus the scroll handler then carries the movement. Where
+    // moves do arrive, refresh the flag so a long drag's TTL never expires
+    // mid-drag.
+    const onPointerMove = (e: PointerEvent) => {
+      if (dragY === null) return;
+      if (e.buttons & 1) inputIntent = performance.now();
+      dragY = e.clientY;
+    };
+    const onPointerUp = () => {
+      dragY = null;
+    };
+    // Scroll keys are scroll input too; editable targets keep their own.
+    const onKeydown = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      inputIntent = performance.now();
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') pinned = false;
     };
     // Transition classification (the virtuoso atBottom scan): compare the
     // movement against the last processed position, not the absolute
     // distance. A pending scroll event's scrollTop can be stale against a
     // bottom that has since grown (the send's jump fires after the first
     // stream growth) — re-classifying that as "scrolled away" would drop
-    // the pin for the whole turn. The unpin additionally requires the
-    // intent flag to be live; a downward move re-pins on arrival at the
-    // bottom.
+    // the pin for the whole turn. Both directions additionally require the
+    // input intent to be live: a downward move with no input behind it is
+    // scroll anchoring (heights landing above the viewport nudge scrollTop),
+    // and letting it re-pin is what made a slow scroll up jitter — the pin
+    // re-armed and the catch-up snapped the view back.
     let lastTop = node.scrollTop;
     const onScroll = () => {
       scroll.top = node.scrollTop;
       scroll.h = node.clientHeight;
       const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
+      const intent = performance.now() - inputIntent <= INPUT_TTL;
       if (node.scrollTop > lastTop) {
-        if (dist <= THRESHOLD) pinned = true;
+        if (dist <= THRESHOLD && intent) pinned = true;
       } else if (node.scrollTop < lastTop) {
-        if (dist > THRESHOLD && performance.now() - upIntent <= UP_INTENT_TTL) {
-          upIntent = 0;
+        if (intent) {
+          inputIntent = 0;
           pinned = false;
         }
       }
@@ -195,10 +222,13 @@
     };
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
-    node.addEventListener('wheel', onWheelUp, { capture: true, passive: true });
+    node.addEventListener('wheel', onWheel, { capture: true, passive: true });
     node.addEventListener('pointerdown', onPointerDown, { capture: true, passive: true });
     node.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
     node.addEventListener('touchmove', onTouchMove, { capture: true, passive: true });
+    node.addEventListener('pointermove', onPointerMove, { capture: true, passive: true });
+    node.addEventListener('pointerup', onPointerUp, { capture: true, passive: true });
+    document.addEventListener('keydown', onKeydown, { capture: true, passive: true });
     node.scrollTo({ top: node.scrollHeight });
     // While pinned, one catch-up per frame to the measured bottom, and only
     // when behind (rAF runs after the flush that re-laid the track, so a
@@ -215,10 +245,13 @@
     raf = requestAnimationFrame(follow);
     return () => {
       node.removeEventListener('scroll', onScroll);
-      node.removeEventListener('wheel', onWheelUp, { capture: true });
+      node.removeEventListener('wheel', onWheel, { capture: true });
       node.removeEventListener('pointerdown', onPointerDown, { capture: true });
       node.removeEventListener('touchstart', onTouchStart, { capture: true });
       node.removeEventListener('touchmove', onTouchMove, { capture: true });
+      node.removeEventListener('pointermove', onPointerMove, { capture: true });
+      node.removeEventListener('pointerup', onPointerUp, { capture: true });
+      document.removeEventListener('keydown', onKeydown, { capture: true });
       cancelAnimationFrame(raf);
     };
   });
@@ -229,6 +262,7 @@
     // keeps the row, so the heights persist across remounts).
     if (mountedFor !== null && store.current !== mountedFor && !store.sessions[mountedFor]) {
       for (const k of [...heights.keys()]) if (k.startsWith(`${mountedFor}:`)) heights.delete(k);
+      for (const k of [...store.entryOpen.keys()]) if (k.startsWith(`${mountedFor}:`)) store.entryOpen.delete(k);
     }
   });
 
