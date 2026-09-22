@@ -4,7 +4,7 @@
   // row shell is the shared TreeNode. Collapse state is the pane's
   // openGroups — null is the default view (the group containing the active
   // session expanded), an array is the explicit set the user has toggled.
-  import { store, pane, openSessionById, renameSession, type SessionState } from '../lib/store.svelte';
+  import { store, pane, openSessionById, renameSession, archiveSession, type SessionState } from '../lib/store.svelte';
   import { tick } from 'svelte';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -111,6 +111,21 @@
     <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
   {/if}
   <span class="mru">{fmtAgo(session.mru)}</span>
+  {#if !session.archived}
+    <button
+      class="arch-b"
+      type="button"
+      title="archive"
+      aria-label="archive session"
+      onmousedown={(e) => e.stopPropagation()}
+      onclick={(e) => {
+        e.stopPropagation();
+        void archiveSession(session.meta.id);
+      }}
+    >
+      <svg class="ci" width="11" height="11"><use href="#i-archive" /></svg>
+    </button>
+  {/if}
 {/snippet}
 <TreeNode
   {depth}
@@ -157,6 +172,23 @@
     font: 9.5px var(--mono);
     color: var(--faint);
     flex: none;
+  }
+  .arch-b {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    border: none;
+    border-radius: 3px;
+    background: none;
+    color: var(--faint);
+    opacity: 0.45;
+    cursor: pointer;
+  }
+  .arch-b:hover,
+  .arch-b:focus-visible {
+    opacity: 1;
+    color: var(--tx);
   }
   .badge {
     flex: none;

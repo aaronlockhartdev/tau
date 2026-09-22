@@ -119,6 +119,12 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
     // The fixture session first: the boot rule opens the list's head.
     case 'session_list':
       return { kind: 'sessions', sessions: [meta, ...kids.map((k) => k.meta)] };
+    case 'session_archive':
+      // The one-way move (ADR-0005): the demo just flags the row.
+      return {
+        kind: 'session',
+        session: { ...(store.sessions[c.session]?.meta ?? meta), archived: true }
+      };
     case 'session_open': {
       const snap = snapshotFor(c.session);
       // switchSession keeps only parent/state/archived from the previous

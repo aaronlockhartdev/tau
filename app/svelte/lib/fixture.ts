@@ -319,7 +319,8 @@ export function buildDemoSession(): DemoSession {
     created: T0,
     leaf: raw[raw.length - 1].id,
     model: 'vllm/qwen3.8-27b',
-    usage: null
+    usage: null,
+    archived: false
   };
 
   return { meta, entries, views };
@@ -364,7 +365,8 @@ function demoMeta(id: string, title: string, created: number, parent: string | n
     created,
     leaf: null,
     model: 'vllm/qwen3.8-27b',
-    usage: null
+    usage: null,
+    archived: false
   };
 }
 

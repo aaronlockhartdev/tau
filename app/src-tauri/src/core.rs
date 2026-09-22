@@ -358,6 +358,7 @@ impl SubagentBridge for AppSubagentBridge {
                 leaf: None,
                 model: Some(n.model.clone()),
                 usage: None,
+                archived: false,
             }),
             agent: agent.clone(),
             stop: agent.stop_flag(),
@@ -416,6 +417,7 @@ impl SubagentBridge for AppSubagentBridge {
                     WakeKind::Done => "done",
                     WakeKind::Failed => "failed",
                     WakeKind::Waiting => "waiting",
+                    WakeKind::Stopped => "stopped",
                 }
                 .into(),
                 text: n.text.clone(),
@@ -881,6 +883,68 @@ impl Core {
                 leaf: h.leaf,
                 model: None,
                 usage: None,
+                archived: false,
+            });
+        }
+        out
+    }
+
+    /// The workspace's archived sessions (ADR-0005): the `archive/` dir's
+    /// zstd files, listed like disk sessions with the `archived` flag.
+    fn archived_sessions(&self, workspace: &Workspace) -> Vec<SessionMeta> {
+        #[derive(serde::Deserialize)]
+        struct ArchHeader {
+            #[serde(rename = "type")]
+            kind: String,
+            id: String,
+            created: u64,
+            #[serde(default)]
+            leaf: Option<String>,
+            #[serde(default)]
+            title: Option<String>,
+            #[serde(default)]
+            parent: Option<String>,
+        }
+        let dir = Path::new(&workspace.cwd).join(".tau").join("archive");
+        let Ok(names) = std::fs::read_dir(&dir).map(|d| {
+            d.filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|n| n.ends_with(".jsonl.zst"))
+                .collect::<Vec<_>>()
+        }) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for name in names {
+            let path = dir.join(&name);
+            let Ok(compressed) = std::fs::read(&path) else {
+                continue;
+            };
+            let Ok(raw) = zstd::decode_all(&compressed[..]) else {
+                continue;
+            };
+            let Ok(text) = std::str::from_utf8(&raw) else {
+                continue;
+            };
+            let Some(first) = text.lines().next() else {
+                continue;
+            };
+            let Ok(h) = serde_json::from_str::<ArchHeader>(first) else {
+                continue;
+            };
+            if h.kind != "session" || h.id != name.trim_end_matches(".jsonl.zst") {
+                continue;
+            }
+            out.push(SessionMeta {
+                id: h.id,
+                workspace: workspace.id.clone(),
+                title: h.title,
+                parent: h.parent,
+                created: h.created,
+                leaf: h.leaf,
+                model: None,
+                usage: None,
+                archived: true,
             });
         }
         out
@@ -1168,6 +1232,7 @@ impl Core {
             leaf: None,
             model: Some(model),
             usage: None,
+            archived: false,
         };
         let live = Arc::new(LiveSession {
             meta: Mutex::new(meta.clone()),
@@ -1431,6 +1496,13 @@ impl Core {
                         sessions.push(m);
                     }
                 }
+                // Archived sessions (their file lives in `archive/`): the
+                // GUI's archive folder lists them, flagged.
+                for m in self.archived_sessions(&workspace) {
+                    if !sessions.iter().any(|s| s.id == m.id) {
+                        sessions.push(m);
+                    }
+                }
                 sessions.sort_by_key(|s| std::cmp::Reverse(s.created));
                 Ok(CommandOutput::Sessions { sessions })
             }
@@ -1509,18 +1581,104 @@ impl Core {
             }
             Command::SessionClose { session } => {
                 // Closing stops any in-flight turn: a closed session must
-                // not keep streaming (review N7).
+                // not keep streaming (review N7) — and its children keep no
+                // work running for a session that no longer exists (their
+                // files stay; they remain resumable as standalone sessions).
                 if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
                     live.stop.store(true, Ordering::SeqCst);
+                    if let Some(sup) = live.agent.subagents() {
+                        sup.stop_all(StoppedBy::User);
+                    }
                 }
                 Ok(CommandOutput::None)
             }
             Command::SessionDelete { session } => {
                 if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
                     live.stop.store(true, Ordering::SeqCst);
+                    if let Some(sup) = live.agent.subagents() {
+                        sup.stop_all(StoppedBy::User);
+                    }
                     delete_session_files(&live.cwd, &session);
                 }
                 Ok(CommandOutput::None)
+            }
+            Command::SessionArchive { session } => {
+                let live = self.live(&session)?;
+                // A running session's file is being written: archiving
+                // mid-turn would tear it (ADR-0005 keeps the archive off
+                // the live path).
+                if live.turn.load(Ordering::SeqCst) {
+                    return Err(ProtocolError::Other {
+                        message: format!("session {session} is running — stop it first"),
+                    });
+                }
+                // Detach from the live map while the children are stopped:
+                // a stop's parent-wake must not start a turn on the file
+                // being archived (the wake looks the parent up by id).
+                self.sessions.lock().unwrap().remove(&session);
+                // This session's children: a running one is stopped and
+                // its drive quiesced before the file moves (its wake would
+                // otherwise write the parent file mid-archive), and a
+                // parked one's sleeping drive ends with the parent.
+                if let Some(sup) = live.agent.subagents() {
+                    sup.stop_all(StoppedBy::User);
+                    for handle in sup.handles() {
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(5);
+                        while !sup.drive_quiescent(&handle) && std::time::Instant::now() < deadline
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                }
+                // A child session: a running child is stopped the same way
+                // (a parked or quiescent one is left as-is — its file is
+                // stable while it rests, and a later resume of it fails
+                // cleanly against the archived file).
+                if let Some(link) = live.agent.child_link() {
+                    let parent = link
+                        .handle()
+                        .rsplit_once('-')
+                        .map(|(s, _)| s.to_owned())
+                        .unwrap_or_default();
+                    let parent_live = self.live(&parent)?;
+                    let sup =
+                        parent_live
+                            .agent
+                            .subagents()
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "child's parent has no supervisor".into(),
+                            })?;
+                    if sup
+                        .state_info(link.handle())
+                        .is_some_and(|i| matches!(i.state, tau_core::subagent::ChildState::Running))
+                    {
+                        sup.stop(link.handle(), StoppedBy::User)
+                            .map_err(|e| ProtocolError::Other { message: e })?;
+                        let deadline =
+                            std::time::Instant::now() + std::time::Duration::from_secs(5);
+                        while !sup.drive_quiescent(link.handle())
+                            && std::time::Instant::now() < deadline
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    }
+                }
+                let mut store = SessionStore::for_workspace(&live.cwd, &session);
+                store
+                    .open()
+                    .and_then(|()| store.archive())
+                    .map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
+                live.meta.lock().unwrap().archived = true;
+                self.sessions
+                    .lock()
+                    .unwrap()
+                    .insert(session.clone(), live.clone());
+                Ok(CommandOutput::Session {
+                    session: live.meta.lock().unwrap().clone(),
+                })
             }
             Command::SessionFork { session, at } | Command::SessionBranch { session, at } => {
                 let live = self.live(&session)?;
@@ -1631,6 +1789,28 @@ impl Core {
             }
             Command::MessageStop { session } => {
                 let live = self.live(&session)?;
+                // A child session stops through its supervisor: the
+                // terminal Stopped state, the freed slot, the parent's
+                // wake. A bare stream cut would leave the child running —
+                // the nudge path resumes it.
+                if let Some(link) = live.agent.child_link() {
+                    let parent = link
+                        .handle()
+                        .rsplit_once('-')
+                        .map(|(s, _)| s.to_owned())
+                        .unwrap_or_default();
+                    let parent_live = self.live(&parent)?;
+                    let sup =
+                        parent_live
+                            .agent
+                            .subagents()
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "child's parent has no supervisor".into(),
+                            })?;
+                    sup.stop(link.handle(), StoppedBy::User)
+                        .map_err(|e| ProtocolError::Other { message: e })?;
+                    return Ok(CommandOutput::None);
+                }
                 live.stop.store(true, Ordering::SeqCst);
                 Ok(CommandOutput::None)
             }
@@ -1992,9 +2172,16 @@ async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     let calls_before = live.provider.calls.lock().unwrap().len();
 
     if let Err(e) = live.agent.process().await {
+        // One locked scope: two meta locks in one expression would be a
+        // same-thread re-entrant deadlock (the first guard lives until the
+        // statement ends).
+        let (workspace, id) = {
+            let meta = live.meta.lock().unwrap();
+            (meta.workspace.clone(), meta.id.clone())
+        };
         core.emit(Event::System {
-            workspace: live.meta.lock().unwrap().workspace.clone(),
-            session: Some(live.meta.lock().unwrap().id.clone()),
+            workspace,
+            session: Some(id),
             kind: SystemEventKind::Error {
                 message: e.to_string(),
             },
@@ -2946,6 +3133,7 @@ mod tests {
                 leaf: None,
                 model: Some("model".into()),
                 usage: None,
+                archived: false,
             }),
             agent: agent.clone(),
             stop: provider.stop.clone(),
@@ -3278,45 +3466,44 @@ mod tests {
     /// its scripted `parent_notify {done}` turn, the supervisor resolves it,
     /// and the parent is woken — the notification lands on the parent's
     /// active branch and a `Notified` event reaches the stream.
+    /// A child provider that replays one canned body per call (the
+    /// scripted sub-agent turns of the dispatch tests).
+    struct CannedChild {
+        body: String,
+        index: AtomicUsize,
+    }
+    impl TurnProvider for CannedChild {
+        fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+            let body = self.body.clone();
+            self.index.fetch_add(1, Ordering::SeqCst);
+            let (events, calls) = provider::decode_stream(&body).unwrap();
+            Box::pin(async move {
+                let mut result = provider::TurnResult::default();
+                for event in &events {
+                    if !sink.event(event.clone()) {
+                        break;
+                    }
+                    provider::fold_event(event, &mut result);
+                }
+                result.calls = calls.into_iter().map(|(_, c)| c).collect();
+                Ok(result)
+            })
+        }
+    }
+    struct CannedChildFactory {
+        body: String,
+    }
+    impl ChildProviderFactory for CannedChildFactory {
+        fn create(&self, _child: &str) -> TurnProviderRef {
+            Arc::new(CannedChild {
+                body: self.body.clone(),
+                index: AtomicUsize::new(0),
+            })
+        }
+    }
+
     #[tokio::test]
     async fn a_spawned_child_finishes_and_wakes_the_parent() {
-        struct CannedChild {
-            body: String,
-            index: AtomicUsize,
-        }
-        impl TurnProvider for CannedChild {
-            fn call<'a>(
-                &self,
-                _req: &ResponseRequest,
-                sink: &'a mut dyn TurnSink,
-            ) -> ProviderTurn<'a> {
-                let body = self.body.clone();
-                self.index.fetch_add(1, Ordering::SeqCst);
-                let (events, calls) = provider::decode_stream(&body).unwrap();
-                Box::pin(async move {
-                    let mut result = provider::TurnResult::default();
-                    for event in &events {
-                        if !sink.event(event.clone()) {
-                            break;
-                        }
-                        provider::fold_event(event, &mut result);
-                    }
-                    result.calls = calls.into_iter().map(|(_, c)| c).collect();
-                    Ok(result)
-                })
-            }
-        }
-        struct CannedChildFactory {
-            body: String,
-        }
-        impl ChildProviderFactory for CannedChildFactory {
-            fn create(&self, _child: &str) -> TurnProviderRef {
-                Arc::new(CannedChild {
-                    body: self.body.clone(),
-                    index: AtomicUsize::new(0),
-                })
-            }
-        }
         // One scripted turn: parent_notify done with a structured output.
         let call_id = "c1".to_string();
         let args = json!({
@@ -3329,7 +3516,7 @@ mod tests {
             "type": "function_call",
             "name": "parent_notify",
             "call_id": call_id,
-            "arguments": args,
+            "arguments": args.to_string(),
         });
         let data = format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}");
         let body = format!("{data}\n\ndata: [DONE]\n\n");
@@ -3377,13 +3564,11 @@ mod tests {
         while tokio::time::Instant::now() < deadline {
             if let Ok(Some(ev)) =
                 tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
-                && matches!(
-                    ev,
-                    Event::SubagentEvent {
-                        kind: SubagentEventKind::Notified { .. },
-                        ..
-                    }
-                )
+                && let Event::SubagentEvent {
+                    kind: SubagentEventKind::Notified { wake, .. },
+                    ..
+                } = ev
+                && wake == "done"
             {
                 notified = true;
                 break;
@@ -3403,6 +3588,236 @@ mod tests {
             core.sessions.lock().unwrap().get(&info.child).is_some(),
             "the child's live session was not registered"
         );
+        drop(core);
+    }
+
+    /// The archive command: the file moves to `archive/` (ADR-0005), the
+    /// metadata carries the flag, `session_list` lists it flagged, and a
+    /// running session refuses (the archive is off the live write path).
+    #[tokio::test]
+    async fn a_session_archives_and_lists_with_the_flag() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let session = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        // A session in flight refuses: the archive would tear the file.
+        let live = manual_session(
+            &core,
+            &workspace,
+            provider::canned_slow(&canned_body(), 600),
+            TurnConfig::default(),
+        );
+        let session_id = live.meta.lock().unwrap().id.clone();
+        core.dispatch(Command::MessageSend {
+            session: session_id.clone(),
+            text: "work".into(),
+            lane: MessageLane::Steering,
+        })
+        .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: session_id.clone(),
+            })
+            .unwrap_err();
+        assert!(
+            matches!(err, ProtocolError::Other { .. }),
+            "a running session must refuse: {err:?}"
+        );
+        // Let the turn end, then archive.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while core
+            .sessions
+            .lock()
+            .unwrap()
+            .get(&session_id)
+            .is_some_and(|l| l.turn.load(Ordering::SeqCst))
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: session_id.clone(),
+            })
+            .unwrap();
+        let meta = match out {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        assert!(meta.archived, "the archive flag rides the metadata");
+        let root = Path::new(&workspace.cwd);
+        assert!(
+            !root
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{session_id}.jsonl"))
+                .exists(),
+            "the live file is gone"
+        );
+        assert!(
+            root.join(".tau")
+                .join("archive")
+                .join(format!("{session_id}.jsonl.zst"))
+                .exists(),
+            "the file is in the archive dir"
+        );
+        // The list carries the flagged session (the live copy wins over
+        // the disk listing).
+        let list = match core
+            .dispatch(Command::SessionList {
+                workspace: workspace.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Sessions { sessions } => sessions,
+            other => panic!("expected sessions: {other:?}"),
+        };
+        let listed = list
+            .iter()
+            .find(|m| m.id == session_id)
+            .expect("the archived session still lists");
+        assert!(listed.archived, "the list carries the flag");
+        // A second archive is refused: the archive already exists.
+        let err = core
+            .dispatch(Command::SessionArchive {
+                session: session_id,
+            })
+            .unwrap_err();
+        assert!(matches!(err, ProtocolError::Other { .. }), "{err:?}");
+        // The fresh (idle) session archives on the same path.
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: session.id,
+            })
+            .unwrap();
+        match out {
+            CommandOutput::Session { session } => assert!(session.archived),
+            other => panic!("expected a session: {other:?}"),
+        }
+    }
+
+    /// A child session archives through the same path as a top-level one
+    /// (a child is an ordinary session, ADR-0006): the done child's file
+    /// moves to `archive/` and the list carries the flag.
+    #[tokio::test]
+    async fn a_child_session_archives_like_a_top_level_one() {
+        // One scripted turn: parent_notify done with a structured output.
+        let call_id = "c1".to_string();
+        let args = json!({
+            "text": "the work is done",
+            "done": true,
+            "output": { "result": "ok" },
+        });
+        let item = json!({
+            "id": call_id,
+            "type": "function_call",
+            "name": "parent_notify",
+            "call_id": call_id,
+            "arguments": args.to_string(),
+        });
+        let data = format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}");
+        let body = format!("{data}\n\ndata: [DONE]\n\n");
+        let core = CoreBuilder::custom(providers())
+            .with_child_factory(Arc::new(CannedChildFactory { body }))
+            .build();
+        let cwd = tempfile::tempdir().unwrap();
+        let workspace = open_ws(&core, cwd.path()).await;
+        let parent = match core
+            .dispatch(Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        let info = match core
+            .dispatch(Command::SubagentSpawn {
+                session: parent.id.clone(),
+                agent_type: "general".into(),
+                brief: "do the thing".into(),
+                context_mode: ContextMode::Fresh,
+            })
+            .unwrap()
+        {
+            CommandOutput::Subagent { subagent } => subagent,
+            other => panic!("expected a subagent: {other:?}"),
+        };
+        // The child finishes on its scripted turn: poll its state until
+        // done (bounded — a hung drive is a test failure, not a wait).
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut done = false;
+        let mut last = String::new();
+        while tokio::time::Instant::now() < deadline && !done {
+            let out = core
+                .dispatch(Command::SubagentState {
+                    handle: info.handle.clone(),
+                })
+                .unwrap();
+            done = matches!(
+                out,
+                CommandOutput::Subagent { ref subagent } if subagent.state == "done"
+            );
+            if let CommandOutput::Subagent { subagent } = out {
+                last = subagent.state.clone();
+            }
+            if !done {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
+        assert!(done, "the child never finished (last state: {last})");
+        // Archive the child through the same command as any session.
+        let out = core
+            .dispatch(Command::SessionArchive {
+                session: info.child.clone(),
+            })
+            .unwrap();
+        let meta = match out {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected a session: {other:?}"),
+        };
+        assert!(meta.archived, "the child's archive flag rides its metadata");
+        let root = Path::new(&workspace.cwd);
+        assert!(
+            !root
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{}.jsonl", info.child))
+                .exists(),
+            "the child's live file is gone"
+        );
+        assert!(
+            root.join(".tau")
+                .join("archive")
+                .join(format!("{}.jsonl.zst", info.child))
+                .exists(),
+            "the child's file is in the archive dir"
+        );
+        let list = match core
+            .dispatch(Command::SessionList {
+                workspace: workspace.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Sessions { sessions } => sessions,
+            other => panic!("expected sessions: {other:?}"),
+        };
+        let listed = list
+            .iter()
+            .find(|m| m.id == info.child)
+            .expect("the archived child still lists");
+        assert!(listed.archived, "the list carries the child's flag");
         drop(core);
     }
 

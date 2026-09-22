@@ -38,6 +38,9 @@ export interface SessionMeta {
   leaf: string | null;
   model: string | null;
   usage: Usage | null;
+  // Archive is one-way and off the live path (ADR-0005): a true flag means
+  // the file sits in the workspace archive dir, listed for the GUI only.
+  archived: boolean;
 }
 
 export type EntryStatus = 'ok' | 'interrupted';
@@ -226,6 +229,7 @@ export type Command =
   | { type: 'session_open'; session: string }
   | { type: 'session_close'; session: string }
   | { type: 'session_delete'; session: string }
+  | { type: 'session_archive'; session: string }
   | { type: 'session_fork'; session: string; at: string }
   | { type: 'session_branch'; session: string; at: string }
   | { type: 'session_snapshot'; session: string }

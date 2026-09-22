@@ -190,6 +190,11 @@ pub struct Child {
     /// stop-then-resume window between `drive()` returning and the loop's
     /// state check — two drives must never run the child concurrently).
     drive_gen: AtomicUsize,
+    /// The generation of the last drive whose loop exited: the archive
+    /// path quiesces a stopped child on this before moving its file (the
+    /// stop's interrupted entry must land in the file, not a recreated
+    /// fragment).
+    last_ended_gen: AtomicUsize,
     /// The idle drive sleeps on this (review N8): a message or a stop
     /// wakes it, so an idle child costs no polling. `Notify`'s permit
     /// makes a wake that lands before the drive arms its future unlost.
@@ -385,12 +390,14 @@ impl Supervisor {
             .lock()
             .unwrap()
             .values()
-            .filter(|c| !matches!(
-                c.state(),
-                ChildState::Done { .. }
-                    | ChildState::Stopped { .. }
-                    | ChildState::Failed { .. }
-            ))
+            .filter(|c| {
+                !matches!(
+                    c.state(),
+                    ChildState::Done { .. }
+                        | ChildState::Stopped { .. }
+                        | ChildState::Failed { .. }
+                )
+            })
             .cloned()
             .collect()
     }
@@ -666,6 +673,7 @@ impl Supervisor {
             nudge_sent: AtomicBool::new(false),
             last_message: Mutex::new(Some(brief.to_owned())),
             drive_gen: AtomicUsize::new(0),
+            last_ended_gen: AtomicUsize::new(0),
             wake: tokio::sync::Notify::new(),
         });
         self.children
@@ -784,6 +792,10 @@ impl Supervisor {
             );
             break;
         }
+        // The loop exited by any arm: record this generation's end (a
+        // superseded drive reporting after the fresh one is a no-op — the
+        // quiescence check compares against the newest generation).
+        child.last_ended_gen.store(drive_gen, Ordering::SeqCst);
     }
 
     fn mark_failed(&self, child: &Arc<Child>, reason: String) {
@@ -1068,18 +1080,28 @@ impl Supervisor {
             .ok_or_else(|| format!("subagent_stop: no sub-agent {handle} in this session"))?;
         if !matches!(child.state(), ChildState::Running) {
             return match child.state() {
-                ChildState::Idle { .. } => {
-                    Ok(format!("sub-agent {handle} is parked — a message resumes it"))
-                }
+                ChildState::Idle { .. } => Ok(format!(
+                    "sub-agent {handle} is parked — a message resumes it"
+                )),
                 other => Ok(format!("sub-agent {handle} is already {}", other.kind())),
             };
         }
         // Cuts the child's stream at the next delta; the loop records
         // the partial as an interrupted entry.
         child.agent.stop();
+        self.finish_stop(&child, by)
+    }
+
+    /// The stop's shared tail (the user stop and the parent's close/archive
+    /// both end a drive this way): the terminal Stopped record, the
+    /// drive's wake, the state event (with the task's resume contract),
+    /// and the parent's wake.
+    fn finish_stop(&self, child: &Arc<Child>, by: StoppedBy) -> Result<String, String> {
+        let handle = child.handle.clone();
         let note = format!("stopped by {}", by.as_str());
         child.set_state(ChildState::Stopped { by }, Some(note.clone()))?;
-        // The drive of a running child is live; it ends at its loop head.
+        // The drive ends at its loop head (running: after the interrupted
+        // entry lands; parked: it wakes from its sleep and exits).
         child.wake.notify_one();
         // A stopped child with an assigned task carries the task's resume
         // contract in the stop event (spec §5.2).
@@ -1120,14 +1142,30 @@ impl Supervisor {
         }
     }
 
-    /// Soft-stop every live child (the parent session was closed or
-    /// deleted: no work runs for a session that no longer exists). Done
-    /// children are left as-is — their record is complete and they stay
-    /// resumable as standalone sessions.
+    /// Soft-stop every child that still holds a drive (the parent session
+    /// was closed, deleted, or archived: no work runs for a session that
+    /// no longer exists): a running child is stopped as `stop` does, and
+    /// a parked (idle) child's sleeping drive is ended — `stop` leaves a
+    /// parked child alone, but a dead parent must not leave a drive behind.
+    /// Quiescent children (done/stopped/failed) are left as-is — their
+    /// record is complete and they stay resumable as standalone sessions.
     pub fn stop_all(self: &Arc<Self>, by: StoppedBy) {
         for child in self.live_children() {
-            let _ = self.stop(&child.handle, by);
+            if matches!(child.state(), ChildState::Running) {
+                child.agent.stop();
+            }
+            let _ = self.finish_stop(&child, by);
         }
+    }
+
+    /// Whether the child's newest drive has exited (the archive's settle
+    /// check: a stopped child's drive must be gone before its file moves).
+    pub fn drive_quiescent(&self, handle: &str) -> bool {
+        let children = self.children.lock().unwrap();
+        let Some(child) = children.get(handle) else {
+            return true;
+        };
+        child.last_ended_gen.load(Ordering::SeqCst) == child.drive_gen.load(Ordering::SeqCst)
     }
 
     /// All registered children (the snapshot's live-state handles).
@@ -1927,10 +1965,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (sup, bridge) = harness(
             dir.path(),
-            vec![sse("parent keeps working", &[]), sse("second parent turn", &[])],
+            vec![
+                sse("parent keeps working", &[]),
+                sse("second parent turn", &[]),
+            ],
             vec![vec![sse(
                 "",
-                &[notify_call("n1", "done", true, Some(json!({ "ok": true })), None)],
+                &[notify_call(
+                    "n1",
+                    "done",
+                    true,
+                    Some(json!({ "ok": true })),
+                    None,
+                )],
             )]],
             SubAgents::default(),
         );
@@ -2107,14 +2154,10 @@ mod tests {
             ),
             "the stopped state is recorded with its provenance"
         );
-        assert!(
-            bridge
-                .states
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|n| n.state == ChildState::Stopped { by: StoppedBy::User })
-        );
+        assert!(bridge.states.lock().unwrap().iter().any(|n| n.state
+            == ChildState::Stopped {
+                by: StoppedBy::User
+            }));
         assert!(
             bridge
                 .wakes
@@ -2204,12 +2247,10 @@ mod tests {
         // stands.
         let out = sup.stop(&parked.handle, StoppedBy::User).unwrap();
         assert!(out.contains("parked"), "{out}");
-        assert!(
-            matches!(
-                sup.state_info(&parked.handle).unwrap().state,
-                ChildState::Idle { .. }
-            )
-        );
+        assert!(matches!(
+            sup.state_info(&parked.handle).unwrap().state,
+            ChildState::Idle { .. }
+        ));
         // A message resumes it; its next scripted turn finishes the child.
         sup.message(&parked.handle, Some("go".into()), Lane::Steering)
             .unwrap();

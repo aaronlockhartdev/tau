@@ -187,6 +187,13 @@ pub enum Command {
     SessionDelete {
         session: String,
     },
+    /// Archive the session: its file is zstd-compressed into the
+    /// workspace's `archive/` dir (ADR-0005 — one-way, off the live
+    /// read/write path) and the session's metadata carries `archived`,
+    /// which the GUI's archive folder lists.
+    SessionArchive {
+        session: String,
+    },
     /// Create a new branch from entry `at` within the same session file
     /// (spec §8: fork is a branch, not a new session).
     SessionFork {
@@ -445,7 +452,7 @@ pub enum SubagentEventKind {
     /// A child notification reached the parent (done / failed / a
     Notified {
         child: String,
-        /// done | failed | waiting
+        /// done | failed | waiting | stopped
         wake: String,
         text: String,
         output: Option<Value>,
@@ -541,6 +548,9 @@ mod tests {
                 session: "s1".into(),
             },
             Command::SessionDelete {
+                session: "s1".into(),
+            },
+            Command::SessionArchive {
                 session: "s1".into(),
             },
             Command::SessionFork {
@@ -830,6 +840,7 @@ mod tests {
             leaf: None,
             model: None,
             usage: None,
+            archived: true,
         };
         let entry = snapshot::ViewEntry {
             id: "e1".into(),
