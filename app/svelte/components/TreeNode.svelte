@@ -71,6 +71,7 @@
     padding: 4.5px 8px 4.5px calc(var(--indent, 0px) + 8px);
     cursor: pointer;
     font-size: 12.5px;
+    line-height: 1;
   }
   .trow:hover {
     background: var(--panel2);

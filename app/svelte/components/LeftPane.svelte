@@ -59,12 +59,12 @@
           {/if}
         </div>
         <div class="arch">
-          <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }} style="display: flex; align-items: center; gap: 5px; width: 100%; text-align: left;">
-            Archive <svg width="12" height="12" style="display: inline-block; vertical-align: -1.5px; transition: transform 0.12s;" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev-d" /></svg>
+          <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }}>
+            <svg class="ci" width="11" height="11" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev" /></svg> ARCHIVE
           </button>
           {#if p.archOpen}
             {#if archived.length === 0}
-              <div class="srow"><span class="t none">nothing archived</span></div>
+              <div class="srow"><span class="name none">nothing archived</span></div>
             {:else}
               {#each archived as s (s.meta.id)}
                 <SessionNode session={s} depth={1} ws={ws} sessions={sessions} />
@@ -124,13 +124,13 @@
     cursor: pointer;
     font-size: 12.5px;
   }
-  .srow .t {
+  .srow .name {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .srow .t.none {
+  .srow .name.none {
     color: var(--faint);
   }
   .arch {
@@ -139,11 +139,19 @@
     flex: none;
   }
   .arch-h {
+    display: flex;
+    align-items: center;
+    gap: 5px;
     width: 100%;
     text-align: left;
     padding: 8px 12px;
     font: 10.5px var(--mono);
+    letter-spacing: 0.08em;
     color: var(--dim);
+  }
+  .arch-h .ci {
+    display: block;
+    transition: transform 0.12s;
   }
   .empty {
     padding: 24px;

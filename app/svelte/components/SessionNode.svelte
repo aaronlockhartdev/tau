@@ -86,7 +86,7 @@
 {#snippet rowLabel()}
   {#if pane(ws)?.renamingId === session.meta.id}
     <input
-      class="t rename"
+      class="name rename"
       bind:this={renameInput}
       bind:value={renameText}
       aria-label="rename session"
@@ -103,7 +103,7 @@
       onclick={(e) => e.stopPropagation()}
     />
   {:else}
-    <span class="t">{session.meta.title ?? session.meta.id}</span>
+    <span class="name">{session.meta.title ?? session.meta.id}</span>
   {/if}
   {#if depth === 0}
     {#if sessionRunning(session)}<span class="badge running"><span class="dot"></span>running</span>{/if}
@@ -137,13 +137,13 @@
     display: flex;
     flex-direction: column;
   }
-  .t {
+  .name {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .t.rename {
+  .name.rename {
     padding: 1px 4px;
     border: 1px solid var(--acc);
     border-radius: 3px;
