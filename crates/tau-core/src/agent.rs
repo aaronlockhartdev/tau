@@ -108,6 +108,10 @@ struct Inner {
     queue: VecDeque<Queued>,
     om: Option<crate::om_integration::OmState>,
     om_model: String,
+    /// The OM-run observer (the app emits the protocol's om_status event
+    /// from it): core is transport-free, so the hook takes the kind string,
+    /// not the event. `None` = no observer (tests, children).
+    om_status_hook: Option<Arc<dyn Fn(&str) + Send + Sync>>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -169,6 +173,7 @@ impl AgentSession {
                 queue: VecDeque::new(),
                 om: p.om,
                 om_model: p.om_model,
+                om_status_hook: None,
                 subagents: p.subagents,
                 child: p.child,
             }),
@@ -351,6 +356,17 @@ impl AgentSession {
     /// Test-only OM state injection (the sub-agent module's tests).
     pub fn set_om(&self, om: Option<crate::om_integration::OmState>) {
         self.inner.lock().unwrap().om = om;
+    }
+
+    /// The OM-run observer (the app's om_status emitter); `None` clears it.
+    pub fn set_om_status_hook(&self, hook: Option<Arc<dyn Fn(&str) + Send + Sync>>) {
+        self.inner.lock().unwrap().om_status_hook = hook;
+    }
+
+    /// The session's model for the next turn's calls (the `session_set_model`
+    /// command's live half; provider resolution happens at the call).
+    pub fn set_model(&self, model: String) {
+        self.inner.lock().unwrap().model = model;
     }
 
     /// Append a record entry against the active leaf (the sub-agent
@@ -599,9 +615,9 @@ impl AgentSession {
     /// run between the lock scopes, so a force or steering send is never
     /// blocked on an OM call.
     async fn om_turn_end(&self) -> Result<(), AgentError> {
-        let mut state = {
+        let (mut state, hook) = {
             let inner = self.inner.lock().unwrap();
-            inner.om.clone()
+            (inner.om.clone(), inner.om_status_hook.clone())
         };
         let Some(state) = &mut state else {
             return Ok(());
@@ -633,6 +649,18 @@ impl AgentSession {
             state.plan(&unobserved)
         };
         loop {
+            // The activity the status bar's gauge shows while this run is in
+            // flight; `Done` closes the run (the hook is the app's om_status
+            // emitter, absent in tests and on children).
+            if let Some(hook) = &hook {
+                let kind = match &action {
+                    crate::om_integration::TurnEndAction::Done => "idle",
+                    crate::om_integration::TurnEndAction::Observe { .. }
+                    | crate::om_integration::TurnEndAction::Buffer { .. } => "observing",
+                    crate::om_integration::TurnEndAction::Reflect { .. } => "reflecting",
+                };
+                hook(kind);
+            }
             let result = match &action {
                 crate::om_integration::TurnEndAction::Done => break,
                 crate::om_integration::TurnEndAction::Observe { transcript }
@@ -1517,6 +1545,80 @@ mod tests {
             })
             .count();
         assert_eq!(hints, 1, "the hint is one-shot: {seen:?}");
+    }
+
+    /// The OM-run status hook (the app's om_status emitter): each run
+    /// reports its kind at start and `idle` at the end, in order.
+    #[tokio::test]
+    async fn om_runs_notify_the_status_hook_in_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = session_in(dir.path());
+        let mut parent: Option<String> = None;
+        for _ in 0..5 {
+            let e = store
+                .append(
+                    "user",
+                    json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                    parent.as_deref(),
+                )
+                .unwrap();
+            parent = Some(e.id);
+        }
+        let cfg = crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1000,
+            reflect_threshold: 2000,
+            buffer_increment: 230,
+        };
+        let obs_text = format!(
+            "<observations>obs {}</observations>",
+            (0..900)
+                .map(|i| format!("L{:04} data", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let ref_text = format!(
+            "<observations>condensed {}</observations>",
+            (0..200)
+                .map(|i| format!("c{:04}", i))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let provider = Arc::new(ScriptedProvider::new(vec![
+            sse("a1", &[]),
+            sse_json(&obs_text),
+            sse("a2", &[]),
+            sse_json(&ref_text),
+        ]));
+        let agent = AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.path().to_path_buf(),
+            provider: provider.clone(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+            turn: TurnConfig::default(),
+            om: Some(crate::om_integration::OmState::from_config(
+                &cfg,
+                crate::om::OmRecord::default(),
+            )),
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        });
+        let kinds = Arc::new(Mutex::new(Vec::<String>::new()));
+        let k = kinds.clone();
+        agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
+            k.lock().unwrap().push(kind.to_owned());
+        })));
+        agent.send("go1", Lane::FollowUp);
+        agent.send("go2", Lane::FollowUp);
+        agent.process().await.unwrap();
+        assert_eq!(
+            *kinds.lock().unwrap(),
+            vec!["observing", "idle", "reflecting", "idle"]
+        );
     }
 
     /// A compacted-spawn-seeded record: the frozen prefix survives the

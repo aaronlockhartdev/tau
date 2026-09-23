@@ -31,13 +31,13 @@ use tau_core::subagent::{
 use tau_core::tools;
 use tau_protocol::coalesce::Coalescer;
 use tau_protocol::snapshot::{
-    EntryMeta, EntryStatus, LiveState, QueuedItem, SessionMeta, Snapshot, TurnState, ViewEntry,
-    Workspace,
+    EntryMeta, EntryStatus, LiveState, OmSnapshot, QueuedItem, SessionMeta, Snapshot, TurnState,
+    ViewEntry, Workspace,
 };
 use tau_protocol::{
     AgentType, Command, CommandOutput, ContextMode, Event, FileEntry, FileText, MessageLane,
-    ProtocolError, ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo, SystemEventKind,
-    Usage,
+    OmStatusKind, ProtocolError, ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo,
+    SystemEventKind, Usage,
 };
 use tokio::sync::mpsc;
 
@@ -1331,6 +1331,24 @@ impl Core {
             subagents: Some(sup.clone()),
             child: None,
         }));
+        // The core's om_status hook takes the kind string; this closure
+        // shapes it into the protocol event on the shared channel.
+        {
+            let tx = self.events_tx.clone();
+            let ws = workspace.id.clone();
+            let sid = provider.session.clone();
+            agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
+                let _ = tx.try_send(Event::OmStatus {
+                    workspace: ws.clone(),
+                    session: sid.clone(),
+                    kind: match kind {
+                        "observing" => OmStatusKind::Observing,
+                        "reflecting" => OmStatusKind::Reflecting,
+                        _ => OmStatusKind::Idle,
+                    },
+                });
+            })));
+        }
         let meta = SessionMeta {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),
@@ -1390,8 +1408,12 @@ impl Core {
             om: live
                 .agent
                 .om_state()
-                .map(|s| serde_json::to_value(&s.record).unwrap_or(Value::Null))
-                .unwrap_or(Value::Null),
+                .map(|s| OmSnapshot {
+                    observation_tokens: s.record.observation_tokens,
+                    pending_tokens: s.record.pending_tokens,
+                    reflector_threshold: s.config.reflect_threshold,
+                })
+                .unwrap_or_default(),
             live: LiveState {
                 queue: live.queue.lock().unwrap().clone(),
                 turn: if live.turn.load(Ordering::SeqCst) {
@@ -1506,7 +1528,7 @@ impl Core {
             workspace,
             session: SessionMeta { usage, ..meta },
             entries: entries.iter().map(entry_meta).collect(),
-            om: Value::Null,
+            om: OmSnapshot::default(),
             live: LiveState {
                 queue: vec![],
                 turn: TurnState::Idle,
@@ -1658,6 +1680,75 @@ impl Core {
                     message: e.to_string(),
                 })?;
                 Ok(CommandOutput::None)
+            }
+            Command::SessionSetModel { session, model } => {
+                if model.trim().is_empty() {
+                    return Err(ProtocolError::Other {
+                        message: "model is empty".into(),
+                    });
+                }
+                match self.live(&session) {
+                    Ok(live) => {
+                        let old = live.meta.lock().unwrap().model.clone();
+                        if old.as_deref() == Some(model.as_str()) {
+                            return Ok(CommandOutput::None);
+                        }
+                        // The same meta-mutation path as a rename: the
+                        // in-memory meta is what snapshot() and
+                        // session_list() serve, so a re-open must not
+                        // revert the change; the agent's own model drives
+                        // the next turn's calls.
+                        live.meta.lock().unwrap().model = Some(model.clone());
+                        live.agent.set_model(model.clone());
+                        live.agent
+                            .append_entry(
+                                tau_core::agent::KIND_SYSTEM,
+                                json!({ "note": model_note(&old, &model) }),
+                            )
+                            .map_err(|e| ProtocolError::Other {
+                                message: e.to_string(),
+                            })?;
+                        Ok(CommandOutput::None)
+                    }
+                    // A closed session is a file: the header carries no
+                    // model, so the quiet entries are the record — the
+                    // last `model:` note on the branch is the current one.
+                    Err(_) => {
+                        let cwd = self
+                            .workspaces
+                            .lock()
+                            .unwrap()
+                            .values()
+                            .find(|w| self.disk_sessions(w).iter().any(|m| m.id == session))
+                            .map(|w| PathBuf::from(w.cwd.clone()))
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "unknown session".into(),
+                            })?;
+                        let mut store = SessionStore::for_workspace(&cwd, &session);
+                        store.open().map_err(|e| ProtocolError::Other {
+                            message: e.to_string(),
+                        })?;
+                        let old = last_model_note(&mut store);
+                        if old.as_deref() == Some(model.as_str()) {
+                            return Ok(CommandOutput::None);
+                        }
+                        let leaf = store
+                            .leaf()
+                            .ok()
+                            .flatten()
+                            .map(|e| e.id);
+                        store
+                            .append(
+                                tau_core::agent::KIND_SYSTEM,
+                                json!({ "note": model_note(&old, &model) }),
+                                leaf.as_deref(),
+                            )
+                            .map_err(|e| ProtocolError::Other {
+                                message: e.to_string(),
+                            })?;
+                        Ok(CommandOutput::None)
+                    }
+                }
             }
             Command::SessionOpen { session } => {
                 match self.live(&session) {
@@ -3047,6 +3138,37 @@ fn usage_of(value: &Value) -> Option<Usage> {
     })
 }
 
+/// The quiet entry a model change appends: `model: <old> → <new>` (the
+/// first change of a session that had no model records `model: <new>`).
+fn model_note(old: &Option<String>, new: &str) -> String {
+    match old {
+        Some(o) => format!("model: {o} → {new}"),
+        None => format!("model: {new}"),
+    }
+}
+
+/// The session's current model from its file: the last `model:` note on the
+/// active branch (a closed session's header carries no model, so the quiet
+/// entries are the record).
+fn last_model_note(store: &mut SessionStore) -> Option<String> {
+    let entries = store.entries_range(0, usize::MAX).ok()?;
+    let leaf = store.leaf().ok()?.map(|e| e.id);
+    tau_core::om_integration::branch_entries(&entries, leaf.as_deref())
+        .iter()
+        .rev()
+        .find(|e| {
+            e.kind == tau_core::agent::KIND_SYSTEM
+                && e.payload
+                    .get("note")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| n.starts_with("model: "))
+        })
+        .and_then(|e| {
+            let n = e.payload.get("note")?.as_str()?;
+            let rest = n.strip_prefix("model: ")?;
+            Some(rest.rsplit(" → ").next()?.to_owned())
+        })
+}
 fn delete_session_files(cwd: &Path, session: &str) {
     // The session file plus its sidecar blobs (blobs are keyed by entry id,
     // which is session-scoped — ADR-0005). The store must be opened before
@@ -5108,6 +5230,213 @@ mod tests {
                 .unwrap()
                 .to_owned();
         assert!(header.contains("\"After\""), "header: {header}");
+    }
+
+    #[tokio::test]
+    async fn session_set_model_updates_the_live_meta_and_records_the_change() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let live = match core
+            .dispatch(Command::SessionNew {
+                workspace: w.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected session: {other:?}"),
+        };
+        let old = live.model.clone().expect("a fresh session has a model");
+        // Same model: a no-op (no quiet entry appended).
+        core.dispatch(Command::SessionSetModel {
+            session: live.id.clone(),
+            model: old.clone(),
+        })
+        .unwrap();
+        core.dispatch(Command::SessionSetModel {
+            session: live.id.clone(),
+            model: "other/model".into(),
+        })
+        .unwrap();
+        let snap = match core
+            .dispatch(Command::SessionOpen { session: live.id.clone() })
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected snapshot: {other:?}"),
+        };
+        assert_eq!(snap.session.model.as_deref(), Some("other/model"));
+        let file =
+            std::fs::read_to_string(
+                cwd.path()
+                    .join(".tau/sessions")
+                    .join(format!("{}.jsonl", live.id)),
+            )
+            .unwrap();
+        let notes: Vec<String> = file
+            .lines()
+            .filter_map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).ok()?;
+                if v.get("type")?.as_str()? == "system" {
+                    v.get("payload")?.get("note")?.as_str().map(str::to_owned)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(notes, vec![format!("model: {old} → other/model")]);
+    }
+
+    #[tokio::test]
+    async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let id = SessionStore::new_session_id();
+        {
+            let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+            store.create().unwrap();
+            store
+                .append("user", json!({ "text": "hello" }), None)
+                .unwrap();
+        }
+        core.dispatch(Command::SessionSetModel {
+            session: id.clone(),
+            model: "m/new".into(),
+        })
+        .unwrap();
+        // The quiet entry is the record: the same model again is a no-op.
+        core.dispatch(Command::SessionSetModel {
+            session: id.clone(),
+            model: "m/new".into(),
+        })
+        .unwrap();
+        let file =
+            std::fs::read_to_string(cwd.path().join(".tau/sessions").join(format!("{id}.jsonl")))
+                .unwrap();
+        let notes: Vec<String> = file
+            .lines()
+            .filter_map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).ok()?;
+                (v.get("type")?.as_str()? == "system")
+                    .then(|| v.get("payload")?.get("note")?.as_str().map(str::to_owned))
+                    .flatten()
+            })
+            .collect();
+        assert_eq!(notes, vec!["model: m/new".to_owned()]);
+    }
+
+    /// The app's om_status glue: a live session's Observer run emits the
+    /// protocol event on the shared channel (observing at the start, idle
+    /// at the end).
+    #[tokio::test]
+    async fn a_live_om_run_emits_om_status_events() {
+        let tmp = tempfile::tempdir().unwrap();
+        let core = CoreBuilder::custom(providers()).build();
+        let workspace = open_ws(&core, tmp.path()).await;
+        let cwd = PathBuf::from(&workspace.cwd);
+        let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
+        store.create().unwrap();
+        let sid = store.id().to_owned();
+        let created = store.created();
+        let om = tau_core::config::Om {
+            om_model: String::new(),
+            observe_threshold: 1,
+            reflect_threshold: 40_000,
+            buffer_increment: 1,
+        };
+        let body = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}}}}\n\n",
+            text = "<observations>observed</observations>"
+        );
+        let provider = Arc::new(ForwardingProvider {
+            inner: provider::canned(&body),
+            tx: core.events_tx.clone(),
+            workspace: workspace.id.clone(),
+            session: sid.clone(),
+            stop: Arc::new(AtomicBool::new(false)),
+            call_seq: AtomicU64::new(0),
+            calls: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+        });
+        let agent = Arc::new(AgentSession::new(SessionParams {
+            store,
+            system_prompt: "be terse".into(),
+            model: "model".into(),
+            tools: tools::agent_tool_specs(),
+            cwd: cwd.clone(),
+            provider: provider.clone(),
+            tool_batch_on_force: Default::default(),
+            turn: TurnConfig::default(),
+            om: Some(tau_core::om_integration::OmState::from_config(
+                &om,
+                tau_core::om::OmRecord::default(),
+            )),
+            om_model: String::new(),
+            subagents: None,
+            child: None,
+        }));
+        {
+            let tx = core.events_tx.clone();
+            let ws = workspace.id.clone();
+            let csid = sid.clone();
+            agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
+                let _ = tx.try_send(Event::OmStatus {
+                    workspace: ws.clone(),
+                    session: csid.clone(),
+                    kind: match kind {
+                        "observing" => OmStatusKind::Observing,
+                        "reflecting" => OmStatusKind::Reflecting,
+                        _ => OmStatusKind::Idle,
+                    },
+                });
+            })));
+        }
+        core.sessions.lock().unwrap().insert(
+            sid.clone(),
+            Arc::new(LiveSession {
+                meta: Mutex::new(SessionMeta {
+                    id: sid.clone(),
+                    workspace: workspace.id.clone(),
+                    title: None,
+                    parent: None,
+                    created,
+                    model: Some("model".into()),
+                    leaf: None,
+                    usage: None,
+                    archived: false,
+                }),
+                agent,
+                stop: Arc::new(AtomicBool::new(false)),
+                queue: Mutex::new(Vec::new()),
+                turn: AtomicBool::new(false),
+                provider,
+                cwd,
+            }),
+        );
+        core.dispatch(Command::MessageSend {
+            session: sid,
+            text: "hello".into(),
+            lane: MessageLane::Steering,
+        })
+        .unwrap();
+        let mut kinds = Vec::new();
+        let mut events = core.events();
+        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(5);
+        while kinds.len() < 2 {
+            let left = deadline
+                .checked_duration_since(tokio::time::Instant::now())
+                .expect("the om_status events did not arrive in time");
+            let ev = tokio::time::timeout(left, events.recv())
+                .await
+                .expect("the om_status events did not arrive in time")
+                .expect("the event pipe closed");
+            if let Event::OmStatus { kind, .. } = ev {
+                kinds.push(kind);
+            }
+        }
+        assert_eq!(kinds, vec![OmStatusKind::Observing, OmStatusKind::Idle]);
     }
 
     #[tokio::test]

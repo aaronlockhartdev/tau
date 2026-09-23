@@ -178,6 +178,13 @@ pub enum Command {
         session: String,
         title: String,
     },
+    /// Switch the session's model (a plain string; provider resolution at
+    /// turn time handles unknown models). Same model is a no-op; otherwise
+    /// the meta's model is set and a quiet system entry records the change.
+    SessionSetModel {
+        session: String,
+        model: String,
+    },
     SessionOpen {
         session: String,
     },
@@ -391,6 +398,14 @@ pub enum Event {
         session: String,
         kind: SessionEventKind,
     },
+    /// The session's OM activity (the turn-end Observer/Reflector run):
+    /// `observing`/`reflecting` while in flight, `idle` when it finishes —
+    /// the status bar's om gauge.
+    OmStatus {
+        workspace: String,
+        session: String,
+        kind: OmStatusKind,
+    },
     System {
         workspace: String,
         session: Option<String>,
@@ -494,6 +509,15 @@ pub enum SessionEventKind {
     /// `first_kept` the first raw entry still in context (spec §3).
     Compaction { entry: String, first_kept: String },
 }
+/// The session's OM activity (the turn-end run's kind; the gauge's
+/// `busy` states and its end).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OmStatusKind {
+    Observing,
+    Reflecting,
+    Idle,
+}
 
 /// System-group events (workspace and provider state; errors).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -548,6 +572,10 @@ mod tests {
             Command::SessionRename {
                 session: "s1".into(),
                 title: "Brave Otter".into(),
+            },
+            Command::SessionSetModel {
+                session: "s1".into(),
+                model: "m2".into(),
             },
             Command::SessionOpen {
                 session: "s1".into(),
@@ -739,6 +767,11 @@ mod tests {
                     lane: MessageLane::Steering,
                 }],
             },
+            Event::OmStatus {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                kind: OmStatusKind::Observing,
+            },
             Event::SessionEvent {
                 workspace: "w1".into(),
                 session: "s1".into(),
@@ -867,7 +900,11 @@ mod tests {
             workspace: ws.clone(),
             session: meta.clone(),
             entries: vec![],
-            om: json!({}),
+            om: snapshot::OmSnapshot {
+                observation_tokens: 18_000,
+                pending_tokens: 1_000,
+                reflector_threshold: 40_000,
+            },
             live: snapshot::LiveState {
                 queue: vec![],
                 turn: snapshot::TurnState::Idle,

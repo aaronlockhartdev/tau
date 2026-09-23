@@ -133,15 +133,26 @@ pub struct LiveState {
     pub tasks: Vec<Value>,
 }
 
+/// The session's OM gauge (ticket #22): observation tokens against the
+/// session's configured Reflector threshold, plus the unobserved pending
+/// tokens. The status bar renders the ratio when idle and the activity
+/// (the `om_status` event) while a run is in flight.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OmSnapshot {
+    pub observation_tokens: u32,
+    pub pending_tokens: u32,
+    /// The configured Reflector threshold (the gauge's denominator).
+    pub reflector_threshold: u32,
+}
+
 /// The ephemeral snapshot (spec §8): metadata skeleton + bounded OM + live
-/// state + cursor. `om` is the only full-payload piece (bounded ~40k tokens
-/// by the Reflector): the session's current OM record (ticket #22).
+/// state + cursor. `om` is the session's current OM gauge (ticket #22).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub workspace: Workspace,
     pub session: SessionMeta,
     pub entries: Vec<EntryMeta>,
-    pub om: Value,
+    pub om: OmSnapshot,
     pub live: LiveState,
     /// The last entry id: a durable cursor for `entries-since` reads.
     pub cursor: String,

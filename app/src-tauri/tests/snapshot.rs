@@ -79,16 +79,17 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         bytes.len()
     );
     assert_eq!(snapshot.entries.len(), 10_000);
-    // No payloads in the snapshot: the only full-payload piece is the OM
-    // record, which the integration (#22) populates.
+    // No payloads in the snapshot: the OM gauge is the only session-level
+    // state piece, and it carries the session's configured threshold.
     let text = String::from_utf8_lossy(&bytes);
     assert!(
         !text.contains("\"payload\""),
         "the snapshot carries an entry payload"
     );
-    assert!(
-        !snapshot.om.is_null(),
-        "the snapshot carries the session's OM record (ticket #22)"
+    assert_eq!(
+        snapshot.om.reflector_threshold,
+        40_000,
+        "the snapshot's om gauge carries the session's configured threshold (ticket #22)"
     );
 
     // The spec's parse bar (single-digit ms locally); a generous bar for
