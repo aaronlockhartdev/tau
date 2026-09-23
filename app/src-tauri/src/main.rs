@@ -14,7 +14,6 @@ use tauri::{
     menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu},
 };
 
-
 #[tauri::command]
 async fn tau_command(
     state: State<'_, CoreState>,

@@ -23,9 +23,7 @@ pub const FILE_VERSION: u32 = 1;
 /// zstd level for blobs and archives — the level measured in ADR-0005.
 const ZSTD_LEVEL: i32 = 3;
 
-/// Default sidecar-blob threshold; the config's `[sessions]
-/// `blob_threshold_bytes` overrides it (spec §3: 100 KB — the research
-/// corpus measured 83 lines >100 KB, max 1 MB, mostly base64 images).
+/// The sidecar-blob threshold (spec §3: 100 KB — the research
 pub const DEFAULT_BLOB_THRESHOLD: u64 = 100_000;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -147,7 +145,7 @@ impl Entry {
 pub struct SessionStore {
     id: String,
     root: PathBuf,
-    blob_threshold: u64,
+    fixed_time: Option<u64>,
     leaf: Option<String>,
     created: u64,
     title: Option<String>,
@@ -223,7 +221,7 @@ impl SessionStore {
         Self {
             id: id.to_owned(),
             root,
-            blob_threshold: DEFAULT_BLOB_THRESHOLD,
+            fixed_time: None,
             leaf: None,
             created: 0,
             title: None,
@@ -233,11 +231,10 @@ impl SessionStore {
             next: 0,
         }
     }
-
-    /// Override the sidecar-blob threshold (normally the config's
-    /// `[sessions] blob_threshold_bytes`).
-    pub fn with_blob_threshold(mut self, bytes: u64) -> Self {
-        self.blob_threshold = bytes;
+    /// A fixed timestamp for every write (the test seam that makes the
+    /// shared fixture byte-deterministic, roadmap G handoff 1).
+    pub fn with_fixed_time(mut self, ms: u64) -> Self {
+        self.fixed_time = Some(ms);
         self
     }
 
@@ -281,12 +278,15 @@ impl SessionStore {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
     }
+    fn now(&self) -> u64 {
+        self.fixed_time.unwrap_or_else(Self::now_ms)
+    }
 
     fn new_entry(&self, kind: &str, payload: Value, first_kept_entry_id: Option<String>) -> Entry {
         Entry {
             id: format!("{:08}", self.next),
             parent: None,
-            timestamp: Self::now_ms(),
+            timestamp: self.now(),
             kind: kind.to_owned(),
             payload,
             blob: None,
@@ -301,7 +301,7 @@ impl SessionStore {
             return Err(Error::Other(format!("session {} already exists", self.id)));
         }
         fs::create_dir_all(self.root.join("sessions"))?;
-        let created = Self::now_ms();
+        let created = self.now();
         let header = Header {
             kind: "session".into(),
             version: FILE_VERSION,
@@ -422,7 +422,7 @@ impl SessionStore {
             return Ok(());
         }
         let bytes = entry.payload.to_string().into_bytes();
-        if (bytes.len() as u64) <= self.blob_threshold {
+        if (bytes.len() as u64) <= DEFAULT_BLOB_THRESHOLD {
             return Ok(());
         }
         let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
@@ -967,13 +967,13 @@ mod tests {
     #[test]
     fn oversized_payload_becomes_a_sidecar_blob() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut s = store(tmp.path(), "s1").with_blob_threshold(100);
+        let mut s = store(tmp.path(), "s1");
         s.create().unwrap();
-        let payload = Value::String("x".repeat(500));
+        let payload = Value::String("x".repeat(120_000));
         let e = s.append("tool_result", payload.clone(), None).unwrap();
         assert!(e.payload.is_null());
         let blob = e.blob.as_ref().unwrap();
-        assert_eq!(blob.size, 502);
+        assert_eq!(blob.size, 120_002);
         assert!(s.blob_path(&e.id).exists());
         let decoded = s.resolve_blob(blob).unwrap();
         assert_eq!(decoded, serde_json::to_string(&payload).unwrap().as_bytes());
@@ -986,7 +986,7 @@ mod tests {
     #[test]
     fn small_payload_stays_inline() {
         let tmp = tempfile::tempdir().unwrap();
-        let mut s = store(tmp.path(), "s1").with_blob_threshold(100);
+        let mut s = store(tmp.path(), "s1");
         s.create().unwrap();
         let e = s
             .append("message", Value::String("y".repeat(50)), None)

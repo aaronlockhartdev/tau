@@ -18,3 +18,5 @@ rand = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+proptest = { workspace = true }
+sha2 = { workspace = true }

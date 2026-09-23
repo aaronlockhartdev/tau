@@ -86,6 +86,11 @@ struct ModelsResponse {
 /// skipping, `[DONE]` termination.
 pub struct SseParser {
     buf: Vec<u8>,
+    /// The `data:` payloads of the in-flight event; a blank line completes
+    /// it. Parser state, not a `feed` local: a `data:` line and its
+    /// terminating blank line can split across chunks, and a lost payload
+    /// here is a lost event (the property test guards this).
+    data: Vec<String>,
     /// Set once a `[DONE]` data payload arrives; the caller stops reading.
     pub terminated: bool,
 }
@@ -99,6 +104,7 @@ impl SseParser {
     pub fn new() -> Self {
         Self {
             buf: Vec::new(),
+            data: Vec::new(),
             terminated: false,
         }
     }
@@ -109,7 +115,6 @@ impl SseParser {
     pub fn feed(&mut self, chunk: &[u8]) -> Result<Vec<String>, ProviderError> {
         self.buf.extend_from_slice(chunk);
         let mut out = Vec::new();
-        let mut data: Vec<String> = Vec::new();
         while let Some(pos) = self.buf.iter().position(|b| *b == b'\n') {
             // 0x0A never occurs inside a multi-byte UTF-8 sequence, so
             // cutting at a newline is UTF-8-safe; a partial code point at the
@@ -118,12 +123,13 @@ impl SseParser {
                 .map_err(|e| ProviderError::MalformedStream(e.to_string()))?
                 .trim_end_matches(['\r', '\n']);
             if line.is_empty() {
-                if !data.is_empty() {
-                    out.push(data.join("\n"));
-                    data.clear();
+                if !self.data.is_empty() {
+                    out.push(self.data.join("\n"));
+                    self.data.clear();
                 }
             } else if let Some(value) = line.strip_prefix("data:") {
-                data.push(value.strip_prefix(' ').unwrap_or(value).to_owned());
+                self.data
+                    .push(value.strip_prefix(' ').unwrap_or(value).to_owned());
             }
             // `:`-prefixed lines are comments (OpenRouter keep-alives); the
             // other SSE fields (`event:`, `id:`, `retry:`) are unused by the
@@ -659,6 +665,66 @@ impl TurnProvider for SlowCannedProvider {
 pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
     let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(SlowCannedProvider { events, delay_ms })
+}
+/// A provider entry with this base URL is a scripted stream, not an HTTP
+/// endpoint: the `canned()` test seam promoted to a provider entry so the
+/// GUI's real-app E2E can drive deterministic turns through the real core.
+/// A documented test hook, not a product surface — debug builds only
+/// (roadmap G, the 25 ms coalesced-stream acceptance bar).
+#[cfg(debug_assertions)]
+pub const CANNED_SCHEME: &str = "canned://";
+
+#[cfg(debug_assertions)]
+fn script_text() -> String {
+    let mut body = String::new();
+    for i in 0..40 {
+        body.push_str(&format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"word {i} \"}}\n\n"
+        ));
+    }
+    body.push_str(
+        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"total_tokens\":140}}}\n\ndata: [DONE]\n\n",
+    );
+    body
+}
+#[cfg(debug_assertions)]
+fn script_reasoning() -> String {
+    let mut body = String::new();
+    for i in 0..20 {
+        body.push_str(&format!(
+            "data: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thought {i} \"}}\n\n"
+        ));
+    }
+    for i in 0..20 {
+        body.push_str(&format!(
+            "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"word {i} \"}}\n\n"
+        ));
+    }
+    body.push_str(
+        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"total_tokens\":140}}}\n\ndata: [DONE]\n\n",
+    );
+    body
+}
+
+/// Resolve a `canned://` provider entry to its scripted replay at the 25 ms
+/// cadence. Debug builds only: release returns `None` and the caller must
+/// refuse the entry (a `canned://` URL is not a reachable endpoint).
+pub fn canned_dev(provider: &Provider) -> Option<TurnProviderRef> {
+    #[cfg(debug_assertions)]
+    {
+        let script = provider.base_url.strip_prefix(CANNED_SCHEME)?;
+        let body = match script {
+            "text" => script_text(),
+            "reasoning" => script_reasoning(),
+            _ => return None,
+        };
+        Some(canned_slow(&body, 25))
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = provider;
+        None
+    }
 }
 
 /// Decode a canned SSE body into the event/call sequence the live path would
@@ -1405,5 +1471,59 @@ data: "
         assert_eq!(wire["max_output_tokens"], 128);
         assert_eq!(wire["reasoning"]["effort"], "low");
         assert_eq!(wire["input"][0]["role"], "user");
+    }
+}
+
+#[cfg(test)]
+mod sse_properties {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// One valid stream over every frame dialect the parser special-cases:
+    /// comments, JSON deltas, multi-byte UTF-8, a multi-line data event, and
+    /// the `[DONE]` terminator.
+    fn body(frames: &[usize]) -> String {
+        let mut out = String::new();
+        for f in frames {
+            out.push_str(match f {
+                0 => ": keep-alive comment\n\n",
+                1 => "data: {\"type\":\"response.created\"}\n\n",
+                2 => "data: {\"type\":\"response.output_text.delta\",\"delta\":\"word \"}\n\n",
+                3 => "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thought éé✓\"}\n\n",
+                4 => "data: part1\ndata: part2\n\n",
+                _ => "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+            });
+        }
+        out.push_str("data: [DONE]\n\n");
+        out
+    }
+
+    proptest! {
+        /// Parse + coalesce is invariant to how the stream is chunked:
+        /// every byte-level partition of one valid body yields the same
+        /// decoded event sequence (generalizes the UTF-8-split case).
+        #[test]
+        fn chunk_boundaries_do_not_change_the_decoded_events(
+            (n, chunk) in (1usize..16, 1usize..40),
+        ) {
+            let frames: Vec<usize> = (0..n).map(|i| (i * 7) % 6).collect();
+            let full = body(&frames);
+            let bytes = full.as_bytes();
+
+            let mut reference = SseParser::new();
+            let expected = reference.feed(bytes).unwrap();
+            let reference_terminated = reference.terminated;
+
+            let mut chunked = SseParser::new();
+            let mut out = Vec::new();
+            let mut pos = 0usize;
+            while pos < bytes.len() {
+                let end = (pos + chunk).min(bytes.len());
+                out.extend(chunked.feed(&bytes[pos..end]).unwrap());
+                pos = end;
+            }
+            prop_assert_eq!(out, expected);
+            prop_assert_eq!(chunked.terminated, reference_terminated);
+        }
     }
 }

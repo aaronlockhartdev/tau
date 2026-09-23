@@ -48,6 +48,8 @@ use crate::watch::{Batch, Watcher};
 /// few directory reads, depth ≤ 4) is trivial, so there is nothing to
 /// gain from a longer window, and 500 ms reads as instant in the GUI.
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(500);
+/// The coalescing window: 25 ms (spec §8, ADR-0006).
+const COALESCE_MS: u64 = 25;
 /// The files pane's excluded dir names (design #30): a hard requirement,
 /// not an optimization — on Linux inotify a recursive watch is one
 /// descriptor per directory (this repo: 4,471, 3,777 under `target/`).
@@ -251,6 +253,17 @@ fn info_to_protocol(i: &tau_core::subagent::SubagentInfo) -> SubagentInfo {
         resume_contract: i.resume_contract.clone(),
     }
 }
+/// A session's provider: a `canned://` entry (the dev-gated test hook) takes
+/// its scripted replay; everything else is the live endpoint. A `canned://`
+/// entry in a release build has no scripts, so it falls through to the live
+/// endpoint, where the unresolvable URL fails the turn.
+fn session_inner(
+    client: &reqwest::Client,
+    p: &tau_core::config::Provider,
+    requests: &tau_core::config::Requests,
+) -> TurnProviderRef {
+    provider::canned_dev(p).unwrap_or_else(|| provider::production(client, p, requests))
+}
 
 /// The child provider factory (ticket #23 N3): wraps the session's
 /// production provider in the forwarding seam, per child session id.
@@ -264,7 +277,7 @@ struct AppChildProviderFactory {
 impl ChildProviderFactory for AppChildProviderFactory {
     fn create(&self, child: &str) -> TurnProviderRef {
         Arc::new(ForwardingProvider {
-            inner: provider::production(&self.client, &self.provider, &self.requests),
+            inner: session_inner(&self.client, &self.provider, &self.requests),
             tx: self.tx.clone(),
             workspace: self.workspace.clone(),
             session: child.to_owned(),
@@ -345,7 +358,7 @@ impl SubagentBridge for AppSubagentBridge {
             },
         });
         let provider = Arc::new(ForwardingProvider {
-            inner: provider::production(&self.client, &self.provider, &self.requests),
+            inner: session_inner(&self.client, &self.provider, &self.requests),
             tx: self.core.events_tx.clone(),
             workspace: self.workspace.clone(),
             session: n.child.clone(),
@@ -502,7 +515,6 @@ pub struct Core {
     events_tx: mpsc::Sender<Event>,
     /// The pump's half of the events channel; taken exactly once.
     events_rx: Mutex<Option<mpsc::Receiver<Event>>>,
-    coalesce_ms: u64,
     /// The test-seam child provider factory (None in production builds).
     child_factory: Option<Arc<dyn ChildProviderFactory>>,
     /// Self-reference for the seams that need an `Arc<Core>` (the child
@@ -593,7 +605,6 @@ impl CoreBuilder {
             },
             events_tx,
             events_rx: Mutex::new(Some(rx)),
-            coalesce_ms: 25,
             child_factory: self.child_factory.clone(),
         });
         core.self_weak
@@ -679,10 +690,6 @@ struct WorkspaceIndexEntry {
 }
 
 impl Core {
-    pub fn coalesce_ms(&self) -> u64 {
-        self.coalesce_ms
-    }
-
     pub fn events(&self) -> mpsc::Receiver<Event> {
         self.events_rx
             .lock()
@@ -1261,7 +1268,7 @@ impl Core {
         }
 
         let provider = ForwardingProvider {
-            inner: provider::production(&self.client, &provider, &config.requests),
+            inner: session_inner(&self.client, &provider, &config.requests),
             tx: self.events_tx.clone(),
             workspace: workspace.id.clone(),
             session: store.id().to_owned(),
@@ -2511,7 +2518,7 @@ impl Core {
 /// so the pipe is testable without a window (ADR-0006 transport #1).
 pub async fn pump(core: Arc<Core>, mut sink: impl FnMut(&[Event])) {
     let mut rx = core.events();
-    let mut coalescer = Coalescer::new(core.coalesce_ms());
+    let mut coalescer = Coalescer::new(COALESCE_MS);
     loop {
         tokio::select! {
             received = rx.recv() => {

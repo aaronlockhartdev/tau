@@ -85,37 +85,6 @@ impl Default for Requests {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Gui {
-    pub coalesce_ms: u64,
-    pub reasoning_visible: bool,
-}
-
-impl Default for Gui {
-    fn default() -> Self {
-        Self {
-            coalesce_ms: 25,
-            reasoning_visible: true,
-        }
-    }
-}
-
-/// Session storage settings (spec §3).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Sessions {
-    pub blob_threshold_bytes: u64,
-}
-
-impl Default for Sessions {
-    fn default() -> Self {
-        Self {
-            blob_threshold_bytes: 100_000,
-        }
-    }
-}
-
 /// The merged, fully-defaulted configuration the core operates on.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -124,8 +93,6 @@ pub struct Config {
     pub om: Om,
     pub subagents: SubAgents,
     pub requests: Requests,
-    pub gui: Gui,
-    pub sessions: Sessions,
 }
 
 /// On-disk file shape: every section optional so a partial file layers cleanly.
@@ -136,8 +103,6 @@ struct ConfigFile {
     om: Option<Om>,
     subagents: Option<SubAgents>,
     requests: Option<Requests>,
-    gui: Option<Gui>,
-    sessions: Option<Sessions>,
 }
 
 impl ConfigFile {
@@ -162,12 +127,6 @@ impl ConfigFile {
         }
         if let Some(requests) = &self.requests {
             config.requests = requests.clone();
-        }
-        if let Some(gui) = &self.gui {
-            config.gui = gui.clone();
-        }
-        if let Some(sessions) = &self.sessions {
-            config.sessions = sessions.clone();
         }
     }
 }
@@ -230,9 +189,6 @@ mod tests {
         assert_eq!(config.om.reflect_threshold, 40_000);
         assert_eq!(config.om.buffer_increment, 6_000);
         assert_eq!(config.subagents.max_depth, 1);
-        assert_eq!(config.gui.coalesce_ms, 25);
-        assert_eq!(config.sessions.blob_threshold_bytes, 100_000);
-        assert!(config.gui.reasoning_visible);
     }
 
     #[test]
@@ -243,15 +199,11 @@ base_url = "http://system:1/v1"
 key_env = "SYS_KEY"
 models = ["sys-model"]
 
-[gui]
-coalesce_ms = 50
 "#;
         let project = r#"
 [providers.local]
 base_url = "http://project:2/v1"
 
-[gui]
-coalesce_ms = 25
 "#;
         let config = load_from(system, project).unwrap();
         let local = &config.providers["local"];
@@ -259,7 +211,6 @@ coalesce_ms = 25
         // omitted fields fall back to their own defaults, not to system values.
         assert_eq!(local.base_url, "http://project:2/v1");
         assert_eq!(local.key_env, "");
-        assert_eq!(config.gui.coalesce_ms, 25);
     }
 
     #[test]
