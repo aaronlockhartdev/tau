@@ -411,25 +411,64 @@ difference. Pre-v1 is breakable; no ADR conflict.
 
 ---
 
-## Suggested execution order
+## Execution plan — ≤ 3 parallel, fresh-context agents
+
+**Model.** Each agent runs in its own git worktree on its own branch; `main` is the merge point. A
+**wave boundary is a sync point**: all of the wave's branches merge to `main` and `cargo check --workspace`
++ `npm run build` run green before the next wave starts. Every agent gets a self-contained brief — this
+document is all the context it needs: read `docs/v0-cleanup-roadmap.md`, take its items in order, own its
+files, commit per item.
+
+**File ownership** (disjoint across concurrent agents — this is what keeps merges trivial):
+
+- **core** — `crates/**` plus the app's Rust shell: `app/src-tauri/src/{core,main,lib}.rs`, `app/src-tauri/Cargo.toml`
+- **app** — everything else under `app/**` (svelte, `tests/e2e`, `scripts/`, the demo files, `package.json`,
+  `tauri.conf.json`) plus tooling: `justfile`, `.github/workflows/**`, repo-root `scripts/`, `./build`
+- **docs** — `docs/**`, `AGENTS.md`, the tracker (via `gh`)
+- **alone** — the A comment audit and the H CI gate are cross-cutting; they run in the final wave, solo.
+
+**Waves** (max 3 agents in flight; an empty cell means that lane's agent is free):
 
 ```
-Phase 0 (independent, land in any order)
-  A comments   B dead code   C mirror-fix   D ADRs+agent-docs   E prototypes+tracker
-  F build/acceptance -> justfile (just)   F2 Linux GUI support
-  G demo rig -> real-app E2E suite   H file-size policy in AGENTS.md
+Wave 1 — three in parallel
+  core:  C5 → 1b-rust (proptest: hashline, SSE chunk-boundaries; canned test seam promoted to a
+          dev-gated canned:// provider; fixture-gen: a tau-core test that writes the shared 10k-entry
+          session file to target/test-fixture/session.jsonl)
+  app:   1a (nextest + the 4-job CI) → F (justfile; retire ./build + scripts/acceptance.sh) →
+          F2 (bundle targets, CI webkit2gtk, xvfb; spec §13 errata)
+  docs:  D (ADRs + agent-docs) → E (prototypes, #33, triage labels, junk edge) → H (policy text in AGENTS.md)
 
-Phase 1 (ordered)
-  1a runner+CI ── 1b rust (proptest, tauri smoke) ── 1c svelte store suite (home of the adversarial-sequence checks)
+Wave 2 — three in parallel
+  core:  C1 (harness move) → C2 (session-access seam) → 1b-app (tau_command to lib.rs; tauri::test smoke)
+  app:   G (tests/e2e: real app on the shared fixture; retire the demo; spec §8 errata) →
+          C8-front (EntryCard.svelte / RightPane.svelte: split only if the cut is clean)
+  svelte:C3 (extract the entries module) → 1c (vitest store suite; absorbs G's adversarial-sequence checks)
 
-Phase 2
-  C3 entries-module ── 1c's store suite benefits from it
-  C5 wire-or-delete config
-  C1 harness move (DECIDED, strategic) ── C2 session-access (collapses; together they break core.rs to <1000 LOC)
-  C8 file splits (every over-limit file; the H CI gate lands with the last one)
-  C4 (defer)   C7 (defer)
-  orphaned #28–#33: left as standalone tickets (user decision — no map)
+Wave 3 — two in parallel
+  core:  C8-core (split the seven over-limit tau-core files; investigate tools/skills/hashline/protocol-lib)
+  app:   B (dead code) → C (protocol.ts mirror + parity guard wired into CI)
+
+Wave 4 — one agent, cross-cutting, alone
+  H gate (the >1000-LOC CI check — lands only once Wave 3 proves every file under the limit) →
+  A (comment audit, the 53 flags) → full `just acceptance` green
 ```
+
+**Handoffs a fresh agent must know** (each is stated here because no agent inherits session context):
+
+1. **The shared fixture** is at `target/test-fixture/session.jsonl` — written by Wave 1's fixture-gen
+   (a `tau-core` test), consumed by G's E2E in Wave 2. Deterministic path; both sides read this doc.
+2. **After C1 (Wave 2)** the app's Rust surface is `main.rs`/`lib.rs` only — `core.rs` is gone from the
+   app crate; anything after that finds the core in `crates/tau-core`.
+3. **The H gate (Wave 4) lands last**: it fails CI on any file over 1000 LOC, so it must see a tree where
+   every split has already landed.
+4. **A is the last edit to code** — after it, nothing changes except acceptance results.
+
+**Per-agent brief template.** (1) Read `docs/v0-cleanup-roadmap.md` — it is the whole spec. (2) Your items,
+in this order: `<ids>`. (3) You own exactly these paths: `<ownership list>` — do not edit outside them;
+if a fix requires it, say so in the commit message and stop. (4) Accept: core → `cargo fmt --check`,
+`cargo clippy --workspace`, `cargo nextest run --workspace`; app → `npm run build` + its suites; docs →
+diff review + `gh` output. (5) One commit per item: `<id>: <one line>`. (6) Merge to `main` only at a
+wave boundary, after the wave's other branches are in.
 
 ## What "done" looks like for v0
 
