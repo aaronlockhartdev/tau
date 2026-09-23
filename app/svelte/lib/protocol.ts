@@ -90,29 +90,136 @@ export interface ViewEntry {
   first_kept: string | null;
 }
 
-// The flat card shape the transcript renders: a ViewEntry payload unfolded
+// The entry payload shapes (C9): what each kind's writer appends — the
+// ADR-0006 mirror of the crate's payload module. The file stays free-form
+// at the ADR-0005 storage level; these types own the shapes the GUI decodes.
+export type SkillRef = { name: string; location: string };
+
+export interface UserPayload {
+  text: string;
+  lane: MessageLane;
+  source?: string;
+  skill?: SkillRef;
+}
+
+// One tool call an assistant message issued (the provider's shape, spec §6).
+export interface FunctionCall {
+  id: string;
+  call_id: string;
+  name: string;
+  arguments: string;
+}
+
+export interface AssistantPayload {
+  text: string;
+  reasoning: string;
+  interrupted: boolean;
+  usage?: Usage;
+  calls: FunctionCall[];
+}
+
+export interface ToolPayload {
+  call_id: string;
+  name: string;
+  args: Record<string, unknown>;
+  output: unknown;
+}
+
+// The OM record (crates/tau-core/src/om.rs OmRecord) as the `om` entry's
+// payload: the newest entry wins, so the decoder shows what it added.
+export interface OmPayload {
+  frozen_prefix: string;
+  active_observations: string;
+  cursor?: { entry_id: string; timestamp: number };
+  generation: number;
+  observation_tokens: number;
+  pending_tokens: number;
+  prefix_demoted?: boolean;
+}
+
+export interface SystemPayload {
+  note: string;
+}
+
+export interface SpawnSnapshotPayload {
+  parentSession: string;
+  range: string;
+  log: string;
+}
+
+export type SubagentPayload =
+  | { event: 'spawn'; type: string; brief: string; context_mode: string; parent: string; call: string; task?: string }
+  | { event: 'state'; state: 'running' }
+  | { event: 'state'; state: 'idle'; waiting_on: string }
+  | { event: 'state'; state: 'done' }
+  | { event: 'state'; state: 'failed'; reason: string }
+  | { event: 'state'; state: 'stopped'; by: string }
+  | { event: 'notify'; text: string; done: boolean; output?: Record<string, unknown>; waiting_on?: string };
+
+// The per-session task event (crates/tau-core/src/task.rs): the task state
+// is a fold of these; the card renders the event plus its variant fields.
+export type TaskPayload =
+  | { event: 'created'; id: string; title: string; steps: Step[]; criteria: Criterion[] }
+  | { event: 'started'; id: string }
+  | { event: 'evidence'; id: string; evidence: Evidence }
+  | { event: 'finished'; id: string; force: boolean; reason: string | null }
+  | { event: 'blocked'; id: string; reason: string; needs: string | null }
+  | {
+      event: 'assigned';
+      id: string;
+      // creator's copy: the worker's session; worker's copy: the record.
+      worker?: string;
+      record?: { title: string; status: string; steps: Step[]; criteria: Criterion[]; evidence: Evidence[]; blockers: Blocker[]; created_in: string };
+    }
+  | { event: 'handed_off'; id: string; output: Record<string, unknown> }
+  | { event: 'cancelled'; id: string; reason: string }
+  | { event: 'pointer'; id: string; status: string }
+  | { event: 'note'; id: string; text: string };
+
+// The flat card shape the transcript renders: a ViewEntry payload decoded
 // (or the snapshot's metadata skeleton before a paged read fills it in).
-export interface Entry {
+// One variant per kind (C9); the last is the escape for a kind the card
+// renders generically (a compaction record, a pre-v0 file).
+export type Entry =
+  | { id: string; kind: 'user'; text: string; source?: string; skill?: SkillRef; msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> } }
+  | MessageEntry
+  | { id: string; kind: 'tool'; text?: string; name?: string; args?: Record<string, unknown>; output?: string; status?: 'ok' | 'running' | 'error' }
+  | { id: string; kind: 'om'; text: string }
+  | { id: string; kind: 'system'; text: string }
+  | { id: string; kind: 'spawn-snapshot'; text: string }
+  | { id: string; kind: 'subagent'; text: string; payload?: SubagentPayload }
+  | { id: string; kind: 'task'; text: string; payload?: TaskPayload }
+  | AnyEntry;
+
+// A streamed assistant message in flight: the live slot until stream_end
+// promotes it (an interrupted partial keeps its slot's id).
+export type MessageEntry = {
+  id: string;
+  kind: 'message' | 'interrupted';
+  text: string;
+  reasoning?: string;
+  calls?: string[];
+  usage?: Usage;
+};
+
+// The escape variant: every variant's fields, all optional — kinds the
+// card renders as a plain text block (no payload interpretation).
+export type AnyEntry = {
   id: string;
   kind: string;
   text?: string;
-  // The child session that produced this wake message (a sub-agent
-  // notification is a user entry carrying its source, ticket #23).
   source?: string;
-  // A /skill: invocation (ticket #28): the user entry records the
-  // expanded template and carries the skill's identity for the block.
-  skill?: { name: string; location: string };
+  skill?: SkillRef;
   reasoning?: string;
-  // The provider tool_call_ids this assistant message issued (the file
-  // payload's calls[].call_id): the reference a tool card anchors to when
-  // the entry's id is the file counter, not the stream's call_id.
   calls?: string[];
-  name?: string;
-  args?: string;
-  status?: 'ok' | 'running' | 'error';
-  output?: string;
   usage?: Usage;
-}
+  name?: string;
+  args?: Record<string, unknown>;
+  output?: string;
+  status?: 'ok' | 'running' | 'error';
+  payload?: SubagentPayload | TaskPayload;
+  msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> };
+};
 export interface QueuedItem {
   text: string;
   lane: MessageLane;
@@ -279,6 +386,7 @@ export type Command =
   | { type: 'provider_list' }
   | { type: 'provider_add'; name: string; base_url: string; key_env: string; models: string[] }
   | { type: 'provider_set'; name: string; base_url: string; key_env: string; models: string[] }
+  | { type: 'provider_delete'; name: string }
   | { type: 'file_read'; workspace: string; path: string; offset: number | null; limit: number | null }
   | { type: 'file_list'; workspace: string; path: string };
 

@@ -75,7 +75,7 @@
   const live = $derived(cur ? store.sessions[cur].live : []);
   // A sub-agent notification's label: the child session's own title.
   const sourceLabelFor = (e: Entry): string =>
-    e.source ? (store.sessions[e.source]?.meta.title ?? '') : '';
+    e.kind === 'user' ? (e.source ? store.sessions[e.source]?.meta.title ?? '' : '') : '';
   // The parent → child direction: a user entry inside a child session is
   // the parent's message (task assignment, steering, follow-up).
   const parentLabel = $derived.by(() => {
@@ -98,9 +98,10 @@
 
   function hOf(e: Entry): number {
     // A fully empty entry renders nothing (EntryCard's hasContent).
+    const reasoning = e.kind === 'message' || e.kind === 'interrupted' ? e.reasoning : undefined;
     if (
       !((e.text ?? '').trim() ||
-        e.reasoning ||
+        reasoning ||
         e.kind === 'interrupted' ||
         (e.kind === 'tool' && (Boolean(e.args) || Boolean(e.output))))
     )
@@ -110,7 +111,7 @@
       if (m !== undefined) return m;
     }
     // estimate: ~1.45 line-height per line + card padding; live streams grow.
-    const lines = Math.max(1, Math.ceil((e.text ?? '').length / 72)) + (e.reasoning ? 2 : 0);
+    const lines = Math.max(1, Math.ceil((e.text ?? '').length / 72)) + (reasoning ? 2 : 0);
     return lines * 21 + 36;
   }
 

@@ -5,6 +5,7 @@
 // entry mix of the prototype; the markdown edge cases are the prototype's.
 
 import type { Entry, SessionMeta, SkillInfo, SubagentInfo, Task, Usage, ViewEntry } from './protocol';
+import { decodeEntry } from './entries';
 interface FixtureEntry {
   id: string;
   parent: string | null;
@@ -14,7 +15,7 @@ interface FixtureEntry {
   first_kept: string | null;
 }
 
-export interface DemoSession {
+interface DemoSession {
   meta: SessionMeta;
   entries: Entry[]; // metadata skeleton (preview text)
   views: ViewEntry[]; // payloads, for paged reads
@@ -22,12 +23,12 @@ export interface DemoSession {
 // A store SessionState row, without importing the store (this module is
 // the store's data source; the demo entry seeds boot's session stubs
 // from these, so the shape is structural).
-export interface FixturePendingMsg {
+interface FixturePendingMsg {
   text: string;
   lane: 'force' | 'steering' | 'follow-up';
 }
 
-export interface FixtureSessionState {
+interface FixtureSessionState {
   meta: SessionMeta;
   entries: Entry[];
   live: Entry[];
@@ -206,73 +207,6 @@ function view(e: FixtureEntry): ViewEntry {
   };
 }
 
-// Map a protocol ViewEntry to the flat card shape the transcript renders.
-export function toEntry(v: ViewEntry): Entry {
-  const p = v.payload as Record<string, unknown>;
-  const usage =
-    'usage' in (p as object) ? (p.usage as Entry['usage']) : undefined;
-  switch (v.kind) {
-    case 'user': {
-      const sk = p.skill as { name?: unknown; location?: unknown } | undefined;
-      return {
-        id: v.id,
-        kind: 'user',
-        text: String(p.text ?? ''),
-        source: p.source ? String(p.source) : undefined,
-        skill: sk ? { name: String(sk.name ?? ''), location: String(sk.location ?? '') } : undefined,
-        usage
-      };
-    }
-    case 'assistant': {
-      const interrupted = Boolean(p.interrupted);
-      return {
-        id: v.id,
-        kind: interrupted ? 'interrupted' : 'message',
-        text: String(p.text ?? ''),
-        reasoning: p.reasoning ? String(p.reasoning) : undefined,
-        calls: Array.isArray(p.calls)
-          ? p.calls
-              .map((c) => String((c as { call_id?: unknown }).call_id ?? ''))
-              .filter(Boolean)
-          : undefined,
-        usage
-      };
-    }
-    case 'tool': {
-      const a = p.args as Record<string, unknown> | undefined;
-      return {
-        id: v.id,
-        kind: 'tool',
-        name: String(p.name ?? 'tool'),
-        args: a ? JSON.stringify(a) : undefined,
-        output: p.output !== undefined ? String(p.output) : undefined,
-        status: p.output === undefined ? 'running' : 'ok'
-      };
-    }
-    case 'om': {
-      const o = p as { active_observations?: string };
-      // The record's active_observations is the whole managed suffix; the
-      // block shows what this entry added — the newest observation, past
-      // its message boundary.
-      const all = o.active_observations ?? String(p as unknown as string);
-      const m = all.lastIndexOf('--- message boundary (');
-      const nl = m >= 0 ? all.indexOf('\n\n', m) : -1;
-      return {
-        id: v.id,
-        kind: 'om',
-        text: nl > 0 ? all.slice(nl + 2).trim() : all.trim(),
-        status: 'ok'
-      };
-    }
-    case 'system':
-      return { id: v.id, kind: 'system', text: String(p.note ?? ''), status: 'ok' };
-    case 'spawn-snapshot':
-      return { id: v.id, kind: 'spawn-snapshot', text: String(p.log ?? ''), status: 'ok' };
-    default:
-      return { id: v.id, kind: v.kind, text: JSON.stringify(p ?? v.id), status: 'ok' };
-  }
-}
-
 export function buildDemoSession(): DemoSession {
   const raw: FixtureEntry[] = [];
   for (let i = 0; i < N; i++) {
@@ -310,7 +244,7 @@ export function buildDemoSession(): DemoSession {
 
   const views = raw.map(view);
   const entries: Entry[] = views.map((v) => {
-    const e = toEntry(v);
+    const e = decodeEntry(v);
     // Skeleton: the card shows the first line until a paged read fills it.
     e.text = (e.text ?? '').split('\n')[0].slice(0, 80);
     return e;

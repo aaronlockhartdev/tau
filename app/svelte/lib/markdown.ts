@@ -10,7 +10,7 @@ function esc(s: string): string {
 // The prototype's highlighter: comments, strings, a keyword set, numbers,
 // capitalized identifiers. A small highlighter per the ticket's allowance
 // (zero-dependency, matching the prototype's behavior).
-export function hl(code: string): string {
+function hl(code: string): string {
   let s = esc(code);
   s = s.replace(/(\/\/[^\n]*|#[^\n]*)/g, '<span class="c">$1</span>');
   s = s.replace(/(&quot;[^&]*?&quot;|&apos;[^&]*?&apos;|'[^'\n]*')/g, '<span class="s">$1</span>');
@@ -68,37 +68,6 @@ export function md(t: string): string {
     }
   }
   return out;
-}
-
-export { esc };
-
-// A sub-agent's message to the parent (and a parent's message to a child)
-// conventionally carries a JSON payload after the prose ("hi — {"word":"hi"}").
-// Split it out so the GUI can render the payload as kv lines, the way the
-// expanded tool call does. Returns null when the text has no parseable
-// trailing object.
-export function splitJsonPayload(
-  text: string
-): { prose: string; kv: Array<{ k: string; lines: string[] }> } | null {
-  const t = text.trimEnd();
-  if (!t.endsWith('}')) return null;
-  for (let i = t.length - 1; i >= 0; i--) {
-    if (t[i] !== '{') continue;
-    let obj: unknown;
-    try {
-      obj = JSON.parse(t.slice(i));
-    } catch {
-      continue;
-    }
-    if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) continue;
-    const kv = Object.entries(obj).map(([k, v]) => ({
-      k,
-      lines: valueLinesOf(v, 1)
-    }));
-    if (!kv.length) continue;
-    return { prose: t.slice(0, i).replace(/[\s—–\-·:]+$/, ''), kv };
-  }
-  return null;
 }
 
 // Structured lines for a tool's arguments: each field's name on its own

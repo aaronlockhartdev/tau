@@ -14,11 +14,11 @@ import {
   buildDemoSession,
   demoChildren,
   demoChild,
-  toEntry,
   demoSkills,
   demoSubagents,
   demoTasks
 } from './lib/fixture';
+import { decodeEntry } from './lib/entries';
 import type {
   Command,
   CommandOutput,
@@ -237,7 +237,7 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
           const sess = store.sessions[c.session];
           if (sess) {
             sess.meta = { ...sess.meta, model: c.model };
-            sess.entries = [...sess.entries, toEntry(views[views.length - 1])];
+            sess.entries = [...sess.entries, decodeEntry(views[views.length - 1])];
           }
         }
       }

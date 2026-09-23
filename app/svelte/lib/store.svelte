@@ -9,66 +9,29 @@
   // skeleton (no payloads); paged reads around the viewport fill the
   // cards in (spec §8).
 
+  import { command, isTauri, type Event, type SessionMeta, type SkillInfo, type SubagentInfo, type Workspace } from './protocol';
+  import { decodeEntry, type PendingDelta, applyStreamEvent, applyToolEvent, mergeHydrated } from './entries';
   import {
-    command,
-    isTauri,
-    type Entry,
-    type Event,
-    type FileEntry,
-    type QueuedItem,
-    type SessionMeta,
-    type SkillInfo,
-    type Snapshot,
-    type SubagentInfo,
-    type Task,
-    type Usage,
-    type ViewEntry,
-    type Workspace
-  } from './protocol';
-  import { toEntry } from './fixture';
+    applySessionList,
+    laneOf,
+    openSession,
+    type PendingMsg,
+    type SessionState,
+    setArchived,
+    touchChild
+  } from './sessions';
+  export type { PendingMsg, SessionState } from './sessions';
+  import {
+    type FilesCache,
+    ensureWorkspace,
+    putListing,
+    removeWorkspace,
+    scheduleRefetch as queueRefetch,
+    toggleDir,
+    waveDirs
+  } from './files';
   import { listen } from '@tauri-apps/api/event';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
-
-
-  export interface PendingMsg {
-    text: string;
-    lane: 'force' | 'steering' | 'follow-up';
-  }
-
-  export interface SessionState {
-    meta: SessionMeta;
-    entries: Entry[];
-    live: Entry[];
-    usage: Usage | null;
-    // Output tokens/second of the session's most recent turn (status bar).
-    tps: number;
-    turn: 'running' | 'idle';
-    // The session's OM state (the status bar's gauge): the activity kind
-    // (the om_status events) and the gauge values (the snapshots).
-    om: {
-      kind: 'idle' | 'observing' | 'reflecting';
-      observation_tokens: number;
-      pending_tokens: number;
-      reflector_threshold: number;
-    };
-    pending: PendingMsg[];
-    // The session-tree row (ticket #26): a child session's parent link,
-    // its lifecycle state, its archive flag, and its sort key.
-    parent: string | null;
-    state: 'running' | 'idle' | 'done' | 'failed' | 'stopped';
-    // The child's declared wait (parent | user | subagent) — from the state
-    // event's detail; annotated on the row and the child's own header.
-    waiting_on: string | null;
-    archived: boolean;
-    mru: number;
-    // The session's children (the parent's view — the sub-agent panel) and
-    // its tasks (the tasks panel; active ones carry their resume contract).
-    subagents: SubagentInfo[];
-    tasks: Task[];
-  }
-
-  const OM_IDLE = { kind: 'idle', observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 } as const;
-
   export const store = $state({
     focus: false,
     // The composer's model menu (the floating centered list): the model
@@ -102,7 +65,7 @@
     // their entries. A dir appears here once fetched (workspace open
     // lists the root, expansion lists its children); FileTreeChanged
     // marks a listed dir stale and a coalesced refetch wave replaces it.
-    files: {} as Record<string, Record<string, FileEntry[]>>,
+    files: {} as FilesCache,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>
@@ -170,50 +133,12 @@
     return wsName ? `${wsName} · ${p} › ${name}` : `${p} › ${name}`;
   }
 
-  // A spawn/state event for a child we haven't opened yet: register a stub
-  // so the session tree can group it; a later session_open replaces the
-  // stub with the real snapshot (keeping the parent link, which the child's
-  // own snapshot does not carry).
-  function touchChild(parentSid: string, childSid: string, state: SessionState['state'], mru: number, waitingOn: string | null = null, title: string | null = null): void {
-    const parent = store.sessions[parentSid];
-    const ws = parent?.meta.workspace ?? '';
-    const prev = store.sessions[childSid];
-    if (prev) {
-      prev.state = state;
-      prev.mru = mru;
-      if (waitingOn !== null) prev.waiting_on = waitingOn;
-      // A late title (the spawn event) fills the stub's blank name; a real
-      // name already set (from a snapshot) wins.
-      if (title !== null && prev.meta.title === null) prev.meta.title = title;
-      return;
-    }
-    store.sessions[childSid] = {
-      meta: { id: childSid, workspace: ws, title, parent: parentSid, created: mru, leaf: null, model: null, usage: null, archived: false },
-      entries: [],
-      live: [],
-      usage: null,
-      tps: 0,
-      turn: state === 'running' ? 'running' : 'idle',
-      om: { ...OM_IDLE },
-      pending: [],
-      parent: parentSid,
-      state,
-      waiting_on: state === 'idle' ? waitingOn : null,
-      archived: false,
-      mru,
-      subagents: [],
-      tasks: []
-    };
-  }
-
   // Deltas that land before their stream_start (a GUI connecting mid-stream):
   // buffered per call until the start or end arrives.
-  let pendingDeltas = new Map<string, { text: string; reasoning: string }>();
+  let pendingDeltas = new Map<string, PendingDelta>();
   // Per-call clock (ms epoch) by call_id: TPS = a call's output tokens over
   // its own stream duration, shown in the status bar.
   let callStartMs = new Map<string, number>();
-  const PENDING_CAP = 64 * 1024;
-
 
   function sessionOf(sid: string): SessionState {
     const s = store.sessions[sid];
@@ -239,9 +164,6 @@
     return String(e);
   }
 
-  function laneOf(l: QueuedItem['lane']): PendingMsg['lane'] {
-    return l === 'follow_up' ? 'follow-up' : l;
-  }
 
   /** Connect: list workspaces, then open the first (or the ?workspace= one). */
   export async function init(): Promise<void> {
@@ -294,7 +216,7 @@
     applyEvents,
     store: () => store,
     liveTexts: () =>
-      (store.current ? store.sessions[store.current]?.live ?? [] : []).map((l) => (l.text ?? '').length),
+      (store.current ? store.sessions[store.current]?.live ?? [] : []).map((l) => l.text.length),
     // send/stop/openWorkspace/switchSession/fetchWindow are module exports
     // the rig drives directly; hoisted above.
     send,
@@ -313,41 +235,6 @@
       ]),
     sessionSetModel: (session: string, model: string) => command({ type: 'session_set_model', session, model })
   };
-
-
-  function snapshotToState(snap: Snapshot): SessionState {
-    const meta = snap.session;
-    return {
-      meta,
-      // metadata skeleton: the card shows the preview until a paged read
-      // replaces it with the payload.
-      entries: snap.entries.map((m) => ({
-        id: m.id,
-        kind:
-          m.kind === 'assistant'
-            ? m.status === 'interrupted'
-              ? 'interrupted'
-              : 'message'
-            : m.kind,
-        text: m.preview
-      })),
-      live: [],
-      usage: meta.usage,
-      turn: snap.live.turn === 'running' ? 'running' : 'idle',
-      tps: 0,
-      // The snapshot carries the gauge values; the activity kind is
-      // event-driven (an open session is idle until a run starts).
-      om: { ...snap.om, kind: 'idle' },
-      pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) })),
-      parent: null,
-      state: snap.live.turn === 'running' ? 'running' : 'idle',
-      waiting_on: null,
-      archived: meta.archived,
-      mru: meta.created,
-      subagents: snap.live.subagents,
-      tasks: snap.live.tasks
-    };
-  }
 
 
   // In-flight marker: the open's own workspace_opened event re-enters the
@@ -387,10 +274,10 @@
     const list = await command({ type: 'session_list', workspace: real.id });
     // The listed sessions materialize as stubs so the pane shows them all;
     // entries hydrate lazily when one is opened.
-    if (list.kind === 'sessions') applySessionList(list.sessions);
+    if (list.kind === 'sessions') store.sessions = applySessionList(store.sessions, list.sessions);
     // The pane's first listing (ticket #32): the root, listed on open —
     // every other dir is fetched on expansion.
-    store.files[real.id] ??= {};
+    store.files = ensureWorkspace(store.files, real.id);
     fetchDir(real.id, '.');
     const sid =
       list.kind === 'sessions' && list.sessions.length > 0
@@ -402,8 +289,6 @@
           })) as { kind: 'session'; session: SessionMeta }).session.id;
     await switchSession(sid);
   }
-
-  // --- The files pane (ticket #32): listed dirs, lazy expansion, invalidation.
 
   // One directory's listing into the store. The change guard keeps an
   // unchanged refetch a no-op (no reactive churn, no re-render).
@@ -417,57 +302,30 @@
       return;
     }
     if (out.kind !== 'files') return;
-    const cur = store.files[ws];
-    if (!cur) return;
-    if (JSON.stringify(cur[path] ?? []) === JSON.stringify(out.files)) return;
-    cur[path] = out.files;
+    store.files = putListing(store.files, ws, path, out.files);
   }
 
   // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
   // fetch on first expand. A dir is listed only while expanded, so the
   // tree's memory tracks what is on screen.
   export function toggleFileDir(ws: string, path: string): void {
-    const cur = store.files[ws];
-    if (!cur) return;
-    if (cur[path]) {
-      delete cur[path];
-      return;
-    }
-    cur[path] = [];
-    void fetchDir(ws, path);
+    const t = toggleDir(store.files, ws, path);
+    store.files = t.cache;
+    if (t.fetch) void fetchDir(ws, t.fetch);
   }
 
-  // Invalidation (the design's lost-events case, client side): a burst of
-  // file_tree_changed events coalesces into one refetch wave — the 300 ms
-  // timer collapses bursts, and only listed (expanded) dirs are refetched:
-  // a change in an unlisted dir is fetched the moment the user expands it.
   const refetchPending = new Map<string, Set<string>>();
   let refetchTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleRefetch(ws: string, dirs: string[]): void {
-    const cur = store.files[ws];
-    if (!cur) return;
-    let set = refetchPending.get(ws);
-    if (!set) {
-      set = new Set();
-      refetchPending.set(ws, set);
-    }
-    for (const d of dirs) {
-      if (cur[d]) set.add(d);
-    }
+    queueRefetch(store.files, refetchPending, ws, dirs);
     if (refetchTimer) clearTimeout(refetchTimer);
     refetchTimer = setTimeout(flushRefetch, 300);
   }
 
   function flushRefetch(): void {
     refetchTimer = null;
-    for (const [ws, dirs] of refetchPending) {
-      refetchPending.delete(ws);
-      // A dir collapsed inside the 300 ms window is no longer listed: drop
-      // it here, not at schedule time (the listed? guard must be fresh).
-      const cur = store.files[ws];
-      for (const d of dirs) if (cur?.[d]) void fetchDir(ws, d);
-    }
+    for (const { ws, path } of waveDirs(store.files, refetchPending)) void fetchDir(ws, path);
   }
 
   // A workspace can be opened by any client (this window, a future second
@@ -498,7 +356,7 @@
       }
     }
     delete store.skills[ws.id];
-    delete store.files[ws.id];
+    store.files = removeWorkspace(store.files, ws.id);
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
@@ -570,11 +428,7 @@
     try {
       const out = await command({ type: 'session_archive', session: sid });
       if (out.kind === 'session') {
-        const s = store.sessions[sid];
-        if (s) {
-          s.meta = out.session;
-          s.archived = out.session.archived;
-        }
+        store.sessions = setArchived(store.sessions, sid, out.session);
       }
     } catch (e) {
       store.error = errText(e);
@@ -584,40 +438,9 @@
     if (wsid) {
       try {
         const list = await command({ type: 'session_list', workspace: wsid });
-        if (list.kind === 'sessions') applySessionList(list.sessions);
+        if (list.kind === 'sessions') store.sessions = applySessionList(store.sessions, list.sessions);
       } catch (e) {
         store.error = errText(e);
-      }
-    }
-  }
-
-  // Merge a session_list into the store: an existing row adopts the list's
-  // archive flag (the list is the flag's authority — a row archived while
-  // listed, or listed after a restart, converges on the file's state); a
-  // new id materializes as a stub (entries hydrate lazily on open).
-  function applySessionList(sessions: SessionMeta[]): void {
-    for (const m of sessions) {
-      const existing = store.sessions[m.id];
-      if (existing) {
-        existing.archived = m.archived;
-      } else {
-        store.sessions[m.id] = {
-          meta: m,
-          entries: [],
-          live: [],
-          usage: null,
-          tps: 0,
-          turn: 'idle',
-          om: { ...OM_IDLE },
-          pending: [],
-          parent: m.parent ?? null,
-          state: 'idle',
-          waiting_on: null,
-          archived: m.archived,
-          mru: m.created,
-          subagents: [],
-          tasks: []
-        };
       }
     }
   }
@@ -634,7 +457,7 @@
     }
     try {
       const list = await command({ type: 'session_list', workspace: ws });
-      if (list.kind === 'sessions') applySessionList(list.sessions);
+      if (list.kind === 'sessions') store.sessions = applySessionList(store.sessions, list.sessions);
     } catch (e) {
       store.error = errText(e);
     }
@@ -644,47 +467,7 @@
     store.current = sid;
     const out = await command({ type: 'session_open', session: sid });
     if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
-    const next = snapshotToState(out.snapshot);
-    // A child's parent link is not in its own snapshot (it lives in the
-    // parent's sub-agent list); keep what the tree already knew.
-    const prev = store.sessions[sid];
-    if (prev) {
-      next.parent = prev.parent;
-      next.state = prev.state;
-      next.archived = prev.archived;
-    }
-    store.sessions[sid] = next;
-    // Self-heal the child stubs: the snapshot's sub-agent list is the
-    // supervisor's ground truth, so it both fills a lost spawn and
-    // corrects a stale stub (a done child must not keep its pre-wake
-    // state). A corrected stub keeps its own mru, so the sort is stable.
-    for (const sub of next.subagents) {
-      const existing = store.sessions[sub.child];
-      if (!existing) {
-        touchChild(sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
-      } else {
-        touchChild(sid, sub.child, sub.state, existing.mru, sub.waiting_on, null);
-        if (sub.waiting_on === null && sub.state !== 'idle') existing.waiting_on = null;
-      }
-    }
-    // A disk-restored child has no live supervisor listing it: synthesize
-    // the tab entry from the child stub so the sub-agents tab is never
-    // empty; a real spawn/state event (matched by child) replaces it.
-    for (const child of Object.values(store.sessions)) {
-      if (child.parent !== sid || next.subagents.some((x) => x.child === child.meta.id)) continue;
-      next.subagents.push({
-        handle: child.meta.id,
-        child: child.meta.id,
-        agent_type: 'general',
-        context_mode: 'fresh',
-        state: child.state,
-        waiting_on: child.waiting_on ?? null,
-        last_message: null,
-        usage: child.usage,
-        task: null,
-        resume_contract: null
-      });
-    }
+    store.sessions = openSession(store.sessions, sid, out.snapshot);
   }
 
   // A pane action (session tree row / sub-agent double-click): the child is
@@ -707,102 +490,9 @@
       range: { start, count }
     });
     if (out.kind !== 'entries') return;
-    mergeHydrated(s, out.entries);
-  }
-
-  // One logical entry appears under two id namespaces: streamed under its call_id / u-
-  // prefix / provider tool_call_id, persisted under the file's counter. The
-  // namespaces are not comparable, so the streamed slot is canonical: a file
-  // entry whose twin is streamed (in entries, live mid-turn, or a duplicate
-  // file copy from the snapshot) hydrates that slot in place and the file
-  // copy is dropped. A file entry with no twin takes its own id and appends
-  // in arrival order.
-  function mergeHydrated(s: SessionState, views: ViewEntry[]): void {
-    const isTwin = (e: { id: string; text?: string; reasoning?: string }, v: ViewEntry, next: Entry) => {
-      // Streamed ids are non-numeric (call_id, u-…, the provider's
-      // tool_call_id); a file-counter id is a snapshot copy, never a twin.
-      if (/^\d+$/.test(e.id)) return false;
-      if (next.kind === 'tool') {
-        return e.id === String((v.payload as Record<string, unknown>).call_id ?? '');
-      }
-      // An empty-text assistant (reasoning-only) has no text to match on:
-      // its reasoning is the identity — the streamed copy and the file copy
-      // carry byte-identical reasoning.
-      if (!next.text) return Boolean(next.reasoning) && e.reasoning === next.reasoning;
-      return e.text === next.text;
-    };
-    const hydrate = (e: Entry, next: Entry): Entry => ({
-      ...e,
-      kind: next.kind,
-      text: next.text,
-      reasoning: next.reasoning,
-      calls: next.calls,
-      output: next.output,
-      status: next.status,
-      name: next.name,
-      args: next.args,
-      usage: next.usage,
-      source: next.source
-    });
-    for (const v of views) {
-      const next = toEntry(v);
-      const i = s.entries.findIndex((e) => e.id === v.id);
-      if (i >= 0) {
-        // A file copy is already present (snapshot). If the streamed twin of
-        // the same logical entry exists too, collapse: the streamed slot
-        // keeps its position and id, adopts the file's payload, and the
-        // file copy is removed — otherwise the entry renders twice.
-        const ti = s.entries.findIndex((e, j) => j !== i && isTwin(e, v, next));
-        if (ti >= 0) {
-          // Assign only on a real change: an unconditional replace makes the
-          // merge reactive every 25 ms fetch and the window effect re-enters
-          // forever.
-          const t = s.entries[ti];
-          if (
-            t.kind !== next.kind ||
-            t.text !== next.text ||
-            t.reasoning !== next.reasoning ||
-            t.output !== next.output ||
-            t.status !== next.status ||
-            t.name !== next.name ||
-            t.args !== next.args ||
-            t.source !== next.source
-          ) {
-            s.entries[ti] = hydrate(t, next);
-          }
-          s.entries.splice(i, 1);
-          continue;
-        }
-        const old = s.entries[i];
-        if (
-          old.kind !== next.kind ||
-          old.text !== next.text ||
-          old.reasoning !== next.reasoning ||
-          old.output !== next.output ||
-          old.status !== next.status ||
-          old.name !== next.name ||
-          old.args !== next.args ||
-          old.source !== next.source
-        ) {
-          s.entries[i] = next;
-        }
-        continue;
-      }
-      const li = s.live.findIndex((e) => isTwin(e, v, next));
-      if (li >= 0) {
-        // Mid-turn: the live slot adopts the file's payload but keeps its
-        // streamed id, so the promoted entry keeps its position. Guarded on
-        // a real change — the 25 ms fetch re-enters while the turn runs and
-        // an unconditional replace never converges.
-        const l = s.live[li];
-        if (l.text !== next.text || l.reasoning !== next.reasoning) {
-          s.live[li] = { ...next, id: l.id };
-        }
-        continue;
-      }
-      if (s.entries.some((e) => isTwin(e, v, next))) continue;
-      s.entries.push(next);
-    }
+    const m = mergeHydrated(s.entries, s.live, out.entries);
+    s.entries = m.entries;
+    s.live = m.live;
   }
 
   export async function send(text: string, lane: PendingMsg['lane']): Promise<void> {
@@ -886,61 +576,20 @@
       if (!s) continue;
       switch (ev.type) {
         case 'stream_start': {
-          const le: Entry = { id: ev.call_id, kind: 'message', text: '', reasoning: '' };
-          const pd = pendingDeltas.get(ev.call_id);
-          if (pd) {
-            le.text = pd.text;
-            le.reasoning = pd.reasoning;
-            pendingDeltas.delete(ev.call_id);
-          }
-          s.live.push(le);
+          s.live = applyStreamEvent(ev, s.entries, s.live, pendingDeltas).live;
           callStartMs.set(ev.call_id, Date.now());
           s.tps = 0;
           s.turn = 'running';
           break;
         }
         case 'stream_delta': {
-          const le = s.live.find((x) => x.id === ev.call_id);
-          if (le) {
-            le.text += ev.text;
-            if (ev.reasoning) le.reasoning += ev.reasoning;
-          } else {
-            const pd = pendingDeltas.get(ev.call_id) ?? { text: '', reasoning: '' };
-            if (pd.text.length < PENDING_CAP) {
-              pd.text += ev.text;
-              if (ev.reasoning) pd.reasoning += ev.reasoning;
-              pendingDeltas.set(ev.call_id, pd);
-            }
-          }
+          s.live = applyStreamEvent(ev, s.entries, s.live, pendingDeltas).live;
           break;
         }
         case 'stream_end': {
-          let le = s.live.find((x) => x.id === ev.call_id);
-          s.live = s.live.filter((x) => x.id !== ev.call_id);
-          if (!le) {
-            // Ended before we saw its start: close it out of the buffer.
-            const pd = pendingDeltas.get(ev.call_id);
-            if (pd) {
-              pendingDeltas.delete(ev.call_id);
-              le = { id: ev.call_id, kind: 'message', text: pd.text, reasoning: pd.reasoning };
-            }
-          }
-          if (le) {
-            const done: Entry = {
-              id: le.id,
-              kind: ev.interrupted ? 'interrupted' : 'message',
-              text: le.text,
-              reasoning: le.reasoning || undefined,
-              usage: ev.usage ?? undefined
-            };
-            // The paged read can hydrate this entry's file copy during the
-            // turn; that copy is canonical, so only push the streamed one
-            // when no file twin exists.
-            const dup = s.entries.some(
-              (e) => /^\d+$/.test(e.id) && e.kind === done.kind && e.text === done.text
-            );
-            if (!dup) s.entries.push(done);
-          }
+          const m = applyStreamEvent(ev, s.entries, s.live, pendingDeltas);
+          s.entries = m.entries;
+          s.live = m.live;
           if (ev.usage) {
             s.usage = ev.usage;
             const started = callStartMs.get(ev.call_id);
@@ -957,58 +606,17 @@
             // assistant state land even if their events raced the stream.
             void fetchWindow(sid, Math.max(0, s.entries.length - 50), 50);
           }
-          s.meta.leaf = le?.id ?? s.entries[s.entries.length - 1]?.id ?? s.meta.leaf;
+          s.meta.leaf = m.fin?.id ?? s.entries[s.entries.length - 1]?.id ?? s.meta.leaf;
           break;
         }
-        // Tool entries key on the provider's tool_call_id (not the stream
-        // call_id): that is the id persisted in the file payload, so the
-        // hydration twin matches, and two tools in one assistant call no
-        // longer collapse into one card.
         case 'tool_start': {
-          // A tool call follows the assistant text that requested it: settle
-          // the streaming entry into the list first so the card lands after
-          // that text, not after the response that follows it.
-          for (const le of s.live) {
-            s.entries.push({
-              id: le.id,
-              kind: 'message',
-              text: le.text,
-              reasoning: le.reasoning || undefined
-            });
-          }
-          s.live = [];
-          const existing = s.entries.find((e) => e.id === ev.tool_call_id);
-          if (existing) {
-            existing.status = 'running';
-          } else {
-            // The end-of-turn pump can deliver this after a later turn's
-            // entries have already landed: place the card right after the
-            // assistant call that made it, not at the tail. The id match
-            // covers the streamed copy (id = the stream's call_id); once the
-            // entry's file twin owns the slot, its id is the file counter
-            // (the stream_end dedupe drops the streamed copy against a
-            // numeric twin of identical text), so fall back to the call
-            // reference the entry carries. The tail append is last resort.
-            let ai = s.entries.findIndex((x) => x.id === ev.call_id);
-            if (ai < 0) {
-              ai = s.entries.findIndex(
-                (x) => (x.kind === 'message' || x.kind === 'interrupted') && x.calls?.includes(ev.tool_call_id)
-              );
-            }
-            if (ai >= 0) {
-              s.entries.splice(ai + 1, 0, { id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
-            } else {
-              s.entries.push({ id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' });
-            }
-          }
+          const m = applyToolEvent(ev, s.entries, s.live);
+          s.entries = m.entries;
+          s.live = m.live;
           break;
         }
         case 'tool_end': {
-          const e = s.entries.find((x) => x.id === ev.tool_call_id);
-          if (e) {
-            e.status = 'ok';
-            e.output = ev.output === undefined ? undefined : String(ev.output);
-          }
+          s.entries = applyToolEvent(ev, s.entries, s.live).entries;
           break;
         }
         case 'queue': {
@@ -1046,7 +654,7 @@
             };
             s.subagents = s.subagents.filter((x) => x.handle !== k.handle && x.child !== k.child);
             s.subagents.push(info);
-            touchChild(ev.session, k.child, 'running', now, null, k.title);
+            store.sessions = touchChild(store.sessions, ev.session, k.child, 'running', now, null, k.title);
             break;
           }
           if (k.kind === 'state') {
@@ -1066,7 +674,7 @@
               else if (st !== 'idle') info.waiting_on = null;
               if (k.note) info.last_message = k.note;
             }
-            touchChild(ev.session, k.child, st, now, waitingOn);
+            store.sessions = touchChild(store.sessions, ev.session, k.child, st, now, waitingOn);
             break;
           }
           // notified: a child notification reached the parent. The wake

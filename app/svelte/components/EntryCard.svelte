@@ -8,7 +8,8 @@
 
   import { onMount } from 'svelte';
   import { store } from '../lib/store.svelte';
-  import { md as renderMarkdown, splitJsonPayload, argsLines, valueLinesOf } from '../lib/markdown';
+  import { md as renderMarkdown, argsLines, valueLinesOf } from '../lib/markdown';
+  import { splitJsonPayload } from '../lib/entries';
   import type { Entry } from '../lib/protocol';
 
   let {
@@ -76,8 +77,8 @@
   let skillOpen = $derived(open.skill);
   $effect(() => {
     void entry.text;
-    void entry.reasoning;
-    void entry.output;
+    if (entry.kind === 'message' || entry.kind === 'interrupted') void entry.reasoning;
+    if (entry.kind === 'tool') void entry.output;
     void toolOut;
     void open.output;
     void open.tool;
@@ -90,15 +91,20 @@
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
   const md = $derived(renderMarkdown((entry.text ?? '').trim()));
-  const reasonMd = $derived(entry.reasoning ? renderMarkdown(entry.reasoning.trim()) : '');
-
+  const reasonMd = $derived(
+    entry.kind === 'message' || entry.kind === 'interrupted'
+      ? entry.reasoning ? renderMarkdown(entry.reasoning.trim()) : ''
+      : ''
+  );
   // The user-facing tool output: for bash, the command is prepended to
   // the result, and the combined text is what gets truncated.
   const toolOut = $derived(
     entry.kind === 'tool'
       ? [
           entry.name === 'bash'
-            ? parseArgs(entry.args)?.command ?? ''
+            ? typeof entry.args?.command === 'string'
+              ? entry.args.command
+              : ''
             : '',
           entry.output ?? ''
         ]
@@ -109,21 +115,20 @@
   // The chip's one-line summary: the argument that names the operation.
   const toolSummary = $derived.by(() => {
     if (entry.kind !== 'tool') return '';
-    const a = parseArgs(entry.args);
-    if (!a) return entry.args ?? '';
-    const pick = (a as Record<string, unknown>);
+    const a = entry.args;
+    if (!a) return entry.text ?? '';
     const v =
-      pick.command ?? pick.file_path ?? pick.task ?? pick.query ?? pick.task_id ?? pick.title ?? pick.message;
+      a.command ?? a.file_path ?? a.task ?? a.query ?? a.task_id ?? a.title ?? a.message;
     const s = typeof v === 'string' ? v : '';
-    return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : entry.args ?? '';
+    return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
   });
   // Expanded args as structured key/value lines (nested values as
   // indented bullets, not a raw JSON blob).
   const toolKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
     if (entry.kind !== 'tool') return [];
-    const a = parseArgs(entry.args);
-    if (!a) return entry.args ? [{ k: '', lines: [entry.args] }] : [];
-    return argsLines(a as Record<string, unknown>);
+    const a = entry.args;
+    if (!a) return entry.text ? [{ k: '', lines: [entry.text] }] : [];
+    return argsLines(a);
   });
   const toolIcon = $derived(
     entry.kind === 'tool'
@@ -151,85 +156,76 @@
     skillLong ? (entry.text ?? '').slice(0, 200) + ' …' : (entry.text ?? '')
   );
 
-  // Sub-agent entries carry the raw payload as JSON; the card renders it
-  // with the shared structured kv rows (field name on its own line with a
-  // colon, value below). State transitions are the exception: one quiet
-  // line, no card shell, no kv body — the record is the discriminant plus
-  // the non-output variant fields, and the output lives in the notify
-  // record (the report), which keeps its card. In a child's own session
-  // these are its own lifecycle records — not amber sub-agent cards (the
-  // amber card is the parent's view of a child).
+  // Sub-agent entries carry the lifecycle record as a typed payload (C9);
+  // the card renders it with the shared structured kv rows (field name on
+  // its own line with a colon, value below). State transitions are the
+  // exception: one quiet line, no card shell, no kv body — the record is
+  // the discriminant plus the non-output variant fields, and the output
+  // lives in the notify record (the report), which keeps its card. In a
+  // child's own session these are its own lifecycle records — not amber
+  // sub-agent cards (the amber card is the parent's view of a child).
   const subKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
     if (entry.kind !== 'subagent') return [];
-    try {
-      const p = JSON.parse(entry.text ?? '') as Record<string, unknown>;
-      return Object.entries(p).map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
-    } catch {
-      return entry.text ? [{ k: '', lines: [entry.text] }] : [];
-    }
+    const p = entry.payload;
+    if (!p) return entry.text ? [{ k: '', lines: [entry.text] }] : [];
+    return Object.entries(p).map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
   });
   // The state line: `state: done`, `state: idle · {waiting_on}`,
   // `state: failed · {reason}`, `state: stopped`.
   const subState = $derived.by(() => {
-    if (entry.kind !== 'subagent') return '';
-    try {
-      const p = JSON.parse(entry.text ?? '') as Record<string, any>;
-      if (p.event !== 'state') return '';
-      const st = typeof p.state === 'string' ? p.state : (p.state?.state ?? '');
-      if (st === 'idle' && p.waiting_on) return `state: ${st} · ${p.waiting_on}`;
-      if (st === 'failed' && p.reason) return `state: ${st} · ${p.reason}`;
-      return `state: ${st}`;
-    } catch {
-      return '';
-    }
+    if (entry.kind !== 'subagent' || !entry.payload) return '';
+    const p = entry.payload;
+    if (p.event !== 'state') return '';
+    if (p.state === 'idle' && p.waiting_on) return `state: ${p.state} · ${p.waiting_on}`;
+    if (p.state === 'failed' && p.reason) return `state: ${p.state} · ${p.reason}`;
+    return `state: ${p.state}`;
   });
   const subLabel = $derived.by(() => {
-    if (entry.kind !== 'subagent') return '';
-    try {
-      const p = JSON.parse(entry.text ?? '') as Record<string, any>;
-      if (p.event === 'spawn') return 'spawn';
-      if (p.event === 'notify') return 'reported to parent';
-      return 'sub-agent';
-    } catch {
-      return 'sub-agent';
-    }
+    if (entry.kind !== 'subagent' || !entry.payload) return 'sub-agent';
+    if (entry.payload.event === 'spawn') return 'spawn';
+    if (entry.payload.event === 'notify') return 'reported to parent';
+    return 'sub-agent';
   });
 
   // A sub-agent's message (child → parent) and the parent's message to a
   // child: prose with a JSON payload, rendered as kv lines the way an
-  // expanded tool call does.
+  // expanded tool call does. The child → parent split comes decoded (the
+  // payload's source); the parent → child case needs the session's parent
+  // link, so the card splits it here.
   const msg = $derived(
     entry.kind === 'user' && (entry.source || parentLabel)
-      ? splitJsonPayload(entry.text ?? '')
+      ? entry.msg ?? (parentLabel ? splitJsonPayload(entry.text ?? '') : null)
       : null
   );
   // Task lifecycle records (created / started / evidence / finished / ...)
-  // carry the raw payload as JSON; render it as a quiet system card with
+  // carry the typed event payload; render it as a quiet system card with
   // an event label and structured kv lines (like a tool's args).
   const taskKv = $derived.by((): Array<{ k: string; lines: string[] }> => {
     if (entry.kind !== 'task') return [];
-    try {
-      const p = JSON.parse(entry.text ?? '') as Record<string, unknown>;
-      return Object.entries(p)
-        .filter(([k]) => k !== 'event')
-        .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
-    } catch {
-      return entry.text ? [{ k: '', lines: [entry.text] }] : [];
-    }
+    const p = entry.payload;
+    if (!p) return entry.text ? [{ k: '', lines: [entry.text] }] : [];
+    return Object.entries(p)
+      .filter(([k]) => k !== 'event')
+      .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }));
   });
   const taskLabel = $derived.by(() => {
-    if (entry.kind !== 'task') return '';
-    try {
-      const p = JSON.parse(entry.text ?? '') as Record<string, any>;
-      if (p.event === 'created') return `task: ${p.title ?? p.id}`;
-      if (p.event === 'started') return `task started · ${p.id}`;
-      if (p.event === 'evidence') return `evidence · ${p.evidence?.criterion ?? p.id}`;
-      if (p.event === 'finished') return `task done · ${p.id}`;
-      if (p.event === 'blocked') return `task blocked · ${p.id}`;
-      if (p.event === 'assigned') return `task assigned · ${p.id}`;
-      return p.event ?? 'task';
-    } catch {
-      return 'task';
+    if (entry.kind !== 'task' || !entry.payload) return 'task';
+    const p = entry.payload;
+    switch (p.event) {
+      case 'created':
+        return `task: ${p.title}`;
+      case 'started':
+        return `task started · ${p.id}`;
+      case 'evidence':
+        return `evidence · ${p.evidence.criterion}`;
+      case 'finished':
+        return `task done · ${p.id}`;
+      case 'blocked':
+        return `task blocked · ${p.id}`;
+      case 'assigned':
+        return `task assigned · ${p.id}`;
+      default:
+        return p.event;
     }
   });
 
@@ -238,20 +234,12 @@
   const hasContent = $derived(
     Boolean(
       (entry.text ?? '').trim() ||
-        entry.reasoning ||
+        (entry.kind === 'message' || entry.kind === 'interrupted' ? entry.reasoning : undefined) ||
         entry.kind === 'interrupted' ||
         (entry.kind === 'tool' && (Boolean(entry.args) || toolOut.length > 0))
     )
   );
 
-  function parseArgs(a: string | undefined): { command?: string } | null {
-    if (!a) return null;
-    try {
-      return JSON.parse(a) as { command?: string };
-    } catch {
-      return null;
-    }
-  }
   function fmt(n: number): string {
     return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
   }
@@ -352,7 +340,7 @@
       {/if}
     </div>
   {:else}
-    {#if entry.reasoning}
+    {#if (entry.kind === 'message' || entry.kind === 'interrupted') && entry.reasoning}
       <div
         class="think"
         class:open={thinkOpen}
