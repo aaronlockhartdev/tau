@@ -144,17 +144,16 @@ Tracker actions (`gh`, read the current state first):
 ### F. Build + acceptance tooling — retire `./build` + `./scripts/acceptance.sh`
 
 Both are ad-hoc shell scripts whose entire job is to drive native workspace tools. Replace them with a
-single entry point that delegates to the native tools (`cargo`, `npm`/`vite`, `tauri`). Runner: **make** —
-zero-install (every dev machine and CI runner has it), the right trade for a handful of simple recipes;
-`just` is the cleaner-syntax modern alternative if a one-time binary install (plus one line of CI setup)
-accepts — pick at implementation, the targets are identical. Targets:
+single entry point that delegates to the native tools (`cargo`, `npm`/`vite`, `tauri`). Runner: **just** (user
+decision, 2026-09-23) — the modern command runner, cleaner syntax than make; CI installs it with the same
+`taiki-e/install-action@v2` already used for nextest (`tool: just`). Targets:
 - `build` — platform-aware: macOS → `cargo build --workspace --release` + `app: npm ci && npm run build` +
   `npx tauri build --bundles app`; Linux → the same with the Linux bundle target (item F2).
 - `test` — `cargo nextest run --workspace` + the frontend suite (item G): what CI's rust + frontend jobs run.
 - `acceptance [legs]` — the spec §1 in-scope legs: `cargo run --release --bin tau-acceptance -- <leg>` for
   b/c/d (live) and e (offline), the GUI E2E suite for f, and the launch smoke (a) on both platforms. Live
   legs stay `TAU_LIVE`-gated exactly as today; a skipped live leg is not a failure, a red leg is.
-`./build` and `./scripts/acceptance.sh` are deleted; CI + README point at the new entry point.
+`./build` and `./scripts/acceptance.sh` are deleted; CI + README point at `just`.
 ### F2. Linux GUI support — spec §13 is "macOS first, Linux second", not "Linux without a GUI"
 
 Audit (2026-09-23): **the code is already cross-platform.** The Rust crates have zero platform-specific
@@ -190,9 +189,13 @@ mocked-IPC demo:
   provider** (the core's existing `canned()` test seam promoted to a dev-build-only `canned://` provider —
   a documented test hook, not product surface). A debug build is enough for correctness; the perf bar
   keeps its current fidelity (measured on a dev build, as today).
-- **Driver**: the in-tree `dev_bridge` (debug builds) is the natural first choice — zero new deps, it
-  already evaluates JS in the running webview. The official route is tauri-plugin-wdio +
-  `@wdio/tauri-service`; take it only if `dev_bridge` proves insufficient (decided at implementation).
+- **Driver**: the in-tree `dev_bridge` — the vendored copy of the tauri-agent-tools bridge (an HTTP server
+  that lets a tool evaluate JS in the running webview; the npm package itself is dead dep B6, and
+  `agent-eval.mjs` is its in-repo replacement). It is **debug-build-only** (`#[cfg(debug_assertions)]` in
+  `main.rs`), so the E2E runs against a debug build: fine for correctness, and the spec §8 bar measures the
+  DOM side (a debug core coalesces at the same 25 ms). If a release-fidelity number ever matters, the fix is
+  to env-gate the bridge for release (a documented test mode) or take the official route —
+  tauri-plugin-wdio + `@wdio/tauri-service` (decided at implementation).
 - **What the mock rig uniquely gave, and where it goes:** the ability to feed the frontend *adversarial*
   event sequences the real core never emits (the `652b3a6` twin-identity class). That coverage moves to
   the store-level Vitest suite (1c), where `mockIPC` is the right tool at the store layer. The `demo.ts` /
@@ -226,11 +229,11 @@ only untested seam. Full detail + a ready-to-paste CI YAML in `01-testing.md`.
    "wedges the whole suite" into "one red test". No test-code changes.
 2. `scripts/acceptance.sh`: accept an optional **leg-filter argument** (`./scripts/acceptance.sh a e f`; no
    args = all, preserving current behavior).
-3. Restructure `ci.yml` to four jobs, driven by the new build entry point (item F): **rust** (macos+linux
-   matrix: fmt/clippy/`nextest`), **frontend** (ubuntu: `make frontend` + the store suite of 1c), **app**
-   (macos **and** linux: `make build` + **launch smoke via `make acceptance a`** — today the bundle is
+3. Restructure `ci.yml` to four jobs, driven by `just` (item F): **rust** (macos+linux matrix:
+   fmt/clippy/`nextest`), **frontend** (ubuntu: `just frontend` + the store suite of 1c), **app**
+   (macos **and** linux: `just build` + **launch smoke via `just acceptance a`** — today the bundle is
    built but never launched in CI, a launch-panic would pass; the Linux leg lands with F2, under
-   `xvfb-run`), and **linux-acceptance** (ubuntu: `make build` + leg e + the real-app E2E suite of item G
+   `xvfb-run`), and **linux-acceptance** (ubuntu: `just build` + leg e + the real-app E2E suite of item G
    as separate steps so a red suite can't mask a red core leg). Live legs (b/c/d) stay local — no `TAU_LIVE`
    in CI.
 
@@ -381,7 +384,7 @@ difference. Pre-v1 is breakable; no ADR conflict.
 ```
 Phase 0 (independent, land in any order)
   A comments   B dead code   C mirror-fix   D ADRs+agent-docs   E prototypes+tracker
-  F build/acceptance -> single entry point (make)   F2 Linux GUI support
+  F build/acceptance -> justfile (just)   F2 Linux GUI support
   G demo rig -> real-app E2E suite   H file-size policy in AGENTS.md
 
 Phase 1 (ordered)
@@ -400,7 +403,7 @@ Phase 2
 - Zero "what" comments / banners / dead code in the scanned surfaces (Phase 0).
 - No throwaway prototypes tracked; no redundant branches; #33 closed; missing labels + junk edge fixed;
   orphaned #28–#33 left as standalone tickets (no map charted).
-- One build/acceptance entry point (`make`) replaces `./build` + `./scripts/acceptance.sh`; the two shell
+- One build/acceptance entry point (a `just` justfile) replaces `./build` + `./scripts/acceptance.sh`; the two shell
   scripts are deleted; all work delegated to cargo/npm/vite/tauri.
 - Linux has a GUI: the Linux bundle target + CI webkit2gtk/xvfb land (F2); the launch smoke runs on both
   platforms.
