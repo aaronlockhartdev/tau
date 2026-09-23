@@ -1,7 +1,7 @@
 # GUI live-journey findings (2026-09-19)
 
-Explored with tauri-agent-tools driving the real development app (bridge
-wired in `app/src-tauri/src/dev_bridge.rs`, debug builds only). The demo
+Explored by driving the real development app through a debug-build-only JS eval
+bridge (since deleted in favor of tauri-pilot). The demo
 mode (10k fixture) verified clean across panes, streams, queue, badges,
 archive, and double-click-to-open; the live user journey surfaced the
 bugs below.

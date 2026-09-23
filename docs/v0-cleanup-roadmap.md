@@ -67,13 +67,13 @@ Delete the stale duplicate doc line `crates/tau-core/src/subagent.rs` L410 (cont
 | 3 | `crates/tau-core/src/session.rs:467` `append_raw` (tests only, no raw path in v0) | delete fn + its tests |
 | 4 | `crates/tau-core/src/session.rs:453` `append_compaction` (1 test caller; OM commits via `store.append`) | delete fn + its test |
 | 5 | `app/src-tauri/src/core.rs:2700` `core.self_weak.replace(…)` re-stamp in `run_turn` (no-op; set once in `build` L599) | delete the write |
-| 6 | `app/package.json:21` `tauri-agent-tools` devDependency (imported nowhere; `dev_bridge.rs` is a vendored copy, `agent-eval.mjs` is its replacement) | remove from package.json + lock |
+| 6 | `app/package.json` `tauri-agent-tools` devDependency (imported nowhere) + the vendored `dev_bridge.rs` + `agent-eval.mjs` (its in-repo replacement) | **Done (2026-09-23)** — all three deleted; tauri-pilot replaces them (AGENTS.md) |
 | 7 | `app/svelte/lib/markdown.ts:13,73` `hl`, `export { esc }` (used only inside the module) | un-export |
 | 8 | `app/svelte/lib/fixture.ts:17,25,30` types `DemoSession`, `FixturePendingMsg`, `FixtureSessionState` (no importers) | un-export |
 
 **Intentionally kept** (do not delete — documented reserved surface, spec §8): `SystemEventKind::ProviderChanged`
 (+ its TS mirror `protocol.ts:307`), `Command::ProviderAdd/Set/Delete` (dispatch → `Unsupported` in v0),
-`Command::SessionFork/SessionBranch` (see C7), and the vendored `dev_bridge.rs`.
+`Command::SessionFork/SessionBranch` (see C7).
 
 ### C. Protocol mirror fix (C6) — one line + a guard
 
@@ -128,7 +128,7 @@ Agent-doc fixes (`02-agent-harness.md` §2):
 | `app/prototype/layout.html`, `palette.html`, `statusbar.html` | **Delete** — superseded throwaway prototypes (winners folded into the Svelte components in `376de61`/`c5d24b7`; zero references) |
 | `prototype/gui-ia/index.html` | **Keep** — the design baseline, triple-documented (README, spec §9, code comments) |
 | `app/demo.html` + `svelte/demo.ts` + `lib/fixture.ts` + `scripts/verify-demo.mjs` | **Keep** — the live verification rig (acceptance leg f, CI) |
-| `app/scripts/agent-eval.mjs` | **Keep** — live dev tool; update the "tauri-agent-tools" reference in `docs/gui-bugs.md:3` |
+| `app/scripts/agent-eval.mjs` | **Deleted (2026-09-23)** — the tauri-agent-tools replacement; tauri-pilot is now the dev-app tool |
 | `docs/research/hash-anchors.md`, `remote-backend.md` | **Keep** — finished research, decision records |
 | `docs/gui-bugs.md` | **Keep** as a historical log; verify + strike the 2 stale "Open" items |
 | Branches `research/remote-backend`, `prototype/gui-ia-variants-a-c` | **Delete** (both are ancestors of main) |
@@ -166,8 +166,7 @@ Chrome binary. What is genuinely macOS-only today: (1) `tauri.conf.json` `bundle
 `.app` has no Linux equivalent, so add `appimage` (v0 distribution = direct download; `deb` is v1 apt
 channel work); (2) the CI image — no webkit2gtk (why `build` skips the Linux bundle; the fix is Tauri's
 documented prerequisites: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); (3) the launch smoke (leg a) —
-WebKitGTK wants an X display, so Linux runs it under `xvfb-run`; (4) `dev_bridge.rs` has macos/windows
-branches with Linux falling through — a dev-only tool, left alone. Work: the bundle target, the CI apt
+WebKitGTK wants an X display, so Linux runs it under `xvfb-run`. Work: the bundle target, the CI apt
 deps + xvfb, a Linux leg-a, and a spec §13 note that "Linux second" includes the GUI.
 
 ### G. The demo rig becomes a real-app E2E suite (the "demo" retires)
@@ -189,13 +188,11 @@ mocked-IPC demo:
   provider** (the core's existing `canned()` test seam promoted to a dev-build-only `canned://` provider —
   a documented test hook, not product surface). A debug build is enough for correctness; the perf bar
   keeps its current fidelity (measured on a dev build, as today).
-- **Driver**: the in-tree `dev_bridge` — the vendored copy of the tauri-agent-tools bridge (an HTTP server
-  that lets a tool evaluate JS in the running webview; the npm package itself is dead dep B6, and
-  `agent-eval.mjs` is its in-repo replacement). It is **debug-build-only** (`#[cfg(debug_assertions)]` in
-  `main.rs`), so the E2E runs against a debug build: fine for correctness, and the spec §8 bar measures the
-  DOM side (a debug core coalesces at the same 25 ms). If a release-fidelity number ever matters, the fix is
-  to env-gate the bridge for release (a documented test mode) or take the official route —
-  tauri-plugin-wdio + `@wdio/tauri-service` (decided at implementation).
+- **Driver**: **tauri-pilot** — the app now embeds `tauri-plugin-pilot` (debug builds only; the
+  tauri-agent-tools bridge it replaces is deleted, AGENTS.md points at the skill). The CLI speaks the
+  running app over a Unix socket: `snapshot`, interact on refs, `assert` (exit 0/1), `logs`, `network`,
+  `screenshot` — a strict superset of the old eval bridge, and its `run <scenario.toml>` (JUnit output,
+  failure screenshots) is ready-made CI machinery if the scripted streams ever want it.
 - **What the mock rig uniquely gave, and where it goes:** the ability to feed the frontend *adversarial*
   event sequences the real core never emits (the `652b3a6` twin-identity class). That coverage moves to
   the store-level Vitest suite (1c), where `mockIPC` is the right tool at the store layer. The `demo.ts` /
@@ -346,7 +343,7 @@ Deletion test: delete `core.rs` and the complexity doesn't vanish — a future `
 (or link the Tauri crate to get) the whole session lifecycle. The complexity is real; it's behind the wrong
 seam. **Solution**: move the transport-free composition into `tau-core` (a `harness` module: `Core` state,
 `dispatch`, `run_turn`, `pump`, watchers, workspace index). The Tauri shell keeps only `main.rs`
-(menu, `tau_command`, `emit`) + the debug `dev_bridge`. The 3,100 test lines in `core.rs` (which construct
+(menu, `tau_command`, `emit`, the debug-gated tauri-pilot plugin). The 3,100 test lines in `core.rs` (which construct
 `Core` directly, no window) move as-is. *Reinforces* ADR-0002/0006 — no conflict. It's large; scope it as its
 own effort, not a v0 ticket.
 

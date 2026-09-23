@@ -12,6 +12,10 @@ Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `
 
 Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
 
+### tauri-pilot
+
+To inspect, drive, or screenshot a running dev build, load the `tauri-pilot` skill. The app embeds its plugin in debug builds only; the CLI auto-detects the socket.
+
 ## Coding conventions
 
 Rules, not suggestions. Enforced in CI where mechanical, in review where not.
@@ -28,3 +32,7 @@ Rules, not suggestions. Enforced in CI where mechanical, in review where not.
 **No speculative code.** No dead abstractions, no "for the future" scaffolding, no flags for nonexistent features, no second implementation kept "just in case". Build the thing the ticket asks for; the next ticket extends it.
 
 **Doc comments** appear only on public API items whose contract is not self-evident from the signature — one line where possible, with a spec/ADR citation when a rule comes from one.
+
+## Verifying UI work
+
+Confirm a visual bug by taking a screenshot of the running app and reading it — a green DOM assertion does not prove the UI renders correctly.

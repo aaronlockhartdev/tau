@@ -91,6 +91,12 @@
       "skillPath": "skills/engineering/setup-matt-pocock-skills/SKILL.md",
       "computedHash": "552b0f48b9fe054aa93c5d432fefbd7bd9645e3f2d20b4e22432453a81800b21"
     },
+    "tauri-pilot": {
+      "source": "mpiton/tauri-pilot",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "44410de32fa531bcd9321a0b6a12b53aa5ab2b353a1e47a949c30e9572b71581"
+    },
     "tdd": {
       "source": "mattpocock/skills",
       "sourceType": "github",

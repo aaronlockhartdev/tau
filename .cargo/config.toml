@@ -1,0 +1,4 @@
+# Delegate git fetches to the git CLI: libgit2 cannot use the SSH agent, and
+# developer machines (and CI) may rewrite github.com URLs in their git config.
+[net]
+git-fetch-with-cli = true

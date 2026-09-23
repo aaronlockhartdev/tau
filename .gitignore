@@ -2,3 +2,6 @@
 node_modules/
 dist/
 .DS_Store
+# agent skills: pulled per-machine from skills-lock.json (npx skills)
+.agents/skills/
+.pi/skills/
