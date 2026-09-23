@@ -8,6 +8,7 @@ Full research reports (kept outside the repo):
 - `/tmp/tau-cleanup/01-testing.md` — testing story
 - `/tmp/tau-cleanup/02-agent-harness.md` — ADR / agent-doc / prototype audit
 - `/tmp/tau-cleanup/03-code.md` — architecture, comment audit, dead code
+- `/tmp/tau-cleanup/04-deepening.md` — frontend deepening scan (improve-codebase-architecture; candidates 1–3 adopted 2026-09-23)
 
 Working vocabulary comes from `CONTEXT.md` (domain) and the codebase-design skill (module, interface,
 depth, seam, adapter, leverage, locality).
@@ -23,15 +24,18 @@ Nothing here is speculative scaffolding between steps (per `AGENTS.md`).
 No open **decisions** remain in this roadmap: the C1 harness move is **decided** (user, 2026-09-23) —
 the seam is that `tau-core` owns all logic necessary for a non-Tauri interface and the Tauri app owns all
 Tauri-specific code, so whatever sits on the wrong side moves; the file-size rule (H) is **decided** and every
-over-limit file gets split in v0 (C8), with the 500–1000 band investigated for clean splits (user, 2026-09-23);
-and the orphaned tickets #28–#33 are **left as standalone tickets** (user, 2026-09-23). Everything here is
+over-limit file gets split in v0 (C8), with the 500–1000 band investigated for clean splits; the deepening
+candidates are **adopted** (user, 2026-09-23): C9 (typed payload surface), C10 (session-registry module),
+C11 (files-cache module) — with C12 (queue mutation) recorded as a post-v0 flag, not v0 work; and the
+orphaned tickets #28–#33 are **left as standalone tickets** (user, 2026-09-23). Everything here is
 mechanical work.
 The two spec touches (F2's §13 note, G's §8 demo retirement) are errata recording already-made user decisions —
 applied inline with their items; per the wayfinder skill's own test, no map is needed when the way is already clear.
 
 Order: **Phase 0 (quick wins) → Phase 1 (testing) → Phase 2 (architecture)**. Phase 0 carries the
 build/acceptance tooling change (F), the demo-rig→test-suite formalization (G), and the file-size policy (H);
-Phase 2 carries the harness move (C1), the file splits (C8), and the store work — all of it lands before v0 freeze.
+Phase 2 carries the harness move (C1), the typed payload surface (C9), the file splits (C8), and the store
+work (C3, C10, C11) — all of it lands before v0 freeze.
 
 ---
 
@@ -89,6 +93,9 @@ Rust has `ProviderAdd/Set/Delete` (lib.rs L300–312).
 - Add `| { type: 'provider_delete'; name: string }` to the TS `Command` union.
 - Add a **mirror-diff check**: derive the TS `Command` tag list from the Rust serde tags (a small script run
   in CI) so the ADR-0006 field-for-field mirror can't silently drift again. This is the real win.
+- **The drift is a class, not a one-off** (`04-deepening.md`): besides the `provider_delete`/`agents` tag
+  drops, the hand-mirrored `Task` interface and every payload shape drift silently today. Once C9 lands, the
+  guard extends from command tags to **payload shapes** — its most valuable form.
 
 ### D. ADR + agent-doc homogenization
 
@@ -203,6 +210,11 @@ mocked-IPC demo:
   the store-level Vitest suite (1c), where `mockIPC` is the right tool at the store layer. The `demo.ts` /
   `demo.html` / `fixture.ts` demo surface retires; the ~35 rig checks port to the real-app E2E where they
   apply.
+- **The production store imports `toEntry` from `fixture.ts`** (store.svelte L28; called on every paged read,
+  L748) — the fixture's retirement must move that import. C9 lands first, so the move is trivial: `toEntry`'s
+  payload handling is replaced by C9's shared decoder and `fixture.ts` has no production importers left. The
+  `window.__tau` rig seam is demoted from load-bearing surface to a thin dev convenience (it can feed C9's
+  pure decoder directly).
 - Wire `app/package.json` `"test:frontend"` → the E2E runner; CI runs it in the app job (macOS) and the
   linux-acceptance job (Linux, post-F2). README + spec §8 point at the suite, not a demo.
 
@@ -280,6 +292,9 @@ Concrete: `app/package.json` (`"test": "vitest run"`, devDeps `vitest@^5.0.1`, `
 `app/svelte/lib/store.svelte.test.ts` — import `./store.svelte`, `mockIPC` reusing `fixture.ts` data, assert
 boot-from-snapshot, `applyEvents` (stream_start/delta/end + usage), lane queueing (force/steering/follow-up),
 session switch + archive convergence, the `skill_list_changed` guard, the `file_tree_changed` refetch wave.
+- **Target decomposition** (`04-deepening.md`): C3 + C10 + C11 partition `store.svelte` into a streaming/merge
+  slice, the session-registry module, the files-cache module, and the panes/queue/shell remainder; every
+  non-streaming slice is unit-testable in node — only the streaming slice needs `mockIPC` sequences.
 ~15–30 tests, each mirroring an existing rig check. CI: `npm run test` in the frontend job (node — no Chrome).
 
 ### Explicitly NOT doing (v0) — each with the trigger that would change it
@@ -300,9 +315,9 @@ session switch + archive convergence, the `skill_list_changed` guard, the `file_
 
 ## Phase 2 — architecture
 
-From `03-code.md`. Candidates use the codebase-design vocabulary; each has a strength badge. C3 is the first
-ticket; C5/C6 are same-week companions; **C1 is the strategic decision**; C4/C7 are deferred.
-
+From `03-code.md` (C3–C8) and `04-deepening.md` (C9–C12). Candidates use the codebase-design
+vocabulary; each has a strength badge. C3 is the first; C5/C6 are same-week companions; **C1 is the
+strategic decision**; C4/C7/C12 are deferred (post-v0).
 ### C3 (first) — extract the store's entry/twin merge into a pure module — **Strong**
 
 `store.svelte` owns state + the ~350-line event switch + the paged-read **twin merge** (`mergeHydrated`/`isTwin`,
@@ -385,13 +400,69 @@ lands when the last hard-limit split lands (no grandfathering).
 | `app/scripts/verify-demo.mjs` | 1,124 | G (retires it) |
 
 **Over the soft 500 limit (investigate; split only if the cut improves readability):** `tau-protocol/src/lib.rs`
-(986), `EntryCard.svelte` (696), `tau-core/src/tools.rs` (693), `tau-acceptance/src/main.rs` (612),
-`tau-core/src/skills.rs` (607), `RightPane.svelte` (563), `tau-core/src/hashline.rs` (521). (`fixture.ts` (552)
-retires with G.)
+(986), `EntryCard.svelte` (696 — its ~250-line script section is mostly payload interpretation that leaves with
+C9's typed decoder; verify it lands under the soft limit after C9), `tau-core/src/tools.rs` (693),
+`tau-acceptance/src/main.rs` (612), `tau-core/src/skills.rs` (607), `RightPane.svelte` (563 — the task-row detail
+template is duplicated verbatim for the live and history sections, ~60 lines × 2; the split is one
+parameterized snippet), `tau-core/src/hashline.rs` (521). (`fixture.ts` (552) retires with G.)
 
 Each split is behaviour-preserving: extract cohesive modules, move the tests with the code, land red→green one
 file at a time. Sequence after the Phase 1 suites so every split lands green against real tests; the seven
 `tau-core` splits are independent of each other and of C1/C3.
+
+### C9 — typed entry/task payload surface (protocol crate + TS mirror) — **Strong (adopted 2026-09-23, `04-deepening.md` #1)**
+
+Entry payloads cross the core↔GUI seam as free-form `Value`/`unknown` and **no module on either side owns
+their shape**: Rust writers scatter `json!` literals across `agent.rs`/`om_integration.rs`/`task.rs`/
+`subagent.rs`; the protocol passes them through untouched (`ViewEntry.payload: Value`; `LiveState.tasks:
+Vec<Value>` even though the source is a full `Task` struct); the app downcasts (`tasks_of` + a map-level
+`resume_contract` surgery); the TS side decodes in the render layer — the single `ViewEntry → Entry` decoder
+`toEntry` lives in the demo-owned `fixture.ts` (G retires it), and `EntryCard` re-parses its string output
+five times with `any` casts (88 stringly-typed `kind ===` sites in all). The most bug-dense part of the GUI
+sits on a concept that has no module.
+
+**Solution**: the payload schema gets one owner on each side of the seam, both inside the protocol surface
+ADR-0006 already mandates. *Rust*: a module that knows each entry kind's payload — writers construct through
+it instead of raw `json!`; the `snapshot.rs`/`LiveState` projections carry the typed shape; `tasks_of` and
+its surgery delete. *TS*: the same shapes in the protocol mirror; decoding collapses from (toEntry + the
+five re-parses + `splitJsonPayload`) to one shared decoder, and `Entry` becomes a discriminated shape whose
+variants carry their own fields. The file stays free-form at the ADR-0005 storage level; the typed layer sits
+exactly where `session.rs`'s doc comment points ("concrete kinds on top of this storage").
+
+**Deletion test**: deleting toEntry's payload handling, EntryCard's five re-parses, the `Task` mirror, and
+`tasks_of` *concentrates* the complexity into one typed payload module per side, whose interface is smaller
+than what it replaces. **ADR**: no conflict — reinforces ADR-0006 ("the Svelte side compiles against the
+protocol types alone" is only true once payloads are types); two real adapters already exist (Rust writers,
+TS renderer) — this gives them a shared face. **Lands as a small series**: Rust types → app projections →
+TS mirror + decoder move → `EntryCard` consumption; the C parity guard (extended to payload shapes) is its
+interim guard.
+
+### C10 — the store's session-tree registry as a pure module — **Strong (adopted 2026-09-23, `04-deepening.md` #2)**
+
+After C3 takes the entry/twin-merge concern, the store's second densest concern is the *session registry*:
+stub materialization, the parent link (which the child's own snapshot does not carry and must survive
+re-opens), the archive flag (the list is its authority), the sub-agent mirror sync (supervisor ground truth
+correcting stale stubs), mru — ~300 of the 1,106 lines, inlined in async store functions entangled with
+command round-trips, reachable only through the browser rig. The git history shows this is where the store's
+subtle bugs live (the mru reorder that lost clicks `cfafe03`, parent-scoped archive `7041dbb`,
+terminal-state convergence `0d7c242`).
+
+**Solution**: a pure module over the session map that the store calls in: the stub rule, the list-merge rule
+(which fields the list is authoritative for), the self-heal rule, the mirror sync, archive/restore
+convergence. The store keeps state + IPC; the module owns the invariants and is callable with plain data —
+exactly the shape the 1c suite needs to test session switch/convergence without a browser. **Deletion test**:
+concentrates. Pairs with C3; sequence with it, and land after 1c so both land green. **ADR**: none —
+ADR-0006's "stateless renderer, rebuildable from snapshot + events" is the property these rules formalize.
+
+### C11 — the store's files-pane cache as a small module — **Worth exploring (adopted 2026-09-23, `04-deepening.md` #3)**
+
+The files pane is a self-contained cache (listed-dir state, lazy expansion, change-coalesced refetch waves
+with the store's only private timers, `refetchPending`/`refetchTimer` — ~110 lines) that lives inside the
+session store: understanding file-tree invalidation means reading the session store. **Solution**: a small
+pure cache module (listed dirs per workspace, expand/collapse, the 300 ms coalesced wave with the
+listed-at-flush recheck) that the store composes; the store keeps calling the file-list command and handing
+results in. **Deletion test**: concentrates (mildly) — do it in the same pass as C3/C10 if the cut is clean.
+**ADR**: none.
 ### C4 — extract the transcript virtualization math — **Worth exploring (defer)**
 
 The most bug-dense area of the git log (mid-scroll yank `3036dc3`, Svelte-Map reactivity `e866549`, boot
@@ -400,7 +471,9 @@ churn `19dde1f`, pin semantics, `652b3a6`) is one component whose invariants are
 be unit-tested. Extracting the pure math (entries, heights map, scroll top/height, viewport → window bounds,
 offset, pin transitions on a classified input event) concentrates the verified invariants where they can be
 asserted; the component becomes DOM glue. The code is currently **stable** — the cost shows up as rig cycles
-per future scroll regression. Defer; do it if scroll regressions recur.
+per future scroll regression. `04-deepening.md` confirms the density and adds two data points: Transcript's
+`hOf` **duplicates EntryCard's `hasContent` predicate verbatim**, and the height-map settle/`pending` deferral
+is its own untestable state machine inside the component. Defer; do it if scroll regressions recur.
 
 ### C7 — `SessionFork` / `SessionBranch`: two variants, one behaviour — **Speculative (defer)**
 
@@ -408,6 +481,15 @@ The protocol's own doc says "fork is a branch, not a new session"; dispatch patt
 (`core.rs:2073`). No v0 producer. Spec §8 lists both, so this is a surface decision, not dead code. When the
 first producer lands, land it as one variant; keep both only if the fork/branch distinction earns a behavioural
 difference. Pre-v1 is breakable; no ADR conflict.
+
+### C12 — queue deletion re-fetches a full snapshot (no lane-mutation command) — **post-v0 flag, do not land (recorded 2026-09-23)**
+
+The composer's queue is dual-owned (the store's optimistic `pending` vs the core's lane as authority) and
+the v0 protocol offers no lane-mutation command: `deleteQueueItem` deletes locally and then re-opens the
+session to fetch a full 1–2 MB snapshot purely to resync the queue. Deleting the optimistic path *moves*
+the problem to the protocol surface, so this is a surface decision on a spec-locked list (ADR-0006: the v0
+command set is settled; §8 is the spec's), not a free refactor. When the post-v0 security/HITL ticket next
+touches the lane surface: a thin lane-mutation command, or the queue event as the sole resync authority.
 
 ---
 
@@ -439,14 +521,22 @@ Wave 1 — three in parallel
   docs:  D (ADRs + agent-docs) → E (prototypes, #33, triage labels, junk edge) → H (policy text in AGENTS.md)
 
 Wave 2 — three in parallel
-  core:  C1 (harness move) → C2 (session-access seam) → 1b-app (tau_command to lib.rs; tauri::test smoke)
-  app:   G (tests/e2e: real app on the shared fixture; retire the demo; spec §8 errata) →
-          C8-front (EntryCard.svelte / RightPane.svelte: split only if the cut is clean)
-  svelte:C3 (extract the entries module) → 1c (vitest store suite; absorbs G's adversarial-sequence checks)
+  core:  C1 (harness move) → C2 (session-access seam) → 1b-app (tau_command to lib.rs; tauri::test
+          smoke) → C9-rust (typed payload module; writers construct through it; typed snapshot/LiveState
+          projections; tasks_of + the resume-contract surgery delete)
+  svelte:B-svelte (markdown.ts / fixture.ts un-exports) → C9-ts (protocol.ts payload shapes; the one shared
+          decoder replaces toEntry + EntryCard's five re-parses; toEntry leaves fixture.ts; C: mirror fix +
+          parity guard) → C3 (entries module) → C10 (session-registry module) → C11 (files-cache module)
+          → 1c (vitest store suite; absorbs G's adversarial-sequence checks)
+  app:   C's one-line CI wiring (the parity-guard job) — then idle: G is blocked on C9-ts
 
-Wave 3 — two in parallel
-  core:  C8-core (split the seven over-limit tau-core files; investigate tools/skills/hashline/protocol-lib)
-  app:   B (dead code) → C (protocol.ts mirror + parity guard wired into CI)
+Wave 3 — three in parallel
+  core:  C8-core (split the seven over-limit tau-core files; investigate tools/skills/hashline/
+          protocol-lib) → B-core (the session.rs / core.rs dead-code items, in the split files)
+  svelte:C8-front (EntryCard: verify under the soft limit post-C9; RightPane: one parameterized task-row
+          snippet)
+  app:   G (tests/e2e: real app on the shared fixture; retire the demo — toEntry is already out;
+          spec §8 errata)
 
 Wave 4 — one agent, cross-cutting, alone
   H gate (the >1000-LOC CI check — lands only once Wave 3 proves every file under the limit) →
@@ -456,12 +546,16 @@ Wave 4 — one agent, cross-cutting, alone
 **Handoffs a fresh agent must know** (each is stated here because no agent inherits session context):
 
 1. **The shared fixture** is at `target/test-fixture/session.jsonl` — written by Wave 1's fixture-gen
-   (a `tau-core` test), consumed by G's E2E in Wave 2. Deterministic path; both sides read this doc.
+   (a `tau-core` test), consumed by G's E2E in Wave 3. Deterministic path; both sides read this doc.
 2. **After C1 (Wave 2)** the app's Rust surface is `main.rs`/`lib.rs` only — `core.rs` is gone from the
    app crate; anything after that finds the core in `crates/tau-core`.
-3. **The H gate (Wave 4) lands last**: it fails CI on any file over 1000 LOC, so it must see a tree where
+3. **C9 sequencing is load-bearing.** C9-rust (Wave 2, core lane) and C9-ts (Wave 2, svelte lane) land in
+   the same wave; the C parity guard diffs protocol.ts against C9's Rust types, so at the wave boundary the
+   core branch merges before the svelte one. G (Wave 3) assumes `toEntry` is already out of `fixture.ts` —
+   if it isn't, G stops and says so in its commit message.
+4. **The H gate (Wave 4) lands last**: it fails CI on any file over 1000 LOC, so it must see a tree where
    every split has already landed.
-4. **A is the last edit to code** — after it, nothing changes except acceptance results.
+5. **A is the last edit to code** — after it, nothing changes except acceptance results.
 
 **Per-agent brief template.** (1) Read `docs/v0-cleanup-roadmap.md` — it is the whole spec. (2) Your items,
 in this order: `<ids>`. (3) You own exactly these paths: `<ownership list>` — do not edit outside them;
@@ -486,7 +580,11 @@ wave boundary, after the wave's other branches are in.
   `core.rs` is split as part of C1/C2.
 - CI: rust (matrix, nextest), frontend (build + store suite), app (macOS + Linux build + launch smoke),
   linux-acceptance (leg e + the real-app E2E). `tauri::test` smoke pins the one real Tauri seam.
-- The store's twin-merge logic is a pure, unit-tested module; the config surface is true (wired or gone).
+- The store decomposes into a streaming slice plus pure modules (C3 entries, C10 session registry,
+  C11 files cache); the config surface is true (wired or gone).
+- Entry payloads are typed on the protocol surface (C9): writers construct through the typed module, the
+  TS mirror carries the shapes, and one shared decoder replaces toEntry + EntryCard's re-parses; the C
+  guard diffs the payload shapes.
 
-No open decisions remain — C1 is decided, the orphaned tickets are left, and every item in this roadmap is
-a scoped change ready to land.
+No open decisions remain — C1 and C9–C11 are decided, the orphaned tickets are left, and every item in
+this roadmap is a scoped change ready to land.

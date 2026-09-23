@@ -20,6 +20,14 @@ _Avoid_: engine, backend
 The branching record of a conversation between a user and one agent instance: a tree of entries (`id`/`parentId`) that can branch in place. Stored as one JSONL file per session — append-only lines with a per-line CRC, oversized payloads as out-of-band sidecar blobs, manually zstd-archived on user request (ADR-0005). Sub-agents have their own session files, linked to the parent. **Placement**: workspace-scoped session data lives in the workspace's project directory, `{project root}/.tau/sessions/` (sidecar blobs and manual archives alongside); sessions with no project live in `~/.config/tau/sessions/`.
 _Avoid_: conversation, transcript (a transcript is a linear rendering of a session)
 
+**Entry**:
+One node in a session's tree: `id`/`parentId`, a free-form `kind`, and a payload (ADR-0005); the unit the core appends and streams to the GUI. The typed payload surface (the one owner of each kind's payload shape on each side of the core↔GUI seam) is a v0 clean-up item (C9).
+_Avoid_: message (entries include non-message kinds: task, spawn, om, system), line/row (renderings)
+
+**Session registry**:
+The GUI-side registry over a workspace's session tree: materialized stubs, parent links (which a child's own snapshot does not carry), the archive flag (the session list is authoritative), and most-recently-used order (ADR-0006). A pure module over snapshot data, not IPC (v0 clean-up item C10).
+_Avoid_: session store (that is the whole GUI state), session index
+
 **Turn**:
 One assistant response and the tool calls it executes, from model request to completion.
 _Avoid_: step, iteration
@@ -87,6 +95,10 @@ _Avoid_: checkpoint (that implies persistence granularity), summary (too generic
 **Snapshot**:
 The ephemeral point-in-time render state the core builds for the GUI — metadata skeleton + bounded OM + live state + cursor; never a file (ADR-0006).
 _Avoid_: export, archive (that is the manual-archive zstd thing)
+
+**Files pane**:
+The file browser over a workspace: lazily listed directories, expand/collapse, and change-coalesced refetches behind its own small invalidation cache — file-tree state, not session state (v0 clean-up item C11).
+_Avoid_: file tree (that is the data), project tree
 **Context files**:
 Project/global instruction files loaded into the system prompt, following pi's pattern (2026-09-17): `AGENTS.md`/`CLAUDE.md` from `~/.config/tau/`, from parent directories walking up from the workspace cwd, and the cwd itself — all layers appended; a per-directory `AGENTS.override.md` replaces that directory's `AGENTS.md`/`CLAUDE.md`.
 _Avoid_: prompt files
