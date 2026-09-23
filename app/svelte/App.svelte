@@ -15,7 +15,7 @@
   import ModelMenu from './components/ModelMenu.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, windowTitle } from './lib/store.svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle } from './lib/store.svelte';
   import { isTauri } from './lib/protocol';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
@@ -29,8 +29,16 @@
     }
   });
   // 'r' toggles every reasoning line at once (V2 thinking lines); skipped
-  // while a field has focus so it never fights the composer.
+  // while a field has focus so it never fights the composer. ⌘/Ctrl+N opens a
+  // new session in the active workspace (app-global: it fires from the
+  // composer too, where it is the natural "start over" key).
   function onKeydown(e: KeyboardEvent): void {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+      e.preventDefault();
+      const ws = store.current ? (store.sessions[store.current]?.meta.workspace ?? null) : null;
+      if (ws) void newSession(ws);
+      return;
+    }
     if (e.key !== 'r' || e.metaKey || e.ctrlKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -53,6 +61,7 @@
     <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11a3 3 0 013 3v13H8a3 3 0 01-3-3z"/><path d="M5 4v13"/></symbol>
     <symbol id="i-term" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7l4 4-4 4M11 15h6"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M15 15l5 5"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0114 0"/></symbol>

@@ -938,8 +938,61 @@ try {
       JSON.stringify(stopClick));
     await evalPage(wsUrl, `window.__tau.switchSession('demo')`);
     await sleep(300);
-    await sleep(300);
 
+    // --- new session: the sessions tab's ghost row (and ⌘N) creates a
+    // top-level session, opens it, and drops straight into inline rename.
+    await evalPage(wsUrl, `(() => {
+      const q = window.__tau.store().pane['w-demo'];
+      if (q) q.ltab = 'sessions';
+    })()`);
+    const ghost = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      const row = document.querySelector('.tree .new');
+      if (!row) return res({ missing: 'no ghost row' });
+      row.click();
+      setTimeout(() => {
+        const s = t.store();
+        const sid = s.current;
+        res({
+          created: sid,
+          isCurrent: s.current === sid,
+          renaming: s.pane['w-demo']?.renamingId === sid,
+          inputVisible: !!document.querySelector('.trow input.rename'),
+          title: s.sessions[sid]?.meta.title ?? null
+        });
+      }, 500);
+    })`);
+    check('new session: the ghost row creates a session, opens it, and starts an inline rename',
+      ghost && !ghost.missing && ghost.created && ghost.isCurrent && ghost.renaming && ghost.inputVisible,
+      JSON.stringify(ghost));
+    const renamed = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      const inp = document.querySelector('.trow input.rename');
+      if (!inp) return res({ missing: 'no rename input' });
+      inp.value = 'rig-spike';
+      inp.dispatchEvent(new Event('input', { bubbles: true }));
+      inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      setTimeout(() => {
+        const s = t.store();
+        res({ title: s.sessions[s.current]?.meta.title ?? null, renaming: s.pane['w-demo']?.renamingId ?? null });
+      }, 400);
+    })`);
+    check('new session: committing the rename sets the title (and ends the rename mode)',
+      renamed && !renamed.missing && renamed.title === 'rig-spike' && renamed.renaming === null,
+      JSON.stringify(renamed));
+    const cmdN = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', metaKey: true, bubbles: true }));
+      setTimeout(() => {
+        const s = t.store();
+        res({ current: s.current, title: s.sessions[s.current]?.meta.title ?? null, renaming: s.pane['w-demo']?.renamingId === s.current });
+      }, 500);
+    })`);
+    check('new session: ⌘N creates the next one straight into rename',
+      cmdN && cmdN.current && cmdN.current !== ghost.created && cmdN.renaming,
+      JSON.stringify(cmdN));
+    await evalPage(wsUrl, `window.__tau.switchSession('demo')`);
+    await sleep(300);
     // --- model menu: the chip opens the centered, provider-grouped menu ---
     const menuOpen = await evalPage(wsUrl, `new Promise((res) => {
       setTimeout(() => {

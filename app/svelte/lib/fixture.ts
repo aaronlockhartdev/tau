@@ -375,7 +375,7 @@ function demoMeta(id: string, title: string, created: number, parent: string | n
   };
 }
 
-function demoChild(
+export function demoChild(
   id: string,
   title: string,
   handle: string | null,

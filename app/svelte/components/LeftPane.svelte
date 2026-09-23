@@ -6,7 +6,7 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, type PaneState } from '../lib/store.svelte';
   import SessionNode from './SessionNode.svelte';
   import FileNode from './FileNode.svelte';
 
@@ -50,6 +50,9 @@
     {:else}
       <div class="sec">
         <div class="tree">
+          <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
+            <svg class="ci" width="10" height="10"><use href="#i-plus" /></svg> new session
+          </button>
           {#if top.length === 0}
             <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
@@ -113,6 +116,28 @@
   }
   .tree {
     padding-top: 4px;
+  }
+  .new {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 4.5px 8px;
+    font-size: 12.5px;
+    line-height: 1;
+    color: var(--faint);
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+  }
+  .new:hover {
+    color: var(--text);
+    background: var(--panel2);
+  }
+  .new .ci {
+    display: block;
+    flex: none;
   }
   .arch {
     border-top: 1px solid var(--line);

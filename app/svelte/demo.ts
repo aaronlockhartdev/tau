@@ -13,6 +13,7 @@ import { store, init, applyEvents } from './lib/store.svelte';
 import {
   buildDemoSession,
   demoChildren,
+  demoChild,
   toEntry,
   demoSkills,
   demoSubagents,
@@ -43,6 +44,7 @@ export const demoFiles: Record<string, FileEntry[]> = {
 };
 const { meta, entries, views } = buildDemoSession();
 const kids = demoChildren();
+let demoNewSession = 0;
 // The bar's usage segment: the fixture parent's usage is the sum of its
 // children's, so it shows real tokens (the raw fixture meta carries none).
 const PARENT_USAGE: Usage = { input_tokens: 195800, output_tokens: 62200, total_tokens: 258000, cached_prompt_tokens: 0 };
@@ -128,6 +130,35 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
           (m) => store.sessions[m.id]?.meta ?? m
         )
       };
+    case 'session_new': {
+      // The ghost row / ⌘N: a new top-level session. The core generates the
+      // name; the demo cycles a small fixture list and pushes the child into
+      // the kids table so session_open and session_list see it.
+      const n = ++demoNewSession;
+      const names = [
+        ['quiet', 'harbor'],
+        ['brisk', 'meadow'],
+        ['pale', 'ridge'],
+        ['wired', 'dune']
+      ];
+      const gen = names[(n - 1) % names.length];
+      const kid = demoChild(
+        `demo-n${n}`,
+        c.title ?? `${gen[0]} ${gen[1]}`,
+        null,
+        null,
+        'idle',
+        null,
+        null,
+        { input_tokens: 0, output_tokens: 0, total_tokens: 0, cached_prompt_tokens: 0 },
+        Date.now(),
+        Date.now(),
+        [],
+        []
+      );
+      kids.push(kid);
+      return { kind: 'session', session: kid.meta };
+    }
     case 'session_archive':
       // The one-way move (ADR-0005): the demo just flags the row.
       return {

@@ -510,6 +510,29 @@
     }
   }
 
+  // New top-level session in the workspace: the core names it (adjective-noun)
+  // when no title is given. Opens it and drops straight into inline rename so
+  // the generated name becomes a real one if the user cares. ⌘N (App.svelte)
+  // and the sessions tab's ghost row both call this.
+  export async function newSession(ws: string, title: string | null = null): Promise<string | null> {
+    let sid: string;
+    try {
+      const out = (await command({
+        type: 'session_new',
+        workspace: ws,
+        title
+      })) as { kind: 'session'; session: SessionMeta };
+      sid = out.session.id;
+    } catch (e) {
+      store.error = errText(e);
+      return null;
+    }
+    await switchSession(sid);
+    const q = pane(ws);
+    if (q) q.renamingId = sid;
+    return sid;
+  }
+
   export async function renameSession(sid: string, title: string): Promise<void> {
     const t = title.trim();
     if (!t) return;
