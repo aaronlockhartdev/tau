@@ -5,6 +5,43 @@
   // and the total/window deriveds read it and re-sum.
   const heights = new Map<string, number>();
   const heightsGen = $state({ gen: 0 });
+
+  // Last user scroll input (wheel, touch, scrollbar drag, scroll key),
+  // performance.now()-stamped by Transcript's listeners. While input is
+  // live, new measurements are held in `pending` instead of the map: the
+  // slice is an absolutely-positioned transform, so a mid-scroll
+  // estimate→measured correction — in the total or in the window's
+  // re-basing prefix — re-offsets the slice and yanks the visible content
+  // under the cursor. At settle the pending heights flush as one clean
+  // re-layout. (A deferred map *write* is not enough: the window's
+  // scrollBefore reads the map directly, so a changed value in the map
+  // jumps the prefix the moment the window boundary crosses it.)
+  let inputIntent = 0;
+  const INPUT_TTL = 200;
+  const pending = new Map<string, number>();
+  let settleTimer = 0;
+  function armSettle() {
+    if (settleTimer) return;
+    settleTimer = setTimeout(() => {
+      settleTimer = 0;
+      if (performance.now() - inputIntent <= INPUT_TTL) return armSettle();
+      for (const [k, h] of pending) if (heights.get(k) !== h) heights.set(k, h);
+      if (pending.size) {
+        pending.clear();
+        heightsGen.gen++;
+      }
+    }, INPUT_TTL + 60);
+  }
+  function reportMeasurement(key: string, h: number) {
+    if (heights.get(key) === h) return;
+    if (performance.now() - inputIntent <= INPUT_TTL) {
+      pending.set(key, h);
+      armSettle();
+    } else {
+      heights.set(key, h);
+      heightsGen.gen++;
+    }
+  }
 </script>
 
 <script lang="ts">
@@ -155,12 +192,10 @@
     const node = el;
     if (!node) return;
     // Input intent: the last user scroll input (wheel, touch, scrollbar
-    // drag, scroll key), performance.now() time-stamped. The unpin branch
-    // consumes it; a re-pin leaves it live (a wheel up within the TTL
-    // unpins in its listener regardless). The TTL expires an arm the
-    // scroll never spent.
-    let inputIntent = 0;
-    const INPUT_TTL = 200;
+    // drag, scroll key), time-stamped in the module's inputIntent (shared
+    // with reportMeasurement). The unpin branch consumes it; a re-pin
+    // leaves it live (a wheel up within the TTL unpins in its listener
+    // regardless). The TTL expires an arm the scroll never spent.
     const onWheel = (e: WheelEvent) => {
       inputIntent = performance.now();
       if (e.deltaY < 0) pinned = false;
@@ -272,6 +307,7 @@
     // keeps the row, so the heights persist across remounts).
     if (mountedFor !== null && store.current !== mountedFor && !store.sessions[mountedFor]) {
       for (const k of [...heights.keys()]) if (k.startsWith(`${mountedFor}:`)) heights.delete(k);
+      for (const k of [...pending.keys()]) if (k.startsWith(`${mountedFor}:`)) pending.delete(k);
       for (const k of [...store.entryOpen.keys()]) if (k.startsWith(`${mountedFor}:`)) store.entryOpen.delete(k);
     }
   });
@@ -321,12 +357,7 @@
           <EntryCard
             entry={e}
             heightKey={hk}
-            report={(h) => {
-              if (heights.get(hk) !== h) {
-                heights.set(hk, h);
-                heightsGen.gen++;
-              }
-            }}
+            report={(h) => reportMeasurement(hk, h)}
             sourceLabel={sourceLabelFor(e)}
             parentLabel={parentLabel}
             turn={turnLabel(idx)}
