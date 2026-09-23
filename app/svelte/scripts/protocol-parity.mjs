@@ -20,7 +20,9 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const rustSrc = [
   readFileSync(join(root, 'crates/tau-protocol/src/lib.rs'), 'utf8'),
-  readFileSync(join(root, 'crates/tau-protocol/src/snapshot.rs'), 'utf8')
+  readFileSync(join(root, 'crates/tau-protocol/src/snapshot.rs'), 'utf8'),
+  readFileSync(join(root, 'crates/tau-protocol/src/payload.rs'), 'utf8'),
+  readFileSync(join(root, 'crates/tau-protocol/src/coalesce.rs'), 'utf8')
 ].join('\n');
 const tsSrc = readFileSync(join(root, 'app/svelte/lib/protocol.ts'), 'utf8');
 
