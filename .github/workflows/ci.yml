@@ -6,8 +6,11 @@ on:
   pull_request:
 
 jobs:
-  macos:
-    runs-on: macos-15
+  rust:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-15, ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
 
@@ -17,11 +20,14 @@ jobs:
 
       - uses: swatinem/rust-cache@v2
 
-      - uses: actions/setup-node@v4
+      - name: Install webkit2gtk
+        if: runner.os == 'Linux'
+        # The workspace links the Tauri app crate, which needs webkit to compile on Linux.
+        run: sudo apt-get update -y && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
+
+      - uses: taiki-e/install-action@v2
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: app/package-lock.json
+          tool: nextest@0.9.146
 
       - name: Format
         run: cargo fmt --all --check
@@ -30,24 +36,33 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo nextest run --workspace
 
-      - name: Install frontend deps
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install
         working-directory: app
         run: npm ci
 
-      - name: Tauri build
+      - name: Build
         working-directory: app
-        run: npx tauri build --bundles app
+        run: npm run build
 
-  linux:
-    runs-on: ubuntu-latest
-    # How far Linux is exercised (map fog item): the full non-GUI build
-    # (./build: non-GUI crates + frontend) plus the non-GUI acceptance
-    # legs — e (branch + archive) and f (the 10k-entry performance demo
-    # with headless Chrome). Leg a (the app-launch smoke) skips: the Tauri
-    # app binary needs the webkit system libraries, macOS-first per spec §13.
-    # Live legs (b/c/d) do not run in CI (no TAU_LIVE).
+      - name: Test
+        working-directory: app
+        run: npm run test
+
+  app:
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -61,8 +76,44 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - name: Build (core + frontend)
-        run: ./build
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
 
-      - name: Acceptance (non-GUI legs)
-        run: ./scripts/acceptance.sh
+      - name: Build
+        run: just build
+
+      - name: Launch smoke (leg a)
+        run: just acceptance a
+
+  linux-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install webkit2gtk + xvfb
+        # The Tauri app crate needs webkit to link; xvfb gives the webview an X display.
+        run: sudo apt-get update -y && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev xvfb
+
+      - uses: dtolnay/rust-toolchain@1.98.1
+
+      - uses: swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: just
+
+      - name: Build
+        run: just build
+
+      - name: Acceptance (offline core leg e)
+        run: just acceptance e
+
+      - name: Launch smoke (leg a, xvfb)
+        run: just acceptance a

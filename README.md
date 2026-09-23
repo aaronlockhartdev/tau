@@ -4,15 +4,15 @@ A local-first coding agent: an agent loop with streaming chat, tree sessions wit
 
 ## Quickstart (~10 minutes, macOS)
 
-Prerequisites: Rust (the pinned toolchain is in `rust-toolchain.toml`), Node 22+, and the Xcode command-line tools (macOS).
+Prerequisites: Rust (the pinned toolchain is in `rust-toolchain.toml`), Node 22+, `just` (the build entry point), and the Xcode command-line tools (macOS).
 
 ```sh
 git clone git@github.com:aaronlockhartdev/tau.git
 cd tau
-./build
+just build
 ```
 
-`./build` does the release cargo build, the Svelte build (with `svelte-check`), and the Tauri bundle. It prints where the artifact lands:
+`just build` does the release cargo build, the Svelte build (with `svelte-check`), and the Tauri bundle. It prints where the artifact lands:
 
 ```
 target/release/bundle/macos/Tau.app
@@ -28,16 +28,16 @@ open target/release/bundle/macos/Tau.app
 
 `dev/config.toml` targets the project's test endpoint (`https://llms.aaronlockhart.dev/v1`, model `qwen3.8-27b`). To use your own provider, edit that file (or drop a `.tau/config.toml` into a project — the project layer wins per provider name): each `[providers.<name>]` entry is a `base_url` + `key_env` (the name of an environment variable holding the key) + `models`; `[om].om_model` names the compaction model. Tau speaks the OpenAI-compatible `responses` endpoint only.
 
-On Linux, `./build` builds the core and the frontend (the app bundle needs the webkit system libraries — that's v1 packaging work).
+On Linux, `just build` builds the full app and bundles an AppImage (needs the webkit system libraries: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); the launch smoke (leg a) runs under `xvfb`.
 
 ## Acceptance
 
 ```sh
-./build
-TAU_LIVE=1 ./scripts/acceptance.sh
+just build
+TAU_LIVE=1 just acceptance
 ```
 
-The script proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per leg: the built app launches (macOS), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the 10k-entry demo entry (two live 25 ms streams, 25 ms coalescing) passes. Live legs are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
+`just acceptance` proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per leg (a leg filter argument runs a subset): the built app launches (macOS and Linux), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the 10k-entry demo entry (two live 25 ms streams, 25 ms coalescing) passes. Live legs are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
 
 The performance bar is a dev-only demo entry — the 10k-entry fixture + two 25 ms streams behind `app/demo.html`, excluded from the release build (`app/scripts/verify-demo.mjs` is its committed, re-runnable verification):
 
@@ -55,4 +55,4 @@ and a human click-through: `npm run dev` in `app/`, open `http://localhost:5173/
 - `app/` — the Tauri + Svelte 5 GUI; `svelte/` is the frontend, `src-tauri/` the thin dispatch binding.
 - `prototype/gui-ia/index.html` — the GUI's behavioral reference (the design baseline, kept as a spec artifact).
 - `dev/config.toml` — the example/dev config.
-- `scripts/` — acceptance; `.github/workflows/ci.yml` — CI (macOS: full build; Linux: the non-GUI surface).
+- `justfile` — the build/acceptance entry point (`just build`, `just test`, `just acceptance`); `.github/workflows/ci.yml` — CI (rust matrix, frontend, macOS app + launch smoke, Linux acceptance).
