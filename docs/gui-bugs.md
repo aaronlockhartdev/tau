@@ -80,6 +80,17 @@ bugs below.
     a model that only saw 5 of the 16 v0 tools, an idle send queuing
     instead of starting, and no TPS / prefix-cache segments in the bar.
     All fixed in 698e691; verified live and by the two-turn rig.
+14. **Workspaces did not survive an app restart** — the workspace
+   map was in-memory and boot never reconstructed workspaces from
+   the on-disk sessions. The workspace index (`{system dir}/workspaces.json`,
+   10d2f75) re-registers at boot the folders whose directory still
+   exists (sessions read from disk on demand), so a restart reopens
+   them.
+15. **Console-error monitoring unverified** — the display locked
+   mid-run and the console-monitor log came back empty; the live
+   journey was verified through the DOM, session files, and
+   screenshots. Superseded: the monitor belonged to the deleted JS
+   eval bridge; log access now lives in tauri-pilot's `logs`.
 
 ## Environmental (not code)
 
@@ -88,14 +99,3 @@ bugs below.
   (the documented dev setup). The core reads config at construction, so
   a config change needs an app restart (no live reload in v0 —
   expected).
-
-## Open (recorded, not fixed)
-
-- **Workspaces do not survive an app restart** — the workspace map is
-  in-memory and boot never reconstructs workspaces from the on-disk
-  sessions (`{project}/.tau/sessions/`), so a restart puts the user
-  back at "no workspace open" with the + button.
-  path.
-- **Console-error monitoring unverified** — the display locked mid-run
-  and the console-monitor log came back empty; the live journey was
-  verified through the DOM, session files, and screenshots instead.

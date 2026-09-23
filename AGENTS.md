@@ -2,15 +2,15 @@
 
 ### Issue tracker
 
-Issues live in this repo's GitHub Issues, driven via the `gh` CLI. See `docs/agents/issue-tracker.md`.
+Issues live in this repo's GitHub Issues — the wayfinder maps and their child tickets among them — driven via the `gh` CLI. See `docs/agents/issue-tracker.md` (conventions + wayfinding operations).
 
 ### Triage labels
 
-Default five-role vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+Five triage roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: `CONTEXT.md` (the glossary), `docs/spec/v0.md` (the approved v0 contract), and `docs/adr/` at the repo root. The v0 clean-up works from `docs/v0-cleanup-roadmap.md`; maps and tickets live in GitHub Issues. See `docs/agents/domain.md`.
 
 ### tauri-pilot
 
@@ -30,6 +30,8 @@ Rules, not suggestions. Enforced in CI where mechanical, in review where not.
 **Formatting.** Rust: `rustfmt` defaults + `clippy -D warnings`, both enforced in CI. Svelte/TypeScript: same spirit — consistent 2-space indent, single quotes, semicolons on; no extra formatter tooling in v0.
 
 **No speculative code.** No dead abstractions, no "for the future" scaffolding, no flags for nonexistent features, no second implementation kept "just in case". Build the thing the ticket asks for; the next ticket extends it.
+
+**File size.** Every code file stays under a soft 500-LOC limit and a hard 1000-LOC limit. The soft limit is a review smell that invites a split; the hard limit is a blocker — per the rule above, a CI check fails on any file over 1000 LOC, and that gate lands when the last over-limit split lands (the v0 clean-up's Wave 4). No grandfathering: all ten files currently over the hard limit are split in v0 (`app/src-tauri/src/core.rs` at 6,297 LOC being the largest), and from then on a file over 1000 fails CI.
 
 **Doc comments** appear only on public API items whose contract is not self-evident from the signature — one line where possible, with a spec/ADR citation when a rule comes from one.
 

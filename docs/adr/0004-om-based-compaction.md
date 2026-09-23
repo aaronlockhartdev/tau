@@ -1,6 +1,8 @@
 # Compaction is Observational Memory (no lossy summarization)
 
-**Context**: pi's compaction is lossy — at near-overflow an LLM summarizes the old span into prose and the detail leaves the context. Tau's compaction is natively Observational Memory (OM, Mastra; research #2): an **Observer** LLM converts raw messages (including tool calls/results) into a dense, append-only, date-grouped, priority-marked observation log; a **Reflector** LLM periodically rewrites the log itself to keep it bounded; the live context is always *observations block + recent raw window*; raw messages remain in storage and are recoverable.
+**Status**: accepted (2026-09-16) — settled in [How does tau's OM-based compaction work?](https://github.com/aaronlockhartdev/tau/issues/9) on [The way to the tau v0 spec](https://github.com/aaronlockhartdev/tau/issues/1).
+
+**Context**: pi's compaction is lossy — at near-overflow an LLM summarizes the old span into prose and the detail leaves the context. Tau's compaction is natively Observational Memory (OM, Mastra; [What is Observational Memory?](https://github.com/aaronlockhartdev/tau/issues/2)): an **Observer** LLM converts raw messages (including tool calls/results) into a dense, append-only, date-grouped, priority-marked observation log; a **Reflector** LLM periodically rewrites the log itself to keep it bounded; the live context is always *observations block + recent raw window*; raw messages remain in storage and are recoverable.
 
 **Decision**: in v0, OM **is** the compaction — there is no pi-style one-shot summarization path:
 
