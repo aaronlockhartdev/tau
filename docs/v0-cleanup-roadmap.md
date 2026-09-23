@@ -19,11 +19,14 @@ depth, seam, adapter, leverage, locality).
 Each phase is a set of small, independently-landable tickets. A ticket is one branch, one red→green,
 landed on its own. Nothing here is speculative scaffolding between steps (per `AGENTS.md`).
 
-Two tracks are **decisions** (need a human call before code): the C1 harness move and the post-v0 map for
-the orphaned tickets #28–#33. Everything else is mechanical work.
+One track is a **decision** (needs a human call before code): the post-v0 map for the orphaned tickets
+#28–#33. The C1 harness move is **decided** (user, 2026-09-23): the seam is that `tau-core` owns all logic
+necessary for a non-Tauri interface and the Tauri app owns all Tauri-specific code, so whatever sits on the
+wrong side moves. Everything else is mechanical work.
 
-Order: **Phase 0 (quick wins) → Phase 1 (testing) → Phase 2 (architecture)**. Phase 2's C1 is the one
-strategic decision; take it before v0 freeze or defer it post-v0.
+Order: **Phase 0 (quick wins) → Phase 1 (testing) → Phase 2 (architecture)**. Phase 0 now also carries the
+build/acceptance tooling change (F), the demo-rig→test-suite formalization (G), and the file-size policy (H);
+Phase 2's C1 (the harness move) is the strategic piece and must land before v0 freeze.
 
 ---
 
@@ -138,6 +141,47 @@ Tracker actions (`gh`, read the current state first):
 - **Orphaned #28–#33** have no parent map — **decision needed** (see Phase 2): chart a post-v0 map and link
   them as sub-issues, or consciously accept standalone tickets.
 
+### F. Build + acceptance tooling — retire `./build` + `./scripts/acceptance.sh`
+
+Both are ad-hoc shell scripts whose entire job is to drive native workspace tools. Replace them with a
+**Makefile** as the single entry point that delegates to the native tools (`cargo`, `npm`/`vite`, `tauri`).
+Targets:
+- `build` — platform-aware, exactly what `./build` did: macOS → `cargo build --workspace --release` +
+  `app: npm ci && npm run build` + `npx tauri build --bundles app`; Linux → the non-GUI crates + frontend
+  (the webkit bundle stays macOS in v0, spec §13).
+- `test` — `cargo nextest run --workspace` + the frontend suite (item G): what CI's rust + frontend jobs run.
+- `acceptance [legs]` — the spec §1 in-scope legs: `cargo run --release --bin tau-acceptance -- <leg>` for
+  b/c/d (live) and e (offline), the frontend suite for f, and the macOS launch smoke for a. Live legs stay
+  `TAU_LIVE`-gated exactly as today; a skipped live leg is not a failure, a red leg is.
+`./build` and `./scripts/acceptance.sh` are deleted; CI + README point at `make`. *(Alternative if the user
+prefers zero added tooling: express the same targets as `npm run` scripts + bare `cargo` — the Makefile is the
+recommended unifier because the work crosses the Rust and node boundaries.)*
+
+### G. Formalize the demo rig into the frontend test suite
+
+The 10k-entry rig (`app/scripts/verify-demo.mjs`, ~1,124 lines, ~35 checks, driving `app/svelte/demo.ts` +
+`app/demo.html` + `app/svelte/lib/fixture.ts`) is the repo's only automated frontend test — and it is still
+named "demo" (a leftover of #29, which stripped the demo *mode* but kept the *name*). Formalize it as a
+first-class **test suite**, not a demo surface:
+- **Relocate** `app/svelte/demo.{ts,html}` + `lib/fixture.ts` + `verify-demo.mjs` → `app/tests/frontend/`
+  (a test entry, not a product/dev entry).
+- **Rename** the entry to a test-harness entry and the runner to `verify.mjs`; `fixture.ts` stays the data
+  source. The "demo" naming is dropped from the tree (grep-clean, as #29 did for the mode).
+- **Wire** `app/package.json` with `"test:frontend": "node tests/frontend/verify.mjs"`; CI's frontend job runs
+  it (the headless-Chrome-over-CDP path already used — no new deps). It keeps the PASS/FAIL shape CI parses.
+- **Docs**: README's "Acceptance" and the spec's §8 perf-bar references point at the test suite, not a demo.
+This is a rename + relocate, not a rewrite — the ~35 checks and the 10k fixture survive intact. It is the
+committed proof of the spec §8/§9 10k-entry bar.
+
+### H. File-size policy in `AGENTS.md`
+
+Add to the Coding-conventions section: **every code file stays under a soft 500-LOC limit and a hard
+1000-LOC limit.** The soft limit is a review smell that invites a split; the hard limit is a blocker, and
+per the repo's "enforced in CI where mechanical" rule a small CI check fails on any file over 1000 LOC
+(the currently-over-limit files are grandfathered until the C1/C2 split lands). This is the standing rule
+that makes the C1/C2 work *required* rather than optional: `app/src-tauri/src/core.rs` is 6,297 LOC — 6× the
+hard limit — and must be broken up as part of moving the harness.
+
 ---
 
 ## Phase 1 — testing
@@ -154,11 +198,12 @@ only untested seam. Full detail + a ready-to-paste CI YAML in `01-testing.md`.
    "wedges the whole suite" into "one red test". No test-code changes.
 2. `scripts/acceptance.sh`: accept an optional **leg-filter argument** (`./scripts/acceptance.sh a e f`; no
    args = all, preserving current behavior).
-3. Restructure `ci.yml` to four jobs: **rust** (macos+linux matrix: fmt/clippy/nextest), **frontend**
-   (ubuntu: `npm run build` + the store suite of 1c), **app** (macos: `./build` + **launch smoke via
-   `acceptance.sh a`** — today the bundle is built but never launched in CI, a launch-panic would pass), and
-   **linux-acceptance** (ubuntu: `./build` + leg e + the demo rig as separate steps so a red rig can't mask a
-   red core leg). Live legs (b/c/d) stay local — no `TAU_LIVE` in CI.
+3. Restructure `ci.yml` to four jobs, driven by the Makefile (item F): **rust** (macos+linux matrix:
+   fmt/clippy/`nextest`), **frontend** (ubuntu: `make frontend` + the store suite of 1c + the formalized
+   frontend test suite of item G), **app** (macos: `make build` + **launch smoke via `make acceptance a`** —
+   today the bundle is built but never launched in CI, a launch-panic would pass), and **linux-acceptance**
+   (ubuntu: `make build` + leg e + the frontend test suite as separate steps so a red suite can't mask a red
+   core leg). Live legs (b/c/d) stay local — no `TAU_LIVE` in CI.
 
 ### 1b. Rust additions (1–2 d)
 
@@ -252,9 +297,13 @@ Wiring also makes B's `with_blob_threshold` item a keep.
 
 ### C6 — (see Phase 0 C) mirror fix + diff check — **Strong** — already in Phase 0.
 
-### C1 (the decision) — move the app-side `Core` to the right side of the core↔GUI seam — **Strong, strategic**
+### C1 (decided) — move the app-side `Core` to the right side of the core↔Tauri seam — **Strong, strategic**
 
-**Decision ticket — get the human call before v0 freeze.** `app/src-tauri/src/core.rs` (6,297 lines) is the
+**Decided by the user (2026-09-23):** the seam is that `tau-core` is responsible for **all logic necessary
+for a non-Tauri interface**, and the Tauri app holds **all Tauri-specific code** — whatever is on the wrong
+side of the seam moves (`Core`'s state and transport-free logic → `tau-core`; Tauri wiring stays). Consequence
+of the file-size rule (H): `app/src-tauri/src/core.rs` (6,297 lines) is 6× the 1000-LOC hard limit and must be
+broken up as part of this move, not merely relocated whole. The file is the
 real state owner: the live-session registry, workspace index, archive/reopen lifecycle, `run_turn` (217 lines),
 the event pump, the watchers — and `dispatch` is one 900-line function. ADR-0002 exists so "a future binary
 (CLI, RPC) can reuse" the standalone core, and ADR-0006 says the core is the single owner of all
@@ -303,16 +352,17 @@ difference. Pre-v1 is breakable; no ADR conflict.
 ```
 Phase 0 (independent, land in any order)
   A comments   B dead code   C mirror-fix   D ADRs+agent-docs   E prototypes+tracker
+  F build/acceptance -> Makefile   G demo-rig -> frontend test suite   H file-size policy in AGENTS.md
 
 Phase 1 (ordered)
-  1a runner+CI ── 1b rust (proptest, tauri smoke) ── 1c svelte store suite
+  1a runner+CI (via make) ── 1b rust (proptest, tauri smoke) ── 1c svelte store suite
 
 Phase 2
   C3 entries-module ── 1c's store suite benefits from it
   C5 wire-or-delete config
-  C1 harness move (DECISION, strategic) ── C2 session-access (collapses)
+  C1 harness move (DECIDED, strategic) ── C2 session-access (collapses; together they break core.rs to <1000 LOC)
   C4 (defer)   C7 (defer)
-  tracker: chart a post-v0 map for orphaned #28–#33 (DECISION)
+  tracker: chart a post-v0 map for orphaned #28–#33 (the one open DECISION)
 ```
 
 ## What "done" looks like for v0
@@ -320,9 +370,15 @@ Phase 2
 - Zero "what" comments / banners / dead code in the scanned surfaces (Phase 0).
 - All 7 ADRs + 4 agent-doc files on one consistent, refer-by-name shape; spec §14 U-numbering unambiguous.
 - No throwaway prototypes tracked; no redundant branches; #33 closed; missing labels + junk edge fixed.
-- CI: rust (matrix, nextest), frontend (build + store suite), app (macOS build + **launch smoke**),
-  linux-acceptance (leg e + demo rig). `tauri::test` smoke pins the one real Tauri seam.
+- One build/acceptance entry point: a `make`-driven Makefile replaces `./build` + `./scripts/acceptance.sh`
+  (all work delegated to cargo/npm/vite/tauri); the two shell scripts are deleted.
+- The frontend "demo rig" is a relocated, renamed **test suite** (`app/tests/frontend/`, `npm run test:frontend`,
+  in CI) — "demo" naming is gone from the tree.
+- `AGENTS.md` carries the file-size rule (soft 500 / hard 1000 LOC) and no code file exceeds the hard limit —
+  `core.rs` is split as part of C1/C2.
+- CI: rust (matrix, nextest), frontend (build + store suite + the frontend test suite), app (macOS build +
+  **launch smoke**), linux-acceptance (leg e + the frontend test suite). `tauri::test` smoke pins the one real
+  Tauri seam.
 - The store's twin-merge logic is a pure, unit-tested module; the config surface is true (wired or gone).
-
-C1 (the harness move) and the post-v0 map are the two open **decisions** — everything else in this roadmap is
-mechanical and ticket-ready.
+Only the post-v0 map for the orphaned tickets #28–#33 is an open **decision**; C1 is decided, and everything
+else in this roadmap is mechanical and ticket-ready.
