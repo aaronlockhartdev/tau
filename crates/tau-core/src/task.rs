@@ -3,8 +3,11 @@
 //! not an agent; it dies with the session. On assignment the record copies
 //! into the worker's session, which becomes the live record; the creator's
 //! copy becomes a status pointer.
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+pub use tau_protocol::payload::{
+    Blocker, Criterion, CriterionStatus, Decision, Evidence, ResumeContract, Step, StepStatus,
+    Task, TaskEvent, TaskRecord, WorkerPointer, resume_contract,
+};
 
 pub const KIND_TASK: &str = "task";
 
@@ -13,115 +16,6 @@ pub const STATUS_IN_PROGRESS: &str = "in_progress";
 pub const STATUS_DONE: &str = "done";
 pub const STATUS_BLOCKED: &str = "blocked";
 pub const STATUS_CANCELLED: &str = "cancelled";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StepStatus {
-    Pending,
-    Active,
-    Done,
-    Skipped,
-}
-
-impl StepStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            StepStatus::Pending => "pending",
-            StepStatus::Active => "active",
-            StepStatus::Done => "done",
-            StepStatus::Skipped => "skipped",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Step {
-    pub text: String,
-    pub expected_output: String,
-    pub status: StepStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CriterionStatus {
-    Pending,
-    Satisfied,
-    Failed,
-    Skipped,
-}
-
-impl CriterionStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            CriterionStatus::Pending => "pending",
-            CriterionStatus::Satisfied => "satisfied",
-            CriterionStatus::Failed => "failed",
-            CriterionStatus::Skipped => "skipped",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Criterion {
-    pub text: String,
-    pub status: CriterionStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Evidence {
-    pub criterion: String,
-    pub summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artifact: Option<String>,
-    pub passed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub step: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Blocker {
-    pub reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub needs: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Decision {
-    pub question: String,
-    pub decision: String,
-    pub decided_by: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rationale: Option<String>,
-}
-
-/// The creator's copy of an assigned task (spec §5.3): a pointer, not a
-/// record — the worker's session is the live one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkerPointer {
-    pub session: String,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Task {
-    pub id: String,
-    pub title: String,
-    pub status: String,
-    pub steps: Vec<Step>,
-    pub criteria: Vec<Criterion>,
-    pub evidence: Vec<Evidence>,
-    pub blockers: Vec<Blocker>,
-    pub decisions: Vec<Decision>,
-    pub notes: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub worker: Option<WorkerPointer>,
-    /// Set on the worker's copy: the session the task was created in.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_in: Option<String>,
-    pub updated: u64,
-}
 
 /// Fold a session's task entries into current task state. Task state is
 /// session-scoped, not branch-scoped (spec §5.3): the fold walks every
@@ -132,20 +26,12 @@ pub fn fold_entries(entries: &[crate::session::Entry]) -> Vec<Task> {
         if e.kind != KIND_TASK {
             continue;
         }
-        let Some(event) = e.payload.get("event").and_then(Value::as_str) else {
+        let Some((id, event)) = TaskEvent::from_value(&e.payload) else {
             continue;
         };
-        let Some(id) = e.payload.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let task = tasks.entry(id.to_owned()).or_insert_with(|| Task {
-            id: id.to_owned(),
-            title: e
-                .payload
-                .get("title")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .unwrap_or_default(),
+        let task = tasks.entry(id.clone()).or_insert_with(|| Task {
+            id: id.clone(),
+            title: String::new(),
             status: STATUS_PENDING.to_owned(),
             steps: Vec::new(),
             criteria: Vec::new(),
@@ -157,130 +43,100 @@ pub fn fold_entries(entries: &[crate::session::Entry]) -> Vec<Task> {
             created_in: None,
             updated: 0,
         });
-        apply_event(task, event, &e.payload);
+        apply_event(task, &event);
         task.updated = e.timestamp;
     }
     tasks.into_values().collect()
 }
 
-fn apply_event(task: &mut Task, event: &str, p: &Value) {
+fn apply_event(task: &mut Task, event: &TaskEvent) {
     match event {
-        "created" => {
+        TaskEvent::Created {
+            title,
+            steps,
+            criteria,
+        } => {
             if task.status == STATUS_PENDING {
-                if let Some(title) = p.get("title").and_then(Value::as_str) {
-                    task.title = title.to_owned();
-                }
-                if let Some(steps) = p.get("steps") {
-                    task.steps = serde_json::from_value(steps.clone()).unwrap_or_default();
-                }
-                if let Some(criteria) = p.get("criteria") {
-                    task.criteria = serde_json::from_value(criteria.clone()).unwrap_or_default();
-                }
+                task.title = title.clone();
+                task.steps = steps.clone();
+                task.criteria = criteria.clone();
             }
         }
         // On the creator's session: the task is assigned away (pointer).
         // On the worker's session: the record copy arrives (full state).
-        "assigned" => {
-            if let Some(worker) = p.get("worker").and_then(Value::as_str) {
+        TaskEvent::Assigned { worker, record } => {
+            if let Some(worker) = worker {
                 task.status = STATUS_IN_PROGRESS.to_owned();
                 task.worker = Some(WorkerPointer {
-                    session: worker.to_owned(),
+                    session: worker.clone(),
                     status: STATUS_IN_PROGRESS.to_owned(),
                 });
             }
-            if p.get("record").is_some() {
-                let record = p.get("record").unwrap();
-                if let Some(title) = record.get("title").and_then(Value::as_str) {
-                    task.title = title.to_owned();
-                }
-                if let Some(steps) = record.get("steps") {
-                    task.steps = serde_json::from_value(steps.clone()).unwrap_or_default();
-                }
-                if let Some(criteria) = record.get("criteria") {
-                    task.criteria = serde_json::from_value(criteria.clone()).unwrap_or_default();
-                }
-                if let Some(evidence) = record.get("evidence") {
-                    task.evidence = serde_json::from_value(evidence.clone()).unwrap_or_default();
-                }
-                if let Some(blockers) = record.get("blockers") {
-                    task.blockers = serde_json::from_value(blockers.clone()).unwrap_or_default();
-                }
-                task.status = record
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or(STATUS_IN_PROGRESS)
-                    .to_owned();
-                if let Some(created_in) = record.get("created_in").and_then(Value::as_str) {
-                    task.created_in = Some(created_in.to_owned());
-                }
+            if let Some(record) = record {
+                task.title = record.title.clone();
+                task.status = record.status.clone();
+                task.steps = record.steps.clone();
+                task.criteria = record.criteria.clone();
+                task.evidence = record.evidence.clone();
+                task.blockers = record.blockers.clone();
+                task.created_in = Some(record.created_in.clone());
             }
         }
-        "started" => {
+        TaskEvent::Started => {
             if task.status == STATUS_PENDING || task.status == STATUS_BLOCKED {
                 task.status = STATUS_IN_PROGRESS.to_owned();
                 advance_step(task);
             }
         }
-        "evidence" => {
-            if let Some(ev) = p
-                .get("evidence")
-                .cloned()
-                .and_then(|v| serde_json::from_value::<Evidence>(v).ok())
-            {
-                if let Some(c) = task.criteria.iter_mut().find(|c| c.text == ev.criterion) {
-                    c.status = if ev.passed {
-                        CriterionStatus::Satisfied
-                    } else {
-                        CriterionStatus::Failed
-                    };
-                }
-                if let Some(step) = ev.step.as_deref()
-                    && let Some(s) = task.steps.iter_mut().find(|s| s.text == step)
-                {
-                    s.status = StepStatus::Done;
-                    advance_step(task);
-                }
-                task.evidence.push(ev);
+        TaskEvent::Evidence { evidence } => {
+            let ev = evidence.clone();
+            if let Some(c) = task.criteria.iter_mut().find(|c| c.text == ev.criterion) {
+                c.status = if ev.passed {
+                    CriterionStatus::Satisfied
+                } else {
+                    CriterionStatus::Failed
+                };
             }
+            if let Some(step) = ev.step.as_deref()
+                && let Some(s) = task.steps.iter_mut().find(|s| s.text == step)
+            {
+                s.status = StepStatus::Done;
+                advance_step(task);
+            }
+            task.evidence.push(ev);
         }
-        "blocked" => {
+        TaskEvent::Blocked { reason, needs } => {
             task.blockers.push(Blocker {
-                reason: p
-                    .get("reason")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                needs: p.get("needs").and_then(Value::as_str).map(str::to_owned),
+                reason: reason.clone(),
+                needs: needs.clone(),
             });
             task.status = STATUS_BLOCKED.to_owned();
         }
-        "finished" => {
-            let force = p.get("force").and_then(Value::as_bool).unwrap_or(false);
+        TaskEvent::Finished { force, reason } => {
             for c in task.criteria.iter_mut() {
                 if c.status == CriterionStatus::Pending || c.status == CriterionStatus::Failed {
                     c.status = CriterionStatus::Skipped;
                 }
             }
-            if force && let Some(reason) = p.get("reason").and_then(Value::as_str) {
+            if *force && let Some(reason) = reason {
                 task.decisions.push(Decision {
                     question: format!("task {} finished by force", task.id),
                     decision: "force finish".to_owned(),
                     decided_by: "agent".to_owned(),
-                    rationale: Some(reason.to_owned()),
+                    rationale: Some(reason.clone()),
                 });
             }
             task.status = STATUS_DONE.to_owned();
         }
-        "cancelled" => {
-            if let Some(reason) = p.get("reason").and_then(Value::as_str) {
-                task.notes.push(reason.to_owned());
+        TaskEvent::Cancelled { reason } => {
+            if let Some(reason) = reason {
+                task.notes.push(reason.clone());
             }
             task.status = STATUS_CANCELLED.to_owned();
         }
-        "handed_off" => {
-            if let Some(output) = p.get("output") {
-                task.notes.push(output.to_string());
-            }
+        TaskEvent::HandedOff { output } => {
+            task.notes
+                .push(serde_json::to_string(output).unwrap_or_default());
             task.decisions.push(Decision {
                 question: format!("task {} resolution on child exit", task.id),
                 decision: "handed_off".to_owned(),
@@ -289,47 +145,30 @@ fn apply_event(task: &mut Task, event: &str, p: &Value) {
             });
         }
         // The creator's pointer tracks the worker's task status.
-        "pointer" => {
-            if let Some(status) = p.get("status").and_then(Value::as_str)
-                && let Some(w) = task.worker.as_mut()
-            {
-                w.status = status.to_owned();
+        TaskEvent::Pointer { status } => {
+            if let Some(w) = task.worker.as_mut() {
+                w.status = status.clone();
             }
         }
-        "note" => {
-            if let Some(text) = p.get("text").and_then(Value::as_str) {
-                task.notes.push(text.to_owned());
-            }
+        TaskEvent::Note { text } => {
+            task.notes.push(text.clone());
         }
-        "decision" => {
+        TaskEvent::Decision {
+            question,
+            decision,
+            decided_by,
+            rationale,
+        } => {
             task.decisions.push(Decision {
-                question: p
-                    .get("question")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                decision: p
-                    .get("decision")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                decided_by: p
-                    .get("decided_by")
-                    .and_then(Value::as_str)
-                    .unwrap_or("agent")
-                    .to_owned(),
-                rationale: p
-                    .get("rationale")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
+                question: question.clone(),
+                decision: decision.clone(),
+                decided_by: decided_by.clone(),
+                rationale: rationale.clone(),
             });
         }
-        _ => {}
     }
 }
 
-/// A step's `done` activates the next pending one (the ordered plan, spec
-/// §5.3); called from `started` and from evidence naming a finished step.
 fn advance_step(task: &mut Task) {
     if task.steps.iter().any(|s| s.status == StepStatus::Active) {
         return;
@@ -341,60 +180,6 @@ fn advance_step(task: &mut Task) {
     {
         next.status = StepStatus::Active;
     }
-}
-
-/// The resume contract (spec §5.3): the compaction-safety device. Derived
-/// from the task's events; re-injected into context assembly while the
-/// task is active, and the payload for resuming a paused/done child.
-pub fn resume_contract(task: &Task) -> Value {
-    let current = task
-        .steps
-        .iter()
-        .find(|s| s.status == StepStatus::Active)
-        .map(|s| json!({"text": s.text, "expected_output": s.expected_output}));
-    let gaps: Vec<String> = task
-        .criteria
-        .iter()
-        .filter(|c| c.status != CriterionStatus::Satisfied)
-        .map(|c| c.text.clone())
-        .collect();
-    let next_action = if task.status == STATUS_DONE {
-        "done".to_owned()
-    } else if task.status == STATUS_CANCELLED {
-        "cancelled".to_owned()
-    } else if task.status == STATUS_BLOCKED {
-        task.blockers
-            .last()
-            .map(|b| {
-                if let Some(needs) = &b.needs {
-                    format!("unblock: {needs}")
-                } else {
-                    format!("unblock: {}", b.reason)
-                }
-            })
-            .unwrap_or_else(|| "unblock".to_owned())
-    } else if let Some(step) = current.as_ref() {
-        format!(
-            "complete: {} (expected: {})",
-            step["text"].as_str().unwrap_or_default(),
-            step["expected_output"].as_str().unwrap_or_default()
-        )
-    } else if !gaps.is_empty() {
-        format!("satisfy the outstanding criteria: {}", gaps.join("; "))
-    } else {
-        "finish the task".to_owned()
-    };
-    json!({
-        "task": task.id,
-        "title": task.title,
-        "status": task.status,
-        "current_step": current,
-        "steps": task.steps,
-        "evidence": task.evidence,
-        "gaps": gaps,
-        "blockers": task.blockers,
-        "next_action": next_action,
-    })
 }
 
 /// The active tasks of a session (the ones a context assembly carries the
@@ -424,15 +209,8 @@ fn find(store: &SessionStore, id: &str) -> StoreResult<Option<Task>> {
     Ok(load(store)?.into_iter().find(|t| t.id == id))
 }
 
-fn append_event(store: &mut SessionStore, id: &str, event: &str, extra: Value) -> StoreResult<()> {
-    let mut payload = json!({ "event": event, "id": id });
-    if let Some(obj) = payload.as_object_mut()
-        && let Some(extra) = extra.as_object()
-    {
-        for (k, v) in extra {
-            obj.insert(k.clone(), v.clone());
-        }
-    }
+fn append_event(store: &mut SessionStore, id: &str, event: TaskEvent) -> StoreResult<()> {
+    let payload = event.to_value(id);
     // Task events append to the active branch like all entries (spec
     // §5.3): a null parent would fork the conversation onto a phantom
     // root, since every later entry chains from the leaf.
@@ -456,12 +234,11 @@ pub fn create(
     append_event(
         store,
         id,
-        "created",
-        json!({
-            "title": title,
-            "steps": steps,
-            "criteria": criteria,
-        }),
+        TaskEvent::Created {
+            title: title.to_owned(),
+            steps,
+            criteria,
+        },
     )
 }
 
@@ -486,22 +263,29 @@ pub fn assign(
     if task.status == STATUS_DONE || task.status == STATUS_CANCELLED {
         return Err(format!("task {id}: cannot assign a {} task", task.status));
     }
-    append_event(creator, id, "assigned", json!({ "worker": worker_session }))?;
+    append_event(
+        creator,
+        id,
+        TaskEvent::Assigned {
+            worker: Some(worker_session.to_owned()),
+            record: None,
+        },
+    )?;
     append_event(
         worker,
         id,
-        "assigned",
-        json!({
-            "record": {
-                "title": task.title,
-                "status": STATUS_IN_PROGRESS,
-                "steps": task.steps,
-                "criteria": task.criteria,
-                "evidence": task.evidence,
-                "blockers": task.blockers,
-                "created_in": creator_session,
-            },
-        }),
+        TaskEvent::Assigned {
+            worker: None,
+            record: Some(TaskRecord {
+                title: task.title.clone(),
+                status: STATUS_IN_PROGRESS.to_owned(),
+                steps: task.steps.clone(),
+                criteria: task.criteria.clone(),
+                evidence: task.evidence.clone(),
+                blockers: task.blockers.clone(),
+                created_in: creator_session.to_owned(),
+            }),
+        },
     )?;
     find(worker, id).map(|t| t.unwrap())
 }
@@ -513,7 +297,7 @@ pub fn start(store: &mut SessionStore, id: &str) -> StoreResult<Task> {
     if task.status != STATUS_PENDING && task.status != STATUS_BLOCKED {
         return Err(format!("task {id}: cannot start from {}", task.status));
     }
-    append_event(store, id, "started", json!({}))?;
+    append_event(store, id, TaskEvent::Started)?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -533,7 +317,7 @@ pub fn add_evidence(store: &mut SessionStore, id: &str, evidence: Evidence) -> S
             evidence.criterion
         ));
     }
-    append_event(store, id, "evidence", json!({ "evidence": evidence }))?;
+    append_event(store, id, TaskEvent::Evidence { evidence })?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -555,8 +339,10 @@ pub fn block(
     append_event(
         store,
         id,
-        "blocked",
-        json!({ "reason": reason, "needs": needs }),
+        TaskEvent::Blocked {
+            reason: reason.to_owned(),
+            needs,
+        },
     )?;
     find(store, id).map(|t| t.unwrap())
 }
@@ -601,12 +387,7 @@ pub fn finish(
     if force && reason.is_none() {
         return Err(format!("task {id}: force finish requires a reason"));
     }
-    append_event(
-        store,
-        id,
-        "finished",
-        json!({ "force": force, "reason": reason }),
-    )?;
+    append_event(store, id, TaskEvent::Finished { force, reason })?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -622,7 +403,13 @@ pub fn handoff(store: &mut SessionStore, id: &str, output: &Value) -> StoreResul
             task.status
         ));
     }
-    append_event(store, id, "handed_off", json!({ "output": output }))?;
+    append_event(
+        store,
+        id,
+        TaskEvent::HandedOff {
+            output: output.clone(),
+        },
+    )?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -633,7 +420,7 @@ pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> Sto
     if task.status == STATUS_DONE {
         return Err(format!("task {id}: done tasks do not cancel"));
     }
-    append_event(store, id, "cancelled", json!({ "reason": reason }))?;
+    append_event(store, id, TaskEvent::Cancelled { reason })?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -641,14 +428,26 @@ pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> Sto
 /// events call this on the creator's copy).
 pub fn mirror_status(creator: &mut SessionStore, id: &str, status: &str) -> StoreResult<()> {
     if find(creator, id)?.is_some() {
-        append_event(creator, id, "pointer", json!({ "status": status }))
+        append_event(
+            creator,
+            id,
+            TaskEvent::Pointer {
+                status: status.to_owned(),
+            },
+        )
     } else {
         Ok(())
     }
 }
 
 pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {
-    append_event(store, id, "note", json!({ "text": text }))
+    append_event(
+        store,
+        id,
+        TaskEvent::Note {
+            text: text.to_owned(),
+        },
+    )
 }
 
 // --- Model-facing tool routing ------------------------------------------
@@ -827,6 +626,8 @@ fn report(t: &Task) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::session::SessionStore;
 
@@ -1070,14 +871,11 @@ mod tests {
         .unwrap();
         start(&mut store, "task-1").unwrap();
         let c = resume_contract(&load(&store).unwrap()[0].clone());
-        assert_eq!(c["task"], "task-1");
-        assert_eq!(c["status"], STATUS_IN_PROGRESS);
-        assert_eq!(c["current_step"]["text"], "first");
-        assert_eq!(
-            c["next_action"].as_str().unwrap(),
-            "complete: first (expected: a.md)"
-        );
-        assert_eq!(c["gaps"].as_array().unwrap().len(), 1);
+        assert_eq!(c.task, "task-1");
+        assert_eq!(c.status, STATUS_IN_PROGRESS);
+        assert_eq!(c.current_step.as_ref().unwrap().text, "first");
+        assert_eq!(c.next_action, "complete: first (expected: a.md)");
+        assert_eq!(c.gaps.len(), 1);
         // finishing a step advances the plan and the contract follows it
         add_evidence(
             &mut store,
@@ -1096,8 +894,8 @@ mod tests {
         assert_eq!(t.steps[0].status, StepStatus::Done);
         assert_eq!(t.steps[1].status, StepStatus::Active);
         let c = resume_contract(&t);
-        assert_eq!(c["current_step"]["text"], "second");
-        assert!(c["gaps"].as_array().unwrap().is_empty());
+        assert_eq!(c.current_step.as_ref().unwrap().text, "second");
+        assert!(c.gaps.is_empty());
     }
 
     #[test]

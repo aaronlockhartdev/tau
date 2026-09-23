@@ -10,8 +10,10 @@
 //! narrows as features finalize (ADR-0006).
 
 pub mod coalesce;
+pub mod payload;
 pub mod snapshot;
 
+use crate::payload::{ResumeContract, Task};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -425,7 +427,7 @@ pub enum Event {
     TaskChanged {
         workspace: String,
         session: String,
-        tasks: Vec<Value>,
+        tasks: Vec<Task>,
     },
     /// The workspace's skill registry changed (the file watcher, ticket
     /// #31): full-state replacement, idempotent by construction; a lost
@@ -495,8 +497,8 @@ pub struct SubagentInfo {
     pub waiting_on: Option<String>,
     pub last_message: Option<String>,
     pub usage: Option<Usage>,
-    pub task: Option<Value>,
-    pub resume_contract: Option<Value>,
+    pub task: Option<Task>,
+    pub resume_contract: Option<ResumeContract>,
 }
 
 /// Session-group events the built core produces (spec §8 session group).
@@ -842,7 +844,20 @@ mod tests {
             Event::TaskChanged {
                 workspace: "w1".into(),
                 session: "s1".into(),
-                tasks: vec![json!({ "id": "t-1", "status": "pending" })],
+                tasks: vec![payload::Task {
+                    id: "t-1".into(),
+                    title: "do it".into(),
+                    status: "pending".into(),
+                    steps: vec![],
+                    criteria: vec![],
+                    evidence: vec![],
+                    blockers: vec![],
+                    decisions: vec![],
+                    notes: vec![],
+                    worker: None,
+                    created_in: None,
+                    updated: 0,
+                }],
             },
             Event::SkillListChanged {
                 workspace: "w1".into(),

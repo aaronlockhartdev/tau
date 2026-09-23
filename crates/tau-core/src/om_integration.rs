@@ -5,7 +5,7 @@
 
 use crate::om::{self, Cursor, OmConfig, OmRecord};
 use crate::session::{Entry, SessionStore};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// The session entry kind that carries the OM record (spec §4: the session
 /// file carries the record; the newest entry is the current state).
@@ -604,11 +604,12 @@ pub fn seed_compacted_child(
     let log = format!("{}{}", parent.frozen_prefix, parent.active_observations);
     if !log.is_empty() {
         let range = om::combine_group_ranges(&om::parse_observation_groups(&log));
-        let payload = json!({
-            "parentSession": parent_session_id,
-            "range": range,
-            "log": log,
-        });
+        let payload = tau_protocol::payload::SpawnSnapshotPayload {
+            parent_session: parent_session_id.to_owned(),
+            range,
+            log: log.clone(),
+        }
+        .to_value();
         let leaf = child.leaf()?.map(|e| e.id);
         child.append(KIND_SPAWN_SNAPSHOT, payload, leaf.as_deref())?;
     }

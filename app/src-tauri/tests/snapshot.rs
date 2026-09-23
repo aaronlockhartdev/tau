@@ -5,8 +5,8 @@
 use std::collections::BTreeMap;
 
 use serde_json::json;
-use tau_app::core::CoreBuilder;
 use tau_core::config::Provider;
+use tau_core::harness::CoreBuilder;
 use tau_core::session::SessionStore;
 use tau_protocol::snapshot::{EntryRange, Snapshot};
 use tau_protocol::{Command, CommandOutput};

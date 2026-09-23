@@ -1,39 +1,23 @@
 //! Transport #1 (ADR-0006): Tauri carries the protocol's tagged-union
 //! messages. One command carries any `Command`; the event pump emits
-//! coalesced batches on the `tau://event` channel.
+//! coalesced batches on the `tau://event` channel. The core itself lives
+//! in `tau_core::harness`; this binary is the shell around it (ADR-0002).
 
 use std::sync::Arc;
 
 use tau_app::{
-    CoreState,
-    core::{Core, CoreBuilder, pump},
+    __cmd__tau_command, __tauri_command_name_tau_command, CoreState, command::tau_command,
 };
-use tau_protocol::{Command, CommandOutput, ProtocolError};
+use tau_core::harness::pump::pump as pump_events;
+use tau_core::harness::{Core, CoreBuilder};
 use tauri::{
-    Emitter, Manager, State,
+    Emitter, Manager,
     menu::{AboutMetadata, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu},
 };
 
-#[tauri::command]
-async fn tau_command(
-    state: State<'_, CoreState>,
-    command: Command,
-) -> Result<CommandOutput, ProtocolError> {
-    // Dispatch is synchronous under the hood. Run it on a blocking thread
-    // so a command wedged on a lock ties up a throwaway thread, not a
-    // runtime worker — the drive tasks, the event pump, and the provider
-    // timeouts must keep polling while any command blocks (a deadlocked
-    // worker pool wedges the whole app, including every in-flight turn).
-    let core = state.0.clone();
-    tokio::task::spawn_blocking(move || core.dispatch(command))
-        .await
-        .map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?
-}
-
 /// The standard menu (the shape of `Menu::default`) with `Open Folder…`
 /// added to File — the product's way to open a project (ticket #29 B1).
+///
 /// The menu only emits: the picker itself runs the dialog plugin's
 /// frontend path, so its scope handling stays in one place.
 fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
@@ -152,7 +136,7 @@ fn main() {
             let core: Arc<Core> = app.state::<CoreState>().0.clone();
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
-                pump(core, |batch| {
+                pump_events(core, |batch| {
                     let _ = handle.emit("tau://event", batch);
                 })
                 .await;

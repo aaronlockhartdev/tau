@@ -400,11 +400,12 @@ impl AgentSession {
                 // records why it stopped.
                 self.append(
                     KIND_SYSTEM,
-                    json!({
-                        "note": format!(
+                    tau_protocol::payload::SystemPayload {
+                        note: format!(
                             "Stopped after {MAX_ROUNDS} tool rounds without the model ending the turn"
-                        )
-                    }),
+                        ),
+                    }
+                    .to_value(),
                 )?;
                 break;
             }
@@ -450,7 +451,9 @@ impl AgentSession {
                 let contracts = crate::task::active_tasks(&crate::task::fold_entries(&entries))
                     .iter()
                     .take(5)
-                    .map(|t| crate::task::resume_contract(t).to_string())
+                    .map(|t| {
+                        serde_json::to_string(&crate::task::resume_contract(t)).unwrap_or_default()
+                    })
                     .collect::<Vec<_>>()
                     .join("\n\n");
                 let contract = if contracts.is_empty() {
@@ -604,12 +607,13 @@ impl AgentSession {
             };
             self.append(
                 KIND_TOOL,
-                json!({
-                    "call_id": call.call_id,
-                    "name": call.name,
-                    "args": args,
-                    "output": output,
-                }),
+                tau_protocol::payload::ToolPayload {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    args,
+                    output: json!(output),
+                }
+                .to_value(),
             )?;
         }
         Ok(())
@@ -728,14 +732,23 @@ impl AgentSession {
     }
 
     async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
-        let mut payload = json!({ "text": msg.text, "lane": lane_name(msg.lane) });
-        if let Some(source) = &msg.source {
-            payload["source"] = json!(source);
-        }
-        if let Some((name, location)) = &msg.skill {
-            payload["skill"] = json!({ "name": name, "location": location });
-        }
-        self.append(KIND_USER, payload)
+        let skill = msg
+            .skill
+            .as_ref()
+            .map(|(name, location)| tau_protocol::payload::SkillRef {
+                name: name.clone(),
+                location: location.clone(),
+            });
+        self.append(
+            KIND_USER,
+            tau_protocol::payload::UserPayload {
+                text: msg.text,
+                lane: lane_name(msg.lane).to_owned(),
+                source: msg.source,
+                skill,
+            }
+            .to_value(),
+        )
     }
 
     fn append_assistant(&self, result: &TurnResult) -> Result<(), AgentError> {
@@ -750,13 +763,14 @@ impl AgentSession {
         }
         self.append(
             KIND_ASSISTANT,
-            json!({
-                "text": result.text,
-                "reasoning": result.reasoning,
-                "interrupted": !result.completed,
-                "usage": result.usage,
-                "calls": result.calls,
-            }),
+            tau_protocol::payload::AssistantPayload {
+                text: result.text.clone(),
+                reasoning: result.reasoning.clone(),
+                interrupted: !result.completed,
+                usage: result.usage.clone(),
+                calls: result.calls.clone(),
+            }
+            .to_value(),
         )
     }
 

@@ -2,10 +2,10 @@
 //! recursive watch set, notify's own thread, a batch channel, and stop —
 //! over `notify`'s full debouncer (500 ms window; the full debouncer
 //! stitches the editor's temp-write + atomic rename). The handler does a
-//! non-blocking send; the app drains the receiver on a tokio task, so the
-//! only non-tokio thread is notify's own. The current consumer is the
-//! skill roots (core.rs) is the first consumer; the files-pane ticket
-//! (#32) is the second, on the same shape with exclusion-aware roots.
+//! non-blocking send; the consumer drains the receiver on its own thread,
+//! so the only non-tokio thread is notify's own. The first consumers are
+//! the skill roots (the harness); the files pane (ticket #32) is a second,
+//! on the same shape with exclusion-aware roots.
 //!
 //! Lifecycle: a watcher lives until dropped. `Debouncer::drop` only sets
 //! the stop flag, so teardown goes through `stop()`, which joins the

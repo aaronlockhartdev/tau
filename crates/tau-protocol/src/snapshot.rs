@@ -4,6 +4,7 @@
 //! demand by the core (app launch, tab open, reconnect); never a file.
 
 use crate::MessageLane;
+use crate::payload::Task;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -129,8 +130,8 @@ pub struct LiveState {
     /// panel); empty for child sessions (the depth cap is structural).
     pub subagents: Vec<crate::SubagentInfo>,
     /// The session's tasks (per-session store, spec §5.3) — the GUI's
-    /// tasks panel; active ones carry their resume contract.
-    pub tasks: Vec<Value>,
+    /// tasks panel.
+    pub tasks: Vec<Task>,
 }
 
 /// The session's OM gauge (ticket #22): observation tokens against the

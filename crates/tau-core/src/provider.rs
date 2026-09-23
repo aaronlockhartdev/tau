@@ -13,6 +13,10 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+pub use tau_protocol::payload::TurnUsage as Usage;
+pub use tau_protocol::payload::{
+    FunctionCall, OutputTokensDetails, PromptTokensDetails, TurnUsage,
+};
 
 /// A model as reported by the provider's `/models` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,54 +272,6 @@ pub enum ReasoningEffort {
 struct ReasoningParam {
     effort: ReasoningEffort,
 }
-
-/// A function call the model emitted on a turn (spec §5.4).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct FunctionCall {
-    pub id: String,
-    pub call_id: String,
-    pub name: String,
-    /// Raw JSON, as the server sent it.
-    pub arguments: String,
-}
-/// Usage from the `response.completed` event (spec §6). Field names accept
-/// both the Responses shape and the chat-completions dialect.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Usage {
-    #[serde(alias = "prompt_tokens")]
-    pub input_tokens: u64,
-    #[serde(alias = "completion_tokens")]
-    pub output_tokens: u64,
-    pub total_tokens: u64,
-    pub output_tokens_details: Option<OutputTokensDetails>,
-    #[serde(alias = "input_tokens_details")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-/// Prompt-side details: how many prompt tokens the server served from its
-/// prefix cache (vLLM/OpenAI `prompt_tokens_details.cached_tokens`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PromptTokensDetails {
-    pub cached_tokens: u64,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct OutputTokensDetails {
-    pub reasoning_tokens: u64,
-}
-
-impl Usage {
-    pub fn reasoning_tokens(&self) -> u64 {
-        self.output_tokens_details
-            .as_ref()
-            .map(|d| d.reasoning_tokens)
-            .unwrap_or(0)
-    }
-}
-
 /// One request to `POST {base}/responses` (streaming; v0 is responses-only,
 /// ADR-0003).
 #[derive(Debug, Clone, Serialize)]

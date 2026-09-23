@@ -23,6 +23,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tau_protocol::payload::{ResumeContract, Task};
 
 /// The session entry kind for sub-agent lifecycle records (spawn, state
 /// transitions, notifies) — the child's session file is the record.
@@ -123,7 +124,7 @@ pub struct StateNotice {
     pub note: Option<String>,
     /// A stopped child's assigned task rides its resume contract (spec
     /// §5.2); None for every other transition.
-    pub resume_contract: Option<Value>,
+    pub resume_contract: Option<ResumeContract>,
 }
 
 /// A spawn notice (the protocol's `subagent_spawned` event).
@@ -1164,7 +1165,8 @@ impl Supervisor {
         });
         match resume_contract {
             Some(rc) => Ok(format!(
-                "stopped sub-agent {name}; its assigned task stays live (resume contract: {rc})"
+                "stopped sub-agent {name}; its assigned task stays live (resume contract: {})",
+                serde_json::to_string(&rc).unwrap_or_default()
             )),
             None => Ok(format!("stopped sub-agent {name}")),
         }
@@ -1238,10 +1240,7 @@ impl Supervisor {
                 .and_then(|entries| {
                     let tasks = crate::task::fold_entries(&entries);
                     let t = tasks.into_iter().find(|t| t.created_in.is_some())?;
-                    Some((
-                        serde_json::to_value(&t).ok(),
-                        Some(crate::task::resume_contract(&t)),
-                    ))
+                    Some((Some(t.clone()), Some(crate::task::resume_contract(&t))))
                 })
                 .unwrap_or((None, None))
         };
@@ -1272,8 +1271,8 @@ pub struct SubagentInfo {
     pub waiting_on: Option<WaitingOn>,
     pub last_message: Option<String>,
     pub usage: Option<Usage>,
-    pub task: Option<Value>,
-    pub resume_contract: Option<Value>,
+    pub task: Option<Task>,
+    pub resume_contract: Option<ResumeContract>,
 }
 
 /// Route a tool call at the parent's sub-agent surface (called from the

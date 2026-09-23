@@ -15,6 +15,9 @@ xxhash-rust = { workspace = true }
 # Adjective-noun session names (top-level and sub-agent children).
 names = { workspace = true }
 rand = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-full = { workspace = true }
+tau-protocol = { path = "../tau-protocol" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
