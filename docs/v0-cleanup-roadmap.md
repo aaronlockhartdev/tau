@@ -16,17 +16,22 @@ depth, seam, adapter, leverage, locality).
 
 ## How to work this roadmap
 
-Each phase is a set of small, independently-landable tickets. A ticket is one branch, one red→green,
-landed on its own. Nothing here is speculative scaffolding between steps (per `AGENTS.md`).
+Each phase is a set of small, independently-landable **changes** — one branch, one red→green, landed on its own.
+Work happens **directly from this document** (user, 2026-09-23): no tickets, no map; the doc *is* the working surface.
+Nothing here is speculative scaffolding between steps (per `AGENTS.md`).
 
 No open **decisions** remain in this roadmap: the C1 harness move is **decided** (user, 2026-09-23) —
 the seam is that `tau-core` owns all logic necessary for a non-Tauri interface and the Tauri app owns all
-Tauri-specific code, so whatever sits on the wrong side moves — and the orphaned tickets #28–#33 are
-**left as standalone tickets** (user, 2026-09-23). Everything here is mechanical work.
+Tauri-specific code, so whatever sits on the wrong side moves; the file-size rule (H) is **decided** and every
+over-limit file gets split in v0 (C8), with the 500–1000 band investigated for clean splits (user, 2026-09-23);
+and the orphaned tickets #28–#33 are **left as standalone tickets** (user, 2026-09-23). Everything here is
+mechanical work.
+The two spec touches (F2's §13 note, G's §8 demo retirement) are errata recording already-made user decisions —
+applied inline with their items; per the wayfinder skill's own test, no map is needed when the way is already clear.
 
-Order: **Phase 0 (quick wins) → Phase 1 (testing) → Phase 2 (architecture)**. Phase 0 now also carries the
+Order: **Phase 0 (quick wins) → Phase 1 (testing) → Phase 2 (architecture)**. Phase 0 carries the
 build/acceptance tooling change (F), the demo-rig→test-suite formalization (G), and the file-size policy (H);
-Phase 2's C1 (the harness move) is the strategic piece and must land before v0 freeze.
+Phase 2 carries the harness move (C1), the file splits (C8), and the store work — all of it lands before v0 freeze.
 
 ---
 
@@ -205,10 +210,11 @@ mocked-IPC demo:
 
 Add to the Coding-conventions section: **every code file stays under a soft 500-LOC limit and a hard
 1000-LOC limit.** The soft limit is a review smell that invites a split; the hard limit is a blocker, and
-per the repo's "enforced in CI where mechanical" rule a small CI check fails on any file over 1000 LOC
-(the currently-over-limit files are grandfathered until the C1/C2 split lands). This is the standing rule
-that makes the C1/C2 work *required* rather than optional: `app/src-tauri/src/core.rs` is 6,297 LOC — 6× the
-hard limit — and must be broken up as part of moving the harness.
+per the repo's "enforced in CI where mechanical" rule a small CI check fails on any file over 1000 LOC.
+**No grandfathering** (user, 2026-09-23): every currently-over-limit file is split in v0 (C8), so the gate
+lands when the last split lands, and from then on a file over 1000 fails CI. This is the standing rule that
+makes the split work *required* rather than optional: ten files are currently over the hard limit,
+`app/src-tauri/src/core.rs` at 6,297 LOC being the largest.
 
 ---
 
@@ -344,8 +350,8 @@ Deletion test: delete `core.rs` and the complexity doesn't vanish — a future `
 seam. **Solution**: move the transport-free composition into `tau-core` (a `harness` module: `Core` state,
 `dispatch`, `run_turn`, `pump`, watchers, workspace index). The Tauri shell keeps only `main.rs`
 (menu, `tau_command`, `emit`, the debug-gated tauri-pilot plugin). The 3,100 test lines in `core.rs` (which construct
-`Core` directly, no window) move as-is. *Reinforces* ADR-0002/0006 — no conflict. It's large; scope it as its
-own effort, not a v0 ticket.
+`Core` directly, no window) move as-is. *Reinforces* ADR-0002/0006 — no conflict. It's large; it lands in v0
+as part of the file-split work (C8) that the hard-limit rule makes required.
 
 ### C2 — collapse the live-vs-disk session duality (follows C1) — **Strong**
 
@@ -357,6 +363,35 @@ Give `tau-core::session` the listing surface it implies (`list_workspace(cwd) ->
 `archive/`), one `session_access` seam the app calls once per command; the duplicate header structs delete.
 *Collapses naturally once C1 lands* — sequence after it.
 
+### C8 — File splits: every over-limit file under 1000 LOC, 500–1000 band investigated — **Strong, user-directed (2026-09-23)**
+
+User decision: the splits are a major refactor and belong in v0 — *all* files over the hard limit get split,
+and every file over the soft limit is investigated for a clean split that improves readability. The H CI gate
+lands when the last hard-limit split lands (no grandfathering).
+
+**Over the hard 1000 limit (10 files):**
+
+| File | LOC | Disposition |
+|---|---|---|
+| `app/src-tauri/src/core.rs` | 6,297 | C1/C2 |
+| `crates/tau-core/src/subagent.rs` | 3,519 | split here |
+| `crates/tau-core/src/om.rs` | 2,155 | split here |
+| `crates/tau-core/src/agent.rs` | 1,808 | split here |
+| `crates/tau-core/src/provider.rs` | 1,409 | split here |
+| `crates/tau-core/src/om_integration.rs` | 1,238 | split here |
+| `crates/tau-core/src/session.rs` | 1,195 | split here |
+| `crates/tau-core/src/task.rs` | 1,158 | split here |
+| `app/svelte/lib/store.svelte` | 1,106 | C3 |
+| `app/scripts/verify-demo.mjs` | 1,124 | G (retires it) |
+
+**Over the soft 500 limit (investigate; split only if the cut improves readability):** `tau-protocol/src/lib.rs`
+(986), `EntryCard.svelte` (696), `tau-core/src/tools.rs` (693), `tau-acceptance/src/main.rs` (612),
+`tau-core/src/skills.rs` (607), `RightPane.svelte` (563), `tau-core/src/hashline.rs` (521). (`fixture.ts` (552)
+retires with G.)
+
+Each split is behaviour-preserving: extract cohesive modules, move the tests with the code, land red→green one
+file at a time. Sequence after the Phase 1 suites so every split lands green against real tests; the seven
+`tau-core` splits are independent of each other and of C1/C3.
 ### C4 — extract the transcript virtualization math — **Worth exploring (defer)**
 
 The most bug-dense area of the git log (mid-scroll yank `3036dc3`, Svelte-Map reactivity `e866549`, boot
@@ -376,7 +411,7 @@ difference. Pre-v1 is breakable; no ADR conflict.
 
 ---
 
-## Suggested ticket graph
+## Suggested execution order
 
 ```
 Phase 0 (independent, land in any order)
@@ -391,6 +426,7 @@ Phase 2
   C3 entries-module ── 1c's store suite benefits from it
   C5 wire-or-delete config
   C1 harness move (DECIDED, strategic) ── C2 session-access (collapses; together they break core.rs to <1000 LOC)
+  C8 file splits (every over-limit file; the H CI gate lands with the last one)
   C4 (defer)   C7 (defer)
   orphaned #28–#33: left as standalone tickets (user decision — no map)
 ```
@@ -414,4 +450,4 @@ Phase 2
 - The store's twin-merge logic is a pure, unit-tested module; the config surface is true (wired or gone).
 
 No open decisions remain — C1 is decided, the orphaned tickets are left, and every item in this roadmap is
-mechanical and ticket-ready.
+a scoped change ready to land.
