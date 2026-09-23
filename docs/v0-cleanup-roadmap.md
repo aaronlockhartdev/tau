@@ -19,10 +19,10 @@ depth, seam, adapter, leverage, locality).
 Each phase is a set of small, independently-landable tickets. A ticket is one branch, one red→green,
 landed on its own. Nothing here is speculative scaffolding between steps (per `AGENTS.md`).
 
-One track is a **decision** (needs a human call before code): the post-v0 map for the orphaned tickets
-#28–#33. The C1 harness move is **decided** (user, 2026-09-23): the seam is that `tau-core` owns all logic
-necessary for a non-Tauri interface and the Tauri app owns all Tauri-specific code, so whatever sits on the
-wrong side moves. Everything else is mechanical work.
+No open **decisions** remain in this roadmap: the C1 harness move is **decided** (user, 2026-09-23) —
+the seam is that `tau-core` owns all logic necessary for a non-Tauri interface and the Tauri app owns all
+Tauri-specific code, so whatever sits on the wrong side moves — and the orphaned tickets #28–#33 are
+**left as standalone tickets** (user, 2026-09-23). Everything here is mechanical work.
 
 Order: **Phase 0 (quick wins) → Phase 1 (testing) → Phase 2 (architecture)**. Phase 0 now also carries the
 build/acceptance tooling change (F), the demo-rig→test-suite formalization (G), and the file-size policy (H);
@@ -138,40 +138,68 @@ Tracker actions (`gh`, read the current state first):
 - The **4 missing triage labels** (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`) don't
   exist in the tracker — `gh label create` them, or consciously drop those roles from the mapping.
 - **Junk edge**: delete #10's cross-repo `blocked_by` edge to sinatra/sinatra#1.
-- **Orphaned #28–#33** have no parent map — **decision needed** (see Phase 2): chart a post-v0 map and link
-  them as sub-issues, or consciously accept standalone tickets.
+- **Orphaned #28–#33** have no parent map — **left as-is** (user, 2026-09-23): standalone post-v0 tickets,
+  not children of any map; no map will be charted for them.
 
 ### F. Build + acceptance tooling — retire `./build` + `./scripts/acceptance.sh`
 
 Both are ad-hoc shell scripts whose entire job is to drive native workspace tools. Replace them with a
-**Makefile** as the single entry point that delegates to the native tools (`cargo`, `npm`/`vite`, `tauri`).
-Targets:
-- `build` — platform-aware, exactly what `./build` did: macOS → `cargo build --workspace --release` +
-  `app: npm ci && npm run build` + `npx tauri build --bundles app`; Linux → the non-GUI crates + frontend
-  (the webkit bundle stays macOS in v0, spec §13).
+single entry point that delegates to the native tools (`cargo`, `npm`/`vite`, `tauri`). Runner: **make** —
+zero-install (every dev machine and CI runner has it), the right trade for a handful of simple recipes;
+`just` is the cleaner-syntax modern alternative if a one-time binary install (plus one line of CI setup)
+accepts — pick at implementation, the targets are identical. Targets:
+- `build` — platform-aware: macOS → `cargo build --workspace --release` + `app: npm ci && npm run build` +
+  `npx tauri build --bundles app`; Linux → the same with the Linux bundle target (item F2).
 - `test` — `cargo nextest run --workspace` + the frontend suite (item G): what CI's rust + frontend jobs run.
 - `acceptance [legs]` — the spec §1 in-scope legs: `cargo run --release --bin tau-acceptance -- <leg>` for
-  b/c/d (live) and e (offline), the frontend suite for f, and the macOS launch smoke for a. Live legs stay
-  `TAU_LIVE`-gated exactly as today; a skipped live leg is not a failure, a red leg is.
-`./build` and `./scripts/acceptance.sh` are deleted; CI + README point at `make`. *(Alternative if the user
-prefers zero added tooling: express the same targets as `npm run` scripts + bare `cargo` — the Makefile is the
-recommended unifier because the work crosses the Rust and node boundaries.)*
+  b/c/d (live) and e (offline), the GUI E2E suite for f, and the launch smoke (a) on both platforms. Live
+  legs stay `TAU_LIVE`-gated exactly as today; a skipped live leg is not a failure, a red leg is.
+`./build` and `./scripts/acceptance.sh` are deleted; CI + README point at the new entry point.
+### F2. Linux GUI support — spec §13 is "macOS first, Linux second", not "Linux without a GUI"
 
-### G. Formalize the demo rig into the frontend test suite
+Audit (2026-09-23): **the code is already cross-platform.** The Rust crates have zero platform-specific
+branches — their only macOS mentions are doc comments describing cross-platform behavior (FSEvents vs
+inotify through `notify`, case-insensitive filesystems, the `/var` → `/private/var` symlink handling,
+which is written defensively for both). The Tauri app already carries non-macOS menu branches
+(`main.rs`), `~/.config/tau` is the XDG convention (native to Linux — if anything, macOS is the
+non-standard side), icons include `.png`/`.ico` alongside `.icns`, and the rig already detects the Linux
+Chrome binary. What is genuinely macOS-only today: (1) `tauri.conf.json` `bundle.targets: ["app"]` —
+`.app` has no Linux equivalent, so add `appimage` (v0 distribution = direct download; `deb` is v1 apt
+channel work); (2) the CI image — no webkit2gtk (why `build` skips the Linux bundle; the fix is Tauri's
+documented prerequisites: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); (3) the launch smoke (leg a) —
+WebKitGTK wants an X display, so Linux runs it under `xvfb-run`; (4) `dev_bridge.rs` has macos/windows
+branches with Linux falling through — a dev-only tool, left alone. Work: the bundle target, the CI apt
+deps + xvfb, a Linux leg-a, and a spec §13 note that "Linux second" includes the GUI.
 
-The 10k-entry rig (`app/scripts/verify-demo.mjs`, ~1,124 lines, ~35 checks, driving `app/svelte/demo.ts` +
-`app/demo.html` + `app/svelte/lib/fixture.ts`) is the repo's only automated frontend test — and it is still
-named "demo" (a leftover of #29, which stripped the demo *mode* but kept the *name*). Formalize it as a
-first-class **test suite**, not a demo surface:
-- **Relocate** `app/svelte/demo.{ts,html}` + `lib/fixture.ts` + `verify-demo.mjs` → `app/tests/frontend/`
-  (a test entry, not a product/dev entry).
-- **Rename** the entry to a test-harness entry and the runner to `verify.mjs`; `fixture.ts` stays the data
-  source. The "demo" naming is dropped from the tree (grep-clean, as #29 did for the mode).
-- **Wire** `app/package.json` with `"test:frontend": "node tests/frontend/verify.mjs"`; CI's frontend job runs
-  it (the headless-Chrome-over-CDP path already used — no new deps). It keeps the PASS/FAIL shape CI parses.
-- **Docs**: README's "Acceptance" and the spec's §8 perf-bar references point at the test suite, not a demo.
-This is a rename + relocate, not a rewrite — the ~35 checks and the 10k fixture survive intact. It is the
-committed proof of the spec §8/§9 10k-entry bar.
+### G. The demo rig becomes a real-app E2E suite (the "demo" retires)
+
+What "demo" is today: a second Vite entry (`app/svelte/demo.ts` + `app/demo.html`) that runs the real
+Svelte frontend in a plain browser with **Tauri IPC mocked** (`@tauri-apps/api/mocks` `mockIPC`) — the
+mock answers `tau_command` from a **JS-generated** 10k-entry fixture (`lib/fixture.ts`) and
+**JS-generated** 25 ms streams. No Rust core, no Tauri, no real session file: a frontend-only harness
+wearing a "demo" name (leftover of #29, which stripped the demo *mode* but kept the *name*).
+
+User decision (2026-09-23): the primary GUI test is **the real app running on a real session file**, not a
+mocked-IPC demo:
+- **One 10k-entry session file, written by the real `SessionStore`** (the generator already exists in
+  `crates/tau-core/tests/large_session.rs`), shared by the Rust tests, the Rust `snapshot.rs` test, *and*
+  the GUI E2E — this kills the triplicated-fixture drift (gap G6) at the source: one artifact in the real
+  on-disk format instead of three hand-kept twins.
+- **The E2E launches the real Tauri binary** pointed at a test workspace containing that file, asserts on
+  the DOM, and drives two deterministic 25 ms streams through the real core via a **dev-gated canned
+  provider** (the core's existing `canned()` test seam promoted to a dev-build-only `canned://` provider —
+  a documented test hook, not product surface). A debug build is enough for correctness; the perf bar
+  keeps its current fidelity (measured on a dev build, as today).
+- **Driver**: the in-tree `dev_bridge` (debug builds) is the natural first choice — zero new deps, it
+  already evaluates JS in the running webview. The official route is tauri-plugin-wdio +
+  `@wdio/tauri-service`; take it only if `dev_bridge` proves insufficient (decided at implementation).
+- **What the mock rig uniquely gave, and where it goes:** the ability to feed the frontend *adversarial*
+  event sequences the real core never emits (the `652b3a6` twin-identity class). That coverage moves to
+  the store-level Vitest suite (1c), where `mockIPC` is the right tool at the store layer. The `demo.ts` /
+  `demo.html` / `fixture.ts` demo surface retires; the ~35 rig checks port to the real-app E2E where they
+  apply.
+- Wire `app/package.json` `"test:frontend"` → the E2E runner; CI runs it in the app job (macOS) and the
+  linux-acceptance job (Linux, post-F2). README + spec §8 point at the suite, not a demo.
 
 ### H. File-size policy in `AGENTS.md`
 
@@ -198,12 +226,13 @@ only untested seam. Full detail + a ready-to-paste CI YAML in `01-testing.md`.
    "wedges the whole suite" into "one red test". No test-code changes.
 2. `scripts/acceptance.sh`: accept an optional **leg-filter argument** (`./scripts/acceptance.sh a e f`; no
    args = all, preserving current behavior).
-3. Restructure `ci.yml` to four jobs, driven by the Makefile (item F): **rust** (macos+linux matrix:
-   fmt/clippy/`nextest`), **frontend** (ubuntu: `make frontend` + the store suite of 1c + the formalized
-   frontend test suite of item G), **app** (macos: `make build` + **launch smoke via `make acceptance a`** —
-   today the bundle is built but never launched in CI, a launch-panic would pass), and **linux-acceptance**
-   (ubuntu: `make build` + leg e + the frontend test suite as separate steps so a red suite can't mask a red
-   core leg). Live legs (b/c/d) stay local — no `TAU_LIVE` in CI.
+3. Restructure `ci.yml` to four jobs, driven by the new build entry point (item F): **rust** (macos+linux
+   matrix: fmt/clippy/`nextest`), **frontend** (ubuntu: `make frontend` + the store suite of 1c), **app**
+   (macos **and** linux: `make build` + **launch smoke via `make acceptance a`** — today the bundle is
+   built but never launched in CI, a launch-panic would pass; the Linux leg lands with F2, under
+   `xvfb-run`), and **linux-acceptance** (ubuntu: `make build` + leg e + the real-app E2E suite of item G
+   as separate steps so a red suite can't mask a red core leg). Live legs (b/c/d) stay local — no `TAU_LIVE`
+   in CI.
 
 ### 1b. Rust additions (1–2 d)
 
@@ -352,33 +381,37 @@ difference. Pre-v1 is breakable; no ADR conflict.
 ```
 Phase 0 (independent, land in any order)
   A comments   B dead code   C mirror-fix   D ADRs+agent-docs   E prototypes+tracker
-  F build/acceptance -> Makefile   G demo-rig -> frontend test suite   H file-size policy in AGENTS.md
+  F build/acceptance -> single entry point (make)   F2 Linux GUI support
+  G demo rig -> real-app E2E suite   H file-size policy in AGENTS.md
 
 Phase 1 (ordered)
-  1a runner+CI (via make) ── 1b rust (proptest, tauri smoke) ── 1c svelte store suite
+  1a runner+CI ── 1b rust (proptest, tauri smoke) ── 1c svelte store suite (home of the adversarial-sequence checks)
 
 Phase 2
   C3 entries-module ── 1c's store suite benefits from it
   C5 wire-or-delete config
   C1 harness move (DECIDED, strategic) ── C2 session-access (collapses; together they break core.rs to <1000 LOC)
   C4 (defer)   C7 (defer)
-  tracker: chart a post-v0 map for orphaned #28–#33 (the one open DECISION)
+  orphaned #28–#33: left as standalone tickets (user decision — no map)
 ```
 
 ## What "done" looks like for v0
 
 - Zero "what" comments / banners / dead code in the scanned surfaces (Phase 0).
-- All 7 ADRs + 4 agent-doc files on one consistent, refer-by-name shape; spec §14 U-numbering unambiguous.
-- No throwaway prototypes tracked; no redundant branches; #33 closed; missing labels + junk edge fixed.
-- One build/acceptance entry point: a `make`-driven Makefile replaces `./build` + `./scripts/acceptance.sh`
-  (all work delegated to cargo/npm/vite/tauri); the two shell scripts are deleted.
-- The frontend "demo rig" is a relocated, renamed **test suite** (`app/tests/frontend/`, `npm run test:frontend`,
-  in CI) — "demo" naming is gone from the tree.
+- No throwaway prototypes tracked; no redundant branches; #33 closed; missing labels + junk edge fixed;
+  orphaned #28–#33 left as standalone tickets (no map charted).
+- One build/acceptance entry point (`make`) replaces `./build` + `./scripts/acceptance.sh`; the two shell
+  scripts are deleted; all work delegated to cargo/npm/vite/tauri.
+- Linux has a GUI: the Linux bundle target + CI webkit2gtk/xvfb land (F2); the launch smoke runs on both
+  platforms.
+- The frontend E2E is **the real app on a real 10k-entry session file** (G) — one shared fixture for Rust
+  and GUI tests; the mocked-IPC "demo" surface retires, its adversarial-sequence checks live in the store
+  suite.
 - `AGENTS.md` carries the file-size rule (soft 500 / hard 1000 LOC) and no code file exceeds the hard limit —
   `core.rs` is split as part of C1/C2.
-- CI: rust (matrix, nextest), frontend (build + store suite + the frontend test suite), app (macOS build +
-  **launch smoke**), linux-acceptance (leg e + the frontend test suite). `tauri::test` smoke pins the one real
-  Tauri seam.
+- CI: rust (matrix, nextest), frontend (build + store suite), app (macOS + Linux build + launch smoke),
+  linux-acceptance (leg e + the real-app E2E). `tauri::test` smoke pins the one real Tauri seam.
 - The store's twin-merge logic is a pure, unit-tested module; the config surface is true (wired or gone).
-Only the post-v0 map for the orphaned tickets #28–#33 is an open **decision**; C1 is decided, and everything
-else in this roadmap is mechanical and ticket-ready.
+
+No open decisions remain — C1 is decided, the orphaned tickets are left, and every item in this roadmap is
+mechanical and ticket-ready.
