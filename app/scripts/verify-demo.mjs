@@ -217,6 +217,64 @@ try {
     check('mid-session: track height ≈ 1× (no 2× inflation)', top.trackH > 0 && mid.scrollH <= top.trackH * 1.2, `scrollH=${mid.scrollH}, trackH=${top.trackH}, ratio=${(mid.scrollH / top.trackH).toFixed(2)}`);
     check('mid-session: DOM is windowed', mid.domCards > 0 && mid.domCards <= 60, `${mid.domCards} cards in DOM`);
 
+    // Measured heights reach the track: expanding a card changes its
+    // measurement, and the track must re-lay in the same flush — with an
+    // estimates-only total the grown card leaves a blank gap below it
+    // (the blank space after the last block). The demo's 25 ms stream flush
+    // resyncs a stale pre-fix track within a couple of flushes, so the
+    // check samples the gap densely (~4 ms) for 40 ms and asserts the max:
+    // post-fix every sample is the margin; pre-fix the pre-flush samples
+    // see the full body-sized gap.
+    const gapExpand = await evalPage(wsUrl, `new Promise((res) => {
+      const sc = document.querySelector('.scroll');
+      const fracs = [0.5, 0.51, 0.49, 0.25, 0.75];
+      const t0 = performance.now();
+      const find = (i) => {
+        const chips = [...document.querySelectorAll('.tool .chip')].filter((c) => c.closest('.wrap'));
+        if (chips.length) {
+          const tryChip = (n) => {
+            if (n >= chips.length) return res(null);
+            const chip = chips[n];
+            const wrap = chip.closest('.wrap');
+            const y0 = wrap.getBoundingClientRect().top + sc.scrollTop;
+            const label = chip.textContent.trim();
+            const h0 = Math.round(wrap.getBoundingClientRect().height);
+            const findW = () =>
+              [...document.querySelectorAll('.track .inner > .wrap')].find(
+                (w) =>
+                  Math.abs(w.getBoundingClientRect().top + sc.scrollTop - y0) < 120 &&
+                  w.querySelector('.tool .chip')?.textContent.trim() === label
+              );
+            chip.click();
+            const samples = [];
+            const end = performance.now() + 40;
+            const sample = () => {
+              const w2 = findW();
+              if (!w2) return res(null);
+              const nb = w2.nextElementSibling;
+              samples.push(nb ? Math.round(nb.getBoundingClientRect().top - w2.getBoundingClientRect().bottom) : 0);
+              if (performance.now() < end) return setTimeout(sample, 1);
+              const body = Math.round(w2.getBoundingClientRect().height) - h0;
+              // collapse again — the later remount check clicks chips of its own
+              w2.querySelector('.tool .chip')?.click();
+              res({ body, max: Math.max(...samples) });
+            };
+            sample();
+          };
+          tryChip(0);
+          return;
+        }
+        if (i < fracs.length && performance.now() - t0 < 6000) {
+          sc.scrollTop = sc.scrollHeight * fracs[i];
+          sc.dispatchEvent(new Event('scroll'));
+          return setTimeout(() => find(i + 1), 400);
+        }
+        res(null);
+      };
+      find(0);
+    })`);
+    check('no blank gap after a card expands (measured heights reach the track)', !!gapExpand && gapExpand.body >= 40 && gapExpand.max <= 30, 'body ' + (gapExpand?.body ?? 'n/a') + 'px, max gap ' + (gapExpand?.max ?? 'n/a'));
+
     // Slow scroll up from the bottom: any upward user input releases the
     // follow immediately — a sub-threshold step must not read as "still at
     // the bottom" (the old model's catch-up snapped the view back, so a
