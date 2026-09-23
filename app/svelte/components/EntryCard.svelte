@@ -394,6 +394,8 @@
         <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>spawn snapshot</div>
         <div class="txt2">{@html md}</div>
       </div>
+    {:else if entry.kind === 'system' && (entry.text ?? '').startsWith('model: ')}
+      <div class="stline"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{entry.text}</div>
     {:else if entry.kind === 'system'}
       <div class="card2">
         <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-term"/></svg>system</div>

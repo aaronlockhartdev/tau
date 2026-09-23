@@ -1229,6 +1229,10 @@ impl Core {
             .ok_or_else(|| ProtocolError::Other {
                 message: format!("provider {name} has no models"),
             })?;
+        // A session that picked a non-default model (session_set_model) keeps
+        // it across close and re-open: the file's last `model:` note is the
+        // record (a fresh session has none and takes the provider default).
+        let model = last_model_note(&mut store).unwrap_or(model);
         let cwd = PathBuf::from(&workspace.cwd);
 
         // The per-session OM record (ticket #22): reconstructed from the

@@ -21,6 +21,14 @@ export interface ProviderInfo {
   models: string[];
 }
 
+// An agent type as the GUI sees it (the sub-agent spawn menu's data
+// source; core lib.rs AgentType, the ADR-0006 field-for-field mirror).
+export interface AgentInfo {
+  name: string;
+  description: string;
+  builtin: boolean;
+}
+
 // A discovered skill (the composer autocomplete's data source):
 // location is the absolute SKILL.md path; model_invocation: false marks
 // a catalog-excluded skill — the dropdown is its only door.
@@ -283,6 +291,7 @@ export type CommandOutput =
   | { kind: 'snapshot'; snapshot: Snapshot }
   | { kind: 'entries'; entries: ViewEntry[] }
   | { kind: 'providers'; providers: ProviderInfo[] }
+  | { kind: 'agents'; agents: AgentInfo[] }
   | { kind: 'skills'; skills: SkillInfo[] }
   | { kind: 'subagent'; subagent: SubagentInfo }
   | { kind: 'subagents'; subagents: SubagentInfo[] }
