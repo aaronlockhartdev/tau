@@ -934,7 +934,7 @@ try {
       }, 250);
     })`);
     check('model menu: a selection updates the chip + meta and records a quiet model entry',
-      menuPick.closed && menuPick.chip === 'anthropic/claude-sonnet-4' &&
+      menuPick.closed && menuPick.chip === 'claude-sonnet-4' &&
         menuPick.model === 'anthropic/claude-sonnet-4' &&
         menuPick.note === 'model: qwen3.8-27b → anthropic/claude-sonnet-4',
       JSON.stringify(menuPick));

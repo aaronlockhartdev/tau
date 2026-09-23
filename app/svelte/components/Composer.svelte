@@ -228,7 +228,7 @@
       onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
     >
       <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
-      <span class="mname">{cur?.meta.model ?? 'no model'}</span>
+      <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
       <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
     </button>
     <span class="chint">enter send · shift+enter newline · / commands</span>
