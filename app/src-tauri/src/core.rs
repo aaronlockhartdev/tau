@@ -5328,6 +5328,42 @@ mod tests {
         assert_eq!(notes, vec!["model: m/new".to_owned()]);
     }
 
+    #[tokio::test]
+    async fn session_set_model_survives_close_and_reopen() {
+        let core = CoreBuilder::custom(providers()).build();
+        let cwd = tempfile::tempdir().unwrap();
+        let w = open_ws(&core, cwd.path()).await;
+        let live = match core
+            .dispatch(Command::SessionNew {
+                workspace: w.id.clone(),
+                title: None,
+            })
+            .unwrap()
+        {
+            CommandOutput::Session { session } => session,
+            other => panic!("expected session: {other:?}"),
+        };
+        core.dispatch(Command::SessionSetModel {
+            session: live.id.clone(),
+            model: "other/model".into(),
+        })
+        .unwrap();
+        // Close + re-open goes through build_live again: the model is a
+        // file-level fact (the quiet note), not the in-memory agent's.
+        core.dispatch(Command::SessionClose {
+            session: live.id.clone(),
+        })
+        .unwrap();
+        let snap = match core
+            .dispatch(Command::SessionOpen { session: live.id })
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected snapshot: {other:?}"),
+        };
+        assert_eq!(snap.session.model.as_deref(), Some("other/model"));
+    }
+
     /// The app's om_status glue: a live session's Observer run emits the
     /// protocol event on the shared channel (observing at the start, idle
     /// at the end).
