@@ -13,6 +13,14 @@ export interface Workspace {
   cwd: string;
 }
 
+// A provider as the GUI sees it (no key material, §8): the model menu's
+// grouping source.
+export interface ProviderInfo {
+  name: string;
+  base_url: string;
+  models: string[];
+}
+
 // A discovered skill (the composer autocomplete's data source):
 // location is the absolute SKILL.md path; model_invocation: false marks
 // a catalog-excluded skill — the dropdown is its only door.
@@ -207,7 +215,13 @@ export interface Snapshot {
   workspace: Workspace;
   session: SessionMeta;
   entries: EntryMeta[];
-  om: unknown;
+  // The session's OM gauge (ticket #22): the observation tokens against the
+  // session's configured reflector threshold, plus the unobserved pending.
+  om: {
+    observation_tokens: number;
+    pending_tokens: number;
+    reflector_threshold: number;
+  };
   live: LiveState;
   cursor: string;
 }
@@ -230,6 +244,7 @@ export type Command =
   | { type: 'session_list'; workspace: string }
   | { type: 'session_new'; workspace: string; title: string | null }
   | { type: 'session_rename'; session: string; title: string }
+  | { type: 'session_set_model'; session: string; model: string }
   | { type: 'session_open'; session: string }
   | { type: 'session_close'; session: string }
   | { type: 'session_delete'; session: string }
@@ -267,8 +282,7 @@ export type CommandOutput =
   | { kind: 'sessions'; sessions: SessionMeta[] }
   | { kind: 'snapshot'; snapshot: Snapshot }
   | { kind: 'entries'; entries: ViewEntry[] }
-  | { kind: 'providers'; providers: Array<{ name: string; base_url: string; models: string[] }> }
-  | { kind: 'agents'; agents: Array<{ name: string; description: string; builtin: boolean }> }
+  | { kind: 'providers'; providers: ProviderInfo[] }
   | { kind: 'skills'; skills: SkillInfo[] }
   | { kind: 'subagent'; subagent: SubagentInfo }
   | { kind: 'subagents'; subagents: SubagentInfo[] }
@@ -292,6 +306,9 @@ export type Event =
   | { type: 'tool_end'; workspace: string; session: string; call_id: string; tool_call_id: string; name: string; output: unknown }
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
+  // The session's OM activity (the turn-end Observer/Reflector run): the
+  // status bar's om gauge — busy while in flight, idle when it finishes.
+  | { type: 'om_status'; workspace: string; session: string; kind: 'observing' | 'reflecting' | 'idle' }
   | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind }
   | { type: 'subagent_event'; workspace: string; session: string; kind: SubagentEventKind }
   | { type: 'task_changed'; workspace: string; session: string; tasks: Task[] }

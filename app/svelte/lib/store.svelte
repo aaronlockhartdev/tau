@@ -43,6 +43,14 @@
     // Output tokens/second of the session's most recent turn (status bar).
     tps: number;
     turn: 'running' | 'idle';
+    // The session's OM state (the status bar's gauge): the activity kind
+    // (the om_status events) and the gauge values (the snapshots).
+    om: {
+      kind: 'idle' | 'observing' | 'reflecting';
+      observation_tokens: number;
+      pending_tokens: number;
+      reflector_threshold: number;
+    };
     pending: PendingMsg[];
     // The session-tree row (ticket #26): a child session's parent link,
     // its lifecycle state, its archive flag, and its sort key.
@@ -59,8 +67,13 @@
     tasks: Task[];
   }
 
+  const OM_IDLE = { kind: 'idle', observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 } as const;
+
   export const store = $state({
     focus: false,
+    // The composer's model menu (the floating centered list): the model
+    // chip and the /model command open it.
+    modelMenuOpen: false,
     // 'r' keybind (App.svelte): every reasoning block opens/closes at once.
     reasoningOpen: false,
     // Per-entry card expansion, keyed `${session}:${entryId}:${slot}`: the
@@ -142,6 +155,21 @@
     store.reasoningOpen = !store.reasoningOpen;
   }
 
+  // The dynamic window title: `workspace · session`; a child session
+  // includes its parent (`ws · parent › child`).
+  export function windowTitle(): string {
+    const sid = store.current;
+    const s = sid ? store.sessions[sid] : null;
+    if (!s) return 'tau';
+    const ws = store.workspaces.find((w) => w.id === s.meta.workspace);
+    const wsName = ws ? ws.name : '';
+    const name = s.meta.title ?? s.meta.id;
+    const parent = s.parent ? store.sessions[s.parent] : null;
+    if (!parent) return wsName ? `${wsName} · ${name}` : name;
+    const p = parent.meta.title ?? parent.meta.id;
+    return wsName ? `${wsName} · ${p} › ${name}` : `${p} › ${name}`;
+  }
+
   // A spawn/state event for a child we haven't opened yet: register a stub
   // so the session tree can group it; a later session_open replaces the
   // stub with the real snapshot (keeping the parent link, which the child's
@@ -166,6 +194,7 @@
       usage: null,
       tps: 0,
       turn: state === 'running' ? 'running' : 'idle',
+      om: { ...OM_IDLE },
       pending: [],
       parent: parentSid,
       state,
@@ -272,7 +301,17 @@
     stop,
     openWorkspace,
     switchSession,
-    fetchWindow
+    fetchWindow,
+    omStatus: (kind: 'observing' | 'reflecting' | 'idle') =>
+      applyEvents([
+        {
+          type: 'om_status',
+          workspace: store.current ? store.sessions[store.current].meta.workspace : '',
+          session: store.current ?? '',
+          kind
+        }
+      ]),
+    sessionSetModel: (session: string, model: string) => command({ type: 'session_set_model', session, model })
   };
 
 
@@ -296,6 +335,9 @@
       usage: meta.usage,
       turn: snap.live.turn === 'running' ? 'running' : 'idle',
       tps: 0,
+      // The snapshot carries the gauge values; the activity kind is
+      // event-driven (an open session is idle until a run starts).
+      om: { ...snap.om, kind: 'idle' },
       pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) })),
       parent: null,
       state: snap.live.turn === 'running' ? 'running' : 'idle',
@@ -481,6 +523,22 @@
     if (s) s.meta.title = t;
   }
 
+  // Switch the current session's model (the composer's model chip and the
+  // /model command): the core sets the meta and records the change as a
+  // quiet system entry; the row converges on the new model.
+  export async function setModel(model: string): Promise<void> {
+    const sid = store.current;
+    if (!sid) return;
+    const s = store.sessions[sid];
+    if (!s || !model || s.meta.model === model) return;
+    try {
+      await command({ type: 'session_set_model', session: sid, model });
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    s.meta.model = model;
+  }
   // Archive (ADR-0005): one-way, off the live read/write path. The core
   // stops a running child first and archives the session's children with
   // it; the row keeps its state (a message resumes it) and moves to the
@@ -527,6 +585,7 @@
           usage: null,
           tps: 0,
           turn: 'idle',
+          om: { ...OM_IDLE },
           pending: [],
           parent: m.parent ?? null,
           state: 'idle',
@@ -1006,6 +1065,12 @@
             if (st === 'idle' && child.waiting_on === null) child.waiting_on = 'parent';
             if (st !== 'idle') child.waiting_on = null;
           }
+          break;
+        }
+        case 'om_status': {
+          // The status bar's om gauge: the activity kind is event-driven;
+          // the gauge values ride the snapshots.
+          s.om.kind = ev.kind;
           break;
         }
         case 'system': {

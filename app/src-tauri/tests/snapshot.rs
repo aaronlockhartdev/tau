@@ -87,8 +87,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         "the snapshot carries an entry payload"
     );
     assert_eq!(
-        snapshot.om.reflector_threshold,
-        40_000,
+        snapshot.om.reflector_threshold, 40_000,
         "the snapshot's om gauge carries the session's configured threshold (ticket #22)"
     );
 

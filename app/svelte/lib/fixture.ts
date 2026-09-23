@@ -323,7 +323,7 @@ export function buildDemoSession(): DemoSession {
     parent: null,
     created: T0,
     leaf: raw[raw.length - 1].id,
-    model: 'vllm/qwen3.8-27b',
+    model: 'qwen3.8-27b',
     usage: null,
     archived: false
   };
@@ -369,7 +369,7 @@ function demoMeta(id: string, title: string, created: number, parent: string | n
     parent,
     created,
     leaf: null,
-    model: 'vllm/qwen3.8-27b',
+    model: 'qwen3.8-27b',
     usage: null,
     archived: false
   };

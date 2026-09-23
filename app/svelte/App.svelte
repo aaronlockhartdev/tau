@@ -12,8 +12,22 @@
   import Queue from './components/Queue.svelte';
   import Composer from './components/Composer.svelte';
   import StatusBar from './components/StatusBar.svelte';
+  import ModelMenu from './components/ModelMenu.svelte';
   import { onMount, onDestroy } from 'svelte';
-  import { store, toggleAllReasoning } from './lib/store.svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { store, toggleAllReasoning, windowTitle } from './lib/store.svelte';
+  import { isTauri } from './lib/protocol';
+  // The dynamic window title (the center header was deleted): the session's
+  // name lives in the title bar and the status bar, not a header row.
+  $effect(() => {
+    const title = windowTitle();
+    document.title = title;
+    try {
+      if (isTauri()) void getCurrentWindow().setTitle(title).catch(() => {});
+    } catch {
+      // No Tauri window (demo/dev): document.title is the whole job.
+    }
+  });
   // 'r' toggles every reasoning line at once (V2 thinking lines); skipped
   // while a field has focus so it never fights the composer.
   function onKeydown(e: KeyboardEvent): void {
@@ -29,7 +43,11 @@
   const error = $derived(store.error);
   const focus = $derived(store.focus);
   const title = $derived(cur?.meta.title ?? cur?.meta.id ?? 'New session');
-  const model = $derived(cur?.meta.model ?? '');
+  // The child session's breadcrumb: the parent's title (the header's job
+  // moved to this thin row — top-level sessions show nothing).
+  const crumbParent = $derived(
+    cur?.parent ? (store.sessions[cur.parent]?.meta.title ?? store.sessions[cur.parent]?.meta.id ?? null) : null
+  );
 </script>
 
 <div class="shell">
@@ -51,19 +69,13 @@
       <LeftPane />
     </aside>
     <main class="center">
-      <div class="chead">
-        <span class="n">{title}</span>
-        <!-- #11 verdict, TOP-LEVEL only: badged `running` while this session
-             is generating or one of its sub-agents is running. A child
-             session's header shows its own lifecycle state instead (its
-             sub-agent's state, not its parent's badge rule). -->
-        {#if cur && !cur.parent && (cur.turn === 'running' || cur.subagents.some((x) => x.state === 'running'))}
-          <span class="badge running"><span class="dot"></span>running</span>
-        {:else if cur && cur.parent}
-          <span class="badge {cur.state}"><span class="dot"></span>{cur.state}{cur.state === 'idle' && cur.waiting_on ? ` · ${cur.waiting_on}` : ''}</span>
-        {/if}
-        <span class="m">{model}</span>
-      </div>
+      {#if crumbParent}
+        <div class="crumb">
+          <span class="par">{crumbParent}</span>
+          <span>›</span>
+          <span class="you">{title}</span>
+        </div>
+      {/if}
       {#if error}
         <div class="err">⚠ {error}</div>
       {/if}
@@ -75,6 +87,9 @@
         {/key}
         <Queue />
         <Composer />
+        {#if store.modelMenuOpen}
+          <ModelMenu />
+        {/if}
       {:else}
         <div class="empty">
           <span class="big">No workspace open</span>
@@ -126,76 +141,30 @@
     min-height: 0;
   }
   .center {
+    position: relative;
     display: flex;
     flex-direction: column;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
   }
-  .chead {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 16px;
-    border-bottom: 1px solid var(--line);
-    background: var(--panel);
+  /* The deleted .chead, replaced by a thin breadcrumb for child sessions
+     only: the parent's title, dim; top-level sessions show nothing. */
+  .crumb {
     flex: none;
-  }
-  .chead .n {
-    font-weight: 600;
-    font-size: 13.5px;
-  }
-  .chead .m {
-    margin-left: auto;
+    padding: 5px 16px 3px;
     font: 10.5px var(--mono);
     color: var(--faint);
-  }
-  .badge {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 5px;
-    font: 10.5px/1.6 var(--mono);
-    padding: 1px 7px;
-    border-radius: 9px;
-    border: 1px solid var(--line);
+    gap: 6px;
+  }
+  .crumb .par {
     color: var(--dim);
-    white-space: nowrap;
   }
-  .badge .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--dim);
-  }
-  .badge.running {
-    color: var(--acc);
-    border-color: color-mix(in srgb, var(--acc) 40%, transparent);
-  }
-  .badge.running .dot {
-    background: var(--acc);
-    animation: pulse 1.2s infinite;
-  }
-  /* The child header's own state tag (the badge rule is top-level only). */
-  .badge.idle {
-    color: var(--amber);
-    border-color: color-mix(in srgb, var(--amber) 40%, transparent);
-  }
-  .badge.done {
-    color: var(--green);
-    border-color: color-mix(in srgb, var(--green) 40%, transparent);
-  }
-  .badge.failed {
-    color: var(--red);
-    border-color: color-mix(in srgb, var(--red) 40%, transparent);
-  }
-  .badge.stopped {
-    color: var(--dim);
-    border-color: color-mix(in srgb, var(--dim) 40%, transparent);
-  }
-  @keyframes pulse {
-    50% {
-      opacity: 0.35;
-    }
+  .crumb .you {
+    color: var(--tx);
+    font-weight: 500;
   }
   .err {
     padding: 6px 16px;

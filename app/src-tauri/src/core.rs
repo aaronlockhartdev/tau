@@ -1732,11 +1732,7 @@ impl Core {
                         if old.as_deref() == Some(model.as_str()) {
                             return Ok(CommandOutput::None);
                         }
-                        let leaf = store
-                            .leaf()
-                            .ok()
-                            .flatten()
-                            .map(|e| e.id);
+                        let leaf = store.leaf().ok().flatten().map(|e| e.id);
                         store
                             .append(
                                 tau_core::agent::KIND_SYSTEM,
@@ -5260,20 +5256,21 @@ mod tests {
         })
         .unwrap();
         let snap = match core
-            .dispatch(Command::SessionOpen { session: live.id.clone() })
+            .dispatch(Command::SessionOpen {
+                session: live.id.clone(),
+            })
             .unwrap()
         {
             CommandOutput::Snapshot { snapshot } => snapshot,
             other => panic!("expected snapshot: {other:?}"),
         };
         assert_eq!(snap.session.model.as_deref(), Some("other/model"));
-        let file =
-            std::fs::read_to_string(
-                cwd.path()
-                    .join(".tau/sessions")
-                    .join(format!("{}.jsonl", live.id)),
-            )
-            .unwrap();
+        let file = std::fs::read_to_string(
+            cwd.path()
+                .join(".tau/sessions")
+                .join(format!("{}.jsonl", live.id)),
+        )
+        .unwrap();
         let notes: Vec<String> = file
             .lines()
             .filter_map(|l| {

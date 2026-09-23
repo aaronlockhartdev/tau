@@ -1,15 +1,17 @@
 <script lang="ts">
-  // Composer with the 3-way lane selector (spec §9): one control
-  // picking force / steering / follow-up. Enter sends; shift+enter
-  // breaks the line; force interrupts the in-flight turn, steering
-  // delivers at the next tool-call opportunity, follow-up after the
-  // model finishes.
+  // The v5 composer: a rounded floating box (margin 0 16px 12px, line2
+  // border, panel background) with an input row (textarea + the 3-way lane
+  // selector + send) and a meta row (the model chip + hint). Enter sends;
+  // shift+enter breaks the line; force interrupts the in-flight turn,
+  // steering delivers at the next tool-call opportunity, follow-up after
+  // the model finishes. The lane control is dimmed + inert while the
+  // session is not running (all three lanes are just "send" then); the
+  // selection is retained.
   //
-  // A leading `/` opens the /skill: autocomplete (ticket #28): arrows
-  // navigate, Enter completes while the dropdown is open (sends while
-  // closed), Tab completes, Esc or losing focus dismisses, and the mouse
-  // completion is plain text until send; the expansion happens at the
-  // message_send boundary, not here.
+  // A leading `/` opens the command dropdown (ticket #28, extended with
+  // /model and /help): arrows navigate, Enter completes, Tab completes,
+  // Esc dismisses; completion is plain text until send, and the /skill:
+  // expansion happens at the message_send boundary, not here.
   import { store, send, type PendingMsg } from '../lib/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
 
@@ -50,11 +52,24 @@
   // text stays plain until send.
   let completed = $state(false);
 
-  const matches = $derived.by(() => {
+  // The dropdown's rows: the fixed commands (/model, /help) and the
+  // matching skills — one list in every state.
+  type Row = { id: string; name: string; desc: string; skill?: SkillInfo };
+  const matches = $derived.by<Row[]>(() => {
     if (prefix === null || completed) return [];
-    return skills
+    const out: Row[] = [];
+    if ('model'.startsWith(prefix)) {
+      out.push({ id: 'model', name: '/model', desc: "switch the session's model" });
+    }
+    if ('help'.startsWith(prefix)) {
+      out.push({ id: 'help', name: '/help', desc: 'list commands' });
+    }
+    for (const s of skills
       .filter((s) => s.name.startsWith(prefix))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.name.localeCompare(b.name))) {
+      out.push({ id: `skill:${s.name}`, name: `/skill:${s.name}`, desc: s.description, skill: s });
+    }
+    return out;
   });
   const open = $derived(matches.length > 0);
   let sel = $state(0);
@@ -66,8 +81,29 @@
   }
 
   function complete(i: number): void {
-    const s = matches[i];
-    if (!s) return;
+    const m = matches[i];
+    if (!m) return;
+    if (m.id === 'model') {
+      // /model opens the same centered model menu the chip does.
+      text = '';
+      completed = true;
+      store.modelMenuOpen = true;
+      requestAnimationFrame(() => inputEl?.focus());
+      return;
+    }
+    if (m.id === 'help') {
+      // "list commands": a fresh / shows the whole command list.
+      text = '/';
+      completed = false;
+      sel = 0;
+      requestAnimationFrame(() => {
+        inputEl?.focus();
+        inputEl?.setSelectionRange(text.length, text.length);
+      });
+      fit();
+      return;
+    }
+    const s = m.skill!;
     text = `/skill:${s.name} `;
     completed = true;
     sel = 0;
@@ -83,11 +119,17 @@
     if (!t) return;
     text = '';
     completed = false;
+    store.modelMenuOpen = false;
     if (inputEl) inputEl.style.height = '';
     void send(t, lane);
   }
 
   function onKey(e: KeyboardEvent): void {
+    if (store.modelMenuOpen && e.key === 'Escape') {
+      e.preventDefault();
+      store.modelMenuOpen = false;
+      return;
+    }
     if (open) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
@@ -125,7 +167,7 @@
 <div class="composer">
   {#if open}
     <div class="dropdown" role="listbox">
-      {#each matches as s, i (s.name)}
+      {#each matches as m, i (m.id + m.name)}
         <div
           class="opt"
           class:sel={i === sel}
@@ -142,28 +184,28 @@
           }}
           onclick={() => complete(i)}
         >
-          <span class="oname">/{s.name}</span>
-          <span class="odesc">{s.description}</span>
+          <span class="oname">{m.name}</span>
+          <span class="odesc">{m.desc}</span>
         </div>
       {/each}
     </div>
   {/if}
-  <textarea
-    class="input"
-    bind:this={inputEl}
-    bind:value={text}
-    rows="3"
-    placeholder="Message Tau — enter sends, shift+enter for a new line"
-    onkeydown={onKey}
-    onblur={() => (completed = true)}
-    oninput={() => {
-      completed = false;
-      sel = 0;
-      fit();
-    }}
-  ></textarea>
-  <div class="row">
-    <div class="lanes">
+  <div class="crow">
+    <textarea
+      class="cin"
+      bind:this={inputEl}
+      bind:value={text}
+      rows="1"
+      placeholder="message — / for commands"
+      onkeydown={onKey}
+      onblur={() => (completed = true)}
+      oninput={() => {
+        completed = false;
+        sel = 0;
+        fit();
+      }}
+    ></textarea>
+    <div class="lanes" class:dim={!running}>
       {#each lanes as l (l.id)}
         <button
           class="lane"
@@ -179,18 +221,48 @@
       {running && lane === 'force' ? '⚡' : '↑'}
     </button>
   </div>
+  <div class="cmeta">
+    <button
+      class="mchip"
+      title="switch model"
+      onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
+    >
+      <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
+      <span class="mname">{cur?.meta.model ?? 'no model'}</span>
+      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
+    </button>
+    <span class="chint">enter send · shift+enter newline · / commands</span>
+  </div>
 </div>
 
 <style>
   .composer {
     position: relative;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--line);
-    background: var(--panel);
     flex: none;
+    margin: 0 16px 12px;
+    border: 1px solid var(--line2);
+    border-radius: 10px;
+    background: var(--panel);
+  }
+  .crow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .cin {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    resize: none;
+    font: 13px/1.4 var(--sans);
+    color: var(--tx);
+    min-height: 18px;
+    max-height: 160px;
+  }
+  .cin::placeholder {
+    color: var(--faint);
   }
   .lanes {
     display: flex;
@@ -199,11 +271,17 @@
     overflow: hidden;
     flex: none;
   }
+  .lanes.dim {
+    opacity: 0.4;
+    pointer-events: none;
+  }
   .lane {
     padding: 4px 10px;
     font: 11px var(--mono);
     color: var(--dim);
     border-right: 1px solid var(--line);
+    background: none;
+    cursor: pointer;
   }
   .lane:last-child {
     border-right: none;
@@ -215,41 +293,68 @@
     background: color-mix(in srgb, var(--acc) 12%, transparent);
     color: var(--acc);
   }
-  .input {
-    width: 100%;
-    min-height: 66px;
-    max-height: 160px;
-    resize: none;
-    overflow-y: auto;
-    background: var(--bg);
-    color: var(--tx);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
-    font: 13.5px/1.45 var(--sans, system-ui);
-    outline: none;
-  }
-  .input:focus {
-    border-color: color-mix(in srgb, var(--acc) 40%, transparent);
-  }
-  .row {
+  .send {
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    background: var(--acc);
+    color: #060a10;
     display: flex;
     align-items: center;
-    gap: 8px;
-  }
-  .send {
-    margin-left: auto;
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
-    background: var(--acc);
-    color: var(--bg);
-    font-size: 15px;
-    font-weight: 700;
+    justify-content: center;
+    font-size: 13px;
     flex: none;
+    border: none;
+    cursor: pointer;
   }
   .send.disabled {
     opacity: 0.35;
+  }
+  .cmeta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px 9px;
+  }
+  /* The model chip is minimal: no border, no fill — dim text, a faint
+     icon, a small chevron; hover lifts the text to primary. */
+  .mchip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 10.5px var(--mono);
+    color: var(--faint);
+    padding: 3px 2px;
+    cursor: pointer;
+    background: none;
+    border: none;
+  }
+  .mchip:hover {
+    color: var(--dim);
+  }
+  .mchip .mi {
+    width: 11px;
+    height: 11px;
+    stroke: var(--faint);
+    fill: none;
+    stroke-width: 2;
+  }
+  .mchip .chev {
+    width: 8px;
+    height: 8px;
+    stroke: var(--faint);
+    fill: none;
+    stroke-width: 2;
+  }
+  .mchip .mname {
+    color: var(--dim);
+  }
+  .mchip:hover .mname {
+    color: var(--tx);
+  }
+  .chint {
+    font: 10px var(--mono);
+    color: var(--faint);
   }
   .dropdown {
     position: absolute;

@@ -355,8 +355,19 @@ try {
         focusOn: body?.classList.contains('focus')
       }), 200);
     })`);
-    check('status bar shows the render stats (range · ms · streams · model)', /\d+–\d+ of \d+/.test(ui.bar) && /·\s*\d+(\.\d+)?\s*ms/.test(ui.bar), ui.bar.replace(/\n/g, ' | '));
-    check('usage renders real numbers (no undefined/NaN)', /\d+(\.\dk)? in · \d+(\.\dk)? out · \d+(\.\dk)? total/.test(ui.bar), ui.bar.replace(/\n/g, ' | '));
+    const barShape = await evalPage(wsUrl, `(() => {
+      const bar = [...document.querySelectorAll('.bar')].pop();
+      return { children: bar ? bar.children.length : -1, seg: bar ? bar.querySelectorAll('.seg').length : -1 };
+    })()`);
+    check('status bar: one unsegmented bar (a left and a right group, no .seg segments)',
+      barShape.children === 2 && barShape.seg === 0 &&
+        /\d+(\.\dk)? in · \d+(\.\dk)? out · \d+% cache/.test(ui.bar.replace(/\n/g, ' ')),
+      `children: ${barShape.children}, seg: ${barShape.seg} | ${ui.bar.replace(/\n/g, ' | ')}`);
+    check('status bar: the left group shows state · workspace · session · the om gauge',
+      /running · .* · Protocol crate[^·]* · OM \d+\.\dk\/\d+\.\dk/.test(ui.bar.replace(/\n/g, ' ')),
+      ui.bar.replace(/\n/g, ' | '));
+    check('the center header is gone (no .chead element)',
+      await evalPage(wsUrl, `document.querySelector('.chead') === null`), '');
     check('focus mode applies the class', ui.focusOn === true, ui.focus);
     await evalPage(wsUrl, `document.querySelector('.focus').click()`); // toggle back
 
@@ -463,19 +474,21 @@ try {
     await openChild('provider hardening');
     await sleep(350);
     const c1view = await evalPage(wsUrl, `(() => ({
-      head: [...document.querySelectorAll('.chead .badge')].map((b) => b.textContent.trim()),
+      crumb: document.querySelector('.crumb')?.textContent.trim() ?? null,
       bar: [...document.querySelectorAll('.bar')].pop()?.innerText ?? ''
     }))()`);
-    check("B1: the running child's header badges running (not idle)", c1view.head.includes('running'), c1view.head.join(' / '));
-    check('B1: the bar shows running for the running child', /st\s*running/i.test(c1view.bar.replace(/\n/g, ' ')), c1view.bar.replace(/\n/g, ' | '));
+    check('B1: the running child shows running in the bar (no header badge row)',
+      /›\s*provider hardening/.test(c1view.crumb ?? '') && /running/.test(c1view.bar) && !/idle/.test(c1view.bar),
+      `crumb: ${c1view.crumb} | bar: ${c1view.bar.replace(/\n/g, ' | ')}`);
     await openChild('protocol surface');
     await sleep(350);
     const c2view = await evalPage(wsUrl, `(() => ({
-      head: [...document.querySelectorAll('.chead .badge')].map((b) => b.textContent.trim()),
-      headTitle: document.querySelector('.chead .n')?.textContent
+      crumb: document.querySelector('.crumb')?.textContent.trim() ?? null,
+      bar: [...document.querySelectorAll('.bar')].pop()?.innerText ?? ''
     }))()`);
-    check('B2: an idle child with a RUNNING nested child shows its own state, not the blanket badge',
-      c2view.head.includes('idle · user') && !c2view.head.includes('running'), c2view.head.join(' / '));
+    check('B2: an idle child with a RUNNING nested child shows idle in the bar (no blanket badge)',
+      /›\s*protocol surface/.test(c2view.crumb ?? '') && /idle/.test(c2view.bar) && !/running/.test(c2view.bar),
+      `crumb: ${c2view.crumb} | bar: ${c2view.bar.replace(/\n/g, ' | ')}`);
 
     // --- N2: the nested pair are real sessions — double-click opens one.
     // While c2 is current, its sub-agents tab lists the pair as rows (the
@@ -491,8 +504,20 @@ try {
       }, 400);
     })`);
     await sleep(350);
-    const nestedHead = await evalPage(wsUrl, `(() => document.querySelector('.chead .n')?.textContent ?? '')()`);
-    check('N2: double-clicking the nested child opens its session', nestedHead === 'event renames', nestedHead);
+    const n2 = await evalPage(wsUrl, `(() => {
+      const t = window.__tau;
+      const st = t.store();
+      const s = st.sessions[st.current];
+      const p = s?.parent ? st.sessions[s.parent] : null;
+      return {
+        current: st.current,
+        crumb: Boolean(document.querySelector('.crumb')),
+        expected: p ? p.meta.title + ' › ' + s.meta.title : null
+      };
+    })()`);
+    check('N2: double-clicking the nested child opens it with the parent-child breadcrumb',
+      n2.current === 'cg1' && n2.crumb && n2.expected === 'protocol surface › event renames',
+      JSON.stringify(n2));
 
     // --- N1: opening a child keeps its parent group expanded (the row the
     // user just clicked stays visible in the tree).
@@ -525,12 +550,12 @@ try {
       const [left] = [...document.querySelectorAll('.pane')];
       return {
         rows: [...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim()),
-        head: document.querySelector('.chead .n')?.textContent ?? ''
+        crumb: document.querySelector('.crumb')?.textContent.trim() ?? ''
       };
     })()`);
     check('B5: an archived row click is a no-op (no open, list order stable)',
-      archAfter.rows.length === 2 && archAfter.rows[1].includes('first session store') && archAfter.head === 'event renames',
-      `head: ${archAfter.head} | rows: ${archAfter.rows.join(' | ')}`);
+      archAfter.rows.length === 2 && archAfter.rows[1].includes('first session store') && archAfter.crumb.includes('event renames'),
+      `crumb: ${archAfter.crumb} | rows: ${archAfter.rows.join(' | ')}`);
 
     // --- live display ordering: the final call's tool card (regression: the
     // subagent_stop card rendered after the model's final response until
@@ -768,10 +793,9 @@ try {
     })()`);
     for (let step = 0; step < 80; step++) {
       const range = await evalPage(wsUrl, `(() => {
-        const bar = [...document.querySelectorAll('.bar')].pop();
-        const t = bar ? (bar.innerText || '').replace(/\\n/g, ' ') : '';
-        const nums = (t.split('RENDER')[1] || '').match(/[0-9]+/g) || [];
-        return { start: Number(nums[0]), end: Number(nums[1]) };
+        const r = window.__tau.store().renderRange || '';
+        const m = r.match(/([0-9]+)–([0-9]+)/);
+        return m ? { start: Number(m[1]) - 1, end: Number(m[2]) } : { start: 0, end: 0 };
       })()`);
       if (range.start <= 5000 && range.end >= 5000) break;
       const delta = range.start > 5000 ? -200 : 200;
@@ -824,8 +848,9 @@ try {
         res(opts);
       }, 100);
     })`);
-    check('typing / opens the autocomplete with all the workspace skills (incl. the disabled one)',
-      dropdown.includes('/tauri-app-creator') && dropdown.includes('/tauri-app-sql') && dropdown.includes('/nightly-build'),
+    check('typing / opens the autocomplete: /model, /help, and all the workspace skills (incl. the disabled one)',
+      dropdown.includes('/model') && dropdown.includes('/help') &&
+        dropdown.includes('/skill:tauri-app-creator') && dropdown.includes('/skill:tauri-app-sql') && dropdown.includes('/skill:nightly-build'),
       dropdown.join(' | '));
     const completed = await evalPage(wsUrl, `new Promise((res) => {
       const ta = document.querySelector('.composer textarea');
@@ -839,6 +864,123 @@ try {
     check('Enter completes the open dropdown to /skill:<name> (and it stays plain text)',
       completed.value === '/skill:tauri-app-creator ' && !completed.open,
       completed.value + (completed.open ? ' [dropdown still open]' : ''));
+
+    // --- v5 status bar: the window title carries the session (chead's job) ---
+    const titleParent = await evalPage(wsUrl, `document.title`);
+    check('window title: the parent session titles the window (workspace · session)',
+      titleParent === 'tau · Protocol crate: messages & events (10k fixture)', titleParent);
+    await evalPage(wsUrl, `window.__tau.switchSession('cg1')`);
+    await sleep(300);
+    const titleChild = await evalPage(wsUrl, `document.title`);
+    check('window title: a child session includes its parent (ws · parent › child)',
+      titleChild === 'tau · protocol surface › event renames', titleChild);
+    await evalPage(wsUrl, `window.__tau.switchSession('demo')`);
+    await sleep(300);
+
+    // --- lanes: dimmed + inert on an idle session, retained selection ---
+    const lanesIdle = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      t.switchSession('c3');
+      setTimeout(() => {
+        const lanes = document.querySelector('.lanes');
+        if (!lanes) return res({ missing: true });
+        const st = getComputedStyle(lanes);
+        res({ opacity: st.opacity, pe: st.pointerEvents });
+      }, 250);
+    })`);
+    check('lanes: dimmed and inert when the session is idle',
+      lanesIdle.opacity === '0.4' && lanesIdle.pe === 'none', JSON.stringify(lanesIdle));
+    await evalPage(wsUrl, `window.__tau.switchSession('demo')`);
+    await sleep(300);
+
+    // --- model menu: the chip opens the centered, provider-grouped menu ---
+    const menuOpen = await evalPage(wsUrl, `new Promise((res) => {
+      setTimeout(() => {
+        document.querySelector('.mchip')?.click();
+        setTimeout(() => {
+          const m = document.querySelector('.mmenu');
+          if (!m) return res({ missing: true });
+          const r = m.getBoundingClientRect();
+          const c = document.querySelector('.center').getBoundingClientRect();
+          res({
+            centeredX: Math.abs(r.left + r.width / 2 - (c.left + c.width / 2)) < 2,
+            centeredY: Math.abs(r.top + r.height / 2 - (c.top + c.height / 2)) < 40,
+            width: Math.round(r.width),
+            groups: [...m.querySelectorAll('.gn')].map((g) => g.textContent.trim()),
+            cur: m.querySelector('.mrow.cur .mn')?.textContent ?? null
+          });
+        }, 250);
+      }, 100);
+    })`);
+    check('model menu: the chip opens the centered 340px menu, grouped by provider, current model dotted',
+      menuOpen.centeredX && menuOpen.centeredY && menuOpen.width === 340 &&
+        menuOpen.groups.join(' ') === 'vllm anthropic' && menuOpen.cur === 'qwen3.8-27b',
+      JSON.stringify(menuOpen));
+    const menuPick = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      const row = [...document.querySelectorAll('.mmenu .mrow')].find(
+        (r) => r.querySelector('.mn')?.textContent === 'claude-sonnet-4'
+      );
+      row?.click();
+      setTimeout(() => {
+        const sess = t.store().sessions['demo'];
+        const lastView = t.demoViews[t.demoViews.length - 1];
+        res({
+          closed: document.querySelector('.mmenu') === null,
+          chip: document.querySelector('.mchip .mname')?.textContent,
+          model: sess.meta.model,
+          note: lastView?.payload?.note ?? null
+        });
+      }, 250);
+    })`);
+    check('model menu: a selection updates the chip + meta and records a quiet model entry',
+      menuPick.closed && menuPick.chip === 'anthropic/claude-sonnet-4' &&
+        menuPick.model === 'anthropic/claude-sonnet-4' &&
+        menuPick.note === 'model: qwen3.8-27b → anthropic/claude-sonnet-4',
+      JSON.stringify(menuPick));
+    // Restore the fixture's model (a quiet entry is appended either way).
+    await evalPage(wsUrl, `window.__tau.sessionSetModel('demo', 'qwen3.8-27b')`);
+    await sleep(150);
+
+    // --- /model: the dropdown command opens the same menu and clears the text ---
+    const cmdModel = await evalPage(wsUrl, `new Promise((res) => {
+      const ta = document.querySelector('.composer textarea');
+      ta.focus();
+      ta.value = '/mod';
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+      setTimeout(() => {
+        const opts = [...document.querySelectorAll('.dropdown .oname')].map((o) => o.textContent);
+        ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        setTimeout(() => {
+          const t = window.__tau;
+          ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+          setTimeout(() => res({ opts, text: ta.value, menu: Boolean(document.querySelector('.mmenu')) }), 150);
+        }, 250);
+      }, 100);
+    })`);
+    check('/model: the dropdown offers it, Enter opens the menu, the text clears, Esc dismisses',
+      JSON.stringify(cmdModel.opts) === JSON.stringify(['/model']) &&
+        cmdModel.text === '' && !cmdModel.menu,
+      JSON.stringify(cmdModel));
+
+    // --- om_status: the gauge flips to the activity, back on idle ---
+    const omObs = await evalPage(wsUrl, `new Promise((res) => {
+      const t = window.__tau;
+      t.omStatus('observing');
+      setTimeout(() => {
+        const bar = [...document.querySelectorAll('.bar')].pop();
+        res({ busy: bar?.querySelector('.om.busy')?.textContent.trim() ?? null });
+      }, 150);
+    })`);
+    check('om_status: observing shows the accented activity in the gauge', omObs.busy === 'observing…', JSON.stringify(omObs));
+    await evalPage(wsUrl, `window.__tau.omStatus('idle')`);
+    const omIdle = await evalPage(wsUrl, `new Promise((res) => {
+      setTimeout(() => {
+        const bar = [...document.querySelectorAll('.bar')].pop();
+        res({ om: bar?.querySelector('.om')?.textContent.trim() ?? null });
+      }, 150);
+    })`);
+    check('om_status: idle restores the Nk/Mk gauge', /[0-9.]+k\/[0-9.]+k/.test(omIdle.om ?? ''), omIdle.om);
 
     // focus mode collapses both panes
     const collapsed = await evalPage(wsUrl, `new Promise((res) => {

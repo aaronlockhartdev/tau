@@ -97,6 +97,11 @@ fn lane_name(lane: Lane) -> &'static str {
     }
 }
 
+/// The OM run's status callback: the activity kind as a string
+/// ("observing" / "reflecting" / "idle") — the app shapes it into the
+/// protocol event.
+type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 struct Inner {
     store: SessionStore,
     system_prompt: String,
@@ -111,7 +116,7 @@ struct Inner {
     /// The OM-run observer (the app emits the protocol's om_status event
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
-    om_status_hook: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    om_status_hook: Option<OmStatusHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -359,7 +364,7 @@ impl AgentSession {
     }
 
     /// The OM-run observer (the app's om_status emitter); `None` clears it.
-    pub fn set_om_status_hook(&self, hook: Option<Arc<dyn Fn(&str) + Send + Sync>>) {
+    pub fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
         self.inner.lock().unwrap().om_status_hook = hook;
     }
 

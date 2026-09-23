@@ -13,6 +13,7 @@ import { store, init, applyEvents } from './lib/store.svelte';
 import {
   buildDemoSession,
   demoChildren,
+  toEntry,
   demoSkills,
   demoSubagents,
   demoTasks
@@ -65,7 +66,7 @@ function snapshotFor(sid: string): Snapshot {
       workspace: WS,
       session: { ...meta, usage: PARENT_USAGE },
       entries: entryMetas,
-      om: null,
+      om: { observation_tokens: 18000, pending_tokens: 1000, reflector_threshold: 40000 },
       live: {
         queue: [
           { text: 'use the 62-char alphabet, not base36', lane: 'steering' },
@@ -85,7 +86,7 @@ function snapshotFor(sid: string): Snapshot {
     workspace: WS,
     session: { ...c.meta, usage: c.usage },
     entries: [],
-    om: null,
+    om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 40000 },
     live: {
       queue: [],
       turn: c.state === 'running' ? 'running' : 'idle',
@@ -171,8 +172,46 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
       return { kind: 'none' };
     case 'file_list':
       return { kind: 'files', files: demoFiles[c.path] ?? [] };
+    case 'session_set_model': {
+      if (c.session === meta.id) {
+        const old = meta.model ?? null;
+        if (old !== c.model) {
+          meta.model = c.model;
+          views.push({
+            id: 'e' + (views.length + 1),
+            parent: null,
+            kind: 'system',
+            timestamp: Date.now(),
+            payload: { note: `model: ${old ?? '—'} → ${c.model}` },
+            blob: null,
+            first_kept: null
+          });
+          // Converge the open session's store row (the chip reads meta).
+          const sess = store.sessions[c.session];
+          if (sess) {
+            sess.meta = { ...sess.meta, model: c.model };
+            sess.entries = [...sess.entries, toEntry(views[views.length - 1])];
+          }
+        }
+      }
+      return { kind: 'none' };
+    }
+    case 'provider_list':
+      return {
+        kind: 'providers',
+        providers: [
+          { name: 'vllm', base_url: 'http://127.0.0.1:8000/v1', models: ['qwen3.8-27b', 'qwen3.5-32b'] },
+          {
+            name: 'anthropic',
+            base_url: 'https://api.anthropic.com/v1',
+            models: ['claude-sonnet-4', 'claude-haiku-3', 'claude-opus-4']
+          }
+        ]
+      };
     default:
-      throw new Error(`demo entry: unmocked command ${c.type}`);
+      // Unmocked commands (e.g. plugin:window|set_title in the demo):
+      // resolve empty so the GUI can run here.
+      return { kind: 'none' };
   }
 }
 
