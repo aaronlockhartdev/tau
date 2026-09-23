@@ -1,18 +1,20 @@
 <script lang="ts">
   // The v5 composer: a rounded floating box (margin 0 16px 12px, line2
-  // border, panel background) with an input row (textarea + the 3-way lane
-  // selector + send) and a meta row (the model chip + hint). Enter sends;
-  // shift+enter breaks the line; force interrupts the in-flight turn,
-  // steering delivers at the next tool-call opportunity, follow-up after
-  // the model finishes. The lane control is dimmed + inert while the
-  // session is not running (all three lanes are just "send" then); the
-  // selection is retained.
+  // border, panel background). The textarea sits alone in the input row
+  // (full box width — it must not share the row with the controls); the
+  // footer row carries the meta items (model chip + hint) left and the
+  // 3-way lane selector + send button right. Enter sends; shift+enter
+  // breaks the line; force interrupts the in-flight turn, steering delivers
+  // at the next tool-call opportunity, follow-up after the model finishes.
+  // The lanes dim while the session is not running but stay changeable
+  // (the selection applies to the next send); the send button becomes a
+  // stop button while a turn is running and the field is empty.
   //
   // A leading `/` opens the command dropdown (ticket #28, extended with
   // /model and /help): arrows navigate, Enter completes, Tab completes,
   // Esc dismisses; completion is plain text until send, and the /skill:
   // expansion happens at the message_send boundary, not here.
-  import { store, send, type PendingMsg } from '../lib/store.svelte';
+  import { store, send, stop, type PendingMsg } from '../lib/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
 
   let text = $state('');
@@ -205,6 +207,20 @@
         fit();
       }}
     ></textarea>
+  </div>
+  <div class="cfoot">
+    <div class="cmeta">
+      <button
+        class="mchip"
+        title="switch model"
+        onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
+      >
+        <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
+        <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
+      </button>
+      <span class="chint">enter send · shift+enter newline · / commands</span>
+    </div>
     <div class="lanes" class:dim={!running}>
       {#each lanes as l (l.id)}
         <button
@@ -217,21 +233,15 @@
         </button>
       {/each}
     </div>
-    <button class="send" class:disabled={!text.trim()} onclick={submit}>
-      {running && lane === 'force' ? '⚡' : '↑'}
-    </button>
-  </div>
-  <div class="cmeta">
     <button
-      class="mchip"
-      title="switch model"
-      onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
+      class="send"
+      class:stop={running && !text.trim()}
+      class:disabled={!text.trim() && !running}
+      title={running && !text.trim() ? 'stop the in-flight turn' : 'send'}
+      onclick={running && !text.trim() ? () => void stop() : submit}
     >
-      <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
-      <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
-      <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
+      {running ? (text.trim() ? (lane === 'force' ? '⚡' : '↑') : '■') : '↑'}
     </button>
-    <span class="chint">enter send · shift+enter newline · / commands</span>
   </div>
 </div>
 
@@ -273,7 +283,6 @@
   }
   .lanes.dim {
     opacity: 0.4;
-    pointer-events: none;
   }
   .lane {
     padding: 4px 10px;
@@ -310,11 +319,21 @@
   .send.disabled {
     opacity: 0.35;
   }
+  .send.stop {
+    background: var(--red);
+    color: #100606;
+  }
+  .cfoot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px 9px;
+  }
   .cmeta {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 0 12px 9px;
+    margin-right: auto;
   }
   /* The model chip is minimal: no border, no fill — dim text, a faint
      icon, a small chevron; hover lifts the text to primary. */

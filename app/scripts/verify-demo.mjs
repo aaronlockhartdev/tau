@@ -477,8 +477,8 @@ try {
       crumb: document.querySelector('.crumb')?.textContent.trim() ?? null,
       bar: [...document.querySelectorAll('.bar')].pop()?.innerText ?? ''
     }))()`);
-    check('B1: the running child shows running in the bar (no header badge row)',
-      /›\s*provider hardening/.test(c1view.crumb ?? '') && /running/.test(c1view.bar) && !/idle/.test(c1view.bar),
+    check('B1: the running child shows running in the bar (no header, no breadcrumb)',
+      c1view.crumb === null && /running/.test(c1view.bar) && !/idle/.test(c1view.bar),
       `crumb: ${c1view.crumb} | bar: ${c1view.bar.replace(/\n/g, ' | ')}`);
     await openChild('protocol surface');
     await sleep(350);
@@ -487,7 +487,7 @@ try {
       bar: [...document.querySelectorAll('.bar')].pop()?.innerText ?? ''
     }))()`);
     check('B2: an idle child with a RUNNING nested child shows idle in the bar (no blanket badge)',
-      /›\s*protocol surface/.test(c2view.crumb ?? '') && /idle/.test(c2view.bar) && !/running/.test(c2view.bar),
+      c2view.crumb === null && /idle/.test(c2view.bar) && !/running/.test(c2view.bar),
       `crumb: ${c2view.crumb} | bar: ${c2view.bar.replace(/\n/g, ' | ')}`);
 
     // --- N2: the nested pair are real sessions — double-click opens one.
@@ -515,8 +515,8 @@ try {
         expected: p ? p.meta.title + ' › ' + s.meta.title : null
       };
     })()`);
-    check('N2: double-clicking the nested child opens it with the parent-child breadcrumb',
-      n2.current === 'cg1' && n2.crumb && n2.expected === 'protocol surface › event renames',
+    check('N2: double-clicking the nested child opens it (no breadcrumb; the window title carries the parent)',
+      n2.current === 'cg1' && !n2.crumb && n2.expected === 'protocol surface › event renames',
       JSON.stringify(n2));
 
     // --- N1: opening a child keeps its parent group expanded (the row the
@@ -550,12 +550,12 @@ try {
       const [left] = [...document.querySelectorAll('.pane')];
       return {
         rows: [...left.querySelectorAll('.arch .trow')].map((r) => r.textContent.trim()),
-        crumb: document.querySelector('.crumb')?.textContent.trim() ?? ''
+        current: window.__tau.store().current
       };
     })()`);
     check('B5: an archived row click is a no-op (no open, list order stable)',
-      archAfter.rows.length === 2 && archAfter.rows[1].includes('first session store') && archAfter.crumb.includes('event renames'),
-      `crumb: ${archAfter.crumb} | rows: ${archAfter.rows.join(' | ')}`);
+      archAfter.rows.length === 2 && archAfter.rows[1].includes('first session store') && archAfter.current === 'cg1',
+      `current: ${archAfter.current} | rows: ${archAfter.rows.join(' | ')}`);
 
     // --- live display ordering: the final call's tool card (regression: the
     // subagent_stop card rendered after the model's final response until
@@ -864,7 +864,14 @@ try {
     check('Enter completes the open dropdown to /skill:<name> (and it stays plain text)',
       completed.value === '/skill:tauri-app-creator ' && !completed.open,
       completed.value + (completed.open ? ' [dropdown still open]' : ''));
-
+    // Leave the composer empty for the checks that follow.
+    await evalPage(wsUrl, `(() => {
+      const ta = document.querySelector('.composer textarea');
+      if (ta && ta.value) {
+        ta.value = '';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    })()`);
     // --- v5 status bar: the window title carries the session (chead's job) ---
     const titleParent = await evalPage(wsUrl, `document.title`);
     check('window title: the parent session titles the window (workspace · session)',
@@ -877,7 +884,7 @@ try {
     await evalPage(wsUrl, `window.__tau.switchSession('demo')`);
     await sleep(300);
 
-    // --- lanes: dimmed + inert on an idle session, retained selection ---
+    // --- lanes: dimmed on an idle session but still changeable ---
     const lanesIdle = await evalPage(wsUrl, `new Promise((res) => {
       const t = window.__tau;
       t.switchSession('c3');
@@ -888,9 +895,49 @@ try {
         res({ opacity: st.opacity, pe: st.pointerEvents });
       }, 250);
     })`);
-    check('lanes: dimmed and inert when the session is idle',
-      lanesIdle.opacity === '0.4' && lanesIdle.pe === 'none', JSON.stringify(lanesIdle));
+    check('lanes: dimmed when the session is idle but still changeable',
+      lanesIdle.opacity === '0.4' && lanesIdle.pe === 'auto', JSON.stringify(lanesIdle));
+    // --- stop button: empty field + running turn → stop; the input row holds
+    // only the textarea (the controls live in the footer row).
+    const stopView = await evalPage(wsUrl, `new Promise((res) => {
+      // The field must be empty for the stop mode; clear any residue from
+      // earlier checks, then switch to the running child.
+      const ta = document.querySelector('.composer textarea');
+      if (ta && ta.value) {
+        ta.value = '';
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      window.__tau.switchSession('c1');
+      setTimeout(() => {
+        const send = document.querySelector('.send');
+        res({
+          glyph: send?.textContent.trim(),
+          stop: send?.classList.contains('stop') ?? false,
+          disabled: send?.classList.contains('disabled') ?? false,
+          crowControls: !!document.querySelector('.crow .lanes, .crow .send'),
+          footSend: !!document.querySelector('.cfoot .send')
+        });
+      }, 400);
+    })`);
+    check('stop: empty field + running turn shows the stop button; the controls sit in the footer, not the input row',
+      stopView.glyph === '■' && stopView.stop && !stopView.disabled && !stopView.crowControls && stopView.footSend,
+      JSON.stringify(stopView));
+    const stopClick = await evalPage(wsUrl, `new Promise((res) => {
+      document.querySelector('.send')?.click();
+      setTimeout(() => {
+        const send = document.querySelector('.send');
+        res({
+          glyph: send?.textContent.trim(),
+          stop: send?.classList.contains('stop') ?? false,
+          bar: [...document.querySelectorAll('.bar')].pop()?.innerText ?? ''
+        });
+      }, 400);
+    })`);
+    check('stop: clicking it stops the turn (the bar goes idle, the glyph reverts)',
+      stopClick.glyph === '↑' && !stopClick.stop && /idle/.test(stopClick.bar) && !/running/.test(stopClick.bar),
+      JSON.stringify(stopClick));
     await evalPage(wsUrl, `window.__tau.switchSession('demo')`);
+    await sleep(300);
     await sleep(300);
 
     // --- model menu: the chip opens the centered, provider-grouped menu ---

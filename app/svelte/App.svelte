@@ -43,11 +43,6 @@
   const error = $derived(store.error);
   const focus = $derived(store.focus);
   const title = $derived(cur?.meta.title ?? cur?.meta.id ?? 'New session');
-  // The child session's breadcrumb: the parent's title (the header's job
-  // moved to this thin row — top-level sessions show nothing).
-  const crumbParent = $derived(
-    cur?.parent ? (store.sessions[cur.parent]?.meta.title ?? store.sessions[cur.parent]?.meta.id ?? null) : null
-  );
 </script>
 
 <div class="shell">
@@ -69,13 +64,6 @@
       <LeftPane />
     </aside>
     <main class="center">
-      {#if crumbParent}
-        <div class="crumb">
-          <span class="par">{crumbParent}</span>
-          <span>›</span>
-          <span class="you">{title}</span>
-        </div>
-      {/if}
       {#if error}
         <div class="err">⚠ {error}</div>
       {/if}
@@ -147,24 +135,6 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
-  }
-  /* The deleted .chead, replaced by a thin breadcrumb for child sessions
-     only: the parent's title, dim; top-level sessions show nothing. */
-  .crumb {
-    flex: none;
-    padding: 5px 16px 3px;
-    font: 10.5px var(--mono);
-    color: var(--faint);
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .crumb .par {
-    color: var(--dim);
-  }
-  .crumb .you {
-    color: var(--tx);
-    font-weight: 500;
   }
   .err {
     padding: 6px 16px;

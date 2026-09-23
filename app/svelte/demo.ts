@@ -168,8 +168,24 @@ function mockBackend(cmd: string, args?: unknown): CommandOutput | string {
       }
       return { kind: 'entries', entries: [] };
     case 'message_send':
-    case 'message_stop':
       return { kind: 'none' };
+    case 'message_stop': {
+      // The demo's stop: flip the child's state (the next snapshot serves it
+      // idle) and close the turn in the store the way a real interrupt does.
+      const k = kids.find((x) => x.meta.id === c.session);
+      if (k) k.state = 'idle';
+      applyEvents([
+        {
+          type: 'stream_end',
+          workspace: WS.id,
+          session: c.session,
+          call_id: 'demo-stop',
+          interrupted: true,
+          usage: null
+        }
+      ]);
+      return { kind: 'none' };
+    }
     case 'file_list':
       return { kind: 'files', files: demoFiles[c.path] ?? [] };
     case 'session_set_model': {
