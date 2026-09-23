@@ -57,6 +57,10 @@ jobs:
         working-directory: app
         run: npm run build
 
+      - name: Protocol parity
+        # ADR-0006's TS mirror of the Rust command surface must not silently drift (roadmap C6).
+        run: node app/svelte/scripts/protocol-parity.mjs
+
       - name: Test
         working-directory: app
         run: npm run test
