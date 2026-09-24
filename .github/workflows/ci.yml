@@ -105,8 +105,8 @@ jobs:
       - name: Build
         run: just build
 
-      - name: Launch smoke (leg a)
-        run: just acceptance a
+      - name: Launch smoke
+        run: just acceptance launch
 
       - name: E2E (real app on the shared fixture)
         # The GUI's test (roadmap G): the debug binary on the 10k-entry fixture,
@@ -139,11 +139,11 @@ jobs:
       - name: Build
         run: just build
 
-      - name: Acceptance (offline core leg e)
-        run: just acceptance e
+      - name: Acceptance (offline core suite)
+        run: just acceptance core
 
-      - name: Launch smoke (leg a, xvfb)
-        run: just acceptance a
+      - name: Launch smoke (xvfb)
+        run: just acceptance launch
 
       - name: E2E (real app on the shared fixture, xvfb)
         # The GUI's test (roadmap G); the driver launches the app under xvfb itself.

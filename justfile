@@ -23,10 +23,10 @@ test:
     cargo nextest run --workspace
     (cd app && npm run test)
 
-# Spec §1 in-scope legs; `just acceptance <leg…>` filters (default: all).
-# Live legs (b/c/d) run only when TAU_LIVE=1 — a skipped live leg is not a
-# failure, a red leg is.
-acceptance *legs = 'a b c d e f':
+# Spec §1 in-scope suites; `just acceptance <suite…>` filters (default: all).
+# The live ones (live-*) run only when TAU_LIVE=1 — a skipped live suite is
+# not a failure, a red one is.
+acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     #!/bin/sh
     set -u
     cd "{{justfile_directory()}}"
@@ -40,36 +40,36 @@ acceptance *legs = 'a b c d e f':
     skip=0
 
     report() {
-      # $1 = leg, $2 = status (PASS|FAIL|SKIP), $3 = detail
+      # $1 = suite, $2 = status (PASS|FAIL|SKIP), $3 = detail
       case "$2" in
         PASS) pass=$((pass + 1)) ;;
         FAIL) fail=$((fail + 1)) ;;
         SKIP) skip=$((skip + 1)) ;;
       esac
-      printf '%-28s %s  %s\n' "leg $1" "$2" "$3"
+      printf '%-28s %s  %s\n' "$1" "$2" "$3"
     }
 
     run_driver() {
-      # $1 = leg, $2... = driver args
-      leg="$1"; shift
+      # $1 = suite, $2... = driver args
+      suite="$1"; shift
       if [ "$TAU_LIVE" != "1" ]; then
-        report "$leg" SKIP "TAU_LIVE unset (set TAU_LIVE=1 with TAU_ENDPOINT/TAU_MODEL)"
+        report "$suite" SKIP "TAU_LIVE unset (set TAU_LIVE=1 with TAU_ENDPOINT/TAU_MODEL)"
         return 0
       fi
       out=$(TAU_ENDPOINT="$TAU_ENDPOINT" TAU_MODEL="$TAU_MODEL" \
-        ./target/release/tau-acceptance "$leg" "$@" 2>&1)
+        ./target/release/tau-acceptance "$suite" "$@" 2>&1)
       status=$?
       if [ $status -eq 0 ]; then
-        report "$leg" PASS "$(echo "$out" | tail -1)"
+        report "$suite" PASS "$(echo "$out" | tail -1)"
       else
-        report "$leg" FAIL "$(echo "$out" | tail -1)"
+        report "$suite" FAIL "$(echo "$out" | tail -1)"
       fi
       return $status
     }
 
     launch_smoke() {
       # $1 = the launch command. Survival is judged at the FINAL check only:
-      # a startup panic must fail the leg, not pass on an early "alive" sample.
+      # a startup panic must fail the suite, not pass on an early "alive" sample.
       $1 >/dev/null 2>&1 &
       pid=$!
       up=1
@@ -82,9 +82,9 @@ acceptance *legs = 'a b c d e f':
       kill "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
       if [ $up -eq 1 ]; then
-        report a PASS "the built app launched and stayed up 15 s (smoke)"
+        report launch PASS "the built app launched and stayed up 15 s (smoke)"
       else
-        report a FAIL "the app exited before 15 s of launch"
+        report launch FAIL "the app exited before 15 s of launch"
       fi
     }
 
@@ -92,14 +92,14 @@ acceptance *legs = 'a b c d e f':
     echo "endpoint: $TAU_ENDPOINT  model: $TAU_MODEL  live: $TAU_LIVE"
     echo ""
 
-    for leg in {{legs}}; do
-      case "$leg" in
-        a)
+    for suite in {{suites}}; do
+      case "$suite" in
+        launch)
           if just build > /tmp/tau-acceptance-build.log 2>&1; then
             if [ "$(uname)" = "Darwin" ]; then
               bin="target/release/bundle/macos/Tau.app/Contents/MacOS/tau-app"
               if [ ! -x "$bin" ]; then
-                report a FAIL "the build reported success but $bin is missing"
+                report launch FAIL "the build reported success but $bin is missing"
               else
                 launch_smoke "$bin"
               fi
@@ -107,41 +107,41 @@ acceptance *legs = 'a b c d e f':
               # WebKitGTK wants an X display: headless Linux runs under xvfb (spec §13).
               bin="target/release/tau-app"
               if [ ! -x "$bin" ]; then
-                report a FAIL "the build reported success but $bin is missing"
+                report launch FAIL "the build reported success but $bin is missing"
               else
                 launch_smoke "xvfb-run -a $bin"
               fi
             fi
           else
-            report a FAIL "just build failed (see /tmp/tau-acceptance-build.log)"
+            report launch FAIL "just build failed (see /tmp/tau-acceptance-build.log)"
           fi
           ;;
-        b|c|d)
-          run_driver "$leg"
+        live-tools|live-subagent|live-om)
+          run_driver "$suite"
           ;;
-        e)
-          out=$(./target/release/tau-acceptance e 2>&1); status=$?
+        core)
+          out=$(./target/release/tau-acceptance core 2>&1); status=$?
           if [ $status -eq 0 ]; then
-            report e PASS "$(echo "$out" | tail -1)"
+            report core PASS "$(echo "$out" | tail -1)"
           else
-            report e FAIL "$(echo "$out" | tail -1)"
+            report core FAIL "$(echo "$out" | tail -1)"
           fi
           ;;
-        f)
+        e2e)
           if command -v node >/dev/null 2>&1; then
             out=$(node app/tests/e2e/run-e2e.mjs 2>&1); status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c '^PASS')
-              report f PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') E2E checks (real app on the 10k-entry fixture, 2 canned 25 ms streams)"
+              report e2e PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') E2E checks (real app on the 10k-entry fixture, 2 canned 25 ms streams)"
             else
-              report f FAIL "$(echo "$out" | grep -m1 '^FAIL' || echo 'the real-app E2E failed')"
+              report e2e FAIL "$(echo "$out" | grep -m1 '^FAIL' || echo 'the real-app E2E failed')"
             fi
           else
-            report f SKIP "node is not available"
+            report e2e SKIP "node is not available"
           fi
           ;;
         *)
-          report "$leg" FAIL "unknown leg"
+          report "$suite" FAIL "unknown suite"
           ;;
       esac
     done

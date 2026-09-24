@@ -139,7 +139,7 @@ Agent-doc fixes (`02-agent-harness.md` §2):
 |---|---|
 | `app/prototype/layout.html`, `palette.html`, `statusbar.html` | **Delete** — superseded throwaway prototypes (winners folded into the Svelte components in `376de61`/`c5d24b7`; zero references) |
 | `prototype/gui-ia/index.html` | **Keep** — the design baseline, triple-documented (README, spec §9, code comments) |
-| `app/demo.html` + `svelte/demo.ts` + `lib/fixture.ts` + `scripts/verify-demo.mjs` | **Keep** — the live verification rig (acceptance leg f, CI) |
+| `app/demo.html` + `svelte/demo.ts` + `lib/fixture.ts` + `scripts/verify-demo.mjs` | **Superseded (G, 2026-09-23)** — the live verification rig; G retired it in favor of the real-app E2E suite (the `e2e` acceptance suite) |
 | `app/scripts/agent-eval.mjs` | **Deleted (2026-09-23)** — the tauri-agent-tools replacement; tauri-pilot is now the dev-app tool |
 | `docs/research/hash-anchors.md`, `remote-backend.md` | **Keep** — finished research, decision records |
 | `docs/gui-bugs.md` | **Keep** as a historical log; verify + strike the 2 stale "Open" items |
@@ -177,9 +177,9 @@ non-standard side), icons include `.png`/`.ico` alongside `.icns`, and the rig a
 Chrome binary. What is genuinely macOS-only today: (1) `tauri.conf.json` `bundle.targets: ["app"]` —
 `.app` has no Linux equivalent, so add `appimage` (v0 distribution = direct download; `deb` is v1 apt
 channel work); (2) the CI image — no webkit2gtk (why `build` skips the Linux bundle; the fix is Tauri's
-documented prerequisites: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); (3) the launch smoke (leg a) —
+documented prerequisites: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); (3) the launch smoke (the `launch` suite) —
 WebKitGTK wants an X display, so Linux runs it under `xvfb-run`. Work: the bundle target, the CI apt
-deps + xvfb, a Linux leg-a, and a spec §13 note that "Linux second" includes the GUI.
+deps + xvfb, a Linux launch suite, and a spec §13 note that "Linux second" includes the GUI.
 
 ### G. The demo rig becomes a real-app E2E suite (the "demo" retires)
 
@@ -246,10 +246,11 @@ only untested seam. Full detail + a ready-to-paste CI YAML in `01-testing.md`.
    args = all, preserving current behavior).
 3. Restructure `ci.yml` to four jobs, driven by `just` (item F): **rust** (macos+linux matrix:
    fmt/clippy/`nextest`), **frontend** (ubuntu: `just frontend` + the store suite of 1c), **app**
-   (macos **and** linux: `just build` + **launch smoke via `just acceptance a`** — today the bundle is
-   built but never launched in CI, a launch-panic would pass; the Linux leg lands with F2, under
-   `xvfb-run`), and **linux-acceptance** (ubuntu: `just build` + leg e + the real-app E2E suite of item G
-   as separate steps so a red suite can't mask a red core leg). Live legs (b/c/d) stay local — no `TAU_LIVE`
+   (macos **and** linux: `just build` + **launch smoke via `just acceptance launch`** — today the bundle is
+   built but never launched in CI, a launch-panic would pass; the Linux suite lands with F2, under
+   `xvfb-run`), and **linux-acceptance** (ubuntu: `just build` + the `core` suite + the real-app E2E suite
+   of item G as separate steps so a red suite can't mask a red core one). The live suites (live-*) stay
+   local — no `TAU_LIVE` in CI.
    in CI.
 
 ### 1b. Rust additions (1–2 d)
@@ -579,7 +580,7 @@ wave boundary, after the wave's other branches are in.
 - `AGENTS.md` carries the file-size rule (soft 500 / hard 1000 LOC) and no code file exceeds the hard limit —
   `core.rs` is split as part of C1/C2.
 - CI: rust (matrix, nextest), frontend (build + store suite), app (macOS + Linux build + launch smoke),
-  linux-acceptance (leg e + the real-app E2E). `tauri::test` smoke pins the one real Tauri seam.
+  linux-acceptance (the `core` suite + the real-app E2E). `tauri::test` smoke pins the one real Tauri seam.
 - The store decomposes into a streaming slice plus pure modules (C3 entries, C10 session registry,
   C11 files cache); the config surface is true (wired or gone).
 - Entry payloads are typed on the protocol surface (C9): writers construct through the typed module, the

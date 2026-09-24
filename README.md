@@ -28,7 +28,7 @@ open target/release/bundle/macos/Tau.app
 
 `dev/config.toml` targets the project's test endpoint (`https://llms.aaronlockhart.dev/v1`, model `qwen3.8-27b`). To use your own provider, edit that file (or drop a `.tau/config.toml` into a project — the project layer wins per provider name): each `[providers.<name>]` entry is a `base_url` + `key_env` (the name of an environment variable holding the key) + `models`; `[om].om_model` names the compaction model. Tau speaks the OpenAI-compatible `responses` endpoint only.
 
-On Linux, `just build` builds the full app and bundles an AppImage (needs the webkit system libraries: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); the launch smoke (leg a) runs under `xvfb`.
+On Linux, `just build` builds the full app and bundles an AppImage (needs the webkit system libraries: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); the launch smoke (the `launch` suite) runs under `xvfb`.
 
 ## Acceptance
 
@@ -37,21 +37,21 @@ just build
 TAU_LIVE=1 just acceptance
 ```
 
-`just acceptance` proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per leg (a leg filter argument runs a subset): the built app launches (macOS and Linux), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the 10k-entry demo entry (two live 25 ms streams, 25 ms coalescing) passes. Live legs are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
+`just acceptance` proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per suite (a suite filter argument runs a subset): the built app launches (macOS and Linux), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the real app on the 10k-entry shared fixture (two deterministic 25 ms streams, 25 ms coalescing) passes. The live suites are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
 
-The performance bar is a dev-only demo entry — the 10k-entry fixture + two 25 ms streams behind `app/demo.html`, excluded from the release build (`app/scripts/verify-demo.mjs` is its committed, re-runnable verification):
+The performance bar is the `e2e` suite — the debug app on the shared 10k-entry fixture (the same `target/test-fixture/session.jsonl` the Rust tests use), driven over the tauri-pilot socket, two deterministic 25 ms streams coalesced at 25 ms (spec §8):
 
 ```sh
-node app/scripts/verify-demo.mjs
+just acceptance e2e
 ```
 
-and a human click-through: `npm run dev` in `app/`, open `http://localhost:5173/demo.html`, and scroll the 10k-entry session while the two streams run — the status bar shows the render range, render time, and stream count.
+and a human click-through: `npm run dev` in `app/`, open a workspace with a large session, and scroll while streams run — the status bar shows the render range, render time, and stream count.
 
 ## Repository layout
 
 - `crates/tau-core` — the standalone core library (no GUI dependencies, ADR-0002): the agent loop, the four hash-anchored tools, session storage (JSONL + per-line CRC + zstd sidecars), OM compaction, sub-agents, tasks, the provider client.
 - `crates/tau-protocol` — the transport-agnostic core↔GUI message set (spec §8).
-- `crates/tau-acceptance` — the acceptance driver (this README's live legs).
+- `crates/tau-acceptance` — the acceptance driver (this README's live suites).
 - `app/` — the Tauri + Svelte 5 GUI; `svelte/` is the frontend, `src-tauri/` the thin dispatch binding.
 - `prototype/gui-ia/index.html` — the GUI's behavioral reference (the design baseline, kept as a spec artifact).
 - `dev/config.toml` — the example/dev config.

@@ -1,11 +1,12 @@
 //! End-to-end acceptance driver (ticket #27).
 //!
-//! Legs: `b` multi-turn with the four core tools (live), `c` a sub-agent
-//! spawned by the model plus its task pointer (live), `d` OM compaction on a
-//! synthesized long session (live observe/reflect), `e` branching + manual
-//! archive round-trip (offline). Live legs read `TAU_ENDPOINT` / `TAU_MODEL`
-//! (or `--endpoint` / `--model`) and cap every generation at 300 output
-//! tokens; the script gates them, the driver does not.
+//! Suites: `live-tools` multi-turn with the four core tools (live),
+//! `live-subagent` a sub-agent spawned by the model plus its task pointer
+//! (live), `live-om` OM compaction on a synthesized long session (live
+//! observe/reflect), `core` branching + manual archive round-trip (offline).
+//! The live suites read `TAU_ENDPOINT` / `TAU_MODEL` (or `--endpoint` /
+//! `--model`) and cap every generation at 300 output tokens; the script
+//! gates them, the driver does not.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -98,10 +99,10 @@ fn session_files(cwd: &Path) -> Vec<PathBuf> {
 // models need the tool list spelled out in the system prompt to use them.
 const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use them as instructed; edit takes the 3-char anchors from read output.";
 
-/// Leg c's parent gets the sub-agent + task tools named too.
+/// live-subagent's parent gets the sub-agent + task tools named too.
 const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
 
-async fn leg_b(ctx: &Ctx) -> Result<(), String> {
+async fn live_tools(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
     let (id, store) = new_session(ws.path());
@@ -133,17 +134,21 @@ async fn leg_b(ctx: &Ctx) -> Result<(), String> {
     for name in ["read", "write", "edit", "bash"] {
         if !calls.contains(&name) {
             return Err(format!(
-                "leg b: the model never called {name} (saw {calls:?})"
+                "live-tools: the model never called {name} (saw {calls:?})"
             ));
         }
     }
     let golden = std::fs::read_to_string(ws.path().join("out.txt")).map_err(|e| e.to_string())?;
     if golden.trim() != "done" {
-        return Err(format!("leg b: out.txt is {golden:?}, expected 'done'"));
+        return Err(format!(
+            "live-tools: out.txt is {golden:?}, expected 'done'"
+        ));
     }
     let notes = std::fs::read_to_string(ws.path().join("notes.txt")).map_err(|e| e.to_string())?;
     if !notes.contains("LINE2") {
-        return Err("leg b: the hash-anchored edit did not land (notes.txt lacks LINE2)".into());
+        return Err(
+            "live-tools: the hash-anchored edit did not land (notes.txt lacks LINE2)".into(),
+        );
     }
     Ok(())
 }
@@ -194,7 +199,7 @@ impl SubagentBridge for AcceptanceBridge {
     }
 }
 
-async fn leg_c(ctx: &Ctx) -> Result<(), String> {
+async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     let (id, store) = new_session(ws.path());
     let (p, prov) = production(ctx);
@@ -260,8 +265,8 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
         .cloned();
     loop {
         if std::time::Instant::now() > deadline {
-            dump_sessions(ws.path(), "/tmp/legc-dump");
-            return Err("leg c: the child never reached a terminal state in 300 s (session dump at /tmp/legc-dump)".into());
+            dump_sessions(ws.path(), "/tmp/live-subagent-dump");
+            return Err("live-subagent: the child never reached a terminal state in 300 s (session dump at /tmp/live-subagent-dump)".into());
         }
         let terminal = child_file
             .as_ref()
@@ -291,7 +296,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
     let files = session_files(ws.path());
     if files.len() < 2 {
         return Err(format!(
-            "leg c: expected a child session file, found {files:?}"
+            "live-subagent: expected a child session file, found {files:?}"
         ));
     }
     drop(agent);
@@ -306,7 +311,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
                 .map(|n| n.to_string())
         })
         .find(|n| n.as_str() != id.as_str())
-        .ok_or("leg c: no child session file")?;
+        .ok_or("live-subagent: no child session file")?;
     // The child's report landed on the parent's branch tagged with the
     // child's id (a done/failed wake or an idle notification — both are
     // lifecycle notifications, spec §5.2).
@@ -315,13 +320,13 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
             && e.payload.get("source").and_then(Value::as_str) == Some(child_id.as_str())
     });
     if !wake {
-        return Err("leg c: no wake entry from the child on the parent's branch".into());
+        return Err("live-subagent: no wake entry from the child on the parent's branch".into());
     }
     // The child's session carries its own record trail (state entries).
     let child_store = SessionStore::for_workspace(ws.path(), &child_id);
     let centries = all_entries(&child_store);
     if !centries.iter().any(|e| e.kind == KIND_SUBAGENT) {
-        return Err("leg c: the child's session has no lifecycle state entries".into());
+        return Err("live-subagent: the child's session has no lifecycle state entries".into());
     }
     let child_state = centries
         .iter()
@@ -339,7 +344,8 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
     if assigned {
         if !centries.iter().any(|e| e.kind == KIND_TASK) {
             return Err(
-                "leg c: the task was assigned but the child's session has no task record".into(),
+                "live-subagent: the task was assigned but the child's session has no task record"
+                    .into(),
             );
         }
         if matches!(child_state, "done" | "failed") {
@@ -355,7 +361,7 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
             });
             if !terminal {
                 return Err(format!(
-                    "leg c: the child ended {child_state} but the task pointer has no terminal state (dangling)"
+                    "live-subagent: the child ended {child_state} but the task pointer has no terminal state (dangling)"
                 ));
             }
         }
@@ -374,7 +380,7 @@ fn prose(i: usize) -> String {
     s
 }
 
-async fn leg_d_once(ctx: &Ctx) -> Result<Option<u32>, String> {
+async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let ws = temp_ws();
     let (id, mut store) = new_session(ws.path());
     // A synthesized long raw window (no model needed for the raw): ~48 KB of
@@ -392,7 +398,7 @@ async fn leg_d_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             om_model: String::new(),
             observe_threshold: 4000,
             // 10, not 150: a live observation can legitimately be short; the
-            // leg must prove the reflector FIRES once an observation exists,
+            // suite must prove the reflector FIRES once an observation exists,
             // not that the model writes long observations
             reflect_threshold: 10,
             buffer_increment: 500,
@@ -440,10 +446,10 @@ async fn leg_d_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     }
     let record = OmState::load_record(&mut store).map_err(|e| e.to_string())?;
     if record.cursor.is_none() {
-        return Err("leg d: the observation cursor did not advance".into());
+        return Err("live-om: the observation cursor did not advance".into());
     }
     if record.live_observations().is_empty() {
-        return Err("leg d: the observation log is empty after a live observe".into());
+        return Err("live-om: the observation log is empty after a live observe".into());
     }
     // One entry = the observe; two = the reflector also fired. The reflect
     // SEMANTICS are unit-tested in tau-core (fidelity oracles,
@@ -453,38 +459,38 @@ async fn leg_d_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     Ok(Some(om_entries.len() as u32))
 }
 
-async fn leg_d(ctx: &Ctx) -> Result<(), String> {
-    // The observe leg is live; a dropped observe call (endpoint flake) is
-    // retried once before the leg fails.
+async fn live_om(ctx: &Ctx) -> Result<(), String> {
+    // The observe suite is live; a dropped observe call (endpoint flake) is
+    // retried once before the suite fails.
     for attempt in 1..=2u32 {
-        match leg_d_once(ctx).await {
+        match live_om_once(ctx).await {
             Ok(Some(entries)) => {
                 if entries >= 2 {
-                    println!("leg d: observe fired, the reflector followed (2 om entries)");
+                    println!("live-om: observe fired, the reflector followed (2 om entries)");
                 } else {
                     println!(
-                        "leg d: observe fired; the reflect did not land this run (1 om entry — live model variance, the reflect semantics are unit-tested in tau-core)"
+                        "live-om: observe fired; the reflect did not land this run (1 om entry — live model variance, the reflect semantics are unit-tested in tau-core)"
                     );
                 }
                 return Ok(());
             }
             Ok(None) if attempt == 1 => {
-                eprintln!("leg d: observe did not land (attempt {attempt}), retrying");
+                eprintln!("live-om: observe did not land (attempt {attempt}), retrying");
                 continue;
             }
             Ok(None) => {
                 return Err(
-                    "leg d: no om entry after the observe threshold was crossed (2 attempts)"
+                    "live-om: no om entry after the observe threshold was crossed (2 attempts)"
                         .into(),
                 );
             }
             Err(e) => return Err(e),
         }
     }
-    Err("leg d: no om entry after the observe threshold was crossed (2 attempts)".into())
+    Err("live-om: no om entry after the observe threshold was crossed (2 attempts)".into())
 }
 
-fn leg_e() -> Result<(), String> {
+fn core_offline() -> Result<(), String> {
     let ws = temp_ws();
     let (id, mut store) = new_session(ws.path());
     // Trunk: three entries, then branch from the second.
@@ -520,21 +526,21 @@ fn leg_e() -> Result<(), String> {
     // Manual archive (the zstd sidecar path) and a round-trip.
     let arc = store.archive().map_err(|e| e.to_string())?;
     if !arc.exists() {
-        return Err("leg e: the archive file was not written".into());
+        return Err("core: the archive file was not written".into());
     }
     store.unarchive().map_err(|e| e.to_string())?;
     let reopened = SessionStore::for_workspace(ws.path(), &id);
     let entries_after = all_entries(&reopened);
     if entries_before.len() != entries_after.len() {
         return Err(format!(
-            "leg e: round-trip lost entries ({} -> {})",
+            "core: round-trip lost entries ({} -> {})",
             entries_before.len(),
             entries_after.len()
         ));
     }
     for (a, b) in entries_before.iter().zip(entries_after.iter()) {
         if a.id != b.id || a.parent != b.parent || a.payload != b.payload {
-            return Err(format!("leg e: round-trip changed entry {}", a.id));
+            return Err(format!("core: round-trip changed entry {}", a.id));
         }
     }
     Ok(())
@@ -542,14 +548,14 @@ fn leg_e() -> Result<(), String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let mut leg = "";
+    let mut suite = "";
     let mut endpoint = std::env::var("TAU_ENDPOINT")
         .unwrap_or_else(|_| "https://llms.aaronlockhart.dev/v1".into());
     let mut model = std::env::var("TAU_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "b" | "c" | "d" | "e" => leg = args[i].as_str(),
+            "live-tools" | "live-subagent" | "live-om" | "core" => suite = args[i].as_str(),
             "--endpoint" => {
                 i += 1;
                 endpoint = args.get(i).cloned().unwrap_or_default();
@@ -562,8 +568,10 @@ fn main() {
         }
         i += 1;
     }
-    if leg.is_empty() {
-        eprintln!("usage: tau-acceptance <b|c|d|e> [--endpoint URL] [--model NAME]");
+    if suite.is_empty() {
+        eprintln!(
+            "usage: tau-acceptance <live-tools|live-subagent|live-om|core> [--endpoint URL] [--model NAME]"
+        );
         std::process::exit(2);
     }
     let ctx = Ctx { endpoint, model };
@@ -572,16 +580,16 @@ fn main() {
         .build()
         .expect("runtime");
     let start = std::time::Instant::now();
-    let result = match leg {
-        "b" => rt.block_on(leg_b(&ctx)),
-        "c" => rt.block_on(leg_c(&ctx)),
-        "d" => rt.block_on(leg_d(&ctx)),
-        _ => rt.block_on(async { leg_e() }),
+    let result = match suite {
+        "live-tools" => rt.block_on(live_tools(&ctx)),
+        "live-subagent" => rt.block_on(live_subagent(&ctx)),
+        "live-om" => rt.block_on(live_om(&ctx)),
+        _ => rt.block_on(async { core_offline() }),
     };
     match result {
-        Ok(()) => println!("leg {leg}: PASS in {:?}", start.elapsed()),
+        Ok(()) => println!("{suite}: PASS in {:?}", start.elapsed()),
         Err(e) => {
-            println!("leg {leg}: FAIL — {e}");
+            println!("{suite}: FAIL — {e}");
             std::process::exit(1);
         }
     }
