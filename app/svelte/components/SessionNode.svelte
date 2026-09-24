@@ -33,6 +33,10 @@
     const q = pane(ws);
     if (!q) return false;
     if (q.openGroups !== null) return q.openGroups.includes(sid);
+    // A group with a running sub-agent child opens by default: the child
+    // row is the visible form of the running work (dogfood 2026-09-24 —
+    // a spawned sub-agent was invisible in a collapsed group).
+    if (session.subagents.some((s) => s.state === 'running')) return true;
     // Default view: the chain containing the active session — the group is
     // the session itself or an ancestor of it.
     let a: SessionState | null = active;
@@ -157,7 +161,7 @@
     <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
   {/if}
   <span class="mru">{fmtAgo(session.mru)}</span>
-  {#if !session.archived}
+  {#if !session.archived && !session.parent}
     <button
       class="arch-b"
       type="button"

@@ -21,7 +21,10 @@
     return Object.values(store.sessions).filter((s) => s.meta.workspace === ws);
   });
   const top = $derived(sessions.filter((s) => !s.parent && !s.archived).sort((a, b) => b.mru - a.mru));
-  const archived = $derived(sessions.filter((s) => s.archived).sort((a, b) => b.mru - a.mru));
+  // Roots only: a child's archive flag is its parent's cascade (the core
+  // archives the children with the parent), so listing children here would
+  // show them twice — once top-level, once under their parent.
+  const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.mru - a.mru));
 
   function setLtab(t: PaneState['ltab']): void {
     const q = pane(ws);

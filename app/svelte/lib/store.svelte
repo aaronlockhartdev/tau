@@ -414,6 +414,10 @@
   // it; the row keeps its state (a message resumes it) and moves to the
   // archive folder, the children's rows converge on the refetched list.
   export async function archiveSession(sid: string): Promise<void> {
+    // A child is archived by its parent's cascade, never directly — a
+    // standalone child archive would leave it out of the parent's row in
+    // the archive folder.
+    if (store.sessions[sid]?.meta.parent) return;
     try {
       const out = await command({ type: 'session_archive', session: sid });
       if (out.kind === 'session') {

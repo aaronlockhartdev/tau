@@ -400,6 +400,20 @@ describe('session switch', () => {
     expect(store.sessions['s2']).toBeTruthy();
   });
 
+  it('a child session is not archived directly — its parent cascades', async () => {
+    store.sessions = applySessionList({}, [meta('s1'), meta('c1', WS.id, { parent: 's1' })]);
+    const called: string[] = [];
+    defaultIPC({
+      session_archive: (cmd) => {
+        if (cmd.type === 'session_archive') called.push(cmd.session);
+        return { kind: 'none' };
+      }
+    });
+    await archiveSession('c1');
+    expect(called).toEqual([]);
+    expect(store.sessions['c1'].archived).toBe(false);
+  });
+
   it('restore: the archive flag converges on the refetched list', async () => {
     store.sessions = applySessionList({}, [meta('s1', WS.id, { archived: true })]);
     defaultIPC({
