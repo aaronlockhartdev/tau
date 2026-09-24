@@ -148,6 +148,8 @@ fn main() {
     #[cfg(debug_assertions)]
     {
         builder = builder.plugin(tauri_plugin_pilot::init());
+        builder = builder.plugin(tauri_plugin_wdio::init());
+        builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
     }
 
     builder

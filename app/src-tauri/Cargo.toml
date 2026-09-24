@@ -12,6 +12,9 @@ tauri = { version = "2.11", features = ["devtools"] }
 tauri-plugin-dialog = "2"
 # debug builds only (cfg-gated in main.rs): the agent's window into the UI
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
+# debug builds only (cfg-gated in main.rs): the WebdriverIO E2E stack (roadmap G2)
+tauri-plugin-wdio = "1.4"
+tauri-plugin-wdio-webdriver = "1.4"
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
 tokio = { workspace = true }

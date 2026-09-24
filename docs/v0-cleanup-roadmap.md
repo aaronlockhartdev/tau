@@ -215,6 +215,8 @@ mocked-IPC demo:
   linux-acceptance job (Linux, post-F2). README + spec §8 point at the suite, not a demo.
 ### G2. WebDriverIO E2E migration (user, 2026-09-24)
 
+**Done (2026-09-24).** `tauri-plugin-wdio` + `tauri-plugin-wdio-webdriver` (1.4) registered under the same `#[cfg(debug_assertions)]` gate as `tauri-plugin-pilot`, `wdio:default` in the default capability, `withGlobalTauri` on, `import '@wdio/tauri-plugin'` in `svelte/main.ts`; `app/wdio.conf.mjs` (mocha framework, embedded provider, the Vite dev server started by the config since the service only spawns the binary) + `app/tests/e2e/e2e.spec.mjs` porting every check of the retired harness (31 assertions in full mode: 29 `check()` lines + 2 framework expects; the plan's "32" counted the pilot-era harness's two pilot-socket checks, which the embedded-server equivalents replace) — expect-webdriverio auto-wait replaces the pollState/withRetry workarounds; lean = 1,000-entry prefix of the pinned fixture / 1 stream / perf informational, full = 10k / 2 streams / 500 ms bar strict (env-driven, `TAU_E2E_MODE`); both CI E2E jobs run the wdio command (macOS embedded, Linux xvfb, `cargo test -p tau-core` first, `target/e2e/` artifacts on failure); `run-e2e.mjs` retired.
+
 Port the E2E suite from the tauri-pilot harness (`app/tests/e2e/run-e2e.mjs`) to the official stack, per the [WebDriver guide](https://v2.tauri.app/develop/tests/webdriver/) and the [CI guide](https://v2.tauri.app/develop/tests/webdriver/ci/):
 
 1. **App**: register the **embedded** `tauri-plugin-wdio-webdriver` provider, debug builds only (same cfg gate as `tauri-plugin-pilot`; the pilot plugin stays for agent interaction — AGENTS.md "The line").

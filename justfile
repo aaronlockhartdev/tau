@@ -137,12 +137,12 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
           ;;
         e2e)
           if command -v node >/dev/null 2>&1; then
-            out=$(node app/tests/e2e/run-e2e.mjs 2>&1); status=$?
+            out=$(cd app && npm run test:frontend 2>&1); status=$?
             if [ $status -eq 0 ]; then
-              n=$(echo "$out" | grep -c '^PASS')
-              report e2e PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') E2E checks (real app on the 10k-entry fixture, 2 canned 25 ms streams)"
+              n=$(echo "$out" | grep -c 'PASS  ')
+              report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-full}, real app on the shared fixture)"
             else
-              report e2e FAIL "$(echo "$out" | grep -m1 '^FAIL' || echo 'the real-app E2E failed')"
+              report e2e FAIL "$(echo "$out" | grep -m1 'FAIL  ' || echo 'the real-app E2E failed')"
             fi
           else
             report e2e SKIP "node is not available"

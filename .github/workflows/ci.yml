@@ -108,22 +108,28 @@ jobs:
       - name: Launch smoke
         run: just acceptance launch
 
-      - name: E2E (real app on the shared fixture)
-        # The GUI's test (roadmap G): the debug binary on the 10k-entry fixture,
-        # driven over the tauri-pilot socket; the driver builds its own inputs.
-        run: node app/tests/e2e/run-e2e.mjs
+      - name: Rust tests before E2E (official CI guide)
+        run: cargo test -p tau-core
+
+      - name: Build debug binary + install frontend deps
+        run: |
+          cargo build -p tau-app
+          (cd app && npm ci)
+
+      - name: E2E (real app on the shared fixture, WebdriverIO)
+        # The GUI's test (roadmap G/G2): the debug binary on the shared
+        # fixture, driven over the embedded WebDriver server; the runner
+        # runs the lean 1k mode (docs/research/tauri-ci.md §4) — the full
+        # 10k/perf bar is local via `just acceptance e2e`.
+        run: |
+          cd app && TAU_E2E_MODE=lean npm run test:frontend
 
       - name: Upload E2E failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-failure-macos
-          # The runner's own temp dir only — globbing /var/folders/* spans
-          # root-owned system folders the action can't read (EACCES kills it).
-          path: |
-            ${{ env.TMPDIR }}tau-e2e-*/failure.png
-            ${{ env.TMPDIR }}tau-e2e-*/app.log
-            ${{ env.TMPDIR }}tau-e2e-*/results.json
+          path: target/e2e/**
           if-no-files-found: warn
 
   linux-acceptance:
@@ -158,17 +164,25 @@ jobs:
       - name: Launch smoke (xvfb)
         run: just acceptance launch
 
-      - name: E2E (real app on the shared fixture, xvfb)
-        # The GUI's test (roadmap G); the driver launches the app under xvfb itself.
-        run: node app/tests/e2e/run-e2e.mjs
+      - name: Rust tests before E2E (official CI guide)
+        run: cargo test -p tau-core
+
+      - name: Build debug binary + install frontend deps
+        run: |
+          cargo build -p tau-app
+          (cd app && npm ci)
+
+      - name: E2E (real app on the shared fixture, WebdriverIO, xvfb)
+        # The GUI's test (roadmap G/G2); xvfb gives the WebKitGTK webview
+        # its display (official CI guide). The runner runs the lean 1k mode
+        # (docs/research/tauri-ci.md §4) — the full 10k/perf bar is local.
+        run: |
+          cd app && TAU_E2E_MODE=lean xvfb-run -a npm run test:frontend
 
       - name: Upload E2E failure artifacts
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-failure-linux
-          path: |
-            /tmp/tau-e2e-*/failure.png
-            /tmp/tau-e2e-*/app.log
-            /tmp/tau-e2e-*/results.json
+          path: target/e2e/**
           if-no-files-found: warn
