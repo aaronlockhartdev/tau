@@ -30,6 +30,8 @@ open target/release/bundle/macos/Tau.app
 
 On Linux, `just build` builds the full app and bundles an AppImage (needs the webkit system libraries: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); the launch smoke (the `launch` suite) runs under `xvfb`.
 
+For the development loop — and for tauri-pilot debugging, whose socket is wired into debug builds only — `just dev` runs a debug build with the Svelte dev server and hot reload.
+
 ## Acceptance
 
 ```sh

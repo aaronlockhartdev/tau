@@ -4,6 +4,14 @@
 default:
     @just build
 
+# The development loop: a debug build (tauri-pilot's socket is debug-only,
+# AGENTS.md 'Verifying UI work') with the Svelte dev server and hot reload.
+dev:
+    #!/bin/sh
+    set -eu
+    cd "{{justfile_directory()}}/app"
+    npx tauri dev
+
 build:
     #!/bin/sh
     set -eu
