@@ -21,17 +21,18 @@
 // - `TurnUsage` (the payload module's usage) is name-parity with the TS
 //   `Usage` — the crate carries two usage dialects; the field diff runs on
 //   lib.rs's `Usage`.
-import { readFileSync } from 'node:fs';
+import { readFileSync, globSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const rustSrc = [
-  readFileSync(join(root, 'crates/tau-protocol/src/lib.rs'), 'utf8'),
-  readFileSync(join(root, 'crates/tau-protocol/src/snapshot.rs'), 'utf8'),
-  readFileSync(join(root, 'crates/tau-protocol/src/payload.rs'), 'utf8'),
-  readFileSync(join(root, 'crates/tau-protocol/src/coalesce.rs'), 'utf8')
-].join('\n');
+const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+// Every source file in the crate — a new module (e.g. the C8 split's events.rs)
+// must not fall out of the diff just because this list wasn't updated.
+const rustSrc = globSync('crates/tau-protocol/src/**/*.rs', { cwd: root })
+  .sort()
+  .map((p) => readFileSync(join(root, p), 'utf8'))
+  .join('\n');
 const tsSrc = readFileSync(join(root, 'app/svelte/lib/protocol.ts'), 'utf8');
 
 const errors = [];
