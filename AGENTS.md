@@ -16,6 +16,7 @@ Single-context: `CONTEXT.md` (the glossary), `docs/spec/v0.md` (the approved v0 
 
 To inspect, drive, or screenshot a running dev build, load the `tauri-pilot` skill. The app embeds its plugin in debug builds only; the CLI auto-detects the socket.
 
+**The line (2026-09-24).** You, the agent, use **tauri-pilot** for direct interaction with the running app — debugging, dogfooding, screenshots. Automated testing uses **WebdriverIO + `@wdio/tauri-service`** in the official Tauri way ([WebDriver guide](https://v2.tauri.app/develop/tests/webdriver/), [CI guide](https://v2.tauri.app/develop/tests/webdriver/ci/); the embedded `tauri-plugin-wdio-webdriver` provider is the default). tauri-pilot never drives a test suite; WebDriverIO never drives ad-hoc agent interaction.
 ## Coding conventions
 
 Rules, not suggestions. Enforced in CI where mechanical, in review where not.

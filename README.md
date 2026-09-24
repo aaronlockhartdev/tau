@@ -41,7 +41,7 @@ TAU_LIVE=1 just acceptance
 
 `just acceptance` proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per suite (a suite filter argument runs a subset): the built app launches (macOS and Linux), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the real app on the 10k-entry shared fixture (two deterministic 25 ms streams, 25 ms coalescing) passes. The live suites are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
 
-The performance bar is the `e2e` suite — the debug app on the shared 10k-entry fixture (the same `target/test-fixture/session.jsonl` the Rust tests use), driven over the tauri-pilot socket, two deterministic 25 ms streams coalesced at 25 ms (spec §8):
+The performance bar is the `e2e` suite — the debug app on the shared 10k-entry fixture (the same `target/test-fixture/session.jsonl` the Rust tests use), driven with WebdriverIO — the official Tauri E2E stack, `@wdio/tauri-service` + the embedded `tauri-plugin-wdio-webdriver` provider (roadmap G2 migrates the current tauri-pilot harness; tauri-pilot stays the agent's direct-interaction route, AGENTS.md) — two deterministic 25 ms streams coalesced at 25 ms (spec §8):
 
 ```sh
 just acceptance e2e

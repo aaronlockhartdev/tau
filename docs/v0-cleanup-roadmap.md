@@ -27,7 +27,7 @@ Tauri-specific code, so whatever sits on the wrong side moves; the file-size rul
 over-limit file gets split in v0 (C8), with the 500–1000 band investigated for clean splits; the deepening
 candidates are **adopted** (user, 2026-09-23): C9 (typed payload surface), C10 (session-registry module),
 C11 (files-cache module) — with C12 (queue mutation) recorded as a post-v0 flag, not v0 work; and the
-orphaned tickets #28–#33 are **left as standalone tickets** (user, 2026-09-23). Everything here is
+orphaned tickets #28–#33 are **left as standalone tickets** (user, 2026-09-23); and the **E2E driver is WebdriverIO** (user, 2026-09-24) — automated testing on the official Tauri stack, tauri-pilot reserved for agent-driven direct interaction (AGENTS.md "The line", item G2). Everything here is
 mechanical work.
 The two spec touches (F2's §13 note, G's §8 demo retirement) are errata recording already-made user decisions —
 applied inline with their items; per the wayfinder skill's own test, no map is needed when the way is already clear.
@@ -200,11 +200,7 @@ mocked-IPC demo:
   provider** (the core's existing `canned()` test seam promoted to a dev-build-only `canned://` provider —
   a documented test hook, not product surface). A debug build is enough for correctness; the perf bar
   keeps its current fidelity (measured on a dev build, as today).
-- **Driver**: **tauri-pilot** — the app now embeds `tauri-plugin-pilot` (debug builds only; the
-  tauri-agent-tools bridge it replaces is deleted, AGENTS.md points at the skill). The CLI speaks the
-  running app over a Unix socket: `snapshot`, interact on refs, `assert` (exit 0/1), `logs`, `network`,
-  `screenshot` — a strict superset of the old eval bridge, and its `run <scenario.toml>` (JUnit output,
-  failure screenshots) is ready-made CI machinery if the scripted streams ever want it.
+- **Driver: WebdriverIO** (user, 2026-09-24) — the official Tauri stack: `@wdio/tauri-service` with the **embedded** `tauri-plugin-wdio-webdriver` provider (debug builds only), per the [WebDriver guide](https://v2.tauri.app/develop/tests/webdriver/) and [CI guide](https://v2.tauri.app/develop/tests/webdriver/ci/). The `app/tests/e2e/run-e2e.mjs` tauri-pilot harness that shipped with G is **retired by item G2** (the WebDriverIO migration): the 32 checks port to WDIO specs, the debug binary is what the driver points at, and CI follows the official guide (xvfb on Linux, `cargo test` before E2E, artifacts on failure). **tauri-pilot stays in the app (debug builds only) as the *agent's* direct-interaction route** — debugging, dogfooding, screenshots (the line is formalized in AGENTS.md); it never drives a test suite again.
 - **What the mock rig uniquely gave, and where it goes:** the ability to feed the frontend *adversarial*
   event sequences the real core never emits (the `652b3a6` twin-identity class). That coverage moves to
   the store-level Vitest suite (1c), where `mockIPC` is the right tool at the store layer. The `demo.ts` /
@@ -217,7 +213,16 @@ mocked-IPC demo:
   pure decoder directly).
 - Wire `app/package.json` `"test:frontend"` → the E2E runner; CI runs it in the app job (macOS) and the
   linux-acceptance job (Linux, post-F2). README + spec §8 point at the suite, not a demo.
+### G2. WebDriverIO E2E migration (user, 2026-09-24)
 
+Port the E2E suite from the tauri-pilot harness (`app/tests/e2e/run-e2e.mjs`) to the official stack, per the [WebDriver guide](https://v2.tauri.app/develop/tests/webdriver/) and the [CI guide](https://v2.tauri.app/develop/tests/webdriver/ci/):
+
+1. **App**: register the **embedded** `tauri-plugin-wdio-webdriver` provider, debug builds only (same cfg gate as `tauri-plugin-pilot`; the pilot plugin stays for agent interaction — AGENTS.md "The line").
+2. **Harness**: `wdio.conf.ts` + specs under `app/tests/e2e/` translating the 32 checks (boot pin on the 10k fixture, windowed transcript, the two 25 ms streams, session re-open, switch, performance samples) to WDIO idioms — `$`/`getText`/`execute`, framework-level **timeouts and auto-wait** (this replaces the poll-until-predicate workarounds that the pilot's fixed 10 s `eval` budget forced), `browser.tauri.execute()` for the dev-seam reads, log capture built in.
+3. **CI** (per the CI guide): the debug binary under test; `cargo test` before E2E (already true — rust jobs run first); **xvfb** on the linux job; framework-level generous timeouts; artifacts on failure (already wired). The lean-vs-stress split from `docs/research/tauri-ci.md` stands: CI runs the lean 1k-fixture mode, local `just acceptance e2e` runs the full 10k/perf bar.
+4. **Retire** `run-e2e.mjs` and the tauri-pilot driver deps in the test path (the plugin itself remains in the app for the agent route).
+
+Accept: both CI E2E jobs green on the WDIO stack; local `just acceptance e2e` green; `app/tests/e2e` under the 1000-LOC gate; README/spec §8 errata updated to the WDIO driver.
 ### H. File-size policy in `AGENTS.md`
 
 Add to the Coding-conventions section: **every code file stays under a soft 500-LOC limit and a hard
@@ -308,8 +313,6 @@ session switch + archive convergence, the `skill_list_changed` guard, the `file_
   the post-v0 chat-completions fallback multiplies the HTTP surface.
 - **trybuild** — until a crate has external consumers (`tau serve`).
 - **`@testing-library/svelte` component tests** — the rig covers rendering in a real browser; jsdom can't.
-- **WebdriverIO + `tauri-plugin-wdio`** — until a ticket needs to drive the real webview's native surface
-  (menus/dialogs), which the rig can't see.
 - **Live legs (b/c/d) in CI** — until there's a CI-usable endpoint + secrets plumbing (an infra ticket, not a testing one).
 
 ---
