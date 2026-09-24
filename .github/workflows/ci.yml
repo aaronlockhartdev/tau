@@ -12,20 +12,20 @@ jobs:
       matrix:
         os: [macos-15, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
           components: clippy, rustfmt
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2.9.2
 
       - name: Install webkit2gtk
         if: runner.os == 'Linux'
         # The workspace links the Tauri app crate, which needs webkit to compile on Linux.
         run: sudo apt-get update -y && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.87.19
         with:
           tool: nextest@0.9.146
 
@@ -44,12 +44,12 @@ jobs:
     # vendored third_party is third-party code under its own license.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: File-size gate
         run: |
           find . -type f \
-            \\( -name '*.rs' -o -name '*.svelte' -o -name '*.ts' -o -name '*.js' -o -name '*.mjs' \\) \
+            \( -name '*.rs' -o -name '*.svelte' -o -name '*.ts' -o -name '*.js' -o -name '*.mjs' \) \
             -not -path '*/node_modules/*' \
             -not -path './target/*' \
             -not -path '*/dist/*' \
@@ -59,9 +59,9 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -86,19 +86,19 @@ jobs:
   app:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - uses: dtolnay/rust-toolchain@1.98.1
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2.9.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.87.19
         with:
           tool: just
 
@@ -116,7 +116,7 @@ jobs:
   linux-acceptance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7.0.1
 
       - name: Install webkit2gtk + xvfb
         # The Tauri app crate needs webkit to link; xvfb gives the webview an X display.
@@ -124,15 +124,15 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.98.1
 
-      - uses: swatinem/rust-cache@v2
+      - uses: swatinem/rust-cache@v2.9.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@v2.87.19
         with:
           tool: just
 
