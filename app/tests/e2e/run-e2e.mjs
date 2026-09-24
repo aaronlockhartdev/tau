@@ -436,7 +436,9 @@ async function main() {
         // already passed, so the turn checks tolerate a missing baseline.
         before = null;
       }
-      await pilot.eval(`await window.__tau.send(${JSON.stringify(msg)}, 'follow-up')`);
+      // 30 s budget + retry: a turn send under load is a heavy in-page
+      // operation; on a starved display the raw 10 s budget is a coin flip.
+      await withRetry(() => pilot.eval(`await window.__tau.send(${JSON.stringify(msg)}, 'follow-up')`, 30000));
 
       // The turn's first events arrive with the coalesced stream; on a
       // throttled display (xvfb) that can lag the send ack, so poll for it.
@@ -565,7 +567,11 @@ async function main() {
         disk.length === 1 + FIXTURE_ENTRIES + 2 * (i + 1) && diskLast.type === 'assistant' && diskLast.payload.text.includes(CANNED_TEXT),
         `last=${diskLast.type} "${(diskLast.payload?.text ?? '').slice(0, 24)}…"`
       );
-      await pilot.eval(`await window.__tau.switchSession(${JSON.stringify(FIXTURE_SESSION)})`);
+      // 30 s budget + retry: re-opening the 10k session reloads the whole
+      // snapshot in-page; on a starved display that is a ten-plus second job,
+      // well past the raw eval's 10 s default (run 35960967597 died here with
+      // 20/20 checks passed).
+      await withRetry(() => pilot.eval(`await window.__tau.switchSession(${JSON.stringify(FIXTURE_SESSION)})`, 30000));
       const re = await st();
       check(
         `${label}: re-opening from the file converges to the disk entries (${diskEntries})`,
