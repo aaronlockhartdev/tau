@@ -113,6 +113,17 @@ jobs:
         # driven over the tauri-pilot socket; the driver builds its own inputs.
         run: node app/tests/e2e/run-e2e.mjs
 
+      - name: Upload E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-macos
+          path: |
+            /var/folders/*/*/T/tau-e2e-*/failure.png
+            /var/folders/*/*/T/tau-e2e-*/app.log
+            /var/folders/*/*/T/tau-e2e-*/results.json
+          if-no-files-found: ignore
+
   linux-acceptance:
     runs-on: ubuntu-latest
     steps:
@@ -148,3 +159,14 @@ jobs:
       - name: E2E (real app on the shared fixture, xvfb)
         # The GUI's test (roadmap G); the driver launches the app under xvfb itself.
         run: node app/tests/e2e/run-e2e.mjs
+
+      - name: Upload E2E failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-failure-linux
+          path: |
+            /tmp/tau-e2e-*/failure.png
+            /tmp/tau-e2e-*/app.log
+            /tmp/tau-e2e-*/results.json
+          if-no-files-found: ignore
