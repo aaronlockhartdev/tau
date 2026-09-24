@@ -585,6 +585,24 @@ wave boundary, after the wave's other branches are in.
 - Entry payloads are typed on the protocol surface (C9): writers construct through the typed module, the
   TS mirror carries the shapes, and one shared decoder replaces toEntry + EntryCard's re-parses; the C
   guard diffs the payload shapes.
-
 No open decisions remain — C1 and C9–C11 are decided, the orphaned tickets are left, and every item in
 this roadmap is a scoped change ready to land.
+
+**Execution status (2026-09-23).** All four waves executed by fresh-context, worktree-isolated agents
+(≤3 in parallel per wave; merged at each boundary): Wave 1 (C5, 1b-rust, 1a, F, F2, D, E, H-text) → Wave 2
+(C1, C2, 1b-app, C9, C, B-svelte, C3, C10, C11, 1c) → Wave 3 (C8, B-core, G) → Wave 4 (G-fix-1/2, H gate,
+A, full `just acceptance`). Along the way the waves fixed real defects the tests surfaced: an `SseParser`
+chunk-boundary drop (1b-rust's property test), the project-layer config merge that never reached sessions
+(G-fix-1), and two CI-breaking slips (a dropped `fi` in the justfile, an unreachable `return` in
+`watch.rs`).
+
+**Recorded residuals (post-v0, deliberately not landed):**
+- Under display-level throttling (xvfb starves webview timers ~5×), a delta can drop in the 1024-slot
+  `try_send` forward channel, leaving a transient twin in the store (exact-text dedupe misses the
+  byte-shorter streamed copy); re-opening converges to disk. A healthy display never backfills that
+  channel. Hardening: a non-dropping forward (Wave 4's G-fix-2 investigation, test
+  `a_production_send_makes_exactly_one_provider_call` pins the call count).
+- Status-bar name spans render garbled on WebKitGTK/xvfb (a Svelte text-patch artifact; the bar's checks
+  assert the robust parts, names are asserted at store level).
+- The E2E leg (f) needs a GUI session: it runs on the CI runners (macOS window server, ubuntu xvfb), not
+  in a headless macOS dev session — the container runs are its evidence.
