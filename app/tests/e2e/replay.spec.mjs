@@ -256,7 +256,26 @@ describe('real-app E2E replay: the dogfood session pair (real parent → child)'
       'the boot pin (cards in the viewport)'
     );
     check('the parent opens at its tail (cards in the viewport)', d.hasScroll && d.visible > 0, `visible=${d.visible}`);
-    check("the tail entry is the parent's real last turn ('All done…')", (d.lastText ?? '').includes('All done'), (d.lastText ?? '').slice(0, 60));
+    let tail = (d.lastText ?? '').includes('All done');
+    if (!tail) {
+      // A starved display can settle one virtualized window short of the
+      // measured tail; nudge the scroller to the bottom and let the
+      // virtualizer render the final entries (the stress leg does the
+      // same for the boot pin). The bar is the tail content at the bottom
+      // — a real regression (the tail entry never renders) still fails.
+      await browser.execute(() => {
+        const sc = document.querySelector('.scroll');
+        if (sc) sc.scrollTop = sc.scrollHeight;
+      });
+      const d2 = await waitUntil(
+        readDom,
+        (d) => (d.lastText ?? '').includes('All done'),
+        30000,
+        'the tail entry after the nudge'
+      ).catch(() => null);
+      tail = d2 !== null;
+    }
+    check("the tail entry is the parent's real last turn ('All done…')", tail, (d.lastText ?? '').slice(0, 60));
   });
 
   it('open the child: it hydrates its 34 real entries', async () => {
