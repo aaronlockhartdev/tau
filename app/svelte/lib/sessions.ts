@@ -233,3 +233,25 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
   }
   return { ...out, [sid]: { ...next, subagents: synthesized } };
 }
+
+// The group-open rule of the session tree (the left pane): an explicit
+// toggle set (openGroups) wins; on the default view a group opens when
+// it contains the active session's chain or a running sub-agent child
+// (a spawned sub-agent is invisible in a collapsed group — dogfood
+// 2026-09-24).
+export function groupIsOpen(
+  q: { openGroups: string[] | null },
+  session: SessionState,
+  active: SessionState | null,
+  sessions: SessionState[]
+): boolean {
+  if (q.openGroups !== null) return q.openGroups.includes(session.meta.id);
+  if (session.subagents.some((s) => s.state === 'running')) return true;
+  let a: SessionState | null = active;
+  while (a) {
+    if (a.meta.id === session.meta.id) return true;
+    const pid = a.parent;
+    a = pid ? (sessions.find((s) => s.meta.id === pid) ?? null) : null;
+  }
+  return false;
+}

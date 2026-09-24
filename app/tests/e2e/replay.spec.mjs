@@ -70,7 +70,8 @@ const panesState = () => {
   const arch = left ? left.querySelector('.arch') : null;
   const rowInfo = (r) => ({
     text: r.textContent.replace(/\s+/g, ' ').trim(),
-    indent: r.closest('.node') ? getComputedStyle(r.closest('.node')).getPropertyValue('--indent').trim() : '0px'
+    indent: r.closest('.node') ? getComputedStyle(r.closest('.node')).getPropertyValue('--indent').trim() : '0px',
+    badge: r.querySelector('.badge')?.textContent.trim() ?? null
   });
   return {
     leftRows: (left ? [...left.querySelectorAll('.trow')] : []).map((r) => r.textContent.replace(/\s+/g, ' ').trim()),
@@ -356,6 +357,7 @@ describe('real-app E2E replay: the dogfood session pair (real parent → child)'
       'the archive folder'
     );
     check('the archive folder lists the parent root (and only roots)', p.archiveRows.some((r) => r.text.includes('ruthless-rest')) && p.archiveRows.every((r) => !r.text.includes('nutritious-gold') || r.indent !== p.archiveRows.find((x) => x.text.includes('ruthless-rest'))?.indent), JSON.stringify(p.archiveRows));
+    check('archived rows carry no status badge', p.archiveRows.every((r) => r.badge === null), JSON.stringify(p.archiveRows));
   });
 
   it('restoring the parent (context menu) brings it back to the live list', async () => {

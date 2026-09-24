@@ -9,6 +9,7 @@
     depth = 0,
     expanded = null,
     selected = false,
+    multi = false,
     dimmed = false,
     label,
     onRow,
@@ -20,10 +21,15 @@
     // null = no children (no chevron); true/false = group open/closed.
     expanded?: boolean | null;
     selected?: boolean;
-    // A non-interactive row (an archived session): no open/rename, dimmed.
+    // A multiselect member (cmd/ctrl, shift range): same tint as the
+    // active row.
+    multi?: boolean;
+    // A non-interactive row (an archived session): no rename/toggle,
+    // dimmed — the row still takes selection clicks and the context
+    // menu.
     dimmed?: boolean;
     label: Snippet;
-    onRow?: () => void;
+    onRow?: (e: MouseEvent) => void;
     onRowDbl?: () => void;
     onToggle?: () => void;
     onContext?: (e: MouseEvent) => void;
@@ -32,7 +38,9 @@
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
-      if (onRow) onRow();
+      // The modifiers ride the keyboard event too; the row handler
+      // only reads them.
+      if (onRow) onRow(e as unknown as MouseEvent);
       else onToggle?.();
     }
   }
@@ -42,11 +50,12 @@
   <div
     class="trow"
     class:sel={selected}
+    class:multi={multi}
     class:dimmed={dimmed}
     role="button"
     tabindex={0}
     aria-expanded={expanded === null ? undefined : expanded}
-    onclick={dimmed ? undefined : onRow}
+    onclick={onRow}
     ondblclick={dimmed ? undefined : onRowDbl}
     oncontextmenu={onContext}
     onkeydown={onKey}
@@ -83,7 +92,8 @@
   .trow:hover {
     background: var(--panel2);
   }
-  .trow.sel {
+  .trow.sel,
+  .trow.multi {
     background: color-mix(in srgb, var(--acc) 8%, transparent);
   }
   .trow.dimmed {

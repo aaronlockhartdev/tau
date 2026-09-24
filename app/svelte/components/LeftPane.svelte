@@ -8,6 +8,7 @@
   // rows keep their full lifecycle tags.
   import { store, pane, ensurePane, newSession, type PaneState } from '../lib/store.svelte';
   import SessionNode from './SessionNode.svelte';
+  import { groupIsOpen } from '../lib/sessions';
   import FileNode from './FileNode.svelte';
 
   const ws = $derived(store.current ? store.sessions[store.current]?.meta.workspace ?? null : null);
@@ -25,6 +26,50 @@
   // archives the children with the parent), so listing children here would
   // show them twice — once top-level, once under their parent.
   const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.mru - a.mru));
+
+  // The visible row order of the sessions tab (live list, then the
+  // archive folder's open groups) — the flat sequence a shift range
+  // spans.
+  const visibleIds = $derived.by(() => {
+    if (ws === null) return [];
+    const active = store.current ? store.sessions[store.current] : null;
+    const q = pane(ws);
+    const out: string[] = [];
+    const walk = (ids: string[]): void => {
+      for (const id of ids) {
+        out.push(id);
+        const s = store.sessions[id];
+        const kids = sessions
+          .filter((k) => k.parent === id)
+          .sort((a, b) => b.mru - a.mru)
+          .map((k) => k.meta.id);
+        if (q && kids.length && groupIsOpen(q, s, active, sessions)) walk(kids);
+      }
+    };
+    walk(top.map((s) => s.meta.id));
+    if (q?.archOpen) walk(archived.map((s) => s.meta.id));
+    return out;
+  });
+  function rangeBetween(a: string, b: string): string[] {
+    const o = visibleIds;
+    const i = o.indexOf(a);
+    const j = o.indexOf(b);
+    if (i === -1 || j === -1) return [b];
+    return o.slice(Math.min(i, j), Math.max(i, j) + 1);
+  }
+
+  // Click-away: a click that lands outside every session row clears the
+  // selection (document-level, so no static element takes a handler).
+  $effect(() => {
+    if (ws === null || p?.ltab !== 'sessions') return;
+    function onDocClick(e: MouseEvent): void {
+      const q = pane(ws);
+      if (!q) return;
+      if (e.target instanceof Element && !e.target.closest('.trow')) q.selected = [];
+    }
+    document.addEventListener('click', onDocClick);
+    return () => document.removeEventListener('click', onDocClick);
+  });
 
   function setLtab(t: PaneState['ltab']): void {
     const q = pane(ws);
@@ -60,7 +105,7 @@
             <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
             {#each top as s (s.meta.id)}
-              <SessionNode session={s} ws={ws} sessions={sessions} />
+              <SessionNode session={s} ws={ws} sessions={sessions} rangeBetween={rangeBetween} />
             {/each}
           {/if}
         </div>
@@ -71,7 +116,7 @@
           </button>
           {#if p.archOpen}
             {#each archived as s (s.meta.id)}
-              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} />
+              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} rangeBetween={rangeBetween} />
             {/each}
           {/if}
         </div>

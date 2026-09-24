@@ -13,6 +13,7 @@
     restoreSession,
     type SessionState
   } from '../lib/store.svelte';
+  import { groupIsOpen } from '../lib/sessions';
   import { tick } from 'svelte';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -21,31 +22,27 @@
     session,
     depth = 0,
     ws,
-    sessions
-  }: { session: SessionState; depth?: number; ws: string; sessions: SessionState[] } = $props();
+    sessions,
+    rangeBetween
+  }: {
+    session: SessionState;
+    depth?: number;
+    ws: string;
+    sessions: SessionState[];
+    // The visible-order range helper (the left pane owns the flat order
+    // a shift range spans).
+    rangeBetween: (a: string, b: string) => string[];
+  } = $props();
 
   const active = $derived(store.current ? store.sessions[store.current] : null);
   const kids = $derived(
     sessions.filter((s) => s.parent === session.meta.id).sort((a, b) => b.mru - a.mru)
   );
 
-  function groupOpen(sid: string): boolean {
+  function groupOpen(sid: string, s: SessionState = session): boolean {
     const q = pane(ws);
     if (!q) return false;
-    if (q.openGroups !== null) return q.openGroups.includes(sid);
-    // A group with a running sub-agent child opens by default: the child
-    // row is the visible form of the running work (dogfood 2026-09-24 —
-    // a spawned sub-agent was invisible in a collapsed group).
-    if (session.subagents.some((s) => s.state === 'running')) return true;
-    // Default view: the chain containing the active session — the group is
-    // the session itself or an ancestor of it.
-    let a: SessionState | null = active;
-    while (a) {
-      if (a.meta.id === sid) return true;
-      const pid = a.parent;
-      a = pid ? (sessions.find((s) => s.meta.id === pid) ?? null) : null;
-    }
-    return false;
+    return groupIsOpen(q, s, active, sessions);
   }
 
   function toggleGroup(sid: string): void {
@@ -53,7 +50,7 @@
     if (!q) return;
     if (q.openGroups === null) {
       // First explicit toggle: materialize the default view, then apply it.
-      const open = sessions.filter((s) => groupOpen(s.meta.id)).map((s) => s.meta.id);
+      const open = sessions.filter((s) => groupOpen(s.meta.id, s)).map((s) => s.meta.id);
       q.openGroups = groupOpen(sid) ? open.filter((x) => x !== sid) : [...open, sid];
     } else {
       q.openGroups = groupOpen(sid)
@@ -61,7 +58,33 @@
         : [...q.openGroups, sid];
     }
   }
+  // Row click: plain opens (and clears the selection), cmd/ctrl
+  // toggles this row in the selection (mac Cmd / linux Ctrl), shift
+  // spans from the anchor. An archived row never opens — it only ever
+  // joins the selection.
+  function onRowClick(e: MouseEvent): void {
+    const q = pane(ws);
+    if (!q) return;
+    const id = session.meta.id;
+    if (e.shiftKey) {
+      const anchor = q.selAnchor ?? q.selected[0] ?? id;
+      q.selected = rangeBetween(anchor, id);
+      return;
+    }
+    if (e.metaKey || e.ctrlKey) {
+      q.selected = q.selected.includes(id)
+        ? q.selected.filter((x) => x !== id)
+        : [...q.selected, id];
+      q.selAnchor = id;
+      return;
+    }
+    q.selected = [];
+    q.selAnchor = id;
+    if (session.archived) return;
+    void openSessionById(id);
+  }
 
+  const isSelected = $derived((pane(ws)?.selected ?? []).includes(session.meta.id));
   // Inline rename: a double-clicked title becomes an input (Enter/blur
   // commits, Esc cancels). One rename at a time, owned by the pane.
   let renameText = $state('');
@@ -83,8 +106,51 @@
     void renameSession(session.meta.id, renameText);
   }
 
-  // An archived row is non-interactive (no open, rename, or archive):
-  // the right-click menu is its only affordance — restore.
+  // The right-click menu acts on the selection: right-clicking a
+  // selected row offers archive/restore for the whole selection (a
+  // single row reads as its own one-element selection); the targets
+  // collapse to each row's root, since a child archives/restores with
+  // its parent (ADR-0005).
+  function rootOf(s: SessionState): string {
+    let r = s;
+    while (r.parent) r = store.sessions[r.parent] ?? r;
+    return r.meta.id;
+  }
+  function menuItems(): { label: string; archive: string[]; restore: string[] }[] {
+    const q = pane(ws);
+    if (!q) return [];
+    const ids = q.selected.includes(session.meta.id) ? q.selected : [session.meta.id];
+    const sel = ids.map((id) => store.sessions[id]).filter((s): s is SessionState => s !== undefined);
+    const archive = new Set<string>();
+    const restore = new Set<string>();
+    for (const s of sel) {
+      if (s.archived) restore.add(rootOf(s));
+      else archive.add(rootOf(s));
+    }
+    const out: { label: string; archive: string[]; restore: string[] }[] = [];
+    if (archive.size)
+      out.push({
+        label: archive.size > 1 ? `archive (${archive.size})` : 'archive',
+        archive: [...archive],
+        restore: []
+      });
+    if (restore.size)
+      out.push({
+        label: restore.size > 1 ? `restore (${restore.size})` : 'restore',
+        archive: [],
+        restore: [...restore]
+      });
+    return out;
+  }
+  function applyMenuAction(item: { archive: string[]; restore: string[] }): void {
+    ctx = null;
+    const q = pane(ws);
+    if (q) q.selected = [];
+    void Promise.all([
+      ...item.archive.map((id) => archiveSession(id)),
+      ...item.restore.map((id) => restoreSession(ws, id))
+    ]);
+  }
   let ctx = $state<{ x: number; y: number } | null>(null);
   // The rendered position: the raw click point, clamped inside the
   // viewport after the first render.
@@ -155,9 +221,9 @@
   {:else}
     <span class="name">{session.meta.title ?? session.meta.id}</span>
   {/if}
-  {#if depth === 0}
+  {#if !session.archived && depth === 0}
     {#if sessionRunning(session)}<span class="badge running"><span class="dot"></span>running</span>{/if}
-  {:else}
+  {:else if !session.archived}
     <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
   {/if}
   <span class="mru">{fmtAgo(session.mru)}</span>
@@ -177,12 +243,13 @@
     </button>
   {/if}
 {/snippet}
-<TreeNode
+  <TreeNode
   {depth}
   expanded={kids.length > 0 ? groupOpen(session.meta.id) : null}
   selected={store.current === session.meta.id}
+  multi={isSelected}
   dimmed={session.archived}
-  onRow={session.archived ? undefined : () => openSessionById(session.meta.id)}
+  onRow={(e) => onRowClick(e)}
   onRowDbl={
     session.archived
       ? undefined
@@ -192,27 +259,22 @@
         }
   }
   onToggle={kids.length > 0 ? () => toggleGroup(session.meta.id) : undefined}
-  onContext={session.archived ? onContext : undefined}
+  onContext={onContext}
   label={rowLabel}
 />
 {#if ctx}
   <div class="ctxmenu" role="menu" bind:this={ctxMenu} style:left="{ctxPos.x}px" style:top="{ctxPos.y}px">
-    <button
-      type="button"
-      role="menuitem"
-      onclick={() => {
-        ctx = null;
-        void restoreSession(ws, session.meta.id);
-      }}
-    >
-      restore
-    </button>
+    {#each menuItems() as item (item.label)}
+      <button type="button" role="menuitem" onclick={() => void applyMenuAction(item)}>
+        {item.label}
+      </button>
+    {/each}
   </div>
 {/if}
 {#if kids.length > 0 && groupOpen(session.meta.id)}
   <div class="kids">
     {#each kids as c (c.meta.id)}
-      <SessionNode session={c} depth={depth + 1} ws={ws} sessions={sessions} />
+      <SessionNode session={c} depth={depth + 1} ws={ws} sessions={sessions} rangeBetween={rangeBetween} />
     {/each}
   </div>
 {/if}

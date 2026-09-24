@@ -79,6 +79,10 @@
     renamingId: string | null;
     archOpen: boolean;
     selSub: string | null;
+    // The session-tree multiselect (cmd/ctrl toggle, shift range): the
+    // selected ids and the row a shift range extends from.
+    selected: string[];
+    selAnchor: string | null;
   }
 
   // Pure read — a $derived may call this; creation goes through ensurePane
@@ -102,7 +106,9 @@
       openGroups: null,
       renamingId: null,
       archOpen: false,
-      selSub: null
+      selSub: null,
+      selected: [],
+      selAnchor: null
     };
     store.pane[ws] = p;
     return p;

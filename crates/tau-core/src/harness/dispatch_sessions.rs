@@ -208,7 +208,17 @@ impl Core {
                 Ok(CommandOutput::None)
             }
             Command::SessionArchive { session } => {
-                let live = self.live(&session)?;
+                let live = match self.live(&session) {
+                    Ok(live) => live,
+                    // A session not in the live map (never opened, or
+                    // closed since) has no turn or supervisor to
+                    // quiesce: its archive is a pure file operation
+                    // (ADR-0005).
+                    Err(ProtocolError::NotFound { .. }) => {
+                        return self.archive_closed(&session);
+                    }
+                    Err(e) => return Err(e),
+                };
                 // Only top-level sessions archive: a sub-agent archives with
                 // its parent (ADR-0005), so a child id is refused outright.
                 if live.agent.child_link().is_some() {
@@ -504,5 +514,79 @@ impl Core {
 
             _ => unreachable!("dispatch routes the arm"),
         }
+    }
+
+    /// The archive for a session not in the live map (never opened, or
+    /// closed since): no turn, no supervisor, no in-memory state to
+    /// quiesce — a pure file operation (ADR-0005). The meta comes from
+    /// the live file, the children from the workspace's disk scan, and
+    /// both move to `archive/`.
+    fn archive_closed(&self, session: &str) -> Result<CommandOutput, ProtocolError> {
+        // The GUI archives from an open workspace's tree: find the
+        // workspace whose live directory holds the file.
+        let workspace = {
+            let wss = self.workspaces.lock().unwrap();
+            wss.values()
+                .find(|w| SessionStore::for_workspace(Path::new(&w.cwd), session).path().exists())
+                .cloned()
+        }
+        .ok_or_else(|| ProtocolError::NotFound {
+            what: format!("session {session} is not open"),
+        })?;
+        let cwd = PathBuf::from(&workspace.cwd);
+        let mut store = SessionStore::for_workspace(&cwd, session);
+        store
+            .open()
+            .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+        // A child archives with its parent, never alone (ADR-0005) — the
+        // on-disk meta carries the parent link.
+        if let Some(parent) = store.parent() {
+            return Err(ProtocolError::Other {
+                message: self.archive_refusal_for_child(session, &workspace.id, &Some(parent.to_string())),
+            });
+        }
+        // The children that archive with it: the workspace's disk scan is
+        // the whole truth here (there is no supervisor in memory). One
+        // already archived stays archived.
+        let children: Vec<String> = self
+            .session_access(&workspace)
+            .into_iter()
+            .filter(|m| !m.archived && m.parent.as_deref() == Some(session))
+            .map(|m| m.id)
+            .collect();
+        for id in &children {
+            let mut cstore = SessionStore::for_workspace(&cwd, id);
+            cstore
+                .open()
+                .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+            // The flag goes in before the child's move, like the open
+            // path: a child still in the live map (opened on its own,
+            // parent closed) has its next write refused at the first
+            // append instead of recreating the file headerless.
+            if let Some(cl) = self.sessions.lock().unwrap().get(id) {
+                cl.meta.lock().unwrap().archived = true;
+            }
+            cstore
+                .archive()
+                .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+        }
+        store
+            .archive()
+            .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+        // The response is a fresh meta from the file (the list and any
+        // snapshot converge on it), like restore.
+        Ok(CommandOutput::Session {
+            session: SessionMeta {
+                id: session.to_string(),
+                workspace: workspace.id,
+                title: store.title().map(str::to_string),
+                parent: None,
+                created: store.created(),
+                leaf: store.leaf().ok().flatten().map(|e| e.id),
+                model: None,
+                usage: None,
+                archived: true,
+            },
+        })
     }
 }

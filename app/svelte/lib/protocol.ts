@@ -451,8 +451,11 @@ export async function command(cmd: Command): Promise<CommandOutput> {
   try {
     return (await invoke<CommandOutput>('tau_command', { command: cmd })) as CommandOutput;
   } catch (e) {
-    // The Rust side returns ProtocolError as a serialized string payload.
-    const msg = typeof e === 'string' ? e : (e as { message?: string })?.message ?? String(e);
+    // The Rust side rejects with the deserialized ProtocolError: a plain
+    // object carrying message (other/unsupported) or what (not_found) —
+    // neither stringifies to anything useful on its own.
+    const o = e as { message?: string; what?: string } | string;
+    const msg = typeof o === 'string' ? o : o?.message ?? o?.what ?? String(o);
     throw new Error(msg);
   }
 }

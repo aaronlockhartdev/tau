@@ -112,8 +112,9 @@ impl Core {
 
     /// The direct-archive refusal for a sub-agent: the invariant's route
     /// is to archive the parent, which archives the child with it — and
-    /// the message must name the route that actually works, since a
-    /// closed parent is itself refused as "not open".
+    /// the message must name the route that actually works — a closed
+    /// parent in an open workspace archives from disk; one whose
+    /// workspace is closed needs a reopen first.
     pub(crate) fn archive_refusal_for_child(
         &self,
         child: &str,
