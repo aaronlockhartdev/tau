@@ -22,6 +22,7 @@ import {
   type Workspace
 } from './protocol';
 import { applySessionList, openSession, touchChild } from './sessions';
+import { type Entry, applyToolEvent, decodeEntry } from './entries';
 import {
   applyEvents,
   archiveSession,
@@ -635,5 +636,38 @@ describe('fetchWindow', () => {
     });
     await fetchWindow('s1', 0, 50);
     expect(store.sessions['s1'].entries[0]?.id).toBe('1');
+  });
+});
+
+describe('tool failure status (dogfood 2026-09-24: a failed tool showed a check mark)', () => {
+  function runningTool(): Entry[] {
+    return [{ id: 't1', kind: 'tool', name: 'bash', status: 'running' }];
+  }
+  function toolEnd(output: unknown) {
+    return {
+      type: 'tool_end' as const,
+      workspace: WS.id,
+      session: 's1',
+      call_id: 'c1',
+      tool_call_id: 't1',
+      name: 'bash',
+      output
+    };
+  }
+  it('a non-zero exit is an error, a zero exit is ok', () => {
+    const failed = applyToolEvent(toolEnd('exit 1\n--- stderr ---\nboom'), runningTool(), []);
+    if (failed.entries[0].kind === 'tool') expect(failed.entries[0].status).toBe('error');
+    const ok = applyToolEvent(toolEnd('exit 0\n--- stdout ---\nhi'), runningTool(), []);
+    if (ok.entries[0].kind === 'tool') expect(ok.entries[0].status).toBe('ok');
+  });
+  it('a spawn/timeout failure is an error', () => {
+    const m = applyToolEvent(toolEnd('bash: timed out after 60s'), runningTool(), []);
+    if (m.entries[0].kind === 'tool') expect(m.entries[0].status).toBe('error');
+  });
+  it('the reload path decodes a persisted failure the same way', () => {
+    const e = decodeEntry(entryView('1', 'tool', { name: 'bash', args: { command: 'false' }, output: 'exit 2' }));
+    if (e.kind === 'tool') expect(e.status).toBe('error');
+    const ok = decodeEntry(entryView('2', 'tool', { name: 'bash', args: {}, output: 'exit 0' }));
+    if (ok.kind === 'tool') expect(ok.status).toBe('ok');
   });
 });

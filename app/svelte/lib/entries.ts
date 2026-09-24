@@ -85,7 +85,7 @@ export function decodeEntry(v: ViewEntry): Entry {
         name: String(p.name ?? 'tool'),
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: p.output !== undefined ? String(p.output) : undefined,
-        status: p.output === undefined ? 'running' : 'ok'
+        status: toolStatus(p.output)
       };
     }
     case 'om': {
@@ -253,8 +253,20 @@ export function applyToolEvent(
   if (i < 0 || entries[i].kind !== 'tool') return { entries, live };
   const e: AnyEntry = entries[i];
   const ne = entries.slice();
-  ne[i] = { ...e, status: 'ok', output: ev.output === undefined ? undefined : String(ev.output) };
+  ne[i] = { ...e, status: toolStatus(ev.output), output: ev.output === undefined ? undefined : String(ev.output) };
   return { entries: ne, live };
+}
+
+// The persisted tool output records a failure: the bash executor prefixes
+// "exit N" (non-zero N) or "bash: <error>" (spawn/timeout). All other tools
+// report free text — a failure there is content, not status.
+function toolStatus(output: unknown): 'running' | 'ok' | 'error' {
+  if (output === undefined) return 'running';
+  const s = String(output);
+  const m = /^exit (\d+)/.exec(s);
+  if (m) return m[1] === '0' ? 'ok' : 'error';
+  if (/^bash: /.test(s)) return 'error';
+  return 'ok';
 }
 
 // Streamed ids are non-numeric (call_id, u-…, the provider's tool_call_id);
