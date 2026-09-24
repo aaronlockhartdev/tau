@@ -1,11 +1,12 @@
-// The real-app E2E (roadmap G, migrated to WebdriverIO in G2): the DEBUG
-// Tauri binary against the test workspace built by wdio.conf.mjs (shared
-// fixture session + the dev-gated canned:// provider), driven over the
-// embedded WebDriver server. Every check of the retired tauri-pilot
-// harness ports over — same fixtures, same assertions — with the
-// hand-rolled pollState/withRetry polling replaced by framework-level
-// auto-wait (expect-webdriverio's expect with an auto-wait matcher; the
-// pilot's fixed 10 s eval budget is gone).
+// The stress leg of the real-app E2E (roadmap G/G2): the DEBUG Tauri binary
+// against the test workspace built by wdio.conf.mjs (the generated 10k-entry
+// fixture + the dev-gated canned:// provider), driven over the embedded
+// WebDriver server. Every check of the retired tauri-pilot harness ports
+// over — same fixture, same assertions — with the hand-rolled
+// pollState/withRetry polling replaced by framework-level auto-wait
+// (expect-webdriverio's expect with an auto-wait matcher; the pilot's fixed
+// 10 s eval budget is gone). Local only: a starved CI webview cannot meet
+// the 10k budgets, so CI runs the replay leg (replay.spec.mjs) instead.
 import { setTimeout as sleep } from 'node:timers/promises';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,18 +15,19 @@ import { expect } from 'expect-webdriverio';
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
-const mode = process.env.TAU_E2E_MODE ?? (process.env.CI ? 'lean' : 'full');
 const ws = process.env.TAU_E2E_WS;
-const entries = Number(process.env.TAU_E2E_ENTRIES ?? (mode === 'full' ? 10000 : 1000));
-const streams = Number(process.env.TAU_E2E_STREAMS ?? (mode === 'full' ? 2 : 1));
+// The stress leg is always the full 10k fixture with two streams (the config
+// only runs this spec in stress/all mode).
+const entries = 10000;
+const streams = 2;
 const fixtureSession = process.env.TAU_E2E_FIXTURE_SESSION ?? 'session';
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
 if (!ws) throw new Error('TAU_E2E_WS unset — the wdio config did not run onPrepare');
 const CANNED_TEXT = 'word 0 word 1';
-// The perf bar (spec §8): strict pass/fail locally in full mode;
+// The perf bar (spec §8): strict pass/fail locally;
 // informational on a runner (a starved CI webview is not a real display).
 const runner = Boolean(process.env.CI);
-const strict = !runner && mode === 'full';
+const strict = !runner;
 
 const storeState = () => {
   const s = window.__tau.store();
@@ -129,7 +131,7 @@ const check = (name, pass, detail) => {
   expect(pass).toBe(true);
 };
 
-describe('real-app E2E (debug binary on the shared fixture, mode ' + mode + ')', () => {
+describe('real-app E2E stress: the 10k generated fixture (windowing, streams, perf bar)', () => {
   let failures = 0;
   afterEach(async function () {
     if (this.currentTest?.err) {
@@ -175,6 +177,12 @@ describe('real-app E2E (debug binary on the shared fixture, mode ' + mode + ')',
   });
 
   it('boot: the empty state renders with no workspace open', async () => {
+    // A fresh-app precondition: in all mode the replay leg already booted
+    // and opened the workspace, so the empty state is gone by design.
+    if (process.env.TAU_E2E_MODE === 'all') {
+      console.log('SKIP  boot: the replay leg already verified the empty state');
+      return;
+    }
     const boot = await waitUntil(
       readStore,
       (s) => s.loading === false && s.error === null && s.current === null,
@@ -193,6 +201,17 @@ describe('real-app E2E (debug binary on the shared fixture, mode ' + mode + ')',
       ws.split(/[\\/]/).filter(Boolean).pop(),
       ws
     );
+    // The MRU auto-open may have landed on a co-located session (in all
+    // mode the dogfood pair shares the workspace); the stress leg is the
+    // fixture, so switch to it explicitly.
+    browser
+      .execute(
+        async (sid) => {
+          await window.__tau.switchSession(sid);
+        },
+        fixtureSession
+      )
+      .catch(() => {});
     const openMs = Date.now() - t0;
     check('workspace open: cwd-keyed open resolves the fixture session', openMs < 30000, `${openMs} ms`);
   });

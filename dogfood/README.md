@@ -26,8 +26,9 @@ message, and letting the agent build a small app with tasks and sub-agents.
 
 **Files:**
 
-- `sessions/parent-ruthless-rest.jsonl` — the parent session (27 entries)
-- `sessions/child-nutritious-gold.jsonl` — the sub-agent's session (35 entries)
+- `sessions/9b94bcc9eade.jsonl` — the parent session `ruthless-rest` (27 entries)
+- `sessions/f12bed0d762f.jsonl` — the sub-agent's session `nutritious-gold` (35 entries, `parent: 9b94bcc9eade`)
+  (files are named by session id — the app's convention; the titles above are their `title` fields)
 - `todo.py`, `test_todo.py` — what the agent built
 - `screenshot.png` — final UI state
 

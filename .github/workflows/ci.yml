@@ -116,13 +116,13 @@ jobs:
           cargo build -p tau-app
           (cd app && npm ci)
 
-      - name: E2E (real app on the shared fixture, WebdriverIO)
-        # The GUI's test (roadmap G/G2): the debug binary on the shared
-        # fixture, driven over the embedded WebDriver server; the runner
-        # runs the lean 1k mode (docs/research/tauri-ci.md §4) — the full
-        # 10k/perf bar is local via `just acceptance e2e`.
+      - name: E2E (real-app replay, WebdriverIO)
+        # The GUI's test (roadmap G/G2): the debug binary on the real dogfood
+        # session pair, driven over the embedded WebDriver server. The runner
+        # runs the replay leg (docs/research/tauri-ci.md §4) — the 10k stress
+        # leg (perf bar) is local via `just acceptance e2e`.
         run: |
-          cd app && TAU_E2E_MODE=lean npm run test:frontend
+          cd app && TAU_E2E_MODE=replay npm run test:frontend
 
       - name: Upload E2E failure artifacts
         if: failure()
@@ -172,12 +172,12 @@ jobs:
           cargo build -p tau-app
           (cd app && npm ci)
 
-      - name: E2E (real app on the shared fixture, WebdriverIO, xvfb)
+      - name: E2E (real-app replay, WebdriverIO, xvfb)
         # The GUI's test (roadmap G/G2); xvfb gives the WebKitGTK webview
-        # its display (official CI guide). The runner runs the lean 1k mode
-        # (docs/research/tauri-ci.md §4) — the full 10k/perf bar is local.
+        # its display (official CI guide). The runner runs the replay leg
+        # (docs/research/tauri-ci.md §4) — the 10k stress leg is local.
         run: |
-          cd app && TAU_E2E_MODE=lean xvfb-run -a npm run test:frontend
+          cd app && TAU_E2E_MODE=replay xvfb-run -a npm run test:frontend
 
       - name: Upload E2E failure artifacts
         if: failure()

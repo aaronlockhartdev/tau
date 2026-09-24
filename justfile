@@ -140,7 +140,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
             out=$(cd app && npm run test:frontend 2>&1); status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c 'PASS  ')
-              report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-full}, real app on the shared fixture)"
+              report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-all}: replay of the real dogfood session pair + the 10k stress fixture)"
             else
               report e2e FAIL "$(echo "$out" | grep -m1 'FAIL  ' || echo 'the real-app E2E failed')"
             fi
