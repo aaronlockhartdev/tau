@@ -211,7 +211,7 @@ mocked-IPC demo:
   payload handling is replaced by C9's shared decoder and `fixture.ts` has no production importers left. The
   `window.__tau` rig seam is demoted from load-bearing surface to a thin dev convenience (it can feed C9's
   pure decoder directly).
-- Wire `app/package.json` `"test:frontend"` → the E2E runner; CI runs it in the app job (macOS) and the
+- Wire `app/package.json` `"test:frontend"` → the E2E runner; CI runs it in the macos-acceptance job and the
   linux-acceptance job (Linux, post-F2). README + spec §8 point at the suite, not a demo.
 ### G2. WebDriverIO E2E migration (user, 2026-09-24)
 
