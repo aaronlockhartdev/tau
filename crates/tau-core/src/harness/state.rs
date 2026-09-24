@@ -386,14 +386,16 @@ impl Core {
         if project.exists()
             && let Ok(loaded) = config::load(&self.system_dir_of(), &project)
         {
-            if !self.custom {
-                // Full file-level layering (system + project).
-            } else {
+            if self.custom {
                 // Custom roots carry explicit providers: a project entry
                 // replaces the same-named root entry, others coexist.
                 for (name, p) in loaded.providers {
                     c.providers.insert(name, p);
                 }
+            } else {
+                // Full file-level layering (spec §12): `loaded` is the
+                // system + project merge itself.
+                c = loaded;
             }
         }
         self.configs

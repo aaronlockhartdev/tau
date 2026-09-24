@@ -168,8 +168,6 @@ beforeEach(() => {
   vi.useRealTimers();
 });
 
-// --- boot ------------------------------------------------------------------
-
 describe('boot (init)', () => {
   it('opens the first listed session from its snapshot', async () => {
     defaultIPC();
@@ -199,8 +197,6 @@ describe('boot (init)', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 });
-
-// --- applyEvents: streaming --------------------------------------------------
 
 describe('applyEvents: streaming', () => {
   function oneSession() {
@@ -307,8 +303,6 @@ describe('applyEvents: streaming', () => {
   });
 });
 
-// --- applyEvents: queueing ----------------------------------------------------
-
 describe('applyEvents: queueing', () => {
   it('maps the wire lanes onto the composer lanes', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
@@ -348,8 +342,6 @@ describe('applyEvents: queueing', () => {
     expect(calls.at(-1)).toEqual({ type: 'message_send', session: 's1', text: 'hi', lane: 'steering' });
   });
 });
-
-// --- session switch + convergence ---------------------------------------------
 
 describe('session switch', () => {
   it('replaces the stub with the snapshot and keeps the parent link', async () => {
@@ -425,8 +417,6 @@ describe('session switch', () => {
   });
 });
 
-// --- full-state-replacement guards --------------------------------------------
-
 describe('guards', () => {
   it('skill_list_changed: an unchanged re-emit is a no-op, a changed list replaces the cache', () => {
     const a: SkillInfo[] = [{ name: 'a', description: '', location: '/x', model_invocation: false }];
@@ -481,8 +471,6 @@ describe('guards', () => {
     expect(store.error).toBe('boom');
   });
 });
-
-// --- sub-agent mirror events ---------------------------------------------------
 
 describe('subagent_event', () => {
   it('spawned: a mirror entry lands and the child stub is registered', () => {
@@ -540,8 +528,6 @@ describe('subagent_event', () => {
   });
 });
 
-// --- files pane: the refetch wave ----------------------------------------------
-
 describe('files pane', () => {
   const f = { name: 'x', path: 'x', dir: false, size: 1 };
 
@@ -598,8 +584,6 @@ describe('files pane', () => {
     vi.useRealTimers();
   });
 });
-
-// --- paged-read twin merge -------------------------------------------------------
 
 describe('fetchWindow', () => {
   it('a paged copy arriving mid-turn hydrates the live slot in place (the streamed id is kept)', async () => {

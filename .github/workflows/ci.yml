@@ -38,6 +38,24 @@ jobs:
       - name: Test
         run: cargo nextest run --workspace
 
+  file-size:
+    # The AGENTS.md hard limit: no code file over 1000 lines — no grandfathering
+    # (roadmap H). The repo-wide glob keeps the scope self-maintaining; the
+    # vendored third_party is third-party code under its own license.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: File-size gate
+        run: |
+          find . -type f \
+            \\( -name '*.rs' -o -name '*.svelte' -o -name '*.ts' -o -name '*.js' -o -name '*.mjs' \\) \
+            -not -path '*/node_modules/*' \
+            -not -path './target/*' \
+            -not -path '*/dist/*' \
+            -not -path './third_party/*' -print0 \
+            | xargs -0 wc -l \
+            | awk '$1 > 1000 && $2 != "total" { print "over the 1000-line hard limit: " $2 " (" $1 " lines)"; bad = 1 } END { if (bad) exit 1 }'
   frontend:
     runs-on: ubuntu-latest
     steps:

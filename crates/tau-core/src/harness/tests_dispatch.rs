@@ -178,6 +178,124 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
     assert_eq!(dev.models, vec!["proj-model".to_owned()]);
 }
 
+/// A project-layer provider reaches a session on the production (file-layered)
+/// path (spec §12): the merge branch used to drop the loaded merge, so only
+/// the system layer reached sessions and the real-app E2E sidestepped it by
+/// putting its provider in the system config (roadmap G bug).
+#[tokio::test]
+async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
+    let sys = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let ws = tempfile::tempdir().unwrap();
+    // The system layer carries a provider the project layer does not know.
+    std::fs::write(
+        sys.path().join("config.toml"),
+        "[providers.sys]\nbase_url = \"http://system:1/v1\"\nkey_env = \"\"\nmodels = [\"sys-model\"]\n",
+    )
+    .unwrap();
+    // The project layer adds its own; the merged config is the system layer
+    // plus this entry, and a session takes the first of the merged map.
+    std::fs::create_dir_all(ws.path().join(".tau")).unwrap();
+    std::fs::write(
+        ws.path().join(".tau").join("config.toml"),
+        "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\nmodels = [\"proj-model\"]\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(home.path().to_path_buf())
+        .build();
+    let workspace = open_ws(&core, ws.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id,
+            title: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    assert_eq!(session.model.as_deref(), Some("proj-model"));
+}
+
+/// One send makes exactly one provider call on the production path (roadmap G):
+/// the E2E's ghost second assistant entry was not a second call — the count
+/// is the forwarding provider's call list, one id per call's first event.
+#[tokio::test]
+async fn a_production_send_makes_exactly_one_provider_call() {
+    let sys = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let ws = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join("config.toml"),
+        "[providers.canned]\nbase_url = \"canned://text\"\nmodels = [\"canned-model\"]\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(home.path().to_path_buf())
+        .build();
+    let workspace = open_ws(&core, ws.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id,
+            title: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let live = core
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&session.id)
+        .cloned()
+        .expect("the new session is live");
+
+    for (n, text) in ["say hello", "second turn"].into_iter().enumerate() {
+        core.dispatch(Command::MessageSend {
+            session: session.id.clone(),
+            text: text.into(),
+            lane: MessageLane::FollowUp,
+        })
+        .unwrap();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while live.turn.load(Ordering::SeqCst) {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the turn never settled"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let expected = n + 1;
+        assert_eq!(
+            live.provider.calls.lock().unwrap().len(),
+            expected,
+            "send {expected} made a second provider call"
+        );
+        // The file is the record: one user + one assistant entry per send.
+        let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), &session.id);
+        store.open().unwrap();
+        let entries = store.entries_range(0, usize::MAX).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|e| e.kind == crate::agent::KIND_USER)
+                .count(),
+            expected
+        );
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|e| e.kind == crate::agent::KIND_ASSISTANT)
+                .count(),
+            expected
+        );
+    }
+}
 /// Closing a session with an in-flight turn stops the stream — the
 /// call closes as interrupted and nothing for that session follows
 /// (review N7).

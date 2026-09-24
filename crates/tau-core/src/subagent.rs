@@ -408,7 +408,6 @@ impl Supervisor {
             .unwrap_or(false)
     }
 
-    /// A child's concurrency slot: every child that is not done holds one
     /// A child's concurrency slot: every child with a live drive holds
     /// one; a quiescent child (done/stopped/failed — its drive is gone)
     /// holds none, and a resume of it re-acquires a slot.

@@ -135,6 +135,7 @@ acceptance *legs = 'a b c d e f':
               report f PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') E2E checks (real app on the 10k-entry fixture, 2 canned 25 ms streams)"
             else
               report f FAIL "$(echo "$out" | grep -m1 '^FAIL' || echo 'the real-app E2E failed')"
+            fi
           else
             report f SKIP "node is not available"
           fi

@@ -45,19 +45,17 @@ async function buildFixture() {
   if (sha !== FIXTURE_SHA256) throw new Error(`fixture hash drifted: ${sha} != ${FIXTURE_SHA256}`);
 }
 
-// The minimal test workspace: the fixture session under .tau/sessions/. The
-// canned:// text provider goes in the *system* config (the isolated HOME's
-// .config/tau/config.toml): the production config layering reads the project
-// .tau/config.toml, but its merge branch in workspace_config is empty, so a
-// project provider never reaches a session today (core bug, reported — the
-// system layer is the one that works).
+// The minimal test workspace: the fixture session under .tau/sessions/ and
+// the canned:// text provider in the *project* config (.tau/config.toml) —
+// the production layering merge a session reads through (spec §12); the
+// isolated HOME's system layer stays empty.
 function makeWorkspace(dir) {
+  fs.mkdirSync(path.join(dir, 'home'), { recursive: true });
   const ws = path.join(dir, 'ws');
   fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
   fs.copyFileSync(FIXTURE, path.join(ws, '.tau', 'sessions', `${FIXTURE_SESSION}.jsonl`));
-  fs.mkdirSync(path.join(dir, 'home', '.config', 'tau'), { recursive: true });
   fs.writeFileSync(
-    path.join(dir, 'home', '.config', 'tau', 'config.toml'),
+    path.join(ws, '.tau', 'config.toml'),
     ['[providers.canned]', 'base_url = "canned://text"', 'models = ["canned-model"]', ''].join('\n')
   );
   const xdg = path.join(dir, 'xdg');

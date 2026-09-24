@@ -192,8 +192,6 @@ pub fn active_tasks(tasks: &[Task]) -> Vec<&Task> {
         .collect()
 }
 
-// --- Session-store operations -------------------------------------------
-
 use crate::session::SessionStore;
 
 type StoreResult<T> = Result<T, String>;

@@ -1,8 +1,7 @@
 <script lang="ts">
-  // One unsplit bar (the v2 status bar): a left context group (state ·
-  // workspace · session name · the om gauge) and a right cost group
-  // (in · out · cache, and tps only while streaming). fps / render ms /
-  // render range / live / entries / the hex id moved to debug logs.
+  // One unsplit bar: a left context group (state · workspace · session
+  // name · the om gauge) and a right cost group (in · out · cache, and
+  // tps only while streaming).
   import { store } from '../lib/store.svelte';
 
   const s = $derived(store.current ? store.sessions[store.current] : null);

@@ -101,8 +101,6 @@ const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use 
 /// Leg c's parent gets the sub-agent + task tools named too.
 const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
 
-// ---------------------------------------------------------------- leg b
-
 async fn leg_b(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
@@ -149,8 +147,6 @@ async fn leg_b(ctx: &Ctx) -> Result<(), String> {
     }
     Ok(())
 }
-
-// ---------------------------------------------------------------- leg c
 
 struct AcceptanceFactory {
     client: reqwest::Client,
@@ -367,8 +363,6 @@ async fn leg_c(ctx: &Ctx) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------- leg d
-
 fn prose(i: usize) -> String {
     let mut s = String::new();
     for j in 0..24 {
@@ -490,8 +484,6 @@ async fn leg_d(ctx: &Ctx) -> Result<(), String> {
     Err("leg d: no om entry after the observe threshold was crossed (2 attempts)".into())
 }
 
-// ---------------------------------------------------------------- leg e
-
 fn leg_e() -> Result<(), String> {
     let ws = temp_ws();
     let (id, mut store) = new_session(ws.path());
@@ -547,8 +539,6 @@ fn leg_e() -> Result<(), String> {
     }
     Ok(())
 }
-
-// ---------------------------------------------------------------- main
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -103,8 +103,6 @@ function topParts(body) {
   return parts;
 }
 
-// --- Rust side -------------------------------------------------------------
-
 function rustEnums(src) {
   const out = {};
   const clean = stripComments(src);
@@ -184,8 +182,6 @@ function renameAllName(name, renameAll) {
   if (renameAll === 'camelCase') return name.replace(/_([a-z0-9])/g, (_, c) => c.toUpperCase());
   return name;
 }
-
-// --- TS side ---------------------------------------------------------------
 
 function tsKinds(src) {
   const out = {};
@@ -278,8 +274,6 @@ function splitAlt(body) {
   return parts;
 }
 
-// --- type normalization ----------------------------------------------------
-
 const rustE = rustEnums(rustSrc);
 const rustS = rustStructs(rustSrc);
 const tsK = tsKinds(tsSrc);
@@ -347,8 +341,6 @@ function expandRustStruct(name) {
     .sort()
     .join(', ')})`;
 }
-
-// --- the diffs --------------------------------------------------------------
 
 function diffUnion(rustName, tsName = rustName) {
   const r = rustE[rustName];

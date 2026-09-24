@@ -34,10 +34,7 @@
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
     focus: false,
-    // The composer's model menu (the floating centered list): the model
-    // chip and the /model command open it.
     modelMenuOpen: false,
-    // 'r' keybind (App.svelte): every reasoning block opens/closes at once.
     reasoningOpen: false,
     // Per-entry card expansion, keyed `${session}:${entryId}:${slot}`: the
     // transcript window unmounts off-screen cards, so the state lives here,
@@ -49,8 +46,6 @@
     entryOpen: new Map(),
     workspaces: [] as Workspace[],
     current: null as string | null,
-    // Bumped by send: the transcript jumps to the new user entry and follows
-    // the turn, so blocks appear while they are written.
     tailJump: 0,
     sessions: {} as Record<string, SessionState>,
     loading: false,
@@ -81,7 +76,6 @@
     // null = the default view (the group containing the active session
     // expanded); an array = the explicit set the user has toggled.
     openGroups: string[] | null;
-    // The session row being renamed (double-click), per pane.
     renamingId: string | null;
     archOpen: boolean;
     selSub: string | null;
@@ -118,8 +112,6 @@
     store.reasoningOpen = !store.reasoningOpen;
   }
 
-  // The dynamic window title: `workspace · session`; a child session
-  // includes its parent (`ws · parent › child`).
   export function windowTitle(): string {
     const sid = store.current;
     const s = sid ? store.sessions[sid] : null;
@@ -404,9 +396,6 @@
     if (s) s.meta.title = t;
   }
 
-  // Switch the current session's model (the composer's model chip and the
-  // /model command): the core sets the meta and records the change as a
-  // quiet system entry; the row converges on the new model.
   export async function setModel(model: string): Promise<void> {
     const sid = store.current;
     if (!sid) return;

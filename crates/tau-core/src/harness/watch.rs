@@ -102,7 +102,6 @@ impl Watcher {
                     }
                 }
             }
-            return;
         }
         #[cfg(not(target_os = "linux"))]
         {

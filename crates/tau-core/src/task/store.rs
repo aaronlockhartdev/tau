@@ -225,5 +225,3 @@ pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {
         },
     )
 }
-
-// --- Model-facing tool routing ------------------------------------------
