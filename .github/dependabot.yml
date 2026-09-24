@@ -1,0 +1,28 @@
+# Dependabot: the three ecosystems in this repo.
+#
+# - cargo: the workspace at the repo root (crates/*, app/src-tauri),
+#   including the tauri-plugin-pilot git dependency (the upstream
+#   mpiton/tauri-pilot we track for fixes).
+# - npm: the frontend lives in app/ (no root package.json).
+# - github-actions: .github/workflows/ci.yml.
+#
+# The Rust toolchain pin (dtolnay/rust-toolchain@1.98.1) is a deliberate
+# version choice, not a dependency to ride along — ignored on purpose.
+version: 2
+updates:
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency: "dtolnay/rust-toolchain"
