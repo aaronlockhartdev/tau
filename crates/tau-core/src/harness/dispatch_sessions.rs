@@ -527,7 +527,11 @@ impl Core {
         let workspace = {
             let wss = self.workspaces.lock().unwrap();
             wss.values()
-                .find(|w| SessionStore::for_workspace(Path::new(&w.cwd), session).path().exists())
+                .find(|w| {
+                    SessionStore::for_workspace(Path::new(&w.cwd), session)
+                        .path()
+                        .exists()
+                })
                 .cloned()
         }
         .ok_or_else(|| ProtocolError::NotFound {
@@ -535,14 +539,18 @@ impl Core {
         })?;
         let cwd = PathBuf::from(&workspace.cwd);
         let mut store = SessionStore::for_workspace(&cwd, session);
-        store
-            .open()
-            .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+        store.open().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
         // A child archives with its parent, never alone (ADR-0005) — the
         // on-disk meta carries the parent link.
         if let Some(parent) = store.parent() {
             return Err(ProtocolError::Other {
-                message: self.archive_refusal_for_child(session, &workspace.id, &Some(parent.to_string())),
+                message: self.archive_refusal_for_child(
+                    session,
+                    &workspace.id,
+                    &Some(parent.to_string()),
+                ),
             });
         }
         // The children that archive with it: the workspace's disk scan is
@@ -556,9 +564,9 @@ impl Core {
             .collect();
         for id in &children {
             let mut cstore = SessionStore::for_workspace(&cwd, id);
-            cstore
-                .open()
-                .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+            cstore.open().map_err(|e| ProtocolError::Other {
+                message: e.to_string(),
+            })?;
             // The flag goes in before the child's move, like the open
             // path: a child still in the live map (opened on its own,
             // parent closed) has its next write refused at the first
@@ -566,13 +574,13 @@ impl Core {
             if let Some(cl) = self.sessions.lock().unwrap().get(id) {
                 cl.meta.lock().unwrap().archived = true;
             }
-            cstore
-                .archive()
-                .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+            cstore.archive().map_err(|e| ProtocolError::Other {
+                message: e.to_string(),
+            })?;
         }
-        store
-            .archive()
-            .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+        store.archive().map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
         // The response is a fresh meta from the file (the list and any
         // snapshot converge on it), like restore.
         Ok(CommandOutput::Session {

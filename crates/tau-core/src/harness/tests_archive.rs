@@ -430,7 +430,9 @@ async fn a_never_opened_session_archives_from_disk() {
     }
     // The child is refused: it archives with its parent (ADR-0005).
     let err = core
-        .dispatch(Command::SessionArchive { session: child.clone() })
+        .dispatch(Command::SessionArchive {
+            session: child.clone(),
+        })
         .unwrap_err();
     assert!(
         matches!(err, ProtocolError::Other { .. }),
@@ -438,7 +440,9 @@ async fn a_never_opened_session_archives_from_disk() {
     );
     // The root archives from disk, the child with it.
     let out = core
-        .dispatch(Command::SessionArchive { session: parent.clone() })
+        .dispatch(Command::SessionArchive {
+            session: parent.clone(),
+        })
         .unwrap();
     let meta = match out {
         CommandOutput::Session { session } => session,
@@ -448,28 +452,42 @@ async fn a_never_opened_session_archives_from_disk() {
     let root = Path::new(&workspace.cwd);
     for (id, role) in [(parent.as_str(), "the root"), (child.as_str(), "the child")] {
         assert!(
-            !root.join(".tau").join("sessions").join(format!("{id}.jsonl")).exists(),
+            !root
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{id}.jsonl"))
+                .exists(),
             "{role}: the live file is gone"
         );
         assert!(
-            root.join(".tau").join("archive").join(format!("{id}.jsonl.zst")).exists(),
+            root.join(".tau")
+                .join("archive")
+                .join(format!("{id}.jsonl.zst"))
+                .exists(),
             "{role}: the file is in the archive"
         );
     }
     // The list converges: both flagged, the child's parent link intact.
     let list = match core
-        .dispatch(Command::SessionList { workspace: workspace.id.clone() })
+        .dispatch(Command::SessionList {
+            workspace: workspace.id.clone(),
+        })
         .unwrap()
     {
         CommandOutput::Sessions { sessions } => sessions,
         other => panic!("expected sessions: {other:?}"),
     };
-    let m = list.iter().find(|m| m.id == child).expect("the child is listed");
+    let m = list
+        .iter()
+        .find(|m| m.id == child)
+        .expect("the child is listed");
     assert!(m.archived, "the child archives with its parent");
     assert!(m.parent.as_deref() == Some(parent.as_str()));
     // The other root, also never opened, archives the same way.
     let out = core
-        .dispatch(Command::SessionArchive { session: second.clone() })
+        .dispatch(Command::SessionArchive {
+            session: second.clone(),
+        })
         .unwrap();
     let meta = match out {
         CommandOutput::Session { session } => session,
