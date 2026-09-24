@@ -274,7 +274,7 @@ export interface ResumeContract {
   task: string;
   title: string;
   status: string;
-  current_step: { text: string; expected_output: string } | null;
+  current_step: Step | null;
   steps: Step[];
   evidence: Evidence[];
   gaps: string[];
@@ -295,7 +295,6 @@ export interface Task {
   worker?: WorkerPointer;
   created_in?: string;
   updated: number;
-  resume_contract?: ResumeContract;
 }
 
 // Sub-agent shapes (ticket #23; crates/tau-protocol) — a child is an

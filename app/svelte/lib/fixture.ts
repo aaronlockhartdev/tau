@@ -404,7 +404,6 @@ function demoTask(id: string, status: Task['status'], worker: string, skip: numb
     worker: { session: worker, status },
     created_in: 'demo',
     updated: now - 60e3 * (skip + 1),
-    resume_contract: undefined,
     decisions: []
   };
   return base;
@@ -427,17 +426,6 @@ export function demoTasks(): Task[] {
     { criterion: 'retries on mid-stream provider errors', summary: 'mid-stream error preserves partial output', command: 'cargo test -p tau-core sse', passed: true },
     { criterion: 'backoff is capped', summary: 'backoff capped at 64 s', command: 'cargo test -p tau-core backoff', passed: true }
   ];
-  t1.resume_contract = {
-    task: 't1',
-    title: t1.title,
-    status: 'in_progress',
-    current_step: { text: t1.steps[1].text, expected_output: t1.steps[1].expected_output },
-    steps: t1.steps,
-    evidence: t1.evidence,
-    gaps: ['timeout path untested'],
-    blockers: [],
-    next_action: 'finish the backoff test, then the live acceptance'
-  };
   const t2 = demoTask('t2', 'done', 'c3', 1);
   t2.steps = [
     { text: 'parse the TOML layers', status: 'done', expected_output: 'layering rules' },
@@ -467,17 +455,6 @@ export function demoTasks(): Task[] {
   ];
   t4.evidence = [{ criterion: 'type-mirrors the crate field-for-field', summary: 'svelte-check green against the crate', passed: true }];
   t4.blockers = [{ reason: 'protocol types rejected in review', needs: 'resubmit after the N1 note' }];
-  t4.resume_contract = {
-    task: 't4',
-    title: t4.title,
-    status: 'blocked',
-    current_step: { text: t4.steps[1].text, expected_output: t4.steps[1].expected_output },
-    steps: t4.steps,
-    evidence: t4.evidence,
-    gaps: ['SubagentInfo shape pending review'],
-    blockers: t4.blockers,
-    next_action: 'address the review note, resubmit the types'
-  };
   const t5 = demoTask('t5', 'done', 'c4', 4);
   t5.steps = [{ text: 'generate the 10k-entry fixture', status: 'done', expected_output: 'the committed fixture' }];
   t5.criteria = [{ text: 'snapshot stays under 2 MB', status: 'satisfied' }];

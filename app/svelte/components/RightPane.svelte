@@ -75,16 +75,6 @@
     const m = (Date.now() - ms) / 60000;
     return m < 1 ? 'just now' : m < 60 ? `${Math.round(m)}m` : `${Math.round(m / 60)}h`;
   };
-  function contractText(t: Task): string {
-    const rc = t.resume_contract;
-    if (!rc) return '';
-    const lines: string[] = [];
-    if (rc.current_step) lines.push(`step: ${rc.current_step.text}\nexpected: ${rc.current_step.expected_output}`);
-    if (rc.gaps.length > 0) lines.push(`gaps: ${rc.gaps.join('; ')}`);
-    if (rc.blockers.length > 0) lines.push(`blockers: ${rc.blockers.map((b) => b.reason).join('; ')}`);
-    lines.push(`next: ${rc.next_action}`);
-    return lines.join('\n');
-  }
 </script>
 
 <div class="pane">
@@ -98,27 +88,24 @@
       {#if liveTasks.length === 0 && histTasks.length === 0}
         <div class="emptyc">No tasks — ask the agent to make one</div>
       {:else}
-        {#if liveTasks.length > 0}
-          <div class="ghead">active · {liveTasks.length}</div>
-        {/if}
-        {#each liveTasks as t (t.id)}
+        {#snippet taskRow(t: Task)}
           <div
             class="lrow"
-            class:open={p.expandedTasks.includes(t.id)}
+            class:open={p?.expandedTasks.includes(t.id)}
             role="button"
             tabindex="0"
             onclick={() => toggleTask(t.id)}
             onkeydown={onKey(() => toggleTask(t.id))}
           >
             <div class="lh">
-              <svg class="chev" class:open={p.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
+              <svg class="chev" class:open={p?.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
               <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
                 <span class="dot"></span>{t.status}
               </span>
               <span class="ln">{t.title}</span>
               <span class="lm">{t.worker?.session ?? ''}</span>
             </div>
-            {#if p.expandedTasks.includes(t.id)}
+            {#if p?.expandedTasks.includes(t.id)}
               <div class="ld">
                 {#if t.steps.length > 0}
                   <div class="dl">steps — {t.steps.filter((s) => s.status === 'done').length}/{t.steps.length} done</div>
@@ -149,16 +136,18 @@
                     ⛔ {t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
                   </div>
                 {/if}
-                {#if t.resume_contract}
-                  <div class="dl">resume contract</div>
-                  <pre class="rc">{contractText(t)}</pre>
-                {/if}
                 <div class="a">
                   {t.worker ? `assigned: ${t.worker.session} (${t.worker.status})` : 'unassigned'} · modified {fmtAgo(t.updated)}
                 </div>
               </div>
             {/if}
           </div>
+        {/snippet}
+        {#if liveTasks.length > 0}
+          <div class="ghead">active · {liveTasks.length}</div>
+        {/if}
+        {#each liveTasks as t (t.id)}
+          {@render taskRow(t)}
         {/each}
         {#if histTasks.length > 0}
           <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
@@ -166,56 +155,7 @@
           </div>
           {#if p.historyOpen}
             {#each histTasks as t (t.id)}
-              <div class="lrow" class:open={p.expandedTasks.includes(t.id)} role="button" tabindex="0" onclick={() => toggleTask(t.id)} onkeydown={onKey(() => toggleTask(t.id))}>
-                <div class="lh">
-                  <svg class="chev" class:open={p.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
-                  <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
-                    <span class="dot"></span>{t.status}
-                  </span>
-                  <span class="ln">{t.title}</span>
-                  <span class="lm">{t.worker?.session ?? ''}</span>
-                </div>
-                {#if p.expandedTasks.includes(t.id)}
-                  <div class="ld">
-                    {#if t.steps.length > 0}
-                      <div class="dl">steps — {t.steps.filter((s) => s.status === 'done').length}/{t.steps.length} done</div>
-                      {#each t.steps as s (s.text)}
-                        <div class="step {s.status}">
-                          <span class="mk">{s.status === 'done' ? '✓' : s.status === 'active' ? '▸' : '○'}</span>{s.text}
-                          {#if s.expected_output}<span class="eo">→ {s.expected_output}</span>{/if}
-                        </div>
-                      {/each}
-                    {/if}
-                    {#if t.criteria.length > 0}
-                      <div class="dl">acceptance criteria</div>
-                      {#each t.criteria as c (c.text)}
-                        {@const sat = c.status === 'satisfied'}
-                        <div class="ev"><span class:ok={sat} class:pend={!sat}>{sat ? '✓' : '…'}</span> {c.text}</div>
-                      {/each}
-                    {/if}
-                    {#if t.evidence.length > 0}
-                      <div class="dl">evidence</div>
-                      {#each t.evidence as e (e.summary)}
-                        <div class="ev"><span class:ok={e.passed} class:pend={!e.passed}>{e.passed ? '✓' : '…'}</span>
-                          {e.summary}{e.command ? ` — ${e.command}` : ''}</div>
-                      {/each}
-                    {/if}
-                    {#if t.blockers.length > 0}
-                      <div class="dl">blocker</div>
-                      <div class="block">
-                        ⛔ {t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
-                      </div>
-                    {/if}
-                    {#if t.resume_contract}
-                      <div class="dl">resume contract</div>
-                      <pre class="rc">{contractText(t)}</pre>
-                    {/if}
-                    <div class="a">
-                      {t.worker ? `assigned: ${t.worker.session} (${t.worker.status})` : 'unassigned'} · modified {fmtAgo(t.updated)}
-                    </div>
-                  </div>
-                {/if}
-              </div>
+              {@render taskRow(t)}
             {/each}
           {/if}
         {/if}
@@ -449,16 +389,6 @@
   .ld .block {
     color: var(--red);
     font-size: 12px;
-  }
-  .ld .rc {
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 8px 10px;
-    font: 10.5px/1.55 var(--mono);
-    color: var(--dim);
-    white-space: pre-wrap;
-    margin: 0;
   }
   .ld .a {
     margin-top: 6px;
