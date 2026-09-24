@@ -83,7 +83,7 @@ jobs:
         working-directory: app
         run: npm run test
 
-  app:
+  macos-acceptance:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7.0.1
