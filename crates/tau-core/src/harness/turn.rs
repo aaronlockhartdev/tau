@@ -150,10 +150,6 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     tool_call_id: tool_call_id.clone(),
                     name: name.clone(),
                 });
-                core.self_weak
-                    .lock()
-                    .unwrap()
-                    .replace(Arc::downgrade(&core));
                 core.emit(Event::ToolEnd {
                     workspace: workspace.clone(),
                     session: session.clone(),

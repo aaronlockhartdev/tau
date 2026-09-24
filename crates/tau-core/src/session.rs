@@ -209,15 +209,6 @@ impl SessionStore {
         Self::new(project_root.join(".tau"), id)
     }
 
-    /// No-project store: `~/.config/tau/` (spec §3 placement).
-    pub fn for_no_project(id: &str) -> Self {
-        let config_home = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .expect("XDG_CONFIG_HOME or HOME must be set");
-        Self::new(config_home.join("tau"), id)
-    }
-
     fn new(root: PathBuf, id: &str) -> Self {
         Self {
             id: id.to_owned(),
@@ -261,16 +252,6 @@ impl SessionStore {
         self.root
             .join("sessions")
             .join(format!("{}.jsonl", self.id))
-    }
-
-    fn blob_path(&self, id: &str) -> PathBuf {
-        self.root.join("blobs").join(id)
-    }
-
-    pub fn archive_path(&self) -> PathBuf {
-        self.root
-            .join("archive")
-            .join(format!("{}.jsonl.zst", self.id))
     }
 
     fn now_ms() -> u64 {
@@ -363,8 +344,8 @@ impl SessionStore {
         }
         self.leaf = header.leaf.clone();
         self.created = header.created;
-        self.title = header.title.clone();
-        self.parent = header.parent.clone();
+        self.title = header.title;
+        self.parent = header.parent;
 
         self.ids.clear();
         self.next = 1;
@@ -448,59 +429,6 @@ impl SessionStore {
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
         self.append_line(self.new_entry(kind, payload, None), parent)
-    }
-
-    /// Append a compaction record referencing the first kept entry (spec §3).
-    pub fn append_compaction(
-        &mut self,
-        first_kept_entry_id: &str,
-        payload: Value,
-        parent: Option<&str>,
-    ) -> Result<Entry, Error> {
-        self.append_line(
-            self.new_entry("compaction", payload, Some(first_kept_entry_id.to_owned())),
-            parent,
-        )
-    }
-
-    /// Append a raw-byte payload (e.g. decoded image bytes) — always a
-    /// sidecar blob, keeping base64 out of the log (ADR-0005).
-    pub fn append_raw(
-        &mut self,
-        kind: &str,
-        bytes: Vec<u8>,
-        parent: Option<&str>,
-    ) -> Result<Entry, Error> {
-        self.ensure_open()?;
-        if let Some(p) = parent
-            && !self.ids.contains(p)
-        {
-            return Err(Error::Other(format!("unknown parent {p}")));
-        }
-        let id = format!("{:08}", self.next);
-        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
-        let compressed = zstd::encode_all(&bytes[..], ZSTD_LEVEL)?;
-        fs::create_dir_all(self.root.join("blobs"))?;
-        fs::write(self.blob_path(&id), compressed)?;
-        let mut entry = self.new_entry(kind, Value::Null, None);
-        entry.id = id;
-        entry.parent = parent.map(str::to_owned);
-        entry.blob = Some(BlobRef {
-            id: entry.id.clone(),
-            size: bytes.len() as u64,
-            hash,
-        });
-        entry.crc = Some(entry.compute_crc());
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.path())?;
-        let mut line = entry.canonical_line();
-        line.push('\n');
-        file.write_all(line.as_bytes())?;
-        self.ids.insert(entry.id.clone());
-        self.next += 1;
-        Ok(entry)
     }
 
     /// The active leaf: the persisted branch choice if any, else the last
@@ -696,94 +624,6 @@ impl SessionStore {
         }
         Err(Error::Other(format!("no entry {id}")))
     }
-
-    /// Decode a sidecar blob, verifying its hash (ADR-0005).
-    pub fn resolve_blob(&self, ref_: &BlobRef) -> Result<Vec<u8>, Error> {
-        let compressed =
-            fs::read(self.blob_path(&ref_.id)).map_err(|e| Error::Other(e.to_string()))?;
-        let bytes = zstd::decode_all(&compressed[..]).map_err(|e| Error::Other(e.to_string()))?;
-        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
-        if hash != ref_.hash {
-            return Err(Error::Other(format!("blob {} hash mismatch", ref_.id)));
-        }
-        Ok(bytes)
-    }
-
-    /// Manual archive: zstd the session file into `archive/` and remove the
-    /// live file. One-way, off the live read/write path (ADR-0005).
-    pub fn archive(&self) -> Result<PathBuf, Error> {
-        let live = self.path();
-        let arc = self.archive_path();
-        if !live.exists() {
-            return Err(Error::Other(format!(
-                "cannot archive {}: not present",
-                live.display()
-            )));
-        }
-        if arc.exists() {
-            return Err(Error::Other(format!(
-                "archive {} already exists",
-                arc.display()
-            )));
-        }
-        let bytes = fs::read(&live)?;
-        fs::create_dir_all(self.root.join("archive"))?;
-        let compressed = zstd::encode_all(&bytes[..], ZSTD_LEVEL)?;
-        fs::write(&arc, compressed)?;
-        fs::remove_file(live)?;
-        Ok(arc)
-    }
-
-    /// Restore a manually archived session; removes the archive.
-    pub fn unarchive(&self) -> Result<(), Error> {
-        let live = self.path();
-        let arc = self.archive_path();
-        if live.exists() {
-            return Err(Error::Other("live session already present".into()));
-        }
-        if !arc.exists() {
-            return Err(Error::Other(format!(
-                "archive {} not present",
-                arc.display()
-            )));
-        }
-        let compressed = fs::read(&arc)?;
-        let bytes = zstd::decode_all(&compressed[..])?;
-        fs::create_dir_all(self.root.join("sessions"))?;
-        fs::write(live, bytes)?;
-        fs::remove_file(arc)?;
-        Ok(())
-    }
-
-    /// The archive file's header line, read bounded (ADR-0005): a listing
-    /// must not decompress a whole transcript to read one short line, so
-    /// the stream is decoded only up to the first newline, capped at 4 KiB
-    /// (overflow is an error — a header is a single JSON line, well under
-    /// the cap).
-    pub fn archive_header_line(&self) -> Result<String, Error> {
-        use std::io::Read as _;
-        const CAP: usize = 4096;
-        let file = fs::File::open(self.archive_path()).map_err(|e| Error::Other(e.to_string()))?;
-        let mut buf = Vec::with_capacity(CAP);
-        zstd::Decoder::new(file)?
-            .take(CAP as u64)
-            .read_to_end(&mut buf)?;
-        let text = std::str::from_utf8(&buf).map_err(|e| Error::Other(e.to_string()))?;
-        match text.find('\n') {
-            // The header is the first line: a complete line inside the cap
-            // is a short header, even when the window is full (a big
-            // archive whose body was never decoded).
-            Some(pos) => Ok(text[..pos].to_owned()),
-            None if buf.len() == CAP => Err(Error::Other(format!(
-                "archive {} header exceeds the {CAP}-byte read",
-                self.id
-            ))),
-            None => Err(Error::Other(format!(
-                "archive {} has no header line",
-                self.id
-            ))),
-        }
-    }
 }
 
 /// The workspace's on-disk sessions (ADR-0005): the `sessions/` files,
@@ -861,15 +701,17 @@ impl std::str::FromStr for Entry {
     }
 }
 
+mod file;
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn store(dir: &Path, id: &str) -> SessionStore {
+    pub(super) fn store(dir: &Path, id: &str) -> SessionStore {
         SessionStore::for_workspace(dir, id)
     }
 
-    fn seeded(dir: &Path) -> (SessionStore, Vec<Entry>) {
+    pub(super) fn seeded(dir: &Path) -> (SessionStore, Vec<Entry>) {
         let mut s = store(dir, "s1");
         s.create().unwrap();
         let e1 = s
@@ -1034,25 +876,6 @@ mod tests {
     }
 
     #[test]
-    fn oversized_payload_becomes_a_sidecar_blob() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut s = store(tmp.path(), "s1");
-        s.create().unwrap();
-        let payload = Value::String("x".repeat(120_000));
-        let e = s.append("tool_result", payload.clone(), None).unwrap();
-        assert!(e.payload.is_null());
-        let blob = e.blob.as_ref().unwrap();
-        assert_eq!(blob.size, 120_002);
-        assert!(s.blob_path(&e.id).exists());
-        let decoded = s.resolve_blob(blob).unwrap();
-        assert_eq!(decoded, serde_json::to_string(&payload).unwrap().as_bytes());
-        // The on-disk line carries a pointer, not the payload.
-        let content = fs::read_to_string(s.path()).unwrap();
-        let line = content.lines().last().unwrap();
-        assert!(!line.contains(&"x".repeat(50)));
-    }
-
-    #[test]
     fn small_payload_stays_inline() {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = store(tmp.path(), "s1");
@@ -1062,91 +885,6 @@ mod tests {
             .unwrap();
         assert!(e.blob.is_none());
         assert_eq!(e.payload, Value::String("y".repeat(50)));
-    }
-
-    #[test]
-    fn raw_bytes_always_become_a_blob() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut s = store(tmp.path(), "s1");
-        s.create().unwrap();
-        let bytes: Vec<u8> = (0..10).map(|i| i as u8).collect();
-        let e = s.append_raw("image", bytes.clone(), None).unwrap();
-        let blob = e.blob.as_ref().unwrap();
-        assert_eq!(blob.size, 10);
-        assert_eq!(s.resolve_blob(blob).unwrap(), bytes);
-    }
-
-    #[test]
-    fn tampered_blob_fails_its_hash() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut s = store(tmp.path(), "s1");
-        s.create().unwrap();
-        let e = s.append_raw("image", vec![1, 2, 3, 4], None).unwrap();
-        let blob = s.blob_path(&e.id);
-        let mut compressed = fs::read(&blob).unwrap();
-        compressed[0] ^= 0xFF;
-        fs::write(&blob, compressed).unwrap();
-        assert!(s.resolve_blob(e.blob.as_ref().unwrap()).is_err());
-    }
-
-    #[test]
-    fn archive_and_unarchive_round_trip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (s, _) = seeded(tmp.path());
-        let original = fs::read(s.path()).unwrap();
-        let arc = s.archive().unwrap();
-        assert!(!s.path().exists());
-        assert!(arc.exists());
-        s.unarchive().unwrap();
-        assert!(!arc.exists());
-        assert_eq!(fs::read(s.path()).unwrap(), original);
-    }
-
-    #[test]
-    fn archiving_twice_is_rejected() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (s, _) = seeded(tmp.path());
-        s.archive().unwrap();
-        assert!(s.archive().is_err());
-    }
-
-    #[test]
-    fn an_archive_header_read_needs_no_full_decode() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (mut s, _) = seeded(tmp.path());
-        // A body big enough that a full decode would be the obvious way to
-        // read the header — the bounded read must not need it.
-        for i in 0..200 {
-            s.append(
-                "message",
-                serde_json::json!({"text": format!("entry {i} {}", "x".repeat(512))}),
-                None,
-            )
-            .unwrap();
-        }
-        s.archive().unwrap();
-        let line = s.archive_header_line().unwrap();
-        let h: Header = serde_json::from_str(&line).unwrap();
-        assert_eq!(h.id, "s1");
-        assert_eq!(h.kind, "session");
-        assert_eq!(h.version, FILE_VERSION);
-    }
-
-    #[test]
-    fn an_archive_header_overflow_is_an_error() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (s, _) = seeded(tmp.path());
-        // A first line over the cap with no newline: the bounded read stops
-        // at the cap and reports the overflow instead of decoding on.
-        let header = format!(
-            "{{\"type\":\"session\",\"version\":1,\"id\":\"s1\",\"created\":0,\"title\":\"{}\"}}{}",
-            "x".repeat(4500),
-            "y".repeat(1000)
-        );
-        fs::create_dir_all(s.root.join("archive")).unwrap();
-        let compressed = zstd::encode_all(header.as_bytes(), ZSTD_LEVEL).unwrap();
-        fs::write(s.archive_path(), compressed).unwrap();
-        assert!(s.archive_header_line().is_err());
     }
 
     #[test]
@@ -1168,23 +906,6 @@ mod tests {
             s.append("message", serde_json::json!({}), Some("99999999"))
                 .is_err()
         );
-    }
-
-    #[test]
-    fn compaction_entry_carries_the_span_reference() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (mut s, entries) = seeded(tmp.path());
-        let c = s
-            .append_compaction(
-                &entries[2].id,
-                serde_json::json!({"summary": "earlier work"}),
-                Some(&entries[2].id),
-            )
-            .unwrap();
-        assert_eq!(c.kind, "compaction");
-        assert_eq!(c.first_kept_entry_id, Some(entries[2].id.clone()));
-        let on_disk = s.entry(&c.id).unwrap();
-        assert_eq!(on_disk.first_kept_entry_id, Some(entries[2].id.clone()));
     }
 
     #[test]
