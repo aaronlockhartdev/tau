@@ -129,16 +129,12 @@ acceptance *legs = 'a b c d e f':
           ;;
         f)
           if command -v node >/dev/null 2>&1; then
-            if [ ! -d app/node_modules ]; then
-              (cd app && npm ci >/dev/null 2>&1)
-            fi
-            out=$(node app/scripts/verify-demo.mjs 2>&1); status=$?
+            out=$(node app/tests/e2e/run-e2e.mjs 2>&1); status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c '^PASS')
-              report f PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') demo checks (10k entries, 2 live 25 ms streams)"
+              report f PASS "$n/$(echo "$out" | grep -cE '^(PASS|FAIL)') E2E checks (real app on the 10k-entry fixture, 2 canned 25 ms streams)"
             else
-              report f FAIL "$(echo "$out" | grep -m1 '^FAIL' || echo 'the demo verification failed')"
-            fi
+              report f FAIL "$(echo "$out" | grep -m1 '^FAIL' || echo 'the real-app E2E failed')"
           else
             report f SKIP "node is not available"
           fi

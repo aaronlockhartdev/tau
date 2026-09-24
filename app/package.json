@@ -8,6 +8,7 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "preview": "vite preview",
     "test": "vitest run --passWithNoTests",
+    "test:frontend": "node tests/e2e/run-e2e.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
