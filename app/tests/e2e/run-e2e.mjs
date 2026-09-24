@@ -511,7 +511,7 @@ async function main() {
           // Settle = idle, no live text, and the entry count stable across a
           // quiet window: a post-turn follow-on (an OM reflection, a retried
           // call) restarts the turn and resets the stability.
-          if (c.turn === 'idle' && c.live === 0 && c.entries === lastEntries) stableMs += 200;
+          if (c.turn === 'idle' && c.live === 0 && c.entries === lastEntries) stableMs += 100;
           else stableMs = 0;
           lastEntries = c.entries;
         } else {
@@ -519,7 +519,10 @@ async function main() {
         }
         if (stableMs >= 1500 && Date.now() - tSettle > 2000) break;
         if (Date.now() - tSettle > settleDeadline) throw new Error(`${label}: the turn did not settle`);
-        await sleep(200);
+        // 100 ms, not 200: the 325 ms canned stream has to land inside at
+        // least one sample for the live-text bar; at 200 ms it can fit
+        // entirely between two samples even on a healthy display.
+        await sleep(100);
       }
       let settled;
       try {

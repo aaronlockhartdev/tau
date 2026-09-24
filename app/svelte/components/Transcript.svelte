@@ -279,16 +279,17 @@
     // While pinned, one catch-up per frame to the measured bottom, and only
     // when behind (rAF runs after the flush that re-laid the track, so a
     // growth and its catch-up land in the same frame — one monotonic step,
-    // no up/down fight, no smooth-scroll mix). The target is the list's
-    // measured total, not the node's scrollHeight: the node only renders the
-    // windowed slice, so its height is the slice's bottom, not the session's
-    // — targeting it ratchets the pin down one window per measurement round
-    // (~30 s over a 10k session with variable heights) instead of landing
-    // the tail in a couple of frames.
+    // no up/down fight, no smooth-scroll mix). The target is the node's
+    // scrollHeight — the rendered slice's bottom — so a live stream's text
+    // growth (which stretches the card without a measurement flush) is
+    // followed frame by frame. The measured-total snap below is the other
+    // half of the pin: it lands the window at the session's true bottom in
+    // the same flush the heights change, which the rAF loop alone only
+    // ratchets toward one rendered window at a time.
     let raf = 0;
     const follow = () => {
       if (pinned) {
-        const top = total - node.clientHeight;
+        const top = node.scrollHeight - node.clientHeight;
         if (node.scrollTop < top) node.scrollTop = top;
       }
       raf = requestAnimationFrame(follow);
@@ -305,6 +306,22 @@
       document.removeEventListener('keydown', onKeydown, { capture: true });
       cancelAnimationFrame(raf);
     };
+  });
+
+  // The measured-total snap: pinned and the height bookkeeping changed, so
+  // the session's true bottom moved — land the viewport there in this
+  // flush. The rAF catch-up alone walks one rendered window per frame, which
+  // on a throttled display (xvfb) leaves the slice out of the viewport for
+  // seconds between frames (a blank screen mid-walk); writing scrollTop in
+  // the same flush the track grew leaves no gap. The write's own scroll
+  // event recomputes the window at the new top, and the loop settles when
+  // the measured bottom stops moving.
+  $effect(() => {
+    const t = total;
+    if (pinned && el) {
+      const top = t - el.clientHeight;
+      if (el.scrollTop < top) el.scrollTop = top;
+    }
   });
 
   onDestroy(() => {
