@@ -35,9 +35,9 @@ Researched 2026-09-24, in response to eight consecutive red E2E CI runs where ea
 2. **The one structural advantage the standard stack has is WebDriver's standardized waiting semantics** — auto-wait, explicit condition waits, framework-level command timeouts — versus tau's raw JSON-RPC `eval`, whose plugin-side budget is a fixed 10 s with no per-call override. That is the exact wall tau's eight red runs hit. (The official embedded provider would require two more plugins in the app and a Node test framework; not a v0 migration candidate.)
 3. **Consensus on what CI is *for*:** boot-on-platform proof, bridge health, and a *lean* functional pass — with artifacts on failure, and stress/performance left to controlled (local) environments. tau's current CI E2E (10k fixture, two streams, performance bar) is a stress test; that is the mismatch, not the tooling.
 
-## 4. Decision (proposed, 2026-09-24)
+## 4. Decision (2026-09-24)
 
-Keep tauri-pilot; restructure what each environment runs:
+Keep tauri-pilot; restructure what each environment runs. **User directive (2026-09-24): the CI re-integration and the e2e harness refactor must follow the official WebDriver-CI best practices** (the [CI guide](https://v2.tauri.app/develop/tests/webdriver/ci/) — `cargo test` before E2E, xvfb + the platform driver packages on Linux, the debug build under test, generous framework-level timeouts, artifacts on failure), applied to the tauri-pilot route:
 
 - **CI (both E2E jobs):** a lean mode of the existing driver — a **1,000-entry fixture** (same deterministic generator, second pinned file), **one** stream, **no performance checks**, and **no single-shot reads**: every state read goes through poll-until-predicate with a generous total deadline (the pattern already proven by the re-open fix, runs 35960967597→35966480883). Nothing in the lean run can plausibly outlast the plugin's 10 s eval budget, which is what makes it deterministic by construction.
 - **Local (`just acceptance e2e`):** unchanged — the full 32-check, 10k, two-stream, performance-bar suite, where the §8 500 ms bar is meaningful.
