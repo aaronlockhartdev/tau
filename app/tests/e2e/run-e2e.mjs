@@ -334,9 +334,13 @@ async function main() {
         await sleep(500);
         return fn();
       });
-    const st = () => withRetry(() => pilot.eval(storeState()));
-    const dom = () => withRetry(() => pilot.eval(domState()));
-    const panes = () => withRetry(() => pilot.eval(panesState()));
+    // 30 s budget (the plugin's cap): right after a heavy in-page op (a 10k
+    // snapshot reload) the webview is saturated and even a plain state read
+    // can exceed the 10 s default — run 35962325726 lost the re-open check
+    // this way on both runners.
+    const st = () => withRetry(() => pilot.eval(storeState(), 30000));
+    const dom = () => withRetry(() => pilot.eval(domState(), 30000));
+    const panes = () => withRetry(() => pilot.eval(panesState(), 30000));
 
     // Boot: the isolated HOME has no workspace index, so the app starts on
     // the empty state and nothing auto-opens.

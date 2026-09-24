@@ -272,11 +272,12 @@ pub(crate) fn entry_by_event(
 pub(crate) fn wait_for(cond: impl Fn() -> bool) {
     let start = std::time::Instant::now();
     while !cond() {
-        // 30 s, not 10: the macos-15 runner ran the lifecycle flow past a 10 s
-        // budget (CI 35944696230) while ubuntu finishes the same flow in well
-        // under a second — the budget is runner-speed margin, not a spec bar.
+        // 60 s, not 30: the macos-15 runner ran the lifecycle flow past 30 s
+        // (CI 35962325726, 30.04 s) after a 10 s budget already flaked
+        // (35944696230) while ubuntu finishes the same flow well under a
+        // second — the budget is runner-speed margin, not a spec bar.
         assert!(
-            start.elapsed() < Duration::from_secs(30),
+            start.elapsed() < Duration::from_secs(60),
             "timed out waiting"
         );
         std::thread::sleep(Duration::from_millis(5));
