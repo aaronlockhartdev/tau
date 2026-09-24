@@ -335,6 +335,19 @@
     }
   });
 
+  // Opening a session starts at its tail, not where the previous
+  // session's viewport was: the pin survives a switch (it is dropped by
+  // scrolling up, never reset), and the old scrollTop can sit far past a
+  // shorter session's bottom. Reset the pin and land on the new bottom;
+  // the measured-total snap below keeps it there as heights flush.
+  $effect(() => {
+    const c = cur;
+    if (c && el) {
+      pinned = true;
+      el.scrollTop = Math.max(0, total - el.clientHeight);
+    }
+  });
+
   // A new send jumps the view to the fresh user entry and re-arms the pin
   // (explicitly: a no-op jump fires no scroll event), so the turn is
   // followed as it is written.

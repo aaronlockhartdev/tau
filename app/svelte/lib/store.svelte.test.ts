@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
 import {
   type Command,
   type CommandOutput,
+  type Entry,
   type LiveState,
   type SessionMeta,
   type SkillInfo,
@@ -22,7 +23,7 @@ import {
   type Workspace
 } from './protocol';
 import { applySessionList, openSession, touchChild } from './sessions';
-import { type Entry, applyToolEvent, decodeEntry } from './entries';
+import { applyToolEvent, decodeEntry } from './entries';
 import {
   applyEvents,
   archiveSession,
