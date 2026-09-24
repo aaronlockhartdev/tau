@@ -611,6 +611,7 @@ async function main() {
       `no visible drops: max rAF gap across both streams stayed under ${budget} ms${suffix}`,
       runner || rafMax <= budget,
       tick ? `max gap ${Math.round(rafMax)} ms over ${tick.raf.length} frames, median ${Math.round(rafMedian)} ms, 50 ms timer avg ${Math.round(toAvg)} ms` : 'n/a (ticker read unresponsive on CI)'
+    );
     check(
       `interaction stays responsive mid-stream: max of ${allLats.length} round-trips under ${budget} ms${suffix}`,
       runner || rtMax <= budget,
