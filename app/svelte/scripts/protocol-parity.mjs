@@ -26,7 +26,6 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
-const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 // Every source file in the crate — a new module (e.g. the C8 split's events.rs)
 // must not fall out of the diff just because this list wasn't updated.
 const rustSrc = globSync('crates/tau-protocol/src/**/*.rs', { cwd: root })
