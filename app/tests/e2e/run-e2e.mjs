@@ -255,7 +255,13 @@ async function main() {
     sh('cargo', ['build', '-p', 'tau-app'], { stdio: 'inherit' });
 
     const ws = makeWorkspace(tmp);
-    const xdg = path.join(tmp, 'xdg');
+    // The pilot socket's full path must fit the kernel's Unix path limit
+    // (macOS SUN_PATH = 104): os.tmpdir() on macOS is /var/folders/<50 chars>/T/…,
+    // which pushes the socket name past it and the plugin then silently skips
+    // the bind. The socket dir therefore lives under a short /tmp path (on
+    // Linux os.tmpdir() IS /tmp, so this changes nothing there); the workspace
+    // stays in the long temp dir — only the socket is constrained.
+    const xdg = path.join('/tmp', path.basename(tmp), 'xdg');
     // The plugin puts the socket in $XDG_RUNTIME_DIR when that directory is
     // private (owner-only, no group/world bits) and in /tmp otherwise — the
     // plugin's documented fallback; on the macOS CI runner the xdg dir does
@@ -320,9 +326,16 @@ async function main() {
       30000,
       'app boot (window.__tau)'
     );
-    const st = () => pilot.eval(storeState());
-    const dom = () => pilot.eval(domState());
-    const panes = () => pilot.eval(panesState());
+    // State reads are idempotent, so one retry absorbs a starved webview that
+    // blows the plugin's 10 s eval budget between polls.
+    const withRetry = (fn) =>
+      fn().catch(async () => {
+        await sleep(500);
+        return fn();
+      });
+    const st = () => withRetry(() => pilot.eval(storeState()));
+    const dom = () => withRetry(() => pilot.eval(domState()));
+    const panes = () => withRetry(() => pilot.eval(panesState()));
 
     // Boot: the isolated HOME has no workspace index, so the app starts on
     // the empty state and nothing auto-opens.
@@ -440,29 +453,53 @@ async function main() {
       let lastEntries = null;
       let stableMs = 0;
       const tSettle = Date.now();
+      // The runner's xvfb starves the webview harder than a local container
+      // (the plugin's own 10 s eval budget can blow mid-poll), so a starved
+      // display — measured from the 50 ms timer chain that has been running
+      // since before the stream — gets a longer settle window.
+      let settleDeadline = 30000;
+      try {
+        const tick0 = await pilot.eval('window.__e2e');
+        const toAvg0 = tick0.to.length ? tick0.to.reduce((x, y) => x + y, 0) / tick0.to.length : 0;
+        if (toAvg0 >= 100) settleDeadline = 120000;
+      } catch {
+        settleDeadline = 120000;
+      }
       for (;;) {
-        const c = await st();
-        for (const len of c.liveTexts) if (len > maxLive) maxLive = len;
-        if (allLats.length < 20) {
-          const lt0 = Date.now();
-          const PROBE_BUDGET = 15000;
-          try {
-            await pilot.eval('1', PROBE_BUDGET);
-            allLats.push(Date.now() - lt0);
-          } catch {
-            // A wedged webview times the probe out; record the budget as the
-            // latency and let the final check render the verdict.
-            allLats.push(PROBE_BUDGET);
-          }
+        // The sample can throw when a starved webview blows the plugin's 10 s
+        // eval budget mid-poll; the deadline below is the real stop, so a failed
+        // sample just reads as "not settled yet".
+        let c;
+        try {
+          c = await st();
+        } catch {
+          c = null;
         }
-        // Settle = idle, no live text, and the entry count stable across a
-        // quiet window: a post-turn follow-on (an OM reflection, a retried
-        // call) restarts the turn and resets the stability.
-        if (c.turn === 'idle' && c.live === 0 && c.entries === lastEntries) stableMs += 200;
-        else stableMs = 0;
-        lastEntries = c.entries;
+        if (c) {
+          for (const len of c.liveTexts) if (len > maxLive) maxLive = len;
+          if (allLats.length < 20) {
+            const lt0 = Date.now();
+            const PROBE_BUDGET = 15000;
+            try {
+              await pilot.eval('1', PROBE_BUDGET);
+              allLats.push(Date.now() - lt0);
+            } catch {
+              // A wedged webview times the probe out; record the budget as the
+              // latency and let the final check render the verdict.
+              allLats.push(PROBE_BUDGET);
+            }
+          }
+          // Settle = idle, no live text, and the entry count stable across a
+          // quiet window: a post-turn follow-on (an OM reflection, a retried
+          // call) restarts the turn and resets the stability.
+          if (c.turn === 'idle' && c.live === 0 && c.entries === lastEntries) stableMs += 200;
+          else stableMs = 0;
+          lastEntries = c.entries;
+        } else {
+          stableMs = 0;
+        }
         if (stableMs >= 1500 && Date.now() - tSettle > 2000) break;
-        if (Date.now() - tSettle > 30000) throw new Error(`${label}: the turn did not settle`);
+        if (Date.now() - tSettle > settleDeadline) throw new Error(`${label}: the turn did not settle`);
         await sleep(200);
       }
       const settled = await st();
@@ -514,6 +551,13 @@ async function main() {
     // throttled one gets a wedge detector scaled to the measured starvation
     // (the CI runner's xvfb starves harder than a local container), capped
     // at the 30 s eval timeout, which already fails the run on a true wedge.
+    const tick = await pilot.eval('window.__e2e');
+    const rafSorted = [...tick.raf].sort((a, b) => a - b);
+    const rafMax = Math.max(...tick.raf);
+    const rafMedian = rafSorted[Math.floor(rafSorted.length / 2)] ?? 0;
+    const toAvg = tick.to.length ? tick.to.reduce((x, y) => x + y, 0) / tick.to.length : 0;
+    const rtMax = Math.max(...allLats);
+    const rtAvg = allLats.length ? allLats.reduce((x, y) => x + y, 0) / allLats.length : 0;
     const healthy = toAvg < 100;
     const budget = healthy ? 500 : Math.min(30000, Math.max(5000, Math.round(toAvg * 12)));
     const suffix = healthy ? '' : ' (throttled display)';
