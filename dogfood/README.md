@@ -35,11 +35,11 @@ Session paths were rewritten `~/tau-dogfood` (the workspace was deleted after
 the run; these recordings are a realistic-session sample for the E2E
 fixture work).
 
-**Bugs the dogfood surfaced** (tracked for the v0 clean-up):
+**Bugs the dogfood surfaced** — all four fixed 2026-09-24 (commits `05db45a`, `5de2ce9`, `12df441`):
 
-1. failing tool calls render a ✓ where they should render an ✗
-2. opening a session should scroll to the bottom (not the top)
-3. child sessions must not be archivable; in the archived dropdown they show
-   twice (top-level and under the parent) — they should appear only under
-   the parent
-4. a sub-agent's child session should be auto-expanded in the tree
+1. failing tool calls rendered a ✓ where they should render an ✗ — the store now derives the tool's status from the recorded output in the live and reload paths
+2. opening a session should scroll to the bottom, not keep the previous session's viewport — a per-session effect resets the pin and lands on the new tail
+3. child sessions must not be archivable (the parent cascades), and the archive folder listed children twice (top-level and under their parent) — it lists roots only; the archive button hides on child rows; `archiveSession` refuses a child
+4. a sub-agent's child session was invisible in a collapsed group — a group with a running sub-agent now opens by default
+
+Live-verified in the running app via tauri-pilot after the fixes (session open-lands-at-tail; archive folder roots-only).
