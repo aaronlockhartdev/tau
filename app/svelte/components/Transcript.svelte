@@ -279,11 +279,16 @@
     // While pinned, one catch-up per frame to the measured bottom, and only
     // when behind (rAF runs after the flush that re-laid the track, so a
     // growth and its catch-up land in the same frame — one monotonic step,
-    // no up/down fight, no smooth-scroll mix).
+    // no up/down fight, no smooth-scroll mix). The target is the list's
+    // measured total, not the node's scrollHeight: the node only renders the
+    // windowed slice, so its height is the slice's bottom, not the session's
+    // — targeting it ratchets the pin down one window per measurement round
+    // (~30 s over a 10k session with variable heights) instead of landing
+    // the tail in a couple of frames.
     let raf = 0;
     const follow = () => {
       if (pinned) {
-        const top = node.scrollHeight - node.clientHeight;
+        const top = total - node.clientHeight;
         if (node.scrollTop < top) node.scrollTop = top;
       }
       raf = requestAnimationFrame(follow);

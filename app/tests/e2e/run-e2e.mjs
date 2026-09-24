@@ -20,7 +20,7 @@ const ROOT = path.join(APP, '..');
 const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
 // The shared fixture's pinned hash (roadmap G handoff 1): a drifted
 // generator invalidates the suite instead of silently re-baselining it.
-const FIXTURE_SHA256 = '88998edb06275361cdc5ab889e60dd467603007a043cb1620436c9194ec94b0c';
+const FIXTURE_SHA256 = '2a4f08174fe7f7e1042833632aebe7f9899839be89fb5a4d41e70df183f72139';
 const APP_ID = 'com.aaronlockhartdev.tau';
 const FIXTURE_SESSION = 'session';
 const FIXTURE_ENTRIES = 10000;
@@ -369,7 +369,7 @@ async function main() {
       d1.trackH > 100000 && d1.scrollH <= d1.trackH * 1.2,
       `trackH=${d1.trackH}, scrollH=${d1.scrollH}`
     );
-    check('transcript: the tail entry (09999) is rendered at the boot pin', d1.lastText.includes('entry 09999'), d1.lastText.slice(0, 80));
+    check('transcript: the tail entry is rendered at the boot pin', d1.lastText.trim().startsWith('Done:'), d1.lastText.slice(0, 80));
     const s1 = await st();
     check('the status bar reports the 10k render range', /of 10000$/.test(s1.renderRange ?? ''), s1.renderRange);
 

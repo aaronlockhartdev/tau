@@ -118,11 +118,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: e2e-failure-macos
+          # The runner's own temp dir only — globbing /var/folders/* spans
+          # root-owned system folders the action can't read (EACCES kills it).
           path: |
-            /var/folders/*/*/T/tau-e2e-*/failure.png
-            /var/folders/*/*/T/tau-e2e-*/app.log
-            /var/folders/*/*/T/tau-e2e-*/results.json
-          if-no-files-found: ignore
+            ${{ env.TMPDIR }}tau-e2e-*/failure.png
+            ${{ env.TMPDIR }}tau-e2e-*/app.log
+            ${{ env.TMPDIR }}tau-e2e-*/results.json
+          if-no-files-found: warn
 
   linux-acceptance:
     runs-on: ubuntu-latest
@@ -169,4 +171,4 @@ jobs:
             /tmp/tau-e2e-*/failure.png
             /tmp/tau-e2e-*/app.log
             /tmp/tau-e2e-*/results.json
-          if-no-files-found: ignore
+          if-no-files-found: warn
