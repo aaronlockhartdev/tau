@@ -137,6 +137,25 @@ async function poll(fn, ms, label) {
   }
 }
 
+// Poll a state read until a predicate on its result holds. A read that
+// throws (the plugin's fixed 10 s eval budget on a saturated webview) is
+// "not ready yet", not a failure; the budget bounds the whole wait.
+async function pollState(fn, pred, ms, label) {
+  const t0 = Date.now();
+  let last = null;
+  for (;;) {
+    try {
+      const s = await fn();
+      last = s;
+      if (pred(s)) return s;
+    } catch {
+      // a timed-out read means the in-page work is still running
+    }
+    if (Date.now() - t0 > ms) throw new Error(`${label} never converged (${ms} ms): ${JSON.stringify(last)}`);
+    await sleep(250);
+  }
+}
+
 const storeState = () =>
   `(() => {
     const s = window.__tau.store();
@@ -334,10 +353,11 @@ async function main() {
         await sleep(500);
         return fn();
       });
-    // 30 s budget (the plugin's cap): right after a heavy in-page op (a 10k
-    // snapshot reload) the webview is saturated and even a plain state read
-    // can exceed the 10 s default — run 35962325726 lost the re-open check
-    // this way on both runners.
+    // The 30 s is the driver's RPC ceiling, set above the plugin's fixed
+    // 10 s eval budget: an eval the plugin kills at 10 s answers as an
+    // error result, and the driver must not race it first (run
+    // 35962325726 lost the re-open read this way). The plugin's `eval`
+    // method takes no timeout param, so no bigger per-call budget exists.
     const st = () => withRetry(() => pilot.eval(storeState(), 30000));
     const dom = () => withRetry(() => pilot.eval(domState(), 30000));
     const panes = () => withRetry(() => pilot.eval(panesState(), 30000));
@@ -571,12 +591,14 @@ async function main() {
         disk.length === 1 + FIXTURE_ENTRIES + 2 * (i + 1) && diskLast.type === 'assistant' && diskLast.payload.text.includes(CANNED_TEXT),
         `last=${diskLast.type} "${(diskLast.payload?.text ?? '').slice(0, 24)}…"`
       );
-      // 30 s budget + retry: re-opening the 10k session reloads the whole
-      // snapshot in-page; on a starved display that is a ten-plus second job,
-      // well past the raw eval's 10 s default (run 35960967597 died here with
-      // 20/20 checks passed).
-      await withRetry(() => pilot.eval(`await window.__tau.switchSession(${JSON.stringify(FIXTURE_SESSION)})`, 30000));
-      const re = await st();
+      // Fire the re-open and poll for convergence. The plugin's eval budget
+      // is a fixed 10 s (its `eval` method takes no timeout param), and a
+      // 10k snapshot reload on a starved display outlasts it: the eval
+      // times out while the reload keeps running in the webview, so the
+      // driver must not trust one read — runs 35960967597, 35962325726 and
+      // 35963701819 each died on the single-shot read here.
+      pilot.eval(`await window.__tau.switchSession(${JSON.stringify(FIXTURE_SESSION)})`).catch(() => {});
+      const re = await pollState(() => st(), (s) => s.entries === diskEntries && s.turn === 'idle', 120000, `${label}: re-opening from the file`);
       check(
         `${label}: re-opening from the file converges to the disk entries (${diskEntries})`,
         re.entries === diskEntries && re.turn === 'idle',
