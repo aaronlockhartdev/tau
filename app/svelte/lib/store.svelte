@@ -249,18 +249,28 @@
   // In-flight marker: the open's own workspace_opened event re-enters the
   // store via syncWorkspaces; without the marker it re-opens mid-flight,
   // and on an empty workspace the two session_new calls create a phantom
-  // duplicate session.
-  let opening = false;
+  // duplicate session. A same-tab double-click shares the in-flight open;
+  // a different tab awaits it and then proceeds (a dropped tab click was
+  // a lost navigation).
+  let inFlight: { cwd: string; done: Promise<void> } | null = null;
 
   export async function openWorkspace(ws: Workspace): Promise<void> {
-    if (opening) return;
-    opening = true;
+    if (inFlight) {
+      if (inFlight.cwd === ws.cwd) return inFlight.done;
+      await inFlight.done;
+    }
+    const done = (async () => {
+      try {
+        await openWorkspaceInner(ws);
+      } catch (e) {
+        store.error = errText(e);
+      }
+    })();
+    inFlight = { cwd: ws.cwd, done };
     try {
-      await openWorkspaceInner(ws);
-    } catch (e) {
-      store.error = errText(e);
+      await done;
     } finally {
-      opening = false;
+      if (inFlight?.done === done) inFlight = null;
     }
   }
 
@@ -357,7 +367,7 @@
   // window, a remote backend): the store re-reads the list and, if nothing
   // is open yet, opens the first one — the boot rule, applied live.
   async function syncWorkspaces(): Promise<void> {
-    if (opening) return;
+    if (inFlight) return;
     try {
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') return;

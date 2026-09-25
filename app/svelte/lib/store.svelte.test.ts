@@ -30,6 +30,7 @@ import {
   closeWorkspace,
   fetchWindow,
   init,
+  openWorkspace,
   retryDirFetch,
   restoreSession,
   send,
@@ -104,7 +105,7 @@ function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
   };
 }
 
-function mockIPC(handler: (cmd: Command) => CommandOutput) {
+function mockIPC(handler: (cmd: Command) => CommandOutput | Promise<CommandOutput>) {
   mockInvoke.mockImplementation(async (_name: unknown, args: { command: Command }) => handler(args.command));
 }
 
@@ -200,6 +201,46 @@ describe('boot (init)', () => {
     expect(store.error).toBe('no Tauri window — run the app');
     expect(store.loading).toBe(false);
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+});
+
+describe('openWorkspace concurrency', () => {
+  const WS2: Workspace = { id: 'w2', name: 'other', cwd: '/tmp/other' };
+
+  it('a different-tab click while an open is in flight proceeds after it; a same-tab double-click is one open', async () => {
+    let release: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const opened: string[] = [];
+    mockIPC((cmd) => {
+      if (cmd.type === 'workspace_open') {
+        if (cmd.cwd === WS.cwd) {
+          opened.push('w1');
+          return gate.then(() => ({ kind: 'workspace', workspace: WS }));
+        }
+        opened.push('w2');
+        return { kind: 'workspace', workspace: WS2 };
+      }
+      if (cmd.type === 'skill_list') return { kind: 'skills', skills: [] };
+      if (cmd.type === 'session_list')
+        return cmd.workspace === WS.id
+          ? { kind: 'sessions', sessions: [meta('s1')] }
+          : { kind: 'sessions', sessions: [meta('s3', WS2.id)] };
+      if (cmd.type === 'session_open')
+        return cmd.session === 's1'
+          ? snap('s1')
+          : { kind: 'snapshot', snapshot: { ...snap('s3').snapshot, workspace: WS2, session: meta('s3', WS2.id) } };
+      return { kind: 'none' };
+    });
+    const p1 = openWorkspace(WS);
+    const p2 = openWorkspace(WS);
+    const p3 = openWorkspace(WS2);
+    release!();
+    await Promise.all([p1, p2, p3]);
+    expect(opened).toEqual(['w1', 'w2']);
+    expect(store.workspaces.map((w) => w.id).sort()).toEqual(['w1', 'w2']);
+    expect(store.current).toBe('s3');
   });
 });
 
