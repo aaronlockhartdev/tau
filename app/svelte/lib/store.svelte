@@ -162,6 +162,13 @@
     return String(e);
   }
 
+  // Banner lifecycle (dogfood N2): every command clears the stale banner
+  // before it runs, a failed command sets a fresh one, and non-error
+  // system events no longer wipe it (applyEvents).
+  function clearError(): void {
+    store.error = null;
+  }
+
 
   /** Connect: list workspaces, then open the first (or the ?workspace= one). */
   export async function init(): Promise<void> {
@@ -254,6 +261,7 @@
   }
 
   async function openWorkspaceInner(ws: Workspace): Promise<void> {
+    clearError();
     // The core keys workspaces by cwd (deterministic id), so re-opening a
     // folder returns the same workspace; the store keeps one tab per cwd.
     const opened = await command({ type: 'workspace_open', cwd: ws.cwd });
@@ -373,6 +381,7 @@
   export async function newSession(ws: string, title: string | null = null): Promise<string | null> {
     let sid: string;
     try {
+      clearError();
       const out = (await command({
         type: 'session_new',
         workspace: ws,
@@ -393,6 +402,7 @@
     const t = title.trim();
     if (!t) return;
     try {
+      clearError();
       await command({ type: 'session_rename', session: sid, title: t });
     } catch (e) {
       store.error = errText(e);
@@ -408,6 +418,7 @@
     const s = store.sessions[sid];
     if (!s || !model || s.meta.model === model) return;
     try {
+      clearError();
       await command({ type: 'session_set_model', session: sid, model });
     } catch (e) {
       store.error = errText(e);
@@ -425,6 +436,7 @@
     // the archive folder.
     if (store.sessions[sid]?.meta.parent) return;
     try {
+      clearError();
       const out = await command({ type: 'session_archive', session: sid });
       if (out.kind === 'session') {
         store.sessions = setArchived(store.sessions, sid, out.session);
@@ -449,6 +461,7 @@
   // refetched list, the archive flag's authority.
   export async function restoreSession(ws: string, sid: string): Promise<void> {
     try {
+      clearError();
       await command({ type: 'session_restore', workspace: ws, session: sid });
     } catch (e) {
       store.error = errText(e);
@@ -462,10 +475,11 @@
     }
   }
 
-export async function switchSession(sid: string): Promise<void> {
+  export async function switchSession(sid: string): Promise<void> {
     const prev = store.current;
     store.current = sid;
     try {
+      clearError();
       const out = await command({ type: 'session_open', session: sid });
       if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
       store.sessions = openSession(store.sessions, sid, out.snapshot);
@@ -515,6 +529,7 @@ export async function switchSession(sid: string): Promise<void> {
   s.entries.push({ id: optimisticId, kind: 'user', text });
   store.tailJump++;
   try {
+    clearError();
     await command({
       type: 'message_send',
       session: sid,
@@ -532,6 +547,7 @@ export async function switchSession(sid: string): Promise<void> {
     const sid = store.current;
     if (sid === null) return;
     try {
+      clearError();
       await command({ type: 'message_stop', session: sid });
     } catch (e) {
       store.error = errText(e);
@@ -553,6 +569,7 @@ export async function switchSession(sid: string): Promise<void> {
       return seen++ !== idx;
     });
     try {
+      clearError();
       const out = await command({ type: 'session_open', session: sid });
       if (out.kind === 'snapshot') {
         s.pending = out.snapshot.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
@@ -569,7 +586,9 @@ export async function switchSession(sid: string): Promise<void> {
       const sid = 'session' in ev ? ev.session : null;
       if (!sid) {
         if (ev.type === 'system') {
-          store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
+          // Only an error kind writes: an unrelated system event (from any
+          // client) must not wipe a live IPC error (S3).
+          if (ev.kind.kind === 'error') store.error = ev.kind.message;
           if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
         }
         if (ev.type === 'skill_list_changed') {
@@ -717,7 +736,9 @@ export async function switchSession(sid: string): Promise<void> {
           break;
         }
         case 'system': {
-          store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
+          // Only an error kind writes (S3): the next successful command
+          // clears the banner, not an unrelated system event.
+          if (ev.kind.kind === 'error') store.error = ev.kind.message;
           break;
         }
       }

@@ -517,6 +517,20 @@ describe('guards', () => {
   });
 });
 
+describe('store.error lifecycle', () => {
+  it('a successful command clears the banner; an unrelated system event does not', async () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    store.current = 's1';
+    store.error = 'stale failure';
+    applyEvents([
+      { type: 'system', workspace: WS.id, session: null, kind: { kind: 'provider_changed' } }
+    ]);
+    expect(store.error).toBe('stale failure');
+    await send('hi', 'steering');
+    expect(store.error).toBeNull();
+  });
+});
+
 describe('subagent_event', () => {
   it('spawned: a mirror entry lands and the child stub is registered', () => {
     store.sessions = openSession({}, 'p', snap('p').snapshot);
