@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use tau_protocol::snapshot::SessionMeta;
 
@@ -300,33 +300,35 @@ impl SessionStore {
         Ok(())
     }
 
-    /// Load the header and all entry ids, verifying every line's CRC. A torn
-    /// last line (process killed mid-append) is terminated or truncated —
-    /// kill-safe by construction (ADR-0005); any other bad line is corruption.
-    pub fn open(&mut self) -> Result<(), Error> {
-        let mut raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
-        if !raw.ends_with('\n') {
-            match raw.rfind('\n') {
-                Some(idx) => {
-                    let partial = &raw[idx + 1..];
-                    if partial.parse::<Entry>().is_ok() {
-                        raw.push('\n');
-                    } else {
-                        raw.truncate(idx + 1);
-                    }
-                    fs::write(self.path(), &raw)?;
-                }
-                None => {
-                    if serde_json::from_str::<Header>(&raw).is_err() {
-                        return Err(Error::Other("session file has no header".into()));
-                    }
-                    raw.push('\n');
-                    fs::write(self.path(), &raw)?;
-                }
-            }
+    /// Split the raw file into lines, dropping a torn tail: a final line
+    /// without its terminating newline that parses as neither an entry
+    /// nor the header is a kill-interrupted write — not an entry, and the
+    /// next append settles it. A complete final line missing only its
+    /// terminator is kept (as is an unterminated header). The read path
+    /// never rewrites the file; it only tolerates the torn tail in memory.
+    fn entry_lines(raw: &str) -> Vec<&str> {
+        let mut lines: Vec<&str> = raw.lines().collect();
+        if !raw.ends_with('\n')
+            && lines.last().is_some_and(|l| {
+                !l.parse::<Entry>().is_ok() && !serde_json::from_str::<Header>(l).is_ok()
+            })
+        {
+            lines.pop();
         }
-        let lines: Vec<&str> = raw.split('\n').collect();
-        let header: Header = serde_json::from_str(lines[0])?;
+        lines
+    }
+
+    /// Load the header and all entry ids, verifying every line's CRC. A
+    /// torn last line (process killed mid-append) is skipped in memory —
+    /// the read path never rewrites the file (the writer settles the tail
+    /// at the next append); any other bad line is corruption.
+    pub fn open(&mut self) -> Result<(), Error> {
+        let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
+        let lines = Self::entry_lines(&raw);
+        let Some(header_line) = lines.first() else {
+            return Err(Error::Other("session file has no header".into()));
+        };
+        let header: Header = serde_json::from_str(header_line)?;
         if header.kind != "session" {
             return Err(Error::Other("first line is not a session header".into()));
         }
@@ -393,6 +395,10 @@ impl SessionStore {
         self.extract_blob_if_needed(&mut entry)?;
         entry.crc = Some(entry.compute_crc());
 
+        // The writer — never the reader — settles a tail left unterminated
+        // by a kill mid-append, so no mangled line lands mid-file.
+        self.settle_tail()?;
+
         let mut file = OpenOptions::new()
             // create(false): a file deleted after open is a refusal (the
             // check above), never a silent resurrection.
@@ -407,6 +413,36 @@ impl SessionStore {
         self.next += 1;
         self.loaded = true;
         Ok(entry)
+    }
+
+    /// The writer-side tail settlement (the read path never rewrites, so
+    /// it cannot race the writer): a kill mid-append leaves the file's
+    /// last line unterminated — a complete line missing its newline, or a
+    /// torn partial. The next append settles it: the complete line is
+    /// terminated, the torn one truncated, and the new line starts clean.
+    fn settle_tail(&self) -> Result<(), Error> {
+        let mut file = fs::File::open(self.path())?;
+        let len = file.metadata()?.len();
+        if len == 0 {
+            return Ok(());
+        }
+        file.seek(io::SeekFrom::End(-1))?;
+        let mut last = [0u8; 1];
+        file.read_exact(&mut last)?;
+        if last[0] == b'\n' {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(self.path())?;
+        let idx = raw.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        if raw[idx..].parse::<Entry>().is_ok() {
+            // A complete line missing its newline: terminate it.
+            let mut tail = OpenOptions::new().append(true).open(self.path())?;
+            tail.write_all(b"\n")?;
+        } else {
+            // A torn line: truncate it; the append below starts clean.
+            fs::write(self.path(), &raw[..idx])?;
+        }
+        Ok(())
     }
 
     /// Move an oversized inline payload out to a zstd sidecar blob
@@ -452,13 +488,14 @@ impl SessionStore {
             return self.entry(l).map(Some);
         }
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
-        // Line 1 is the header; the leaf is the last entry line after it.
-        let lines: Vec<&str> = raw.lines().skip(1).collect();
-        let Some(line) = lines.iter().rev().find(|l| !l.is_empty()) else {
+        // Line 1 is the header; the leaf is the last entry line after it
+        // (a torn tail is not an entry — `entry_lines` drops it).
+        let lines: Vec<&str> = Self::entry_lines(&raw);
+        let Some(line) = lines.iter().skip(1).rev().find(|l| !l.is_empty()) else {
             return Ok(None);
         };
         let entry: Entry = line.parse::<Entry>()?;
-        entry.verify(raw.lines().count())?;
+        entry.verify(lines.len())?;
         Ok(Some(entry))
     }
 
@@ -580,7 +617,7 @@ impl SessionStore {
     pub fn entries_range(&self, start: usize, end: usize) -> Result<Vec<Entry>, Error> {
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
         let mut out = Vec::new();
-        for (i, line) in raw.lines().skip(1).enumerate() {
+        for (i, line) in Self::entry_lines(&raw).iter().skip(1).enumerate() {
             if line.is_empty() {
                 continue;
             }
@@ -606,7 +643,7 @@ impl SessionStore {
         let mut out = Vec::new();
         let prefix = format!("{{\"id\":\"{cursor}\"");
         let mut past = false;
-        for (i, line) in raw.lines().skip(1).enumerate() {
+        for (i, line) in Self::entry_lines(&raw).iter().skip(1).enumerate() {
             if line.is_empty() {
                 continue;
             }
@@ -624,7 +661,7 @@ impl SessionStore {
     /// Read one entry by id.
     pub fn entry(&self, id: &str) -> Result<Entry, Error> {
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
-        for (i, line) in raw.lines().skip(1).enumerate() {
+        for (i, line) in Self::entry_lines(&raw).iter().skip(1).enumerate() {
             if line.is_empty() {
                 continue;
             }
@@ -861,30 +898,86 @@ mod tests {
     }
 
     #[test]
-    fn torn_last_line_is_repaired_on_open() {
+    fn a_torn_last_line_is_skipped_not_repaired_on_open() {
         let tmp = tempfile::tempdir().unwrap();
         let (s, entries) = seeded(tmp.path());
         let mut raw = fs::read_to_string(s.path()).unwrap();
         raw.push_str(&format!("{{\"id\":\"{:08}\",\"parentId\":null", 99)); // no newline: a kill mid-append
+        let before = raw.clone();
         fs::write(s.path(), raw).unwrap();
         let mut reopened = store(tmp.path(), "s1");
         reopened.open().unwrap();
         assert_eq!(reopened.leaf().unwrap().unwrap().id, entries[2].id);
-        let fixed = fs::read_to_string(s.path()).unwrap();
-        assert!(fixed.ends_with('\n'));
-        assert!(!fixed.contains("99999999"));
+        // The read path never rewrites: the file is exactly as found.
+        assert_eq!(fs::read_to_string(s.path()).unwrap(), before);
     }
 
     #[test]
-    fn valid_last_line_without_newline_is_terminated_not_dropped() {
+    fn a_valid_last_line_without_newline_is_kept_not_dropped() {
         let tmp = tempfile::tempdir().unwrap();
         let (s, entries) = seeded(tmp.path());
         let raw = fs::read_to_string(s.path()).unwrap();
-        fs::write(s.path(), raw.trim_end_matches('\n')).unwrap();
+        let before = raw.trim_end_matches('\n').to_string();
+        fs::write(s.path(), &before).unwrap();
         let mut reopened = store(tmp.path(), "s1");
         reopened.open().unwrap();
         assert_eq!(reopened.leaf().unwrap().unwrap().id, entries[2].id);
-        assert!(fs::read_to_string(s.path()).unwrap().ends_with('\n'));
+        // The read path never rewrites: the file is exactly as found.
+        assert_eq!(fs::read_to_string(s.path()).unwrap(), before);
+    }
+
+    /// The writer settles a torn tail: the next append truncates the torn
+    /// line, so no mangled line lands mid-file and the session re-opens
+    /// clean.
+    #[test]
+    fn an_append_settles_a_torn_tail() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut s, entries) = seeded(tmp.path());
+        // A kill mid-append: a torn partial line, unterminated.
+        let mut raw = fs::read_to_string(s.path()).unwrap();
+        raw.push_str(&format!(
+            "{{\"id\":\"{:08}\",\"parentId\":\"{}\"",
+            99, entries[2].id
+        ));
+        fs::write(s.path(), raw).unwrap();
+        let e4 = s
+            .append(
+                "message",
+                serde_json::json!({ "text": "after the tear" }),
+                Some(&entries[2].id),
+            )
+            .unwrap();
+        let mut reopened = store(tmp.path(), "s1");
+        reopened.open().unwrap();
+        assert_eq!(
+            reopened.leaf().unwrap().unwrap().id,
+            e4.id,
+            "the session re-opens clean after the settle"
+        );
+        let all = reopened.entries_range(0, usize::MAX).unwrap();
+        assert_eq!(all.len(), 4);
+    }
+
+    /// A complete line missing its newline is terminated by the next
+    /// append, not dropped or mangled.
+    #[test]
+    fn an_append_terminates_a_complete_line_missing_its_newline() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut s, entries) = seeded(tmp.path());
+        let raw = fs::read_to_string(s.path()).unwrap();
+        fs::write(s.path(), raw.trim_end_matches('\n')).unwrap();
+        let e4 = s
+            .append(
+                "message",
+                serde_json::json!({ "text": "next" }),
+                Some(&entries[2].id),
+            )
+            .unwrap();
+        let mut reopened = store(tmp.path(), "s1");
+        reopened.open().unwrap();
+        assert_eq!(reopened.leaf().unwrap().unwrap().id, e4.id);
+        let all = reopened.entries_range(0, usize::MAX).unwrap();
+        assert_eq!(all.len(), 4);
     }
 
     #[test]
