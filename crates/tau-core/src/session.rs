@@ -374,6 +374,16 @@ impl SessionStore {
 
     fn append_line(&mut self, mut entry: Entry, parent: Option<&str>) -> Result<Entry, Error> {
         self.ensure_open()?;
+        // A loaded store whose file is gone (deleted, or archived out
+        // from under it) is in an inconsistent state: refuse the append
+        // — never resurrect a file headerless (unopenable, invisible to
+        // the list, orphaned on disk; ADR-0005).
+        if !self.path().exists() {
+            return Err(Error::Other(format!(
+                "session {} file is gone — the append was refused",
+                self.id
+            )));
+        }
         if let Some(p) = parent
             && !self.ids.contains(p)
         {
@@ -384,7 +394,9 @@ impl SessionStore {
         entry.crc = Some(entry.compute_crc());
 
         let mut file = OpenOptions::new()
-            .create(true)
+            // create(false): a file deleted after open is a refusal (the
+            // check above), never a silent resurrection.
+            .create(false)
             .append(true)
             .open(self.path())?;
         let mut line = entry.canonical_line();
@@ -905,6 +917,27 @@ mod tests {
         assert!(
             s.append("message", serde_json::json!({}), Some("99999999"))
                 .is_err()
+        );
+    }
+
+    /// A store whose file is deleted (or archived) after open refuses the
+    /// next append instead of resurrecting the file headerless (unopenable,
+    /// invisible to the list, orphaned on disk; ADR-0005).
+    #[test]
+    fn an_append_to_a_deleted_file_is_refused_not_resurrected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (mut s, _) = seeded(tmp.path());
+        std::fs::remove_file(s.path()).unwrap();
+        let err = s
+            .append("message", serde_json::json!({ "text": "ghost" }), None)
+            .unwrap_err();
+        assert!(
+            matches!(err, Error::Other(_)),
+            "expected a plain refusal: {err:?}"
+        );
+        assert!(
+            !s.path().exists(),
+            "a refused append must not recreate the file"
         );
     }
 
