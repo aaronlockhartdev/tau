@@ -401,3 +401,68 @@ async fn a_skill_invocation_records_the_expanded_entry() {
     assert_eq!(user.payload["text"], "/not-a-skill");
     assert!(user.payload.get("skill").is_none());
 }
+
+/// A /skill: send queued mid-turn shows in the GUI queue as the text the
+/// turn will record — the expanded template, not the raw line. The
+/// in-flight turn absorbs the steering message and records the expansion;
+/// the post-turn reconciliation matches the queued item by exact text and
+/// removes it, so a raw entry would have ghosted.
+#[tokio::test]
+async fn a_skill_send_queued_mid_turn_shows_its_expanded_text() {
+    let cwd = tempfile::tempdir().unwrap();
+    write_skill_fixture(
+        cwd.path(),
+        ".agents/skills/alpha",
+        "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
+    );
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, cwd.path()).await;
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned_slow(&canned_body(), 600),
+        TurnConfig::default(),
+    );
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "work".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // A skill send while the turn is in flight: it is the queued one.
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "/skill:alpha do it".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    // The queued item shows the recorded text, not the raw line.
+    let items = live.queue.lock().unwrap().clone();
+    assert_eq!(items.len(), 1);
+    assert!(
+        items[0].text.starts_with("Skill `alpha`"),
+        "the queue shows the expanded text: {}",
+        items[0].text
+    );
+    assert!(
+        !items[0].text.starts_with("/skill:"),
+        "the raw line must not queue"
+    );
+    // When the turn settles, the reconciliation removes the item by exact
+    // text — nothing ghosts.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if live.queue.lock().unwrap().is_empty() {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the queued skill send ghosted: {:?}",
+            live.queue.lock().unwrap()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    drop(core);
+}
