@@ -23,7 +23,7 @@ tauri = "2.11"
 tauri-plugin-dialog = "2"
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the agent's window into the UI
-tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", optional = true }
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "79f837ab965debf800282343811b5909a537284d", optional = true }
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the WebdriverIO E2E stack (roadmap G2)
 tauri-plugin-wdio = { version = "1.4", optional = true }
