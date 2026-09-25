@@ -9,15 +9,17 @@ tauri-build = { version = "2.6", features = [] }
 
 [features]
 # The E2E/dogfooding stack (roadmap G2): the pilot socket + the WebdriverIO
-# server. Debug builds opt in via `--features e2e`; release builds compile
+# server, plus the webview devtools (kept out of release, sweep finding T5).
+# Debug builds opt in via `--features e2e`; release builds compile
 # none of it in (sweep finding X1: debug seams stay out of the artifact).
 e2e = [
     "dep:tauri-plugin-pilot",
     "dep:tauri-plugin-wdio",
     "dep:tauri-plugin-wdio-webdriver",
+    "tauri/devtools",
 ]
 [dependencies]
-tauri = { version = "2.11", features = ["devtools"] }
+tauri = "2.11"
 tauri-plugin-dialog = "2"
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the agent's window into the UI
