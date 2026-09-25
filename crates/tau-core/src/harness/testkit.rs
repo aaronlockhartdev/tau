@@ -8,11 +8,7 @@ pub(crate) fn providers() -> BTreeMap<String, crate::config::Provider> {
     let mut m = BTreeMap::new();
     m.insert(
         "dev".into(),
-        crate::config::Provider {
-            base_url: "http://127.0.0.1:9/v1".into(),
-            key_env: String::new(),
-            models: vec!["model".into()],
-        },
+        crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model"),
     );
     m
 }

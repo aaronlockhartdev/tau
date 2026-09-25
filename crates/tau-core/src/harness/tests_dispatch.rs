@@ -156,7 +156,7 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
     std::fs::create_dir_all(tmp.path().join(".tau")).unwrap();
     std::fs::write(
             tmp.path().join(".tau").join("config.toml"),
-            "[providers.dev]\nbase_url = \"http://project:9/v1\"\nkey_env = \"\"\nmodels = [\"proj-model\"]\n",
+            "[providers.dev]\nbase_url = \"http://project:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"proj-model\"]\n",
         )
         .unwrap();
     let core = CoreBuilder::custom(providers()).build();
@@ -175,7 +175,7 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
         dev.base_url, "http://project:9/v1",
         "the project layer did not replace the root provider"
     );
-    assert_eq!(dev.models, vec!["proj-model".to_owned()]);
+    assert_eq!(dev.models.keys().next(), Some(&"proj-model".to_owned()));
 }
 
 /// A project-layer provider reaches a session on the production (file-layered)
@@ -190,7 +190,7 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
     // The system layer carries a provider the project layer does not know.
     std::fs::write(
         sys.path().join("config.toml"),
-        "[providers.sys]\nbase_url = \"http://system:1/v1\"\nkey_env = \"\"\nmodels = [\"sys-model\"]\n",
+        "[providers.sys]\nbase_url = \"http://system:1/v1\"\nkey_env = \"\"\n\n[providers.sys.models.\"sys-model\"]\n",
     )
     .unwrap();
     // The project layer adds its own; the merged config is the system layer
@@ -198,7 +198,7 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
     std::fs::create_dir_all(ws.path().join(".tau")).unwrap();
     std::fs::write(
         ws.path().join(".tau").join("config.toml"),
-        "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\nmodels = [\"proj-model\"]\n",
+        "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-model\"]\n",
     )
     .unwrap();
     let core = CoreBuilder::default_system()
@@ -229,7 +229,7 @@ async fn a_production_send_makes_exactly_one_provider_call() {
     let ws = tempfile::tempdir().unwrap();
     std::fs::write(
         sys.path().join("config.toml"),
-        "[providers.canned]\nbase_url = \"canned://text\"\nmodels = [\"canned-model\"]\n",
+        "[providers.canned]\nbase_url = \"canned://text\"\n\n[providers.canned.models.\"canned-model\"]\n",
     )
     .unwrap();
     let core = CoreBuilder::default_system()

@@ -68,13 +68,22 @@ impl From<crate::provider::ProviderError> for AgentError {
     }
 }
 
-/// Per-turn provider limits (v0: fixed for the session's life; the hosted
-/// test model is a thinking model, so capping reasoning is how live tests
-/// stay cheap).
-#[derive(Debug, Clone, Copy, Default)]
+/// Per-turn provider options, resolved from the merged config and the
+/// session's model facts at session build (spec §12, #35); re-resolved when
+/// the session's model changes.
+#[derive(Debug, Clone, Default)]
 pub struct TurnConfig {
     pub max_output_tokens: Option<u64>,
     pub reasoning: Option<ReasoningEffort>,
+    pub reasoning_summary: bool,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    /// A stable cache key (the session id) plus the `cache.retention`.
+    pub prompt_cache: Option<(String, crate::config::CacheRetention)>,
+    /// The model's declared context window (its facts); the clamp's ceiling.
+    pub context_window: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -385,6 +394,13 @@ impl AgentSession {
     /// command's live half; provider resolution happens at the call).
     pub fn set_model(&self, model: String) {
         self.inner.lock().unwrap().model = model;
+    }
+
+    /// The turn's provider options (spec §12, #35): re-derived when the
+    /// session's model changes, so clamping and reasoning levels track the
+    /// active model.
+    pub fn set_turn_config(&self, turn: TurnConfig) {
+        self.inner.lock().unwrap().turn = turn;
     }
 
     /// Append a record entry against the active leaf (the sub-agent

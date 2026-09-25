@@ -36,7 +36,7 @@ pub(super) fn provider_for(base: &str) -> Provider {
     Provider {
         base_url: base.into(),
         key_env: String::new(),
-        models: Vec::new(),
+        models: std::collections::BTreeMap::new(),
     }
 }
 
@@ -44,6 +44,7 @@ pub(super) fn fast_requests() -> Requests {
     Requests {
         timeout_secs: 10,
         retries: 2,
+        idle_timeout_secs: 10,
         tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
     }
 }
@@ -174,6 +175,7 @@ async fn timeout_is_retried_and_surfaced() {
     let requests = Requests {
         timeout_secs: 1,
         retries: 1,
+        idle_timeout_secs: 1,
         tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
     };
     let request = ResponseRequest::new(
@@ -215,7 +217,7 @@ async fn models_roundtrip() {
     let provider = Provider {
         base_url: base,
         key_env: String::new(),
-        models: Vec::new(),
+        models: std::collections::BTreeMap::new(),
     };
     let models = list_models(&client, &provider)
         .await
@@ -232,11 +234,7 @@ async fn multi_message_conversation_streams() {
         Err(_) => return,
     };
     let client = test_client();
-    let provider = Provider {
-        base_url: base,
-        key_env: String::new(),
-        models: vec!["qwen3.5-9b-4bit".into()],
-    };
+    let provider = Provider::with_model(base, "qwen3.5-9b-4bit");
     let requests = Requests::default();
     let request = ResponseRequest::new(
         "qwen3.5-9b-4bit",
@@ -316,6 +314,7 @@ async fn a_healthy_long_stream_outlives_the_connect_deadline() {
         // not — the old total deadline would have cut this stream.
         timeout_secs: 3,
         retries: 0,
+        idle_timeout_secs: 3,
         tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
     };
     let request = ResponseRequest::new("m", None, vec![]);
@@ -352,6 +351,7 @@ async fn a_dead_stream_is_cut_by_the_idle_timeout() {
     let requests = Requests {
         timeout_secs: 1,
         retries: 2,
+        idle_timeout_secs: 1,
         tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
     };
     let request = ResponseRequest::new("m", None, vec![]);

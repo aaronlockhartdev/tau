@@ -83,3 +83,52 @@ fn call_output_from_payload_maps_the_stored_shapes() {
         None
     );
 }
+
+#[test]
+fn request_wire_shape_carries_generation_thinking_and_cache() {
+    let request = ResponseRequest::new("m", Some("sys"), vec![])
+        .with_max_output_tokens(8192)
+        .with_temperature(0.5)
+        .with_top_p(0.9375)
+        .with_frequency_penalty(0.25)
+        .with_presence_penalty(0.0)
+        .with_reasoning(ReasoningEffort::High)
+        .with_reasoning_summary()
+        .with_prompt_cache("sess-1".into(), crate::config::CacheRetention::Long);
+    let wire: serde_json::Value = serde_json::to_value(&request).unwrap();
+    assert_eq!(wire["max_output_tokens"], 8192);
+    assert_eq!(wire["temperature"], 0.5);
+    assert_eq!(wire["top_p"], 0.9375);
+    assert_eq!(wire["frequency_penalty"], 0.25);
+    assert_eq!(wire["presence_penalty"], 0.0);
+    assert_eq!(wire["reasoning"]["effort"], "high");
+    assert_eq!(wire["reasoning"]["summary"], "auto");
+    assert_eq!(wire["prompt_cache_key"], "sess-1");
+    assert_eq!(wire["prompt_cache_options"]["type"], "default");
+    assert_eq!(wire["prompt_cache_options"]["retention"], "7d");
+}
+
+#[test]
+fn request_wire_shape_omits_unset_options() {
+    let wire: serde_json::Value =
+        serde_json::to_value(ResponseRequest::new("m", None, vec![])).unwrap();
+    assert!(wire.get("temperature").is_none());
+    assert!(wire.get("top_p").is_none());
+    assert!(wire.get("frequency_penalty").is_none());
+    assert!(wire.get("presence_penalty").is_none());
+    assert!(wire.get("reasoning").is_none());
+    assert!(wire.get("prompt_cache_key").is_none());
+    assert!(wire.get("prompt_cache_options").is_none());
+}
+
+#[test]
+fn clamp_respects_the_declared_window_and_prompt() {
+    // Cap below the window's remainder: untouched.
+    assert_eq!(clamp_max_output(8192, Some(32768), 1000), 8192);
+    // Cap above the remainder: clamped to it.
+    assert_eq!(clamp_max_output(8192, Some(9000), 1000), 8000);
+    // No declared window: untouched.
+    assert_eq!(clamp_max_output(8192, None, 1000), 8192);
+    // Prompt fills the window: untouched (the server rejects).
+    assert_eq!(clamp_max_output(8192, Some(500), 1000), 8192);
+}

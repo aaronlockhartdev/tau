@@ -310,11 +310,7 @@ async fn live_tool_calling_session() {
     std::fs::write(dir.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
     let provider = crate::provider::production(
         &crate::provider::tests::test_client(),
-        &crate::config::Provider {
-            base_url: base,
-            key_env: String::new(),
-            models: vec![model.clone()],
-        },
+        &crate::config::Provider::with_model(base, model.clone()),
         &crate::config::Requests::default(),
     );
     let agent = AgentSession::new(SessionParams {
@@ -330,6 +326,7 @@ async fn live_tool_calling_session() {
         turn: TurnConfig {
             max_output_tokens: Some(200),
             reasoning: Some(crate::provider::ReasoningEffort::Low),
+            ..TurnConfig::default()
         },
         om: None,
         om_model: String::new(),

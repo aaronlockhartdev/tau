@@ -74,11 +74,7 @@ async fn live_run_streams_the_event_pipe() {
     let mut hosted = providers();
     hosted.insert(
         "dev".to_owned(),
-        crate::config::Provider {
-            base_url: "https://llms.aaronlockhart.dev/v1".into(),
-            key_env: String::new(),
-            models: vec!["qwen3.8-27b".into()],
-        },
+        crate::config::Provider::with_model("https://llms.aaronlockhart.dev/v1", "qwen3.8-27b"),
     );
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(hosted).build();
@@ -100,6 +96,7 @@ async fn live_run_streams_the_event_pipe() {
         TurnConfig {
             max_output_tokens: Some(200),
             reasoning: None,
+            ..TurnConfig::default()
         },
     );
 

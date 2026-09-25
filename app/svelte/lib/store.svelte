@@ -10,6 +10,7 @@
   // cards in (spec §8).
 
   import { command, isTauri, type Event, type SessionMeta, type SkillInfo, type SubagentInfo, type Workspace } from './protocol';
+  import { presentation } from './presentation.svelte';
   import { decodeEntry, type PendingDelta, applyStreamEvent, applyToolEvent, mergeHydrated } from './entries';
   import {
     applySessionList,
@@ -35,7 +36,10 @@
   export const store = $state({
     focus: false,
     modelMenuOpen: false,
-    reasoningOpen: false,
+    // Seeded from the per-user presentation registry (spec §12, #35):
+    // 'visible-by-default' is the user's standing preference, and the 'r'
+    // keybind toggles it for the session.
+    reasoningOpen: presentation.reasoningVisibleByDefault,
     // Per-entry card expansion, keyed `${session}:${entryId}:${slot}`: the
     // transcript window unmounts off-screen cards, so the state lives here,
     // not in the card's local $state (which would reset to collapsed on

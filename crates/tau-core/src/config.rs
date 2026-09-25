@@ -1,7 +1,11 @@
 //! Merged configuration: system `~/.config/tau/config.toml` with the project
 //! `.tau/config.toml` layered on top (spec §12). TOML was chosen as the format
 //! at the scaffold milestone — map ticket #16, resolving spec U2.
-
+//!
+//! The settled key layout (spec §12, #35): `providers` (connection),
+//! `generation` (sampling), `thinking` (reasoning effort), `cache`
+//! (prompt-cache policy), `requests` (resilience), `om` (memory),
+//! `subagents` (delegation), `limits` (size / safety).
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -9,7 +13,7 @@ use std::fmt;
 use std::path::Path;
 
 /// A named OpenAI-compatible provider entry: base URL, env var holding the key,
-/// and the model ids to offer (spec §6: no keychain, no auto-detection).
+/// and the models it offers (spec §6: no keychain, no auto-detection).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Provider {
@@ -17,7 +21,150 @@ pub struct Provider {
     pub base_url: String,
     /// Name of the environment variable holding the API key; empty = no key.
     pub key_env: String,
-    pub models: Vec<String>,
+    /// The offered models: id = key, facts optional (#35).
+    pub models: BTreeMap<String, ModelDef>,
+}
+
+impl Provider {
+    /// A single-model entry with no facts (the common test shape).
+    pub fn with_model(base_url: impl Into<String>, model: impl Into<String>) -> Self {
+        let mut models = BTreeMap::new();
+        models.insert(model.into(), ModelDef::default());
+        Self {
+            base_url: base_url.into(),
+            key_env: String::new(),
+            models,
+        }
+    }
+}
+
+/// The user-authored facts of one model, inline under its provider (spec
+/// §12, #35): no separate catalog file — fidelity is the user's
+/// responsibility (§6). Every fact is optional; absent = sane default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModelDef {
+    /// Total context window in tokens; when declared, the output cap is
+    /// clamped to `context_window` − prompt.
+    pub context_window: Option<u32>,
+    /// This model's output cap.
+    pub max_tokens: Option<u32>,
+    /// The model reasons (thinking levels are offered for it).
+    pub reasoning: Option<bool>,
+    /// Per-1M-token cost (display fact; the GUI's cost display is later).
+    pub cost: Option<Cost>,
+}
+
+/// Per-1M-token cost (USD).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Cost {
+    pub input: f64,
+    pub output: f64,
+}
+
+/// Sampling defaults (spec §12, #35); `None` = the server's own default.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Generation {
+    /// The session's model; empty = the provider's first model.
+    pub default_model: String,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub top_p: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+}
+
+/// A thinking level (spec §12, #35).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThinkingLevel {
+    #[default]
+    Off,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+/// Reasoning-effort policy (spec §12, #35).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Thinking {
+    /// The default level for the session's model.
+    pub level: ThinkingLevel,
+    /// Per-model level overrides (model id → level).
+    pub levels: BTreeMap<String, ThinkingLevel>,
+    /// Per-level token budgets (level name → tokens).
+    pub budgets: BTreeMap<String, u32>,
+    /// Ask for a reasoning summary (`reasoning.summary`).
+    pub summary: bool,
+}
+
+/// Prompt-cache retention (spec §12, #35): `short` = 24 h, `long` = 7 d.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheRetention {
+    #[default]
+    None,
+    Short,
+    Long,
+}
+
+/// Prompt-cache warming (spec §12, #35).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CacheWarming {
+    #[default]
+    Off,
+    Streaming,
+    Idle,
+}
+
+/// Prompt-cache policy (spec §12, #35).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Cache {
+    pub retention: CacheRetention,
+    pub warming: CacheWarming,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Requests {
+    /// The connect/headers phase's deadline (seconds); the stream body is
+    /// bounded separately by `idle_timeout_secs`.
+    pub timeout_secs: u64,
+    pub retries: u32,
+    /// The stream's idle timeout (seconds): a stream silent for this long
+    /// (connect, headers, or between chunks) is dead. Per-chunk — reset on
+    /// every chunk — never a total deadline (a total killed healthy long
+    /// streams mid-body).
+    pub idle_timeout_secs: u64,
+    pub tool_batch_on_force: ToolBatchPolicy,
+}
+
+impl Default for Requests {
+    fn default() -> Self {
+        Self {
+            timeout_secs: 120,
+            retries: 2,
+            idle_timeout_secs: 120,
+            tool_batch_on_force: ToolBatchPolicy::default(),
+        }
+    }
+}
+
+/// What a force does to an in-flight tool batch (spec §7: complete | kill).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolBatchPolicy {
+    #[default]
+    Complete,
+    Kill,
 }
 
 /// Observational Memory settings; `om_model` is global, not per-provider (spec §4).
@@ -58,35 +205,35 @@ impl Default for SubAgents {
     }
 }
 
-/// What a force does to an in-flight tool batch (spec §7: complete | kill).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolBatchPolicy {
-    #[default]
-    Complete,
-    Kill,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Image-read caps (spec §12, #35): the home for #34's enforcement.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Requests {
-    /// The stream's idle timeout (seconds): a stream silent for this long
-    /// (connect, headers, or between chunks) is dead. Per-chunk — reset on
-    /// every chunk — never a total deadline (a total killed healthy long
-    /// streams mid-body).
-    pub timeout_secs: u64,
-    pub retries: u32,
-    pub tool_batch_on_force: ToolBatchPolicy,
+pub struct ImageLimits {
+    pub max_width: u32,
+    pub max_height: u32,
+    pub max_bytes: u64,
+    /// 1–100, when a read transcodes to JPEG.
+    pub jpeg_quality: u8,
 }
 
-impl Default for Requests {
+impl Default for ImageLimits {
     fn default() -> Self {
         Self {
-            timeout_secs: 120,
-            retries: 2,
-            tool_batch_on_force: ToolBatchPolicy::default(),
+            max_width: 2048,
+            max_height: 2048,
+            max_bytes: 10 * 1024 * 1024,
+            jpeg_quality: 80,
         }
     }
+}
+
+/// Size / safety caps (spec §12, #35).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Limits {
+    pub image: ImageLimits,
+    /// Total request-body cap in bytes; unset = unbounded.
+    pub max_request_bytes: Option<u64>,
 }
 
 /// The merged, fully-defaulted configuration the core operates on.
@@ -94,9 +241,13 @@ impl Default for Requests {
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub providers: BTreeMap<String, Provider>,
+    pub generation: Generation,
+    pub thinking: Thinking,
+    pub cache: Cache,
+    pub requests: Requests,
     pub om: Om,
     pub subagents: SubAgents,
-    pub requests: Requests,
+    pub limits: Limits,
 }
 
 /// On-disk file shape: every section optional so a partial file layers cleanly.
@@ -104,9 +255,13 @@ pub struct Config {
 #[serde(default, deny_unknown_fields)]
 struct ConfigFile {
     providers: Option<BTreeMap<String, Provider>>,
+    generation: Option<Generation>,
+    thinking: Option<Thinking>,
+    cache: Option<Cache>,
+    requests: Option<Requests>,
     om: Option<Om>,
     subagents: Option<SubAgents>,
-    requests: Option<Requests>,
+    limits: Option<Limits>,
 }
 
 impl ConfigFile {
@@ -123,14 +278,26 @@ impl ConfigFile {
         if let Some(providers) = &self.providers {
             config.providers = providers.clone();
         }
+        if let Some(generation) = &self.generation {
+            config.generation = generation.clone();
+        }
+        if let Some(thinking) = &self.thinking {
+            config.thinking = thinking.clone();
+        }
+        if let Some(cache) = &self.cache {
+            config.cache = cache.clone();
+        }
+        if let Some(requests) = &self.requests {
+            config.requests = requests.clone();
+        }
         if let Some(om) = &self.om {
             config.om = om.clone();
         }
         if let Some(subagents) = &self.subagents {
             config.subagents = subagents.clone();
         }
-        if let Some(requests) = &self.requests {
-            config.requests = requests.clone();
+        if let Some(limits) = &self.limits {
+            config.limits = limits.clone();
         }
     }
 }
@@ -171,65 +338,4 @@ impl From<std::io::Error> for LoadError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn load_from(system: &str, project: &str) -> Result<Config, LoadError> {
-        let (sys_dir, proj_dir) = (tempfile::tempdir()?, tempfile::tempdir()?);
-        if !system.is_empty() {
-            std::fs::write(sys_dir.path().join("config.toml"), system)?;
-        }
-        if !project.is_empty() {
-            std::fs::write(proj_dir.path().join("config.toml"), project)?;
-        }
-        load(sys_dir.path(), proj_dir.path())
-    }
-
-    #[test]
-    fn absent_files_yield_defaults() {
-        let config = load_from("", "").unwrap();
-        assert!(config.providers.is_empty());
-        assert_eq!(config.om.observe_threshold, 30_000);
-        assert_eq!(config.om.reflect_threshold, 40_000);
-        assert_eq!(config.om.buffer_increment, 6_000);
-        assert_eq!(config.subagents.max_depth, 1);
-    }
-
-    #[test]
-    fn project_layer_overrides_system_layer() {
-        let system = r#"
-[providers.local]
-base_url = "http://system:1/v1"
-key_env = "SYS_KEY"
-models = ["sys-model"]
-
-"#;
-        let project = r#"
-[providers.local]
-base_url = "http://project:2/v1"
-
-"#;
-        let config = load_from(system, project).unwrap();
-        let local = &config.providers["local"];
-        // Provider entries replace wholesale — a project entry is a unit, so
-        // omitted fields fall back to their own defaults, not to system values.
-        assert_eq!(local.base_url, "http://project:2/v1");
-        assert_eq!(local.key_env, "");
-    }
-
-    #[test]
-    fn partial_sections_fill_their_own_defaults() {
-        let config = load_from("", "[om]\nom_model = \"m1\"\n").unwrap();
-        assert_eq!(config.om.om_model, "m1");
-        assert_eq!(config.om.observe_threshold, 30_000);
-    }
-
-    #[test]
-    fn unknown_keys_are_rejected() {
-        let err = load_from("", "[om]\nbogus = 1\n").unwrap_err();
-        match err {
-            LoadError::Parse(path, _) => assert!(path.ends_with("config.toml")),
-            other => panic!("expected a parse error, got {other:?}"),
-        }
-    }
-}
+mod tests;

@@ -4,7 +4,8 @@
 [providers.dev]
 base_url = "https://llms.aaronlockhart.dev/v1"
 key_env = ""
-models = ["qwen3.8-27b"]
+
+[providers.dev.models."qwen3.8-27b"]
 
 [om]
 om_model = "qwen3.8-27b"

@@ -188,18 +188,19 @@ async fn attempt_one_turn(
     sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
     // `.timeout` is a *total* deadline, which kills a healthy long stream
-    // mid-body: the connect is bounded by the client's connect timeout,
-    // and the stream by this per-chunk idle deadline (reset on every
-    // chunk). A silent stream is dead; a slow one is not.
-    let idle = Duration::from_secs(requests.timeout_secs);
+    // mid-body: the connect/headers phase is bounded by
+    // `requests.timeout_secs`, the stream by the per-chunk idle deadline
+    // (reset on every chunk). A silent stream is dead; a slow one is not.
+    let head = Duration::from_secs(requests.timeout_secs);
+    let idle = Duration::from_secs(requests.idle_timeout_secs);
     let mut builder = client.post(url).json(request);
     if let Some(key) = key {
         builder = builder.bearer_auth(key);
     }
-    // A connect/headers phase silent past the idle deadline is a dead
+    // A connect/headers phase silent past the deadline is a dead
     // endpoint: fail (and retry), like a connect timeout.
     let mut sending = builder.send();
-    let response = tokio::time::timeout_at(tokio::time::Instant::now() + idle, &mut sending)
+    let response = tokio::time::timeout_at(tokio::time::Instant::now() + head, &mut sending)
         .await
         .map_err(|_| ProviderError::IdleTimeout)?
         .map_err(ProviderError::Request)?;

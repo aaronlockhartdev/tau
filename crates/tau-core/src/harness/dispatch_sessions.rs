@@ -120,6 +120,17 @@ impl Core {
                         // the next turn's calls.
                         live.meta.lock().unwrap().model = Some(model.clone());
                         live.agent.set_model(model.clone());
+                        // #35: the model-specific options (output-cap clamp,
+                        // reasoning level) track the active model —
+                        // re-derived from the workspace config.
+                        let ws_id = live.meta.lock().unwrap().workspace.clone();
+                        if let Ok(ws) = self.workspace(&ws_id) {
+                            let config = self.workspace_config(&ws);
+                            if let Some((_, p)) = config.providers.iter().next() {
+                                live.agent
+                                    .set_turn_config(derive_turn(&config, p, &model, &session));
+                            }
+                        }
                         live.agent
                             .append_entry(
                                 crate::agent::KIND_SYSTEM,

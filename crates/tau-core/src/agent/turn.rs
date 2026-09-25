@@ -103,14 +103,41 @@ impl AgentSession {
                     }
                 }
             };
+            let turn = self.turn_config();
+            let tools = self.tools();
+            // The soft prompt size for the output-cap clamp (spec §12, #35):
+            // estimated before `input` moves into the request.
+            let prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
             let mut request =
                 ResponseRequest::new(self.model().to_owned(), Some(system_prompt.as_str()), input)
-                    .with_tools(self.tools().clone());
-            if let Some(n) = self.turn_config().max_output_tokens {
-                request = request.with_max_output_tokens(n);
+                    .with_tools(tools);
+            if let Some(n) = turn.max_output_tokens {
+                request = request.with_max_output_tokens(crate::provider::clamp_max_output(
+                    n,
+                    turn.context_window,
+                    prompt,
+                ));
             }
-            if let Some(e) = self.turn_config().reasoning {
+            if let Some(e) = turn.reasoning {
                 request = request.with_reasoning(e);
+                if turn.reasoning_summary {
+                    request = request.with_reasoning_summary();
+                }
+            }
+            if let Some(t) = turn.temperature {
+                request = request.with_temperature(t);
+            }
+            if let Some(p) = turn.top_p {
+                request = request.with_top_p(p);
+            }
+            if let Some(p) = turn.frequency_penalty {
+                request = request.with_frequency_penalty(p);
+            }
+            if let Some(p) = turn.presence_penalty {
+                request = request.with_presence_penalty(p);
+            }
+            if let Some((key, retention)) = &turn.prompt_cache {
+                request = request.with_prompt_cache(key.clone(), *retention);
             }
 
             // A force has already killed the stream it targeted; every
@@ -417,7 +444,7 @@ impl AgentSession {
     }
 
     fn turn_config(&self) -> TurnConfig {
-        self.inner.lock().unwrap().turn
+        self.inner.lock().unwrap().turn.clone()
     }
 }
 

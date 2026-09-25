@@ -17,11 +17,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
     let mut providers = BTreeMap::new();
     providers.insert(
         "dev".into(),
-        Provider {
-            base_url: "http://127.0.0.1:9/v1".into(),
-            key_env: String::new(),
-            models: vec!["m".into()],
-        },
+        Provider::with_model("http://127.0.0.1:9/v1", "m"),
     );
     let core = CoreBuilder::custom(providers).build();
 

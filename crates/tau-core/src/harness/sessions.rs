@@ -253,17 +253,28 @@ impl Core {
             .ok_or_else(|| ProtocolError::Other {
                 message: "no providers configured; add a [providers.x] section".into(),
             })?;
-        let model = provider
-            .models
-            .first()
-            .cloned()
-            .ok_or_else(|| ProtocolError::Other {
-                message: format!("provider {name} has no models"),
-            })?;
+        // `generation.default_model` wins; an empty or unknown value falls
+        // back to the provider's first model (BTreeMap order).
+        let default = config.generation.default_model.clone();
+        let model = if !default.is_empty() && provider.models.contains_key(&default) {
+            default
+        } else {
+            provider
+                .models
+                .keys()
+                .next()
+                .cloned()
+                .ok_or_else(|| ProtocolError::Other {
+                    message: format!("provider {name} has no models"),
+                })?
+        };
         // A session that picked a non-default model (session_set_model) keeps
         // it across close and re-open: the file's last `model:` note is the
         // record (a fresh session has none and takes the provider default).
         let model = last_model_note(&mut store).unwrap_or(model);
+        // The turn's provider options (spec §12, #35): resolved from the
+        // merged config + this model's facts, once, at registration.
+        let turn = derive_turn(&config, &provider, &model, store.id());
         let cwd = PathBuf::from(&workspace.cwd);
 
         // The per-session OM record (ticket #22): reconstructed from the
@@ -342,7 +353,7 @@ impl Core {
             om: config.om.clone(),
             om_model: config.om.om_model.clone(),
             tool_batch_on_force: config.requests.tool_batch_on_force,
-            turn: TurnConfig::default(),
+            turn: turn.clone(),
             caps: config.subagents.clone(),
             types: crate::agent_type::discover(self.system_dir.as_deref(), &cwd),
             depth: 0,
@@ -360,7 +371,7 @@ impl Core {
             cwd: cwd.clone(),
             provider: provider.clone(),
             tool_batch_on_force: config.requests.tool_batch_on_force,
-            turn: TurnConfig::default(),
+            turn,
             om: Some(crate::om_integration::OmState::from_config(
                 &config.om, record,
             )),
@@ -413,6 +424,46 @@ impl Core {
             .insert(id.clone(), live.clone());
         sup.attach_parent(live.agent.clone());
         Ok(meta)
+    }
+}
+
+/// The session's per-turn provider options (spec §12, #35): sampling from
+/// `generation`, model-specific facts (output cap, context window, reasoning
+/// level) from the model's entry — a model with no facts falls back to the
+/// global values.
+pub(crate) fn derive_turn(
+    config: &Config,
+    provider: &crate::config::Provider,
+    model: &str,
+    session: &str,
+) -> TurnConfig {
+    let def = provider.models.get(model);
+    let level = config
+        .thinking
+        .levels
+        .get(model)
+        .copied()
+        .unwrap_or(config.thinking.level);
+    let reasoning = match def.and_then(|d| d.reasoning) {
+        // A model recorded as non-reasoning never carries the effort: the
+        // server would reject it.
+        Some(false) => None,
+        _ => level.into(),
+    };
+    TurnConfig {
+        max_output_tokens: def
+            .and_then(|d| d.max_tokens)
+            .or(config.generation.max_tokens)
+            .map(u64::from),
+        reasoning,
+        reasoning_summary: config.thinking.summary,
+        temperature: config.generation.temperature,
+        top_p: config.generation.top_p,
+        frequency_penalty: config.generation.frequency_penalty,
+        presence_penalty: config.generation.presence_penalty,
+        prompt_cache: (config.cache.retention != crate::config::CacheRetention::None)
+            .then(|| (session.to_owned(), config.cache.retention)),
+        context_window: def.and_then(|d| d.context_window),
     }
 }
 

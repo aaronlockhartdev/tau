@@ -263,153 +263,6 @@ pub enum ToolKind {
     Function,
 }
 
-/// The reasoning budget in the responses-API shape (`{"effort": ...}`);
-/// `None` leaves the server default (a thinking model reasons heavily by
-/// default, which burns the output budget — spec §6).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ReasoningEffort {
-    None,
-    Low,
-    Medium,
-    High,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct ReasoningParam {
-    effort: ReasoningEffort,
-}
-/// One request to `POST {base}/responses` (streaming; v0 is responses-only,
-/// ADR-0003).
-#[derive(Debug, Clone, Serialize)]
-pub struct ResponseRequest {
-    model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    instructions: Option<String>,
-    input: Vec<InputEntry>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<ToolSpec>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    max_output_tokens: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning: Option<ReasoningParam>,
-    stream: bool,
-}
-
-impl ResponseRequest {
-    pub fn new(
-        model: impl Into<String>,
-        instructions: Option<&str>,
-        input: Vec<InputEntry>,
-    ) -> Self {
-        Self {
-            model: model.into(),
-            instructions: instructions.map(str::to_owned),
-            input,
-            tools: Vec::new(),
-            max_output_tokens: None,
-            reasoning: None,
-            stream: true,
-        }
-    }
-
-    pub fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
-        self.tools = tools;
-        self
-    }
-
-    pub fn with_max_output_tokens(mut self, n: u64) -> Self {
-        self.max_output_tokens = Some(n);
-        self
-    }
-
-    pub fn with_reasoning(mut self, effort: ReasoningEffort) -> Self {
-        self.reasoning = Some(ReasoningParam { effort });
-        self
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InputMessage {
-    pub role: String,
-    pub content: String,
-}
-
-/// One input item, wire-shaped: a plain message, a prior function call, or a
-/// tool result (spec §5.4: results ride back to the model on the next call).
-#[derive(Debug, Clone, Serialize)]
-#[serde(untagged)]
-pub enum InputEntry {
-    Message(InputMessage),
-    Call(FunctionCallInput),
-    CallOutput(FunctionCallOutputInput),
-}
-
-/// A prior function call as an input item (responses API shape).
-#[derive(Debug, Clone, Serialize)]
-pub struct FunctionCallInput {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    pub id: String,
-    pub call_id: String,
-    pub name: String,
-    pub arguments: String,
-}
-
-/// A tool result as an input item (responses API shape).
-#[derive(Debug, Clone, Serialize)]
-pub struct FunctionCallOutputInput {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    pub call_id: String,
-    pub output: CallOutput,
-}
-
-/// The tool result as the responses API carries it: a plain JSON string
-/// (the common path), or a content-parts array. The API accepts both for
-/// `function_call_output.output`; an image is an `input_image` part with
-/// the base64 payload as a data URL (#34).
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(untagged)]
-pub enum CallOutput {
-    Text(String),
-    Image(Vec<InputImagePart>),
-}
-
-impl CallOutput {
-    /// A stored tool output as wire content (#34): a string passes through;
-    /// an image block becomes one `input_image` data-URL part.
-    pub fn from_payload(v: &Value) -> Option<Self> {
-        match v {
-            Value::String(s) => Some(Self::Text(s.clone())),
-            obj if obj.get("type").and_then(Value::as_str) == Some("image") => {
-                let media_type = obj
-                    .get("media_type")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                let data = obj
-                    .get("data_base64")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                Some(Self::Image(vec![InputImagePart {
-                    kind: "input_image",
-                    image_url: format!("data:{media_type};base64,{data}"),
-                }]))
-            }
-            _ => None,
-        }
-    }
-}
-
-/// An `input_image` content part (responses API): the base64 payload in a
-/// data URL.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct InputImagePart {
-    #[serde(rename = "type")]
-    pub kind: &'static str,
-    pub image_url: String,
-}
-
 /// The assembled result of one turn.
 #[derive(Debug, Default)]
 pub struct TurnResult {
@@ -449,8 +302,10 @@ pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
 }
 
 mod canned;
+mod request;
 mod stream;
 pub use canned::*;
+pub use request::*;
 pub use stream::*;
 
 #[cfg(test)]

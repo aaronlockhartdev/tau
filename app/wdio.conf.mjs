@@ -98,7 +98,7 @@ function makeWorkspace() {
   }
   fs.writeFileSync(
     path.join(ws, '.tau', 'config.toml'),
-    ['[providers.canned]', 'base_url = "canned://text"', 'models = ["canned-model"]', ''].join('\n')
+    ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', ''].join('\n')
   );
   fs.mkdirSync(xdg, { recursive: true, mode: 0o700 });
   return ws;

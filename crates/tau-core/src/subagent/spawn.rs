@@ -169,7 +169,7 @@ impl Supervisor {
             cwd: self.cwd.clone(),
             provider: provider.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
-            turn: self.turn,
+            turn: self.turn.clone(),
             om: Some(OmState::from_config(&self.om, record)),
             om_model: self.om_model.clone(),
             subagents: None,

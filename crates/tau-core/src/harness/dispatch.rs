@@ -79,7 +79,7 @@ impl Core {
                     .map(|(name, p)| ProviderInfo {
                         name: name.clone(),
                         base_url: p.base_url.clone(),
-                        models: p.models.clone(),
+                        models: p.models.keys().cloned().collect(),
                     })
                     .collect::<Vec<_>>();
                 providers.sort_by(|a, b| a.name.cmp(&b.name));

@@ -37,6 +37,7 @@ fn capped() -> TurnConfig {
     TurnConfig {
         max_output_tokens: Some(CAP),
         reasoning: None,
+        ..TurnConfig::default()
     }
 }
 
@@ -50,11 +51,7 @@ fn client() -> reqwest::Client {
 }
 
 fn production(ctx: &Ctx) -> (Provider, tau_core::provider::TurnProviderRef) {
-    let p = Provider {
-        base_url: ctx.endpoint.clone(),
-        key_env: String::new(),
-        models: vec![ctx.model.clone()],
-    };
+    let p = Provider::with_model(ctx.endpoint.clone(), ctx.model.clone());
     (
         p.clone(),
         provider::production(&client(), &p, &Requests::default()),
