@@ -54,7 +54,7 @@
   // off-screen), total = sum of measured + estimated, the DOM windowed to
   // viewport + buffer, positioned by an absolutely-positioned inner track.
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
   import type { Entry } from '../lib/protocol';
@@ -368,7 +368,10 @@
     const c = cur;
     if (c && el) {
       pinned = true;
-      el.scrollTop = Math.max(0, total - el.clientHeight);
+      // untrack: this effect must stay one-shot per session. If it tracked
+      // total, every height flush would re-run it, re-arm the pin, and snap
+      // a user who scrolled up back to the bottom (B3's second re-pin path).
+      el.scrollTop = Math.max(0, untrack(() => total) - el.clientHeight);
     }
   });
 
