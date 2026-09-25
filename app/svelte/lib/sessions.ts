@@ -185,8 +185,10 @@ export function setArchived(sessions: SessionMap, sid: string, meta: SessionMeta
 
 // Session-open convergence: the snapshot replaces the stub/previous state;
 // a child's parent link is not in its own snapshot (it lives in the
-// parent's sub-agent list) so it survives re-opens, and the archive flag
-// stays with the row (the list is its authority).
+// parent's sub-agent list) so it survives re-opens, the archive flag stays
+// with the row (the list is its authority), and the row's mru survives too
+// — resetting it to creation time reshuffles the MRU tree away from the
+// row the user just clicked.
 export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): SessionMap {
   const next = snapshotToState(snap);
   const prev = sessions[sid];
@@ -194,6 +196,7 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
     next.parent = prev.parent;
     next.state = prev.state;
     next.archived = prev.archived;
+    next.mru = prev.mru;
   }
   let out = { ...sessions, [sid]: next };
   // Self-heal the child stubs: the snapshot's sub-agent list is the

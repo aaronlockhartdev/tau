@@ -385,6 +385,15 @@ describe('session switch', () => {
     expect(store.error).toBe('session file missing');
     expect(store.current).toBe('s1');
   });
+
+  it('re-opening a session preserves the row mru (no tree reshuffle away from the clicked row)', async () => {
+    store.sessions = applySessionList({}, [meta('s1')]);
+    store.sessions['s1'].mru = 9999;
+    defaultIPC();
+    await switchSession('s1');
+    expect(store.sessions['s1'].mru).toBe(9999);
+  });
+
   it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the mru)', async () => {
     store.sessions = applySessionList({}, [meta('p')]);
     store.sessions = touchChild(store.sessions, 'p', 'c', 'running', 5000, null);
