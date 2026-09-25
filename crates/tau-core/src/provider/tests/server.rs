@@ -2,7 +2,7 @@ use super::*;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
-fn ok_body(frames: &[&str]) -> String {
+pub(super) fn ok_body(frames: &[&str]) -> String {
     let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
     for frame in frames {
         body.push_str(&sse(frame));
@@ -12,7 +12,7 @@ fn ok_body(frames: &[&str]) -> String {
 
 /// One-shot HTTP server on 127.0.0.1:0; each connection gets the canned
 /// body from `bodies` (cycling) and the request is counted.
-async fn mock_server(bodies: Vec<String>) -> (String, Arc<AtomicU32>) {
+pub(super) async fn mock_server(bodies: Vec<String>) -> (String, Arc<AtomicU32>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let count = Arc::new(AtomicU32::new(0));
@@ -24,8 +24,7 @@ async fn mock_server(bodies: Vec<String>) -> (String, Arc<AtomicU32>) {
                 Err(_) => break,
             };
             count2.fetch_add(1, Ordering::SeqCst);
-            let body =
-                bodies[(count2.load(Ordering::SeqCst) - 1) as usize % bodies.len()].clone();
+            let body = bodies[(count2.load(Ordering::SeqCst) - 1) as usize % bodies.len()].clone();
             use tokio::io::AsyncWriteExt;
             let _ = sock.write_all(body.as_bytes()).await;
         }
@@ -33,7 +32,7 @@ async fn mock_server(bodies: Vec<String>) -> (String, Arc<AtomicU32>) {
     (format!("http://{addr}"), count)
 }
 
-fn provider_for(base: &str) -> Provider {
+pub(super) fn provider_for(base: &str) -> Provider {
     Provider {
         base_url: base.into(),
         key_env: String::new(),
@@ -41,7 +40,7 @@ fn provider_for(base: &str) -> Provider {
     }
 }
 
-fn fast_requests() -> Requests {
+pub(super) fn fast_requests() -> Requests {
     Requests {
         timeout_secs: 10,
         retries: 2,
@@ -197,8 +196,9 @@ async fn timeout_is_retried_and_surfaced() {
     .await
     .unwrap_err();
     match err {
-        ProviderError::Request(e) => assert!(e.is_timeout(), "expected timeout, got {e}"),
-        other => panic!("expected Request(timeout), got {other:?}"),
+        // The silent server: the connect/headers phase went idle.
+        ProviderError::IdleTimeout => {}
+        other => panic!("expected IdleTimeout, got {other:?}"),
     }
     assert_eq!(count.load(Ordering::SeqCst), 2);
 }
@@ -284,3 +284,92 @@ async fn multi_message_conversation_streams() {
     assert!(turn2.usage.is_some(), "turn 2 recorded no usage");
 }
 
+/// A healthy stream whose total duration exceeds the old *total* deadline
+/// (`.timeout`) must complete: the connect is bounded by the client's
+/// connect timeout and the body by the per-chunk `timeout_secs` idle
+/// deadline, which the 1.5 s gaps stay under.
+#[tokio::test]
+async fn a_healthy_long_stream_outlives_the_connect_deadline() {
+    // Streams a frame every 1.5 s for ~4.5 s total.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        use tokio::io::AsyncWriteExt;
+        let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
+        body.push_str(&sse(
+            r#"{"type":"response.output_text.delta","delta":"one "}"#,
+        ));
+        let _ = sock.write_all(body.as_bytes()).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        body = sse(r#"{"type":"response.output_text.delta","delta":"two "}"#);
+        let _ = sock.write_all(body.as_bytes()).await;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        body = sse(r#"{"type":"response.output_text.delta","delta":"three"}"#);
+        body.push_str(&sse(
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}"#,
+        ));
+        let _ = sock.write_all(body.as_bytes()).await;
+    });
+    let requests = Requests {
+        // 3 s idle per chunk; the 1.5 s gaps fit, the ~4.5 s total does
+        // not — the old total deadline would have cut this stream.
+        timeout_secs: 3,
+        retries: 0,
+        tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+    };
+    let request = ResponseRequest::new("m", None, vec![]);
+    let result = stream_response(
+        &reqwest::Client::new(),
+        &provider_for(&format!("http://{addr}")),
+        &requests,
+        &request,
+    )
+    .await
+    .expect("a healthy stream outlives the connect deadline");
+    assert_eq!(result.text, "one two three");
+    assert!(result.completed, "the stream completed");
+}
+
+/// A stream that goes silent past `timeout_secs` (idle) is cut (a dead
+/// stream): the partial stands as an incomplete turn, like a mid-body
+/// drop — and the call returns after the idle window, not forever.
+#[tokio::test]
+async fn a_dead_stream_is_cut_by_the_idle_timeout() {
+    // Answers with one delta, then goes silent.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        use tokio::io::AsyncWriteExt;
+        let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
+        body.push_str(&sse(
+            r#"{"type":"response.output_text.delta","delta":"only"}"#,
+        ));
+        let _ = sock.write_all(body.as_bytes()).await;
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+    let requests = Requests {
+        timeout_secs: 1,
+        retries: 2,
+        tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+    };
+    let request = ResponseRequest::new("m", None, vec![]);
+    let started = std::time::Instant::now();
+    let result = stream_response(
+        &reqwest::Client::new(),
+        &provider_for(&format!("http://{addr}")),
+        &requests,
+        &request,
+    )
+    .await
+    .expect("a received partial stands, like a mid-body drop");
+    // Cut at the idle deadline (1 s), with room for the cut to land.
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the idle cut did not fire in time: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(result.text, "only");
+    assert!(!result.completed, "the cut stream is not completed");
+}

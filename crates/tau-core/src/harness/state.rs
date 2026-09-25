@@ -29,6 +29,11 @@ pub(crate) const TREE_EXCLUDES: &[&str] = &[
 /// archive list, losing its only restore row (review N3).
 pub(crate) const MAX_TITLE_LEN: usize = 200;
 
+/// The client's connect-phase timeout (applied to the shared client; the
+/// streaming body is bounded per provider by `requests.timeout_secs` as a
+/// per-chunk idle deadline). A connect that takes this long is a dead
+/// endpoint, not a slow model.
+pub(crate) const CONNECT_TIMEOUT_SECS: u64 = 30;
 /// A live session: the loop plus the binding's view of its lanes, the
 /// stop flag, and the provider (kept here so a turn can be diffed against
 /// the calls it started).
@@ -164,10 +169,14 @@ impl CoreBuilder {
             client: if self.custom {
                 reqwest::Client::builder()
                     .pool_max_idle_per_host(0)
+                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
                     .build()
                     .expect("client")
             } else {
-                reqwest::Client::new()
+                reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+                    .build()
+                    .expect("client")
             },
             events_tx,
             events_rx: Mutex::new(Some(rx)),

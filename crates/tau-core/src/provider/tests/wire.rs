@@ -29,5 +29,3 @@ fn request_wire_shape_carries_tools_and_limits() {
     assert_eq!(wire["reasoning"]["effort"], "low");
     assert_eq!(wire["input"][0]["role"], "user");
 }
-}
-
