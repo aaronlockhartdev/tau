@@ -307,6 +307,7 @@ async fn a_live_om_run_emits_om_status_events() {
     let provider = Arc::new(ForwardingProvider {
         inner: provider::canned(&body),
         tx: core.events_tx.clone(),
+        pipe: core.pipe.clone(),
         workspace: workspace.id.clone(),
         session: sid.clone(),
         stop: Arc::new(AtomicBool::new(false)),
@@ -457,5 +458,52 @@ async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
     );
     // The turn flag is clear: the session is not stuck running.
     assert!(!live.turn.load(Ordering::SeqCst));
+    drop(core);
+}
+
+/// A pipe overflow is never silent: the drop is counted, and a summary
+/// system error reaches the GUI. The summary cannot ride the same full
+/// channel, so it is owed and delivered by the next successful send —
+/// the first moment the pipe has room again.
+#[tokio::test]
+async fn a_pipe_overflow_is_counted_and_surfaced() {
+    let core = CoreBuilder::custom(providers()).build();
+    let mut rx = core.events();
+    // Flood the bounded pipe (capacity 1024) with no reader: every
+    // event past the capacity is a drop.
+    for i in 0..2048 {
+        core.emit(Event::System {
+            workspace: "w".into(),
+            session: None,
+            kind: SystemEventKind::WorkspaceOpened {
+                name: "w".into(),
+                cwd: format!("/w/{i}"),
+            },
+        });
+    }
+    let dropped = core.pipe.dropped.load(Ordering::Relaxed);
+    assert!(dropped > 0, "overflows must be counted, got {dropped}");
+    // Drain the pipe, then let the next successful send deliver the
+    // owed summary.
+    while rx.try_recv().is_ok() {}
+    core.emit(Event::System {
+        workspace: "w".into(),
+        session: None,
+        kind: SystemEventKind::WorkspaceOpened {
+            name: "w".into(),
+            cwd: "/w/after".into(),
+        },
+    });
+    let mut surfaced = false;
+    while let Ok(ev) = rx.try_recv() {
+        surfaced |= matches!(
+            &ev,
+            Event::System {
+                kind: SystemEventKind::Error { message },
+                ..
+            } if message.contains("event pipe overflow")
+        );
+    }
+    assert!(surfaced, "an overflow must emit a visible summary");
     drop(core);
 }

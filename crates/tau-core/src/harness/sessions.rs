@@ -294,6 +294,7 @@ impl Core {
         let provider = ForwardingProvider {
             inner: session_inner(&self.client, &provider, &config.requests),
             tx: self.events_tx.clone(),
+            pipe: self.pipe.clone(),
             workspace: workspace.id.clone(),
             session: store.id().to_owned(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -318,6 +319,7 @@ impl Core {
                     provider: first_provider.clone(),
                     requests: config.requests.clone(),
                     tx: self.events_tx.clone(),
+                    pipe: self.pipe.clone(),
                     workspace: workspace.id.clone(),
                 })
             });

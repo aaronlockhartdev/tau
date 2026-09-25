@@ -7,6 +7,9 @@ use super::*;
 pub(crate) struct ForwardingProvider {
     pub(crate) inner: TurnProviderRef,
     pub(crate) tx: mpsc::Sender<Event>,
+    /// The core's pipe drop bookkeeping (shared): an overflow in a child
+    /// stream is counted and surfaced exactly like the core's own pipe.
+    pub(crate) pipe: PipeCounters,
     pub(crate) workspace: String,
     pub(crate) session: String,
     pub(crate) stop: Arc<AtomicBool>,
@@ -30,6 +33,7 @@ impl TurnProvider for ForwardingProvider {
         // future captures no lifetimes of its own beyond the loop's sink.
         let mut forward = ForwardSink {
             tx: self.tx.clone(),
+            pipe: self.pipe.clone(),
             workspace: self.workspace.clone(),
             session: self.session.clone(),
             stop: self.stop.clone(),
@@ -49,6 +53,7 @@ impl TurnProvider for ForwardingProvider {
 /// delegates to the loop's own sink (the kill point stays the loop's).
 pub(crate) struct ForwardSink<'a> {
     pub(crate) tx: mpsc::Sender<Event>,
+    pipe: PipeCounters,
     pub(crate) workspace: String,
     session: String,
     stop: Arc<AtomicBool>,
@@ -119,9 +124,14 @@ impl TurnSink for ForwardSink<'_> {
 
 impl ForwardSink<'_> {
     fn send(&self, event: Event) {
-        // The channel is the boundary's only failure mode; a dropped batch
-        // self-heals on the GUI's next paged read (spec §8 idempotency).
-        let _ = self.tx.try_send(event);
+        // A drop is never silent (the shared counter + a one-shot summary error)
+        pipe_send(
+            &self.tx,
+            &self.pipe,
+            event,
+            self.workspace.clone(),
+            Some(self.session.clone()),
+        );
     }
 }
 
@@ -187,6 +197,7 @@ pub(crate) struct ForwardingChildFactory {
     pub(crate) provider: crate::config::Provider,
     pub(crate) requests: crate::config::Requests,
     pub(crate) tx: mpsc::Sender<Event>,
+    pub(crate) pipe: PipeCounters,
     pub(crate) workspace: String,
 }
 impl ChildProviderFactory for ForwardingChildFactory {
@@ -194,6 +205,7 @@ impl ChildProviderFactory for ForwardingChildFactory {
         Arc::new(ForwardingProvider {
             inner: session_inner(&self.client, &self.provider, &self.requests),
             tx: self.tx.clone(),
+            pipe: self.pipe.clone(),
             workspace: self.workspace.clone(),
             session: child.to_owned(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -275,6 +287,7 @@ impl SubagentBridge for SessionSubagentBridge {
         let provider = Arc::new(ForwardingProvider {
             inner: session_inner(&self.client, &self.provider, &self.requests),
             tx: self.core.events_tx.clone(),
+            pipe: self.core.pipe.clone(),
             workspace: self.workspace.clone(),
             session: n.child.clone(),
             stop: agent.stop_flag(),
