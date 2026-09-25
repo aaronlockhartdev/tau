@@ -475,3 +475,47 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
     }
     drop(core);
 }
+
+/// Deleting a running session is refused: its file is being written,
+/// and moving it mid-turn would tear it (the archive guard's twin). A
+/// refused delete mutates nothing — the session stays open with its
+/// file intact.
+#[tokio::test]
+async fn a_delete_of_a_running_session_is_refused() {
+    let core = CoreBuilder::custom(providers()).build();
+    let cwd = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, cwd.path()).await;
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned_slow(&canned_body(), 600),
+        TurnConfig::default(),
+    );
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "work".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let err = core
+        .dispatch(Command::SessionDelete {
+            session: session_id.clone(),
+        })
+        .unwrap_err();
+    let msg = match &err {
+        ProtocolError::Other { message } => message.as_str(),
+        other => panic!("expected a plain refusal: {other:?}"),
+    };
+    assert!(
+        msg.contains("is running"),
+        "the refusal names the state: {msg}"
+    );
+    // The session is intact: still in the live map, file on disk.
+    assert!(
+        core.live(&session_id).is_ok(),
+        "a refused delete leaves the session open"
+    );
+    drop(core);
+}

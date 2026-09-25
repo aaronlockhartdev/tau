@@ -241,13 +241,44 @@ impl Core {
                 Ok(CommandOutput::None)
             }
             Command::SessionDelete { session } => {
-                if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
-                    live.stop.store(true, Ordering::SeqCst);
-                    if let Some(sup) = live.agent.subagents() {
-                        sup.stop_all(StoppedBy::User);
-                    }
-                    delete_session_files(&live.cwd, &session);
+                // The archive guard's twin (ADR-0005 keeps file moves off the live
+                // path): a running session's file is being written, so
+                // deleting it mid-turn tears it — and the turn's next
+                // write hits the gone file (the append refusal) instead
+                // of recording.
+                if let Some(live) = self.sessions.lock().unwrap().get(&session)
+                    && live.turn.load(Ordering::SeqCst)
+                {
+                    return Err(ProtocolError::Other {
+                        message: format!("session {session} is running — stop it first"),
+                    });
                 }
+                let Some(live) = self.sessions.lock().unwrap().remove(&session) else {
+                    // Not in the live map (never opened, or closed since):
+                    // nothing to quiesce.
+                    return Ok(CommandOutput::None);
+                };
+                // A wake that looked the session up before the detach holds
+                // the shared session and will CAS the turn (its map read
+                // predates the removal): re-check after the removal and
+                // abort if a turn started in the window — the file must
+                // not move mid-write.
+                if live.turn.load(Ordering::SeqCst) {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .insert(session.to_owned(), live.clone());
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "session {session} started a turn while deleting — stop it and retry"
+                        ),
+                    });
+                }
+                live.stop.store(true, Ordering::SeqCst);
+                if let Some(sup) = live.agent.subagents() {
+                    sup.stop_all(StoppedBy::User);
+                }
+                delete_session_files(&live.cwd, &session);
                 Ok(CommandOutput::None)
             }
             Command::SessionArchive { session } => {
