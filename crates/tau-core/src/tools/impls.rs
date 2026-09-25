@@ -10,7 +10,11 @@ fn resolve(cwd: &Path, path: &str) -> PathBuf {
     }
 }
 
-pub(super) async fn read(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
+pub(super) async fn read(
+    cwd: &Path,
+    args: &serde_json::Value,
+    image_max_bytes: Option<u64>,
+) -> ToolOutput {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
         return "read: missing \"path\"".into();
     };
@@ -21,6 +25,18 @@ pub(super) async fn read(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     };
     // #34: an image is content for a vision endpoint, not UTF-8 text.
     if let Some(media_type) = image_media_type(&bytes) {
+        // #36: a bounded read — an oversized image is a loud refusal, not a
+        // silent drop (stateless, it would ride every request).
+        if let Some(cap) = image_max_bytes
+            && bytes.len() as u64 > cap
+        {
+            return format!(
+                "read: {} is a {media_type} image of {} bytes, over the {cap}-byte cap — not returned",
+                path.display(),
+                bytes.len()
+            )
+            .into();
+        }
         return ToolOutput::Image(tau_protocol::payload::ImageBlock {
             kind: "image".into(),
             media_type: media_type.to_owned(),

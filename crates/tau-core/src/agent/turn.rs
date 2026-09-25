@@ -250,7 +250,7 @@ impl AgentSession {
                         None => "parent_notify: not available in a top-level session".into(),
                     }
                 } else {
-                    tools::dispatch(&self.cwd(), &tc).await
+                    tools::dispatch(&self.cwd(), &tc, self.turn_config().image_max_bytes).await
                 }
             };
             self.append(

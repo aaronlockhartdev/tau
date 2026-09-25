@@ -31,8 +31,8 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             description: "Read a file. Text files come back as hash-anchored lines: \
                  each line is 'HASH│content' (HASH = 3 chars). The hash is the anchor \
                  you pass to edit. Optional offset (1-based) and limit page long files. \
-                 Image files (png, jpg, gif, webp, bmp, tiff) come back as an image the \
-                 model can see on vision-capable endpoints."
+                 Image files (png, jpg, gif, webp, bmp, tiff) come back as an image you \
+                 can see on vision-capable endpoints — use read to view an image."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -324,9 +324,9 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
 
 /// Dispatch one tool call. Never panics on bad input — the diagnostic is the
 /// result (the model's only recovery path).
-pub async fn dispatch(cwd: &Path, call: &ToolCall) -> ToolOutput {
+pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>) -> ToolOutput {
     match call.name.as_str() {
-        "read" => read(cwd, &call.args).await,
+        "read" => read(cwd, &call.args, image_max_bytes).await,
         "write" => write(cwd, &call.args).await,
         "edit" => edit(cwd, &call.args).await,
         "bash" => bash(cwd, &call.args).await,

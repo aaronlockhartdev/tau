@@ -17,7 +17,7 @@ async fn write_then_read_roundtrip_with_anchors() {
         &json!({"path": "a.txt", "content": "one\ntwo\n"}),
     )
     .await;
-    let out = text(read(dir.path(), &json!({"path": "a.txt"})).await);
+    let out = text(read(dir.path(), &json!({"path": "a.txt"}), None).await);
     let rows: Vec<&str> = out.lines().collect();
     assert_eq!(rows.len(), 2);
     assert!(rows[0].ends_with("one"));
@@ -50,6 +50,7 @@ async fn read_pages_with_offset_and_limit() {
         read(
             dir.path(),
             &json!({"path": "p.txt", "offset": 2, "limit": 2}),
+            None,
         )
         .await,
     );
@@ -80,7 +81,7 @@ async fn stale_anchor_diagnostic_does_not_touch_the_file() {
 async fn crlf_files_are_normalized_through_read_and_edit() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("w.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
-    let out = text(read(dir.path(), &json!({"path": "w.txt"})).await);
+    let out = text(read(dir.path(), &json!({"path": "w.txt"}), None).await);
     assert!(!out.contains('\r'), "{out}");
     let rows: Vec<&str> = out.lines().collect();
     let anchor = rows[0].split('│').next().unwrap().to_string();
@@ -123,7 +124,7 @@ async fn edit_output_is_bounded_to_the_changed_region() {
         &json!({"path": "big.txt", "content": content.as_str()}),
     )
     .await;
-    let read_out = text(read(dir.path(), &json!({"path": "big.txt"})).await);
+    let read_out = text(read(dir.path(), &json!({"path": "big.txt"}), None).await);
     let lines: Vec<&str> = read_out.lines().collect();
     let anchor = lines[24].split('│').next().unwrap().to_string();
     let out = text(
@@ -176,7 +177,7 @@ async fn read_returns_an_image_block_for_a_png() {
     let dir = tempfile::tempdir().unwrap();
     let png = b"\x89PNG\r\n\x1a\nfake-png-pixels";
     std::fs::write(dir.path().join("shot.png"), png).unwrap();
-    match read(dir.path(), &json!({"path": "shot.png"})).await {
+    match read(dir.path(), &json!({"path": "shot.png"}), None).await {
         ToolOutput::Image(img) => {
             assert_eq!(img.kind, "image");
             assert_eq!(img.media_type, "image/png");
@@ -197,8 +198,31 @@ async fn read_returns_an_image_block_for_a_jpeg() {
     let dir = tempfile::tempdir().unwrap();
     let jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF";
     std::fs::write(dir.path().join("shot.jpg"), jpeg).unwrap();
-    match read(dir.path(), &json!({"path": "shot.jpg"})).await {
+    match read(dir.path(), &json!({"path": "shot.jpg"}), None).await {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/jpeg"),
+        ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
+    }
+}
+
+#[tokio::test]
+async fn an_oversized_image_is_refused_loudly() {
+    let dir = tempfile::tempdir().unwrap();
+    // A PNG past the cap: the 8-byte signature plus 200 padding bytes.
+    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
+    png.resize(png.len() + 200, 0);
+    std::fs::write(dir.path().join("big.png"), &png).unwrap();
+    // Over the cap: a loud text refusal, not an image block.
+    let out = text(read(dir.path(), &json!({"path": "big.png"}), Some(100)).await);
+    assert!(out.contains("over the 100-byte cap"), "{out}");
+    // At the cap: the image block comes through.
+    match read(
+        dir.path(),
+        &json!({"path": "big.png"}),
+        Some(png.len() as u64),
+    )
+    .await
+    {
+        ToolOutput::Image(img) => assert_eq!(img.media_type, "image/png"),
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
     }
 }

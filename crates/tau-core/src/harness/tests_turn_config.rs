@@ -84,12 +84,36 @@ fn a_model_without_facts_falls_back_to_the_globals() {
         crate::config::CacheRetention::None,
     );
     let turn = derive_turn(&config, &provider, "m", "sess-1");
-    assert_eq!(turn.max_output_tokens, Some(4096));
+    // No model fact → no ceiling, so the High thinking budget (16384 default)
+    // raises the 4096 global to leave room for thinking (#36).
+    assert_eq!(turn.max_output_tokens, Some(20480));
     assert_eq!(turn.context_window, None);
     assert_eq!(turn.reasoning, Some(crate::provider::ReasoningEffort::High));
     assert!(!turn.reasoning_summary);
     assert_eq!(turn.temperature, None);
     assert!(turn.prompt_cache.is_none());
+}
+
+#[test]
+fn a_custom_thinking_budget_drives_the_output_cap() {
+    let generation = crate::config::Generation {
+        max_tokens: Some(4096),
+        ..Default::default()
+    };
+    // A user-set high budget (2048) replaces the 16384 default (#36).
+    let thinking = crate::config::Thinking {
+        level: ThinkingLevel::High,
+        budgets: BTreeMap::from([("high".to_owned(), 2048)]),
+        ..Default::default()
+    };
+    let (config, provider) = setup(
+        crate::config::ModelDef::default(),
+        generation,
+        thinking,
+        crate::config::CacheRetention::None,
+    );
+    let turn = derive_turn(&config, &provider, "m", "sess-1");
+    assert_eq!(turn.max_output_tokens, Some(6144));
 }
 
 #[test]

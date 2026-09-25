@@ -84,6 +84,9 @@ pub struct TurnConfig {
     pub prompt_cache: Option<(String, crate::config::CacheRetention)>,
     /// The model's declared context window (its facts); the clamp's ceiling.
     pub context_window: Option<u32>,
+    /// The `limits.image.max_bytes` cap on a `read` of an image file (#36);
+    /// `None` (the default) is uncapped.
+    pub image_max_bytes: Option<u64>,
 }
 
 #[derive(Clone)]
