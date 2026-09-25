@@ -462,11 +462,19 @@
     }
   }
 
-  export async function switchSession(sid: string): Promise<void> {
+export async function switchSession(sid: string): Promise<void> {
+    const prev = store.current;
     store.current = sid;
-    const out = await command({ type: 'session_open', session: sid });
-    if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
-    store.sessions = openSession(store.sessions, sid, out.snapshot);
+    try {
+      const out = await command({ type: 'session_open', session: sid });
+      if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
+      store.sessions = openSession(store.sessions, sid, out.snapshot);
+    } catch (e) {
+      // A failed open must not leave current dangling at an unhydrated
+      // stub: roll back to the previous session and surface the error.
+      store.error = errText(e);
+      store.current = prev;
+    }
   }
 
   // A pane action (session tree row / sub-agent double-click): the child is

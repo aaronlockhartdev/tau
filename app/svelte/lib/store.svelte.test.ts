@@ -356,6 +356,19 @@ describe('session switch', () => {
     expect(s.meta.title).toBe('child');
   });
 
+  it('a failed session_open rolls current back to the previous session and surfaces the error', async () => {
+    store.sessions = applySessionList({}, [meta('s1'), meta('s2')]);
+    store.current = 's1';
+    defaultIPC({
+      session_open: (cmd) => {
+        if (cmd.type === 'session_open' && cmd.session === 's2') throw new Error('session file missing');
+        return snap('s1');
+      }
+    });
+    await switchSession('s2');
+    expect(store.error).toBe('session file missing');
+    expect(store.current).toBe('s1');
+  });
   it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the mru)', async () => {
     store.sessions = applySessionList({}, [meta('p')]);
     store.sessions = touchChild(store.sessions, 'p', 'c', 'running', 5000, null);
