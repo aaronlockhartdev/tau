@@ -25,6 +25,8 @@
   "bundle": {
     "active": true,
     "targets": ["app", "appimage"],
+    "copyright": "Copyright (C) 2026 aaronlockhartdev — GNU Affero General Public License v3.0",
+    "publisher": "aaronlockhartdev",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

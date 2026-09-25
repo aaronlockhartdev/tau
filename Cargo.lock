@@ -4294,7 +4294,7 @@ dependencies = [
 [[package]]
 name = "tauri-plugin-pilot"
 version = "0.7.3"
-source = "git+https://github.com/mpiton/tauri-pilot#79f837ab965debf800282343811b5909a537284d"
+source = "git+https://github.com/mpiton/tauri-pilot?rev=79f837ab965debf800282343811b5909a537284d#79f837ab965debf800282343811b5909a537284d"
 dependencies = [
  "core-foundation",
  "core-graphics",
