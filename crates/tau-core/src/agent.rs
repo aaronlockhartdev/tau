@@ -7,12 +7,12 @@
 
 use crate::config::ToolBatchPolicy;
 use crate::provider::{
-    FunctionCall, FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage,
+    CallOutput, FunctionCall, FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage,
     ReasoningEffort, ResponseRequest, ToolSpec, TurnProviderRef, TurnResult, TurnSink,
 };
 use crate::session::{Entry, SessionStore};
 use crate::tools;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;

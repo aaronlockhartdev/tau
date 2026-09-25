@@ -1,4 +1,5 @@
 use super::*;
+use base64::Engine;
 
 fn resolve(cwd: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
@@ -14,13 +15,33 @@ pub(super) async fn read(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         return "read: missing \"path\"".into();
     };
     let path = resolve(cwd, path);
-    let content = match std::fs::read_to_string(&path) {
-        Ok(c) => hashline::normalize(&c),
-        Err(e) => return format!("read: cannot read {}: {e}", path.display()),
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => return format!("read: cannot read {}: {e}", path.display()).into(),
+    };
+    // #34: an image is content for a vision endpoint, not UTF-8 text.
+    if let Some(media_type) = image_media_type(&bytes) {
+        return ToolOutput::Image(tau_protocol::payload::ImageBlock {
+            kind: "image".into(),
+            media_type: media_type.to_owned(),
+            data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        });
+    }
+    let content = match std::str::from_utf8(&bytes) {
+        Ok(c) => hashline::normalize(c),
+        // The same diagnostic `read_to_string` produced: the text path stays
+        // byte-for-byte (#34).
+        Err(_) => {
+            return format!(
+                "read: cannot read {}: stream did not contain valid UTF-8",
+                path.display()
+            )
+            .into();
+        }
     };
     let rows = match hashline::render(&content) {
         Ok(rows) => rows,
-        Err(e) => return e.to_string(),
+        Err(e) => return e.to_string().into(),
     };
     let offset = args
         .get("offset")
@@ -47,7 +68,27 @@ pub(super) async fn read(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
             total
         ));
     }
-    out
+    out.into()
+}
+
+/// The image type by magic bytes (#34): the extension is not authoritative —
+/// a lying one would ship binary junk to the model as text.
+pub(super) fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF8") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.len() >= 14 && bytes.starts_with(b"BM") && bytes[6..8] == [0, 0] {
+        Some("image/bmp")
+    } else if bytes.starts_with(b"II\x2a\x00") || bytes.starts_with(b"MM\x00\x2a") {
+        Some("image/tiff")
+    } else {
+        None
+    }
 }
 
 pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
@@ -61,11 +102,11 @@ pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     if let Some(parent) = path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
-        return format!("write: cannot create {}: {e}", parent.display());
+        return format!("write: cannot create {}: {e}", parent.display()).into();
     }
     match write_atomic(&path, content) {
-        Ok(()) => format!("wrote {} ({} bytes)", path.display(), content.len()),
-        Err(e) => format!("write: {e}"),
+        Ok(()) => format!("wrote {} ({} bytes)", path.display(), content.len()).into(),
+        Err(e) => format!("write: {e}").into(),
     }
 }
 /// Overwrite a file without a torn intermediate state: unique temp file in
@@ -144,7 +185,7 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     let path = resolve(cwd, path);
     let original = match std::fs::read_to_string(&path) {
         Ok(c) => hashline::normalize(&c),
-        Err(e) => return format!("edit: cannot read {}: {e}", path.display()),
+        Err(e) => return format!("edit: cannot read {}: {e}", path.display()).into(),
     };
     let edited = match hashline::apply_edit(
         &original,
@@ -155,28 +196,29 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         },
     ) {
         Ok(e) => e,
-        Err(e) => return e.to_string(),
+        Err(e) => return e.to_string().into(),
     };
     if let Err(e) = write_atomic(&path, &edited.content) {
-        return format!("edit: cannot write {}: {e}", path.display());
+        return format!("edit: cannot write {}: {e}", path.display()).into();
     }
     // Bounded output (the reference returns the changed region, not the
     // whole file): the changed lines plus two context lines per side, with
     // their fresh anchors, plus the result line count.
     if edited.first_changed > edited.last_changed {
-        return format!("edited {} (no change)", path.display());
+        return format!("edited {} (no change)", path.display()).into();
     }
     let rows = hashline::render(&edited.content).unwrap_or_default();
     let lo = edited.first_changed.saturating_sub(1).saturating_sub(2);
     let hi = (edited.last_changed + 2).min(rows.len());
-    format!(
+    (format!(
         "edited {} (lines {}–{} of {})",
         path.display(),
         edited.first_changed,
         edited.last_changed,
         rows.len()
     ) + "\n"
-        + &rows[lo..hi].join("\n")
+        + &rows[lo..hi].join("\n"))
+        .into()
 }
 
 pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
@@ -205,12 +247,12 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         .await
         {
             Ok(Ok(output)) => output,
-            Ok(Err(e)) => return format!("bash: {e}"),
+            Ok(Err(e)) => return format!("bash: {e}").into(),
             // The timeout dropped the (now owned) child; kill_on_drop fired,
             // so a timed-out command cannot keep running and mutate files.
-            Err(_) => return format!("bash: timed out after {timeout_secs}s"),
+            Err(_) => return format!("bash: timed out after {timeout_secs}s").into(),
         },
-        Err(e) => return format!("bash: {e}"),
+        Err(e) => return format!("bash: {e}").into(),
     };
     let mut out = format!("exit {}", output.status.code().unwrap_or(-1));
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -223,5 +265,5 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         out.push_str("\n--- stderr ---\n");
         out.push_str(&stderr);
     }
-    out
+    out.into()
 }

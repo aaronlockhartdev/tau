@@ -18,7 +18,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
         let e = store
             .append(
                 "user",
-                json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
             .unwrap();
@@ -111,7 +111,7 @@ async fn om_runs_notify_the_status_hook_in_order() {
         let e = store
             .append(
                 "user",
-                json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
             .unwrap();
@@ -186,7 +186,7 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
         let e = store
             .append(
                 "user",
-                json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
             .unwrap();
@@ -296,7 +296,7 @@ async fn a_compaction_reinjects_the_active_task_resume_contract() {
         let e = store
             .append(
                 "user",
-                json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
             .unwrap();

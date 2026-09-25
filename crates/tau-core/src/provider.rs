@@ -362,8 +362,54 @@ pub struct FunctionCallOutputInput {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub call_id: String,
-    pub output: String,
+    pub output: CallOutput,
 }
+
+/// The tool result as the responses API carries it: a plain JSON string
+/// (the common path), or a content-parts array. The API accepts both for
+/// `function_call_output.output`; an image is an `input_image` part with
+/// the base64 payload as a data URL (#34).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum CallOutput {
+    Text(String),
+    Image(Vec<InputImagePart>),
+}
+
+impl CallOutput {
+    /// A stored tool output as wire content (#34): a string passes through;
+    /// an image block becomes one `input_image` data-URL part.
+    pub fn from_payload(v: &Value) -> Option<Self> {
+        match v {
+            Value::String(s) => Some(Self::Text(s.clone())),
+            obj if obj.get("type").and_then(Value::as_str) == Some("image") => {
+                let media_type = obj
+                    .get("media_type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let data = obj
+                    .get("data_base64")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                Some(Self::Image(vec![InputImagePart {
+                    kind: "input_image",
+                    image_url: format!("data:{media_type};base64,{data}"),
+                }]))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// An `input_image` content part (responses API): the base64 payload in a
+/// data URL.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct InputImagePart {
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    pub image_url: String,
+}
+
 /// The assembled result of one turn.
 #[derive(Debug, Default)]
 pub struct TurnResult {

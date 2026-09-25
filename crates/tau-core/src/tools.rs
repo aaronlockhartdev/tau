@@ -17,8 +17,10 @@ pub struct ToolCall {
 }
 
 /// The tool's output, as the model will see it (errors are results, not
-/// panics — the model reads the diagnostic and recovers, spec §5.4).
-pub type ToolOutput = String;
+/// panics — the model reads the diagnostic and recovers, spec §5.4). Plain
+/// text is the common shape; `read` can also return an image block a
+/// vision-capable endpoint can see (#34).
+pub use tau_protocol::payload::ToolOutput;
 
 /// The model-facing definitions of the four core tools.
 pub fn tool_specs() -> Vec<ToolSpec> {
@@ -26,9 +28,11 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: ToolKind::Function,
             name: "read".into(),
-            description: "Read a text file as hash-anchored lines: each line is \
-                 'HASH│content' (HASH = 3 chars). The hash is the anchor you pass \
-                 to edit. Optional offset (1-based) and limit page long files."
+            description: "Read a file. Text files come back as hash-anchored lines: \
+                 each line is 'HASH│content' (HASH = 3 chars). The hash is the anchor \
+                 you pass to edit. Optional offset (1-based) and limit page long files. \
+                 Image files (png, jpg, gif, webp, bmp, tiff) come back as an image the \
+                 model can see on vision-capable endpoints."
                 .into(),
             parameters: json!({
                 "type": "object",
@@ -326,7 +330,7 @@ pub async fn dispatch(cwd: &Path, call: &ToolCall) -> ToolOutput {
         "write" => write(cwd, &call.args).await,
         "edit" => edit(cwd, &call.args).await,
         "bash" => bash(cwd, &call.args).await,
-        other => format!("unknown tool: {other}"),
+        other => format!("unknown tool: {other}").into(),
     }
 }
 

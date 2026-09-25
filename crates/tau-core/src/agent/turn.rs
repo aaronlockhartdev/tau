@@ -182,8 +182,8 @@ impl AgentSession {
                         let task = tc.args.get("task").and_then(Value::as_str).unwrap_or("");
                         let worker = tc.args.get("worker").and_then(Value::as_str).unwrap_or("");
                         match sup.assign_task(task, worker) {
-                            Ok(()) => format!("assigned {task} to {worker}"),
-                            Err(e) => e,
+                            Ok(()) => format!("assigned {task} to {worker}").into(),
+                            Err(e) => e.into(),
                         }
                     }
                     None => "task_assign: this session has no sub-agents".into(),
@@ -192,9 +192,9 @@ impl AgentSession {
                 // Tasks live in this session's own store (spec §5.3) — parent
                 // and child alike. Routed before the sub-agent surface so a
                 // child (which has no supervisor) still gets its tools.
-                self.task_tool(&tc)
+                self.task_tool(&tc).into()
             } else if call.name == "recall" {
-                self.recall_scoped(&args)
+                self.recall_scoped(&args).into()
             } else {
                 // The sub-agent surface routes outside the core tools: the
                 // parent's supervisor tools, or the child's `parent_notify`
@@ -214,12 +214,12 @@ impl AgentSession {
                 // child carries a link AND core tools.
                 if call.name.starts_with("subagent_") {
                     match sup {
-                        Some(sup) => crate::subagent::route_parent(&sup, &tc),
-                        None => format!("{}: not available in this session", call.name),
+                        Some(sup) => crate::subagent::route_parent(&sup, &tc).into(),
+                        None => format!("{}: not available in this session", call.name).into(),
                     }
                 } else if call.name == "parent_notify" {
                     match link {
-                        Some(link) => link.notify(&args),
+                        Some(link) => link.notify(&args).into(),
                         None => "parent_notify: not available in a top-level session".into(),
                     }
                 } else {
@@ -232,7 +232,7 @@ impl AgentSession {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
                     args,
-                    output: json!(output),
+                    output,
                 }
                 .to_value(),
             )?;
@@ -498,14 +498,17 @@ fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
             KIND_TOOL => {
                 let (Some(call_id), Some(output)) = (
                     entry.payload.get("call_id").and_then(Value::as_str),
-                    entry.payload.get("output").and_then(Value::as_str),
+                    entry
+                        .payload
+                        .get("output")
+                        .and_then(CallOutput::from_payload),
                 ) else {
                     continue;
                 };
                 out.push(InputEntry::CallOutput(FunctionCallOutputInput {
                     kind: "function_call_output",
                     call_id: call_id.to_owned(),
-                    output: output.to_owned(),
+                    output,
                 }));
             }
             _ => {}

@@ -194,7 +194,36 @@ pub struct ToolPayload {
     pub call_id: String,
     pub name: String,
     pub args: Value,
-    pub output: Value,
+    pub output: ToolOutput,
+}
+
+/// A tool result's content (#34): plain text — the common, cheap path —
+/// or an image block a vision-capable endpoint can see.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ToolOutput {
+    Text(String),
+    Image(ImageBlock),
+}
+
+/// An image block (#34): the media type and the base64 payload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImageBlock {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub media_type: String,
+    pub data_base64: String,
+}
+impl From<String> for ToolOutput {
+    fn from(s: String) -> Self {
+        ToolOutput::Text(s)
+    }
+}
+
+impl From<&str> for ToolOutput {
+    fn from(s: &str) -> Self {
+        ToolOutput::Text(s.to_owned())
+    }
 }
 
 /// The system entry's payload: a note the session records (a runaway
@@ -389,5 +418,38 @@ impl TurnUsage {
             .as_ref()
             .map(|d| d.reasoning_tokens)
             .unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #34: text stays a bare JSON string (the common, cheap path); an
+    /// image is the tagged block.
+    #[test]
+    fn tool_output_payload_shape() {
+        let text = ToolPayload {
+            call_id: "c1".into(),
+            name: "read".into(),
+            args: json!({"path": "a.txt"}),
+            output: ToolOutput::Text("line".into()),
+        };
+        assert_eq!(text.to_value()["output"], "line");
+
+        let image = ToolPayload {
+            call_id: "c2".into(),
+            name: "read".into(),
+            args: json!({"path": "a.png"}),
+            output: ToolOutput::Image(ImageBlock {
+                kind: "image".into(),
+                media_type: "image/png".into(),
+                data_base64: "AAAA".into(),
+            }),
+        };
+        assert_eq!(
+            image.to_value()["output"],
+            json!({"type": "image", "media_type": "image/png", "data_base64": "AAAA"})
+        );
     }
 }

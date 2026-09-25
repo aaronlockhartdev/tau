@@ -53,8 +53,8 @@ pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
 
 /// Like sse(), but the text is JSON-escaped (multi-line deltas).
 pub(crate) fn sse_json(text: &str) -> String {
-    let delta = json!({ "type": "response.output_text.delta", "delta": text });
-    let done = json!({
+    let delta = serde_json::json!({ "type": "response.output_text.delta", "delta": text });
+    let done = serde_json::json!({
         "type": "response.completed",
         "response": { "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 } }
     });
