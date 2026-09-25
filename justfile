@@ -139,6 +139,15 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
           ;;
         e2e)
           if command -v node >/dev/null 2>&1; then
+            # Self-sufficient on a clean checkout (sweep finding X4): the
+            # E2E driver needs the debug binary with the e2e feature; build
+            # it when missing.
+            if [ ! -x target/debug/tau-app ]; then
+              if ! cargo build -p tau-app --features e2e; then
+                report e2e FAIL "debug binary build failed"
+                continue
+              fi
+            fi
             out=$(cd app && npm run test:frontend 2>&1); status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c 'PASS  ')
