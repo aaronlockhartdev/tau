@@ -27,6 +27,7 @@ import { applyToolEvent, decodeEntry } from './entries';
 import {
   applyEvents,
   archiveSession,
+  closeWorkspace,
   fetchWindow,
   init,
   restoreSession,
@@ -468,6 +469,34 @@ describe('session switch', () => {
       { type: 'session_event', workspace: WS.id, session: 's1', kind: { kind: 'branch_move', leaf: '7' } }
     ]);
     expect(store.sessions['s1'].meta.leaf).toBe('7');
+  });
+});
+
+describe('closeWorkspace', () => {
+  const WS2: Workspace = { id: 'w2', name: 'other', cwd: '/tmp/other' };
+
+  it('closing the current workspace lands on a surviving session; the last close clears current', async () => {
+    store.workspaces = [WS, WS2];
+    store.sessions = applySessionList({}, [meta('s1'), meta('s2', WS2.id)]);
+    store.current = 's1';
+    mockIPC(() => ({ kind: 'none' }));
+    await closeWorkspace(WS);
+    expect(store.workspaces).toEqual([WS2]);
+    expect(store.current).toBe('s2');
+    await closeWorkspace(WS2);
+    expect(store.workspaces).toEqual([]);
+    expect(store.current).toBeNull();
+    expect(store.sessions['s1']).toBeUndefined();
+    expect(store.sessions['s2']).toBeUndefined();
+  });
+
+  it('closing a non-current workspace leaves current alone', async () => {
+    store.workspaces = [WS, WS2];
+    store.sessions = applySessionList({}, [meta('s1'), meta('s2', WS2.id)]);
+    store.current = 's2';
+    mockIPC(() => ({ kind: 'none' }));
+    await closeWorkspace(WS);
+    expect(store.current).toBe('s2');
   });
 });
 

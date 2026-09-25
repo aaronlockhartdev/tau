@@ -361,15 +361,31 @@
         await command({ type: 'session_close', session: s.id }).catch(() => {});
       }
     }
+    // Capture before the map deletion below: if the closed workspace held
+    // the current session, current must be redirected (a surviving
+    // workspace's session) or cleared in this same synchronous block — a
+    // dangling id rejects the next command with 'unknown session'
+    // (dogfood B1), and the tabs strand the app on 'No workspace open'
+    // (S6).
+    const cur = store.current;
+    const closedHeldCurrent = cur !== null && store.sessions[cur]?.meta.workspace === ws.id;
     delete store.skills[ws.id];
     store.files = removeWorkspace(store.files, ws.id);
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
     }
+    // The closed workspace's pane view state is dead with it.
+    delete store.pane[ws.id];
     pendingDeltas.clear();
-    const cur = store.current;
-    if (cur && store.sessions[cur]?.meta.workspace === ws.id) {
+    if (!closedHeldCurrent) return;
+    const survivor = store.workspaces.find((w) =>
+      Object.values(store.sessions).some((s) => s.meta.workspace === w.id)
+    );
+    if (survivor) {
+      store.current =
+        Object.values(store.sessions).find((s) => s.meta.workspace === survivor.id)?.meta.id ?? null;
+    } else {
       store.current = null;
     }
   }
