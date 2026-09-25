@@ -8,7 +8,7 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:frontend": "wdio run wdio.conf.mjs",
+    "test:frontend": "HOME=/tmp/tau-e2e-home wdio run wdio.conf.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

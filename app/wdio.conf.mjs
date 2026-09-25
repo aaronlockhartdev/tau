@@ -47,13 +47,16 @@ const legs = mode === 'all' ? ['replay', 'stress'] : [mode];
 
 // The isolated HOME keeps the run from touching the real ~/.config/tau; an
 // empty system dir is what makes the boot check (no workspace auto-opens)
-// deterministic.
+// deterministic. It is a FIXED path (not mkdtemp) set in the test:frontend
+// script's environment, because the app is spawned by the wdio CLI process —
+// which never runs this config — so only the CLI's inherited env can point
+// the app (and the spec's os.homedir()) at the same home.
+const E2E_HOME = '/tmp/tau-e2e-home';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'tau-e2e-'));
 // The xdg dir lives under a short /tmp path (macOS SUN_PATH = 104): the
 // debug binary's pilot socket name must fit the kernel's Unix path limit,
 // and os.tmpdir() on macOS (/var/folders/…) would push it past it.
 const xdg = path.join('/tmp', path.basename(tmp), 'xdg');
-
 function sh(cmd, args, opts = {}) {
   const p = spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
   if (p.status !== 0) throw new Error(`${cmd} ${args.join(' ')} exited ${p.status}\n${p.stderr}`);
@@ -83,7 +86,6 @@ function checkDogfood() {
 // dogfood pair (hash-pinned above); the stress leg materializes the shared
 // 10k fixture.
 function makeWorkspace() {
-  fs.mkdirSync(path.join(tmp, 'home'), { recursive: true });
   const ws = path.join(tmp, 'ws');
   fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
   for (const leg of legs) {
@@ -115,7 +117,7 @@ function appEnv() {
   const env = { ...process.env };
   if (process.platform === 'darwin') delete env.DISPLAY;
   delete env.TAURI_PILOT_SOCKET;
-  env.HOME = path.join(tmp, 'home');
+  env.HOME = E2E_HOME;
   env.XDG_RUNTIME_DIR = xdg;
   return env;
 }
@@ -158,6 +160,10 @@ function teardown() {
 process.on('exit', teardown);
 
 async function onPrepare() {
+  // Reset the isolated home so the boot check (no workspace auto-opens) and
+  // the registry-persistence check start from a known-empty registry.
+  fs.rmSync(E2E_HOME, { recursive: true, force: true });
+  fs.mkdirSync(path.join(E2E_HOME, '.config', 'tau'), { recursive: true });
   console.log(`e2e: mode=${mode}, temp workspace under ${tmp}`);
   fs.rmSync(OUTPUT_DIR, { recursive: true, force: true });
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
