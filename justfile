@@ -5,12 +5,14 @@ default:
     @just build
 
 # The development loop: a debug build (tauri-pilot's socket is debug-only,
-# AGENTS.md 'Verifying UI work') with the Svelte dev server and hot reload.
+# The development loop: a debug build with the e2e feature (the pilot +
+# WebdriverIO plugins are feature-gated, sweep finding X1) plus the Svelte
+# dev server and hot reload.
 dev:
     #!/bin/sh
     set -eu
     cd "{{justfile_directory()}}/app"
-    npx tauri dev
+    npx tauri dev --features e2e
 
 build:
     #!/bin/sh

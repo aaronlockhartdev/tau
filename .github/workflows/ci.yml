@@ -112,8 +112,9 @@ jobs:
         run: cargo test -p tau-core
 
       - name: Build debug binary + install frontend deps
+        # The E2E plugins are behind the `e2e` cargo feature (sweep finding X1).
         run: |
-          cargo build -p tau-app
+          cargo build -p tau-app --features e2e
           (cd app && npm ci)
 
       - name: E2E (real-app replay, WebdriverIO)
@@ -168,8 +169,9 @@ jobs:
         run: cargo test -p tau-core
 
       - name: Build debug binary + install frontend deps
+        # The E2E plugins are behind the `e2e` cargo feature (sweep finding X1).
         run: |
-          cargo build -p tau-app
+          cargo build -p tau-app --features e2e
           (cd app && npm ci)
 
       - name: E2E (real-app replay, WebdriverIO, xvfb)

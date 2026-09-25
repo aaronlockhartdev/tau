@@ -123,7 +123,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 }
 
 fn main() {
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(CoreState(CoreBuilder::default_system().build()))
         .on_menu_event(|app, event| {
@@ -145,12 +145,15 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![tau_command]);
 
-    #[cfg(debug_assertions)]
-    {
-        builder = builder.plugin(tauri_plugin_pilot::init());
-        builder = builder.plugin(tauri_plugin_wdio::init());
-        builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
-    }
+    // The E2E/dogfooding plugins (sweep finding X1): compiled in only with
+    // the `e2e` feature and registered only in debug builds, so a release
+    // artifact can never carry the WebDriver server — even if built with the
+    // feature on.
+    #[cfg(all(debug_assertions, feature = "e2e"))]
+    let builder = builder
+        .plugin(tauri_plugin_pilot::init())
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
         .run(tauri::generate_context!())
