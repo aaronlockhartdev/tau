@@ -525,9 +525,27 @@ describe('closeWorkspace', () => {
 
   it('closing the current workspace lands on a surviving session; the last close clears current', async () => {
     store.workspaces = [WS, WS2];
-    store.sessions = applySessionList({}, [meta('s1'), meta('s2', WS2.id)]);
+    // The survivor's sessions are NOT in the map: the redirect must re-open
+    // the surviving workspace (workspace_open + session_list + session_open),
+    // not just pick from already-hydrated sessions (dogfood B1).
+    store.sessions = applySessionList({}, [meta('s1')]);
     store.current = 's1';
-    mockIPC(() => ({ kind: 'none' }));
+    mockIPC((c) => {
+      switch (c.type) {
+        case 'workspace_open':
+          return { kind: 'workspace', workspace: WS2 };
+        case 'skill_list':
+          return { kind: 'skills', skills: [] };
+        case 'session_list':
+          return { kind: 'sessions', sessions: [meta('s2', WS2.id)] };
+        case 'file_list':
+          return { kind: 'files', files: [] };
+        case 'session_open':
+          return snap('s2', { session: { workspace: WS2.id } });
+        default:
+          return { kind: 'none' };
+      }
+    });
     await closeWorkspace(WS);
     expect(store.workspaces).toEqual([WS2]);
     expect(store.current).toBe('s2');
@@ -632,7 +650,20 @@ describe('closeWorkspaces (bulk, B2)', () => {
     store.current = 's1';
     store.tabSelected = ['w1', 'w2'];
     store.tabSelAnchor = 'w1';
-    mockIPC(() => ({ kind: 'none' }));
+    mockIPC((c) => {
+      switch (c.type) {
+        case 'workspace_open':
+          return { kind: 'workspace', workspace: WS3 };
+        case 'session_list':
+          return { kind: 'sessions', sessions: [meta('s3', WS3.id)] };
+        case 'file_list':
+          return { kind: 'files', files: [] };
+        case 'session_open':
+          return snap('s3', { session: { workspace: WS3.id } });
+        default:
+          return { kind: 'none' };
+      }
+    });
     await closeWorkspaces([WS, WS2]);
     expect(store.workspaces).toEqual([WS3]);
     expect(store.current).toBe('s3');

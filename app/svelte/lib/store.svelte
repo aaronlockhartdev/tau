@@ -386,7 +386,7 @@
       store.error = errText(e);
     }
   }
-  export async function closeWorkspace(ws: Workspace): Promise<void> {
+  export async function closeWorkspace(ws: Workspace, redirect = true): Promise<void> {
     const list = await command({ type: 'session_list', workspace: ws.id }).catch(() => ({
       kind: 'sessions' as const,
       sessions: []
@@ -402,14 +402,6 @@
     await command({ type: 'workspace_close', workspace: ws.id }).catch((e) => {
       store.error = errText(e);
     });
-    // Capture before the map deletion below: if the closed workspace held
-    // the current session, current must be redirected (a surviving
-    // workspace's session) or cleared in this same synchronous block — a
-    // dangling id rejects the next command with 'unknown session'
-    // (dogfood B1), and the tabs strand the app on 'No workspace open'
-    // (S6).
-    const cur = store.current;
-    const closedHeldCurrent = cur !== null && store.sessions[cur]?.meta.workspace === ws.id;
     delete store.skills[ws.id];
     if (ws.id in store.fileErrors) {
       const next = { ...store.fileErrors };
@@ -426,16 +418,25 @@
     // The closed tab drops out of the selection too (no dangling member).
     store.tabSelected = store.tabSelected.filter((x) => x !== ws.id);
     pendingDeltas.clear();
-    if (!closedHeldCurrent) return;
-    const survivor = store.workspaces.find((w) =>
-      Object.values(store.sessions).some((s) => s.meta.workspace === w.id)
-    );
-    if (survivor) {
-      store.current =
-        Object.values(store.sessions).find((s) => s.meta.workspace === survivor.id)?.meta.id ?? null;
-    } else {
+    if (redirect) await redirectCurrent();
+  }
+
+  // After one or more workspace closes: if current dangles (its session
+  // lived in a closed workspace) or is null, re-open the first surviving
+  // tab so current lands on a real, hydrated session. A map-only redirect
+  // is not enough — the survivor's sessions may not be in the map yet
+  // (they hydrate lazily per workspace) — and a dangling current makes the
+  // next workspace-scoped command fail with 'missing field `workspace`'
+  // (dogfood B1) while the tabs strand the app on 'No workspace open' (S6).
+  async function redirectCurrent(): Promise<void> {
+    if (store.current !== null && store.sessions[store.current]) return;
+    const survivor = store.workspaces[0];
+    if (!survivor) {
       store.current = null;
+      return;
     }
+    await openWorkspace(survivor);
+    if (!store.sessions[store.current ?? '']) store.current = null;
   }
 
   // The tab strip's multiselect (B2): cmd/ctrl toggles a tab in and out,
@@ -466,14 +467,14 @@
     store.tabSelAnchor = ws;
   }
 
-  // A bulk close (B2): N closes in sequence — each applies the
-  // current-redirect, and the final close's redirect is the one that
-  // stands (computed over the survivors), so the end state is a single
-  // redirect over the surviving set.
+  // A bulk close (B2): N closes sharing ONE final redirect over the
+  // surviving set — a per-close redirect would re-open tabs that a later
+  // close in the same batch removes.
   export async function closeWorkspaces(wss: Workspace[]): Promise<void> {
     store.tabSelected = [];
     store.tabSelAnchor = null;
-    for (const w of wss) await closeWorkspace(w);
+    for (const w of wss) await closeWorkspace(w, false);
+    await redirectCurrent();
   }
 
   // New top-level session in the workspace: the core names it (adjective-noun)
