@@ -17,6 +17,10 @@
   // scrollBefore reads the map directly, so a changed value in the map
   // jumps the prefix the moment the window boundary crosses it.)
   let inputIntent = 0;
+  // Direction of the last user scroll input: -1 up, 0 none known (a
+  // pointerdown before the drag moves), 1 down. A downward (or
+  // directionless) stamp must never authorize a re-pin.
+  let inputDir = 0;
   const INPUT_TTL = 200;
   const pending = new Map<string, number>();
   let settleTimer = 0;
@@ -103,7 +107,7 @@
       !((e.text ?? '').trim() ||
         reasoning ||
         e.kind === 'interrupted' ||
-        (e.kind === 'tool' && (Boolean(e.args) || Boolean(e.output))))
+        (e.kind === 'tool' && (e.status === 'running' || Boolean(e.args) || Boolean(e.output))))
     )
       return 0;
     if (cur) {
@@ -183,8 +187,10 @@
   // upward input (wheel up, a touch moving up, a scrollbar drag pulled up,
   // a scroll key up) unpins immediately, so a slow scroll up from the
   // bottom can never fight the catch-up; a downward arrival at the bottom
-  // re-pins. The input-intent flag stamps the last user scroll input and
-  // the scroll handler consults it for both directions. That gate is what
+  // re-pins — a live DOWNWARD intent authorizes it, never an upward one
+  // (the catch-up write itself is a downward movement). The input-intent
+  // flag stamps the last user scroll input with its direction, and the
+  // scroll handler consults it for both directions. That gate is what
   // keeps boot churn (the estimate→measured correction clamps the viewport
   // up with no input behind it) and the follow's own catch-up (its
   // scrollTop write fires a downward scroll event the old unconditional
@@ -199,6 +205,7 @@
     // regardless). The TTL expires an arm the scroll never spent.
     const onWheel = (e: WheelEvent) => {
       inputIntent = performance.now();
+      inputDir = e.deltaY < 0 ? -1 : 1;
       if (e.deltaY < 0) pinned = false;
     };
     let touchY = 0;
@@ -208,6 +215,8 @@
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0]?.clientY ?? 0;
       inputIntent = performance.now();
+      if (y < touchY) inputDir = -1;
+      else if (y > touchY) inputDir = 1;
       if (y < touchY) pinned = false;
       touchY = y;
     };
@@ -217,6 +226,7 @@
     const onPointerDown = (e: PointerEvent) => {
       if (e.target === node) {
         inputIntent = performance.now();
+        inputDir = 0;
         dragY = e.clientY;
       }
     };
@@ -226,7 +236,11 @@
     // mid-drag.
     const onPointerMove = (e: PointerEvent) => {
       if (dragY === null) return;
-      if (e.buttons & 1) inputIntent = performance.now();
+      if (e.buttons & 1) {
+        inputIntent = performance.now();
+        if (e.clientY < dragY) inputDir = -1;
+        else if (e.clientY > dragY) inputDir = 1;
+      }
       dragY = e.clientY;
     };
     const onPointerUp = () => {
@@ -237,7 +251,12 @@
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       inputIntent = performance.now();
-      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') pinned = false;
+      if (e.key === 'ArrowUp' || e.key === 'PageUp' || e.key === 'Home') {
+        inputDir = -1;
+        pinned = false;
+      } else if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === 'End') {
+        inputDir = 1;
+      }
     };
     // Transition classification (the virtuoso atBottom scan): compare the
     // movement against the last processed position, not the absolute
@@ -257,10 +276,15 @@
       const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
       const intent = performance.now() - inputIntent <= INPUT_TTL;
       if (node.scrollTop > lastTop) {
-        if (dist <= THRESHOLD && intent) pinned = true;
+        // Downward re-pin requires a live DOWNWARD intent: the follow's
+        // own catch-up write can land right after a wheel-up stamped the
+        // intent, and an upward stamp must never authorize a re-pin
+        // (dogfood B3).
+        if (dist <= THRESHOLD && intent && inputDir === 1) pinned = true;
       } else if (node.scrollTop < lastTop) {
         if (intent) {
           inputIntent = 0;
+          inputDir = 0;
           pinned = false;
         }
       }

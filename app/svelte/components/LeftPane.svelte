@@ -6,7 +6,7 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, newSession, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, retryDirFetch, type PaneState } from '../lib/store.svelte';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
   import FileNode from './FileNode.svelte';
@@ -91,6 +91,19 @@
               <FileNode entry={f} ws={ws} />
             {/each}
           </div>
+        {:else if store.fileErrors[ws]?.['.']}
+          <div
+            class="note fail"
+            role="button"
+            tabindex="0"
+            onclick={() => retryDirFetch(ws, '.')}
+            onkeydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                retryDirFetch(ws, '.');
+              }
+            }}
+          >failed to list — click to retry</div>
         {:else}
           <div class="note">No files listed yet.</div>
         {/if}
@@ -161,6 +174,10 @@
     font: 11px var(--mono);
     color: var(--faint);
     line-height: 1.6;
+  }
+  .note.fail {
+    color: var(--red);
+    cursor: pointer;
   }
   .tree {
     padding-top: 4px;

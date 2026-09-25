@@ -61,6 +61,10 @@
     // lists the root, expansion lists its children); FileTreeChanged
     // marks a listed dir stale and a coalesced refetch wave replaces it.
     files: {} as FilesCache,
+    // Per-dir file_list failures (the empty-directory deception): a failed
+    // listing is recorded per workspace/path and cleared when the same dir
+    // lists successfully again.
+    fileErrors: {} as Record<string, Record<string, string>>,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>
@@ -162,6 +166,13 @@
     return String(e);
   }
 
+  // Banner lifecycle (dogfood N2): every command clears the stale banner
+  // before it runs, a failed command sets a fresh one, and non-error
+  // system events no longer wipe it (applyEvents).
+  function clearError(): void {
+    store.error = null;
+  }
+
 
   /** Connect: list workspaces, then open the first (or the ?workspace= one). */
   export async function init(): Promise<void> {
@@ -238,22 +249,33 @@
   // In-flight marker: the open's own workspace_opened event re-enters the
   // store via syncWorkspaces; without the marker it re-opens mid-flight,
   // and on an empty workspace the two session_new calls create a phantom
-  // duplicate session.
-  let opening = false;
+  // duplicate session. A same-tab double-click shares the in-flight open;
+  // a different tab awaits it and then proceeds (a dropped tab click was
+  // a lost navigation).
+  let inFlight: { cwd: string; done: Promise<void> } | null = null;
 
   export async function openWorkspace(ws: Workspace): Promise<void> {
-    if (opening) return;
-    opening = true;
+    if (inFlight) {
+      if (inFlight.cwd === ws.cwd) return inFlight.done;
+      await inFlight.done;
+    }
+    const done = (async () => {
+      try {
+        await openWorkspaceInner(ws);
+      } catch (e) {
+        store.error = errText(e);
+      }
+    })();
+    inFlight = { cwd: ws.cwd, done };
     try {
-      await openWorkspaceInner(ws);
-    } catch (e) {
-      store.error = errText(e);
+      await done;
     } finally {
-      opening = false;
+      if (inFlight?.done === done) inFlight = null;
     }
   }
 
   async function openWorkspaceInner(ws: Workspace): Promise<void> {
+    clearError();
     // The core keys workspaces by cwd (deterministic id), so re-opening a
     // folder returns the same workspace; the store keeps one tab per cwd.
     const opened = await command({ type: 'workspace_open', cwd: ws.cwd });
@@ -294,13 +316,22 @@
     let out;
     try {
       out = await command({ type: 'file_list', workspace: ws, path });
-    } catch {
+    } catch (e) {
       // The workspace may be closing mid-flight: a fetch for a gone
       // workspace is dropped, not an error.
+      if (!store.workspaces.some((w) => w.id === ws)) return;
+      const failed = store.fileErrors[ws] ?? {};
+      store.fileErrors = { ...store.fileErrors, [ws]: { ...failed, [path]: errText(e) } };
       return;
     }
     if (out.kind !== 'files') return;
     store.files = putListing(store.files, ws, path, out.files);
+    const failed = store.fileErrors[ws];
+    if (failed && path in failed) {
+      const next = { ...failed };
+      delete next[path];
+      store.fileErrors = { ...store.fileErrors, [ws]: next };
+    }
   }
 
   // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
@@ -310,6 +341,12 @@
     const t = toggleDir(store.files, ws, path);
     store.files = t.cache;
     if (t.fetch) void fetchDir(ws, t.fetch);
+  }
+
+  // 'failed to list — click to retry': a failed dir is already listed
+  // (empty), so toggleFileDir would collapse it — re-fetch instead.
+  export function retryDirFetch(ws: string, path: string): void {
+    void fetchDir(ws, path);
   }
 
   const refetchPending = new Map<string, Set<string>>();
@@ -330,7 +367,7 @@
   // window, a remote backend): the store re-reads the list and, if nothing
   // is open yet, opens the first one — the boot rule, applied live.
   async function syncWorkspaces(): Promise<void> {
-    if (opening) return;
+    if (inFlight) return;
     try {
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') return;
@@ -353,15 +390,36 @@
         await command({ type: 'session_close', session: s.id }).catch(() => {});
       }
     }
+    // Capture before the map deletion below: if the closed workspace held
+    // the current session, current must be redirected (a surviving
+    // workspace's session) or cleared in this same synchronous block — a
+    // dangling id rejects the next command with 'unknown session'
+    // (dogfood B1), and the tabs strand the app on 'No workspace open'
+    // (S6).
+    const cur = store.current;
+    const closedHeldCurrent = cur !== null && store.sessions[cur]?.meta.workspace === ws.id;
     delete store.skills[ws.id];
+    if (ws.id in store.fileErrors) {
+      const next = { ...store.fileErrors };
+      delete next[ws.id];
+      store.fileErrors = next;
+    }
     store.files = removeWorkspace(store.files, ws.id);
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
     }
+    // The closed workspace's pane view state is dead with it.
+    delete store.pane[ws.id];
     pendingDeltas.clear();
-    const cur = store.current;
-    if (cur && store.sessions[cur]?.meta.workspace === ws.id) {
+    if (!closedHeldCurrent) return;
+    const survivor = store.workspaces.find((w) =>
+      Object.values(store.sessions).some((s) => s.meta.workspace === w.id)
+    );
+    if (survivor) {
+      store.current =
+        Object.values(store.sessions).find((s) => s.meta.workspace === survivor.id)?.meta.id ?? null;
+    } else {
       store.current = null;
     }
   }
@@ -373,6 +431,7 @@
   export async function newSession(ws: string, title: string | null = null): Promise<string | null> {
     let sid: string;
     try {
+      clearError();
       const out = (await command({
         type: 'session_new',
         workspace: ws,
@@ -393,6 +452,7 @@
     const t = title.trim();
     if (!t) return;
     try {
+      clearError();
       await command({ type: 'session_rename', session: sid, title: t });
     } catch (e) {
       store.error = errText(e);
@@ -408,6 +468,7 @@
     const s = store.sessions[sid];
     if (!s || !model || s.meta.model === model) return;
     try {
+      clearError();
       await command({ type: 'session_set_model', session: sid, model });
     } catch (e) {
       store.error = errText(e);
@@ -425,6 +486,7 @@
     // the archive folder.
     if (store.sessions[sid]?.meta.parent) return;
     try {
+      clearError();
       const out = await command({ type: 'session_archive', session: sid });
       if (out.kind === 'session') {
         store.sessions = setArchived(store.sessions, sid, out.session);
@@ -449,6 +511,7 @@
   // refetched list, the archive flag's authority.
   export async function restoreSession(ws: string, sid: string): Promise<void> {
     try {
+      clearError();
       await command({ type: 'session_restore', workspace: ws, session: sid });
     } catch (e) {
       store.error = errText(e);
@@ -463,10 +526,19 @@
   }
 
   export async function switchSession(sid: string): Promise<void> {
+    const prev = store.current;
     store.current = sid;
-    const out = await command({ type: 'session_open', session: sid });
-    if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
-    store.sessions = openSession(store.sessions, sid, out.snapshot);
+    try {
+      clearError();
+      const out = await command({ type: 'session_open', session: sid });
+      if (out.kind !== 'snapshot') throw new Error('unexpected session_open output');
+      store.sessions = openSession(store.sessions, sid, out.snapshot);
+    } catch (e) {
+      // A failed open must not leave current dangling at an unhydrated
+      // stub: roll back to the previous session and surface the error.
+      store.error = errText(e);
+      store.current = prev;
+    }
   }
 
   // A pane action (session tree row / sub-agent double-click): the child is
@@ -499,26 +571,33 @@
     if (sid === null || text.trim() === '') return;
     const s = sessionOf(sid);
     s.pending = s.pending.filter((p) => !(p.text === text && p.lane === lane));
-    // The user bubble appears at send time; the core's file copy of the
-    // same entry hydrates later and is dropped against this one (twin).
-    s.entries.push({ id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: 'user', text });
-    store.tailJump++;
-    try {
-      await command({
-        type: 'message_send',
-        session: sid,
-        text,
-        lane: lane === 'follow-up' ? 'follow_up' : lane
-      });
-    } catch (e) {
-      store.error = errText(e);
-    }
+  // The user bubble appears at send time; the core's file copy of the
+  // same entry hydrates later and is dropped against this one (twin).
+  // A rejected send never reaches the core, so its twin never arrives —
+  // the optimistic entry is spliced back out instead of ghosting.
+  const optimisticId = `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  s.entries.push({ id: optimisticId, kind: 'user', text });
+  store.tailJump++;
+  try {
+    clearError();
+    await command({
+      type: 'message_send',
+      session: sid,
+      text,
+      lane: lane === 'follow-up' ? 'follow_up' : lane
+    });
+  } catch (e) {
+    const i = s.entries.findIndex((x) => x.id === optimisticId);
+    if (i >= 0) s.entries.splice(i, 1);
+    store.error = errText(e);
+  }
   }
 
   export async function stop(): Promise<void> {
     const sid = store.current;
     if (sid === null) return;
     try {
+      clearError();
       await command({ type: 'message_stop', session: sid });
     } catch (e) {
       store.error = errText(e);
@@ -540,6 +619,7 @@
       return seen++ !== idx;
     });
     try {
+      clearError();
       const out = await command({ type: 'session_open', session: sid });
       if (out.kind === 'snapshot') {
         s.pending = out.snapshot.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
@@ -556,7 +636,9 @@
       const sid = 'session' in ev ? ev.session : null;
       if (!sid) {
         if (ev.type === 'system') {
-          store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
+          // Only an error kind writes: an unrelated system event (from any
+          // client) must not wipe a live IPC error (S3).
+          if (ev.kind.kind === 'error') store.error = ev.kind.message;
           if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
         }
         if (ev.type === 'skill_list_changed') {
@@ -704,7 +786,9 @@
           break;
         }
         case 'system': {
-          store.error = ev.kind.kind === 'error' ? ev.kind.message : null;
+          // Only an error kind writes (S3): the next successful command
+          // clears the banner, not an unrelated system event.
+          if (ev.kind.kind === 'error') store.error = ev.kind.message;
           break;
         }
       }
