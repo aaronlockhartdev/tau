@@ -28,6 +28,7 @@ import {
   applyEvents,
   archiveSession,
   closeWorkspace,
+  closeWorkspaces,
   fetchWindow,
   init,
   openWorkspace,
@@ -36,6 +37,7 @@ import {
   send,
   store,
   switchSession,
+  tabSelect,
   toggleFileDir
 } from './store.svelte';
 
@@ -114,6 +116,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
   const base: Record<Command['type'], (cmd: Command) => CommandOutput> = {
     workspace_list: () => ({ kind: 'workspaces', workspaces: [WS] }),
     workspace_open: () => ({ kind: 'workspace', workspace: WS }),
+    workspace_close: () => ({ kind: 'none' }),
     session_list: () => ({ kind: 'sessions', sessions: [meta('s1')] }),
     session_new: () => ({ kind: 'session', session: meta('s2') }),
     session_rename: () => ({ kind: 'none' }),
@@ -160,6 +163,8 @@ function freshStore() {
   store.fileErrors = {};
   store.skills = {};
   store.pane = {};
+  store.tabSelected = [];
+  store.tabSelAnchor = null;
   store.loading = false;
   store.error = null;
   store.tailJump = 0;
@@ -540,6 +545,110 @@ describe('closeWorkspace', () => {
     mockIPC(() => ({ kind: 'none' }));
     await closeWorkspace(WS);
     expect(store.current).toBe('s2');
+  });
+
+  it('sends the workspace_close command to persist the close', async () => {
+    store.workspaces = [WS];
+    store.sessions = applySessionList({}, [meta('s1')]);
+    store.current = null;
+    const calls: string[] = [];
+    mockIPC((cmd) => {
+      calls.push(cmd.type);
+      return { kind: 'none' };
+    });
+    await closeWorkspace(WS);
+    expect(calls).toContain('workspace_close');
+    expect(calls.at(-1)).toBe('workspace_close');
+  });
+
+  it('a failed persist surfaces store.error; the tab still closes locally', async () => {
+    store.workspaces = [WS];
+    store.sessions = applySessionList({}, [meta('s1')]);
+    store.current = null;
+    mockIPC((cmd) => {
+      if (cmd.type === 'workspace_close') throw new Error('registry write failed');
+      return { kind: 'none' };
+    });
+    await closeWorkspace(WS);
+    expect(store.error).toBe('registry write failed');
+    expect(store.workspaces).toEqual([]);
+  });
+
+  it('a closed tab drops out of the selection (no dangling member)', async () => {
+    store.workspaces = [WS, WS2];
+    store.sessions = applySessionList({}, [meta('s1'), meta('s2', WS2.id)]);
+    store.current = 's2';
+    store.tabSelected = ['w1', 'w2'];
+    mockIPC(() => ({ kind: 'none' }));
+    await closeWorkspace(WS);
+    expect(store.tabSelected).toEqual(['w2']);
+  });
+});
+
+describe('tab select (B2)', () => {
+  const WS2: Workspace = { id: 'w2', name: 'other', cwd: '/tmp/other' };
+  const WS3: Workspace = { id: 'w3', name: 'third', cwd: '/tmp/third' };
+  const plain = { shiftKey: false, metaKey: false, ctrlKey: false };
+  const cmd = { shiftKey: false, metaKey: true, ctrlKey: false };
+  const shift = { shiftKey: true, metaKey: false, ctrlKey: false };
+
+  it('cmd/ctrl toggles a tab in and out of the selection', () => {
+    store.workspaces = [WS, WS2];
+    tabSelect('w1', cmd);
+    expect(store.tabSelected).toEqual(['w1']);
+    expect(store.tabSelAnchor).toBe('w1');
+    tabSelect('w2', { ...cmd, metaKey: false, ctrlKey: true });
+    expect(store.tabSelected).toEqual(['w1', 'w2']);
+    tabSelect('w1', cmd);
+    expect(store.tabSelected).toEqual(['w2']);
+  });
+
+  it('shift spans a range in tab order, from the held anchor', () => {
+    store.workspaces = [WS, WS2, WS3];
+    tabSelect('w1', cmd);
+    tabSelect('w3', shift);
+    expect(store.tabSelected).toEqual(['w1', 'w2', 'w3']);
+    tabSelect('w2', shift);
+    expect(store.tabSelected).toEqual(['w1', 'w2']);
+  });
+
+  it('a plain click clears the selection and sets the anchor', () => {
+    store.workspaces = [WS, WS2];
+    store.tabSelected = ['w2'];
+    store.tabSelAnchor = 'w2';
+    tabSelect('w1', plain);
+    expect(store.tabSelected).toEqual([]);
+    expect(store.tabSelAnchor).toBe('w1');
+  });
+});
+
+describe('closeWorkspaces (bulk, B2)', () => {
+  const WS2: Workspace = { id: 'w2', name: 'other', cwd: '/tmp/other' };
+  const WS3: Workspace = { id: 'w3', name: 'third', cwd: '/tmp/third' };
+
+  it('closes N tabs; the current-redirect lands on the final survivor', async () => {
+    store.workspaces = [WS, WS2, WS3];
+    store.sessions = applySessionList({}, [meta('s1'), meta('s2', WS2.id), meta('s3', WS3.id)]);
+    store.current = 's1';
+    store.tabSelected = ['w1', 'w2'];
+    store.tabSelAnchor = 'w1';
+    mockIPC(() => ({ kind: 'none' }));
+    await closeWorkspaces([WS, WS2]);
+    expect(store.workspaces).toEqual([WS3]);
+    expect(store.current).toBe('s3');
+    expect(store.tabSelected).toEqual([]);
+    expect(store.tabSelAnchor).toBeNull();
+  });
+
+  it('a one-element bulk is a single close', async () => {
+    store.workspaces = [WS, WS2];
+    store.sessions = applySessionList({}, [meta('s1'), meta('s2', WS2.id)]);
+    store.current = 's2';
+    mockIPC(() => ({ kind: 'none' }));
+    await closeWorkspaces([WS]);
+    expect(store.workspaces).toEqual([WS2]);
+    expect(store.current).toBe('s2');
+    expect(store.tabSelected).toEqual([]);
   });
 });
 

@@ -67,7 +67,12 @@
     fileErrors: {} as Record<string, Record<string, string>>,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
-    pane: {} as Record<string, PaneState>
+    pane: {} as Record<string, PaneState>,
+    // The tab strip's multiselect (B2): the pane's session-select shape
+    // (PaneState's selected/selAnchor), but global — a selection can span
+    // tabs of several workspaces, so it keys on nothing.
+    tabSelected: [] as string[],
+    tabSelAnchor: null as string | null
   });
 
   export interface PaneState {
@@ -226,11 +231,12 @@
     store: () => store,
     liveTexts: () =>
       (store.current ? store.sessions[store.current]?.live ?? [] : []).map((l) => l.text.length),
-    // send/stop/openWorkspace/switchSession/fetchWindow are module exports
-    // the rig drives directly; hoisted above.
+    // send/stop/openWorkspace/closeWorkspace/switchSession/fetchWindow
+    // are module exports the rig drives directly; hoisted above.
     send,
     stop,
     openWorkspace,
+    closeWorkspace,
     switchSession,
     fetchWindow,
     omStatus: (kind: 'observing' | 'reflecting' | 'idle') =>
@@ -390,6 +396,12 @@
         await command({ type: 'session_close', session: s.id }).catch(() => {});
       }
     }
+    // Persist the close (B7): the core's `open` flag keeps the tab closed
+    // across a restart. A failed persist surfaces the banner; the tab
+    // closes locally either way.
+    await command({ type: 'workspace_close', workspace: ws.id }).catch((e) => {
+      store.error = errText(e);
+    });
     // Capture before the map deletion below: if the closed workspace held
     // the current session, current must be redirected (a surviving
     // workspace's session) or cleared in this same synchronous block — a
@@ -411,6 +423,8 @@
     }
     // The closed workspace's pane view state is dead with it.
     delete store.pane[ws.id];
+    // The closed tab drops out of the selection too (no dangling member).
+    store.tabSelected = store.tabSelected.filter((x) => x !== ws.id);
     pendingDeltas.clear();
     if (!closedHeldCurrent) return;
     const survivor = store.workspaces.find((w) =>
@@ -422,6 +436,44 @@
     } else {
       store.current = null;
     }
+  }
+
+  // The tab strip's multiselect (B2): cmd/ctrl toggles a tab in and out,
+  // shift spans from the anchor in tab order, a plain click clears the
+  // selection (the caller then activates the tab).
+  export function tabSelect(
+    ws: string,
+    e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }
+  ): void {
+    if (e.shiftKey) {
+      const anchor = store.tabSelAnchor ?? store.tabSelected[0] ?? ws;
+      const ids = store.workspaces.map((w) => w.id);
+      const a = ids.indexOf(anchor);
+      const b = ids.indexOf(ws);
+      if (a < 0 || b < 0) return;
+      const [lo, hi] = a < b ? [a, b] : [b, a];
+      store.tabSelected = ids.slice(lo, hi + 1);
+      return;
+    }
+    if (e.metaKey || e.ctrlKey) {
+      store.tabSelected = store.tabSelected.includes(ws)
+        ? store.tabSelected.filter((x) => x !== ws)
+        : [...store.tabSelected, ws];
+      store.tabSelAnchor = ws;
+      return;
+    }
+    store.tabSelected = [];
+    store.tabSelAnchor = ws;
+  }
+
+  // A bulk close (B2): N closes in sequence — each applies the
+  // current-redirect, and the final close's redirect is the one that
+  // stands (computed over the survivors), so the end state is a single
+  // redirect over the surviving set.
+  export async function closeWorkspaces(wss: Workspace[]): Promise<void> {
+    store.tabSelected = [];
+    store.tabSelAnchor = null;
+    for (const w of wss) await closeWorkspace(w);
   }
 
   // New top-level session in the workspace: the core names it (adjective-noun)
