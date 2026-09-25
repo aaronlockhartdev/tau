@@ -36,6 +36,10 @@
   // registry (a disable-model-invocation skill is here too — the
   // dropdown is its only door).
   const cur = $derived(store.current ? store.sessions[store.current] : null);
+  // A session archived while open keeps its transcript, but the composer
+  // goes quiet: the core rejects sends to an archived session (ADR-0005),
+  // so the input is replaced by a restore hint (dogfood B4).
+  const archived = $derived(cur?.archived ?? false);
   const skills: SkillInfo[] = $derived.by(() => {
     const ws = cur?.meta.workspace;
     return ws ? (store.skills[ws] ?? []) : [];
@@ -167,82 +171,89 @@
 </script>
 
 <div class="composer">
-  {#if open}
-    <div class="dropdown" role="listbox">
-      {#each matches as m, i (m.id + m.name)}
-        <div
-          class="opt"
-          class:sel={i === sel}
-          role="option"
-          aria-selected={i === sel}
-          tabindex="-1"
-          onmouseenter={() => (sel = i)}
-          onmousedown={(e) => e.preventDefault()}
-          onkeydown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              complete(i);
-            }
-          }}
-          onclick={() => complete(i)}
+  {#if archived}
+    <div class="crow archived">
+      <svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-archive" /></svg>
+      <span>archived — restore to continue</span>
+    </div>
+  {:else}
+    {#if open}
+      <div class="dropdown" role="listbox">
+        {#each matches as m, i (m.id + m.name)}
+          <div
+            class="opt"
+            class:sel={i === sel}
+            role="option"
+            aria-selected={i === sel}
+            tabindex="-1"
+            onmouseenter={() => (sel = i)}
+            onmousedown={(e) => e.preventDefault()}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                complete(i);
+              }
+            }}
+            onclick={() => complete(i)}
+          >
+            <span class="oname">{m.name}</span>
+            <span class="odesc">{m.desc}</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <div class="crow">
+      <textarea
+        class="cin"
+        bind:this={inputEl}
+        bind:value={text}
+        rows="1"
+        placeholder="message — / for commands"
+        onkeydown={onKey}
+        onblur={() => (completed = true)}
+        oninput={() => {
+          completed = false;
+          sel = 0;
+          fit();
+        }}
+      ></textarea>
+    </div>
+    <div class="cfoot">
+      <div class="cmeta">
+        <button
+          class="mchip"
+          title="switch model"
+          onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
         >
-          <span class="oname">{m.name}</span>
-          <span class="odesc">{m.desc}</span>
-        </div>
-      {/each}
+          <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
+          <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
+          <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
+        </button>
+        <span class="chint">enter send · shift+enter newline · / commands</span>
+      </div>
+      <div class="lanes" class:dim={!running}>
+        {#each lanes as l (l.id)}
+          <button
+            class="lane"
+            class:active={lane === l.id}
+            title={l.title}
+            onclick={() => (lane = l.id)}
+          >
+            {l.label}
+          </button>
+        {/each}
+      </div>
+      <button
+        class="send"
+        class:stop={running && !text.trim()}
+        class:disabled={!text.trim() && !running}
+        title={running && !text.trim() ? 'stop the in-flight turn' : 'send'}
+        onclick={running && !text.trim() ? () => void stop() : submit}
+      >
+        {running ? (text.trim() ? (lane === 'force' ? '⚡' : '↑') : '■') : '↑'}
+      </button>
     </div>
   {/if}
-  <div class="crow">
-    <textarea
-      class="cin"
-      bind:this={inputEl}
-      bind:value={text}
-      rows="1"
-      placeholder="message — / for commands"
-      onkeydown={onKey}
-      onblur={() => (completed = true)}
-      oninput={() => {
-        completed = false;
-        sel = 0;
-        fit();
-      }}
-    ></textarea>
-  </div>
-  <div class="cfoot">
-    <div class="cmeta">
-      <button
-        class="mchip"
-        title="switch model"
-        onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
-      >
-        <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
-        <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
-        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
-      </button>
-      <span class="chint">enter send · shift+enter newline · / commands</span>
-    </div>
-    <div class="lanes" class:dim={!running}>
-      {#each lanes as l (l.id)}
-        <button
-          class="lane"
-          class:active={lane === l.id}
-          title={l.title}
-          onclick={() => (lane = l.id)}
-        >
-          {l.label}
-        </button>
-      {/each}
-    </div>
-    <button
-      class="send"
-      class:stop={running && !text.trim()}
-      class:disabled={!text.trim() && !running}
-      title={running && !text.trim() ? 'stop the in-flight turn' : 'send'}
-      onclick={running && !text.trim() ? () => void stop() : submit}
-    >
-      {running ? (text.trim() ? (lane === 'force' ? '⚡' : '↑') : '■') : '↑'}
-    </button>
-  </div>
 </div>
 
 <style>
@@ -259,6 +270,16 @@
     align-items: center;
     gap: 10px;
     padding: 10px 12px;
+  }
+  .crow.archived {
+    font: 12px var(--mono);
+    color: var(--faint);
+    gap: 8px;
+  }
+  .crow.archived .ai {
+    width: 14px;
+    height: 14px;
+    flex: none;
   }
   .cin {
     flex: 1;
