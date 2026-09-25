@@ -1,5 +1,6 @@
 //! Session lifecycle: skill discovery at the session boundary, the live registration path (create / re-open), and the live-vs-disk lookups.
 
+use super::thinking::thinking_adjusted_max_output;
 use super::*;
 
 impl Core {
@@ -469,53 +470,6 @@ pub(crate) fn derive_turn(
         context_window: def.and_then(|d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
     }
-}
-
-/// A reasoning turn reserves output room for its thinking (#36): the output
-/// cap rises to base + the level's token budget, capped at the model's max
-/// (pi's adjustMaxTokensForThinking, the provider-agnostic part — the
-/// Responses API has no budget_tokens field, so raising the cap is the
-/// consumer). A `None` base with a declared model max uses the model max.
-fn thinking_adjusted_max_output(
-    base: Option<u32>,
-    model_max: Option<u32>,
-    level: crate::config::ThinkingLevel,
-    budgets: &std::collections::BTreeMap<String, u32>,
-) -> Option<u64> {
-    if level == crate::config::ThinkingLevel::Off {
-        return base.map(u64::from);
-    }
-    let budget = thinking_budget(level, budgets) as u64;
-    match (base, model_max) {
-        (Some(b), Some(m)) => Some((b as u64 + budget).min(m as u64)),
-        (Some(b), None) => Some(b as u64 + budget),
-        (None, Some(m)) => Some(m as u64),
-        (None, None) => None,
-    }
-}
-
-/// The token budget for a thinking level (#36): the user's `thinking.budgets`
-/// entry wins, else the pi defaults; xhigh and max fold to high.
-fn thinking_budget(
-    level: crate::config::ThinkingLevel,
-    budgets: &std::collections::BTreeMap<String, u32>,
-) -> u32 {
-    let key: &'static str = match level {
-        crate::config::ThinkingLevel::Minimal => "minimal",
-        crate::config::ThinkingLevel::Low => "low",
-        crate::config::ThinkingLevel::Medium => "medium",
-        crate::config::ThinkingLevel::High
-        | crate::config::ThinkingLevel::XHigh
-        | crate::config::ThinkingLevel::Max => "high",
-        crate::config::ThinkingLevel::Off => "off",
-    };
-    budgets.get(key).copied().unwrap_or(match key {
-        "minimal" => 1024,
-        "low" => 2048,
-        "medium" => 8192,
-        "high" => 16384,
-        _ => 0,
-    })
 }
 
 /// The live-turn refusal shared by the header-writers (rename, fork,

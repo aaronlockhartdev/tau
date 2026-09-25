@@ -53,6 +53,7 @@ mod sessions;
 pub(crate) use sessions::*;
 mod snapshot;
 mod state;
+mod thinking;
 mod turn;
 mod watch;
 mod watchers;
