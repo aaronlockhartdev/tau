@@ -294,6 +294,7 @@ impl Core {
         let provider = ForwardingProvider {
             inner: session_inner(&self.client, &provider, &config.requests),
             tx: self.events_tx.clone(),
+            pipe: self.pipe.clone(),
             workspace: workspace.id.clone(),
             session: store.id().to_owned(),
             stop: Arc::new(AtomicBool::new(false)),
@@ -318,6 +319,7 @@ impl Core {
                     provider: first_provider.clone(),
                     requests: config.requests.clone(),
                     tx: self.events_tx.clone(),
+                    pipe: self.pipe.clone(),
                     workspace: workspace.id.clone(),
                 })
             });
@@ -411,5 +413,13 @@ impl Core {
             .insert(id.clone(), live.clone());
         sup.attach_parent(live.agent.clone());
         Ok(meta)
+    }
+}
+
+/// The live-turn refusal shared by the header-writers (rename, fork,
+/// branch) and the delete: the same guard as the archive (ADR-0005).
+pub(crate) fn running_turn_refusal(session: &str) -> ProtocolError {
+    ProtocolError::Other {
+        message: format!("session {session} is running — stop it first"),
     }
 }

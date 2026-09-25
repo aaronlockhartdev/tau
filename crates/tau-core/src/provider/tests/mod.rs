@@ -1,5 +1,9 @@
 use super::*;
 
+mod canned;
+mod server;
+mod wire;
+
 /// Live tests use a no-pool client: a pooled keep-alive connection keeps
 /// the tokio runtime alive after the test and hangs teardown (ticket #23).
 pub(crate) fn test_client() -> reqwest::Client {

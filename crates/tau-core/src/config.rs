@@ -70,6 +70,10 @@ pub enum ToolBatchPolicy {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Requests {
+    /// The stream's idle timeout (seconds): a stream silent for this long
+    /// (connect, headers, or between chunks) is dead. Per-chunk — reset on
+    /// every chunk — never a total deadline (a total killed healthy long
+    /// streams mid-body).
     pub timeout_secs: u64,
     pub retries: u32,
     pub tool_batch_on_force: ToolBatchPolicy,

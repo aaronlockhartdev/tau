@@ -33,6 +33,7 @@ pub(crate) fn manual_session(
     let provider = Arc::new(ForwardingProvider {
         inner,
         tx: core.events_tx.clone(),
+        pipe: core.pipe.clone(),
         workspace: workspace.id.clone(),
         session: store.id().to_owned(),
         stop: Arc::new(AtomicBool::new(false)),

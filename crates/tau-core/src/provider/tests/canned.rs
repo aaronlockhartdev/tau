@@ -1,3 +1,4 @@
+use super::server::*;
 use super::*;
 
 #[test]
@@ -171,4 +172,3 @@ data: "
     assert_eq!(result.text, "survived");
     assert!(!result.completed, "an early EOF is an incomplete turn");
 }
-

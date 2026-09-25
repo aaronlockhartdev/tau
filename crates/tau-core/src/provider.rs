@@ -27,6 +27,9 @@ pub struct Model {
 #[derive(Debug)]
 pub enum ProviderError {
     Request(reqwest::Error),
+    /// No data for `requests.timeout_secs` (connect, headers, or
+    /// between chunks): a dead stream, cut by the per-chunk idle deadline.
+    IdleTimeout,
     Status {
         status: u16,
         body: String,
@@ -39,6 +42,10 @@ impl fmt::Display for ProviderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Request(e) => write!(f, "provider request failed: {e}"),
+            Self::IdleTimeout => write!(
+                f,
+                "provider stream went idle (no data for the idle timeout)"
+            ),
             Self::Status { status, body } => write!(f, "provider returned {status}: {body}"),
             Self::MalformedStream(msg) => write!(f, "malformed stream: {msg}"),
         }

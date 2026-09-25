@@ -29,6 +29,11 @@ pub(crate) const TREE_EXCLUDES: &[&str] = &[
 /// archive list, losing its only restore row (review N3).
 pub(crate) const MAX_TITLE_LEN: usize = 200;
 
+/// The client's connect-phase timeout (applied to the shared client; the
+/// streaming body is bounded per provider by `requests.timeout_secs` as a
+/// per-chunk idle deadline). A connect that takes this long is a dead
+/// endpoint, not a slow model.
+pub(crate) const CONNECT_TIMEOUT_SECS: u64 = 30;
 /// A live session: the loop plus the binding's view of its lanes, the
 /// stop flag, and the provider (kept here so a turn can be diffed against
 /// the calls it started).
@@ -79,6 +84,9 @@ pub struct Core {
     pub(crate) custom: bool,
     pub(crate) client: reqwest::Client,
     pub(crate) events_tx: mpsc::Sender<Event>,
+    /// The event pipe's drop bookkeeping (never silent: a drop is counted
+    /// and a summary error is delivered at the next successful send).
+    pub(crate) pipe: PipeCounters,
     /// The pump's half of the events channel; taken exactly once.
     pub(crate) events_rx: Mutex<Option<mpsc::Receiver<Event>>>,
     /// The test-seam child provider factory (None in production builds).
@@ -148,6 +156,10 @@ impl CoreBuilder {
     pub fn build(self) -> Arc<Core> {
         let (events_tx, rx) = mpsc::channel(1024);
         let core = Arc::new(Core {
+            pipe: PipeCounters {
+                dropped: Arc::new(AtomicU64::new(0)),
+                overflow_pending: Arc::new(AtomicBool::new(false)),
+            },
             self_weak: Mutex::new(None),
             workspaces: Mutex::new(BTreeMap::new()),
             sessions: Mutex::new(HashMap::new()),
@@ -164,10 +176,14 @@ impl CoreBuilder {
             client: if self.custom {
                 reqwest::Client::builder()
                     .pool_max_idle_per_host(0)
+                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
                     .build()
                     .expect("client")
             } else {
-                reqwest::Client::new()
+                reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+                    .build()
+                    .expect("client")
             },
             events_tx,
             events_rx: Mutex::new(Some(rx)),
@@ -254,7 +270,96 @@ struct WorkspaceIndexEntry {
     name: String,
     cwd: String,
 }
+/// The routing pair an overflow notification rides on: the dropped
+/// event's own workspace/session, insofar as it has one.
+fn event_route(event: &Event) -> (String, Option<String>) {
+    match event {
+        Event::System {
+            workspace, session, ..
+        } => (workspace.clone(), session.clone()),
+        Event::SkillListChanged { workspace, .. } => (workspace.clone(), None),
+        Event::FileTreeChanged { workspace, .. } => (workspace.clone(), None),
+        Event::StreamStart {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::StreamDelta {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::StreamEnd {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::ToolStart {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::ToolEnd {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::Queue {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::SessionEvent {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::OmStatus {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::SubagentEvent {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+        Event::TaskChanged {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
+    }
+}
 
+/// The event pipe's drop bookkeeping, shared by the core and every
+/// forwarding sink: the drop counter (the ground truth) and the
+/// not-yet-delivered overflow summary.
+#[derive(Clone)]
+pub(crate) struct PipeCounters {
+    /// Total events dropped at the pipe's boundary.
+    pub(crate) dropped: Arc<AtomicU64>,
+    /// An overflow happened whose summary has not been delivered yet.
+    pub(crate) overflow_pending: Arc<AtomicBool>,
+}
+
+/// Send one event to the GUI, surfacing drops: an overflow (the bounded
+/// channel full) is counted and owes a summary. The summary cannot ride
+/// the same full channel, so it is delivered by the next *successful*
+/// send — the first moment the pipe has room again.
+pub(crate) fn pipe_send(
+    tx: &mpsc::Sender<Event>,
+    counters: &PipeCounters,
+    event: Event,
+    workspace: String,
+    session: Option<String>,
+) {
+    match tx.try_send(event) {
+        Ok(()) => {
+            if counters.overflow_pending.swap(false, Ordering::Relaxed) {
+                let total = counters.dropped.load(Ordering::Relaxed);
+                let summary = Event::System {
+                    workspace,
+                    session,
+                    kind: SystemEventKind::Error {
+                        message: format!(
+                            "event pipe overflow: {total} event(s) dropped — the view may be missing events; reload"
+                        ),
+                    },
+                };
+                // The summary can miss too (the channel refills in the
+                // same instant): then it stays owed.
+                if tx.try_send(summary).is_err() {
+                    counters.overflow_pending.store(true, Ordering::Relaxed);
+                }
+            }
+        }
+        Err(_) => {
+            counters.dropped.fetch_add(1, Ordering::Relaxed);
+            counters.overflow_pending.store(true, Ordering::Relaxed);
+        }
+    }
+}
 impl Core {
     pub fn events(&self) -> mpsc::Receiver<Event> {
         self.events_rx
@@ -265,7 +370,8 @@ impl Core {
     }
 
     pub(crate) fn emit(&self, event: Event) {
-        let _ = self.events_tx.try_send(event);
+        let (workspace, session) = event_route(&event);
+        pipe_send(&self.events_tx, &self.pipe, event, workspace, session);
     }
 
     /// The core as an `Arc` (the child seams keep one); None pre-`build`.
@@ -455,6 +561,16 @@ pub(crate) fn lane_to_lane(lane: MessageLane) -> Lane {
         MessageLane::Force => Lane::Force,
         MessageLane::Steering => Lane::Steering,
         MessageLane::FollowUp => Lane::FollowUp,
+    }
+}
+
+/// The inverse of `lane_to_lane` (re-queueing a core-lane message into
+/// the GUI's queue, where the protocol's lane is the currency).
+pub(crate) fn lane_to_message_lane(lane: Lane) -> MessageLane {
+    match lane {
+        Lane::Force => MessageLane::Force,
+        Lane::Steering => MessageLane::Steering,
+        Lane::FollowUp => MessageLane::FollowUp,
     }
 }
 

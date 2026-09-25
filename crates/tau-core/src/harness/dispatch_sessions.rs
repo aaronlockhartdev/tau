@@ -47,33 +47,55 @@ impl Core {
                 }
                 // The title lives in the file header, so the same write
                 // works for a live and a closed session alike.
-                let cwd = match self.live(&session) {
+                let (live, cwd) = match self.live(&session) {
                     Ok(l) => {
+                        // The archive's live-turn guard (ADR-0005): the
+                        // rename is a read-modify-write header rewrite
+                        // racing the in-flight turn's append_line — an
+                        // entry appended in the window would be clobbered
+                        // by the rename.
+                        if l.turn.load(Ordering::SeqCst) {
+                            return Err(running_turn_refusal(&session));
+                        }
                         // Keep the in-memory meta in sync; snapshot() and
                         // session_list() serve it, so a re-open must not
                         // revert the rename.
                         l.meta.lock().unwrap().title = Some(title.clone());
-                        l.cwd.clone()
+                        let cwd = l.cwd.clone();
+                        (Some(l), cwd)
                     }
-                    Err(_) => self
-                        .workspaces
-                        .lock()
-                        .unwrap()
-                        .values()
-                        .find(|w| {
-                            self.session_access(w)
-                                .iter()
-                                .any(|m| m.id == session && !m.archived)
-                        })
-                        .map(|w| PathBuf::from(w.cwd.clone()))
-                        .ok_or_else(|| ProtocolError::Other {
-                            message: "unknown session".into(),
-                        })?,
+                    Err(_) => (
+                        None,
+                        self.workspaces
+                            .lock()
+                            .unwrap()
+                            .values()
+                            .find(|w| {
+                                self.session_access(w)
+                                    .iter()
+                                    .any(|m| m.id == session && !m.archived)
+                            })
+                            .map(|w| PathBuf::from(w.cwd.clone()))
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "unknown session".into(),
+                            })?,
+                    ),
                 };
                 let mut store = SessionStore::for_workspace(&cwd, &session);
                 store.open().map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
+                // The archive's recheck: a wake can CAS a turn between the first
+                // check and the header rewrite.
+                if let Some(l) = &live
+                    && l.turn.load(Ordering::SeqCst)
+                {
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "session {session} started a turn while renaming — stop it and retry"
+                        ),
+                    });
+                }
                 store.set_title(&title).map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
@@ -189,7 +211,28 @@ impl Core {
                 // not keep streaming (review N7) — and its children keep no
                 // work running for a session that no longer exists (their
                 // files stay; they remain resumable as standalone sessions).
-                if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
+                // The remove's guard is scoped to the statement: a re-entrant sessions
+                // lock in the block below would deadlock (the mutex is
+                // non-reentrant).
+                let closed = self.sessions.lock().unwrap().remove(&session);
+                if let Some(live) = closed {
+                    // Closing a running CHILD session routes through the
+                    // parent's supervisor (the terminal Stopped record, the
+                    // state event, the parent's wake) — a bare stop flag
+                    // would let the child's drive burn its one-shot nudge
+                    // into a bogus `failed`.
+                    if let Some(link) = live.agent.child_link() {
+                        let parent = link
+                            .handle()
+                            .rsplit_once('-')
+                            .map(|(s, _)| s.to_owned())
+                            .unwrap_or_default();
+                        if let Ok(parent_live) = self.live(&parent)
+                            && let Some(sup) = parent_live.agent.subagents()
+                        {
+                            let _ = sup.stop_handle(link.handle(), StoppedBy::User);
+                        }
+                    }
                     live.stop.store(true, Ordering::SeqCst);
                     if let Some(sup) = live.agent.subagents() {
                         sup.stop_all(StoppedBy::User);
@@ -198,13 +241,44 @@ impl Core {
                 Ok(CommandOutput::None)
             }
             Command::SessionDelete { session } => {
-                if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
-                    live.stop.store(true, Ordering::SeqCst);
-                    if let Some(sup) = live.agent.subagents() {
-                        sup.stop_all(StoppedBy::User);
-                    }
-                    delete_session_files(&live.cwd, &session);
+                // The archive guard's twin (ADR-0005 keeps file moves off the live
+                // path): a running session's file is being written, so
+                // deleting it mid-turn tears it — and the turn's next
+                // write hits the gone file (the append refusal) instead
+                // of recording.
+                if let Some(live) = self.sessions.lock().unwrap().get(&session)
+                    && live.turn.load(Ordering::SeqCst)
+                {
+                    return Err(ProtocolError::Other {
+                        message: format!("session {session} is running — stop it first"),
+                    });
                 }
+                let Some(live) = self.sessions.lock().unwrap().remove(&session) else {
+                    // Not in the live map (never opened, or closed since):
+                    // nothing to quiesce.
+                    return Ok(CommandOutput::None);
+                };
+                // A wake that looked the session up before the detach holds
+                // the shared session and will CAS the turn (its map read
+                // predates the removal): re-check after the removal and
+                // abort if a turn started in the window — the file must
+                // not move mid-write.
+                if live.turn.load(Ordering::SeqCst) {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .insert(session.to_owned(), live.clone());
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "session {session} started a turn while deleting — stop it and retry"
+                        ),
+                    });
+                }
+                live.stop.store(true, Ordering::SeqCst);
+                if let Some(sup) = live.agent.subagents() {
+                    sup.stop_all(StoppedBy::User);
+                }
+                delete_session_files(&live.cwd, &session);
                 Ok(CommandOutput::None)
             }
             Command::SessionArchive { session } => {
@@ -477,10 +551,27 @@ impl Core {
             }
             Command::SessionFork { session, at } | Command::SessionBranch { session, at } => {
                 let live = self.live(&session)?;
+                // The archive's live-turn guard (ADR-0005): set_leaf
+                // rewrites the header racing the in-flight turn's
+                // append_line, and it would desync the agent's in-memory
+                // writer leaf from the file's — the next entry would
+                // parent to the old branch.
+                if live.turn.load(Ordering::SeqCst) {
+                    return Err(running_turn_refusal(&session));
+                }
                 let mut store = SessionStore::for_workspace(&live.cwd, &session);
                 store.open().map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
+                // The archive's recheck: a wake can CAS a turn between the
+                // first check and the header rewrite.
+                if live.turn.load(Ordering::SeqCst) {
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "session {session} started a turn while branching — stop it and retry"
+                        ),
+                    });
+                }
                 store.set_leaf(&at).map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;

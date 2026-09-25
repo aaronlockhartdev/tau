@@ -147,6 +147,9 @@ pub async fn stream_turn(
                     ProviderError::Request(reqwest_err) => {
                         reqwest_err.is_connect() || reqwest_err.is_timeout()
                     }
+                    // A dead stream before its body is a transport failure:
+                    // retry it, like a connect timeout.
+                    ProviderError::IdleTimeout => true,
                     ProviderError::Status { status, .. } => (500..599).contains(status),
                     _ => false,
                 };
@@ -184,14 +187,22 @@ async fn attempt_one_turn(
     request: &ResponseRequest,
     sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
-    let mut builder = client
-        .post(url)
-        .timeout(Duration::from_secs(requests.timeout_secs))
-        .json(request);
+    // `.timeout` is a *total* deadline, which kills a healthy long stream
+    // mid-body: the connect is bounded by the client's connect timeout,
+    // and the stream by this per-chunk idle deadline (reset on every
+    // chunk). A silent stream is dead; a slow one is not.
+    let idle = Duration::from_secs(requests.timeout_secs);
+    let mut builder = client.post(url).json(request);
     if let Some(key) = key {
         builder = builder.bearer_auth(key);
     }
-    let response = builder.send().await.map_err(ProviderError::Request)?;
+    // A connect/headers phase silent past the idle deadline is a dead
+    // endpoint: fail (and retry), like a connect timeout.
+    let mut sending = builder.send();
+    let response = tokio::time::timeout_at(tokio::time::Instant::now() + idle, &mut sending)
+        .await
+        .map_err(|_| ProviderError::IdleTimeout)?
+        .map_err(ProviderError::Request)?;
     let status = response.status().as_u16();
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -200,20 +211,42 @@ async fn attempt_one_turn(
     let mut parser = SseParser::new();
     let mut result = TurnResult::default();
     let mut stream = response;
+    let mut idle_deadline = tokio::time::Instant::now() + idle;
     'outer: while !parser.terminated {
-        let chunk = match stream.chunk().await {
-            Ok(Some(chunk)) => chunk,
+        let chunk = match tokio::time::timeout_at(
+            // `Box::pin` makes the future `Unpin`: reqwest's async-fn
+            // future is not, and `timeout_at` demands it.
+            idle_deadline,
+            Box::pin(stream.chunk()),
+        )
+        .await
+        {
+            Ok(Ok(Some(chunk))) => {
+                // A received chunk restarts the idle deadline.
+                idle_deadline = tokio::time::Instant::now() + idle;
+                chunk
+            }
             // EOF: the result stands as accumulated — `completed` only if
             // `response.completed` arrived (spec §6, #17 handoff gap b).
-            Ok(None) => break,
-            Err(e) => {
-                // A mid-body drop keeps the partial as an incomplete turn
-                // instead of an error (ticket #19, #17 handoff gap c): the
-                // partial cannot be re-derived by a retry; a pre-body
-                // failure (nothing received) still fails and retries.
+            Ok(Ok(None)) => break,
+            // A mid-body drop keeps the partial as an incomplete turn
+            // instead of an error (ticket #19, #17 handoff gap c): the
+            // partial cannot be re-derived by a retry; a pre-body
+            // failure (nothing received) still fails and retries.
+            Ok(Err(e)) => {
                 if result.text.is_empty() && result.reasoning.is_empty() && result.calls.is_empty()
                 {
                     return Err(ProviderError::Request(e));
+                }
+                break;
+            }
+            // The stream went silent past the idle deadline: a dead
+            // stream. Nothing received fails (and retries); a received
+            // partial stands as an incomplete turn, like a mid-body drop.
+            Err(_) => {
+                if result.text.is_empty() && result.reasoning.is_empty() && result.calls.is_empty()
+                {
+                    return Err(ProviderError::IdleTimeout);
                 }
                 break;
             }

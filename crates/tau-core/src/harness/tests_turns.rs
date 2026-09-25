@@ -307,6 +307,7 @@ async fn a_live_om_run_emits_om_status_events() {
     let provider = Arc::new(ForwardingProvider {
         inner: provider::canned(&body),
         tx: core.events_tx.clone(),
+        pipe: core.pipe.clone(),
         workspace: workspace.id.clone(),
         session: sid.clone(),
         stop: Arc::new(AtomicBool::new(false)),
@@ -391,4 +392,118 @@ async fn a_live_om_run_emits_om_status_events() {
         }
     }
     assert_eq!(kinds, vec![OmStatusKind::Observing, OmStatusKind::Idle]);
+}
+
+/// A send to a session whose file no longer opens (corrupted) must not
+/// vanish: the turn start fails visibly (a system error), and the
+/// accepted message is kept in the GUI's queue — it also stays in the
+/// agent's queue, so the next successful turn delivers it and the
+/// post-turn reconciliation removes it by text.
+#[tokio::test]
+async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
+    let core = CoreBuilder::custom(providers()).build();
+    let cwd = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, cwd.path()).await;
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned(&canned_body()),
+        TurnConfig::default(),
+    );
+    let session_id = live.meta.lock().unwrap().id.clone();
+    // Corrupt the file: open() now refuses it.
+    std::fs::write(
+        Path::new(&workspace.cwd)
+            .join(".tau")
+            .join("sessions")
+            .join(format!("{session_id}.jsonl")),
+        "{\"type\":\"not-a-session\"}\n",
+    )
+    .unwrap();
+    let collected = collect_events(&core);
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "do the thing".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let events = collected.lock().unwrap().clone();
+        let surfaced = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::System {
+                    kind: SystemEventKind::Error { message },
+                    ..
+                } => Some(message.clone()),
+                _ => None,
+            })
+            .is_some_and(|m| m.contains("cannot be opened"));
+        if surfaced {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no open-failure error surfaced"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // The accepted message is kept in the GUI's queue.
+    let items = live.queue.lock().unwrap().clone();
+    assert!(
+        items.iter().any(|i| i.text == "do the thing"),
+        "the accepted message must stay queued: {items:?}"
+    );
+    // The turn flag is clear: the session is not stuck running.
+    assert!(!live.turn.load(Ordering::SeqCst));
+    drop(core);
+}
+
+/// A pipe overflow is never silent: the drop is counted, and a summary
+/// system error reaches the GUI. The summary cannot ride the same full
+/// channel, so it is owed and delivered by the next successful send —
+/// the first moment the pipe has room again.
+#[tokio::test]
+async fn a_pipe_overflow_is_counted_and_surfaced() {
+    let core = CoreBuilder::custom(providers()).build();
+    let mut rx = core.events();
+    // Flood the bounded pipe (capacity 1024) with no reader: every
+    // event past the capacity is a drop.
+    for i in 0..2048 {
+        core.emit(Event::System {
+            workspace: "w".into(),
+            session: None,
+            kind: SystemEventKind::WorkspaceOpened {
+                name: "w".into(),
+                cwd: format!("/w/{i}"),
+            },
+        });
+    }
+    let dropped = core.pipe.dropped.load(Ordering::Relaxed);
+    assert!(dropped > 0, "overflows must be counted, got {dropped}");
+    // Drain the pipe, then let the next successful send deliver the
+    // owed summary.
+    while rx.try_recv().is_ok() {}
+    core.emit(Event::System {
+        workspace: "w".into(),
+        session: None,
+        kind: SystemEventKind::WorkspaceOpened {
+            name: "w".into(),
+            cwd: "/w/after".into(),
+        },
+    });
+    let mut surfaced = false;
+    while let Ok(ev) = rx.try_recv() {
+        surfaced |= matches!(
+            &ev,
+            Event::System {
+                kind: SystemEventKind::Error { message },
+                ..
+            } if message.contains("event pipe overflow")
+        );
+    }
+    assert!(surfaced, "an overflow must emit a visible summary");
+    drop(core);
 }
