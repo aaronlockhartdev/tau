@@ -355,6 +355,7 @@ export interface FileEntry {
 export type Command =
   | { type: 'workspace_open'; cwd: string }
   | { type: 'workspace_list' }
+  | { type: 'workspace_close'; workspace: string }
   | { type: 'session_list'; workspace: string }
   | { type: 'session_new'; workspace: string; title: string | null }
   | { type: 'session_rename'; session: string; title: string }

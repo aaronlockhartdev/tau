@@ -34,10 +34,9 @@ impl Core {
 
     /// The workspace's project roots (the `.tau/skills` + `.agents/skills`
     /// pair), watched from the first `open_workspace`; a batch re-discovers
-    /// that workspace. The watcher lives until process exit (no
-    /// workspace-close command — design #30); the map grows at most one
-    /// entry per distinct workspace. A missing project dir has no roots to
-    /// watch.
+    /// that workspace. `workspace_close` drops the entry (the debouncer
+    /// stops on drop), so the map tracks the open workspaces. A missing
+    /// project dir has no roots to watch.
     pub(crate) fn start_project_watcher(&self, workspace: &Workspace) {
         if !Path::new(&workspace.cwd).is_dir() {
             return;
@@ -137,9 +136,9 @@ pub(crate) fn spawn_watcher_consumer(
         .expect("the watcher thread spawns");
 }
 
-/// The watchers live until process exit (no workspace-close command —
-/// design #30); the drop is the test teardown, and it joins each
-/// debouncer thread (the `Watcher`'s own drop does the joining).
+/// The drop is the test teardown for the watchers a close did not stop;
+/// it joins each debouncer thread (the `Watcher`'s own drop does the
+/// joining).
 impl Drop for Core {
     fn drop(&mut self) {
         self.home_watcher.lock().unwrap().take();

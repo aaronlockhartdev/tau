@@ -70,8 +70,8 @@ pub struct Core {
     pub(crate) home_watcher: Mutex<Option<Watcher>>,
     /// The per-workspace project roots (the `.tau/skills` + `.agents/skills`
     /// pair), created at the first `open_workspace`; a batch re-discovers
-    /// that workspace. The watchers live until process exit — no
-    /// workspace-close command exists (design #30).
+    /// that workspace. `workspace_close` drops the entry (the debouncer
+    /// stops on drop), so the map tracks the open workspaces.
     pub(crate) project_watchers: Mutex<HashMap<String, Watcher>>,
     /// The per-workspace tree watcher (the files pane, ticket #32): the
     /// second consumer of the shared `Watcher` plumbing, watching the
@@ -208,10 +208,11 @@ impl CoreBuilder {
             config.providers.insert(name, p);
         }
         core.configs.lock().unwrap().insert(String::new(), config);
-        // The workspaces a previous run opened: re-register the ones whose
-        // folder still exists (sessions are read from disk on demand).
+        // The workspaces a previous run left open: re-register the ones
+        // whose folder still exists (sessions are read from disk on
+        // demand); a closed workspace (B7) stays closed across the restart.
         for e in core.load_workspace_index() {
-            if Path::new(&e.cwd).is_dir() {
+            if e.open && Path::new(&e.cwd).is_dir() {
                 let w = Workspace {
                     id: e.id,
                     name: e.name,
@@ -269,6 +270,13 @@ struct WorkspaceIndexEntry {
     id: String,
     name: String,
     cwd: String,
+    /// The tab's open flag (B7): a closed workspace stays closed across a
+    /// restart. Entries written before the flag existed default to open.
+    #[serde(default = "open_default")]
+    open: bool,
+}
+fn open_default() -> bool {
+    true
 }
 /// The routing pair an overflow notification rides on: the dropped
 /// event's own workspace/session, insofar as it has one.
@@ -415,7 +423,7 @@ impl Core {
                 cwd: workspace.cwd.clone(),
             },
         });
-        self.upsert_workspace_index(&workspace);
+        self.set_workspace_open(&workspace, true);
         self.start_project_watcher(&workspace);
         self.start_tree_watcher(&workspace);
         Ok(workspace)
@@ -467,16 +475,37 @@ impl Core {
         }
     }
 
-    fn upsert_workspace_index(&self, w: &Workspace) {
+    /// Set the workspace's `open` flag in the index (B7): true on open,
+    /// false on close. The entry is created if absent (a first open, or a
+    /// close racing ahead of any saved open) so the flag always sticks.
+    fn set_workspace_open(&self, w: &Workspace, open: bool) {
         let mut entries = self.load_workspace_index();
-        entries.retain(|e| e.cwd != w.cwd);
-        entries.push(WorkspaceIndexEntry {
-            id: w.id.clone(),
-            name: w.name.clone(),
-            cwd: w.cwd.clone(),
-        });
-        entries.sort_by(|a, b| a.cwd.cmp(&b.cwd));
+        if let Some(e) = entries.iter_mut().find(|e| e.cwd == w.cwd) {
+            e.open = open;
+        } else {
+            entries.push(WorkspaceIndexEntry {
+                id: w.id.clone(),
+                name: w.name.clone(),
+                cwd: w.cwd.clone(),
+                open,
+            });
+            entries.sort_by(|a, b| a.cwd.cmp(&b.cwd));
+        }
         self.save_workspace_index(&entries);
+    }
+
+    /// Close (archive) a workspace (B7): persist its `open` flag as closed,
+    /// then drop it from the live set — a `workspace_list` that still
+    /// carried it would resurrect the just-closed tab on the next sync —
+    /// and stop its watchers. The sessions stay on disk; the workspace
+    /// re-opens.
+    pub(crate) fn close_workspace(&self, id: &str) -> Result<(), ProtocolError> {
+        let w = self.workspace(id)?;
+        self.set_workspace_open(&w, false);
+        self.workspaces.lock().unwrap().remove(id);
+        self.project_watchers.lock().unwrap().remove(id);
+        self.tree_watchers.lock().unwrap().remove(id);
+        Ok(())
     }
 
     pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {
