@@ -386,3 +386,92 @@ async fn a_half_archived_session_converges_on_the_next_archive() {
     }
     drop(core);
 }
+
+/// Closing a RUNNING child session ends it `Stopped` through the
+/// parent's supervisor — not the bogus `failed` a bare stop flag would
+/// leave (the child has no supervisor of its own, and its drive would
+/// burn the one-shot nudge).
+#[tokio::test]
+async fn a_close_of_a_running_child_records_stopped_not_failed() {
+    let core = CoreBuilder::custom(providers())
+        .with_child_factory(Arc::new(SlowChildFactory {
+            body: plain_body(),
+            delay_ms: 1200,
+        }))
+        .build();
+    let cwd = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, cwd.path()).await;
+    let parent = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let info = match core
+        .dispatch(Command::SubagentSpawn {
+            session: parent.id.clone(),
+            agent_type: "general".into(),
+            brief: "do the thing".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    // Wait for the child to be running in its supervisor.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let out = core
+            .dispatch(Command::SubagentState {
+                handle: info.handle.clone(),
+            })
+            .unwrap();
+        let state = match out {
+            CommandOutput::Subagent { subagent } => subagent.state,
+            _ => String::new(),
+        };
+        if state == "running" {
+            break;
+        }
+        if tokio::time::Instant::now() > deadline {
+            panic!("the child never started running (last: {state})");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // Close the child's session directly.
+    core.dispatch(Command::SessionClose {
+        session: info.child.clone(),
+    })
+    .unwrap();
+    // The child ends Stopped — never the bogus `failed`.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let out = core
+            .dispatch(Command::SubagentState {
+                handle: info.handle.clone(),
+            })
+            .unwrap();
+        let state = match out {
+            CommandOutput::Subagent { subagent } => subagent.state,
+            _ => String::new(),
+        };
+        if matches!(state.as_str(), "stopped" | "failed" | "done") {
+            assert_eq!(
+                state, "stopped",
+                "closing a running child records its stop, not a failure"
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the child never reached a terminal state (last: {state})"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    drop(core);
+}

@@ -146,6 +146,25 @@ impl Supervisor {
         }
     }
 
+    /// Stop one child by handle (the GUI closing the child session): the
+    /// same terminal path as `stop` — a running child's stream is cut,
+    /// and every child gets the terminal Stopped record, the drive's
+    /// wake, the state event, and the parent's wake. A bare stop flag on
+    /// the child session would leave its drive to end the turn without a
+    /// parent notify and burn its one-shot nudge into a bogus `failed`.
+    pub fn stop_handle(self: &Arc<Self>, handle: &str, by: StoppedBy) -> Result<String, String> {
+        let child = self
+            .live_children()
+            .into_iter()
+            .find(|c| c.handle == handle)
+            .ok_or_else(|| format!("no child {handle} in this session's supervisor"))?;
+        if matches!(child.state(), ChildState::Running) {
+            // Cuts the child's stream at the next delta; the loop records
+            // the partial as an interrupted entry.
+            child.agent.stop();
+        }
+        self.finish_stop(&child, by)
+    }
     /// Soft-stop every child that still holds a drive (the parent session
     /// was closed, deleted, or archived: no work runs for a session that
     /// no longer exists): a running child is stopped as `stop` does, and
@@ -155,10 +174,7 @@ impl Supervisor {
     /// record is complete and they stay resumable as standalone sessions.
     pub fn stop_all(self: &Arc<Self>, by: StoppedBy) {
         for child in self.live_children() {
-            if matches!(child.state(), ChildState::Running) {
-                child.agent.stop();
-            }
-            let _ = self.finish_stop(&child, by);
+            let _ = self.stop_handle(&child.handle, by);
         }
     }
 

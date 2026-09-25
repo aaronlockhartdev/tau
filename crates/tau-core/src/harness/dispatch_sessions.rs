@@ -211,7 +211,28 @@ impl Core {
                 // not keep streaming (review N7) — and its children keep no
                 // work running for a session that no longer exists (their
                 // files stay; they remain resumable as standalone sessions).
-                if let Some(live) = self.sessions.lock().unwrap().remove(&session) {
+                // The remove's guard is scoped to the statement: a re-entrant sessions
+                // lock in the block below would deadlock (the mutex is
+                // non-reentrant).
+                let closed = self.sessions.lock().unwrap().remove(&session);
+                if let Some(live) = closed {
+                    // Closing a running CHILD session routes through the
+                    // parent's supervisor (the terminal Stopped record, the
+                    // state event, the parent's wake) — a bare stop flag
+                    // would let the child's drive burn its one-shot nudge
+                    // into a bogus `failed`.
+                    if let Some(link) = live.agent.child_link() {
+                        let parent = link
+                            .handle()
+                            .rsplit_once('-')
+                            .map(|(s, _)| s.to_owned())
+                            .unwrap_or_default();
+                        if let Ok(parent_live) = self.live(&parent)
+                            && let Some(sup) = parent_live.agent.subagents()
+                        {
+                            let _ = sup.stop_handle(link.handle(), StoppedBy::User);
+                        }
+                    }
                     live.stop.store(true, Ordering::SeqCst);
                     if let Some(sup) = live.agent.subagents() {
                         sup.stop_all(StoppedBy::User);
