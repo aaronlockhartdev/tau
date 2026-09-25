@@ -50,6 +50,7 @@ mod dispatch_sessions;
 mod forwarding;
 pub mod pump;
 mod sessions;
+pub(crate) use sessions::*;
 mod snapshot;
 mod state;
 mod turn;
@@ -78,6 +79,8 @@ mod tests_model;
 mod tests_skills;
 #[cfg(test)]
 mod tests_stream;
+#[cfg(test)]
+mod tests_turn_guards;
 #[cfg(test)]
 mod tests_turns;
 #[cfg(test)]

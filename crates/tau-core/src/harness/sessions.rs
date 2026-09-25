@@ -413,3 +413,11 @@ impl Core {
         Ok(meta)
     }
 }
+
+/// The live-turn refusal shared by the header-writers (rename, fork,
+/// branch) and the delete: the same guard as the archive (ADR-0005).
+pub(crate) fn running_turn_refusal(session: &str) -> ProtocolError {
+    ProtocolError::Other {
+        message: format!("session {session} is running — stop it first"),
+    }
+}

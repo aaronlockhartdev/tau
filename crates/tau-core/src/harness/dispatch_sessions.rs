@@ -47,33 +47,55 @@ impl Core {
                 }
                 // The title lives in the file header, so the same write
                 // works for a live and a closed session alike.
-                let cwd = match self.live(&session) {
+                let (live, cwd) = match self.live(&session) {
                     Ok(l) => {
+                        // The archive's live-turn guard (ADR-0005): the
+                        // rename is a read-modify-write header rewrite
+                        // racing the in-flight turn's append_line — an
+                        // entry appended in the window would be clobbered
+                        // by the rename.
+                        if l.turn.load(Ordering::SeqCst) {
+                            return Err(running_turn_refusal(&session));
+                        }
                         // Keep the in-memory meta in sync; snapshot() and
                         // session_list() serve it, so a re-open must not
                         // revert the rename.
                         l.meta.lock().unwrap().title = Some(title.clone());
-                        l.cwd.clone()
+                        let cwd = l.cwd.clone();
+                        (Some(l), cwd)
                     }
-                    Err(_) => self
-                        .workspaces
-                        .lock()
-                        .unwrap()
-                        .values()
-                        .find(|w| {
-                            self.session_access(w)
-                                .iter()
-                                .any(|m| m.id == session && !m.archived)
-                        })
-                        .map(|w| PathBuf::from(w.cwd.clone()))
-                        .ok_or_else(|| ProtocolError::Other {
-                            message: "unknown session".into(),
-                        })?,
+                    Err(_) => (
+                        None,
+                        self.workspaces
+                            .lock()
+                            .unwrap()
+                            .values()
+                            .find(|w| {
+                                self.session_access(w)
+                                    .iter()
+                                    .any(|m| m.id == session && !m.archived)
+                            })
+                            .map(|w| PathBuf::from(w.cwd.clone()))
+                            .ok_or_else(|| ProtocolError::Other {
+                                message: "unknown session".into(),
+                            })?,
+                    ),
                 };
                 let mut store = SessionStore::for_workspace(&cwd, &session);
                 store.open().map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
+                // The archive's recheck: a wake can CAS a turn between the first
+                // check and the header rewrite.
+                if let Some(l) = &live
+                    && l.turn.load(Ordering::SeqCst)
+                {
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "session {session} started a turn while renaming — stop it and retry"
+                        ),
+                    });
+                }
                 store.set_title(&title).map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
@@ -477,10 +499,27 @@ impl Core {
             }
             Command::SessionFork { session, at } | Command::SessionBranch { session, at } => {
                 let live = self.live(&session)?;
+                // The archive's live-turn guard (ADR-0005): set_leaf
+                // rewrites the header racing the in-flight turn's
+                // append_line, and it would desync the agent's in-memory
+                // writer leaf from the file's — the next entry would
+                // parent to the old branch.
+                if live.turn.load(Ordering::SeqCst) {
+                    return Err(running_turn_refusal(&session));
+                }
                 let mut store = SessionStore::for_workspace(&live.cwd, &session);
                 store.open().map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
+                // The archive's recheck: a wake can CAS a turn between the
+                // first check and the header rewrite.
+                if live.turn.load(Ordering::SeqCst) {
+                    return Err(ProtocolError::Other {
+                        message: format!(
+                            "session {session} started a turn while branching — stop it and retry"
+                        ),
+                    });
+                }
                 store.set_leaf(&at).map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
