@@ -7,7 +7,9 @@ use super::*;
 impl Core {
     pub fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
         match &cmd {
-            Command::WorkspaceOpen { .. } | Command::WorkspaceList => self.dispatch_workspace(cmd),
+            Command::WorkspaceOpen { .. }
+            | Command::WorkspaceList
+            | Command::WorkspaceClose { .. } => self.dispatch_workspace(cmd),
             Command::SessionList { .. }
             | Command::SessionNew { .. }
             | Command::SessionRename { .. }
@@ -52,6 +54,10 @@ impl Core {
             Command::WorkspaceList => Ok(CommandOutput::Workspaces {
                 workspaces: self.workspaces.lock().unwrap().values().cloned().collect(),
             }),
+            Command::WorkspaceClose { workspace } => {
+                self.close_workspace(&workspace)?;
+                Ok(CommandOutput::None)
+            }
             _ => unreachable!("dispatch routes the arm"),
         }
     }

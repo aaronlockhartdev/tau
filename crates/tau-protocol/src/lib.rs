@@ -164,6 +164,12 @@ pub enum Command {
         cwd: String,
     },
     WorkspaceList,
+    /// Close (archive) the workspace (B7): its `open` flag in the workspace
+    /// index is persisted, so a closed tab stays closed across a restart.
+    /// The workspace's sessions remain on disk and the workspace re-opens.
+    WorkspaceClose {
+        workspace: String,
+    },
 
     SessionList {
         workspace: String,
@@ -368,6 +374,9 @@ mod tests {
                 cwd: "/tmp/w".into(),
             },
             Command::WorkspaceList,
+            Command::WorkspaceClose {
+                workspace: "w1".into(),
+            },
             Command::SessionList {
                 workspace: "w1".into(),
             },
