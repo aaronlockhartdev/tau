@@ -30,6 +30,7 @@ import {
   closeWorkspace,
   fetchWindow,
   init,
+  retryDirFetch,
   restoreSession,
   send,
   store,
@@ -155,6 +156,7 @@ function freshStore() {
   store.current = null;
   store.sessions = {};
   store.files = {};
+  store.fileErrors = {};
   store.skills = {};
   store.pane = {};
   store.loading = false;
@@ -679,6 +681,25 @@ describe('files pane', () => {
     await vi.advanceTimersByTimeAsync(300);
     expect(listed).toHaveLength(0);
     vi.useRealTimers();
+  });
+
+  it('a file_list failure records a per-dir error; a successful retry lists and clears it', async () => {
+    store.workspaces = [WS];
+    store.files = { w1: {} };
+    let fail = true;
+    mockIPC((cmd) => {
+      if (cmd.type === 'file_list') {
+        if (fail) throw new Error('permission denied');
+        return { kind: 'files', files: [f] };
+      }
+      return { kind: 'none' };
+    });
+    toggleFileDir('w1', 'src');
+    await vi.waitFor(() => expect(store.fileErrors['w1']?.['src']).toBe('permission denied'));
+    fail = false;
+    retryDirFetch('w1', 'src');
+    await vi.waitFor(() => expect(store.files['w1']['src']).toEqual([f]));
+    expect(store.fileErrors['w1']?.['src']).toBeUndefined();
   });
 });
 

@@ -61,6 +61,10 @@
     // lists the root, expansion lists its children); FileTreeChanged
     // marks a listed dir stale and a coalesced refetch wave replaces it.
     files: {} as FilesCache,
+    // Per-dir file_list failures (the empty-directory deception): a failed
+    // listing is recorded per workspace/path and cleared when the same dir
+    // lists successfully again.
+    fileErrors: {} as Record<string, Record<string, string>>,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>
@@ -302,13 +306,22 @@
     let out;
     try {
       out = await command({ type: 'file_list', workspace: ws, path });
-    } catch {
+    } catch (e) {
       // The workspace may be closing mid-flight: a fetch for a gone
       // workspace is dropped, not an error.
+      if (!store.workspaces.some((w) => w.id === ws)) return;
+      const failed = store.fileErrors[ws] ?? {};
+      store.fileErrors = { ...store.fileErrors, [ws]: { ...failed, [path]: errText(e) } };
       return;
     }
     if (out.kind !== 'files') return;
     store.files = putListing(store.files, ws, path, out.files);
+    const failed = store.fileErrors[ws];
+    if (failed && path in failed) {
+      const next = { ...failed };
+      delete next[path];
+      store.fileErrors = { ...store.fileErrors, [ws]: next };
+    }
   }
 
   // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
@@ -318,6 +331,12 @@
     const t = toggleDir(store.files, ws, path);
     store.files = t.cache;
     if (t.fetch) void fetchDir(ws, t.fetch);
+  }
+
+  // 'failed to list — click to retry': a failed dir is already listed
+  // (empty), so toggleFileDir would collapse it — re-fetch instead.
+  export function retryDirFetch(ws: string, path: string): void {
+    void fetchDir(ws, path);
   }
 
   const refetchPending = new Map<string, Set<string>>();
@@ -370,6 +389,11 @@
     const cur = store.current;
     const closedHeldCurrent = cur !== null && store.sessions[cur]?.meta.workspace === ws.id;
     delete store.skills[ws.id];
+    if (ws.id in store.fileErrors) {
+      const next = { ...store.fileErrors };
+      delete next[ws.id];
+      store.fileErrors = next;
+    }
     store.files = removeWorkspace(store.files, ws.id);
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {

@@ -6,7 +6,7 @@
   // and svelte-check chokes on its renamed props).
   import FileNode from './FileNode.svelte';
   import TreeNode from './TreeNode.svelte';
-  import { store, toggleFileDir } from '../lib/store.svelte';
+  import { store, toggleFileDir, retryDirFetch } from '../lib/store.svelte';
   import type { FileEntry } from '../lib/protocol';
 
   let { entry, ws, depth = 0 }: { entry: FileEntry; ws: string; depth?: number } = $props();
@@ -14,7 +14,14 @@
   const children = $derived(store.files[ws]?.[entry.path] ?? null);
 
   function toggle(): void {
-    if (entry.dir) toggleFileDir(ws, entry.path);
+    if (!entry.dir) return;
+    if (store.fileErrors[ws]?.[entry.path]) {
+      // A failed dir is already listed (empty): toggleFileDir would just
+      // collapse it, so the row re-fetches instead.
+      retryDirFetch(ws, entry.path);
+      return;
+    }
+    toggleFileDir(ws, entry.path);
   }
 </script>
 
@@ -33,6 +40,9 @@
     {#each children as c (c.path)}
       <FileNode entry={c} ws={ws} depth={depth + 1} />
     {/each}
+    {#if store.fileErrors[ws]?.[entry.path]}
+      <div class="fail">failed to list — click the row to retry</div>
+    {/if}
   </div>
 {/if}
 
@@ -46,5 +56,10 @@
   .kids {
     display: flex;
     flex-direction: column;
+  }
+  .fail {
+    padding: 2px 8px;
+    font: 10.5px var(--mono);
+    color: var(--red);
   }
 </style>
