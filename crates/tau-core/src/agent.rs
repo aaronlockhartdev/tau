@@ -262,6 +262,19 @@ impl AgentSession {
         !self.inner.lock().unwrap().queue.is_empty()
     }
 
+    /// The queued message at the head of the lane queue — for a
+    /// turn-starting send, the one the in-flight turn will deliver first.
+    /// The harness re-queues it in the GUI's queue when the turn cannot
+    /// even start (a failed store open), so the accepted send is not lost.
+    pub fn first_pending(&self) -> Option<(String, Lane)> {
+        self.inner
+            .lock()
+            .unwrap()
+            .queue
+            .front()
+            .map(|q| (q.text.clone(), q.lane))
+    }
+
     /// The child-side link (a child session's `parent_notify` routing).
     pub fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
         self.inner.lock().unwrap().child.clone()

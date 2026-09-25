@@ -467,6 +467,16 @@ pub(crate) fn lane_to_lane(lane: MessageLane) -> Lane {
     }
 }
 
+/// The inverse of `lane_to_lane` (re-queueing a core-lane message into
+/// the GUI's queue, where the protocol's lane is the currency).
+pub(crate) fn lane_to_message_lane(lane: Lane) -> MessageLane {
+    match lane {
+        Lane::Force => MessageLane::Force,
+        Lane::Steering => MessageLane::Steering,
+        Lane::FollowUp => MessageLane::FollowUp,
+    }
+}
+
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

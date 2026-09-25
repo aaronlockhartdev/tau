@@ -392,3 +392,70 @@ async fn a_live_om_run_emits_om_status_events() {
     }
     assert_eq!(kinds, vec![OmStatusKind::Observing, OmStatusKind::Idle]);
 }
+
+/// A send to a session whose file no longer opens (corrupted) must not
+/// vanish: the turn start fails visibly (a system error), and the
+/// accepted message is kept in the GUI's queue — it also stays in the
+/// agent's queue, so the next successful turn delivers it and the
+/// post-turn reconciliation removes it by text.
+#[tokio::test]
+async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
+    let core = CoreBuilder::custom(providers()).build();
+    let cwd = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, cwd.path()).await;
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned(&canned_body()),
+        TurnConfig::default(),
+    );
+    let session_id = live.meta.lock().unwrap().id.clone();
+    // Corrupt the file: open() now refuses it.
+    std::fs::write(
+        Path::new(&workspace.cwd)
+            .join(".tau")
+            .join("sessions")
+            .join(format!("{session_id}.jsonl")),
+        "{\"type\":\"not-a-session\"}\n",
+    )
+    .unwrap();
+    let collected = collect_events(&core);
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "do the thing".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let events = collected.lock().unwrap().clone();
+        let surfaced = events
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                Event::System {
+                    kind: SystemEventKind::Error { message },
+                    ..
+                } => Some(message.clone()),
+                _ => None,
+            })
+            .is_some_and(|m| m.contains("cannot be opened"));
+        if surfaced {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no open-failure error surfaced"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    // The accepted message is kept in the GUI's queue.
+    let items = live.queue.lock().unwrap().clone();
+    assert!(
+        items.iter().any(|i| i.text == "do the thing"),
+        "the accepted message must stay queued: {items:?}"
+    );
+    // The turn flag is clear: the session is not stuck running.
+    assert!(!live.turn.load(Ordering::SeqCst));
+    drop(core);
+}

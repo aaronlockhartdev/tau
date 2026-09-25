@@ -7,7 +7,31 @@ use super::*;
 /// `process()` drained the queue.
 pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
-    if store.open().is_err() {
+    if let Err(e) = store.open() {
+        // The send is already accepted (the GUI shows it as the turn):
+        // a failed open must surface, or every send to a corrupted
+        // session vanishes without a trace. The turn-starting message is
+        // re-queued in the GUI's queue — it also stays in the agent's
+        // queue, so the next successful turn delivers it, and the
+        // post-turn reconciliation removes it by text.
+        let (workspace, id) = {
+            let meta = live.meta.lock().unwrap();
+            (meta.workspace.clone(), meta.id.clone())
+        };
+        core.emit(Event::System {
+            workspace: workspace.clone(),
+            session: Some(id.clone()),
+            kind: SystemEventKind::Error {
+                message: format!("session {id} cannot be opened — the send was not run: {e}"),
+            },
+        });
+        if let Some((text, lane)) = live.agent.first_pending() {
+            live.queue.lock().unwrap().push(QueuedItem {
+                text,
+                lane: lane_to_message_lane(lane),
+            });
+            core.emit_queue(&live);
+        }
         live.turn.store(false, Ordering::SeqCst);
         return;
     }
