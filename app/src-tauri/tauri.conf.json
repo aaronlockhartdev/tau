@@ -24,7 +24,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "appimage"],
+    "targets": ["app", "appimage", "dmg"],
     "copyright": "Copyright (C) 2026 aaronlockhartdev — GNU Affero General Public License v3.0",
     "publisher": "aaronlockhartdev",
     "icon": [

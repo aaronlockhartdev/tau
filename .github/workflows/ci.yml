@@ -108,6 +108,13 @@ jobs:
       - name: Launch smoke
         run: just acceptance launch
 
+      - name: Upload dmg (distribution artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: tau-macos-dmg
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: warn
+
       - name: Rust tests before E2E (official CI guide)
         run: cargo test -p tau-core
 

@@ -21,7 +21,7 @@ build:
     cargo build --workspace --release
     (cd app && npm ci && npm run build)
     if [ "$(uname)" = "Darwin" ]; then
-      (cd app && npx tauri build --bundles app)
+      (cd app && npx tauri build --bundles app,dmg)
     else
       (cd app && npx tauri build --bundles appimage)
     fi

@@ -12,11 +12,14 @@ cd tau
 just build
 ```
 
-`just build` does the release cargo build, the Svelte build (with `svelte-check`), and the Tauri bundle. It prints where the artifact lands:
+`just build` does the release cargo build, the Svelte build (with `svelte-check`), and the Tauri bundle. On macOS the download artifact is the **dmg** (the unpacked `.app` is also emitted for local use):
 
 ```
+target/release/bundle/dmg/Tau_0.1.0_aarch64.dmg
 target/release/bundle/macos/Tau.app
 ```
+
+The v0 macOS build is **ad-hoc signed** — no Developer ID, no notarization (post-v0, spec U3). Gatekeeper blocks a first launch of a downloaded copy on other Macs; the recipient right-clicks the app → **Open** once (or `xattr -dr com.apple.quarantine /Applications/Tau.app` after installing from the dmg), and it runs normally afterwards.
 
 Point the app at a model, then run it:
 
