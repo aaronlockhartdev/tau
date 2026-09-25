@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "preview": "vite preview",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "test:frontend": "wdio run wdio.conf.mjs",
     "tauri": "tauri"
   },
