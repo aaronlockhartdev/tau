@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import type { Entry } from '../lib/protocol';
   // key: `${session}:${entryId}` — heights persist across remounts. A plain
   // Map: Svelte 5.57 does not deep-proxy Maps, so the map never tracks on
   // its own; gen is the reactive trigger — a changed measurement bumps it,
@@ -24,15 +25,68 @@
   const INPUT_TTL = 200;
   const pending = new Map<string, number>();
   let settleTimer = 0;
+  // Scroll anchoring (B3's residual): a flush that changes the combined
+  // height of entries above the viewport shrinks the track, and the browser
+  // clamps scrollTop — the view then ratchets up on its own. So at flush
+  // time, shift scrollTop by the anchor's prefix delta, keeping the entry at
+  // the top of the viewport where it was.
+  let anchorEl: HTMLElement | null = null;
+  let anchorAll: Entry[] = [];
+  let anchorHOf: (e: Entry) => number = () => 0;
+  let anchorPinned = true;
+  export function registerAnchor(el: HTMLElement, all: Entry[], hOf: (e: Entry) => number): void {
+    anchorEl = el;
+    anchorAll = all;
+    anchorHOf = hOf;
+  }
+  export function setAnchorPinned(p: boolean): void {
+    anchorPinned = p;
+  }
+  function flushMeasurements(batch: Array<[string, number]>): void {
+    const el = anchorEl;
+    if (!el) return;
+    const oldTop = el.scrollTop;
+    // The anchor is the entry containing oldTop, under the OLD heights
+    // (first walk) — then the new heights land, and the second walk sums the
+    // new prefix at the same anchor.
+    let acc = 0;
+    let anchorIdx = anchorAll.length;
+    let anchorPrefixOld = 0;
+    for (let i = 0; i < anchorAll.length; i++) {
+      const oh = anchorHOf(anchorAll[i]);
+      if (acc + oh > oldTop) {
+        anchorIdx = i;
+        anchorPrefixOld = acc;
+        break;
+      }
+      acc += oh;
+    }
+    let wrote = false;
+    for (const [k, h] of batch) {
+      if (heights.get(k) !== h) {
+        heights.set(k, h);
+        wrote = true;
+      }
+    }
+    if (!wrote) return;
+    let prefixNew = 0;
+    for (let i = 0; i < anchorIdx; i++) prefixNew += anchorHOf(anchorAll[i]);
+    heightsGen.gen++;
+    // A pinned view is owned by the bottom snap; compensating it would fight
+    // that snap every flush.
+    if (!anchorPinned) {
+      const delta = prefixNew - anchorPrefixOld;
+      if (delta) el.scrollTop = oldTop + delta;
+    }
+  }
   function armSettle() {
     if (settleTimer) return;
     settleTimer = setTimeout(() => {
       settleTimer = 0;
       if (performance.now() - inputIntent <= INPUT_TTL) return armSettle();
-      for (const [k, h] of pending) if (heights.get(k) !== h) heights.set(k, h);
       if (pending.size) {
+        flushMeasurements([...pending]);
         pending.clear();
-        heightsGen.gen++;
       }
     }, INPUT_TTL + 60);
   }
@@ -42,8 +96,7 @@
       pending.set(key, h);
       armSettle();
     } else {
-      heights.set(key, h);
-      heightsGen.gen++;
+      flushMeasurements([[key, h]]);
     }
   }
 </script>
@@ -57,7 +110,6 @@
   import { onDestroy, onMount, untrack } from 'svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
-  import type { Entry } from '../lib/protocol';
 
   const BUFFER = 600;
   // A viewport within this of the measured bottom counts as "at the bottom".
@@ -330,6 +382,16 @@
       document.removeEventListener('keydown', onKeydown, { capture: true });
       cancelAnimationFrame(raf);
     };
+  });
+
+  // The anchor geometry for the module's scroll compensation: the scroll
+  // node, the entry list, and the effective-height function. Re-registered
+  // whenever any of them changes.
+  $effect(() => {
+    if (el) registerAnchor(el, all, hOf);
+  });
+  $effect(() => {
+    setAnchorPinned(pinned);
   });
 
   // The measured-total snap: pinned and the height bookkeeping changed, so
