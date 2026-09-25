@@ -507,20 +507,25 @@ export async function switchSession(sid: string): Promise<void> {
     if (sid === null || text.trim() === '') return;
     const s = sessionOf(sid);
     s.pending = s.pending.filter((p) => !(p.text === text && p.lane === lane));
-    // The user bubble appears at send time; the core's file copy of the
-    // same entry hydrates later and is dropped against this one (twin).
-    s.entries.push({ id: `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, kind: 'user', text });
-    store.tailJump++;
-    try {
-      await command({
-        type: 'message_send',
-        session: sid,
-        text,
-        lane: lane === 'follow-up' ? 'follow_up' : lane
-      });
-    } catch (e) {
-      store.error = errText(e);
-    }
+  // The user bubble appears at send time; the core's file copy of the
+  // same entry hydrates later and is dropped against this one (twin).
+  // A rejected send never reaches the core, so its twin never arrives —
+  // the optimistic entry is spliced back out instead of ghosting.
+  const optimisticId = `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  s.entries.push({ id: optimisticId, kind: 'user', text });
+  store.tailJump++;
+  try {
+    await command({
+      type: 'message_send',
+      session: sid,
+      text,
+      lane: lane === 'follow-up' ? 'follow_up' : lane
+    });
+  } catch (e) {
+    const i = s.entries.findIndex((x) => x.id === optimisticId);
+    if (i >= 0) s.entries.splice(i, 1);
+    store.error = errText(e);
+  }
   }
 
   export async function stop(): Promise<void> {

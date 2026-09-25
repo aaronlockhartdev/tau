@@ -343,6 +343,22 @@ describe('applyEvents: queueing', () => {
     const calls = mockInvoke.mock.calls.map((c) => (c[1] as { command: Command }).command);
     expect(calls.at(-1)).toEqual({ type: 'message_send', session: 's1', text: 'hi', lane: 'steering' });
   });
+
+  it('a failed send splices the optimistic bubble back out (no ghost, no twin on retry)', async () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    store.current = 's1';
+    defaultIPC({
+      message_send: () => {
+        throw new Error('provider 500');
+      }
+    });
+    await send('hi', 'steering');
+    expect(store.error).toBe('provider 500');
+    expect(store.sessions['s1'].entries).toHaveLength(0);
+    // a retry of the same text must not stack a second ghost
+    await send('hi', 'steering');
+    expect(store.sessions['s1'].entries).toHaveLength(0);
+  });
 });
 
 describe('session switch', () => {
