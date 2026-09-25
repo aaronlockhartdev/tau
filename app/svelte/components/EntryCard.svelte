@@ -229,14 +229,16 @@
     }
   });
 
-  // A fully empty entry (a pure tool request whose payload has
-  // not arrived) renders nothing, so no shell margin gap is left behind.
+  // A fully empty entry renders nothing, so no shell margin gap is left
+  // behind; a running tool is the exception — its chip (name + spinner)
+  // carries the call for the whole duration (args/output only land with
+  // the file payload, at completion).
   const hasContent = $derived(
     Boolean(
       (entry.text ?? '').trim() ||
         (entry.kind === 'message' || entry.kind === 'interrupted' ? entry.reasoning : undefined) ||
         entry.kind === 'interrupted' ||
-        (entry.kind === 'tool' && (Boolean(entry.args) || toolOut.length > 0))
+        (entry.kind === 'tool' && (entry.status === 'running' || Boolean(entry.args) || toolOut.length > 0))
     )
   );
 
@@ -321,7 +323,11 @@
         <span class="nm">{entry.name}</span>
         <span class="sum">{toolSummary}</span>
         <span class="st {entry.status === 'ok' ? 'ok' : entry.status === 'error' ? 'err' : 'pend'}">
-          {entry.status === 'ok' ? '✓' : entry.status === 'error' ? '✗' : '…'}
+          {#if entry.status === 'running'}
+            <span class="spin"></span>
+          {:else}
+            {entry.status === 'ok' ? '✓' : '✗'}
+          {/if}
         </span>
         <span class="caret">▾</span>
       </div>
@@ -566,6 +572,20 @@
   }
   .tool .chip .st.err {
     color: var(--red);
+  }
+  .tool .chip .st .spin {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--line2);
+    border-top-color: var(--acc);
+    border-radius: 50%;
+    animation: toolspin 0.9s linear infinite;
+  }
+  @keyframes toolspin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .tool .chip .caret {
     color: var(--faint);

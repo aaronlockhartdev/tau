@@ -103,7 +103,7 @@
       !((e.text ?? '').trim() ||
         reasoning ||
         e.kind === 'interrupted' ||
-        (e.kind === 'tool' && (Boolean(e.args) || Boolean(e.output))))
+        (e.kind === 'tool' && (e.status === 'running' || Boolean(e.args) || Boolean(e.output))))
     )
       return 0;
     if (cur) {
