@@ -166,6 +166,10 @@
       const m = heights.get(`${cur}:${e.id}`);
       if (m !== undefined) return m;
     }
+    // Tool cards carry no text to size from; they measure 100–140px, so
+    // estimate flat. The old text-length estimate (57px) made every height
+    // flush rebase the viewport by the undercount (B3).
+    if (e.kind === 'tool') return 120;
     // estimate: ~1.45 line-height per line + card padding; live streams grow.
     const lines = Math.max(1, Math.ceil((e.text ?? '').length / 72)) + (reasoning ? 2 : 0);
     return lines * 21 + 36;
@@ -322,25 +326,35 @@
     // scroll up jitter — the pin re-armed and the catch-up snapped the
     // view back.
     let lastTop = node.scrollTop;
+    // Coalesce scroll events to one state commit per frame. A 1200 px
+    // wheel generates dozens of scroll events, and a full window recompute
+    // per event (O(n) over the whole entry list) saturated the main thread
+    // until WebKit dropped the pending wheel delta — burst scrolling moved
+    // ~3% of the requested distance (B3 residual, live-repro'd).
+    let scrollRaf = 0;
     const onScroll = () => {
-      scroll.top = node.scrollTop;
-      scroll.h = node.clientHeight;
-      const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
-      const intent = performance.now() - inputIntent <= INPUT_TTL;
-      if (node.scrollTop > lastTop) {
-        // Downward re-pin requires a live DOWNWARD intent: the follow's
-        // own catch-up write can land right after a wheel-up stamped the
-        // intent, and an upward stamp must never authorize a re-pin
-        // (dogfood B3).
-        if (dist <= THRESHOLD && intent && inputDir === 1) pinned = true;
-      } else if (node.scrollTop < lastTop) {
-        if (intent) {
-          inputIntent = 0;
-          inputDir = 0;
-          pinned = false;
+      if (scrollRaf) return;
+      scrollRaf = requestAnimationFrame(() => {
+        scrollRaf = 0;
+        scroll.top = node.scrollTop;
+        scroll.h = node.clientHeight;
+        const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
+        const intent = performance.now() - inputIntent <= INPUT_TTL;
+        if (node.scrollTop > lastTop) {
+          // Downward re-pin requires a live DOWNWARD intent: the follow's
+          // own catch-up write can land right after a wheel-up stamped the
+          // intent, and an upward stamp must never authorize a re-pin
+          // (dogfood B3).
+          if (dist <= THRESHOLD && intent && inputDir === 1) pinned = true;
+        } else if (node.scrollTop < lastTop) {
+          if (intent) {
+            inputIntent = 0;
+            inputDir = 0;
+            pinned = false;
+          }
         }
-      }
-      lastTop = node.scrollTop;
+        lastTop = node.scrollTop;
+      });
     };
     onScroll();
     node.addEventListener('scroll', onScroll, { passive: true });
@@ -381,6 +395,7 @@
       node.removeEventListener('pointerup', onPointerUp, { capture: true });
       document.removeEventListener('keydown', onKeydown, { capture: true });
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(scrollRaf);
     };
   });
 
