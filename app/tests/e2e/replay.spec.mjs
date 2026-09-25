@@ -9,6 +9,7 @@
 // framework-level auto-wait throughout (docs/research/tauri-ci.md §4).
 import { setTimeout as sleep } from 'node:timers/promises';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { browser } from '@wdio/globals';
 import { expect } from 'expect-webdriverio';
@@ -384,5 +385,31 @@ describe('real-app E2E replay: the dogfood session pair (real parent → child)'
       'status bar usage'
     );
     check('status bar: usage from the canned turn (100 in · 40 out)', /100 in/.test(bar) && /40 out/.test(bar), bar);
+  });
+
+  it('closing the workspace archives it: the tab is gone and the open flag persisted', async () => {
+    const before = await readStore();
+    const id = before.workspaces[0];
+    await browser.execute(
+      async (id) => {
+        const w = window.__tau.store().workspaces.find((x) => x.id === id);
+        if (w) await window.__tau.closeWorkspace(w);
+      },
+      id
+    );
+    const s = await waitUntil(
+      readStore,
+      (s) => !s.workspaces.includes(id) && s.current === null,
+      30000,
+      'the workspace close'
+    );
+    check('closing the workspace removes the tab and clears the view', !s.workspaces.includes(id) && s.current === null, JSON.stringify({ workspaces: s.workspaces, current: s.current }));
+    // No relaunch leg (an app restart mid-leg is too expensive): the
+    // persistence bar is the registry's open flag itself — the next boot
+    // restores tabs from exactly that file (the restart behavior is
+    // covered by the core tests).
+    const reg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.config', 'tau', 'workspaces.json'), 'utf8'));
+    const entry = reg.find((e) => e.cwd === ws);
+    check('the registry flag persisted (open: false)', entry && entry.open === false, JSON.stringify(entry));
   });
 });
