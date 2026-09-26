@@ -25,7 +25,7 @@ jobs:
         # The workspace links the Tauri app crate, which needs webkit to compile on Linux.
         run: sudo apt-get update -y && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
-      - uses: taiki-e/install-action@v2.87.19
+      - uses: taiki-e/install-action@v2.87.20
         with:
           tool: nextest@0.9.146
 
@@ -98,7 +98,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: taiki-e/install-action@v2.87.19
+      - uses: taiki-e/install-action@v2.87.20
         with:
           tool: just
 
@@ -109,7 +109,7 @@ jobs:
         run: just acceptance launch
 
       - name: Upload dmg (distribution artifact)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: tau-macos-dmg
           path: target/release/bundle/dmg/*.dmg
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: e2e-failure-macos
           path: target/e2e/**
@@ -159,7 +159,7 @@ jobs:
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: taiki-e/install-action@v2.87.19
+      - uses: taiki-e/install-action@v2.87.20
         with:
           tool: just
 
@@ -190,7 +190,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.1
         with:
           name: e2e-failure-linux
           path: target/e2e/**
