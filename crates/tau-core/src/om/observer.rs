@@ -252,7 +252,7 @@ Completion observations should be terse but specific about WHAT was completed.
 Prefer concrete resolved outcomes over abstract workflow status so the assistant remembers what is already done."#;
 
 /// Verbatim from `observer-agent.ts` (`buildObserverOutputFormat` with no
-/// extractors, `includeThreadTitle` false, current-task + suggested-response
+/// extractors, `includeThreadTitle` false, suggested-response
 /// enabled): the priority/indent/date/`<observations>` template plus the
 /// legacy continuation sections.
 pub const OBSERVER_OUTPUT_FORMAT: &str = r#"Use priority levels:
@@ -280,12 +280,6 @@ Date: Dec 5, 2025
 * 🔴 (09:15) Continued work on feature X
 </observations>
 
-
-<current-task>
-State the current task(s) explicitly:
-- Primary: What the agent is currently working on
-- Secondary: Other pending tasks (mark as "waiting for user" if appropriate)
-</current-task>
 
 <suggested-response>
 Hint for the agent's immediate next message. Examples:
@@ -345,10 +339,6 @@ Simply output your observations without any thread-related markup.
 Remember: These observations are the assistant's ONLY memory. Make them count.
 
 User messages are extremely important.${
-    currentTaskEnabled
-      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
-      : ''
-  }${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
       : ''
@@ -359,11 +349,6 @@ pub fn observer_system_prompt() -> String {
         .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
         .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES)
-        .replace("${
-    currentTaskEnabled
-      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
-      : ''
-  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.")
         .replace("${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
@@ -550,7 +535,6 @@ pub(super) fn parse_observer_sections(output: &str) -> Vec<ObserverSection> {
 #[derive(Debug, Clone, Default)]
 pub struct ParsedObserverOutput {
     pub observations: String,
-    pub current_task: String,
     pub suggested_response: String,
     pub degenerate: bool,
 }
@@ -561,15 +545,11 @@ pub struct ParsedObserverOutput {
 pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
     let sections = parse_observer_sections(raw_output);
     let mut observations = String::new();
-    let mut current_task = String::new();
     let mut suggested_response = String::new();
     for section in &sections {
         let content = &section.content;
         match &section.name {
             Some(n) if n == "observations" => observations = content.to_owned(),
-            Some(n) if n == "current-task" || n == "current_task" => {
-                current_task = content.to_owned()
-            }
             Some(n) if n == "suggested-response" || n == "suggested_response" => {
                 suggested_response = content.to_owned()
             }
@@ -578,7 +558,6 @@ pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
     }
     ParsedObserverOutput {
         observations: sanitize_observation_lines(&observations),
-        current_task,
         suggested_response,
         degenerate: detect_degenerate_repetition(&observations),
     }

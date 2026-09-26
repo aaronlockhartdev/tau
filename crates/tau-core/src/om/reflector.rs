@@ -169,10 +169,6 @@ Date: Dec 4, 2025
 ${outputFormat}
 
 User messages are extremely important.${
-    currentTaskEnabled
-      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
-      : ''
-  }${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
       : ''
@@ -262,11 +258,6 @@ pub fn reflector_system_prompt() -> String {
         .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
         .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES)
-        .replace("${
-    currentTaskEnabled
-      ? ' If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.'
-      : ''
-  }", " If the user asks a question or gives a new task, make it clear in <current-task> that this is the priority.")
         .replace("${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'

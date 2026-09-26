@@ -166,6 +166,35 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
 }
 
 #[test]
+fn the_suggested_response_is_injected_once_then_cleared() {
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1000,
+        reflect_threshold: 2000,
+        buffer_increment: 230,
+    };
+    let mut state = OmState::from_config(
+        &cfg,
+        OmRecord {
+            active_observations: "the log".into(),
+            om_suggested_response: "pause and answer the user".into(),
+            ..Default::default()
+        },
+    );
+    state.changed = true;
+    let first = state.assemble_context("base prompt", None);
+    // The steering signal is handed to the model alongside the hint...
+    assert!(first.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(first.contains("pause and answer the user"), "{first}");
+    // ...and consumed: a later log change re-fires the hint but must not
+    // re-inject the now-stale signal.
+    state.changed = true;
+    let second = state.assemble_context("base prompt", None);
+    assert!(second.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(!second.contains("pause and answer the user"), "{second}");
+    assert!(state.record.om_suggested_response.is_empty());
+}
+#[test]
 fn the_idle_gap_measures_the_pause_before_the_current_turn() {
     let mk = |id: &str, parent: Option<&str>, ts: u64, kind: &str| Entry {
         id: id.to_owned(),

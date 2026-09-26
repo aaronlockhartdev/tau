@@ -103,7 +103,6 @@ export function decodeEntry(v: ViewEntry): Entry {
         active_observations?: string;
         om_thinking?: string;
         om_input?: string;
-        om_current_task?: string;
         om_suggested_response?: string;
         om_model?: string;
       };
@@ -120,7 +119,6 @@ export function decodeEntry(v: ViewEntry): Entry {
         text: stripObservationGroup(raw),
         thinking: o.om_thinking || undefined,
         input: o.om_input || undefined,
-        currentTask: o.om_current_task || undefined,
         suggestedResponse: o.om_suggested_response || undefined,
         model: o.om_model || undefined
       };

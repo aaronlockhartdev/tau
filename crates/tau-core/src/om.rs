@@ -182,15 +182,13 @@ pub struct OmRecord {
     /// re-admitted when space frees).
     #[serde(default)]
     pub prefix_demoted: bool,
-    /// Display-only metadata for the observation card (thinking, input,
-    /// current-task, suggested-response, model) — persisted with the record,
-    /// never acted on.
+    /// Observation-card metadata: thinking, input, model are display-only;
+    /// suggested-response also steers the main agent (injected with the
+    /// continuation hint, spec §4).
     #[serde(default)]
     pub om_thinking: String,
     #[serde(default)]
     pub om_input: String,
-    #[serde(default)]
-    pub om_current_task: String,
     #[serde(default)]
     pub om_suggested_response: String,
     #[serde(default)]

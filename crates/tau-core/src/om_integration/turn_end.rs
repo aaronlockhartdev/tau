@@ -152,7 +152,6 @@ impl OmState {
         {
             self.record.om_thinking = result.reasoning.clone();
             self.record.om_input = transcript.clone();
-            self.record.om_current_task = parsed.current_task.clone();
             self.record.om_suggested_response = parsed.suggested_response.clone();
         }
         match action {
@@ -172,8 +171,8 @@ impl OmState {
                 let source = self.record.reflect_source().to_owned();
                 // The committed suffix is the parsed <observations> content,
                 // never the raw response (mastra `parseReflectorOutput`):
-                // the <current-task>/<suggested-response> sections are not
-                // observation material and must not pollute the log.
+                // the <suggested-response> section is steering, not
+                // observation material, and must not pollute the log.
                 let parsed = om::parse_reflector_output(&result.text, Some(&source));
                 if !parsed.degenerate
                     && !parsed.observations.trim().is_empty()
@@ -323,8 +322,17 @@ impl OmState {
         }
         if self.changed && !observations.is_empty() {
             self.changed = false;
+            // One-shot steering: hand the observer's suggested-response to the
+            // model alongside the hint (which says to follow it), then clear it
+            // so a later reflect/promote can't re-inject a stale signal.
+            let suggested = self.record.om_suggested_response.clone();
+            self.record.om_suggested_response = String::new();
             instructions.push_str("\n\n<system-reminder>");
             instructions.push_str(om::OBSERVATION_CONTINUATION_HINT);
+            if !suggested.trim().is_empty() {
+                instructions.push_str("\n\nSuggested response: ");
+                instructions.push_str(&suggested);
+            }
             instructions.push_str("</system-reminder>");
         }
         instructions

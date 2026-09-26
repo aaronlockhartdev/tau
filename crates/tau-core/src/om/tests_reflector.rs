@@ -9,7 +9,7 @@ fn reflector_template_from_ts() -> String {
         .expect("reflector template");
     let open = ts[..at].rfind('`').expect("template open");
     let close = at + ts[at..].find('`').expect("template close");
-    ts[open + 1..close].to_string()
+    strip_current_task(&ts[open + 1..close])
 }
 
 fn fill_reflector_slots(template: &str) -> String {
@@ -20,14 +20,13 @@ fn fill_reflector_slots(template: &str) -> String {
         )
         .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES);
-    for name in ["currentTaskEnabled", "suggestedResponseEnabled"] {
-        let i = built.find(&format!("${{\n    {name}")).expect(name);
-        let j = i + built[i..].find('}').expect("ternary end") + 1;
-        let span = &built[i..j];
-        let a = span.find('\'').expect("branch open");
-        let b = span.find("'\n").expect("branch close");
-        built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
-    }
+    let name = "suggestedResponseEnabled";
+    let i = built.find(&format!("${{\n    {name}")).expect(name);
+    let j = i + built[i..].find('}').expect("ternary end") + 1;
+    let span = &built[i..j];
+    let a = span.find('\'').expect("branch open");
+    let b = span.find("'\n").expect("branch close");
+    built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
     built.replace("${customInstructions}", "")
 }
 

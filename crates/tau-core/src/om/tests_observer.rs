@@ -25,7 +25,7 @@ fn output_format_matches_upstream_assembly() {
         + ts[tpl_at..]
             .find("${extractorSections")
             .expect("extractor slot");
-    let expected = format!("{}{}", &ts[open + 1..close], legacy);
+    let expected = strip_current_task(&format!("{}{}", &ts[open + 1..close], legacy));
     assert_eq!(
         OBSERVER_OUTPUT_FORMAT, expected,
         "output format drifted from the upstream buildObserverOutputFormat"
@@ -64,7 +64,7 @@ fn observer_prompt_matches_upstream_template() {
     let at = first + opening.len() + rest.find(opening).expect("second occurrence");
     let open = ts[..at].rfind('`').expect("template open");
     let close = at + ts[at..].find('`').expect("template close");
-    let template = &ts[open + 1..close];
+    let template = strip_current_task(&ts[open + 1..close]);
     assert_eq!(
         OBSERVER_PROMPT_TEMPLATE, template,
         "observer system template drifted from the upstream non-multithreaded branch"
@@ -79,27 +79,23 @@ fn observer_prompt_matches_upstream_template() {
         )
         .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES);
-    for name in ["currentTaskEnabled", "suggestedResponseEnabled"] {
-        let i = built.find(&format!("${{\n    {name}")).expect(name);
-        let j = i + built[i..].find('}').expect("ternary end") + 1;
-        let span = &built[i..j];
-        let a = span.find('\'').expect("branch open");
-        let b = span.find("'\n").expect("branch close");
-        built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
-    }
+    let name = "suggestedResponseEnabled";
+    let i = built.find(&format!("${{\n    {name}")).expect(name);
+    let j = i + built[i..].find('}').expect("ternary end") + 1;
+    let span = &built[i..j];
+    let a = span.find('\'').expect("branch open");
+    let b = span.find("'\n").expect("branch close");
+    built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
     built = built.replace("${customInstructions}", "");
     assert_eq!(observer_system_prompt(), built);
 }
 
 #[test]
-fn parse_observer_output_extracts_all_three_sections() {
+fn parse_observer_output_extracts_observations_and_response() {
     let raw = concat!(
         "<observations>",
         "* 🔴 (14:30) User prefers direct answers",
         "</observations>",
-        "<current-task>",
-        "Primary: auth",
-        "</current-task>",
         "<suggested-response>",
         "Walk through the changes.",
         "</suggested-response>"
@@ -109,7 +105,6 @@ fn parse_observer_output_extracts_all_three_sections() {
         parsed.observations,
         "* 🔴 (14:30) User prefers direct answers"
     );
-    assert_eq!(parsed.current_task, "Primary: auth");
     assert_eq!(parsed.suggested_response, "Walk through the changes.");
     assert!(!parsed.degenerate);
 }
@@ -119,7 +114,6 @@ fn parse_observer_output_falls_back_to_list_items() {
     let raw = "* line one\n* line two\nplain line";
     let parsed = parse_observer_output(raw);
     assert_eq!(parsed.observations, "* line one\n* line two");
-    assert_eq!(parsed.current_task, "");
 }
 
 #[test]

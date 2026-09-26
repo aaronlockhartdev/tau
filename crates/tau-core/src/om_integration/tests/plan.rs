@@ -39,7 +39,7 @@ fn commit_persists_the_observation_card_display_fields() {
     let mut store = store_with_text_entries(dir.path(), 3, 100);
     let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
     let result = crate::provider::TurnResult {
-        text: "<observations>user set up a workbench</observations>\n<current-task>Primary: workbench</current-task>\n<suggested-response>Walk through it.</suggested-response>".into(),
+        text: "<observations>user set up a workbench</observations>\n<suggested-response>Walk through it.</suggested-response>".into(),
         reasoning: "deciding what is worth remembering".into(),
         usage: None,
         completed: true,
@@ -61,10 +61,6 @@ fn commit_persists_the_observation_card_display_fields() {
     assert_eq!(
         p.get("om_input").and_then(|v| v.as_str()),
         Some("the observed transcript")
-    );
-    assert_eq!(
-        p.get("om_current_task").and_then(|v| v.as_str()),
-        Some("Primary: workbench")
     );
     assert_eq!(
         p.get("om_suggested_response").and_then(|v| v.as_str()),
@@ -119,7 +115,6 @@ fn plan_reflects_at_the_observation_threshold_and_commit_rewrites_the_suffix() {
     // may land in the log — the other sections are not observation
     // material (B1).
     let tagged = "<observations>condensed suffix</observations>".to_owned()
-        + "\n<current-task>finish the refactor</current-task>"
         + "\n<suggested-response>report the summary</suggested-response>";
     let result = turn_result(&tagged);
     let mut action = TurnEndAction::Reflect { level: 0 };
@@ -130,9 +125,7 @@ fn plan_reflects_at_the_observation_threshold_and_commit_rewrites_the_suffix() {
     let suffix = &state.record.active_observations;
     assert!(suffix.contains("condensed suffix"), "{suffix:?}");
     assert!(!suffix.contains("<observations>"), "{suffix:?}");
-    assert!(!suffix.contains("<current-task>"), "{suffix:?}");
     assert!(!suffix.contains("<suggested-response>"), "{suffix:?}");
-    assert!(!suffix.contains("finish the refactor"), "{suffix:?}");
     assert!(!suffix.contains("report the summary"), "{suffix:?}");
     assert_eq!(
         state.record.live_observations(),

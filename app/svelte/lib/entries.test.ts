@@ -12,7 +12,6 @@ const payload = {
     '</observation-group>',
   om_thinking: 'deciding what to keep',
   om_input: 'the transcript',
-  om_current_task: 'Primary: workbench',
   om_suggested_response: 'walk through it',
   om_model: 'dev/qwen3.8-27b'
 };
@@ -42,13 +41,11 @@ describe('decodeEntry (om)', () => {
     const e = decodeEntry(omView()) as {
       thinking?: string;
       input?: string;
-      currentTask?: string;
       suggestedResponse?: string;
       model?: string;
     };
     expect(e.thinking).toBe('deciding what to keep');
     expect(e.input).toBe('the transcript');
-    expect(e.currentTask).toBe('Primary: workbench');
     expect(e.suggestedResponse).toBe('walk through it');
     expect(e.model).toBe('dev/qwen3.8-27b');
   });
@@ -59,10 +56,8 @@ describe('decodeEntry (om)', () => {
     const e = decodeEntry(v) as {
       text: string;
       thinking?: string;
-      currentTask?: string;
     };
     expect(e.text).toBe('plain observation, no group tags');
     expect(e.thinking).toBeUndefined();
-    expect(e.currentTask).toBeUndefined();
   });
 });

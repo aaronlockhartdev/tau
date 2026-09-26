@@ -184,7 +184,7 @@ export type Entry =
   | { id: string; kind: 'user'; text: string; source?: string; skill?: SkillRef; msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> } }
   | MessageEntry
   | { id: string; kind: 'tool'; text?: string; name?: string; args?: Record<string, unknown>; output?: string; status?: 'ok' | 'running' | 'error' }
-  | { id: string; kind: 'om'; text: string; thinking?: string; input?: string; currentTask?: string; suggestedResponse?: string; model?: string }
+  | { id: string; kind: 'om'; text: string; thinking?: string; input?: string; suggestedResponse?: string; model?: string }
   | { id: string; kind: 'system'; text: string }
   | { id: string; kind: 'spawn-snapshot'; text: string }
   | { id: string; kind: 'subagent'; text: string; payload?: SubagentPayload }
@@ -221,7 +221,6 @@ export type AnyEntry = {
   msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> };
   thinking?: string;
   input?: string;
-  currentTask?: string;
   suggestedResponse?: string;
   model?: string;
 };

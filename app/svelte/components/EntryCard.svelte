@@ -408,17 +408,13 @@
         >
           <svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation
           {#if entry.model}<span class="meta">{entry.model}</span>{/if}
-          {#if entry.thinking || entry.input || entry.currentTask || entry.suggestedResponse}
+          {#if entry.thinking || entry.input || entry.suggestedResponse}
             <span class="caret">{obsOpen ? '▾' : '▸'}</span>
           {/if}
         </div>
         <div class="txt2 dim">{@html md}</div>
         {#if obsOpen}
           <div class="obs-details">
-            {#if entry.currentTask}
-              <div class="kv"><span class="k">current task:</span></div>
-              <div class="kv sub"><span class="v">{entry.currentTask}</span></div>
-            {/if}
             {#if entry.suggestedResponse}
               <div class="kv"><span class="k">suggested:</span></div>
               <div class="kv sub"><span class="v">{entry.suggestedResponse}</span></div>
