@@ -285,7 +285,10 @@
           role="button"
           tabindex="0"
           aria-expanded={skillOpen}
-          ondblclick={() => setOpen('skill')}
+          ondblclick={(e) => {
+            e.preventDefault();
+            setOpen('skill');
+          }}
           onkeydown={onKey(() => setOpen('skill'))}
         >
           <svg class="ic" width="13" height="13"><use href="#i-book"/></svg>skill · {entry.skill.name}
@@ -389,7 +392,10 @@
           role="button"
           tabindex="0"
           aria-expanded={obsOpen}
-          ondblclick={() => setOpen('obs')}
+          ondblclick={(e) => {
+            e.preventDefault();
+            setOpen('obs');
+          }}
           onkeydown={onKey(() => setOpen('obs'))}
         >
           <svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation
