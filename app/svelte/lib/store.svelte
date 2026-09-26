@@ -613,10 +613,18 @@
           since: null,
           range: { start, count }
         });
+        // Re-resolve the session at landing: a tab round-trip re-opens the
+        // session into a fresh state while this read is in flight (and the
+        // re-open's identical window request is deduped onto it), so
+        // merging into the object captured at issue time would land the
+        // page in the discarded state and leave the re-opened transcript's
+        // window unhydrated.
+        const cur = store.sessions[sid];
+        if (!cur) return;
         if (out.kind !== 'entries') return;
-        const m = mergeHydrated(s.entries, s.live, out.entries);
-        s.entries = m.entries;
-        s.live = m.live;
+        const m = mergeHydrated(cur.entries, cur.live, out.entries);
+        cur.entries = m.entries;
+        cur.live = m.live;
       } finally {
         windowsInFlight.delete(key);
       }
