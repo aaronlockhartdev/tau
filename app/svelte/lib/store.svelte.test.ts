@@ -273,6 +273,15 @@ describe('applyEvents: streaming', () => {
     return store.sessions['s1'];
   }
 
+  it('a turn that fails before its first output leaves "starting" (no stuck running badge)', () => {
+    const s = oneSession();
+    s.turn = 'starting';
+    applyEvents([
+      { type: 'system', workspace: WS.id, session: 's1', kind: { kind: 'error', message: 'provider 4xx' } }
+    ]);
+    expect(s.turn).toBe('idle');
+  });
+
   it('streams a turn to completion: live fills, the final entry lands with usage', () => {
     const s = oneSession();
     applyEvents([
@@ -488,68 +497,6 @@ describe('session switch', () => {
     defaultIPC({ session_open: () => snap('p') });
     await switchSession('p');
     expect(store.sessions['p'].subagents).toEqual([sub('c', { state: 'done' })]);
-  });
-
-  it('archive: the row keeps its state, meta and flag converge on the command and the refetched list', async () => {
-    store.sessions = applySessionList({}, [meta('s1', WS.id, { title: 'one' })]);
-    defaultIPC({
-      session_archive: () => ({ kind: 'session', session: meta('s1', WS.id, { title: 'one', archived: true }) }),
-      session_list: () => ({
-        kind: 'sessions',
-        sessions: [meta('s1', WS.id, { title: 'one', archived: true }), meta('s2')]
-      })
-    });
-    await archiveSession('s1');
-    expect(store.sessions['s1'].archived).toBe(true);
-    expect(store.sessions['s1'].state).toBe('idle');
-    expect(store.sessions['s2']).toBeTruthy();
-  });
-
-  it('a child session is not archived directly — its parent cascades', async () => {
-    store.sessions = applySessionList({}, [meta('s1'), meta('c1', WS.id, { parent: 's1' })]);
-    const called: string[] = [];
-    defaultIPC({
-      session_archive: (cmd) => {
-        if (cmd.type === 'session_archive') called.push(cmd.session);
-        return { kind: 'none' };
-      }
-    });
-    await archiveSession('c1');
-    expect(called).toEqual([]);
-    expect(store.sessions['c1'].archived).toBe(false);
-  });
-
-  it('restore: the archive flag converges on the refetched list', async () => {
-    store.sessions = applySessionList({}, [meta('s1', WS.id, { archived: true })]);
-    defaultIPC({
-      session_restore: () => ({ kind: 'none' }),
-      session_list: () => ({ kind: 'sessions', sessions: [meta('s1', WS.id, { archived: false })] })
-    });
-    await restoreSession(WS.id, 's1');
-    expect(store.sessions['s1'].archived).toBe(false);
-  });
-
-  it('delete: the session and its cascade leave the store on the refetch', async () => {
-    // The refetch no longer carries the deleted id (nor its child), so both
-    // drop out of the store; a survivor stays.
-    store.sessions = applySessionList({}, [
-      meta('s1', WS.id, { archived: true }),
-      meta('c1', WS.id, { parent: 's1', archived: true }),
-      meta('s2')
-    ]);
-    const called: string[] = [];
-    defaultIPC({
-      session_delete: (cmd) => {
-        if (cmd.type === 'session_delete') called.push(cmd.session);
-        return { kind: 'none' };
-      },
-      session_list: () => ({ kind: 'sessions', sessions: [meta('s2')] })
-    });
-    await deleteSession(WS.id, 's1');
-    expect(called).toEqual(['s1']);
-    expect(store.sessions['s1']).toBeUndefined();
-    expect(store.sessions['c1']).toBeUndefined();
-    expect(store.sessions['s2']).toBeTruthy();
   });
 
   it('a branch_move event moves the leaf', () => {

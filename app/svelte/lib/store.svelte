@@ -886,7 +886,13 @@
         case 'system': {
           // Only an error kind writes (S3): the next successful command
           // clears the banner, not an unrelated system event.
-          if (ev.kind.kind === 'error') store.error = ev.kind.message;
+          if (ev.kind.kind === 'error') {
+            store.error = ev.kind.message;
+            // A turn that failed before its first output (a provider 4xx, a
+            // connect failure, an open failure) emits only this System event —
+            // no stream/tool event to move the turn out of 'starting'.
+            if (s.turn === 'starting' && s.live.length === 0) s.turn = 'idle';
+          }
           break;
         }
       }
