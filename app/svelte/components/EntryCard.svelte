@@ -336,6 +336,10 @@
         role="button"
         tabindex="0"
         onclick={() => setOpen('tool')}
+        ondblclick={(e) => {
+          e.preventDefault();
+          setOpen('tool');
+        }}
         onkeydown={onKey(() => setOpen('tool'))}
       >
         <svg class="ic" width="13" height="13"><use href={`#${toolIcon}`}/></svg>
@@ -373,6 +377,10 @@
         tabindex="0"
         aria-expanded={thinkOpen}
         onclick={() => setOpen('think')}
+        ondblclick={(e) => {
+          e.preventDefault();
+          setOpen('think');
+        }}
         onkeydown={onKey(() => setOpen('think'))}
       >
         <svg class="ic" width="13" height="13"><use href="#i-spark"/></svg>
@@ -458,6 +466,10 @@
           tabindex="0"
           aria-expanded={taskOpen}
           onclick={() => setOpen('task')}
+          ondblclick={(e) => {
+            e.preventDefault();
+            setOpen('task');
+          }}
           onkeydown={onKey(() => setOpen('task'))}
         >
           <svg class="ic" width="13" height="13"><use href="#i-check"/></svg>{taskLabel}

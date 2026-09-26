@@ -62,6 +62,7 @@ fn fork_copies_observations_and_cursor_without_a_prefix() {
         observation_tokens: 42,
         pending_tokens: 9,
         prefix_demoted: false,
+        ..Default::default()
     };
     let fork = fork_record(&parent);
     assert!(fork.frozen_prefix.is_empty());

@@ -197,11 +197,6 @@ fn the_overflow_ladder_demotes_the_prefix_and_readmits_it() {
         buffered: Vec::new(),
         buffer_cursor: None,
         changed: false,
-        om_thinking: String::new(),
-        om_input: String::new(),
-        om_current_task: String::new(),
-        om_suggested_response: String::new(),
-        om_model: String::new(),
     };
     // 200 combined tokens over the 100 budget: the prefix demotes out of
     // the live context (it stays in the record, recall reaches it).

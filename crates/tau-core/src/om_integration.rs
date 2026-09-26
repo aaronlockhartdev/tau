@@ -50,14 +50,6 @@ pub struct OmState {
     /// carries the continuation hint so the model doesn't react to the raw
     /// history vanishing (spec §4).
     pub changed: bool,
-    /// The latest Observer run's display details, merged into the om entry
-    /// payload by `save` for the observation card (thinking, input, and the
-    /// model's <current-task>/<suggested-response>).
-    pub om_thinking: String,
-    pub om_input: String,
-    pub om_current_task: String,
-    pub om_suggested_response: String,
-    pub om_model: String,
 }
 
 impl OmState {
@@ -78,11 +70,6 @@ impl OmState {
             buffered: Vec::new(),
             buffer_cursor: None,
             changed: false,
-            om_thinking: String::new(),
-            om_input: String::new(),
-            om_current_task: String::new(),
-            om_suggested_response: String::new(),
-            om_model: String::new(),
         }
     }
 
@@ -114,23 +101,8 @@ impl OmState {
     /// Persist the record as a new `om` entry (the newest entry wins).
     pub fn save(&self, store: &mut SessionStore) -> Result<(), crate::session::Error> {
         let parent = store.leaf()?.map(|e| e.id);
-        let mut payload = serde_json::to_value(&self.record)
+        let payload = serde_json::to_value(&self.record)
             .map_err(|e| crate::session::Error::Other(e.to_string()))?;
-        // The display details ride along in the om entry for the observation
-        // card; load_record (an OmRecord) deserializes over them.
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("om_thinking".into(), serde_json::json!(self.om_thinking));
-            obj.insert("om_input".into(), serde_json::json!(self.om_input));
-            obj.insert(
-                "om_current_task".into(),
-                serde_json::json!(self.om_current_task),
-            );
-            obj.insert(
-                "om_suggested_response".into(),
-                serde_json::json!(self.om_suggested_response),
-            );
-            obj.insert("om_model".into(), serde_json::json!(self.om_model));
-        }
         store
             .append(KIND_OM, payload, parent.as_deref())
             .map(|_| ())
@@ -170,6 +142,7 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
         observation_tokens: parent.observation_tokens,
         pending_tokens: 0,
         prefix_demoted: false,
+        ..Default::default()
     }
 }
 /// An OM failure: session storage or the model call.

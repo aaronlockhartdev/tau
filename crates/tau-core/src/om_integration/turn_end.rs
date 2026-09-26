@@ -150,10 +150,10 @@ impl OmState {
         // mislabel the card's thinking and show a stale input.
         if let TurnEndAction::Observe { transcript } | TurnEndAction::Buffer { transcript } = action
         {
-            self.om_thinking = result.reasoning.clone();
-            self.om_input = transcript.clone();
-            self.om_current_task = parsed.current_task.clone();
-            self.om_suggested_response = parsed.suggested_response.clone();
+            self.record.om_thinking = result.reasoning.clone();
+            self.record.om_input = transcript.clone();
+            self.record.om_current_task = parsed.current_task.clone();
+            self.record.om_suggested_response = parsed.suggested_response.clone();
         }
         match action {
             TurnEndAction::Observe { .. } => {

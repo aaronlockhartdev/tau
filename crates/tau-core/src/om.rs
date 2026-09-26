@@ -160,10 +160,7 @@ pub fn projected_message_removal(
 /// evaluated on the active branch (Mastra's cursor is a linear timestamp;
 /// the entry id is tau's branch disambiguator).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-/// The om entry payload also carries the run's display details (om_thinking,
-/// om_input, om_current_task, om_suggested_response, om_model); the record
-/// deserializes over them, so they are not rejected as unknown fields.
+#[serde(default, deny_unknown_fields)]
 pub struct OmRecord {
     /// Frozen prefix: the parent's observation log verbatim at a compacted
     /// spawn (ADR-0004) — never re-observed and never re-reflected, and
@@ -185,6 +182,19 @@ pub struct OmRecord {
     /// re-admitted when space frees).
     #[serde(default)]
     pub prefix_demoted: bool,
+    /// Display-only metadata for the observation card (thinking, input,
+    /// current-task, suggested-response, model) — persisted with the record,
+    /// never acted on.
+    #[serde(default)]
+    pub om_thinking: String,
+    #[serde(default)]
+    pub om_input: String,
+    #[serde(default)]
+    pub om_current_task: String,
+    #[serde(default)]
+    pub om_suggested_response: String,
+    #[serde(default)]
+    pub om_model: String,
 }
 
 impl OmRecord {

@@ -358,7 +358,7 @@ impl AgentSession {
                 }
             };
             {
-                state.om_model = self.om_model();
+                state.record.om_model = self.om_model();
                 let mut inner = self.inner.lock().unwrap();
                 state
                     .commit(&mut inner.store, &mut action, &result)
