@@ -43,6 +43,16 @@ export function splitJsonPayload(
   return null;
 }
 
+// The newest observation is wrapped in its provenance-group tags
+// (<observation-group id=… range=…> … </observation-group>); the card shows
+// the content, not the wrapper.
+function stripObservationGroup(s: string): string {
+  return s
+    .replace(/^<observation-group[^>]*>\s*/, '')
+    .replace(/\s*<\/observation-group>\s*$/, '')
+    .trim();
+}
+
 export function decodeEntry(v: ViewEntry): Entry {
   const p = (v.payload && typeof v.payload === 'object' ? v.payload : {}) as Record<string, unknown>;
   switch (v.kind) {
@@ -89,14 +99,31 @@ export function decodeEntry(v: ViewEntry): Entry {
       };
     }
     case 'om': {
-      const o = p as { active_observations?: string };
+      const o = p as {
+        active_observations?: string;
+        om_thinking?: string;
+        om_input?: string;
+        om_current_task?: string;
+        om_suggested_response?: string;
+        om_model?: string;
+      };
       // The record's active_observations is the whole managed suffix; the
       // block shows what this entry added — the newest observation, past
       // its message boundary.
       const all = o.active_observations ?? String(p as unknown as string);
       const m = all.lastIndexOf('--- message boundary (');
       const nl = m >= 0 ? all.indexOf('\n\n', m) : -1;
-      return { id: v.id, kind: 'om', text: nl > 0 ? all.slice(nl + 2).trim() : all.trim() };
+      const raw = nl > 0 ? all.slice(nl + 2).trim() : all.trim();
+      return {
+        id: v.id,
+        kind: 'om',
+        text: stripObservationGroup(raw),
+        thinking: o.om_thinking || undefined,
+        input: o.om_input || undefined,
+        currentTask: o.om_current_task || undefined,
+        suggestedResponse: o.om_suggested_response || undefined,
+        model: o.om_model || undefined
+      };
     }
     case 'system':
       return { id: v.id, kind: 'system', text: String(p.note ?? '') };

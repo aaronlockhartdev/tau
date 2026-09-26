@@ -143,6 +143,15 @@ impl OmState {
         result: &crate::provider::TurnResult,
     ) -> Result<(), OmError> {
         let parsed = om::parse_observer_output(&result.text);
+        // Capture the run's display details for the observation card: the
+        // model's thinking, its input, and its <current-task>/<suggested-response>.
+        self.om_thinking = result.reasoning.clone();
+        self.om_current_task = parsed.current_task.clone();
+        self.om_suggested_response = parsed.suggested_response.clone();
+        if let TurnEndAction::Observe { transcript } | TurnEndAction::Buffer { transcript } = action
+        {
+            self.om_input = transcript.clone();
+        }
         match action {
             TurnEndAction::Observe { .. } => {
                 if !parsed.degenerate && !parsed.observations.trim().is_empty() {

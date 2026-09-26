@@ -160,7 +160,10 @@ pub fn projected_message_removal(
 /// evaluated on the active branch (Mastra's cursor is a linear timestamp;
 /// the entry id is tau's branch disambiguator).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
+/// The om entry payload also carries the run's display details (om_thinking,
+/// om_input, om_current_task, om_suggested_response, om_model); the record
+/// deserializes over them, so they are not rejected as unknown fields.
 pub struct OmRecord {
     /// Frozen prefix: the parent's observation log verbatim at a compacted
     /// spawn (ADR-0004) — never re-observed and never re-reflected, and

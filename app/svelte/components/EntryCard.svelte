@@ -50,9 +50,10 @@
     task: !!store.entryOpen.get(okey('task')),
     output: !!store.entryOpen.get(okey('output')),
     skill: !!store.entryOpen.get(okey('skill')),
+    obs: !!store.entryOpen.get(okey('obs')),
     think: store.entryOpen.get(okey('think')) ?? false
   });
-  function setOpen(slot: 'tool' | 'task' | 'output' | 'skill' | 'think') {
+  function setOpen(slot: 'tool' | 'task' | 'output' | 'skill' | 'think' | 'obs') {
     const k = okey(slot);
     const next = !(store.entryOpen.get(k) ?? (slot === 'think' ? store.reasoningOpen : false));
     store.entryOpen.set(k, next);
@@ -75,6 +76,11 @@
   let taskOpen = $derived(open.task);
   let outputOpen = $derived(open.output);
   let skillOpen = $derived(open.skill);
+  let obsOpen = $derived(open.obs);
+  // The observation card's thinking, rendered like a thinking block's body.
+  const obsThinkMd = $derived(
+    entry.kind === 'om' && entry.thinking ? renderMarkdown(entry.thinking.trim()) : ''
+  );
   $effect(() => {
     void entry.text;
     if (entry.kind === 'message' || entry.kind === 'interrupted') void entry.reasoning;
@@ -84,6 +90,7 @@
     void open.tool;
     void open.task;
     void open.think;
+    void open.obs;
     void thinkSynced;
     measure();
   });
@@ -273,7 +280,16 @@
   {#if entry.kind === 'user'}
     {#if entry.skill}
       <div class="card2">
-        <div class="hd skill"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>skill · {entry.skill.name}</div>
+        <div
+          class="hd skill"
+          role="button"
+          tabindex="0"
+          aria-expanded={skillOpen}
+          ondblclick={() => setOpen('skill')}
+          onkeydown={onKey(() => setOpen('skill'))}
+        >
+          <svg class="ic" width="13" height="13"><use href="#i-book"/></svg>skill · {entry.skill.name}
+        </div>
         <div class="txt2 dim">{skillOpen ? (entry.text ?? '') : skillPreview}</div>
         {#if skillLong}
           <button class="expando" onclick={() => setOpen('skill')}>
@@ -367,9 +383,42 @@
       {/if}
     {/if}
     {#if entry.kind === 'om'}
-      <div class="card2">
-        <div class="hd obs"><svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation</div>
+      <div class="card2 obs">
+        <div
+          class="hd obs"
+          role="button"
+          tabindex="0"
+          aria-expanded={obsOpen}
+          ondblclick={() => setOpen('obs')}
+          onkeydown={onKey(() => setOpen('obs'))}
+        >
+          <svg class="ic" width="13" height="13"><use href="#i-book"/></svg>observation
+          {#if entry.model}<span class="meta">{entry.model}</span>{/if}
+          {#if entry.thinking || entry.input || entry.currentTask || entry.suggestedResponse}
+            <span class="caret">{obsOpen ? '▾' : '▸'}</span>
+          {/if}
+        </div>
         <div class="txt2 dim">{@html md}</div>
+        {#if obsOpen}
+          <div class="obs-details">
+            {#if entry.currentTask}
+              <div class="kv"><span class="k">current task:</span></div>
+              <div class="kv sub"><span class="v">{entry.currentTask}</span></div>
+            {/if}
+            {#if entry.suggestedResponse}
+              <div class="kv"><span class="k">suggested:</span></div>
+              <div class="kv sub"><span class="v">{entry.suggestedResponse}</span></div>
+            {/if}
+            {#if entry.thinking}
+              <div class="obs-seclbl">thinking</div>
+              <div class="thinkbody md">{@html obsThinkMd}</div>
+            {/if}
+            {#if entry.input}
+              <div class="obs-seclbl">input</div>
+              <pre class="obs-pre">{entry.input}</pre>
+            {/if}
+          </div>
+        {/if}
       </div>
     {:else if entry.kind === 'subagent' && subState}
       <div class="stline"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{subState}</div>
@@ -536,6 +585,34 @@
     color: var(--dim);
     font-size: 12px;
     line-height: 1.5;
+  }
+  .hd .meta {
+    margin-left: auto;
+    margin-right: 6px;
+    font: 10px var(--mono);
+    color: var(--faint);
+  }
+  .obs-details {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  .obs-seclbl {
+    margin-top: 8px;
+    font: 10px var(--mono);
+    letter-spacing: 0.04em;
+    color: var(--faint);
+  }
+  .obs-pre {
+    margin: 4px 0 0;
+    padding: 8px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    font: 11.5px/1.5 var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--dim);
   }
   .tool .chip {
     display: flex;

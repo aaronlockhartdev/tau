@@ -34,6 +34,46 @@ fn plan_picks_observe_at_activation_and_commit_advances_the_cursor() {
 }
 
 #[test]
+fn commit_persists_the_observation_card_display_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 3, 100);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    let result = crate::provider::TurnResult {
+        text: "<observations>user set up a workbench</observations>\n<current-task>Primary: workbench</current-task>\n<suggested-response>Walk through it.</suggested-response>".into(),
+        reasoning: "deciding what is worth remembering".into(),
+        usage: None,
+        completed: true,
+        calls: Vec::new(),
+        mid_stream_errors: Vec::new(),
+    };
+    let mut action = TurnEndAction::Observe {
+        transcript: "the observed transcript".into(),
+    };
+    state.commit(&mut store, &mut action, &result).unwrap();
+
+    let entries = store.entries_range(0, usize::MAX).unwrap();
+    let om = entries.iter().find(|e| e.kind == KIND_OM).unwrap();
+    let p = &om.payload;
+    assert_eq!(
+        p.get("om_thinking").and_then(|v| v.as_str()),
+        Some("deciding what is worth remembering")
+    );
+    assert_eq!(
+        p.get("om_input").and_then(|v| v.as_str()),
+        Some("the observed transcript")
+    );
+    assert_eq!(
+        p.get("om_current_task").and_then(|v| v.as_str()),
+        Some("Primary: workbench")
+    );
+    assert_eq!(
+        p.get("om_suggested_response").and_then(|v| v.as_str()),
+        Some("Walk through it.")
+    );
+    assert!(p.get("om_model").is_some());
+}
+
+#[test]
 fn plan_buffers_below_activation_and_commit_holds_the_chunk() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 25, 1000);
@@ -157,6 +197,11 @@ fn the_overflow_ladder_demotes_the_prefix_and_readmits_it() {
         buffered: Vec::new(),
         buffer_cursor: None,
         changed: false,
+        om_thinking: String::new(),
+        om_input: String::new(),
+        om_current_task: String::new(),
+        om_suggested_response: String::new(),
+        om_model: String::new(),
     };
     // 200 combined tokens over the 100 budget: the prefix demotes out of
     // the live context (it stays in the record, recall reaches it).

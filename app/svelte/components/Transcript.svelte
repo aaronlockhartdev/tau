@@ -412,6 +412,24 @@
     setAnchorPinned(pinned);
   });
 
+  // A height flush (a card expanding or collapsing) re-lays the track before
+  // the flush's scrollTop write has fired its scroll event; the window derived
+  // would then recompute against a stale scroll position and blank the cards.
+  // Sync the scroll state from the DOM on every flush so the window is always
+  // computed at the viewport's real position. untrack keeps this from
+  // depending on scroll (it would otherwise re-run on every scroll).
+  $effect(() => {
+    void heightsGen.gen;
+    const node = el;
+    if (!node) return;
+    const cur = untrack(() => scroll.top);
+    const curH = untrack(() => scroll.h);
+    if (node.scrollTop !== cur || node.clientHeight !== curH) {
+      scroll.top = node.scrollTop;
+      scroll.h = node.clientHeight;
+    }
+  });
+
   // The measured-total snap: pinned and the height bookkeeping changed, so
   // the session's true bottom moved — land the viewport there in this
   // flush. The rAF catch-up alone walks one rendered window per frame, which
@@ -554,7 +572,7 @@
     position: absolute;
     left: 0;
     right: 0;
-    padding: 14px;
+    padding: 28px 16px 14px;
   }
   .dots {
     display: inline-flex;
