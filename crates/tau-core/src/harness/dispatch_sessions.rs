@@ -461,6 +461,10 @@ impl Core {
                 store.set_leaf(&at).map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
+                // The live session's store is now the snapshot's source
+                // (its in-memory log): it must see the new leaf too, or the
+                // next snapshot's cursor would lag the branch move.
+                live.agent.with_task_store(|s| s.adopt_leaf(&at));
                 live.meta.lock().unwrap().leaf = Some(at.clone());
                 self.emit(Event::SessionEvent {
                     workspace: live.meta.lock().unwrap().workspace.clone(),

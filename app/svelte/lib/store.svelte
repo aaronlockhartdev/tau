@@ -249,7 +249,12 @@
     // The skill registry refreshes per open/switch (ticket #28): discovery
     // is cheap and the cache keys on the workspace, so a stale list never
     // outlives a tab.
-    const skillsOut = await command({ type: 'skill_list', workspace: real.id });
+    // skill_list and session_list only depend on the workspace id, so
+    // both fire at once (one round-trip, not two) before the store updates.
+    const [skillsOut, list] = await Promise.all([
+      command({ type: 'skill_list', workspace: real.id }),
+      command({ type: 'session_list', workspace: real.id })
+    ]);
     if (skillsOut.kind === 'skills') store.skills[real.id] = skillsOut.skills;
     const i = store.workspaces.findIndex((w) => w.cwd === real.cwd);
     if (i >= 0) {
@@ -257,7 +262,6 @@
     } else {
       store.workspaces.push(real);
     }
-    const list = await command({ type: 'session_list', workspace: real.id });
     // The listed sessions materialize as stubs so the pane shows them all;
     // entries hydrate lazily when one is opened.
     if (list.kind === 'sessions') store.sessions = applySessionList(store.sessions, list.sessions);
@@ -588,19 +592,37 @@
   // the core serves the slice. Views keep the file's own id — the snapshot
   // and this paged read must share one id namespace or their copies of an
   // entry never match.
+  //
+  // In-flight dedupe: the transcript's window effect re-fires on every
+  // window recompute (the post-open height settling is a storm of them),
+  // and an identical (start, count) already in flight is shared, not
+  // re-issued — so the recompute storm cannot re-request the same page.
+  const windowsInFlight = new Map<string, Promise<void>>();
+
   export async function fetchWindow(sid: string, start: number, count: number): Promise<void> {
     const s = store.sessions[sid];
     if (!s || count <= 0) return;
-    const out = await command({
-      type: 'session_entries',
-      session: sid,
-      since: null,
-      range: { start, count }
-    });
-    if (out.kind !== 'entries') return;
-    const m = mergeHydrated(s.entries, s.live, out.entries);
-    s.entries = m.entries;
-    s.live = m.live;
+    const key = `${sid}:${start}:${count}`;
+    const inFlight = windowsInFlight.get(key);
+    if (inFlight) return inFlight;
+    const done = (async () => {
+      try {
+        const out = await command({
+          type: 'session_entries',
+          session: sid,
+          since: null,
+          range: { start, count }
+        });
+        if (out.kind !== 'entries') return;
+        const m = mergeHydrated(s.entries, s.live, out.entries);
+        s.entries = m.entries;
+        s.live = m.live;
+      } finally {
+        windowsInFlight.delete(key);
+      }
+    })();
+    windowsInFlight.set(key, done);
+    return done;
   }
 
   export async function send(text: string, lane: PendingMsg['lane']): Promise<void> {

@@ -84,8 +84,12 @@ impl OmState {
         // they are in the list. Reading the leaf after the list lets a
         // concurrent writer append a new leaf between the two reads, which
         // strands the walk on an id the list does not contain.
-        let leaf = store.leaf()?.map(|e| e.id);
-        let entries = store.entries_range(0, usize::MAX)?;
+        let leaf = store.leaf_cached()?.map(|e| e.id);
+        let entries: Vec<Entry> = store
+            .entries_range_cached(0, usize::MAX)?
+            .into_iter()
+            .map(|(e, _)| e)
+            .collect();
         Ok(branch_entries(&entries, leaf.as_deref())
             .into_iter()
             .rev()

@@ -102,13 +102,35 @@ fn deserialize_crc<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Stri
     Ok(if v.is_empty() { None } else { Some(v) })
 }
 
+/// The CRC32 table (IEEE, reflected): the bitwise algorithm unrolled to
+/// one table lookup per byte — bitwise-identical values, no 8-way inner
+/// loop (a full-file verify pass is then linear without the per-bit cost).
+const fn crc_table() -> [u32; 256] {
+    let mut table = [0u32; 256];
+    let mut i = 0;
+    while i < 256 {
+        let mut c = i as u32;
+        let mut n = 0;
+        while n < 8 {
+            c = if c & 1 != 0 {
+                0xEDB8_8320 ^ (c >> 1)
+            } else {
+                c >> 1
+            };
+            n += 1;
+        }
+        table[i] = c;
+        i += 1;
+    }
+    table
+}
+
+const CRC_TABLE: [u32; 256] = crc_table();
+
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {
-        crc ^= u32::from(b);
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ (0xEDB8_8320 & ((crc & 1) * 0xEDB8_8320));
-        }
+        crc = CRC_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
     }
     !crc
 }
@@ -154,6 +176,21 @@ pub struct SessionStore {
     loaded: bool,
     ids: HashSet<String>,
     next: u64,
+    /// The loaded entry lines in file order (empty lines kept as `None`
+    /// so the in-memory paging indexes match the file's), plus this store's
+    /// own appends: the live session's paged reads are served from here
+    /// without re-opening the file. The file-backed reads (`entries_range`,
+    /// `entries_since`, `entry`) stay the verification path and are
+    /// untouched.
+    entries: Vec<Option<Entry>>,
+    /// Each entry line's byte length (a snapshot's `size` field, served
+    /// without re-serializing the entry).
+    entry_len: Vec<usize>,
+    /// The file length the in-memory log is current to: the freshness
+    /// check (`refresh_if_grown`) re-opens when the file has grown past it
+    /// (an external writer — the 10k fixture test), so a live read never
+    /// serves a stale log.
+    file_len: u64,
 }
 
 /// Storage errors.
@@ -221,6 +258,9 @@ impl SessionStore {
             loaded: false,
             ids: HashSet::new(),
             next: 0,
+            entries: Vec::new(),
+            entry_len: Vec::new(),
+            file_len: 0,
         }
     }
     /// A fixed timestamp for every write (the test seam that makes the
@@ -296,7 +336,8 @@ impl SessionStore {
         self.created = created;
         let mut line = serde_json::to_string(&header)?;
         line.push('\n');
-        fs::write(self.path(), line)?;
+        fs::write(self.path(), &line)?;
+        self.file_len = line.len() as u64;
         Ok(())
     }
 
@@ -324,6 +365,7 @@ impl SessionStore {
     /// at the next append); any other bad line is corruption.
     pub fn open(&mut self) -> Result<(), Error> {
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
+        self.file_len = raw.len() as u64;
         let lines = Self::entry_lines(&raw);
         let Some(header_line) = lines.first() else {
             return Err(Error::Other("session file has no header".into()));
@@ -350,9 +392,13 @@ impl SessionStore {
         self.parent = header.parent;
 
         self.ids.clear();
+        self.entries.clear();
+        self.entry_len.clear();
         self.next = 1;
         for (i, line) in lines.iter().enumerate().skip(1) {
             if line.is_empty() {
+                self.entries.push(None);
+                self.entry_len.push(0);
                 continue;
             }
             let entry: Entry = match line.parse::<Entry>() {
@@ -361,7 +407,9 @@ impl SessionStore {
             };
             entry.verify(i + 1)?;
             self.next = self.next.max(entry.id.parse::<u64>().unwrap_or(0) + 1);
-            self.ids.insert(entry.id);
+            self.ids.insert(entry.id.clone());
+            self.entries.push(Some(entry));
+            self.entry_len.push(line.len());
         }
         self.loaded = true;
         Ok(())
@@ -406,10 +454,18 @@ impl SessionStore {
             .append(true)
             .open(self.path())?;
         let mut line = entry.canonical_line();
+        let line_len = line.len();
         line.push('\n');
         file.write_all(line.as_bytes())?;
+        // The writer's own growth: keep the bookkeeping `refresh_if_grown`
+        // relies on (a settle may also have touched the tail).
+        if let Ok(m) = fs::metadata(self.path()) {
+            self.file_len = m.len();
+        }
 
         self.ids.insert(entry.id.clone());
+        self.entries.push(Some(entry.clone()));
+        self.entry_len.push(line_len);
         self.next += 1;
         self.loaded = true;
         Ok(entry)
@@ -751,6 +807,7 @@ impl std::str::FromStr for Entry {
 }
 
 mod file;
+mod log;
 
 #[cfg(test)]
 mod tests;

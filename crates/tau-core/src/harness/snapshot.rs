@@ -5,19 +5,23 @@ use super::*;
 impl Core {
     pub(crate) fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
         let workspace = self.workspace(&live.meta.lock().unwrap().workspace)?;
-        let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
-        store.open().map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
-        // The snapshot is metadata: one full page read, payloads dropped.
-        let entries = store
-            .entries_range(0, usize::MAX)
+        // The live session's own store serves the snapshot from its
+        // in-memory log (verified at open; only it appends to the file):
+        // no file re-open per snapshot — one open serves it all.
+        let (sized, leaf) = live
+            .agent
+            .with_task_store(|store: &mut SessionStore| {
+                // An external writer (the 10k fixture) grows the file out
+                // from under the log: one re-open keeps the view current.
+                store.refresh_if_grown()?;
+                let sized = store.entries_range_cached(0, usize::MAX)?;
+                let leaf = store.leaf_cached()?;
+                Ok::<_, crate::session::Error>((sized, leaf))
+            })
             .map_err(|e| ProtocolError::Other {
                 message: e.to_string(),
             })?;
-        let leaf = store.leaf().map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
+        let entries: Vec<Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
         let usage = entries
             .iter()
             .rev()
@@ -25,7 +29,7 @@ impl Core {
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
         let tasks = crate::task::fold_entries(&entries);
-        let entries = entries.iter().map(entry_meta).collect();
+        let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
         let meta = live.meta.lock().unwrap().clone();
         Ok(Snapshot {
             workspace,
@@ -71,32 +75,31 @@ impl Core {
         since: Option<String>,
         range: Option<tau_protocol::snapshot::EntryRange>,
     ) -> Result<Vec<ViewEntry>, ProtocolError> {
-        let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
-        store.open().map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
-        let entries: Vec<Entry> = match (since, range) {
-            (Some(cursor), None) => {
-                store
-                    .entries_since(&cursor)
-                    .map_err(|e| ProtocolError::Other {
-                        message: e.to_string(),
-                    })?
-            }
-            (None, Some(r)) => store
-                .entries_range(r.start, r.start + r.count)
-                .map_err(|e| ProtocolError::Other {
-                    message: e.to_string(),
-                })?,
-            // (None, None) would be a full dump with payloads — spec §8
-            // has no full-dump command (ADR-0006); one of the two is
-            // required.
-            _ => {
-                return Err(ProtocolError::Other {
-                    message: "exactly one of since/range is required".into(),
-                });
-            }
-        };
+        // The live session's own store serves the page from its in-memory
+        // log: the viewport's recompute storm is a cache hit, not a
+        // whole-file re-open per read.
+        let entries: Vec<Entry> = live
+            .agent
+            .with_task_store(|store| {
+                // An external writer grows the file out from under the log:
+                // one re-open keeps the view current.
+                store.refresh_if_grown()?;
+                match (since, range) {
+                    (Some(cursor), None) => store.entries_since_cached(&cursor),
+                    (None, Some(r)) => store
+                        .entries_range_cached(r.start, r.start + r.count)
+                        .map(|v| v.into_iter().map(|(e, _)| e).collect()),
+                    // (None, None) would be a full dump with payloads — spec §8
+                    // has no full-dump command (ADR-0006); one of the two is
+                    // required.
+                    _ => Err(crate::session::Error::Other(
+                        "exactly one of since/range is required".into(),
+                    )),
+                }
+            })
+            .map_err(|e| ProtocolError::Other {
+                message: e.to_string(),
+            })?;
         Ok(entries
             .iter()
             .map(|e| ViewEntry {
@@ -136,24 +139,28 @@ impl Core {
         store.open().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
-        let entries = store
-            .entries_range(0, usize::MAX)
-            .map_err(|e| ProtocolError::Other {
-                message: e.to_string(),
-            })?;
+        // One open serves the projection: the in-memory log the open just
+        // filled, not a second whole-file read.
+        let sized =
+            store
+                .entries_range_cached(0, usize::MAX)
+                .map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+        let entries: Vec<Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
         let usage = entries
             .iter()
             .rev()
             .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
-        let leaf = store.leaf().map_err(|e| ProtocolError::Other {
+        let leaf = store.leaf_cached().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
-            entries: entries.iter().map(entry_meta).collect(),
+            entries: sized.iter().map(|(e, l)| entry_meta(e, *l)).collect(),
             om: OmSnapshot::default(),
             live: LiveState {
                 queue: vec![],
@@ -191,19 +198,24 @@ impl Core {
         store.open().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        // One open serves the page: the in-memory log, not a second
+        // whole-file read per paged read.
         let entries = match (since, range) {
             (Some(cursor), None) => {
                 store
-                    .entries_since(&cursor)
+                    .entries_since_cached(&cursor)
                     .map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
                     })?
             }
             (None, Some(r)) => store
-                .entries_range(r.start, r.start + r.count)
+                .entries_range_cached(r.start, r.start + r.count)
                 .map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
-                })?,
+                })?
+                .into_iter()
+                .map(|(e, _)| e)
+                .collect(),
             _ => {
                 return Err(ProtocolError::Other {
                     message: "exactly one of since/range is required".into(),
@@ -249,13 +261,13 @@ pub(crate) fn preview(entry: &Entry) -> String {
 
 /// One file entry's snapshot projection (the metadata the GUI renders
 /// before a paged read supplies payloads).
-pub(crate) fn entry_meta(e: &Entry) -> EntryMeta {
+pub(crate) fn entry_meta(e: &Entry, size: u64) -> EntryMeta {
     EntryMeta {
         id: e.id.clone(),
         parent: e.parent.clone(),
         kind: e.kind.clone(),
         timestamp: e.timestamp,
-        size: serde_json::to_vec(e).map(|v| v.len() as u64).unwrap_or(0),
+        size,
         preview: preview(e),
         first_kept: e.first_kept_entry_id.clone(),
         status: if e.kind == crate::agent::KIND_ASSISTANT
@@ -294,8 +306,13 @@ pub(crate) fn model_note(old: &Option<String>, new: &str) -> String {
 /// active branch (a closed session's header carries no model, so the quiet
 /// entries are the record).
 pub(crate) fn last_model_note(store: &mut SessionStore) -> Option<String> {
-    let entries = store.entries_range(0, usize::MAX).ok()?;
-    let leaf = store.leaf().ok()?.map(|e| e.id);
+    let entries: Vec<Entry> = store
+        .entries_range_cached(0, usize::MAX)
+        .ok()?
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect();
+    let leaf = store.leaf_cached().ok()?.map(|e| e.id);
     crate::om_integration::branch_entries(&entries, leaf.as_deref())
         .iter()
         .rev()
@@ -321,10 +338,11 @@ pub(crate) fn delete_session_files(cwd: &Path, session: &str) {
     let mut store = SessionStore::for_workspace(cwd, session);
     let blobs = if store.open().is_ok() {
         store
-            .entries_range(0, usize::MAX)
+            .entries_range_cached(0, usize::MAX)
             .map(|entries| {
                 entries
                     .into_iter()
+                    .map(|(e, _)| e)
                     .filter_map(|e| e.blob.map(|b| b.id))
                     .collect()
             })

@@ -430,3 +430,83 @@ fn unique_name_numbers_past_the_collisions() {
     ];
     assert_eq!(unique_name(&titles, || "Rusty Nail".into()), "Rusty Nail 4");
 }
+
+/// A live session's paged `session_entries` and `session_snapshot` are
+/// served from its own in-memory store (perf-session-open): the window
+/// comes back identical to the file's entries, a fresh append is visible
+/// with no file re-open, and the snapshot's cursor tracks the leaf.
+#[tokio::test]
+async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned(&canned_body()),
+        TurnConfig::default(),
+    );
+    let session_id = live.meta.lock().unwrap().id.clone();
+    // Five entries through the session's own store (the live writer's path).
+    live.agent
+        .with_task_store(|store| {
+            let mut parent: Option<String> = None;
+            for i in 0..5u32 {
+                let e = store
+                    .append(
+                        crate::agent::KIND_USER,
+                        json!({ "text": format!("msg {i}") }),
+                        parent.as_deref(),
+                    )
+                    .unwrap();
+                parent = Some(e.id);
+            }
+            Ok::<(), crate::session::Error>(())
+        })
+        .unwrap();
+    // The middle window (entries 2-3): identical to what the file holds.
+    let out = core
+        .dispatch(Command::SessionEntries {
+            session: session_id.clone(),
+            since: None,
+            range: Some(tau_protocol::snapshot::EntryRange { start: 1, count: 2 }),
+        })
+        .unwrap();
+    let window = match out {
+        CommandOutput::Entries { entries } => entries,
+        other => panic!("expected entries: {other:?}"),
+    };
+    assert_eq!(window.len(), 2);
+    assert_eq!(window[0].id, "00000002");
+    assert_eq!(window[0].payload["text"], "msg 1");
+    assert_eq!(window[1].id, "00000003");
+    assert_eq!(window[1].payload["text"], "msg 2");
+    // A since-read from the first entry: everything after it.
+    let out = core
+        .dispatch(Command::SessionEntries {
+            session: session_id.clone(),
+            since: Some("00000000".into()),
+            range: None,
+        })
+        .unwrap();
+    let since = match out {
+        CommandOutput::Entries { entries } => entries,
+        other => panic!("expected entries: {other:?}"),
+    };
+    assert_eq!(
+        since.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
+        vec!["00000002", "00000003", "00000004", "00000005"]
+    );
+    // The snapshot: five metadata rows, the cursor at the leaf.
+    let snap = match core
+        .dispatch(Command::SessionSnapshot {
+            session: session_id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected snapshot: {other:?}"),
+    };
+    assert_eq!(snap.entries.len(), 5);
+    assert_eq!(snap.cursor, "00000005");
+}
