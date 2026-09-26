@@ -13,6 +13,7 @@ import {
   type Command,
   type CommandOutput,
   type Entry,
+  type EntryMeta,
   type LiveState,
   type SessionMeta,
   type SkillInfo,
@@ -922,6 +923,96 @@ describe('fetchWindow', () => {
     });
     await fetchWindow('s1', 0, 50);
     expect(store.sessions['s1'].entries[0]?.id).toBe('1');
+  });
+});
+
+describe('workspace tab round trip (switch away and back)', () => {
+  const WS2: Workspace = { id: 'w2', name: 'other', cwd: '/tmp/other' };
+
+  function em(id: string, kind: string, preview: string): EntryMeta {
+    return { id, parent: null, kind, timestamp: 1, size: 10, preview, first_kept: null };
+  }
+
+  it('a paged read in flight during the tab round trip hydrates the re-opened session, not the discarded state', async () => {
+    // Longer than the 80-char snapshot preview, so an unhydrated window is
+    // visible in the assertion.
+    const full = 'x'.repeat(200);
+    const preview = full.slice(0, 80) + '…';
+    let release: ((v: { kind: 'entries'; entries: ViewEntry[] }) => void) | undefined;
+    const hang = new Promise<{ kind: 'entries'; entries: ViewEntry[] }>((r) => {
+      release = r;
+    });
+    store.workspaces = [WS, WS2];
+    store.sessions = applySessionList({}, [meta('s1'), meta('s3', WS2.id)]);
+    mockIPC((cmd) => {
+      switch (cmd.type) {
+        case 'workspace_open':
+          return { kind: 'workspace', workspace: cmd.cwd === WS.cwd ? WS : WS2 };
+        case 'skill_list':
+          return { kind: 'skills', skills: [] };
+        case 'session_list':
+          return cmd.workspace === WS.id
+            ? { kind: 'sessions', sessions: [meta('s1')] }
+            : { kind: 'sessions', sessions: [meta('s3', WS2.id)] };
+        case 'session_open':
+          if (cmd.session === 's1')
+            return {
+              kind: 'snapshot',
+              snapshot: {
+                ...snap('s1').snapshot,
+                entries: [em('1', 'user', 'hello'), em('2', 'assistant', preview), em('3', 'tool', 'exit 0')]
+              }
+            };
+          return snap('s3', { session: { workspace: WS2.id } });
+        case 'session_entries':
+          return hang;
+        case 'file_list':
+          return { kind: 'files', files: [] };
+        default:
+          return { kind: 'none' };
+      }
+    });
+    await openWorkspace(WS);
+    expect(store.current).toBe('s1');
+    // The transcript's paged read for the open window is in flight when the
+    // user switches tabs...
+    const p1 = fetchWindow('s1', 0, 3);
+    await openWorkspace(WS2);
+    expect(store.current).toBe('s3');
+    // ...and back: s1 re-opens into a fresh state (the snapshot skeleton).
+    await openWorkspace(WS);
+    expect(store.current).toBe('s1');
+    // The remounted transcript requests the identical window: it must dedupe
+    // onto the in-flight read, not re-issue it (the perf win stays intact) —
+    // proven by the single session_entries call asserted below.
+    const p2 = fetchWindow('s1', 0, 3);
+    release!({
+      kind: 'entries',
+      entries: [
+        entryView('1', 'user', { text: 'hello', lane: 'force' }),
+        entryView('2', 'assistant', { text: full, reasoning: 'r' }),
+        entryView('3', 'tool', { name: 'bash', args: { command: 'ls' }, output: 'exit 0' })
+      ]
+    });
+    await p2;
+    const entries = mockInvoke.mock.calls.filter(
+      (c) => (c[1] as { command: Command }).command.type === 'session_entries'
+    );
+    expect(entries).toHaveLength(1);
+    const s = store.sessions['s1'];
+    // Every card kind lands in the re-opened session with its full payload.
+    expect(s.entries.map((e) => e.kind)).toEqual(['user', 'message', 'tool']);
+    const a = s.entries[1];
+    if (a.kind === 'message' || a.kind === 'interrupted') {
+      expect(a.text).toBe(full);
+      expect(a.reasoning).toBe('r');
+    }
+    const t = s.entries[2];
+    if (t.kind === 'tool') {
+      expect(t.name).toBe('bash');
+      expect(t.status).toBe('ok');
+      expect(t.output).toBe('exit 0');
+    }
   });
 });
 
