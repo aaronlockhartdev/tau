@@ -10,9 +10,11 @@ import type {
   QueuedItem,
   SessionMeta,
   Snapshot,
+  SubagentEventKind,
   SubagentInfo,
   Task,
-  Usage
+  Usage,
+  Workspace
 } from './protocol';
 
 export interface PendingMsg {
@@ -235,6 +237,115 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
     });
   }
   return { ...out, [sid]: { ...next, subagents: synthesized } };
+}
+
+// The window title (the store's windowTitle() wrapper feeds it the live
+// state): the workspace name, the parent's title, and the session's.
+export function windowTitle(t: {
+  current: string | null;
+  sessions: SessionMap;
+  workspaces: Workspace[]
+}): string {
+  const s = t.current ? t.sessions[t.current] : null;
+  if (!s) return 'tau';
+  const ws = t.workspaces.find((w) => w.id === s.meta.workspace);
+  const wsName = ws ? ws.name : '';
+  const name = s.meta.title ?? s.meta.id;
+  const parent = s.parent ? t.sessions[s.parent] : null;
+  if (!parent) return wsName ? `${wsName} · ${name}` : name;
+  const p = parent.meta.title ?? parent.meta.id;
+  return wsName ? `${wsName} · ${p} › ${name}` : `${p} › ${name}`;
+}
+
+// A sub-agent event applied to the registry (spec §8, idempotent-cumulative:
+// each event carries the full state of one handle; a lost batch self-heals
+// on the next snapshot).
+export function applySubagentEvent(
+  sessions: SessionMap,
+  sid: string,
+  k: SubagentEventKind,
+  now: number
+): SessionMap {
+  const s = sessions[sid];
+  if (!s) return sessions;
+  if (k.kind === 'spawned') {
+    const info: SubagentInfo = {
+      handle: k.handle,
+      child: k.child,
+      agent_type: k.agent_type,
+      context_mode: k.context_mode,
+      state: 'running',
+      waiting_on: null,
+      last_message: null,
+      usage: null,
+      task: null,
+      resume_contract: null
+    };
+    const subs = s.subagents.filter((x) => x.handle !== k.handle && x.child !== k.child);
+    subs.push(info);
+    return touchChild(
+      { ...sessions, [sid]: { ...s, subagents: subs } },
+      sid,
+      k.child,
+      'running',
+      now,
+      null,
+      k.title
+    );
+  }
+  if (k.kind === 'state') {
+    const st = k.state as SessionState['state'];
+    // The live bridge sends detail as an object (core.rs: {waiting_on}
+    // for idle, {by, resume_contract?} for stopped, {output},
+    // {reason}, null for running).
+    const d = k.detail as { waiting_on?: unknown } | null;
+    const waitingOn =
+      d && typeof d === 'object' && typeof d.waiting_on === 'string' ? d.waiting_on : null;
+    const prev = s.subagents.find((x) => x.handle === k.handle);
+    if (!prev) return touchChild(sessions, sid, k.child, st, now, waitingOn);
+    const info: SubagentInfo = { ...prev, state: st };
+    if (waitingOn !== null) info.waiting_on = waitingOn;
+    else if (st !== 'idle') info.waiting_on = null;
+    if (k.note) info.last_message = k.note;
+    return touchChild(
+      { ...sessions, [sid]: { ...s, subagents: s.subagents.map((x) => (x.handle === k.handle ? info : x)) } },
+      sid,
+      k.child,
+      st,
+      now,
+      waitingOn
+    );
+  }
+  // notified: a child notification reached the parent. The wake
+  // kind maps onto a terminal state (done/failed/stopped) — a
+  // stopped child must not read back as idle.
+  const st =
+    k.wake === 'done'
+      ? 'done'
+      : k.wake === 'failed'
+        ? 'failed'
+        : k.wake === 'stopped'
+          ? 'stopped'
+          : 'idle';
+  let out = sessions;
+  const child = sessions[k.child];
+  if (child) {
+    const next: SessionState = { ...child, mru: now, state: st };
+    if (st === 'idle' && next.waiting_on === null) next.waiting_on = 'parent';
+    if (st !== 'idle') next.waiting_on = null;
+    out = { ...out, [k.child]: next };
+  }
+  const prev = s.subagents.find((x) => x.child === k.child);
+  if (prev) {
+    const info: SubagentInfo = { ...prev, last_message: k.text, state: st };
+    if (st === 'idle' && info.waiting_on === null) info.waiting_on = 'parent';
+    if (st !== 'idle') info.waiting_on = null;
+    out = {
+      ...out,
+      [sid]: { ...s, subagents: s.subagents.map((x) => (x.child === k.child ? info : x)) }
+    };
+  }
+  return out;
 }
 
 // The group-open rule of the session tree (the left pane): an explicit

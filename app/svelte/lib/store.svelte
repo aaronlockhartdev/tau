@@ -9,17 +9,26 @@
   // skeleton (no payloads); paged reads around the viewport fill the
   // cards in (spec §8).
 
-  import { command, isTauri, type Event, type SessionMeta, type SkillInfo, type SubagentInfo, type Workspace } from './protocol';
+  import {
+    command,
+    isTauri,
+    type Event,
+    type SessionMeta,
+    type SkillInfo,
+    type Workspace
+  } from './protocol';
   import { presentation } from './presentation.svelte';
   import { decodeEntry, type PendingDelta, applyStreamEvent, applyToolEvent, mergeHydrated } from './entries';
   import {
     applySessionList,
+    applySubagentEvent,
     laneOf,
     openSession,
     type PendingMsg,
     type SessionState,
     setArchived,
-    touchChild
+    touchChild,
+    windowTitle as windowTitleOf
   } from './sessions';
   export type { PendingMsg, SessionState } from './sessions';
   import {
@@ -31,6 +40,9 @@
     toggleDir,
     waveDirs
   } from './files';
+  import { applyTabSelect, defaultPane, paneOf, type PaneState } from './panes';
+  import { errText } from './errors';
+  export type { PaneState } from './panes';
   import { listen } from '@tauri-apps/api/event';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
@@ -79,50 +91,17 @@
     tabSelAnchor: null as string | null
   });
 
-  export interface PaneState {
-    ltab: 'files' | 'sessions';
-    rtab: 'tasks' | 'subs';
-    // F3: the right-pane history section (done/failed/stopped rows) starts
-    // collapsed; per-row badges carry the exact state, so no filter exists.
-    historyOpen: boolean;
-    expandedTasks: string[];
-    // null = the default view (the group containing the active session
-    // expanded); an array = the explicit set the user has toggled.
-    openGroups: string[] | null;
-    renamingId: string | null;
-    archOpen: boolean;
-    selSub: string | null;
-    // The session-tree multiselect (cmd/ctrl toggle, shift range): the
-    // selected ids and the row a shift range extends from.
-    selected: string[];
-    selAnchor: string | null;
-  }
-
   // Pure read — a $derived may call this; creation goes through ensurePane
   // (a mutation, only from effects/actions).
   export function pane(ws: string | null): PaneState | null {
-    if (ws === null) return null;
-    return store.pane[ws] ?? null;
+    return paneOf(store.pane, ws);
   }
 
   // Create-if-missing (the old pane() behavior) — call from effects/actions.
   export function ensurePane(ws: string): PaneState {
     const prev = store.pane[ws];
     if (prev) return prev;
-    // The filters default to 'all': a done sub-agent or task that the user
-    // just watched finish is what they expect to see, not an empty tab.
-    const p: PaneState = {
-      ltab: 'sessions',
-      rtab: 'tasks',
-      historyOpen: false,
-      expandedTasks: [],
-      openGroups: null,
-      renamingId: null,
-      archOpen: false,
-      selSub: null,
-      selected: [],
-      selAnchor: null
-    };
+    const p = defaultPane();
     store.pane[ws] = p;
     return p;
   }
@@ -132,16 +111,11 @@
   }
 
   export function windowTitle(): string {
-    const sid = store.current;
-    const s = sid ? store.sessions[sid] : null;
-    if (!s) return 'tau';
-    const ws = store.workspaces.find((w) => w.id === s.meta.workspace);
-    const wsName = ws ? ws.name : '';
-    const name = s.meta.title ?? s.meta.id;
-    const parent = s.parent ? store.sessions[s.parent] : null;
-    if (!parent) return wsName ? `${wsName} · ${name}` : name;
-    const p = parent.meta.title ?? parent.meta.id;
-    return wsName ? `${wsName} · ${p} › ${name}` : `${p} › ${name}`;
+    return windowTitleOf({
+      current: store.current,
+      sessions: store.sessions,
+      workspaces: store.workspaces
+    });
   }
 
   // Deltas that land before their stream_start (a GUI connecting mid-stream):
@@ -155,24 +129,6 @@
     const s = store.sessions[sid];
     if (!s) throw new Error(`unknown session ${sid}`);
     return s;
-  }
-
-  // Rejections can be plain objects (a serialized core error) — String()
-  // of one is "[object Object]".
-  function errText(e: unknown): string {
-    if (e instanceof Error) return e.message;
-    if (typeof e === 'string') return e;
-    if (e && typeof e === 'object') {
-      const o = e as { message?: unknown; label?: unknown };
-      if (typeof o.message === 'string') return o.message;
-      if (typeof o.label === 'string') return o.label;
-      try {
-        return JSON.stringify(e);
-      } catch {
-        return String(e);
-      }
-    }
-    return String(e);
   }
 
   // Banner lifecycle (dogfood N2): every command clears the stale banner
@@ -459,25 +415,14 @@
     ws: string,
     e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }
   ): void {
-    if (e.shiftKey) {
-      const anchor = store.tabSelAnchor ?? store.tabSelected[0] ?? ws;
-      const ids = store.workspaces.map((w) => w.id);
-      const a = ids.indexOf(anchor);
-      const b = ids.indexOf(ws);
-      if (a < 0 || b < 0) return;
-      const [lo, hi] = a < b ? [a, b] : [b, a];
-      store.tabSelected = ids.slice(lo, hi + 1);
-      return;
-    }
-    if (e.metaKey || e.ctrlKey) {
-      store.tabSelected = store.tabSelected.includes(ws)
-        ? store.tabSelected.filter((x) => x !== ws)
-        : [...store.tabSelected, ws];
-      store.tabSelAnchor = ws;
-      return;
-    }
-    store.tabSelected = [];
-    store.tabSelAnchor = ws;
+    const t = applyTabSelect(
+      { selected: store.tabSelected, anchor: store.tabSelAnchor },
+      store.workspaces.map((w) => w.id),
+      ws,
+      e
+    );
+    store.tabSelected = t.selected;
+    store.tabSelAnchor = t.anchor;
   }
 
   // A bulk close (B2): N closes sharing ONE final redirect over the
@@ -816,65 +761,7 @@
           // Idempotent-cumulative (spec §8): each event carries the full
           // state of one handle; a lost batch self-heals on the next
           // snapshot.
-          const k = ev.kind;
-          const now = Date.now();
-          if (k.kind === 'spawned') {
-            const info: SubagentInfo = {
-              handle: k.handle,
-              child: k.child,
-              agent_type: k.agent_type,
-              context_mode: k.context_mode,
-              state: 'running',
-              waiting_on: null,
-              last_message: null,
-              usage: null,
-              task: null,
-              resume_contract: null
-            };
-            s.subagents = s.subagents.filter((x) => x.handle !== k.handle && x.child !== k.child);
-            s.subagents.push(info);
-            store.sessions = touchChild(store.sessions, ev.session, k.child, 'running', now, null, k.title);
-            break;
-          }
-          if (k.kind === 'state') {
-            const st = k.state as SessionState['state'];
-            const info = s.subagents.find((x) => x.handle === k.handle);
-            // The live bridge sends detail as an object (core.rs: {waiting_on}
-            // for idle, {by, resume_contract?} for stopped, {output},
-            // {reason}, null for running).
-            const d = k.detail as { waiting_on?: unknown } | null;
-            const waitingOn =
-              d && typeof d === 'object' && typeof d.waiting_on === 'string'
-                ? d.waiting_on
-                : null;
-            if (info) {
-              info.state = st;
-              if (waitingOn !== null) info.waiting_on = waitingOn;
-              else if (st !== 'idle') info.waiting_on = null;
-              if (k.note) info.last_message = k.note;
-            }
-            store.sessions = touchChild(store.sessions, ev.session, k.child, st, now, waitingOn);
-            break;
-          }
-          // notified: a child notification reached the parent. The wake
-          // kind maps onto a terminal state (done/failed/stopped) — a
-          // stopped child must not read back as idle.
-          const st =
-            k.wake === 'done' ? 'done' : k.wake === 'failed' ? 'failed' : k.wake === 'stopped' ? 'stopped' : 'idle';
-          const child = store.sessions[k.child];
-          if (child) child.mru = now;
-          const info = s.subagents.find((x) => x.child === k.child);
-          if (info) {
-            info.last_message = k.text;
-            info.state = st;
-            if (st === 'idle' && info.waiting_on === null) info.waiting_on = 'parent';
-            if (st !== 'idle') info.waiting_on = null;
-          }
-          if (child) {
-            child.state = st;
-            if (st === 'idle' && child.waiting_on === null) child.waiting_on = 'parent';
-            if (st !== 'idle') child.waiting_on = null;
-          }
+          store.sessions = applySubagentEvent(store.sessions, ev.session, ev.kind, Date.now());
           break;
         }
         case 'om_status': {
