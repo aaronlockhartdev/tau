@@ -16,6 +16,7 @@
   // expansion happens at the message_send boundary, not here.
   import { store, send, stop, type PendingMsg } from '../lib/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
+  import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';
 
   let text = $state('');
   let lane = $state<PendingMsg['lane']>('steering');
@@ -48,12 +49,17 @@
     return ws ? (store.skills[ws] ?? []) : [];
   });
 
-  // The name prefix being typed after the leading `/` (the `skill:`
-  // infix counts as already typed).
-  const prefix = $derived.by(() => {
-    if (!text.startsWith('/')) return null;
-    const rest = text.slice(1);
-    return rest.startsWith('skill:') ? rest.slice(6) : rest;
+  // The full dropdown list: the fixed commands (/model, /help) and the
+  // workspace skills in name order; matches narrows it per keystroke.
+  const all: Suggestion[] = $derived.by(() => {
+    const out: Suggestion[] = [
+      { id: 'model', name: '/model', desc: "switch the session's model" },
+      { id: 'help', name: '/help', desc: 'list commands' }
+    ];
+    for (const s of [...skills].sort((a, b) => a.name.localeCompare(b.name))) {
+      out.push({ id: `skill:${s.name}`, name: `/skill:${s.name}`, desc: s.description, skill: s });
+    }
+    return out;
   });
 
   // A completed suggestion (Enter/Tab/click) keeps the dropdown closed
@@ -61,24 +67,9 @@
   // text stays plain until send.
   let completed = $state(false);
 
-  // The dropdown's rows: the fixed commands (/model, /help) and the
-  // matching skills — one list in every state.
-  type Row = { id: string; name: string; desc: string; skill?: SkillInfo };
-  const matches = $derived.by<Row[]>(() => {
-    if (prefix === null || completed) return [];
-    const out: Row[] = [];
-    if ('model'.startsWith(prefix)) {
-      out.push({ id: 'model', name: '/model', desc: "switch the session's model" });
-    }
-    if ('help'.startsWith(prefix)) {
-      out.push({ id: 'help', name: '/help', desc: 'list commands' });
-    }
-    for (const s of skills
-      .filter((s) => s.name.startsWith(prefix))
-      .sort((a, b) => a.name.localeCompare(b.name))) {
-      out.push({ id: `skill:${s.name}`, name: `/skill:${s.name}`, desc: s.description, skill: s });
-    }
-    return out;
+  const matches = $derived.by<Suggestion[]>(() => {
+    const token = slashToken(text);
+    return token === null || completed ? [] : filterSuggestions(all, token);
   });
   const open = $derived(matches.length > 0);
   let sel = $state(0);
