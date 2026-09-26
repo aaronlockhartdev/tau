@@ -27,7 +27,7 @@ export interface SessionState {
   usage: Usage | null;
   // Output tokens/second of the session's most recent turn (status bar).
   tps: number;
-  turn: 'running' | 'idle';
+  turn: 'running' | 'idle' | 'starting';
   // The session's OM state (the status bar's gauge): the activity kind
   // (the om_status events) and the gauge values (the snapshots).
   om: {

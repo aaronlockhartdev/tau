@@ -29,6 +29,7 @@ import {
   archiveSession,
   closeWorkspace,
   closeWorkspaces,
+  deleteSession,
   fetchWindow,
   init,
   openWorkspace,
@@ -526,6 +527,29 @@ describe('session switch', () => {
     });
     await restoreSession(WS.id, 's1');
     expect(store.sessions['s1'].archived).toBe(false);
+  });
+
+  it('delete: the session and its cascade leave the store on the refetch', async () => {
+    // The refetch no longer carries the deleted id (nor its child), so both
+    // drop out of the store; a survivor stays.
+    store.sessions = applySessionList({}, [
+      meta('s1', WS.id, { archived: true }),
+      meta('c1', WS.id, { parent: 's1', archived: true }),
+      meta('s2')
+    ]);
+    const called: string[] = [];
+    defaultIPC({
+      session_delete: (cmd) => {
+        if (cmd.type === 'session_delete') called.push(cmd.session);
+        return { kind: 'none' };
+      },
+      session_list: () => ({ kind: 'sessions', sessions: [meta('s2')] })
+    });
+    await deleteSession(WS.id, 's1');
+    expect(called).toEqual(['s1']);
+    expect(store.sessions['s1']).toBeUndefined();
+    expect(store.sessions['c1']).toBeUndefined();
+    expect(store.sessions['s2']).toBeTruthy();
   });
 
   it('a branch_move event moves the leaf', () => {

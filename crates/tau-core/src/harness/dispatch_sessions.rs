@@ -265,9 +265,9 @@ impl Core {
                     });
                 }
                 let Some(live) = self.sessions.lock().unwrap().remove(&session) else {
-                    // Not in the live map (never opened, or closed since):
-                    // nothing to quiesce.
-                    return Ok(CommandOutput::None);
+                    // Not in the live map (never opened, or closed since —
+                    // includes archived sessions): delete is a pure file op.
+                    return self.delete_closed(&session);
                 };
                 // A wake that looked the session up before the detach holds
                 // the shared session and will CAS the turn (its map read
@@ -698,5 +698,53 @@ impl Core {
                 archived: true,
             },
         })
+    }
+
+    /// Delete a session that is not in the live map — a pure file op (the
+    /// disk-only twin of `archive_closed`). Archived sessions only ever reach
+    /// this path: their file sits in the archive dir, never in memory. The
+    /// target and every descendant are removed (a delete orphans its
+    /// children, so they go with it).
+    fn delete_closed(&self, session: &str) -> Result<CommandOutput, ProtocolError> {
+        // The GUI deletes from an open workspace's tree: find the workspace
+        // whose dir holds the file, live or archived.
+        let workspace = {
+            let wss = self.workspaces.lock().unwrap();
+            wss.values()
+                .find(|w| {
+                    let s = SessionStore::for_workspace(Path::new(&w.cwd), session);
+                    s.path().exists() || s.archive_path().exists()
+                })
+                .cloned()
+        }
+        .ok_or_else(|| ProtocolError::NotFound {
+            what: format!("session {session} is not open"),
+        })?;
+        let cwd = PathBuf::from(&workspace.cwd);
+        // The workspace's disk scan is the whole truth here (no supervisor in
+        // memory): BFS the parent links to collect the target and all
+        // descendants.
+        let all = self.session_access(&workspace);
+        let mut to_delete = vec![session.to_string()];
+        let mut i = 0;
+        while i < to_delete.len() {
+            let parent = to_delete[i].clone();
+            i += 1;
+            for m in all
+                .iter()
+                .filter(|m| m.parent.as_deref() == Some(parent.as_str()))
+            {
+                if !to_delete.contains(&m.id) {
+                    to_delete.push(m.id.clone());
+                }
+            }
+        }
+        for id in &to_delete {
+            // A child may still be open on its own: drop it from the live map
+            // so a late write can't resurrect the file.
+            self.sessions.lock().unwrap().remove(id);
+            delete_session_files(&cwd, id);
+        }
+        Ok(CommandOutput::None)
     }
 }

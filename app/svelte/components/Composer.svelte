@@ -27,7 +27,10 @@
   ];
 
   const running = $derived(
-    store.current ? store.sessions[store.current].turn === 'running' : false
+    store.current
+      ? store.sessions[store.current].turn === 'running' ||
+          store.sessions[store.current].turn === 'starting'
+      : false
   );
 
   let inputEl = $state<HTMLTextAreaElement | null>(null);

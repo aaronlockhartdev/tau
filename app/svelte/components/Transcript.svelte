@@ -129,6 +129,9 @@
   let pinned = true;
   const entries = $derived(cur ? store.sessions[cur].entries : []);
   const live = $derived(cur ? store.sessions[cur].live : []);
+  // The pre-first-output window: a turn is dispatched but no stream/tool event
+  // has landed yet. The animated dots sit at the tail of the track here.
+  const awaiting = $derived(cur ? store.sessions[cur].turn === 'starting' : false);
   // A sub-agent notification's label: the child session's own title.
   const sourceLabelFor = (e: Entry): string =>
     e.kind === 'user' ? (e.source ? store.sessions[e.source]?.meta.title ?? '' : '') : '';
@@ -490,7 +493,7 @@
       <div class="sub">send a message below to start the session</div>
     </div>
   {:else}
-    <div class="track" style="height: {total}px">
+    <div class="track" style="height: {total + (awaiting ? 44 : 0)}px">
       <div class="inner" style="transform: translateY({win.offset}px)">
         {#each all.slice(win.start, win.end) as e, idx (e.id)}
           {@const hk = cur ? `${cur}:${e.id}` : e.id}
@@ -504,6 +507,11 @@
           />
         {/each}
       </div>
+      {#if awaiting}
+        <div class="waiting" style="top: {total}px">
+          <span class="dots"><i></i><i></i><i></i></span>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -541,5 +549,41 @@
     top: 0;
     left: 0;
     right: 0;
+  }
+  .waiting {
+    position: absolute;
+    left: 0;
+    right: 0;
+    padding: 14px;
+  }
+  .dots {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .dots i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--dim);
+    animation: dotpulse 1s infinite ease-in-out;
+  }
+  .dots i:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+  .dots i:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+  @keyframes dotpulse {
+    0%,
+    80%,
+    100% {
+      opacity: 0.25;
+      transform: translateY(0);
+    }
+    40% {
+      opacity: 1;
+      transform: translateY(-3px);
+    }
   }
 </style>

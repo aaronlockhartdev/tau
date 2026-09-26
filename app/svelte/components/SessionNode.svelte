@@ -11,6 +11,7 @@
     renameSession,
     archiveSession,
     restoreSession,
+    deleteSession,
     type SessionState
   } from '../lib/store.svelte';
   import { groupIsOpen } from '../lib/sessions';
@@ -116,39 +117,52 @@
     while (r.parent) r = store.sessions[r.parent] ?? r;
     return r.meta.id;
   }
-  function menuItems(): { label: string; archive: string[]; restore: string[] }[] {
+  function menuItems(): { label: string; archive: string[]; restore: string[]; delete: string[] }[] {
     const q = pane(ws);
     if (!q) return [];
     const ids = q.selected.includes(session.meta.id) ? q.selected : [session.meta.id];
     const sel = ids.map((id) => store.sessions[id]).filter((s): s is SessionState => s !== undefined);
     const archive = new Set<string>();
     const restore = new Set<string>();
+    const del = new Set<string>();
     for (const s of sel) {
-      if (s.archived) restore.add(rootOf(s));
-      else archive.add(rootOf(s));
+      if (s.archived) {
+        restore.add(rootOf(s));
+        del.add(rootOf(s));
+      } else archive.add(rootOf(s));
     }
-    const out: { label: string; archive: string[]; restore: string[] }[] = [];
+    const out: { label: string; archive: string[]; restore: string[]; delete: string[] }[] = [];
     if (archive.size)
       out.push({
         label: archive.size > 1 ? `archive (${archive.size})` : 'archive',
         archive: [...archive],
-        restore: []
+        restore: [],
+        delete: []
       });
     if (restore.size)
       out.push({
         label: restore.size > 1 ? `restore (${restore.size})` : 'restore',
         archive: [],
-        restore: [...restore]
+        restore: [...restore],
+        delete: []
+      });
+    if (del.size)
+      out.push({
+        label: del.size > 1 ? `delete (${del.size})` : 'delete',
+        archive: [],
+        restore: [],
+        delete: [...del]
       });
     return out;
   }
-  function applyMenuAction(item: { archive: string[]; restore: string[] }): void {
+  function applyMenuAction(item: { archive: string[]; restore: string[]; delete: string[] }): void {
     ctx = null;
     const q = pane(ws);
     if (q) q.selected = [];
     void Promise.all([
       ...item.archive.map((id) => archiveSession(id)),
-      ...item.restore.map((id) => restoreSession(ws, id))
+      ...item.restore.map((id) => restoreSession(ws, id)),
+      ...item.delete.map((id) => deleteSession(ws, id))
     ]);
   }
   let ctx = $state<{ x: number; y: number } | null>(null);
@@ -187,7 +201,11 @@
     };
   });
   function sessionRunning(s: SessionState): boolean {
-    return s.turn === 'running' || s.subagents.some((x) => x.state === 'running');
+    return (
+      s.turn === 'running' ||
+      s.turn === 'starting' ||
+      s.subagents.some((x) => x.state === 'running')
+    );
   }
   function childInfo(c: SessionState) {
     return active?.subagents.find((x) => x.child === c.meta.id) ?? null;

@@ -5,7 +5,7 @@
   import { store } from '../lib/store.svelte';
 
   const s = $derived(store.current ? store.sessions[store.current] : null);
-  const running = $derived(s?.turn === 'running');
+  const running = $derived(s?.turn === 'running' || s?.turn === 'starting');
   const name = $derived(s?.meta.title ?? s?.meta.id ?? '—');
   const ws = $derived(
     s

@@ -591,6 +591,32 @@
     }
   }
 
+  // Permanent delete (the inverse of archive): the file is removed from disk
+  // (live or archive dir) and the row leaves the list. The command returns no
+  // id list, so the cascade's victims are found by diffing the refetch.
+  export async function deleteSession(ws: string, sid: string): Promise<void> {
+    try {
+      clearError();
+      await command({ type: 'session_delete', session: sid });
+    } catch (e) {
+      store.error = errText(e);
+      return;
+    }
+    try {
+      const list = await command({ type: 'session_list', workspace: ws });
+      if (list.kind === 'sessions') {
+        const alive = new Set(list.sessions.map((s) => s.id));
+        const next = { ...store.sessions };
+        for (const id of Object.keys(next)) {
+          if (next[id].meta.workspace === ws && !alive.has(id)) delete next[id];
+        }
+        store.sessions = applySessionList(next, list.sessions);
+      }
+    } catch (e) {
+      store.error = errText(e);
+    }
+  }
+
   export async function switchSession(sid: string): Promise<void> {
     const prev = store.current;
     store.current = sid;
@@ -652,6 +678,10 @@
       text,
       lane: lane === 'follow-up' ? 'follow_up' : lane
     });
+    // The turn is dispatched: it is now 'starting' — waiting for the model's
+    // first output (prefill + request latency). stream_start / tool_start move
+    // it to running; the waiting indicator and the stop button key off this.
+    if (s.turn === 'idle') s.turn = 'starting';
   } catch (e) {
     const i = s.entries.findIndex((x) => x.id === optimisticId);
     if (i >= 0) s.entries.splice(i, 1);
@@ -760,6 +790,8 @@
           const m = applyToolEvent(ev, s.entries, s.live);
           s.entries = m.entries;
           s.live = m.live;
+          // A tool call is the model's first output: leave 'starting'.
+          if (s.turn === 'starting') s.turn = 'running';
           break;
         }
         case 'tool_end': {

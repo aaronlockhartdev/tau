@@ -503,3 +503,65 @@ async fn a_never_opened_session_archives_from_disk() {
     );
     drop(core);
 }
+
+/// A delete for a session not in the live map (archived, disk-only): a pure
+/// file op that removes the target and its descendants from the archive dir,
+/// and the list converges (the disk-only twin of the archive test above).
+#[tokio::test]
+async fn a_never_opened_session_deletes_from_disk() {
+    let core = CoreBuilder::custom(providers()).build();
+    let cwd = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, cwd.path()).await;
+    let parent = SessionStore::new_session_id();
+    let child = SessionStore::new_session_id();
+    {
+        let mut p = SessionStore::for_workspace(Path::new(&workspace.cwd), &parent);
+        p.create().unwrap();
+        let mut c = SessionStore::for_workspace(Path::new(&workspace.cwd), &child);
+        c.create().unwrap();
+        c.set_parent(&parent).unwrap();
+    }
+    // Archive the root first so both files sit in the archive dir.
+    core.dispatch(Command::SessionArchive {
+        session: parent.clone(),
+    })
+    .unwrap();
+    // Delete the archived root: the file and its child's file are removed.
+    core.dispatch(Command::SessionDelete {
+        session: parent.clone(),
+    })
+    .unwrap();
+    let root = Path::new(&workspace.cwd);
+    for (id, role) in [(parent.as_str(), "the root"), (child.as_str(), "the child")] {
+        assert!(
+            !root
+                .join(".tau")
+                .join("archive")
+                .join(format!("{id}.jsonl.zst"))
+                .exists(),
+            "{role}: the archived file is gone"
+        );
+        assert!(
+            !root
+                .join(".tau")
+                .join("sessions")
+                .join(format!("{id}.jsonl"))
+                .exists(),
+            "{role}: no live file left"
+        );
+    }
+    let list = match core
+        .dispatch(Command::SessionList {
+            workspace: workspace.id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Sessions { sessions } => sessions,
+        other => panic!("expected sessions: {other:?}"),
+    };
+    assert!(
+        !list.iter().any(|m| m.id == parent || m.id == child),
+        "the deleted sessions leave the list"
+    );
+    drop(core);
+}

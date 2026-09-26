@@ -333,6 +333,9 @@ pub(crate) fn delete_session_files(cwd: &Path, session: &str) {
         Vec::new()
     };
     let _ = std::fs::remove_file(root.join("sessions").join(format!("{session}.jsonl")));
+    // Archived sessions live in the archive dir as .zst (ADR-0005); a delete
+    // must clear that path too, or an archived session's file survives.
+    let _ = std::fs::remove_file(root.join("archive").join(format!("{session}.jsonl.zst")));
     for id in blobs {
         let _ = std::fs::remove_file(root.join("blobs").join(id));
     }
