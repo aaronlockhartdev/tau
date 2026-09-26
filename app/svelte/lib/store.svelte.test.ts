@@ -200,6 +200,23 @@ describe('boot (init)', () => {
     expect(newCall).toBeTruthy();
   });
 
+  it('opens the most recent unarchived session, skipping archived ones', async () => {
+    // list_workspace emits sessions/ then archive/ in arbitrary order, so the
+    // first listed can be archived; the auto-open must pick the newest live one.
+    defaultIPC({
+      session_list: () => ({
+        kind: 'sessions',
+        sessions: [
+          meta('archived-old', WS.id, { archived: true, created: 500 }),
+          meta('live-new', WS.id, { created: 900 }),
+          meta('live-old', WS.id, { created: 700 })
+        ]
+      })
+    });
+    await init();
+    expect(store.current).toBe('live-new');
+  });
+
   it('fails fast outside the Tauri window', async () => {
     delete (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     await init();

@@ -309,14 +309,23 @@
     // every other dir is fetched on expansion.
     store.files = ensureWorkspace(store.files, real.id);
     fetchDir(real.id, '.');
-    const sid =
-      list.kind === 'sessions' && list.sessions.length > 0
-        ? list.sessions[0].id
-        : ((await command({
-            type: 'session_new',
-            workspace: real.id,
-            title: null
-          })) as { kind: 'session'; session: SessionMeta }).session.id;
+    // Archived sessions are listed (for the archive folder) but can't be
+    // opened; auto-open the most recent live one, else start a fresh session.
+    const unarchived =
+      list.kind === 'sessions'
+        ? list.sessions.filter((s) => !s.archived)
+        : [];
+    const latest = unarchived.reduce<SessionMeta | null>(
+      (best, s) => (best === null || s.created > best.created ? s : best),
+      null
+    );
+    const sid = latest
+      ? latest.id
+      : ((await command({
+          type: 'session_new',
+          workspace: real.id,
+          title: null
+        })) as { kind: 'session'; session: SessionMeta }).session.id;
     await switchSession(sid);
   }
 
