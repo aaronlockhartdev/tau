@@ -1,5 +1,7 @@
 use super::*;
-
+use std::future::Future;
+use std::pin::Pin;
+use std::time::Duration;
 impl AgentSession {
     /// Run turns until the queue is empty.
     pub async fn process(&self) -> Result<(), AgentError> {
@@ -455,9 +457,27 @@ struct KillSink {
     stop: Arc<AtomicBool>,
 }
 
+/// The stop-flag poll cadence: a human clicking stop, not a tight race.
+const STOP_POLL_MS: u64 = 50;
+
 impl TurnSink for KillSink {
     fn event(&mut self, _: crate::provider::TurnEvent) -> bool {
         !self.kill.load(Ordering::SeqCst) && !self.stop.load(Ordering::SeqCst)
+    }
+    fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(stop_flags(&self.kill, &self.stop))
+    }
+}
+
+/// The prefill half of a kill/stop (spec §7): a poll over the flags so the
+/// provider can tear the in-flight request down before the first stream
+/// event arrives.
+async fn stop_flags(kill: &AtomicBool, stop: &AtomicBool) {
+    loop {
+        if kill.load(Ordering::SeqCst) || stop.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(STOP_POLL_MS)).await;
     }
 }
 

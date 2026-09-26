@@ -291,6 +291,14 @@ pub trait TurnSink: Send {
     /// Return false to kill the in-flight stream; the partial result then
     /// stands with `completed: false`.
     fn event(&mut self, event: TurnEvent) -> bool;
+
+    /// A future that completes when this sink wants the in-flight request
+    /// torn down before the next stream event arrives (a stop during the
+    /// prefill window, spec §7): the caller aborts the HTTP request and the
+    /// partial stands, like a kill. Default: never.
+    fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(std::future::pending())
+    }
 }
 
 pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {

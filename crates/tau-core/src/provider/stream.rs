@@ -200,10 +200,16 @@ async fn attempt_one_turn(
     // A connect/headers phase silent past the deadline is a dead
     // endpoint: fail (and retry), like a connect timeout.
     let mut sending = builder.send();
-    let response = tokio::time::timeout_at(tokio::time::Instant::now() + head, &mut sending)
-        .await
-        .map_err(|_| ProviderError::IdleTimeout)?
-        .map_err(ProviderError::Request)?;
+    let response = match tokio::select! {
+        sent = tokio::time::timeout_at(tokio::time::Instant::now() + head, &mut sending) => sent,
+        // A stop before the headers tears the request down before it is
+        // answered: nothing received, the empty partial stands (spec §7).
+        _ = sink.stop_signal() => return Ok(TurnResult::default()),
+    } {
+        Ok(Ok(response)) => response,
+        Ok(Err(e)) => return Err(ProviderError::Request(e)),
+        Err(_) => return Err(ProviderError::IdleTimeout),
+    };
     let status = response.status().as_u16();
     if !response.status().is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -214,14 +220,17 @@ async fn attempt_one_turn(
     let mut stream = response;
     let mut idle_deadline = tokio::time::Instant::now() + idle;
     'outer: while !parser.terminated {
-        let chunk = match tokio::time::timeout_at(
-            // `Box::pin` makes the future `Unpin`: reqwest's async-fn
-            // future is not, and `timeout_at` demands it.
-            idle_deadline,
-            Box::pin(stream.chunk()),
-        )
-        .await
-        {
+        let chunk = match tokio::select! {
+            got = tokio::time::timeout_at(
+                // `Box::pin` makes the future `Unpin`: reqwest's async-fn
+                // future is not, and `timeout_at` demands it.
+                idle_deadline,
+                Box::pin(stream.chunk()),
+            ) => got,
+            // A stop during prefill (before the first token) aborts the
+            // request: the partial — possibly empty — stands, like a kill.
+            _ = sink.stop_signal() => break 'outer,
+        } {
             Ok(Ok(Some(chunk))) => {
                 // A received chunk restarts the idle deadline.
                 idle_deadline = tokio::time::Instant::now() + idle;

@@ -1,7 +1,8 @@
 //! The streaming seam: the forwarding provider that mirrors stream events onto the protocol channel, the protocol mapping, the session provider factory, and the sub-agent factory/driver/bridge.
 
 use super::*;
-
+use std::future::Future;
+use std::pin::Pin;
 /// A `TurnProvider` wrapper that mirrors stream events onto the protocol
 /// channel (spec §8 streaming) before the loop's own sink sees them.
 pub(crate) struct ForwardingProvider {
@@ -119,6 +120,21 @@ impl TurnSink for ForwardSink<'_> {
             return false;
         }
         self.inner.event(event)
+    }
+    fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(stop_flag(&self.stop))
+    }
+}
+
+/// The prefill half of a stop (spec §7): a poll over the flag so the
+/// provider tears the in-flight request down before the first stream event
+/// arrives. 50 ms: a human clicking stop, not a tight race.
+async fn stop_flag(stop: &AtomicBool) {
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

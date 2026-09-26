@@ -256,8 +256,9 @@ impl AgentSession {
         });
     }
 
-    /// A persistent stop (ticket #23): cuts the in-flight stream at the
-    /// next delta and stays until the next send.
+    /// A persistent stop (ticket #23): cuts the in-flight stream —
+    /// including during the prefill window, before the first token — and
+    /// stays set until the next send.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::SeqCst);
     }

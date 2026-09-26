@@ -1,5 +1,7 @@
 use super::*;
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 pub(super) fn ok_body(frames: &[&str]) -> String {
@@ -372,4 +374,136 @@ async fn a_dead_stream_is_cut_by_the_idle_timeout() {
     );
     assert_eq!(result.text, "only");
     assert!(!result.completed, "the cut stream is not completed");
+}
+
+/// A sink whose stop signal fires at a fixed instant: the shape of a user
+/// stop landing while the request is in flight.
+struct StopAt {
+    at: std::time::Instant,
+}
+
+impl TurnSink for StopAt {
+    fn event(&mut self, _: TurnEvent) -> bool {
+        true
+    }
+    fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(tokio::time::sleep_until(self.at.into()))
+    }
+}
+
+/// A stop during the prefill window (headers arrived, no token yet) aborts
+/// the in-flight request: the empty partial stands promptly, and a stop is
+/// not a retryable failure (no second request).
+#[tokio::test]
+async fn a_stop_during_prefill_aborts_the_in_flight_request() {
+    // Answers headers, then goes silent: a stalled prefill.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = Arc::new(AtomicU32::new(0));
+    let count2 = count.clone();
+    tokio::spawn(async move {
+        loop {
+            let (mut sock, _) = match listener.accept().await {
+                Ok(x) => x,
+                Err(_) => break,
+            };
+            count2.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                use tokio::io::AsyncWriteExt;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n")
+                    .await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            });
+        }
+    });
+    let requests = Requests {
+        timeout_secs: 30,
+        retries: 2,
+        idle_timeout_secs: 30,
+        tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+    };
+    let request = ResponseRequest::new("m", None, vec![]);
+    let mut sink = StopAt {
+        at: std::time::Instant::now() + Duration::from_millis(200),
+    };
+    let started = std::time::Instant::now();
+    let result = stream_turn(
+        &reqwest::Client::new(),
+        &provider_for(&format!("http://{addr}")),
+        &requests,
+        &request,
+        &mut sink,
+    )
+    .await
+    .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the stop did not cut the prefill promptly: {:?}",
+        started.elapsed()
+    );
+    assert!(result.text.is_empty(), "a prefill stop has no partial");
+    assert!(!result.completed, "a prefill stop is not a completion");
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "a stop is not a retryable failure"
+    );
+}
+
+/// A stop before the response headers arrive (the connect/headers phase)
+/// aborts the request before it is answered: the empty partial stands,
+/// promptly, with no retry.
+#[tokio::test]
+async fn a_stop_before_headers_aborts_the_in_flight_request() {
+    // Accepts, then goes silent: no headers, no body.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = Arc::new(AtomicU32::new(0));
+    let count2 = count.clone();
+    tokio::spawn(async move {
+        loop {
+            let (sock, _) = match listener.accept().await {
+                Ok(x) => x,
+                Err(_) => break,
+            };
+            count2.fetch_add(1, Ordering::SeqCst);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                drop(sock);
+            });
+        }
+    });
+    let requests = Requests {
+        timeout_secs: 30,
+        retries: 2,
+        idle_timeout_secs: 30,
+        tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+    };
+    let request = ResponseRequest::new("m", None, vec![]);
+    let mut sink = StopAt {
+        at: std::time::Instant::now() + Duration::from_millis(200),
+    };
+    let started = std::time::Instant::now();
+    let result = stream_turn(
+        &reqwest::Client::new(),
+        &provider_for(&format!("http://{addr}")),
+        &requests,
+        &request,
+        &mut sink,
+    )
+    .await
+    .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the stop did not cut the connect/headers phase promptly: {:?}",
+        started.elapsed()
+    );
+    assert!(result.text.is_empty(), "a pre-headers stop has no partial");
+    assert!(!result.completed, "a pre-headers stop is not a completion");
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        1,
+        "a stop is not a retryable failure"
+    );
 }
