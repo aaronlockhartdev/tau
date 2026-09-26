@@ -207,6 +207,14 @@ impl OmRecord {
         format!("{}{}", self.frozen_prefix, self.active_observations)
     }
 
+    /// The observation text injected into the main agent's context: the live
+    /// log with the internal `--- message boundary ---` delimiters stripped.
+    /// Those markers are cache-stability chunk delimiters for reflect/compact,
+    /// not memory content — mastra's main-agent context carries none (spec §4).
+    pub fn agent_observations(&self) -> String {
+        strip_boundary_markers(&self.live_observations())
+    }
+
     /// What the Reflector sees and rewrites: the managed suffix only.
     pub fn reflect_source(&self) -> &str {
         &self.active_observations
@@ -241,6 +249,25 @@ pub fn message_boundary(iso_timestamp: &str) -> String {
 
 fn is_boundary_line(line: &str) -> bool {
     line.starts_with("--- message boundary (") && line.ends_with(" ---")
+}
+
+/// Drop the `--- message boundary (…) ---` delimiter lines (and the blank
+/// runs they leave behind) from an observation log, for the main-agent view.
+fn strip_boundary_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut prev_blank = false;
+    for line in text.lines() {
+        if is_boundary_line(line) {
+            continue;
+        }
+        if line.is_empty() && prev_blank {
+            continue;
+        }
+        prev_blank = line.is_empty();
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
 }
 
 /// Split the observation log into cache-stable chunks at boundary delimiters

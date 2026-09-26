@@ -166,6 +166,45 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
 }
 
 #[test]
+fn the_main_agent_view_has_no_boundary_markers() {
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1000,
+        reflect_threshold: 2000,
+        buffer_increment: 230,
+    };
+    // A log with a boundary delimiter between two observation groups.
+    let log = format!(
+        "\n{}\n\n{}\n\n{}",
+        om::message_boundary("2025-12-05T09:15:00Z"),
+        om::wrap_in_observation_group("first obs", "00000001:00000002", "a", None),
+        om::wrap_in_observation_group("second obs", "00000003:00000004", "b", None),
+    );
+    let record = OmRecord {
+        active_observations: log,
+        ..Default::default()
+    };
+    // The stored log keeps the delimiter (reflector/compaction need it);
+    assert!(
+        record
+            .live_observations()
+            .contains("--- message boundary (")
+    );
+    // the main-agent view strips it, keeping content + group wrappers.
+    let clean = record.agent_observations();
+    assert!(!clean.contains("--- message boundary ("), "{clean}");
+    assert!(clean.contains("first obs"), "{clean}");
+    assert!(clean.contains("second obs"), "{clean}");
+    assert!(clean.contains("<observation-group"), "{clean}");
+    // And the assembled main-agent context is clean end-to-end.
+    let mut state = OmState::from_config(&cfg, record);
+    state.changed = true;
+    let ctx = state.assemble_context("base prompt", None);
+    assert!(!ctx.contains("--- message boundary ("), "{ctx}");
+    assert!(ctx.contains("first obs"), "{ctx}");
+}
+
+#[test]
 fn the_suggested_response_is_injected_once_then_cleared() {
     let cfg = crate::config::Om {
         om_model: String::new(),

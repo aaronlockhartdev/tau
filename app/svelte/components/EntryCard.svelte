@@ -412,7 +412,7 @@
             <span class="caret">{obsOpen ? '▾' : '▸'}</span>
           {/if}
         </div>
-        <div class="txt2 dim">{@html md}</div>
+        <div class="txt2 dim md">{@html md}</div>
         {#if obsOpen}
           <div class="obs-details">
             {#if entry.suggestedResponse}
@@ -445,14 +445,14 @@
     {:else if entry.kind === 'spawn-snapshot'}
       <div class="card2">
         <div class="hd sub"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>spawn snapshot</div>
-        <div class="txt2">{@html md}</div>
+        <div class="txt2 md">{@html md}</div>
       </div>
     {:else if entry.kind === 'system' && (entry.text ?? '').startsWith('model: ')}
       <div class="stline"><svg class="ic" width="13" height="13"><use href="#i-bot"/></svg>{entry.text}</div>
     {:else if entry.kind === 'system'}
       <div class="card2">
         <div class="hd sys"><svg class="ic" width="13" height="13"><use href="#i-term"/></svg>system</div>
-        <div class="txt2 dim">{@html md}</div>
+        <div class="txt2 dim md">{@html md}</div>
       </div>
     {:else if entry.kind === 'task'}
       <div class="card2" class:collapsed={!taskOpen}>
@@ -480,7 +480,7 @@
         {#if entry.kind === 'interrupted'}
           <div class="intmark">⚡ interrupted</div>
         {/if}
-        <div class="txt2">{@html md}</div>
+        <div class="txt2 md">{@html md}</div>
       </div>
     {/if}
   {/if}
@@ -516,6 +516,7 @@
     border-radius: 10px;
     padding: 8px 12px;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   .card2 {
     background: var(--panel);
@@ -731,6 +732,7 @@
     border-radius: 6px;
     font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
     color: var(--dim);
   }
   .expando {
@@ -748,17 +750,15 @@
     margin-bottom: 4px;
   }
   /* The renderer's output arrives via @html, outside scoping. */
-  :global(.md pre) {
+  :global(pre.code) {
     padding: 10px;
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 6px;
     font: 12px/1.5 var(--mono);
-    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
     margin: 6px 0;
-  }
-  :global(.md pre code) {
-    color: var(--tx);
   }
   :global(.md code) {
     font: 12px var(--mono);

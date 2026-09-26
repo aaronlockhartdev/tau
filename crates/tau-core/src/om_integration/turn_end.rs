@@ -307,7 +307,7 @@ impl OmState {
     /// when the loop runs it on the persistent state under the lock.
     pub fn assemble_context(&mut self, base: &str, task_contract: Option<&str>) -> String {
         let mut instructions = base.to_owned();
-        let observations = self.record.live_observations();
+        let observations = self.record.agent_observations();
         if !observations.is_empty() {
             instructions.push_str("\n\n");
             instructions.push_str(om::OBSERVATION_CONTEXT_PROMPT);
