@@ -1,33 +1,48 @@
 <script lang="ts">
   // Two-section vertical queue above the composer (spec §9):
   // steering ("next opportunity") on top, follow-up ("after work
-  // completes") below. Items are deletable; the core's queue events are
-  // the source of truth, so deletion is optimistic with resync.
+  // completes") below. Child reports (a sub-agent's wake) carry a source
+  // and get their own section, distinct from the user's own messages.
+  // Items are deletable; the core's queue events are the source of truth,
+  // so deletion is optimistic with resync.
 
   import { store, deleteQueueItem } from '../lib/store.svelte';
 
   const cur = $derived(store.current);
   const s = $derived(cur ? store.sessions[cur] : null);
+  const reports = $derived(s ? s.pending.filter((p) => p.source) : []);
+  const steering = $derived(s ? s.pending.filter((p) => p.lane === 'steering' && !p.source) : []);
+  const followUp = $derived(s ? s.pending.filter((p) => p.lane === 'follow-up' && !p.source) : []);
 </script>
 
 {#if s && s.pending.length > 0}
   <div class="queue">
-    {#if s.pending.some((p) => p.lane === 'steering')}
-      <div class="qlabel">next opportunity</div>
+    {#if reports.length > 0}
+      <div class="qlabel">subagent reports</div>
     {/if}
-    {#each s.pending.filter((p) => p.lane === 'steering') as p, idx (p.text + ':' + idx)}
-      <div class="qrow">
+    {#each reports as p, idx (p.text + ':' + idx)}
+      <div class="qrow qsub">
+        <span class="qsrc" title={p.source ?? ''}>sub-agent {(p.source ?? '').split('-').pop()}</span>
         <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => deleteQueueItem(p.text, p.lane, idx)}>✕</button>
+        <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, p.source ?? null, idx)}>✕</button>
       </div>
     {/each}
-    {#if s.pending.some((p) => p.lane === 'follow-up')}
-      <div class="qlabel">after work completes</div>
+    {#if steering.length > 0}
+      <div class="qlabel">next opportunity</div>
     {/if}
-    {#each s.pending.filter((p) => p.lane === 'follow-up') as p, idx (p.text + ':' + idx)}
+    {#each steering as p, idx (p.text + ':' + idx)}
       <div class="qrow">
         <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => deleteQueueItem(p.text, p.lane, idx)}>✕</button>
+        <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, null, idx)}>✕</button>
+      </div>
+    {/each}
+    {#if followUp.length > 0}
+      <div class="qlabel">after work completes</div>
+    {/if}
+    {#each followUp as p, idx (p.text + ':' + idx)}
+      <div class="qrow">
+        <span class="qtext">{p.text}</span>
+        <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, null, idx)}>✕</button>
       </div>
     {/each}
   </div>
@@ -57,6 +72,15 @@
   }
   .qrow:hover {
     background: var(--panel2);
+  }
+  /* A child's report: set off from the user's own messages. */
+  .qrow.qsub {
+    border-left: 2px solid var(--amber);
+  }
+  .qsrc {
+    flex: none;
+    font: 10px var(--mono);
+    color: var(--amber);
   }
   .qtext {
     flex: 1;

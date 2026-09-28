@@ -400,6 +400,25 @@ describe('applyEvents: queueing', () => {
     expect(store.sessions['s1'].pending.map((p) => p.lane)).toEqual(['force', 'steering', 'follow-up']);
   });
 
+  it('a sourced item (a sub-agent report) keeps its provenance', () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    applyEvents([
+      {
+        type: 'queue',
+        workspace: WS.id,
+        session: 's1',
+        items: [
+          { text: 'a', lane: 'steering' },
+          { text: 'child done', lane: 'steering', source: 's1-1' }
+        ]
+      }
+    ]);
+    const p = store.sessions['s1'].pending;
+    expect(p).toHaveLength(2);
+    expect(p[0].source).toBeUndefined();
+    expect(p[1].source).toBe('s1-1');
+  });
+
   it('send(): the optimistic user bubble lands, the lane maps, the duplicate queues dedupe', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     store.current = 's1';

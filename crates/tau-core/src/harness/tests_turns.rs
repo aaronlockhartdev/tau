@@ -364,7 +364,6 @@ async fn a_live_om_run_emits_om_status_events() {
             }),
             agent,
             stop: Arc::new(AtomicBool::new(false)),
-            queue: Mutex::new(Vec::new()),
             turn: AtomicBool::new(false),
             provider,
             cwd,
@@ -450,8 +449,9 @@ async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    // The accepted message is kept in the GUI's queue.
-    let items = live.queue.lock().unwrap().clone();
+    // The accepted message stays in the agent's queue — the GUI's queue
+    // is its projection, so the projection shows it.
+    let items = live.agent.queued_items();
     assert!(
         items.iter().any(|i| i.text == "do the thing"),
         "the accepted message must stay queued: {items:?}"

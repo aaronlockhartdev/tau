@@ -36,7 +36,8 @@ pub(crate) const MAX_TITLE_LEN: usize = 200;
 pub(crate) const CONNECT_TIMEOUT_SECS: u64 = 30;
 /// A live session: the loop plus the binding's view of its lanes, the
 /// stop flag, and the provider (kept here so a turn can be diffed against
-/// the calls it started).
+/// the calls it started). The GUI's queue is not held here: it is a
+/// projection of the agent's own lane queue, taken at emit time.
 pub(crate) struct LiveSession {
     pub(crate) meta: Mutex<SessionMeta>,
     pub(crate) agent: Arc<AgentSession>,
@@ -44,7 +45,6 @@ pub(crate) struct LiveSession {
     /// cuts the in-flight stream the way a force does — a stop is a force
     /// with no message.
     pub(crate) stop: Arc<AtomicBool>,
-    pub(crate) queue: Mutex<Vec<QueuedItem>>,
     pub(crate) turn: AtomicBool,
     /// The forwarding provider (the only live surface that sees stream
     /// events); also the provider the loop runs against.

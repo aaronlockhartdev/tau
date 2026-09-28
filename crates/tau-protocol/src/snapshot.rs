@@ -110,6 +110,10 @@ pub struct ViewEntry {
 pub struct QueuedItem {
     pub text: String,
     pub lane: MessageLane,
+    /// Child provenance (a sub-agent's report, ticket #23): `None` for the
+    /// user's own messages.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// The session's turn state (spec §8 live state).

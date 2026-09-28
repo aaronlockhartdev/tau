@@ -172,7 +172,7 @@ impl ChildDriver for AcceptanceDriver {
 }
 
 /// The driver-side bridge: no GUI events; a wake delivers the child's result
-/// to the parent loop exactly as the app does (send_notified, provenance).
+/// to the parent loop exactly as the app does (send_notified_steer, provenance).
 struct AcceptanceBridge {
     parent: Mutex<Weak<AgentSession>>,
 }
@@ -192,7 +192,7 @@ impl SubagentBridge for AcceptanceBridge {
             ),
             None => n.text.clone(),
         };
-        p.send_notified(text, n.child.clone());
+        p.send_notified_steer(text, n.child.clone());
     }
 }
 

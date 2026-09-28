@@ -438,8 +438,9 @@ async fn a_skill_send_queued_mid_turn_shows_its_expanded_text() {
         lane: MessageLane::Steering,
     })
     .unwrap();
-    // The queued item shows the recorded text, not the raw line.
-    let items = live.queue.lock().unwrap().clone();
+    // The queued item shows the recorded text, not the raw line — the
+    // projection of the agent's queue carries the expansion.
+    let items = live.agent.queued_items();
     assert_eq!(items.len(), 1);
     assert!(
         items[0].text.starts_with("Skill `alpha`"),
@@ -450,17 +451,18 @@ async fn a_skill_send_queued_mid_turn_shows_its_expanded_text() {
         !items[0].text.starts_with("/skill:"),
         "the raw line must not queue"
     );
-    // When the turn settles, the reconciliation removes the item by exact
-    // text — nothing ghosts.
+    // When the turn settles, the in-flight process() has drained the
+    // agent's queue and the post-turn Queue event projects it — nothing
+    // ghosts.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        if live.queue.lock().unwrap().is_empty() {
+        if live.agent.queued_items().is_empty() {
             break;
         }
         assert!(
             tokio::time::Instant::now() < deadline,
             "the queued skill send ghosted: {:?}",
-            live.queue.lock().unwrap()
+            live.agent.queued_items()
         );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }

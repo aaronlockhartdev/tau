@@ -246,11 +246,24 @@ impl AgentSession {
     /// lands on the follow-up lane tagged with the child's session id, so
     /// the notification entry carries child provenance (ADR-0001).
     pub fn send_notified(&self, text: impl Into<String>, source: String) {
+        self.queue_notified(text, Lane::FollowUp, source)
+    }
+
+    /// The steering variant of `send_notified`: a child that reports while
+    /// the parent's turn is in flight lands on the steering lane, so the
+    /// report rides the current turn's next LLM call — temporally correct
+    /// where a follow-up would splice it into a later, unrelated turn.
+    /// An idle parent degrades to the next turn (the wake starts one).
+    pub fn send_notified_steer(&self, text: impl Into<String>, source: String) {
+        self.queue_notified(text, Lane::Steering, source)
+    }
+
+    fn queue_notified(&self, text: impl Into<String>, lane: Lane, source: String) {
         let mut inner = self.inner.lock().unwrap();
         self.stop.store(false, Ordering::SeqCst);
         inner.queue.push_back(Queued {
             text: text.into(),
-            lane: Lane::FollowUp,
+            lane,
             source: Some(source),
             skill: None,
         });
@@ -277,8 +290,8 @@ impl AgentSession {
 
     /// The queued message at the head of the lane queue — for a
     /// turn-starting send, the one the in-flight turn will deliver first.
-    /// The harness re-queues it in the GUI's queue when the turn cannot
-    /// even start (a failed store open), so the accepted send is not lost.
+    /// The harness uses it to decide whether a failed turn-start still has
+    /// a pending message to surface in the queue's projection.
     pub fn first_pending(&self) -> Option<(String, Lane)> {
         self.inner
             .lock()
@@ -286,6 +299,22 @@ impl AgentSession {
             .queue
             .front()
             .map(|q| (q.text.clone(), q.lane))
+    }
+
+    /// The session's pending messages as the GUI's queue shows them: a
+    /// projection of the loop's queue (the single source of truth), taken
+    /// at emit time — the GUI keeps no second ledger of its own.
+    pub fn queued_items(&self) -> Vec<tau_protocol::snapshot::QueuedItem> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .queue
+            .iter()
+            .map(|q| tau_protocol::snapshot::QueuedItem {
+                text: q.text.clone(),
+                lane: crate::harness::lane_to_message_lane(q.lane),
+                source: q.source.clone(),
+            })
+            .collect()
     }
 
     /// The child-side link (a child session's `parent_notify` routing).

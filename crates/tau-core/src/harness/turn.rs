@@ -10,10 +10,10 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     if let Err(e) = store.open() {
         // The send is already accepted (the GUI shows it as the turn):
         // a failed open must surface, or every send to a corrupted
-        // session vanishes without a trace. The turn-starting message is
-        // re-queued in the GUI's queue — it also stays in the agent's
-        // queue, so the next successful turn delivers it, and the
-        // post-turn reconciliation removes it by text.
+        // session vanishes without a trace. The turn-starting message
+        // also stays in the agent's queue, so the next successful turn
+        // delivers it, and the queue's projection shows it — nothing is
+        // re-queued anywhere.
         let (workspace, id) = {
             let meta = live.meta.lock().unwrap();
             (meta.workspace.clone(), meta.id.clone())
@@ -25,11 +25,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                 message: format!("session {id} cannot be opened — the send was not run: {e}"),
             },
         });
-        if let Some((text, lane)) = live.agent.first_pending() {
-            live.queue.lock().unwrap().push(QueuedItem {
-                text,
-                lane: lane_to_message_lane(lane),
-            });
+        if live.agent.first_pending().is_some() {
             core.emit_queue(&live);
         }
         live.turn.store(false, Ordering::SeqCst);
@@ -87,24 +83,12 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     let mut task_touched = false;
     for entry in &new {
         match entry.kind.as_str() {
-            // A delivered message leaves the GUI's queue (full-state
-            // replacement keeps the GUI and the core in agreement).
             crate::agent::KIND_USER => {
-                let text = entry.payload.get("text").and_then(Value::as_str);
-                // The position lookup and the removal are separate locked
-                // scopes: a let-chain would keep the first guard alive
-                // across the second lock on the same (non-reentrant) mutex.
-                let pos = text.and_then(|t| {
-                    live.queue
-                        .lock()
-                        .unwrap()
-                        .iter()
-                        .position(|item| item.text == t)
-                });
-                if let Some(pos) = pos {
-                    live.queue.lock().unwrap().remove(pos);
-                    queue_changed = true;
-                }
+                // A delivered message has left the agent's queue (the
+                // process loop drained it): the post-turn Queue event is
+                // projected from the queue, so the GUI converges without a
+                // second ledger to remove from.
+                queue_changed = true;
             }
             crate::agent::KIND_ASSISTANT => {
                 let call_id = live
@@ -246,13 +230,15 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
 impl Core {
     pub(crate) fn emit_queue(&self, live: &LiveSession) {
         // One locked scope: the event's fields are cloned out before the
-        // guard drops, so a long emit cannot hold the locks.
+        // guard drops, so a long emit cannot hold the locks. The items are
+        // a projection of the agent's lane queue (the single source of
+        // truth), not a second ledger.
         let (workspace, session, items) = {
             let meta = live.meta.lock().unwrap();
             (
                 meta.workspace.clone(),
                 meta.id.clone(),
-                live.queue.lock().unwrap().clone(),
+                live.agent.queued_items(),
             )
         };
         self.emit(Event::Queue {

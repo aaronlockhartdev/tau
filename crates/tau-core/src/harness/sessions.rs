@@ -413,7 +413,6 @@ impl Core {
             meta: Mutex::new(meta.clone()),
             agent: agent.clone(),
             stop: provider.stop.clone(),
-            queue: Mutex::new(Vec::new()),
             turn: AtomicBool::new(false),
             provider,
             cwd,

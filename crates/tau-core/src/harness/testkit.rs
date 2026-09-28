@@ -65,7 +65,6 @@ pub(crate) fn manual_session(
         }),
         agent: agent.clone(),
         stop: provider.stop.clone(),
-        queue: Mutex::new(Vec::new()),
         turn: AtomicBool::new(false),
         provider,
         cwd,

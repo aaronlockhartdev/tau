@@ -183,7 +183,7 @@ export type TaskPayload =
 export type Entry =
   | { id: string; kind: 'user'; text: string; source?: string; skill?: SkillRef; msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> } }
   | MessageEntry
-  | { id: string; kind: 'tool'; text?: string; name?: string; args?: Record<string, unknown>; output?: string; status?: 'ok' | 'running' | 'error' }
+  | { id: string; kind: 'tool'; text?: string; name?: string; call_id?: string; args?: Record<string, unknown>; output?: string; status?: 'ok' | 'running' | 'error' }
   | { id: string; kind: 'om'; text: string; thinking?: string; input?: string; suggestedResponse?: string; model?: string }
   | { id: string; kind: 'system'; text: string }
   | { id: string; kind: 'spawn-snapshot'; text: string }
@@ -214,6 +214,7 @@ export type AnyEntry = {
   calls?: string[];
   usage?: Usage;
   name?: string;
+  call_id?: string;
   args?: Record<string, unknown>;
   output?: string;
   status?: 'ok' | 'running' | 'error';
@@ -227,6 +228,8 @@ export type AnyEntry = {
 export interface QueuedItem {
   text: string;
   lane: MessageLane;
+  // Child provenance (a sub-agent's report): null for the user's own messages.
+  source?: string | null;
 }
 
 export type TurnState = 'idle' | 'running';

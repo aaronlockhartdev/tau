@@ -93,6 +93,9 @@ export function decodeEntry(v: ViewEntry): Entry {
         id: v.id,
         kind: 'tool',
         name: String(p.name ?? 'tool'),
+        // The provider's call id: the two-phase record's join key (the call
+        // entry and its result entry share it; the GUI folds them to one card).
+        call_id: p.call_id ? String(p.call_id) : undefined,
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: p.output !== undefined ? String(p.output) : undefined,
         status: toolStatus(p.output)
@@ -367,6 +370,73 @@ function hydrate(e: Entry, n: Entry): Entry {
   };
 }
 
+// A tool call is recorded in two phases: the call entry (recorded before
+// dispatch, no output) and the result entry (after dispatch, same call_id).
+// The file carries both; the GUI shows one card — the call slot keeps its
+// position (ordered before the side-effect entries the dispatch appended)
+// and adopts the result's output. Pairing is by call_id when both entries
+// carry one; entries without a call_id (pre-change files, preview
+// placeholders) never blind-pair, so a mixed list degrades to a duplicate
+// card that the next read resolving the pair heals — never a mis-pair.
+export function collapseToolCalls(entries: Entry[]): Entry[] {
+  const toolIdx: number[] = [];
+  for (let i = 0; i < entries.length; i++) {
+    if ((entries[i] as AnyEntry).kind === 'tool') toolIdx.push(i);
+  }
+  if (toolIdx.length < 2) return entries;
+  const pos = new Map<number, number>();
+  toolIdx.forEach((t, k) => pos.set(t, k));
+  const cid = (i: number) => (entries[i] as AnyEntry).call_id ?? undefined;
+  const hasOut = (i: number) => {
+    const o = (entries[i] as AnyEntry).output;
+    return o !== undefined && o !== '';
+  };
+  const pair = (a: number, b: number) => {
+    const ca = cid(a);
+    const cb = cid(b);
+    return ca && cb ? ca === cb : !ca && !cb;
+  };
+  const open: number[] = []; // output-less tool entries (call phase), in order
+  const drop = new Set<number>();
+  let outList = entries;
+  const adopt = (call: number, result: number) => {
+    outList = outList.slice();
+    const c = outList[call] as AnyEntry;
+    const r = outList[result] as AnyEntry;
+    outList[call] = { ...c, output: r.output, status: r.status };
+  };
+  for (const i of toolIdx) {
+    if (drop.has(i)) continue;
+    if (hasOut(i)) {
+      // A result phase: adopt the nearest pending call phase that is its
+      // adjacent predecessor in the tool subsequence (the file interleaves
+      // each call's two phases before the next call's).
+      if (open.length > 0) {
+        const j = open[open.length - 1];
+        if (!drop.has(j) && pos.get(j)! + 1 === pos.get(i) && pair(j, i)) {
+          adopt(j, i);
+          drop.add(i);
+          open.pop();
+          continue;
+        }
+      }
+      // A re-read of a result whose slot already shows the output: an
+      // earlier same-call entry is the twin — drop the duplicate.
+      for (let k = pos.get(i)! - 1; k >= 0; k--) {
+        const t = toolIdx[k];
+        if (!drop.has(t) && hasOut(t) && pair(t, i)) {
+          drop.add(i);
+          break;
+        }
+      }
+    } else {
+      open.push(i);
+    }
+  }
+  if (drop.size === 0) return outList;
+  return outList.filter((_, i) => !drop.has(i));
+}
+
 export function mergeHydrated(
   entries: Entry[],
   live: MessageEntry[],
@@ -402,7 +472,13 @@ export function mergeHydrated(
         for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
         continue;
       }
-      if (entryChanged(ne[i], next)) {
+      // A call-phase view (empty output) must not blank a slot that has
+      // already adopted its pair's output (the two-phase tool record).
+      const staleCallPhase =
+        next.kind === 'tool' &&
+        !(next as AnyEntry).output &&
+        Boolean((ne[i] as AnyEntry).output);
+      if (!staleCallPhase && entryChanged(ne[i], next)) {
         ne = ne.slice();
         ne[i] = next;
       }
@@ -425,5 +501,5 @@ export function mergeHydrated(
     ne = [...ne, next];
     index.set(next.id, ne.length - 1);
   }
-  return { entries: ne, live: nl };
+  return { entries: collapseToolCalls(ne), live: nl };
 }

@@ -256,6 +256,7 @@ mod tests {
                 items: vec![snapshot::QueuedItem {
                     text: "next".into(),
                     lane: MessageLane::Steering,
+                    source: None,
                 }],
             },
             Event::OmStatus {

@@ -325,7 +325,6 @@ impl SubagentBridge for SessionSubagentBridge {
             }),
             agent: agent.clone(),
             stop: agent.stop_flag(),
-            queue: Mutex::new(Vec::new()),
             turn: AtomicBool::new(false),
             provider,
             cwd: parent_live.cwd.clone(),
@@ -390,6 +389,9 @@ impl SubagentBridge for SessionSubagentBridge {
         });
         // Wake the parent (ADR-0001 wake rules): the notification is already
         // on its active branch; deliver it to the loop and start a turn.
+        // The report rides the steering lane — a child that finishes mid
+        // parent-turn is delivered at this turn's next LLM call, not
+        // spliced into a later, unrelated one.
         let Some(live) = self.core.sessions.lock().unwrap().get(&n.parent).cloned() else {
             return;
         };
@@ -401,18 +403,13 @@ impl SubagentBridge for SessionSubagentBridge {
             ),
             None => n.text.clone(),
         };
-        live.agent.send_notified(text.clone(), n.child.clone());
-        {
-            let mut q = live.queue.lock().unwrap();
-            q.push(QueuedItem {
-                text: text.clone(),
-                lane: MessageLane::FollowUp,
-            });
-        }
+        live.agent.send_notified_steer(text, n.child.clone());
+        // The Queue event is a projection of the agent's lane queue (the
+        // single source of truth), taken after the wake lands in it.
         self.core.emit(Event::Queue {
             workspace: self.workspace.clone(),
             session: n.parent.clone(),
-            items: live.queue.lock().unwrap().clone(),
+            items: live.agent.queued_items(),
         });
         live.stop.store(false, Ordering::SeqCst);
         if live

@@ -698,22 +698,28 @@
   export async function deleteQueueItem(
     text: string,
     lane: PendingMsg['lane'],
+    source: string | null,
     idx: number
   ): Promise<void> {
     const sid = store.current;
     if (sid === null) return;
     const s = sessionOf(sid);
-    // Duplicates are keyed by occurrence; delete only the idx-th of them.
+    // Duplicates are keyed by occurrence (text + lane + source); delete only
+    // the idx-th of them.
     let seen = 0;
     s.pending = s.pending.filter((p) => {
-      if (p.text !== text || p.lane !== lane) return true;
+      if (p.text !== text || p.lane !== lane || (p.source ?? null) !== source) return true;
       return seen++ !== idx;
     });
     try {
       clearError();
       const out = await command({ type: 'session_open', session: sid });
       if (out.kind === 'snapshot') {
-        s.pending = out.snapshot.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
+        s.pending = out.snapshot.live.queue.map((q) => ({
+          text: q.text,
+          lane: laneOf(q.lane),
+          source: q.source ?? undefined
+        }));
       }
     } catch {
       // optimistic: the queue event will resync
@@ -794,7 +800,11 @@
           break;
         }
         case 'queue': {
-          s.pending = ev.items.map((q) => ({ text: q.text, lane: laneOf(q.lane) }));
+          s.pending = ev.items.map((q) => ({
+            text: q.text,
+            lane: laneOf(q.lane),
+            source: q.source ?? undefined
+          }));
           break;
         }
         case 'task_changed': {

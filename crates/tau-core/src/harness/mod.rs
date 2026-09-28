@@ -34,8 +34,8 @@ use crate::tools;
 use serde_json::{Value, json};
 use tau_protocol::coalesce::Coalescer;
 use tau_protocol::snapshot::{
-    EntryMeta, EntryStatus, LiveState, OmSnapshot, QueuedItem, SessionMeta, Snapshot, TurnState,
-    ViewEntry, Workspace,
+    EntryMeta, EntryStatus, LiveState, OmSnapshot, SessionMeta, Snapshot, TurnState, ViewEntry,
+    Workspace,
 };
 use tau_protocol::{
     AgentType, Command, CommandOutput, ContextMode, Event, FileEntry, FileText, MessageLane,

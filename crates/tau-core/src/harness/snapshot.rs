@@ -45,7 +45,9 @@ impl Core {
                 })
                 .unwrap_or_default(),
             live: LiveState {
-                queue: live.queue.lock().unwrap().clone(),
+                // The queue's projection (the agent's lane queue is the
+                // single source of truth), not a second ledger.
+                queue: live.agent.queued_items(),
                 turn: if live.turn.load(Ordering::SeqCst) {
                     TurnState::Running
                 } else {
@@ -241,7 +243,9 @@ impl Core {
     }
 }
 /// The entry tree's one-line preview: the entry's first text line, cut at
-/// 80 chars (the snapshot carries previews, never payloads, spec §8).
+/// 80 chars (the snapshot carries previews, never payloads, spec §8). A
+/// tool's call-phase entry (recorded before dispatch, no output yet) falls
+/// back to the tool's name.
 pub(crate) fn preview(entry: &Entry) -> String {
     let text = entry
         .payload
@@ -249,6 +253,7 @@ pub(crate) fn preview(entry: &Entry) -> String {
         .or_else(|| entry.payload.get("note"))
         .or_else(|| entry.payload.get("state"))
         .or_else(|| entry.payload.get("output"))
+        .or_else(|| entry.payload.get("name"))
         .and_then(Value::as_str)
         .unwrap_or_default();
     let first = text.lines().next().unwrap_or_default();

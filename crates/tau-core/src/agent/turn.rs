@@ -199,6 +199,22 @@ impl AgentSession {
                 name: call.name.clone(),
                 args: args.clone(),
             };
+            // The call entry is recorded before dispatch: a side-effect
+            // tool (task_*, subagent_*) appends to this store during
+            // dispatch, and its effect must land after the call that
+            // caused it. The output is only known after dispatch, so the
+            // call entry carries an empty output and a result entry with
+            // the same call_id carries the real one.
+            self.append(
+                KIND_TOOL,
+                tau_protocol::payload::ToolPayload {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    args: args.clone(),
+                    output: tau_protocol::payload::ToolOutput::Text(String::new()),
+                }
+                .to_value(),
+            )?;
             let output = if call.name == "task_assign" {
                 // Cross-session: routed through the supervisor, which runs
                 // both sides on the sessions' own stores (review B3).
@@ -553,6 +569,12 @@ fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
                 ) else {
                     continue;
                 };
+                // The call-phase entry (recorded before dispatch, empty
+                // output) is not an input item: its pair's result entry
+                // carries the output for the same call_id.
+                if matches!(&output, CallOutput::Text(t) if t.is_empty()) {
+                    continue;
+                }
                 out.push(InputEntry::CallOutput(FunctionCallOutputInput {
                     kind: "function_call_output",
                     call_id: call_id.to_owned(),

@@ -72,13 +72,30 @@ async fn task_tools_run_through_the_loop_and_the_gate_enforces_evidence() {
     let out = |id: &str| -> String {
         entries
             .iter()
-            .find(|e| e.payload["call_id"] == id)
+            .find(|e| {
+                e.payload["call_id"] == id
+                    && e.payload["output"].as_str().is_some_and(|s| !s.is_empty())
+            })
             .unwrap()
             .payload["output"]
             .as_str()
             .unwrap()
             .to_owned()
     };
+    // The call entry is recorded before dispatch: each task record (a side
+    // effect) lands after the tool call that caused it, never before.
+    let call = entries
+        .iter()
+        .position(|e| e.kind == KIND_TOOL && e.payload["call_id"] == "c1")
+        .unwrap();
+    let effect = entries
+        .iter()
+        .position(|e| e.kind == crate::task::KIND_TASK)
+        .unwrap();
+    assert!(
+        call < effect,
+        "the call entry must precede the task record: {entries:?}"
+    );
     assert!(out("c1").contains("created task-1"), "{}", out("c1"));
     assert!(out("c2").contains("[in_progress]"), "{}", out("c2"));
     assert!(
@@ -130,13 +147,23 @@ async fn tool_calls_roundtrip_through_the_session() {
     agent.process().await.unwrap();
     let entries = entries_of(&agent.inner.lock().unwrap().store);
     let kinds: Vec<&str> = entries.iter().map(|e| e.kind.as_str()).collect();
+    // Two tool entries per call: the call (recorded before dispatch, empty
+    // output) and the result (same call_id, the real output).
     assert_eq!(
         kinds,
-        vec![KIND_USER, KIND_ASSISTANT, KIND_TOOL, KIND_ASSISTANT]
+        vec![
+            KIND_USER,
+            KIND_ASSISTANT,
+            KIND_TOOL,
+            KIND_TOOL,
+            KIND_ASSISTANT
+        ]
     );
     assert_eq!(entries[2].payload["call_id"], "c1");
     assert_eq!(entries[2].payload["name"], "read");
-    assert!(entries[2].payload["output"].as_str().unwrap().contains("a"));
+    assert_eq!(entries[2].payload["output"], "");
+    assert_eq!(entries[3].payload["call_id"], "c1");
+    assert!(entries[3].payload["output"].as_str().unwrap().contains("a"));
 }
 
 #[tokio::test]
@@ -162,6 +189,7 @@ async fn steering_lands_on_the_next_llm_call() {
             KIND_USER,
             KIND_USER,
             KIND_ASSISTANT,
+            KIND_TOOL,
             KIND_TOOL,
             KIND_ASSISTANT
         ]
@@ -432,7 +460,7 @@ async fn runaway_turn_stops_with_a_visible_note() {
     );
     assert_eq!(
         entries.iter().filter(|e| e.kind == KIND_TOOL).count(),
-        MAX_ROUNDS
+        2 * MAX_ROUNDS
     );
 }
 

@@ -20,10 +20,6 @@ impl Core {
                 // entry is recorded (ticket #28); a misspelled name
                 // rejects the send — nothing is recorded.
                 let (expanded, skill) = self.expand_skill(&live, &text)?;
-                // The GUI queue shows the recorded text (the expansion),
-                // not the raw line — cloned now, before `expanded` moves
-                // into the send.
-                let queued_text = expanded.clone();
                 // A child session takes messages through its supervisor
                 // (the parent's subagent_message semantics: a running
                 // child gets a steering-lane message; a non-running one is
@@ -72,14 +68,10 @@ impl Core {
                     .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok();
                 if !started && lane != MessageLane::Force {
-                    // The queue shows what the next turn will record — the
-                    // expanded text (a /skill: send records its template,
-                    // not the raw line): reconciliation matches by exact
-                    // text, so a raw entry would ghost.
-                    live.queue.lock().unwrap().push(QueuedItem {
-                        text: queued_text,
-                        lane,
-                    });
+                    // The Queue event is a projection of the agent's lane
+                    // queue (the single source of truth) — it shows what the
+                    // next turn will record (a /skill: send records its
+                    // expansion, not the raw line).
                     self.emit_queue(&live);
                 }
                 if started {
