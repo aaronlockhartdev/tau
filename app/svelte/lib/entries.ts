@@ -374,10 +374,16 @@ export function mergeHydrated(
 ): { entries: Entry[]; live: MessageEntry[] } {
   let ne = entries;
   let nl = live;
+  // id → index, rebuilt on a structural change (a splice): a per-view id
+  // lookup is O(1) instead of an O(n) findIndex, so a burst of window pages
+  // no longer costs O(n·window). (The twin scan below is content-based and
+  // stays a walk; a structural rebuild is rare.)
+  const index = new Map<string, number>();
+  for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
   for (const v of views) {
     const next = decodeEntry(v);
-    const i = ne.findIndex((e) => e.id === v.id);
-    if (i >= 0) {
+    const i = index.get(v.id);
+    if (i !== undefined) {
       // A file copy is already present (snapshot). If the streamed twin of
       // the same logical entry exists too, collapse: the streamed slot
       // keeps its position and id, adopts the file's payload, and the file
@@ -391,6 +397,9 @@ export function mergeHydrated(
         ne = ne.slice();
         if (entryChanged(t, next)) ne[ti] = hydrate(t, next);
         ne.splice(i, 1);
+        // The splice shifted every index after i: rebuild the id map.
+        index.clear();
+        for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
         continue;
       }
       if (entryChanged(ne[i], next)) {
@@ -414,6 +423,7 @@ export function mergeHydrated(
     }
     if (ne.some((e) => isTwin(e, v, next))) continue;
     ne = [...ne, next];
+    index.set(next.id, ne.length - 1);
   }
   return { entries: ne, live: nl };
 }

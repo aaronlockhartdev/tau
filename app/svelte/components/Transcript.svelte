@@ -34,10 +34,21 @@
   let anchorAll: Entry[] = [];
   let anchorHOf: (e: Entry) => number = () => 0;
   let anchorPinned = true;
-  export function registerAnchor(el: HTMLElement, all: Entry[], hOf: (e: Entry) => number): void {
+  // The component's scroll state, mirrored here so a flush can write the
+  // compensated scrollTop into it in the SAME synchronous block as the height
+  // change. The window then computes once with (new heights, new scrollTop)
+  // consistently — not one frame on a stale top (the jump/flicker).
+  let anchorScroll: { top: number; h: number } | null = null;
+  export function registerAnchor(
+    el: HTMLElement,
+    all: Entry[],
+    hOf: (e: Entry) => number,
+    scroll: { top: number; h: number }
+  ): void {
     anchorEl = el;
     anchorAll = all;
     anchorHOf = hOf;
+    anchorScroll = scroll;
   }
   export function setAnchorPinned(p: boolean): void {
     anchorPinned = p;
@@ -76,7 +87,17 @@
     // that snap every flush.
     if (!anchorPinned) {
       const delta = prefixNew - anchorPrefixOld;
-      if (delta) el.scrollTop = oldTop + delta;
+      if (delta) {
+        // Clamp to the track: a flush that shrinks it (measured < estimate)
+        // must not push scrollTop past the bottom (an unsolicited nudge).
+        el.scrollTop = Math.min(oldTop + delta, el.scrollHeight - el.clientHeight);
+      }
+    }
+    // Mirror the (possibly compensated) scrollTop into the reactive scroll
+    // state NOW, in the same block as the height change (see anchorScroll).
+    if (anchorScroll) {
+      anchorScroll.top = el.scrollTop;
+      anchorScroll.h = el.clientHeight;
     }
   }
   function armSettle() {
@@ -106,13 +127,21 @@
   // measured per-entry heights (measured on mount, cached, unmount
   // off-screen), total = sum of measured + estimated, the DOM windowed to
   // viewport + buffer, positioned by an absolutely-positioned inner track.
+  //
+  // Windowing is prefix-sum based: a cumulative-height array (rebuilt only on
+  // a height change, never on a scroll) makes every window query a binary
+  // search + O(1) offset read instead of three O(n) walks of the list.
 
   import { onDestroy, onMount, untrack } from 'svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
+  import { buildPrefix, computeWin } from '../lib/virtualizer';
 
   const BUFFER = 600;
   // A viewport within this of the measured bottom counts as "at the bottom".
+  // It is a floor: the live threshold widens to the bottom card's height
+  // estimate error (a 120px tool card measures 100–140px, so a genuine
+  // wheel-to-bottom can land 10–50px short and must still re-arm the pin).
   const THRESHOLD = 8;
 
   const cur = $derived(store.current);
@@ -120,7 +149,6 @@
   // derived re-reads store.current (already the next session), which made
   // the prune below a dead branch.
   const mountedFor = store.current;
-
 
   let el = $state<HTMLDivElement | null>(null);
   let scroll = $state({ top: 0, h: 0 });
@@ -178,85 +206,61 @@
     return lines * 21 + 36;
   }
 
-  const total = $derived.by(() => {
+  // Prefix-sum windowing. The entries half is the bulk and is stable across a
+  // turn (it changes only on a hydration or a measurement flush); the live
+  // half is a few streaming cards. Both rebuild only when heightsGen bumps or
+  // their list changes — never on a scroll.
+  const entriesHeights = $derived.by(() => {
     void heightsGen.gen;
-    return all.reduce((sum, e) => sum + hOf(e), 0);
+    return entries.map(hOf);
   });
-
-  function computeWin() {
+  const liveHeights = $derived.by(() => {
     void heightsGen.gen;
-    const t0 = performance.now();
-    const { top, h } = scroll;
-    const view = h || 600;
-    let acc = 0;
-    let start = 0;
-    for (let i = 0; i < all.length; i++) {
-      const hh = hOf(all[i]);
-      if (acc + hh >= top) {
-        start = i;
-        break;
-      }
-      acc += hh;
-      start = i + 1;
-    }
-    let end = start;
-    acc = 0;
-    for (let i = 0; i < all.length; i++) {
-      acc += hOf(all[i]);
-      if (acc >= top + view + BUFFER) {
-        end = Math.max(start, i);
-        break;
-      }
-      end = i + 1;
-    }
-    // The slice sits at its natural document position (the prototype's
-    // prefix[start]); the viewport scroll does the rest. Adding scrollTop
-    // to it double-counts the scroll — at mid-session the slice lands ~S
-    // px below the viewport and the screen is blank.
-    return {
-      start,
-      end: Math.min(all.length, end + 1),
-      offset: scrollBefore(start),
-      ms: performance.now() - t0
-    };
-  }
-  const win = $derived(computeWin());
-
-  // The status bar's render stats (spec §9 seg3): the window's range and
-  // the compute cost, reported on every recompute.
-  $effect(() => {
-    void win.start;
-    void win.end;
-    store.renderMs = win.ms;
-    store.renderRange = `${win.start + 1}–${win.end} of ${all.length}`;
+    return live.map(hOf);
   });
+  const prefix = $derived.by(() => buildPrefix(entriesHeights.concat(liveHeights)));
+  const total = $derived.by(() => prefix[prefix.length - 1]);
 
-  function scrollBefore(i: number): number {
-    let acc = 0;
-    for (let j = 0; j < i; j++) acc += hOf(all[j]);
-    return acc;
-  }
+  // The windowed slice: a binary search over the prefix (O(log n)) + an O(1)
+  // offset read, recomputed only when the prefix, the list length, or the
+  // scroll position changes — never an O(n) walk per frame.
+  const win = $derived(
+    computeWin(prefix, entries.length + live.length, scroll.top, scroll.h || 600, BUFFER)
+  );
 
   // Scroll bookkeeping lives on the DOM, not in the reactive graph: a
   // scroll listener that writes $state from an effect re-triggers itself
   // in this Svelte. onMount registers once; the deriveds just read.
   //
-  // The follow is one flag: pinned while the viewport sits within THRESHOLD
-  // of the measured bottom, and only user input moves the flag — any
-  // upward input (wheel up, a touch moving up, a scrollbar drag pulled up,
-  // a scroll key up) unpins immediately, so a slow scroll up from the
-  // bottom can never fight the catch-up; a downward arrival at the bottom
-  // re-pins — a live DOWNWARD intent authorizes it, never an upward one
-  // (the catch-up write itself is a downward movement). The input-intent
-  // flag stamps the last user scroll input with its direction, and the
-  // scroll handler consults it for both directions. That gate is what
-  // keeps boot churn (the estimate→measured correction clamps the viewport
-  // up with no input behind it) and the follow's own catch-up (its
-  // scrollTop write fires a downward scroll event the old unconditional
-  // re-pin read as a user arrival) from flipping the follow.
+  // The follow is one flag: pinned while the viewport sits within the
+  // (estimate-aware) threshold of the measured bottom, and only user input
+  // moves the flag — any upward input (wheel up, a touch moving up, a
+  // scrollbar drag pulled up, a scroll key up) unpins immediately, so a slow
+  // scroll up from the bottom can never fight the catch-up; a downward
+  // arrival at the bottom re-pins — a live DOWNWARD intent authorizes it,
+  // never an upward one (the catch-up write itself is a downward movement).
+  // The input-intent flag stamps the last user scroll input with its
+  // direction, and the scroll handler consults it for both directions. That
+  // gate is what keeps boot churn and the follow's own catch-up from
+  // flipping the follow.
   onMount(() => {
     const node = el;
     if (!node) return;
+    // Cached scrollHeight (a forced-layout read): refreshed on a height flush
+    // and in the follow loop, so the per-frame scroll handler reads the cache
+    // instead of forcing layout.
+    let scrollH = 0;
+    // A downward arrival that lands within the (estimate-aware) threshold of
+    // the bottom re-arms the pin. The bottom card's unmeasured estimate is
+    // the dominant source of bottom-position error, so scale the threshold to
+    // it rather than a fixed 8px that a 100–140px tool card overshoots.
+    const bottomThreshold = (): number => {
+      const nn = all.length;
+      if (nn === 0) return THRESHOLD;
+      const e = all[nn - 1];
+      const measured = cur ? heights.has(`${cur}:${e.id}`) : true;
+      return Math.max(THRESHOLD, measured ? 0 : 2 * hOf(e));
+    };
     // Input intent: the last user scroll input (wheel, touch, scrollbar
     // drag, scroll key), time-stamped in the module's inputIntent (shared
     // with reportMeasurement). The unpin branch consumes it; a re-pin
@@ -274,9 +278,16 @@
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0]?.clientY ?? 0;
       inputIntent = performance.now();
-      if (y < touchY) inputDir = -1;
-      else if (y > touchY) inputDir = 1;
-      if (y < touchY) pinned = false;
+      // A finger dragging DOWN pulls the content up (away from the tail):
+      // that is an upward scroll — unpin. A finger dragging UP pushes the
+      // content down (toward the tail): a downward scroll — never unpin.
+      // (The wheel handler already has this direction right.)
+      if (y > touchY) {
+        inputDir = -1;
+        pinned = false;
+      } else if (y < touchY) {
+        inputDir = 1;
+      }
       touchY = y;
     };
     // A scrollbar drag fires no wheel/touch event; a pointerdown on the
@@ -330,10 +341,9 @@
     // view back.
     let lastTop = node.scrollTop;
     // Coalesce scroll events to one state commit per frame. A 1200 px
-    // wheel generates dozens of scroll events, and a full window recompute
-    // per event (O(n) over the whole entry list) saturated the main thread
-    // until WebKit dropped the pending wheel delta — burst scrolling moved
-    // ~3% of the requested distance (B3 residual, live-repro'd).
+    // wheel generates dozens of scroll events; the window recompute is now a
+    // binary search, but one commit per frame still keeps the reactive graph
+    // quiet.
     let scrollRaf = 0;
     const onScroll = () => {
       if (scrollRaf) return;
@@ -341,14 +351,14 @@
         scrollRaf = 0;
         scroll.top = node.scrollTop;
         scroll.h = node.clientHeight;
-        const dist = node.scrollHeight - node.scrollTop - node.clientHeight;
+        const dist = scrollH - node.scrollTop - node.clientHeight;
         const intent = performance.now() - inputIntent <= INPUT_TTL;
         if (node.scrollTop > lastTop) {
           // Downward re-pin requires a live DOWNWARD intent: the follow's
           // own catch-up write can land right after a wheel-up stamped the
           // intent, and an upward stamp must never authorize a re-pin
           // (dogfood B3).
-          if (dist <= THRESHOLD && intent && inputDir === 1) pinned = true;
+          if (dist <= bottomThreshold() && intent && inputDir === 1) pinned = true;
         } else if (node.scrollTop < lastTop) {
           if (intent) {
             inputIntent = 0;
@@ -382,7 +392,8 @@
     let raf = 0;
     const follow = () => {
       if (pinned) {
-        const top = node.scrollHeight - node.clientHeight;
+        scrollH = node.scrollHeight;
+        const top = scrollH - node.clientHeight;
         if (node.scrollTop < top) node.scrollTop = top;
       }
       raf = requestAnimationFrame(follow);
@@ -406,27 +417,25 @@
   // node, the entry list, and the effective-height function. Re-registered
   // whenever any of them changes.
   $effect(() => {
-    if (el) registerAnchor(el, all, hOf);
+    if (el) registerAnchor(el, all, hOf, scroll);
   });
   $effect(() => {
     setAnchorPinned(pinned);
   });
 
-  // A height flush (a card expanding or collapsing) re-lays the track before
-  // the flush's scrollTop write has fired its scroll event; the window derived
-  // would then recompute against a stale scroll position and blank the cards.
-  // Sync the scroll state from the DOM on every flush so the window is always
-  // computed at the viewport's real position. untrack keeps this from
-  // depending on scroll (it would otherwise re-run on every scroll).
+  // A height flush re-lays the track; the module mirrors the compensated
+  // scrollTop into `scroll` in the same block (registerAnchor's scroll arg),
+  // so the window computes once with consistent values. The old separate
+  // "sync scroll from the DOM on every flush" effect is gone for that reason.
+
+  // Cached scrollHeight refresh on a height flush (the track height changed);
+  // the follow loop also refreshes it while pinned. A clean read (no write
+  // follows in the effect), so it does not force a reflow.
   $effect(() => {
     void heightsGen.gen;
-    const node = el;
-    if (!node) return;
-    const cur = untrack(() => scroll.top);
-    const curH = untrack(() => scroll.h);
-    if (node.scrollTop !== cur || node.clientHeight !== curH) {
-      scroll.top = node.scrollTop;
-      scroll.h = node.clientHeight;
+    if (el) {
+      const node = el;
+      void node.scrollHeight;
     }
   });
 
@@ -486,12 +495,23 @@
 
   // Paged read around the viewport (spec §8): the window's slice is
   // requested from the core; the response replaces the skeleton cards.
+  // Hysteresis: a scroll burst moves the window a little each frame, and
+  // re-fetching on every move pipelines IPC (each page also costs an O(n)
+  // merge). Only fetch when the window has drifted beyond the last fetch by
+  // ~a buffer, so a burst issues a few pages, not one per frame.
+  const lastFetched = new Map<string, { start: number; end: number }>();
+  const FETCH_MARGIN = 5; // ≈ one 600px buffer of 120px cards
   $effect(() => {
     const start = win.start;
     const end = win.end;
     const c = cur;
-    if (c) void fetchWindow(c, start, end - start);
+    if (!c) return;
+    const last = lastFetched.get(c);
+    if (last && start >= last.start - FETCH_MARGIN && end <= last.end + FETCH_MARGIN) return;
+    lastFetched.set(c, { start, end });
+    void fetchWindow(c, start, end - start);
   });
+
   // V2 turn headers: 'you' on the user's own messages, 'agent' on the first
   // entry of a response block. The label renders inside the card's measured
   // wrap, so the virtualized height math stays exact.
