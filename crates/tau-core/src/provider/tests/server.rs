@@ -87,6 +87,42 @@ async fn mid_stream_error_never_terminates_the_stream() {
 }
 
 #[tokio::test]
+async fn a_done_terminated_stream_without_completed_frame_is_complete() {
+    // The exact dogfood shape: a live provider ends with [DONE] but omits
+    // the response.completed frame (common on tool-call responses). The
+    // stream is complete — not an interrupted turn.
+    let body = ok_body(&[
+        r#"{"type":"response.output_text.delta","delta":"hello"}"#,
+        "[DONE]",
+    ]);
+    let (base, _) = mock_server(vec![body]).await;
+    let request = ResponseRequest::new(
+        "m",
+        None,
+        vec![InputMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }]
+        .into_iter()
+        .map(InputEntry::Message)
+        .collect(),
+    );
+    let result = stream_response(
+        &reqwest::Client::new(),
+        &provider_for(&base),
+        &fast_requests(),
+        &request,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.text, "hello");
+    assert!(
+        result.completed,
+        "[DONE] ends the stream cleanly even without response.completed"
+    );
+}
+
+#[tokio::test]
 async fn server_5xx_is_retried_then_succeeds() {
     let (base, count) = mock_server(vec![
         "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 2\r\n\r\nxx".into(),

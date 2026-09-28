@@ -209,6 +209,44 @@ async fn force_kills_the_stream_and_keeps_the_partial() {
     assert!(assistant.payload["interrupted"].as_bool().unwrap());
     assert_eq!(assistant.payload["text"], "a");
 }
+#[tokio::test]
+async fn a_tool_call_response_that_omits_completed_is_not_interrupted() {
+    let dir = tempfile::tempdir().unwrap();
+    // A tool-call response whose server omits the response.completed frame
+    // (some do, on tool-call turns) and ends cleanly with [DONE]: it is a
+    // complete, normal agentic segment, not an interrupted one. Regression:
+    // `interrupted = !completed` flagged every such segment as interrupted.
+    let item = serde_json::json!({
+        "id": "c1",
+        "type": "function_call",
+        "name": "bash",
+        "call_id": "c1",
+        "arguments": "{\"command\":\"true\"}",
+    });
+    let tool_call_no_completed = format!(
+        "data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}\n\ndata: [DONE]\n\n"
+    );
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        tool_call_no_completed,
+        sse("done", &[]),
+    ]));
+    let agent = make_agent(dir.path(), provider);
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let assistants: Vec<_> = entries
+        .iter()
+        .filter(|e| e.kind == KIND_ASSISTANT)
+        .collect();
+    assert_eq!(assistants.len(), 2, "tool-call segment + final segment");
+    for a in &assistants {
+        assert!(
+            a.payload["interrupted"].as_bool() == Some(false),
+            "segment must not be interrupted: {:?}",
+            a.payload
+        );
+    }
+}
 
 #[tokio::test]
 async fn force_preempts_a_queued_steering_at_the_head_of_the_queue() {

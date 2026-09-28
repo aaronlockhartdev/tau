@@ -121,6 +121,14 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
             seen_calls += 1;
         }
     }
+    // A body that ended with [DONE] is a clean end: it stands as complete
+    // even when the server omitted the response.completed frame (some do, on
+    // tool-call responses). Synthesize the completion so the canned replay
+    // mirrors the live path's clean_end; a [DONE]-less cut body stays
+    // incomplete, as before.
+    if parser.terminated && !sink.0.iter().any(|e| matches!(e, TurnEvent::Completed(_))) {
+        sink.0.push(TurnEvent::Completed(Usage::default()));
+    }
     Ok((sink.0, calls))
 }
 
@@ -219,6 +227,11 @@ async fn attempt_one_turn(
     let mut result = TurnResult::default();
     let mut stream = response;
     let mut idle_deadline = tokio::time::Instant::now() + idle;
+    // A clean end (EOF / [DONE]) means the server finished the response: it
+    // stands as complete even when the server omitted the response.completed
+    // frame (some do, on tool-call responses) — otherwise `!completed` flags
+    // every normal agentic segment as interrupted.
+    let mut clean_end = false;
     'outer: while !parser.terminated {
         let chunk = match tokio::select! {
             got = tokio::time::timeout_at(
@@ -236,8 +249,13 @@ async fn attempt_one_turn(
                 idle_deadline = tokio::time::Instant::now() + idle;
                 chunk
             }
-            // EOF: the result stands as accumulated — `completed` only if
-            // `response.completed` arrived (spec §6, #17 handoff gap b).
+            // A bare EOF (no [DONE]) is byte-identical to a mid-body drop
+            // with a graceful FIN, so it stays a cut (incomplete) — the
+            // canned path's [DONE]-only semantics. A compliant Responses-API
+            // provider always ends with [DONE] (handled below), which sets
+            // clean_end; a provider omitting both [DONE] and
+            // response.completed is a contract violation and the safer
+            // failure mode is an incomplete turn, not a fake-complete one.
             Ok(Ok(None)) => break,
             // A mid-body drop keeps the partial as an incomplete turn
             // instead of an error (ticket #19, #17 handoff gap c): the
@@ -263,6 +281,7 @@ async fn attempt_one_turn(
         };
         for payload in parser.feed(&chunk)? {
             if payload == "[DONE]" {
+                clean_end = true;
                 break 'outer;
             }
             if !apply_frame(sink, &mut result, &payload) {
@@ -270,6 +289,9 @@ async fn attempt_one_turn(
                 return Ok(result);
             }
         }
+    }
+    if clean_end {
+        result.completed = true;
     }
     Ok(result)
 }

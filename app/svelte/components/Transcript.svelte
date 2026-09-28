@@ -259,7 +259,11 @@
       if (nn === 0) return THRESHOLD;
       const e = all[nn - 1];
       const measured = cur ? heights.has(`${cur}:${e.id}`) : true;
-      return Math.max(THRESHOLD, measured ? 0 : 2 * hOf(e));
+      // Allow for the last card's *estimate error* (~±30px on a 120px tool),
+      // not its full height: `2 * hOf(e)` (240px+) re-armed the pin on a fast
+      // downward scroll still ~200px short, and the catch-up then yanked the
+      // view to the bottom (the jump).
+      return Math.max(THRESHOLD, measured ? 0 : Math.min(2 * hOf(e), 48));
     };
     // Input intent: the last user scroll input (wheel, touch, scrollbar
     // drag, scroll key), time-stamped in the module's inputIntent (shared
