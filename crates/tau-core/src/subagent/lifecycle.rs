@@ -107,18 +107,15 @@ impl Supervisor {
         // entry lands; parked: it wakes from its sleep and exits).
         child.wake.notify_one();
         // A stopped child with an assigned task carries the task's resume
-        // contract in the stop event (spec §5.2).
-        let resume_contract = child.agent.with_task_store(|store| {
-            let entries = store.entries_range(0, usize::MAX).ok()?;
-            crate::task::fold_entries(&entries)
-                .into_iter()
-                .find(|t| t.created_in.is_some())
-                .filter(|t| {
-                    t.status == crate::task::STATUS_IN_PROGRESS
-                        || t.status == crate::task::STATUS_BLOCKED
-                })
-                .map(|t| crate::task::resume_contract(&t))
-        });
+        // contract in the stop event (spec §5.2) — the task lives in the
+        // parent's file (the single source of truth).
+        let resume_contract = self
+            .child_task(child)
+            .filter(|t| {
+                t.status == crate::task::STATUS_IN_PROGRESS
+                    || t.status == crate::task::STATUS_BLOCKED
+            })
+            .map(|t| crate::task::resume_contract(&t));
         self.bridge.state(&StateNotice {
             parent: self.parent_session.clone(),
             handle: child.handle.clone(),

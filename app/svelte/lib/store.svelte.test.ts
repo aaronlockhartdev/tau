@@ -814,6 +814,42 @@ describe('subagent_event', () => {
     expect(store.sessions['p'].subagents[0].state).toBe('stopped');
     expect(store.sessions['c'].state).toBe('stopped');
   });
+
+  it('task_changed: a child-targeted emission fills the child pane (the projection)', () => {
+    store.sessions = openSession({}, 'p', snap('p').snapshot);
+    applyEvents([
+      {
+        type: 'subagent_event',
+        workspace: WS.id,
+        session: 'p',
+        kind: {
+          kind: 'spawned',
+          handle: 'h1',
+          child: 'c',
+          agent_type: 'general',
+          context_mode: 'fresh',
+          title: 'worker'
+        }
+      }
+    ]);
+    const projected: Task[] = [
+      {
+        id: 't1',
+        title: 'x',
+        status: 'in_progress',
+        steps: [],
+        criteria: [],
+        evidence: [],
+        blockers: [],
+        decisions: [],
+        notes: [],
+        worker: { session: 'c', status: 'in_progress' },
+        updated: 1
+      }
+    ];
+    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 'c', tasks: projected }]);
+    expect(store.sessions['c'].tasks).toEqual(projected);
+  });
 });
 
 describe('files pane', () => {

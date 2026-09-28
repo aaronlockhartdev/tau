@@ -88,16 +88,13 @@ impl Supervisor {
             .map_err(|e| format!("subagent_spawn: {e}"))?;
 
         // A spawn with a task is an assignment (spec §5.3): the record
-        // copies into the child's session before its first turn, so the
-        // child works a task that already exists in its own file — the
-        // child's session is the live record, the parent's the pointer.
-        // Both sides run on their own stores (single writer per session).
+        // stays in the parent's file with the child set as worker — the
+        // parent is the single source of truth, the child's pane a
+        // projection of it.
         if let Some(task) = task
             && let Some(parent) = self.parent.lock().unwrap().clone()
         {
-            let _ = parent.with_task_store(|cstore| {
-                crate::task::assign(cstore, &mut store, task, &session_id, &self.parent_session)
-            });
+            let _ = parent.with_task_store(|cstore| crate::task::assign(cstore, task, &session_id));
         }
         // The child's OM record (spec §5.1, ADR-0004): fresh = an empty
         // prefix; compacted = the parent's log verbatim as the frozen
@@ -178,6 +175,10 @@ impl Supervisor {
                 handle: handle.clone(),
             })),
         }));
+        // The child's task tools route to the parent's store (the shared
+        // task model): the `Weak` upgrades per call, so a dropped parent
+        // degrades to the child's own store.
+        agent.set_parent_task_store(Some(Arc::downgrade(&parent_agent)));
 
         let created = agent.store_created();
         let stop = agent.stop_flag();

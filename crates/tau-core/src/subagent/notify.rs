@@ -2,13 +2,13 @@ use super::*;
 
 impl Supervisor {
     /// Assign one of this session's tasks to a child (spec §5.3): the
-    /// record copies into the child's session, which becomes the live
-    /// record; the creator's copy becomes the status pointer. Both sides
-    /// run through the sessions' own stores — one writer per session,
-    /// never a second store on a live file (review B3). The copy is then
-    /// delivered through the child's message path: a running child takes
-    /// it as a steering round on its next call, a non-running child
-    /// resumes with it (ADR-0001) — a bare copy races a running loop.
+    /// record stays in this session's file with the child set as worker —
+    /// the single source of truth; the child's pane is a projection. The
+    /// write runs through this session's own store (one writer per
+    /// session, review B3). The assignment is then delivered through the
+    /// child's message path: a running child takes it as a steering round
+    /// on its next call, a non-running child resumes with it (ADR-0001)
+    /// — a bare write races a running loop.
     pub fn assign_task(
         self: &Arc<Self>,
         task_id: &str,
@@ -34,17 +34,7 @@ impl Supervisor {
             .clone()
             .ok_or("task_assign: no parent attached".to_owned())?;
         parent
-            .with_task_store(|cstore| {
-                child.agent.with_task_store(|wstore| {
-                    crate::task::assign(
-                        cstore,
-                        wstore,
-                        task_id,
-                        worker_session,
-                        &self.parent_session,
-                    )
-                })
-            })
+            .with_task_store(|cstore| crate::task::assign(cstore, task_id, worker_session))
             .map(|_| ())?;
         let title = parent
             .with_task_store(|store| {
@@ -212,23 +202,29 @@ impl Supervisor {
     }
 
     /// The child's assigned task, resolved on done (spec §5.3): the
-    /// completion gate runs on the child's own store (the live record),
-    /// and the creator's pointer is mirrored on the parent's own store —
-    /// one store per session, never a second store on a live file.
+    /// completion gate runs on the parent's file — the single source of
+    /// truth; the child's file carries no task entries.
     ///
     /// - all criteria satisfied → `done`
     /// - not satisfied, not blocked → `handed_off` (stays in_progress;
     ///   the output becomes the resume contract, the parent decides)
     /// - already blocked (the child called `task_block`) → stays blocked
     fn resolve_assigned_task(&self, child: &Child, output: &Option<Value>) {
-        let resolved = child.agent.with_task_store(|store| {
+        let Some(parent) = self.parent.lock().unwrap().clone() else {
+            return;
+        };
+        let _ = parent.with_task_store(|store| {
             let entries = store.entries_range(0, usize::MAX).ok()?;
             let tasks = crate::task::fold_entries(&entries);
-            // The live record is the task with a creator link (in v0 a
-            // child carries at most one assigned task).
-            let task = tasks.into_iter().find(|t| t.created_in.is_some())?;
+            // The single record: this session's task with the child set as
+            // worker (in v0 a child carries at most one assigned task).
+            let task = tasks.into_iter().find(|t| {
+                t.worker
+                    .as_ref()
+                    .is_some_and(|w| w.session == child.session_id)
+            })?;
             let output = output.as_ref().unwrap_or(&Value::Null);
-            let status = if task.status == crate::task::STATUS_IN_PROGRESS {
+            if task.status == crate::task::STATUS_IN_PROGRESS {
                 let gate = task
                     .criteria
                     .iter()
@@ -238,21 +234,9 @@ impl Supervisor {
                 } else {
                     crate::task::handoff(store, &task.id, output)
                 }
-                .ok()?
-                .status
-            } else {
-                task.status.clone()
-            };
-            Some((task.id, status))
+                .ok();
+            }
+            Some(())
         });
-        if let Some((id, status)) = resolved
-            && let Some(parent) = self.parent.lock().unwrap().clone()
-        {
-            parent.with_task_store(|store| {
-                // The creator's copy tracks the worker's state; a creator
-                // without the copy is a no-op (mirror_status handles it).
-                let _ = crate::task::mirror_status(store, &id, &status);
-            });
-        }
     }
 }

@@ -44,9 +44,10 @@ async fn notify_rejects_invalid_shapes() {
 
 /// The acceptance flow (ticket #24): the parent creates a task and
 /// assigns it to a compacted child; the child works it — evidence,
-/// then a gated finish — and ends via parent_notify; the child's
-/// session is the live record (done, with the evidence) and the
-/// parent's copy is the status pointer.
+/// then a gated finish — and ends via parent_notify. The record never
+/// leaves the parent's session (the single source of truth): the
+/// child's file stays task-free, the parent's record is done with the
+/// child's evidence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate() {
     let dir = tempfile::tempdir().unwrap();
@@ -130,36 +131,38 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         )
         .expect("the compacted spawn");
     // The spawn with a task IS the assignment (spec §5.3): the record
-    // is in the child's session before its first turn — no second
-    // store, no timing cushion (review N3/B3). The child's session is
-    // the live record; the parent's copy is the status pointer.
+    // gets its worker set in the parent's file before the child's first
+    // turn — no copy, no second store, no timing cushion (review N3/B3).
     wait_for(|| {
         matches!(
             sup.state_info(&spawned.handle).unwrap().state,
             ChildState::Done { .. }
         )
     });
-    // The child's session is the live record: done, with the evidence.
+    // The child's file carries no task entry: the record never left the
+    // parent's session (the single source of truth).
     let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
     child_store.open().unwrap();
     let child_tasks = crate::task::fold_entries(&child_store.entries_range(0, usize::MAX).unwrap());
-    let t = &child_tasks[0];
-    assert_eq!(t.id, "task-1");
-    assert_eq!(t.status, crate::task::STATUS_DONE);
-    assert_eq!(
-        t.criteria[0].status,
-        crate::task::CriterionStatus::Satisfied
+    assert!(
+        child_tasks.is_empty(),
+        "the child's file is task-free: {child_tasks:?}"
     );
-    // The parent's copy is the status pointer to the child.
+    // The parent's record holds the child's work: done, with the
+    // evidence, worker = the child.
     let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
     parent_store.open().unwrap();
     let parent_tasks =
         crate::task::fold_entries(&parent_store.entries_range(0, usize::MAX).unwrap());
     let p = &parent_tasks[0];
+    assert_eq!(p.id, "task-1");
+    assert_eq!(p.status, crate::task::STATUS_DONE);
+    assert_eq!(
+        p.criteria[0].status,
+        crate::task::CriterionStatus::Satisfied
+    );
+    assert_eq!(p.evidence.len(), 1);
     assert_eq!(p.worker.as_ref().unwrap().session, spawned.session_id);
-    // The pointer reflects the worker's final state (review B2): the
-    // done resolution mirrored through the gate, not just the link.
-    assert_eq!(p.worker.as_ref().unwrap().status, crate::task::STATUS_DONE);
     // The parent was woken by the notify.
     let wakes = bridge.wakes.lock().unwrap();
     assert!(
@@ -257,15 +260,15 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
     );
     let tasks = crate::task::fold_entries(&entries);
     assert!(
-        tasks.iter().all(|t| t.created_in.is_some()),
+        tasks.is_empty(),
         "a child cannot create a task of its own: {tasks:?}"
     );
 }
 
-/// An assign is delivery, not just a copy (the spawn-race fix): the
+/// An assign is delivery, not just a write (the spawn-race fix): the
 /// child's message path carries "Assigned {id}: {title}". The child
 /// parks after its first turn, so the assign deterministically takes
-/// the resume branch: the record copy precedes the resuming message,
+/// the resume branch: the worker set precedes the resuming message,
 /// and the child's evidence lands on the parent's record.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
@@ -296,8 +299,8 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
                     r#"{"text":"kicking off","done":false,"waiting_on":"parent"}"#.into(),
                 )],
             ),
-            // The resume turn: the record is already in the child's
-            // session — the evidence lands on the parent's task.
+            // The resume turn: the child's task tools route to the
+            // parent's store — the evidence lands on the parent's task.
             sse(
                 "",
                 &[(
@@ -370,8 +373,8 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
             ChildState::Done { .. }
         )
     });
-    // The delivery reached the child as a message, and the record it
-    // worked is the parent's task (no phantom of its own).
+    // The delivery reached the child as a message, and the child's file
+    // stays task-free — the record it worked is the parent's.
     let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
     child_store.open().unwrap();
     let entries = child_store.entries_range(0, usize::MAX).unwrap();
@@ -384,11 +387,151 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         "the assignment was delivered to the child as a message"
     );
     let tasks = crate::task::fold_entries(&entries);
-    assert_eq!(tasks.len(), 1);
-    assert_eq!(tasks[0].id, "task-1");
-    assert_eq!(tasks[0].status, crate::task::STATUS_DONE);
+    assert!(
+        tasks.is_empty(),
+        "the child's file is task-free (the record lives in the parent's): {tasks:?}"
+    );
+    // The parent's record: done, with the child's evidence.
+    let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
+    parent_store.open().unwrap();
+    let parent_tasks =
+        crate::task::fold_entries(&parent_store.entries_range(0, usize::MAX).unwrap());
+    assert_eq!(parent_tasks.len(), 1);
+    assert_eq!(parent_tasks[0].id, "task-1");
+    assert_eq!(parent_tasks[0].status, crate::task::STATUS_DONE);
+    assert_eq!(parent_tasks[0].evidence.len(), 1);
 }
 
+/// The shared task model: a child's worker tools (evidence, finish —
+/// everything a child is not refused) route to the parent's store: the
+/// child's file stays task-free, and the parent's record carries the
+/// child's work, applied under the parent's own lock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_childs_task_tools_route_to_the_parents_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "parent");
+    store.create().unwrap();
+    crate::task::create(
+        &mut store,
+        "task-1",
+        "write the docs",
+        vec![],
+        vec![crate::task::Criterion {
+            text: "docs exist".into(),
+            status: crate::task::CriterionStatus::Pending,
+        }],
+    )
+    .unwrap();
+    let bridge = Arc::new(TestBridge::default());
+    let factory = Arc::new(CannedFactory {
+        scripts: vec![vec![sse(
+            "",
+            &[
+                (
+                    "task_evidence".into(),
+                    "e1".into(),
+                    r#"{"task":"task-1","criterion":"docs exist","summary":"they do"}"#.into(),
+                ),
+                (
+                    "task_finish".into(),
+                    "f1".into(),
+                    r#"{"task":"task-1"}"#.into(),
+                ),
+                notify_call(
+                    "n1",
+                    "finished",
+                    true,
+                    Some(json!({ "result": "the docs" })),
+                    None,
+                ),
+            ],
+        )]],
+        delays: vec![],
+        created: AtomicUsize::new(0),
+        calls: Arc::new(AtomicUsize::new(0)),
+    });
+    let sup = Supervisor::new(SupervisorParams {
+        parent_session: "parent".into(),
+        cwd: dir.path().to_path_buf(),
+        provider: factory,
+        model: "test-model".into(),
+        system_prompt: "be terse".into(),
+        om: Om::default(),
+        om_model: String::new(),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: TurnConfig::default(),
+        caps: SubAgents::default(),
+        depth: 0,
+        types: vec![crate::agent_type::builtin_general()],
+        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        driver: Arc::new(TestDriver),
+    });
+    let parent = Arc::new(AgentSession::new(SessionParams {
+        store,
+        system_prompt: "be terse".into(),
+        model: "test-model".into(),
+        tools: tools::agent_tool_specs(),
+        cwd: dir.path().to_path_buf(),
+        provider: crate::provider::canned(sse("", &[]).as_str()),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: TurnConfig::default(),
+        om: None,
+        om_model: String::new(),
+        subagents: None,
+        child: None,
+    }));
+    sup.attach_parent(parent.clone());
+    let spawned = sup
+        .spawn(
+            "general",
+            "work task-1",
+            Some(ContextMode::Fresh),
+            Some("task-1"),
+            "c0",
+        )
+        .expect("the spawn");
+    wait_for(|| {
+        matches!(
+            sup.state_info(&spawned.handle).unwrap().state,
+            ChildState::Done { .. }
+        )
+    });
+    // The child's tool calls ran against the parent's record: its file is
+    // task-free, and the tool results are successes (not a missing record).
+    let mut child_store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+    child_store.open().unwrap();
+    let entries = child_store.entries_range(0, usize::MAX).unwrap();
+    assert!(
+        crate::task::fold_entries(&entries).is_empty(),
+        "the child's file is task-free"
+    );
+    let outputs: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.kind == crate::agent::KIND_TOOL)
+        .filter_map(|e| e.payload.get("output").and_then(Value::as_str))
+        .collect();
+    assert!(
+        outputs
+            .iter()
+            .any(|o| o.contains("task-1") && o.contains("in_progress")),
+        "the child's task tools ran against the parent's record: {outputs:?}"
+    );
+    assert!(
+        !outputs
+            .iter()
+            .any(|o| o.contains("not found in this session")),
+        "no task call hit a missing record: {outputs:?}"
+    );
+    // The parent's record: done, with the child's evidence, worker = the child.
+    let mut parent_store = SessionStore::for_workspace(dir.path(), "parent");
+    parent_store.open().unwrap();
+    let parent_tasks =
+        crate::task::fold_entries(&parent_store.entries_range(0, usize::MAX).unwrap());
+    let p = &parent_tasks[0];
+    assert_eq!(p.status, crate::task::STATUS_DONE);
+    assert_eq!(p.evidence.len(), 1);
+    assert_eq!(p.worker.as_ref().unwrap().session, spawned.session_id);
+}
 /// The state record carries the discriminant plus the non-output
 /// variant fields only — done's output lives in the notify record (the
 /// report), never duplicated in the state record.

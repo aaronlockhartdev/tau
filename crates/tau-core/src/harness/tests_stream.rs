@@ -63,7 +63,94 @@ async fn task_commands_emit_a_task_changed_event() {
     assert_eq!(tasks[0].status, "pending");
 }
 
-/// A session wired to `inner` (canned in tests, production in the
+/// Child-targeted TaskChanged (the shared task model): a task assigned to
+/// a child is emitted for the child's session as well — the child's pane
+/// is a projection of the parent's store, and the child's own file is
+/// task-free.
+#[tokio::test]
+async fn a_task_assigned_to_a_child_is_emitted_for_the_child_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers())
+        .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
+        .build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session: m } => m,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let collected = collect_events(&core);
+    core.dispatch(Command::TaskCreate {
+        session: session.id.clone(),
+        title: "work".into(),
+    })
+    .unwrap();
+    let sub = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "do it".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    core.dispatch(Command::TaskAssign {
+        session: session.id.clone(),
+        task: "task-1".into(),
+        worker: sub.handle.clone(),
+    })
+    .unwrap();
+    // Both the parent's full list (worker set) and the child's projection
+    // reach the pipe.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let evs = collected.lock().unwrap().clone();
+        let for_parent = evs.iter().any(|e| {
+            matches!(
+                e,
+                Event::TaskChanged {
+                    session: s,
+                    tasks,
+                    ..
+                }
+                if *s == session.id
+                    && tasks.iter().any(|t| t.id == "task-1"
+                        && t.worker.as_ref().is_some_and(|w| w.session == sub.child))
+            )
+        });
+        let for_child = evs.iter().any(|e| {
+            matches!(
+                e,
+                Event::TaskChanged {
+                    session: s,
+                    tasks,
+                    ..
+                }
+                if *s == sub.child
+                    && tasks.len() == 1
+                    && tasks[0].id == "task-1"
+                    && tasks[0].worker.as_ref().is_some_and(|w| w.session == sub.child)
+            )
+        });
+        if for_parent && for_child {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the child-targeted task_changed never arrived: {evs:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 /// live test), registered with the core the way `SessionNew` does.
 #[tokio::test]
 async fn live_run_streams_the_event_pipe() {

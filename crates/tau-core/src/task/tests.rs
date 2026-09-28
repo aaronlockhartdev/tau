@@ -184,7 +184,7 @@ fn failing_evidence_marks_the_criterion_failed() {
 }
 
 #[test]
-fn assignment_copies_the_record_and_pointer_tracks_status() {
+fn assignment_keeps_the_record_in_the_creators_session() {
     let dir = tempfile::tempdir().unwrap();
     let mut creator = session_in(dir.path(), "parent");
     let mut worker = session_in(dir.path(), "child");
@@ -196,23 +196,24 @@ fn assignment_copies_the_record_and_pointer_tracks_status() {
         vec![criterion("proof")],
     )
     .unwrap();
-    let live = assign(&mut creator, &mut worker, "task-1", "child", "parent").unwrap();
+    let live = assign(&mut creator, "task-1", "child").unwrap();
     assert_eq!(live.status, STATUS_IN_PROGRESS);
-    assert_eq!(live.created_in.as_deref(), Some("parent"));
-    // the creator's copy is now a pointer
+    // The record stays in the creator's file with the worker set — the
+    // single source of truth; the worker's file gets no task entry.
     let c = load(&creator).unwrap()[0].clone();
     assert_eq!(c.status, STATUS_IN_PROGRESS);
     assert_eq!(c.worker.as_ref().unwrap().session, "child");
-    // the worker's copy carries the full record (steps + criteria)
-    let w = load(&worker).unwrap()[0].clone();
-    assert_eq!(w.steps.len(), 1);
-    assert_eq!(w.criteria.len(), 1);
-    assert!(w.worker.is_none());
+    assert_eq!(c.steps.len(), 1);
+    assert_eq!(c.criteria.len(), 1);
+    assert!(
+        load(&worker).unwrap().is_empty(),
+        "the worker's file carries no task entry"
+    );
     // double assignment is rejected
-    assert!(assign(&mut creator, &mut worker, "task-1", "child", "parent").is_err());
-    // the pointer mirrors the worker's terminal status
+    assert!(assign(&mut creator, "task-1", "child").is_err());
+    // The worker's work (evidence, finish) lands on the creator's record
     add_evidence(
-        &mut worker,
+        &mut creator,
         "task-1",
         Evidence {
             criterion: "proof".into(),
@@ -224,10 +225,10 @@ fn assignment_copies_the_record_and_pointer_tracks_status() {
         },
     )
     .unwrap();
-    finish(&mut worker, "task-1", false, None).unwrap();
-    mirror_status(&mut creator, "task-1", STATUS_DONE).unwrap();
+    finish(&mut creator, "task-1", false, None).unwrap();
     let c = load(&creator).unwrap()[0].clone();
-    assert_eq!(c.worker.as_ref().unwrap().status, STATUS_DONE);
+    assert_eq!(c.status, STATUS_DONE);
+    assert_eq!(c.worker.as_ref().unwrap().session, "child");
 }
 
 #[test]
@@ -284,17 +285,18 @@ fn handoff_keeps_the_task_in_progress() {
 }
 
 #[test]
-fn active_tasks_excludes_pointer_copies() {
+fn active_tasks_excludes_assigned_tasks() {
     let dir = tempfile::tempdir().unwrap();
     let mut a = session_in(dir.path(), "a");
     let mut b = session_in(dir.path(), "b");
     create(&mut a, "task-1", "t", vec![], vec![criterion("c")]).unwrap();
     start(&mut a, "task-1").unwrap();
     assert_eq!(active_tasks(&load(&a).unwrap()).len(), 1);
-    assign(&mut a, &mut b, "task-1", "b", "a").unwrap();
-    // a's copy is a pointer (not active for assembly); b's is the live one
+    assign(&mut a, "task-1", "b").unwrap();
+    // a's record is now the worker's (single source of truth) — not active
+    // for a's own assembly; b's file is task-free
     assert_eq!(active_tasks(&load(&a).unwrap()).len(), 0);
-    assert_eq!(active_tasks(&load(&b).unwrap()).len(), 1);
+    assert!(load(&b).unwrap().is_empty());
 }
 
 #[test]

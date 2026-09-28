@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 /// A message lane (spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +135,11 @@ struct Inner {
     /// The child-side link (ticket #23): present on child sessions only;
     /// routes `parent_notify` to the child's supervisor.
     child: Option<Arc<crate::subagent::ChildLink>>,
+    /// The parent's session (child sessions only, ticket: shared task
+    /// model): the child's task tools route here, so the task never
+    /// leaves the parent's file. `Weak` — the supervisor's `Arc` already
+    /// links parent and child; this adds no new strong cycle.
+    parent_task_store: Option<Weak<AgentSession>>,
 }
 
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
@@ -193,6 +198,7 @@ impl AgentSession {
                 om_status_hook: None,
                 subagents: p.subagents,
                 child: p.child,
+                parent_task_store: None,
             }),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -366,14 +372,43 @@ impl AgentSession {
         }
     }
 
-    /// The task tools (spec §5.3/§5.4): run against this session's own
-    /// store — the session-scoped task store a parent and a child share.
-    fn task_tool(&self, tc: &tools::ToolCall) -> String {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(r) = Self::task_child_refusal(inner.child.is_some(), &tc.name) {
+    /// The parent's task-routing target (child sessions only): set at
+    /// spawn from the supervisor's attached parent.
+    pub fn set_parent_task_store(&self, parent: Option<Weak<AgentSession>>) {
+        self.inner.lock().unwrap().parent_task_store = parent;
+    }
+
+    /// The task tools (spec §5.3/§5.4). A child session's worker tools
+    /// route to the parent's store — the task never leaves the parent's
+    /// file (one store, one lock); the child's pane is a projection.
+    /// The child's `inner` is read and released before the parent's lock
+    /// is taken: no child-lock → parent-lock nesting (the deadlock guard).
+    fn task_tool_dispatch(&self, name: &str, args: &Value) -> String {
+        let (is_child, parent) = {
+            let inner = self.inner.lock().unwrap();
+            (
+                inner.child.is_some(),
+                inner.parent_task_store.as_ref().and_then(Weak::upgrade),
+            )
+        };
+        if let Some(r) = Self::task_child_refusal(is_child, name) {
             return r;
         }
-        crate::task::tool_call(&mut inner.store, &tc.name, &tc.args)
+        match parent {
+            Some(parent) => {
+                parent.with_task_store(|store| crate::task::tool_call(store, name, args))
+            }
+            None => {
+                let mut inner = self.inner.lock().unwrap();
+                crate::task::tool_call(&mut inner.store, name, args)
+            }
+        }
+    }
+
+    /// The task tools for the model's dispatch (the app's task commands
+    /// use `task_tool_call` — the same routing on both paths).
+    fn task_tool(&self, tc: &tools::ToolCall) -> String {
+        self.task_tool_dispatch(&tc.name, &tc.args)
     }
     /// The session store's header timestamp (epoch ms).
     pub fn store_created(&self) -> u64 {
@@ -388,14 +423,10 @@ impl AgentSession {
         f(&mut inner.store)
     }
 
-    /// The seven task tools against this session's own store (the app's
-    /// task commands; the model's dispatch uses `task_tool`).
+    /// The seven task tools (the app's task commands; the model's dispatch
+    /// uses `task_tool`) — both share the child→parent routing.
     pub fn task_tool_call(&self, name: &str, args: &Value) -> String {
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(r) = Self::task_child_refusal(inner.child.is_some(), name) {
-            return r;
-        }
-        crate::task::tool_call(&mut inner.store, name, args)
+        self.task_tool_dispatch(name, args)
     }
 
     /// A child is a leaf: create/assign/cancel act on a parent's planning
