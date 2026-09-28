@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEntry } from './entries';
+import { decodeEntry, resolveBlobs } from './entries';
 import type { ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
@@ -59,5 +59,41 @@ describe('decodeEntry (om)', () => {
     };
     expect(e.text).toBe('plain observation, no group tags');
     expect(e.thinking).toBeUndefined();
+  });
+});
+
+describe('resolveBlobs (om)', () => {
+  it('substitutes the fetched payload before decode', async () => {
+    // The dogfood shape: a 218KB observation stored as sidecar blob 00000063.
+    const v: ViewEntry = {
+      id: '00000063',
+      parent: null,
+      kind: 'om',
+      timestamp: 1,
+      payload: null,
+      blob: { id: '00000063', size: 218_000, hash: '0'.repeat(16) },
+      first_kept: null
+    };
+    const views = await resolveBlobs([v], async () => ({
+      active_observations: 'the observation text'
+    }));
+    const e = decodeEntry(views[0]) as { kind: string; text: string };
+    expect(e.kind).toBe('om');
+    expect(e.text).toBe('the observation text');
+  });
+
+  it('keeps the pointer when the fetch fails', async () => {
+    const v: ViewEntry = {
+      id: '00000063',
+      parent: null,
+      kind: 'om',
+      timestamp: 1,
+      payload: null,
+      blob: { id: '00000063', size: 218_000, hash: '0'.repeat(16) },
+      first_kept: null
+    };
+    const views = await resolveBlobs([v], () => Promise.reject(new Error('no such file')));
+    expect(views[0].payload).toBeNull();
+    expect(views[0].blob).toBe(v.blob);
   });
 });

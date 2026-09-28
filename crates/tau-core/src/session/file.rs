@@ -11,16 +11,20 @@ impl SessionStore {
             .join(format!("{}.jsonl.zst", self.id))
     }
 
-    /// Decode a sidecar blob, verifying its hash (ADR-0005).
-    pub fn resolve_blob(&self, ref_: &BlobRef) -> Result<Vec<u8>, Error> {
-        let compressed =
-            fs::read(self.blob_path(&ref_.id)).map_err(|e| Error::Other(e.to_string()))?;
+    /// Decode a sidecar blob from `root` (the workspace's `.tau` dir),
+    /// verifying its hash (ADR-0005).
+    pub fn read_blob(root: &Path, ref_: &BlobRef) -> Result<Vec<u8>, Error> {
+        let compressed = fs::read(root.join("blobs").join(&ref_.id))?;
         let bytes = zstd::decode_all(&compressed[..]).map_err(|e| Error::Other(e.to_string()))?;
         let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
         if hash != ref_.hash {
             return Err(Error::Other(format!("blob {} hash mismatch", ref_.id)));
         }
         Ok(bytes)
+    }
+
+    pub fn resolve_blob(&self, ref_: &BlobRef) -> Result<Vec<u8>, Error> {
+        Self::read_blob(&self.root, ref_)
     }
 
     /// Manual archive: zstd the session file into `archive/` and remove the

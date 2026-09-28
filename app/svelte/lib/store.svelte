@@ -18,7 +18,7 @@
     type Workspace
   } from './protocol';
   import { presentation } from './presentation.svelte';
-  import { decodeEntry, type PendingDelta, applyStreamEvent, applyToolEvent, mergeHydrated } from './entries';
+  import { decodeEntry, resolveBlobs, type PendingDelta, applyStreamEvent, applyToolEvent, mergeHydrated } from './entries';
   import {
     applySessionList,
     applySubagentEvent,
@@ -599,6 +599,11 @@
   // re-issued — so the recompute storm cannot re-request the same page.
   const windowsInFlight = new Map<string, Promise<void>>();
 
+  // In-flight blob reads keyed by workspace + hash: the window effect's
+  // recompute storm can hit the same blob twice; an identical read is
+  // shared, not re-issued (the windowsInFlight pattern).
+  const blobsInFlight = new Map<string, Promise<unknown>>();
+
   export async function fetchWindow(sid: string, start: number, count: number): Promise<void> {
     const s = store.sessions[sid];
     if (!s || count <= 0) return;
@@ -622,7 +627,22 @@
         const cur = store.sessions[sid];
         if (!cur) return;
         if (out.kind !== 'entries') return;
-        const m = mergeHydrated(cur.entries, cur.live, out.entries);
+        const views = await resolveBlobs(out.entries, (v) => {
+          const key = `${cur.meta.workspace}:${v.blob!.hash}`;
+          const inflight = blobsInFlight.get(key);
+          if (inflight) return inflight;
+          const read = command({
+            type: 'blob_read',
+            workspace: cur.meta.workspace,
+            id: v.blob!.id,
+            hash: v.blob!.hash
+          })
+            .then((o) => (o.kind === 'blob' ? o.payload : null))
+            .finally(() => blobsInFlight.delete(key));
+          blobsInFlight.set(key, read);
+          return read;
+        });
+        const m = mergeHydrated(cur.entries, cur.live, views);
         cur.entries = m.entries;
         cur.live = m.live;
       } finally {

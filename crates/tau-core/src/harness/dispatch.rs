@@ -22,7 +22,8 @@ impl Core {
             | Command::SessionFork { .. }
             | Command::SessionBranch { .. }
             | Command::SessionSnapshot { .. }
-            | Command::SessionEntries { .. } => self.dispatch_session(cmd),
+            | Command::SessionEntries { .. }
+            | Command::BlobRead { .. } => self.dispatch_session(cmd),
             Command::MessageSend { .. }
             | Command::MessageStop { .. }
             | Command::SubagentTypes

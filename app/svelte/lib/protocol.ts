@@ -373,6 +373,7 @@ export type Command =
   | { type: 'session_branch'; session: string; at: string }
   | { type: 'session_snapshot'; session: string }
   | { type: 'session_entries'; session: string; since: string | null; range: EntryRange | null }
+  | { type: 'blob_read'; workspace: string; id: string; hash: string }
   | { type: 'message_send'; session: string; text: string; lane: MessageLane }
   | { type: 'message_stop'; session: string }
   | { type: 'subagent_types' }
@@ -402,6 +403,7 @@ export type CommandOutput =
   | { kind: 'sessions'; sessions: SessionMeta[] }
   | { kind: 'snapshot'; snapshot: Snapshot }
   | { kind: 'entries'; entries: ViewEntry[] }
+  | { kind: 'blob'; payload: unknown }
   | { kind: 'providers'; providers: ProviderInfo[] }
   | { kind: 'agents'; agents: AgentInfo[] }
   | { kind: 'skills'; skills: SkillInfo[] }

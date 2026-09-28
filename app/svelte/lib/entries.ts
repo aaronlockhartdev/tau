@@ -136,6 +136,26 @@ export function decodeEntry(v: ViewEntry): Entry {
   }
 }
 
+// Sidecar blob (ADR-0005): an oversized payload arrives null with a blob
+// pointer; the payload is fetched on demand and substituted before decode.
+// A fetch that fails keeps the pointer — one unreadable blob must not sink
+// the window read.
+export async function resolveBlobs(
+  views: ViewEntry[],
+  fetchBlob: (v: ViewEntry) => Promise<unknown>
+): Promise<ViewEntry[]> {
+  return Promise.all(
+    views.map(async (v) => {
+      if (v.payload !== null || !v.blob) return v;
+      try {
+        return { ...v, payload: await fetchBlob(v) };
+      } catch {
+        return v;
+      }
+    })
+  );
+}
+
 // One logical entry appears under two id namespaces: streamed under its
 // call_id / u- prefix / provider tool_call_id, persisted under the file's
 // counter. The namespaces are not comparable, so the streamed slot is
