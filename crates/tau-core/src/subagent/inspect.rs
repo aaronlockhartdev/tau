@@ -32,21 +32,10 @@ impl Supervisor {
                 })
         };
         // The child's assigned task + its resume contract (spec §5.1):
-        // read from the child's own entries (read-only — the writer stays
-        // the child's session).
-        let (task, resume_contract) = {
-            let mut store = SessionStore::for_workspace(&self.cwd, &child.session_id);
-            store
-                .open()
-                .ok()
-                .and_then(|_| store.entries_range(0, usize::MAX).ok())
-                .and_then(|entries| {
-                    let tasks = crate::task::fold_entries(&entries);
-                    let t = tasks.into_iter().find(|t| t.created_in.is_some())?;
-                    Some((Some(t.clone()), Some(crate::task::resume_contract(&t))))
-                })
-                .unwrap_or((None, None))
-        };
+        // read from the parent's file — the single source of truth (the
+        // child's file carries no task entries).
+        let task = self.child_task(&child);
+        let resume_contract = task.as_ref().map(crate::task::resume_contract);
         Some(SubagentInfo {
             handle: child.handle.clone(),
             child: child.session_id.clone(),

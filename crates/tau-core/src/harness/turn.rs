@@ -233,12 +233,25 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         // authoritative empty list — skip; the next emission or the
         // open/switch snapshot converges.
         if let Ok(all) = store.entries_range(0, usize::MAX) {
+            let tasks = crate::task::fold_entries(&all);
             core.emit(Event::TaskChanged {
                 workspace: workspace.clone(),
                 session: session.clone(),
-                tasks: crate::task::fold_entries(&all),
+                tasks: tasks.clone(),
             });
+            core.emit_child_projections(&live, &workspace, &tasks);
         }
+    }
+    // A child's task tools write the parent's file (the shared task
+    // model): the child's own fold would report no change, so the
+    // projection is re-emitted from the parent — the parent's list and
+    // the child's slice.
+    if let Some(parent) = live
+        .agent
+        .child_link()
+        .map(|l| l.parent_session().to_owned())
+    {
+        core.emit_task_projection(&workspace, &live.cwd, &session, &parent);
     }
     live.turn.store(false, Ordering::SeqCst);
 }
@@ -265,12 +278,22 @@ impl Core {
     /// The session's task list, folded from its file, as a task_changed
     /// event (spec §8): the payload is a projection of the file, never a
     /// second source of truth; the store replaces on receive, so the GUI
-    /// converges on the file's state without polling.
+    /// converges on the file's state without polling. A child session is
+    /// projected from the parent's file (the shared task model) — its own
+    /// file carries no task entries.
     pub(crate) fn emit_task_changed(&self, live: &LiveSession, session: &str) {
         let (workspace, cwd) = {
             let meta = live.meta.lock().unwrap();
             (meta.workspace.clone(), live.cwd.clone())
         };
+        if let Some(parent) = live
+            .agent
+            .child_link()
+            .map(|l| l.parent_session().to_owned())
+        {
+            self.emit_task_projection(&workspace, &cwd, session, &parent);
+            return;
+        }
         let mut store = SessionStore::for_workspace(&cwd, session);
         if store.open().is_err() {
             return; // the file is gone; the next open rebuilds from nothing
@@ -278,10 +301,77 @@ impl Core {
         let Ok(entries) = store.entries_range(0, usize::MAX) else {
             return; // a failed read is not an empty task list (torn-append race)
         };
+        let tasks = crate::task::fold_entries(&entries);
         self.emit(Event::TaskChanged {
-            workspace,
+            workspace: workspace.clone(),
             session: session.to_owned(),
-            tasks: crate::task::fold_entries(&entries),
+            tasks: tasks.clone(),
         });
+        self.emit_child_projections(live, &workspace, &tasks);
+    }
+
+    /// A task change in the parent (the single source of truth) is emitted
+    /// twice: the parent's own full list, and — for the named child — that
+    /// child's projection (worker == the child), which fills the child's
+    /// task pane.
+    pub(crate) fn emit_task_projection(
+        &self,
+        workspace: &str,
+        cwd: &std::path::Path,
+        child: &str,
+        parent: &str,
+    ) {
+        let mut store = SessionStore::for_workspace(cwd, parent);
+        if store.open().is_err() {
+            return; // the parent's file is gone; the next open rebuilds
+        }
+        let Ok(entries) = store.entries_range(0, usize::MAX) else {
+            return; // a failed read is not an empty task list (torn-append race)
+        };
+        let tasks = crate::task::fold_entries(&entries);
+        self.emit(Event::TaskChanged {
+            workspace: workspace.to_owned(),
+            session: parent.to_owned(),
+            tasks: tasks.clone(),
+        });
+        let projected: Vec<crate::task::Task> = tasks
+            .into_iter()
+            .filter(|t| t.worker.as_ref().is_some_and(|w| w.session == child))
+            .collect();
+        if !projected.is_empty() {
+            self.emit(Event::TaskChanged {
+                workspace: workspace.to_owned(),
+                session: child.to_owned(),
+                tasks: projected,
+            });
+        }
+    }
+
+    /// Child-targeted TaskChanged for each of this session's children that
+    /// owns a task: the child's pane is a projection of this session's
+    /// list, filtered to worker == the child.
+    fn emit_child_projections(
+        &self,
+        live: &LiveSession,
+        workspace: &str,
+        tasks: &[crate::task::Task],
+    ) {
+        let Some(sup) = live.agent.subagents() else {
+            return;
+        };
+        for sid in sup.child_sessions() {
+            let projected: Vec<crate::task::Task> = tasks
+                .iter()
+                .filter(|t| t.worker.as_ref().is_some_and(|w| w.session == sid))
+                .cloned()
+                .collect();
+            if !projected.is_empty() {
+                self.emit(Event::TaskChanged {
+                    workspace: workspace.to_owned(),
+                    session: sid,
+                    tasks: projected,
+                });
+            }
+        }
     }
 }

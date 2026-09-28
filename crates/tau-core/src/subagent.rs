@@ -257,6 +257,11 @@ impl ChildLink {
         &self.handle
     }
 
+    /// The parent's session id (the handle is `{parent}-{n}`).
+    pub fn parent_session(&self) -> &str {
+        self.handle.rsplit_once('-').map(|(s, _)| s).unwrap_or("")
+    }
+
     /// The `parent_notify` tool handler (ticket #23): `done:true` requires
     /// a structured output and ends the child; a note parks it. The
     /// declared `waiting_on` (default: parent — it just messaged the
@@ -459,6 +464,32 @@ impl Supervisor {
             .unwrap()
             .get(handle)
             .map(|c| c.agent.clone())
+    }
+
+    /// Every child's session id (the child-targeted TaskChanged routing).
+    pub fn child_sessions(&self) -> Vec<String> {
+        self.children
+            .lock()
+            .unwrap()
+            .values()
+            .map(|c| c.session_id.clone())
+            .collect()
+    }
+
+    /// The child's assigned task from the single source of truth (the
+    /// parent's file — the task never leaves it; the child's file carries
+    /// no task entries).
+    pub(super) fn child_task(&self, child: &Child) -> Option<Task> {
+        let mut store = SessionStore::for_workspace(&self.cwd, &self.parent_session);
+        let Ok(()) = store.open() else {
+            return None;
+        };
+        let entries = store.entries_range(0, usize::MAX).ok()?;
+        crate::task::fold_entries(&entries).into_iter().find(|t| {
+            t.worker
+                .as_ref()
+                .is_some_and(|w| w.session == child.session_id)
+        })
     }
 }
 

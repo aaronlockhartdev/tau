@@ -18,17 +18,11 @@ pub fn create(
     )
 }
 
-/// Assignment (spec §5.3, ADR-0001): the record copies into the worker's
-/// session — which becomes the live record — and the creator's copy becomes
-/// a status pointer. `worker_session` is the worker's session id; the
-/// caller supplies the worker's open store (a spawn passes the child's).
-pub fn assign(
-    creator: &mut SessionStore,
-    worker: &mut SessionStore,
-    id: &str,
-    worker_session: &str,
-    creator_session: &str,
-) -> StoreResult<Task> {
+/// Assignment (spec §5.3, ADR-0001): the record never leaves the
+/// creator's session — the single source of truth. `worker_session` is
+/// the worker's session id; the task stays in the creator's file with its
+/// worker pointer set, and the worker's pane is a projection of it.
+pub fn assign(creator: &mut SessionStore, id: &str, worker_session: &str) -> StoreResult<Task> {
     let Some(task) = find(creator, id)?.filter(|t| t.worker.is_none()) else {
         return Err(format!(
             "task {id}: not found in this session (or already assigned)"
@@ -47,23 +41,7 @@ pub fn assign(
             record: None,
         },
     )?;
-    append_event(
-        worker,
-        id,
-        TaskEvent::Assigned {
-            worker: None,
-            record: Some(TaskRecord {
-                title: task.title.clone(),
-                status: STATUS_IN_PROGRESS.to_owned(),
-                steps: task.steps.clone(),
-                criteria: task.criteria.clone(),
-                evidence: task.evidence.clone(),
-                blockers: task.blockers.clone(),
-                created_in: creator_session.to_owned(),
-            }),
-        },
-    )?;
-    find(worker, id).map(|t| t.unwrap())
+    find(creator, id).map(|t| t.unwrap())
 }
 
 pub fn start(store: &mut SessionStore, id: &str) -> StoreResult<Task> {
@@ -198,22 +176,6 @@ pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> Sto
     }
     append_event(store, id, TaskEvent::Cancelled { reason })?;
     find(store, id).map(|t| t.unwrap())
-}
-
-/// The creator's pointer tracks the worker's task (the child's notify
-/// events call this on the creator's copy).
-pub fn mirror_status(creator: &mut SessionStore, id: &str, status: &str) -> StoreResult<()> {
-    if find(creator, id)?.is_some() {
-        append_event(
-            creator,
-            id,
-            TaskEvent::Pointer {
-                status: status.to_owned(),
-            },
-        )
-    } else {
-        Ok(())
-    }
 }
 
 pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {
