@@ -73,6 +73,11 @@
   });
   const open = $derived(matches.length > 0);
   let sel = $state(0);
+  // Rendered options, so arrow-key selection scrolls the chosen one into view.
+  let optRefs: Array<HTMLElement | undefined> = [];
+  $effect(() => {
+    if (open) optRefs[sel]?.scrollIntoView({ block: 'nearest' });
+  });
 
   function fit(): void {
     if (!inputEl) return;
@@ -176,6 +181,7 @@
         {#each matches as m, i (m.id + m.name)}
           <div
             class="opt"
+            bind:this={optRefs[i]}
             class:sel={i === sel}
             role="option"
             aria-selected={i === sel}
