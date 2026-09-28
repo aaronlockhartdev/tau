@@ -510,3 +510,58 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
     assert_eq!(snap.entries.len(), 5);
     assert_eq!(snap.cursor, "00000005");
 }
+
+/// A blob-backed entry (ADR-0005): `blob_read` decodes the sidecar and
+/// returns the payload; a missing id is a clean NotFound, a tampered hash
+/// a clean Other.
+#[tokio::test]
+async fn blob_read_decodes_the_sidecar_and_errors_are_clean() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let id = SessionStore::new_session_id();
+    // An oversized payload becomes a sidecar blob on append.
+    let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), &id);
+    store.create().unwrap();
+    let payload = json!({ "active_observations": "x".repeat(120_000) });
+    let entry = store.append("om", payload, None).unwrap();
+    let blob = entry.blob.expect("the oversized payload is a sidecar blob");
+    let out = core
+        .dispatch(Command::BlobRead {
+            workspace: workspace.id.clone(),
+            id: blob.id.clone(),
+            hash: blob.hash.clone(),
+        })
+        .unwrap();
+    match out {
+        CommandOutput::Blob { payload } => {
+            assert_eq!(
+                payload,
+                json!({ "active_observations": "x".repeat(120_000) })
+            )
+        }
+        other => panic!("expected a blob: {other:?}"),
+    }
+    let err = core
+        .dispatch(Command::BlobRead {
+            workspace: workspace.id.clone(),
+            id: "00000999".into(),
+            hash: "0".repeat(16),
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, ProtocolError::NotFound { .. }),
+        "a missing blob is a NotFound: {err:?}"
+    );
+    let err = core
+        .dispatch(Command::BlobRead {
+            workspace: workspace.id,
+            id: blob.id,
+            hash: "deadbeefdeadbeef".into(),
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, ProtocolError::Other { .. }),
+        "a hash mismatch is an Other: {err:?}"
+    );
+}

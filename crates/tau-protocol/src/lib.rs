@@ -14,6 +14,7 @@ pub mod payload;
 pub mod snapshot;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// A message lane (spec §7; the GUI composer's 3-way selector).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,6 +130,10 @@ pub enum CommandOutput {
     Entries {
         entries: Vec<snapshot::ViewEntry>,
     },
+    /// A sidecar blob's decoded payload (ADR-0005).
+    Blob {
+        payload: Value,
+    },
     Providers {
         providers: Vec<ProviderInfo>,
     },
@@ -236,6 +241,15 @@ pub enum Command {
         session: String,
         since: Option<String>,
         range: Option<snapshot::EntryRange>,
+    },
+    /// Decode a sidecar blob (ADR-0005) of a paged-read entry: an
+    /// oversized payload lives out-of-band in the workspace's `blobs/`.
+    BlobRead {
+        workspace: String,
+        /// The blob file name (the owning entry's id).
+        id: String,
+        /// The pointer's hash: the read verifies it (ADR-0005).
+        hash: String,
     },
 
     MessageSend {
@@ -427,6 +441,11 @@ mod tests {
                     count: 100,
                 }),
             },
+            Command::BlobRead {
+                workspace: "w1".into(),
+                id: "00000063".into(),
+                hash: "0".repeat(16),
+            },
             Command::MessageSend {
                 session: "s1".into(),
                 text: "hi".into(),
@@ -611,6 +630,9 @@ mod tests {
             CommandOutput::Snapshot { snapshot: snap },
             CommandOutput::Entries {
                 entries: vec![entry],
+            },
+            CommandOutput::Blob {
+                payload: json!({ "active_observations": "obs" }),
             },
             CommandOutput::Providers {
                 providers: vec![provider],

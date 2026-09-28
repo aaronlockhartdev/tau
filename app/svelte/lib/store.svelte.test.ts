@@ -133,6 +133,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     session_branch: () => ({ kind: 'none' }),
     session_snapshot: () => ({ kind: 'none' }),
     session_entries: () => ({ kind: 'entries', entries: [] }),
+    blob_read: () => ({ kind: 'blob', payload: null }),
     message_send: () => ({ kind: 'none' }),
     message_stop: () => ({ kind: 'none' }),
     subagent_types: () => ({ kind: 'agents', agents: [] }),
@@ -923,6 +924,42 @@ describe('fetchWindow', () => {
     });
     await fetchWindow('s1', 0, 50);
     expect(store.sessions['s1'].entries[0]?.id).toBe('1');
+  });
+
+  it('a blob-backed om entry resolves via blob_read and renders the observation text', async () => {
+    // The dogfood shape: a 218KB observation stored as sidecar blob 00000063
+    // (payload null in the page read) — the card must show the text, not
+    // the [object Object] the null payload decoded to.
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    const blobView: ViewEntry = {
+      id: '00000063',
+      parent: null,
+      kind: 'om',
+      timestamp: 1,
+      payload: null,
+      blob: { id: '00000063', size: 218_000, hash: '0'.repeat(16) },
+      first_kept: null
+    };
+    mockIPC((cmd) => {
+      if (cmd.type === 'session_entries') {
+        return { kind: 'entries', entries: [blobView] };
+      }
+      if (cmd.type === 'blob_read') {
+        return {
+          kind: 'blob',
+          payload: {
+            active_observations:
+              '<observation-group id="abc" range="1:5">\n* 🔴 (16:21) user set up a workbench\n</observation-group>'
+          }
+        };
+      }
+      return { kind: 'none' };
+    });
+    await fetchWindow('s1', 0, 50);
+    const e = store.sessions['s1'].entries[0];
+    expect(e?.kind).toBe('om');
+    expect(e?.text).toBe('* 🔴 (16:21) user set up a workbench');
+    expect(e?.text).not.toContain('[object Object]');
   });
 });
 

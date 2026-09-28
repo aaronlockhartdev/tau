@@ -492,6 +492,44 @@ impl Core {
                 };
                 Ok(CommandOutput::Entries { entries })
             }
+            Command::BlobRead {
+                workspace,
+                id,
+                hash,
+            } => {
+                let workspace = self.workspace(&workspace)?;
+                // The blob lives in the requesting workspace's `.tau/blobs/`
+                // (ADR-0005 placement); the read verifies the pointer's hash.
+                let ref_ = crate::session::BlobRef {
+                    id: id.clone(),
+                    size: 0,
+                    hash,
+                };
+                let bytes = match crate::session::SessionStore::read_blob(
+                    &Path::new(&workspace.cwd).join(".tau"),
+                    &ref_,
+                ) {
+                    // A missing file is a clean NotFound (the entry keeps its
+                    // pointer); a hash mismatch stays an Other.
+                    Err(crate::session::Error::Io(io))
+                        if io.kind() == std::io::ErrorKind::NotFound =>
+                    {
+                        return Err(ProtocolError::NotFound {
+                            what: format!("blob {id}"),
+                        });
+                    }
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        return Err(ProtocolError::Other {
+                            message: e.to_string(),
+                        });
+                    }
+                };
+                let payload = serde_json::from_slice(&bytes).map_err(|e| ProtocolError::Other {
+                    message: e.to_string(),
+                })?;
+                Ok(CommandOutput::Blob { payload })
+            }
 
             _ => unreachable!("dispatch routes the arm"),
         }
