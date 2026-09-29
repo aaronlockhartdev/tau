@@ -448,19 +448,16 @@ export function mergeHydrated(
     const i = index.get(v.id);
     if (i !== undefined) {
       // A file copy is already present (snapshot). If the streamed twin of
-      // the same logical entry exists too, collapse: the streamed slot
-      // keeps its position and id, adopts the file's payload, and the file
-      // copy is removed — otherwise the entry renders twice.
+      // the same logical entry exists too, drop the streamed slot and keep
+      // the file copy: the card moves to where the file says it belongs (its
+      // file position), matching a reload. The old "keep the streamed slot"
+      // left live tool cards stuck at the tail of the hydrated list.
       const ti = ne.findIndex((e, j) => j !== i && isTwin(e, v, next));
       if (ti >= 0) {
-        // Assign only on a real change: an unconditional replace makes the
-        // merge reactive every 25 ms fetch and the window effect re-enters
-        // forever.
-        const t = ne[ti];
         ne = ne.slice();
-        if (entryChanged(t, next)) ne[ti] = hydrate(t, next);
-        ne.splice(i, 1);
-        // The splice shifted every index after i: rebuild the id map.
+        ne.splice(ti, 1);
+        // The splice shifted every index after ti: rebuild the id map. The
+        // file copy (at i) stays, now at its file position.
         index.clear();
         for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
         continue;

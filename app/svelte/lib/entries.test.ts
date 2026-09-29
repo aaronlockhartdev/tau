@@ -222,4 +222,39 @@ describe('mergeHydrated (live entry positioning)', () => {
       '00000005'
     ]);
   });
+
+  it('replaces a streamed tool card with its file copy at the file position', () => {
+    const tool = (id: string, callId: string, output: string): ViewEntry => ({
+      id,
+      parent: null,
+      kind: 'tool',
+      timestamp: 1,
+      payload: { call_id: callId, name: 'bash', output },
+      blob: null,
+      first_kept: null
+    });
+    const msg = (id: string): ViewEntry => ({
+      id,
+      parent: null,
+      kind: 'message',
+      timestamp: 1,
+      payload: { text: id },
+      blob: null,
+      first_kept: null
+    });
+    // The file copy (00000002) is hydrated at its file position; the streamed
+    // twin (id = call_id) sits at the tail from the live ToolStart.
+    const entries: Entry[] = [
+      decodeEntry(msg('00000001')),
+      decodeEntry(tool('00000002', 'call_abc', 'done')),
+      decodeEntry(msg('00000003')),
+      decodeEntry(tool('call_abc', 'call_abc', 'done'))
+    ];
+    // A re-read of the file copy collapses the streamed twin: the card moves
+    // to the file copy's position and the tail twin is dropped.
+    const { entries: out } = mergeHydrated(entries, [], [
+      tool('00000002', 'call_abc', 'done')
+    ]);
+    expect(out.map((e) => e.id)).toEqual(['00000001', '00000002', '00000003']);
+  });
 });
