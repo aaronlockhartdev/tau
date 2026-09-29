@@ -320,9 +320,6 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         Event::EntryLive {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
-        Event::SteeringReport {
-            workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
     }
 }
 

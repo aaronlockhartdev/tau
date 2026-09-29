@@ -99,6 +99,10 @@ struct Queued {
     /// A skill invocation (ticket #28): the entry's payload carries
     /// `(name, location)` so the GUI renders its green block.
     skill: Option<(String, String)>,
+    /// The entry was appended to the file at queue time (a steering report
+    /// lands now, so the GUI shows it immediately); the turn loop's dequeue
+    /// skips the second append.
+    in_file: bool,
 }
 
 fn lane_name(lane: Lane) -> &'static str {
@@ -118,11 +122,6 @@ type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 /// consumed): the app re-emits the queue snapshot so the GUI's queue pane
 /// doesn't stay stale until the turn boundary.
 pub(crate) type QueueEventHook = Arc<dyn Fn() + Send + Sync>;
-/// Fired the moment a child report is queued for the steering lane (text,
-/// source, and the parent's next entry id): the app emits a `SteeringReport`
-/// so the GUI shows the report now, not at the next LLM-call boundary.
-pub(crate) type NotifyHook = Arc<dyn Fn(String, String, u64) + Send + Sync>;
-
 struct Inner {
     store: SessionStore,
     system_prompt: String,
@@ -141,7 +140,6 @@ struct Inner {
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
     queue_event_hook: Option<QueueEventHook>,
-    notify_hook: Option<NotifyHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -214,7 +212,6 @@ impl AgentSession {
                 om_model: p.om_model,
                 om_status_hook: None,
                 queue_event_hook: None,
-                notify_hook: None,
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
@@ -239,6 +236,7 @@ impl AgentSession {
             lane,
             source: None,
             skill: None,
+            in_file: false,
         };
         if lane == Lane::Force {
             self.kill.store(true, Ordering::SeqCst);
@@ -259,6 +257,7 @@ impl AgentSession {
             lane,
             source: None,
             skill: Some((name.to_owned(), location.to_owned())),
+            in_file: false,
         };
         if lane == Lane::Force {
             self.kill.store(true, Ordering::SeqCst);
@@ -288,21 +287,30 @@ impl AgentSession {
         let mut inner = self.inner.lock().unwrap();
         self.stop.store(false, Ordering::SeqCst);
         let text = text.into();
-        // A steering report is surfaced the moment it is queued (the GUI shows
-        // it now); a follow-up is silent until it is dequeued.
-        let notify = matches!(lane, Lane::Steering).then(|| {
-            (inner.notify_hook.clone(), text.clone(), source.clone(), inner.store.next_id())
-        });
+        let steering = matches!(lane, Lane::Steering);
+        // A steering report is appended to the file the moment it is queued, so
+        // the EntryLive event fires now and the GUI shows the report immediately
+        // (not at the next LLM-call boundary, which for an idle parent may be a
+        // long way off). The in_file flag tells the turn loop's dequeue to skip
+        // the second append.
+        if steering {
+            let _ = inner.store.append(
+                KIND_USER,
+                serde_json::json!({
+                    "text": text,
+                    "lane": "steering",
+                    "source": source,
+                }),
+                None,
+            );
+        }
         inner.queue.push_back(Queued {
             text,
             lane,
             source: Some(source),
             skill: None,
+            in_file: steering,
         });
-        drop(inner);
-        if let Some((Some(hook), text, source, seq)) = notify {
-            hook(text, source, seq);
-        }
     }
 
     /// A persistent stop (ticket #23): cuts the in-flight stream —
@@ -493,10 +501,6 @@ impl AgentSession {
 
     pub(crate) fn set_queue_event_hook(&self, hook: Option<QueueEventHook>) {
         self.inner.lock().unwrap().queue_event_hook = hook;
-    }
-
-    pub(crate) fn set_notify_hook(&self, hook: Option<NotifyHook>) {
-        self.inner.lock().unwrap().notify_hook = hook;
     }
 
     /// The live entry sink, set on this session's store (the append choke

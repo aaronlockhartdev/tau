@@ -58,19 +58,6 @@ pub enum Event {
         session: String,
         entry: ViewEntry,
     },
-    /// A child reported to its parent *right now* — before the steering
-    /// entry is dequeued and appended at the next LLM-call boundary. The
-    /// GUI shows the report in the transcript immediately (a placeholder
-    /// card) and folds it into place when the real `EntryLive` arrives.
-    /// `seq` is the parent's next entry id, so the placeholder lands at the
-    /// report's file position.
-    SteeringReport {
-        workspace: String,
-        session: String,
-        source: String,
-        text: String,
-        seq: u64,
-    },
     /// The full pending-lane state (steering on top, follow-up below —
     /// spec §7's vertical queue). Full-state replacement: idempotent by
     /// construction.

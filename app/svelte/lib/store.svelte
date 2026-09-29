@@ -810,26 +810,6 @@
           s.live = live;
           break;
         }
-        case 'steering_report': {
-          // A child reported: show it now, at its future file position (a
-          // placeholder). The real `entry_live` carries the same id, so the
-          // twin/dedup fold replaces this placeholder with the persisted copy
-          // when the steering entry is dequeued + appended.
-          const id = String(ev.seq).padStart(8, '0');
-          const placeholder: ViewEntry = {
-            id,
-            parent: null,
-            kind: 'user',
-            timestamp: Date.now(),
-            payload: { text: ev.text, lane: 'steering', source: ev.source },
-            blob: null,
-            first_kept: null,
-          };
-          const { entries, live } = mergeHydrated(s.entries, s.live, [placeholder]);
-          s.entries = entries;
-          s.live = live;
-          break;
-        }
         case 'queue': {
           s.pending = ev.items.map((q) => ({
             text: q.text,

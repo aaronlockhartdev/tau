@@ -319,12 +319,6 @@ impl SessionStore {
         self.fixed_time.unwrap_or_else(Self::now_ms)
     }
 
-    /// The id the next appended entry will get (the live report placeholder
-    /// uses it so a steering card lands at its file position before the real
-    /// `EntryLive` arrives).
-    pub fn next_id(&self) -> u64 {
-        self.next
-    }
     fn new_entry(&self, kind: &str, payload: Value, first_kept_entry_id: Option<String>) -> Entry {
         Entry {
             id: format!("{:08}", self.next),

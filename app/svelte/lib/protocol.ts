@@ -433,11 +433,6 @@ export type Event =
   // A non-streamed entry landed in the log (task/subagent/om card, and future
   // kinds): folded into the transcript live, decoded like a paged-read row.
   | { type: 'entry_live'; workspace: string; session: string; entry: ViewEntry }
-  // A child report, surfaced the moment it is queued (before the steering
-  // entry is dequeued + appended): `seq` is the entry id it will get, so the
-  // placeholder card lands at its file position and the real `entry_live`
-  // folds over it (same id) when it arrives.
-  | { type: 'steering_report'; workspace: string; session: string; source: string; text: string; seq: number }
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
   // The session's OM activity (the turn-end Observer/Reflector run): the

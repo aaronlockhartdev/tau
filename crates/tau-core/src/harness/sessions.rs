@@ -418,18 +418,6 @@ impl Core {
                     items: q_agent.queued_items(),
                 });
             })));
-            let n_tx = tx.clone();
-            let n_ws = ws.clone();
-            let n_sid = sid.clone();
-            agent.set_notify_hook(Some(Arc::new(move |text: String, source: String, seq: u64| {
-                let _ = n_tx.try_send(Event::SteeringReport {
-                    workspace: n_ws.clone(),
-                    session: n_sid.clone(),
-                    source,
-                    text,
-                    seq,
-                });
-            })));
             agent.set_entry_event_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
                 let event = match entry.kind.as_str() {
                     crate::agent::KIND_TOOL => {

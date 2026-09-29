@@ -416,6 +416,11 @@ impl AgentSession {
     }
 
     async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
+        // A steering report was already appended at queue time (so the GUI
+        // showed it immediately); don't append it a second time here.
+        if msg.in_file {
+            return Ok(());
+        }
         let skill = msg
             .skill
             .as_ref()
