@@ -38,6 +38,10 @@
   // VirtualizerHandle.
   let ref = $state<VirtualizerHandle | undefined>(undefined);
   let shouldStickToBottom = $state(true);
+  // Last reported scroll offset: detects a user scroll up (offset dropping) so
+  // the pin can release instead of fighting a mid-read against an expanding
+  // card.
+  let lastScrollOffset = 0;
 
   const entries = $derived(cur ? store.sessions[cur].entries : []);
   const live = $derived(cur ? store.sessions[cur].live : []);
@@ -90,15 +94,33 @@
     ref.scrollToIndex(n - 1, { align: 'end', offset: TOP_PAD });
   });
 
+  // The turn's ellipses appeared (a new turn, pre-first-output): jump to the
+  // very bottom so they're visible. They sit below the last card — past the
+  // virtualized items — so a direct DOM scroll, not scrollToIndex.
+  $effect(() => {
+    if (awaiting && el) el.scrollTop = el.scrollHeight;
+  });
+
   // Paged read around the visible window (spec §8): virtua's range drives
   // fetchWindow. Hysteresis: a scroll burst moves the window a little each
   // frame, and re-fetching on every move pipelines IPC (each page also
   // costs an O(n) merge) — only fetch when the range has drifted beyond the
   // last fetch by ~a buffer.
   const lastFetched = new Map<string, { start: number; end: number }>();
+  // Ranges hydrated while a turn was in flight. A mid-turn read can capture a
+  // streamed assistant before it is finalized (empty), and the page is only
+  // re-read on scroll, so it stays stale while the user watches the tail. The
+  // turn-end effect below re-reads the union to heal those entries.
+  const duringTurn = new Map<string, { start: number; end: number }>();
   function onVirtuaScroll(offset: number): void {
     if (!ref) return;
+    // A user scroll up (offset dropping past a small threshold) releases the
+    // pin: a rapidly expanding card otherwise re-arms the stick and yanks the
+    // view back to the tail mid-read.
+    const scrolledUp = offset < lastScrollOffset - 4;
+    lastScrollOffset = offset;
     shouldStickToBottom =
+      !scrolledUp &&
       offset - ref.getScrollSize() + ref.getViewportSize() >= STICK_TOLERANCE;
     const c = cur;
     const n = all.length;
@@ -110,6 +132,10 @@
     lastFetched.set(c, { start, end });
     store.renderRange = `${start}–${end} of ${n}`;
     void fetchWindow(c, start, end - start);
+    if (store.sessions[c]?.turn !== 'idle') {
+      const d = duringTurn.get(c) ?? { start: 0, end: 0 };
+      duringTurn.set(c, { start: Math.min(d.start, start), end: Math.max(d.end, end) });
+    }
   }
 
   // A session opens pinned at its tail, so the first page is the tail.
@@ -122,6 +148,25 @@
     const count = Math.min(OPEN_TAIL, n);
     lastFetched.set(c, { start: n - count, end: n });
     void fetchWindow(c, n - count, count);
+    if (store.sessions[c]?.turn !== 'idle') {
+      const d = duringTurn.get(c) ?? { start: 0, end: 0 };
+      duringTurn.set(c, { start: Math.min(d.start, n - count), end: Math.max(d.end, n) });
+    }
+  });
+
+  // A turn just ended: re-read the ranges hydrated while it ran, directly
+  // (bypassing the scroll hysteresis). Entries finalized since the in-flight
+  // read — a streamed assistant captured empty before its turn ended — are now
+  // final, so the re-read heals the empty-then-filled cards.
+  $effect(() => {
+    const c = cur;
+    if (!c) return;
+    const t = store.sessions[c]?.turn;
+    if (t !== 'idle') return;
+    const r = duringTurn.get(c);
+    if (!r) return;
+    duringTurn.delete(c);
+    void fetchWindow(c, r.start, r.end - r.start);
   });
 
   // A new send re-arms the pin (explicitly: the jump to the fresh user
@@ -226,7 +271,7 @@
     width: 100%;
   }
   .waiting {
-    padding: 28px 16px 14px;
+    padding: 16px 16px 12px;
   }
   .dots {
     display: inline-flex;
