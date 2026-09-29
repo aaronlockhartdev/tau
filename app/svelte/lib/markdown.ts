@@ -1,3 +1,5 @@
+import MarkdownIt from 'markdown-it';
+
 // Markdown + syntax highlighting, ported from the prototype's renderer
 // (prototype/gui-ia/index.html): code segments are PROTECTED from markdown
 // interpretation — fences are split out first and only non-code text gets
@@ -29,45 +31,25 @@ interface Seg {
   txt?: string;
 }
 
-export function md(t: string): string {
-  // Fences are split from the RAW text: text segments are escaped here, code
-  // segments are escaped exactly once by hl() — escaping the fence text up
-  // front and again in hl() double-encodes (& becomes &amp;amp;).
-  const segs: Seg[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  const fenceRe = /```(\w*)\n([\s\S]*?)```/g;
-  while ((m = fenceRe.exec(t))) {
-    if (m.index > 0) segs.push({ txt: esc(t.slice(last, m.index)) });
-    segs.push({ code: m[2], lang: m[1] });
-    last = m.index + m[0].length;
-  }
-  if (last < t.length) segs.push({ txt: esc(t.slice(last)) });
+// A fenced code block: the highlighter's output wrapped in the app's .code
+// pre (markdownit's highlight hook returns the block verbatim).
+function highlight(code: string, lang: string): string {
+  return (
+    '<pre class="code">' +
+    (lang ? '<span class="lang">' + lang + '</span>' : '') +
+    hl(code) +
+    '</pre>'
+  );
+}
 
-  let out = '';
-  for (const sg of segs) {
-    if (sg.code != null) {
-      out +=
-        '<pre class="code">' +
-        (sg.lang ? '<span class="lang">' + sg.lang + '</span>' : '') +
-        hl(sg.code) +
-        '</pre>';
-    } else {
-      let x = sg.txt ?? '';
-      const codes: string[] = [];
-      x = x.replace(/`([^`\n]+)`/g, (mm) => {
-        codes.push(mm.slice(1, -1));
-        return '\u0000' + (codes.length - 1) + '\u0000';
-      });
-      x = x.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/\*([^*\n]+)\*/g, '<i>$1</i>');
-      x = x.replace(/^### (.*)$/gm, '<div class="mh">$1</div>').replace(/^## (.*)$/gm, '<div class="mh2">$1</div>');
-      x = x.replace(/^- (.*)$/gm, '<div class="mi">$1</div>');
-      x = x.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="lk">$1</span>');
-      x = x.replace(/\u0000(\d+)\u0000/g, (_mm, i2) => '<code class="ic">' + codes[+i2] + '</code>');
-      out += x;
-    }
-  }
-  return out;
+// CommonMark + GFM tables; single newlines render as <br> (breaks); a fenced
+// block is the highlighter's .code pre. Raw HTML is off (bodies are model
+// output, not trusted markup).
+const mdit = new MarkdownIt({ html: false, breaks: true, highlight });
+mdit.enable(['table']);
+
+export function md(t: string): string {
+  return mdit.render(t);
 }
 
 // Structured lines for a tool's arguments: each field's name on its own

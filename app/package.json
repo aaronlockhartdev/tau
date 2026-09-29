@@ -14,10 +14,12 @@
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.3",
+    "markdown-it": "^14.0.0",
     "virtua": "^0.52.8"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@types/markdown-it": "^14.0.0",
     "@tauri-apps/cli": "^2.11.5",
     "@typescript/native": "npm:typescript@^7.0.2",
     "@wdio/cli": "9.32.0",

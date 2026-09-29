@@ -764,32 +764,45 @@
     font: 12px var(--mono);
     color: var(--acc);
   }
-  :global(.md b) {
+  :global(.md strong) {
     color: #fff;
   }
-  :global(.md i) {
+  :global(.md em) {
     color: var(--dim);
   }
-  :global(.md .mh) {
+  :global(.md h1),
+  :global(.md h2),
+  :global(.md h3) {
     font-weight: 700;
-    font-size: 14.5px;
     margin: 8px 0 4px;
   }
-  :global(.md .mh2) {
-    font-weight: 700;
+  :global(.md h1) {
+    font-size: 16.5px;
+  }
+  :global(.md h2) {
     font-size: 15.5px;
-    margin: 8px 0 4px;
   }
-  :global(.md .mi) {
-    padding-left: 14px;
-    position: relative;
+  :global(.md h3) {
+    font-size: 14.5px;
   }
-  :global(.md .mi::before) {
-    content: '·';
-    position: absolute;
-    left: 2px;
+  :global(.md ul),
+  :global(.md ol) {
+    margin: 4px 0;
+    padding-left: 18px;
   }
-  :global(.md .lk) {
+  :global(.md li) {
+    margin: 2px 0;
+  }
+  :global(.md a) {
     color: var(--acc);
+  }
+  :global(.md table) {
+    border-collapse: collapse;
+    margin: 6px 0;
+  }
+  :global(.md th),
+  :global(.md td) {
+    border: 1px solid var(--line);
+    padding: 4px 8px;
   }
 </style>

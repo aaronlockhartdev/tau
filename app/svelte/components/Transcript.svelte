@@ -20,6 +20,10 @@
   const STICK_TOLERANCE = -1.5;
   // A session opens pinned at its tail: the first page is the tail.
   const OPEN_TAIL = 20;
+  // Sessions at or under this size hydrate in full on open (no stubs): a
+  // re-open re-pins to the tail, so an older entry in a small session would
+  // otherwise sit unhydrated until scrolled to.
+  const FULL_OPEN_THRESHOLD = 200;
   const FETCH_MARGIN = 5; // ≈ one 600px buffer of 120px cards
   const BUFFER = 600;
 
@@ -92,6 +96,10 @@
     void cardHeights[lastId];
     if (!shouldStickToBottom) return;
     ref.scrollToIndex(n - 1, { align: 'end', offset: TOP_PAD });
+    // virtua's size cache can lag a just-landed card's height, leaving the
+    // end-aligned scroll short of the true bottom: a direct DOM scroll to the
+    // bottom is the robust catch.
+    if (el) el.scrollTop = el.scrollHeight;
   });
 
   // The turn's ellipses appeared (a new turn, pre-first-output): jump to the
@@ -145,7 +153,7 @@
     const c = cur;
     if (!c) return;
     const n = untrack(() => all.length);
-    const count = Math.min(OPEN_TAIL, n);
+    const count = n <= FULL_OPEN_THRESHOLD ? n : Math.min(OPEN_TAIL, n);
     lastFetched.set(c, { start: n - count, end: n });
     void fetchWindow(c, n - count, count);
     if (store.sessions[c]?.turn !== 'idle') {
@@ -271,7 +279,7 @@
     width: 100%;
   }
   .waiting {
-    padding: 16px 16px 12px;
+    padding: 8px 16px 12px;
   }
   .dots {
     display: inline-flex;
