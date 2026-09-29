@@ -205,10 +205,6 @@ impl AgentSession {
             // caused it. The output is only known after dispatch, so the
             // call entry carries an empty output and a result entry with
             // the same call_id carries the real one.
-            self.emit_tool_event(&LiveToolEvent::Start {
-                tool_call_id: call.call_id.clone(),
-                name: call.name.clone(),
-            });
             self.append(
                 KIND_TOOL,
                 tau_protocol::payload::ToolPayload {
@@ -275,11 +271,6 @@ impl AgentSession {
                     tools::dispatch(&self.cwd(), &tc, self.turn_config().image_max_bytes).await
                 }
             };
-            self.emit_tool_event(&LiveToolEvent::End {
-                tool_call_id: call.call_id.clone(),
-                name: call.name.clone(),
-                output: output.clone(),
-            });
             self.append(
                 KIND_TOOL,
                 tau_protocol::payload::ToolPayload {
@@ -451,25 +442,26 @@ impl AgentSession {
     }
 
     pub(super) fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
-        let mut inner = self.inner.lock().unwrap();
-        // A fresh session has no leaf: the first entry starts the branch.
-        // Any other failure is a storage error and propagates.
-        let parent = match inner.store.leaf() {
-            Ok(leaf) => leaf.map(|e| e.id),
-            Err(e) => return Err(AgentError::Session(e)),
+        let (live, hook) = {
+            let mut inner = self.inner.lock().unwrap();
+            // A fresh session has no leaf: the first entry starts the branch.
+            // Any other failure is a storage error and propagates.
+            let parent = match inner.store.leaf() {
+                Ok(leaf) => leaf.map(|e| e.id),
+                Err(e) => return Err(AgentError::Session(e)),
+            };
+            let parent = parent.as_deref();
+            inner.store.append(kind, payload, parent)?;
+            // The entry just written is the new leaf: capture it and the hook
+            // under the lock, then fire the hook outside it (the app's mapper
+            // re-locks this session, and the guard is not reentrant).
+            let live = inner.store.leaf().ok().flatten();
+            (live, inner.entry_event_hook.clone())
         };
-        let parent = parent.as_deref();
-        inner.store.append(kind, payload, parent)?;
-        Ok(())
-    }
-
-    /// Emit a live tool event to the app's sink (if wired) so the GUI's card
-    /// renders as the tool runs. A `None` sink (tests, children) is a no-op.
-    fn emit_tool_event(&self, ev: &LiveToolEvent) {
-        let hook = self.inner.lock().unwrap().tool_event_hook.clone();
-        if let Some(hook) = hook {
-            hook(ev);
+        if let (Some(live), Some(hook)) = (live, hook) {
+            hook(&live);
         }
+        Ok(())
     }
 
     fn cwd(&self) -> PathBuf {

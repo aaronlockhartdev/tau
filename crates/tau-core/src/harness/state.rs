@@ -317,6 +317,9 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         Event::TaskChanged {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
+        Event::EntryLive {
+            workspace, session, ..
+        } => (workspace.clone(), Some(session.clone())),
     }
 }
 

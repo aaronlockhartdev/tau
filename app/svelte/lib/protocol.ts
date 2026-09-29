@@ -430,6 +430,9 @@ export type Event =
   | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null }
   | { type: 'tool_start'; workspace: string; session: string; call_id: string; tool_call_id: string; name: string }
   | { type: 'tool_end'; workspace: string; session: string; call_id: string; tool_call_id: string; name: string; output: unknown }
+  // A non-streamed entry landed in the log (task/subagent/om card, and future
+  // kinds): folded into the transcript live, decoded like a paged-read row.
+  | { type: 'entry_live'; workspace: string; session: string; entry: ViewEntry }
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
   // The session's OM activity (the turn-end Observer/Reflector run): the

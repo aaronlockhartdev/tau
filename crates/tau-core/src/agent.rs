@@ -113,19 +113,12 @@ fn lane_name(lane: Lane) -> &'static str {
 /// ("observing" / "reflecting" / "idle") — the app shapes it into the
 /// protocol event.
 type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
-/// A tool starting/finishing in the loop. The app maps it to the protocol's
-/// ToolStart/ToolEnd so the GUI's card renders as the tool runs, not only at
-/// the turn-end pump; core is transport-free, so the hook takes the tool
-/// facts, not the event.
-pub(crate) enum LiveToolEvent {
-    Start { tool_call_id: String, name: String },
-    End {
-        tool_call_id: String,
-        name: String,
-        output: tau_protocol::payload::ToolOutput,
-    },
-}
-type ToolEventHook = Arc<dyn Fn(&LiveToolEvent) + Send + Sync>;
+/// An entry just landed in the session log. The app maps it to the protocol —
+/// tool entries to ToolStart/ToolEnd, everything else (task/subagent/om and
+/// future kinds) to EntryLive — so the GUI renders the card as the entry
+/// lands, not only at a refresh. Core is transport-free, so the hook takes the
+/// entry, not the event.
+pub(crate) type EntryEventHook = Arc<dyn Fn(&crate::session::Entry) + Send + Sync>;
 
 struct Inner {
     store: SessionStore,
@@ -142,10 +135,10 @@ struct Inner {
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
     om_status_hook: Option<OmStatusHook>,
-    /// The live tool-event sink (the app maps it to protocol ToolStart/ToolEnd
-    /// so the GUI's card renders as the tool runs): `None` = no live surface
-    /// (tests, children).
-    tool_event_hook: Option<ToolEventHook>,
+    /// The live entry-event sink (the app maps each entry to the protocol —
+    /// tool to ToolStart/ToolEnd, the rest to EntryLive): `None` = no live
+    /// surface (tests, children).
+    entry_event_hook: Option<EntryEventHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -213,7 +206,7 @@ impl AgentSession {
                 om: p.om,
                 om_model: p.om_model,
                 om_status_hook: None,
-                tool_event_hook: None,
+                entry_event_hook: None,
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
@@ -472,10 +465,10 @@ impl AgentSession {
         self.inner.lock().unwrap().om_status_hook = hook;
     }
 
-    /// The live tool-event sink (the app's ToolStart/ToolEnd emitter);
+    /// The live entry-event sink (the app's entry→protocol mapper);
     /// `None` clears it.
-    pub(crate) fn set_tool_event_hook(&self, hook: Option<ToolEventHook>) {
-        self.inner.lock().unwrap().tool_event_hook = hook;
+    pub(crate) fn set_entry_event_hook(&self, hook: Option<EntryEventHook>) {
+        self.inner.lock().unwrap().entry_event_hook = hook;
     }
 
     /// The session's model for the next turn's calls (the `session_set_model`

@@ -799,6 +799,16 @@
           s.entries = applyToolEvent(ev, s.entries, s.live).entries;
           break;
         }
+        case 'entry_live': {
+          // A non-streamed entry landed (task/subagent/om card, and future
+          // kinds): fold it into the transcript live, the same way a paged
+          // read's row is decoded + merged (the twin/dedup logic absorbs a
+          // page read that already carries it).
+          const { entries, live } = mergeHydrated(s.entries, s.live, [ev.entry]);
+          s.entries = entries;
+          s.live = live;
+          break;
+        }
         case 'queue': {
           s.pending = ev.items.map((q) => ({
             text: q.text,

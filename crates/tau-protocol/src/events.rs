@@ -1,5 +1,6 @@
 use super::*;
 use crate::payload::{ResumeContract, Task};
+use crate::snapshot::ViewEntry;
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -47,6 +48,15 @@ pub enum Event {
         tool_call_id: String,
         name: String,
         output: Value,
+    },
+    /// A non-streamed entry landed in the session log. The GUI folds it into
+    /// the transcript live — task/subagent/om cards and any future card kind —
+    /// instead of waiting for the next paged read. Carries the full persisted
+    /// view; the GUI decodes it exactly as it decodes a paged-read row.
+    EntryLive {
+        workspace: String,
+        session: String,
+        entry: ViewEntry,
     },
     /// The full pending-lane state (steering on top, follow-up below —
     /// spec §7's vertical queue). Full-state replacement: idempotent by
