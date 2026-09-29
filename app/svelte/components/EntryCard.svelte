@@ -530,6 +530,12 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* Rendered markdown is HTML: source newlines between tags are not
+     meaningful, so collapse them (pre-wrap would turn each into a line
+     break -- the trailing blank line and the extra space around <br>). */
+  .txt2.md {
+    white-space: normal;
+  }
   .txt2.dim {
     color: var(--dim);
     font-size: 12.5px;

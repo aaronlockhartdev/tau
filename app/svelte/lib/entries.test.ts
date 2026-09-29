@@ -73,6 +73,18 @@ describe('collapseToolCalls (two-phase tool record)', () => {
     expect(out[0]).toMatchObject({ id: '2', output: 'out1' });
     expect(out[1]).toMatchObject({ id: '4', output: 'out2' });
   });
+  it('collapses a batch (every call recorded before any result) by call_id', () => {
+    const entries: Entry[] = [
+      decodeEntry(toolView('2', 'c1', '')),
+      decodeEntry(toolView('3', 'c2', '')),
+      decodeEntry(toolView('4', 'c1', 'out1')),
+      decodeEntry(toolView('5', 'c2', 'out2'))
+    ];
+    const out = collapseToolCalls(entries);
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ id: '2', output: 'out1' });
+    expect(out[1]).toMatchObject({ id: '3', output: 'out2' });
+  });
 
   it('drops a re-read of a result whose call slot already shows the output', () => {
     const entries: Entry[] = [

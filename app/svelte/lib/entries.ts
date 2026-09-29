@@ -386,54 +386,45 @@ export function collapseToolCalls(entries: Entry[]): Entry[] {
     if ((entries[i] as AnyEntry).kind === 'tool') toolIdx.push(i);
   }
   if (toolIdx.length < 2) return entries;
-  const pos = new Map<number, number>();
-  toolIdx.forEach((t, k) => pos.set(t, k));
   const cid = (i: number) => (entries[i] as AnyEntry).call_id ?? undefined;
   const hasOut = (i: number) => {
     const o = (entries[i] as AnyEntry).output;
     return o !== undefined && o !== '';
   };
-  const pair = (a: number, b: number) => {
-    const ca = cid(a);
-    const cb = cid(b);
-    return ca && cb ? ca === cb : !ca && !cb;
-  };
-  const open: number[] = []; // output-less tool entries (call phase), in order
+  // A tool call is recorded in two phases: the call (before dispatch, empty
+  // output) and the result (after dispatch, with output). In a batch every
+  // call is appended before any result, so a result pairs with its call by
+  // call_id -- adjacency in the tool subsequence only holds for one call.
+  const callPhase = new Map<string, number>();
+  for (const i of toolIdx) {
+    const id = cid(i);
+    if (id !== undefined && !hasOut(i) && !callPhase.has(id)) callPhase.set(id, i);
+  }
+  const seenResult = new Set<string>();
   const drop = new Set<number>();
   let outList = entries;
-  const adopt = (call: number, result: number) => {
-    outList = outList.slice();
-    const c = outList[call] as AnyEntry;
-    const r = outList[result] as AnyEntry;
-    outList[call] = { ...c, output: r.output, status: r.status };
-  };
   for (const i of toolIdx) {
-    if (drop.has(i)) continue;
-    if (hasOut(i)) {
-      // A result phase: adopt the nearest pending call phase that is its
-      // adjacent predecessor in the tool subsequence (the file interleaves
-      // each call's two phases before the next call's).
-      if (open.length > 0) {
-        const j = open[open.length - 1];
-        if (!drop.has(j) && pos.get(j)! + 1 === pos.get(i) && pair(j, i)) {
-          adopt(j, i);
-          drop.add(i);
-          open.pop();
-          continue;
-        }
-      }
-      // A re-read of a result whose slot already shows the output: an
-      // earlier same-call entry is the twin — drop the duplicate.
-      for (let k = pos.get(i)! - 1; k >= 0; k--) {
-        const t = toolIdx[k];
-        if (!drop.has(t) && hasOut(t) && pair(t, i)) {
-          drop.add(i);
-          break;
-        }
-      }
-    } else {
-      open.push(i);
+    if (drop.has(i) || !hasOut(i)) continue;
+    const id = cid(i);
+    if (id === undefined) continue;
+    const j = callPhase.get(id);
+    if (j !== undefined) {
+      // Pair found: the call slot adopts the result's output + status; the
+      // result slot is dropped. Consuming the id means a later same-call
+      // result is a re-read, not a fresh pair.
+      outList = outList.slice();
+      const c = outList[j] as AnyEntry;
+      const r = outList[i] as AnyEntry;
+      outList[j] = { ...c, output: r.output, status: r.status };
+      drop.add(i);
+      callPhase.delete(id);
+      seenResult.add(id);
+      continue;
     }
+    // No call slot for this call_id: a re-read of an earlier result (drop
+    // it) or a standalone result with no call phase (keep it).
+    if (seenResult.has(id)) drop.add(i);
+    else seenResult.add(id);
   }
   if (drop.size === 0) return outList;
   return outList.filter((_, i) => !drop.has(i));
