@@ -113,6 +113,19 @@ fn lane_name(lane: Lane) -> &'static str {
 /// ("observing" / "reflecting" / "idle") — the app shapes it into the
 /// protocol event.
 type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
+/// A tool starting/finishing in the loop. The app maps it to the protocol's
+/// ToolStart/ToolEnd so the GUI's card renders as the tool runs, not only at
+/// the turn-end pump; core is transport-free, so the hook takes the tool
+/// facts, not the event.
+pub(crate) enum LiveToolEvent {
+    Start { tool_call_id: String, name: String },
+    End {
+        tool_call_id: String,
+        name: String,
+        output: tau_protocol::payload::ToolOutput,
+    },
+}
+type ToolEventHook = Arc<dyn Fn(&LiveToolEvent) + Send + Sync>;
 
 struct Inner {
     store: SessionStore,
@@ -129,6 +142,10 @@ struct Inner {
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
     om_status_hook: Option<OmStatusHook>,
+    /// The live tool-event sink (the app maps it to protocol ToolStart/ToolEnd
+    /// so the GUI's card renders as the tool runs): `None` = no live surface
+    /// (tests, children).
+    tool_event_hook: Option<ToolEventHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -196,6 +213,7 @@ impl AgentSession {
                 om: p.om,
                 om_model: p.om_model,
                 om_status_hook: None,
+                tool_event_hook: None,
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
@@ -452,6 +470,12 @@ impl AgentSession {
     /// The OM-run observer (the app's om_status emitter); `None` clears it.
     pub fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
         self.inner.lock().unwrap().om_status_hook = hook;
+    }
+
+    /// The live tool-event sink (the app's ToolStart/ToolEnd emitter);
+    /// `None` clears it.
+    pub(crate) fn set_tool_event_hook(&self, hook: Option<ToolEventHook>) {
+        self.inner.lock().unwrap().tool_event_hook = hook;
     }
 
     /// The session's model for the next turn's calls (the `session_set_model`

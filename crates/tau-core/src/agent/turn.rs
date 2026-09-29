@@ -205,6 +205,10 @@ impl AgentSession {
             // caused it. The output is only known after dispatch, so the
             // call entry carries an empty output and a result entry with
             // the same call_id carries the real one.
+            self.emit_tool_event(&LiveToolEvent::Start {
+                tool_call_id: call.call_id.clone(),
+                name: call.name.clone(),
+            });
             self.append(
                 KIND_TOOL,
                 tau_protocol::payload::ToolPayload {
@@ -271,6 +275,11 @@ impl AgentSession {
                     tools::dispatch(&self.cwd(), &tc, self.turn_config().image_max_bytes).await
                 }
             };
+            self.emit_tool_event(&LiveToolEvent::End {
+                tool_call_id: call.call_id.clone(),
+                name: call.name.clone(),
+                output: output.clone(),
+            });
             self.append(
                 KIND_TOOL,
                 tau_protocol::payload::ToolPayload {
@@ -452,6 +461,15 @@ impl AgentSession {
         let parent = parent.as_deref();
         inner.store.append(kind, payload, parent)?;
         Ok(())
+    }
+
+    /// Emit a live tool event to the app's sink (if wired) so the GUI's card
+    /// renders as the tool runs. A `None` sink (tests, children) is a no-op.
+    fn emit_tool_event(&self, ev: &LiveToolEvent) {
+        let hook = self.inner.lock().unwrap().tool_event_hook.clone();
+        if let Some(hook) = hook {
+            hook(ev);
+        }
     }
 
     fn cwd(&self) -> PathBuf {

@@ -398,6 +398,35 @@ impl Core {
                 });
             })));
         }
+        // The core's tool hook carries the tool facts; this closure shapes them
+        // into protocol ToolStart/ToolEnd on the shared channel, so the GUI's
+        // card renders as the tool runs (not only at the turn-end pump).
+        {
+            let tx = self.events_tx.clone();
+            let ws = workspace.id.clone();
+            let sid = provider.session.clone();
+            agent.set_tool_event_hook(Some(Arc::new(move |ev: &crate::agent::LiveToolEvent| {
+                let event = match ev {
+                    crate::agent::LiveToolEvent::Start { tool_call_id, name } => Event::ToolStart {
+                        workspace: ws.clone(),
+                        session: sid.clone(),
+                        call_id: tool_call_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                        name: name.clone(),
+                    },
+                    crate::agent::LiveToolEvent::End { tool_call_id, name, output } => Event::ToolEnd {
+                        workspace: ws.clone(),
+                        session: sid.clone(),
+                        call_id: tool_call_id.clone(),
+                        tool_call_id: tool_call_id.clone(),
+                        name: name.clone(),
+                        output: serde_json::to_value(output)
+                            .unwrap_or(serde_json::Value::Null),
+                    },
+                };
+                let _ = tx.try_send(event);
+            })));
+        }
         let meta = SessionMeta {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),

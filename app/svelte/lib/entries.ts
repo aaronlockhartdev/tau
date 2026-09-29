@@ -274,7 +274,9 @@ export function applyToolEvent(
     const xi = ne.findIndex((e) => e.id === ev.tool_call_id);
     if (xi >= 0 && ne[xi].kind === 'tool') {
       const e: AnyEntry = ne[xi];
-      ne[xi] = { ...e, status: 'running' };
+      // The turn-end pump re-emits ToolStart for every tool: a card that
+      // already has a live output stays put, no running→ok flicker.
+      if (!e.output) ne[xi] = { ...e, status: 'running' };
     } else {
       // The end-of-turn pump can deliver this after a later turn's entries
       // have already landed: place the card right after the assistant call
