@@ -491,8 +491,17 @@ export function mergeHydrated(
       continue;
     }
     if (ne.some((e) => isTwin(e, v, next))) continue;
-    ne = [...ne, next];
-    index.set(next.id, ne.length - 1);
+    // Insert at the file position (id is a zero-padded counter, so it sorts
+    // in file order), not the end: a live entry (a subagent/task/om card)
+    // lands mid-file, and appending it would show it after later entries
+    // until a reload reorders the list.
+    const at = ne.findIndex((e) => e.id > next.id);
+    ne =
+      at === -1
+        ? [...ne, next]
+        : [...ne.slice(0, at), next, ...ne.slice(at)];
+    index.clear();
+    for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
   }
   return { entries: collapseToolCalls(ne), live: nl };
 }

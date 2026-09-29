@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applyToolEvent, collapseToolCalls, decodeEntry, resolveBlobs } from './entries';
+import {
+  applyToolEvent,
+  collapseToolCalls,
+  decodeEntry,
+  mergeHydrated,
+  resolveBlobs
+} from './entries';
 import type { Entry, ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
@@ -185,5 +191,35 @@ describe('resolveBlobs (om)', () => {
     const views = await resolveBlobs([v], () => Promise.reject(new Error('no such file')));
     expect(views[0].payload).toBeNull();
     expect(views[0].blob).toBe(v.blob);
+  });
+});
+
+describe('mergeHydrated (live entry positioning)', () => {
+  it('inserts a mid-file live entry at its file position, not the end', () => {
+    const v = (id: string, kind: string): ViewEntry => ({
+      id,
+      parent: null,
+      kind,
+      timestamp: 1,
+      payload: {},
+      blob: null,
+      first_kept: null
+    });
+    // Existing entries in file order, with a gap at position 3.
+    const entries: Entry[] = [
+      decodeEntry(v('00000001', 'message')),
+      decodeEntry(v('00000002', 'message')),
+      decodeEntry(v('00000004', 'message')),
+      decodeEntry(v('00000005', 'message'))
+    ];
+    // A live subagent card lands at file position 3 (between 2 and 4).
+    const { entries: out } = mergeHydrated(entries, [], [v('00000003', 'subagent')]);
+    expect(out.map((e) => e.id)).toEqual([
+      '00000001',
+      '00000002',
+      '00000003',
+      '00000004',
+      '00000005'
+    ]);
   });
 });
