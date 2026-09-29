@@ -7,7 +7,7 @@
   import { store } from '../lib/store.svelte';
   import { md as renderMarkdown, argsLines, valueLinesOf } from '../lib/markdown';
   import { splitJsonPayload } from '../lib/entries';
-  import type { Entry } from '../lib/protocol';
+  import type { CardEntry } from '../lib/protocol';
 
   let {
     entry,
@@ -16,7 +16,7 @@
     parentLabel = '',
     turn = ''
   }: {
-    entry: Entry;
+    entry: CardEntry;
     heightKey: string;
     sourceLabel?: string;
     parentLabel?: string;

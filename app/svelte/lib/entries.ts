@@ -244,7 +244,7 @@ export function applyStreamEvent(
         // The paged read can hydrate this entry's file copy during the turn;
         // that copy is canonical, so only push the streamed one when no file
         // twin exists.
-        const dup = ne.some((e) => /^\d+$/.test(e.id) && e.kind === fin.kind && e.text === fin.text);
+        const dup = ne.some((e) => /^\d+$/.test(e.id) && e.kind === fin.kind && (e as AnyEntry).text === fin.text);
         if (!dup) ne = [...ne, fin];
       }
       return { entries: ne, live: nl, fin };
@@ -430,6 +430,35 @@ export function collapseToolCalls(entries: Entry[]): Entry[] {
   return outList.filter((_, i) => !drop.has(i));
 }
 
+// Group maximal runs of 2+ consecutive tool cards into a single tool_group
+// entry (a shared header over the individual cards): parallel calls in one
+// LLM response land back-to-back in the file, so a run is a batch.
+export function groupToolCalls(entries: Entry[]): Entry[] {
+  const out: Entry[] = [];
+  let run: Entry[] = [];
+  const flush = () => {
+    if (run.length >= 2) {
+      out.push({
+        id: `group_${run[0].id}`,
+        kind: 'tool_group',
+        children: run
+      });
+    } else if (run.length === 1) {
+      out.push(run[0]);
+    }
+    run = [];
+  };
+  for (const e of entries) {
+    if (e.kind === 'tool') run.push(e);
+    else {
+      flush();
+      out.push(e);
+    }
+  }
+  flush();
+  return out;
+}
+
 export function mergeHydrated(
   entries: Entry[],
   live: MessageEntry[],
@@ -500,5 +529,5 @@ export function mergeHydrated(
     index.clear();
     for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
   }
-  return { entries: collapseToolCalls(ne), live: nl };
+  return { entries: groupToolCalls(collapseToolCalls(ne)), live: nl };
 }

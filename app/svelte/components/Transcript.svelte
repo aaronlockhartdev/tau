@@ -7,6 +7,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
+  import ToolGroup from './ToolGroup.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
   import type { Entry } from '../lib/protocol';
 
@@ -189,6 +190,13 @@
             <div class="waiting">
               <span class="dots"><i></i><i></i><i></i></span>
             </div>
+          {:else if e.kind === 'tool_group'}
+            {@const hk = cur ? `${cur}:${e.id}` : e.id}
+            <ToolGroup
+              entry={e as Extract<Entry, { kind: 'tool_group' }>}
+              heightKey={hk}
+              turn={turnLabel(idx)}
+            />
           {:else}
             {@const hk = cur ? `${cur}:${e.id}` : e.id}
             <EntryCard
