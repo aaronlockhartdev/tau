@@ -6,7 +6,7 @@ import {
   mergeHydrated,
   resolveBlobs
 } from './entries';
-import type { Entry, ViewEntry } from './protocol';
+import type { Entry, MessageEntry, ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
 // stripped) plus the run's display details for the observation card.
@@ -256,6 +256,50 @@ describe('mergeHydrated (live entry positioning)', () => {
       tool('00000002', 'call_abc', 'done')
     ]);
     expect(out.map((e) => e.id)).toEqual(['00000001', '00000002', '00000003']);
+  });
+
+  it('inserts a steering report (user + source) even when a live slot has the same text', () => {
+    const userView = (id: string, text: string, source?: string): ViewEntry => ({
+      id,
+      parent: null,
+      kind: 'user',
+      timestamp: 1,
+      payload: source ? { text, source } : { text },
+      blob: null,
+      first_kept: null
+    });
+    // A streaming live slot carries the same text as the incoming report. The
+    // report is a 'user' card with a child source, so it is a distinct card:
+    // it must be inserted, not folded into the same-text live slot (which is
+    // what dropped steering reports until a reload re-decoded them).
+    const live: MessageEntry[] = [{ id: 'stream-1', kind: 'message', text: 'ship it' }];
+    const { entries: out, live: outLive } = mergeHydrated([], live, [
+      userView('00000001', 'ship it', 'child-session-id')
+    ]);
+    expect(out.map((e) => e.id)).toEqual(['00000001']);
+    // The live slot is preserved — the report did not adopt it.
+    expect(outLive.map((e) => e.id)).toEqual(['stream-1']);
+  });
+
+  it('still folds a plain user message (no source) into a same-text live slot', () => {
+    const userView = (id: string, text: string): ViewEntry => ({
+      id,
+      parent: null,
+      kind: 'user',
+      timestamp: 1,
+      payload: { text },
+      blob: null,
+      first_kept: null
+    });
+    // A plain user message (no source) repeating a live slot's text is the
+    // optimistic-push twin: it adopts the live slot, not a new card. The
+    // source guard must not disturb this dedup path.
+    const live: MessageEntry[] = [{ id: 'stream-1', kind: 'message', text: 'ship it' }];
+    const { entries: out, live: outLive } = mergeHydrated([], live, [
+      userView('00000001', 'ship it')
+    ]);
+    expect(out).toEqual([]);
+    expect(outLive.map((e) => e.id)).toEqual(['stream-1']);
   });
 });
 

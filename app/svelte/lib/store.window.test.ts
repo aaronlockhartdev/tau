@@ -109,7 +109,7 @@ describe('fetchWindow', () => {
     }
   });
 
-  it('a first-arriving file copy of an already-settled streamed twin is dropped (the streamed slot is canonical)', async () => {
+  it('a first-arriving file copy of an already-settled streamed twin replaces it (the file copy is canonical)', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     store.sessions['s1'].entries.push({ id: 'c1', kind: 'message', text: 'hello', reasoning: '' });
     mockIPC((cmd) => {
@@ -121,10 +121,10 @@ describe('fetchWindow', () => {
     await fetchWindow('s1', 0, 50);
     const s = store.sessions['s1'];
     expect(s.entries).toHaveLength(1);
-    expect(s.entries[0].id).toBe('c1');
+    expect(s.entries[0].id).toBe('42');
     const e = s.entries[0];
     if (e.kind === 'message' || e.kind === 'interrupted') {
-      expect(e.reasoning).toBe('');
+      expect(e.reasoning).toBe('r');
     }
   });
 

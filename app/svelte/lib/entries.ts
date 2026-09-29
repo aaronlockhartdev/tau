@@ -328,6 +328,12 @@ function isTwin(e: Entry, v: ViewEntry, next: Entry): boolean {
   if (n.kind === 'tool') {
     return e.id === String((v.payload as Record<string, unknown>).call_id ?? '');
   }
+  // A steering report is a 'user' card carrying a child source id — a distinct
+  // card, not a twin of a streamed/optimistic message. Text-matching it (the
+  // fallthrough below) folds it into an existing slot and drops it when the
+  // live buffer clears; a plain user message has no source, so it still dedups
+  // against its optimistic push as before.
+  if (n.kind === 'user' && n.source) return false;
   // An empty-text assistant (reasoning-only) has no text to match on: its
   // reasoning is the identity — the streamed copy and the file copy carry
   // byte-identical reasoning.
@@ -487,12 +493,23 @@ export function mergeHydrated(
       }
       continue;
     }
-    if (ne.some((e) => isTwin(e, v, next))) continue;
-    // Insert at the file position (id is a zero-padded counter, so it sorts
-    // in file order), not the end: a live entry (a subagent/task/om card)
-    // lands mid-file, and appending it would show it after later entries
-    // until a reload reorders the list.
-    const at = ne.findIndex((e) => e.id > next.id);
+    // A streamed/optimistic twin of this file copy is already in the list (it
+    // landed live before the file copy did). The file copy wins: drop the twin
+    // and insert the file copy at its file position. (The old behaviour skipped
+    // the file copy here, leaving the streamed twin in place — the card stayed
+    // at its live tail position and duplicated against the file copy.)
+    const ti = ne.findIndex((e) => isTwin(e, v, next));
+    if (ti >= 0) {
+      ne = ne.slice();
+      ne.splice(ti, 1);
+      index.clear();
+      for (let k = 0; k < ne.length; k++) index.set(ne[k].id, k);
+    }
+    // Insert at the file position. Compare only against numeric (file) ids: a
+    // zero-padded counter sorts in file order, but the non-numeric ids of
+    // in-flight streamed/optimistic entries sort after every file copy and
+    // would yank a new card to the top of the list.
+    const at = ne.findIndex((e) => /^\d+$/.test(e.id) && e.id > next.id);
     ne =
       at === -1
         ? [...ne, next]
