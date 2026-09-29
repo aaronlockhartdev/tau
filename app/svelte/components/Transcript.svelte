@@ -32,8 +32,10 @@
   let el = $state<HTMLDivElement | null>(null);
   // The --tsgo checker cannot infer the exported handle of virtua's generic
   // .svelte component from node_modules (it sees a plain SvelteComponent),
-  // so the binding is cast at the site; every use of `ref` below stays fully
-  // typed through VirtualizerHandle.
+  // so the binding is cast at the site. `any` is the only form that passes:
+  // the check runs both ways, and `unknown` and the handle type each fail
+  // one direction. Every use of `ref` below stays fully typed through
+  // VirtualizerHandle.
   let ref = $state<VirtualizerHandle | undefined>(undefined);
   let shouldStickToBottom = $state(true);
 
@@ -68,8 +70,8 @@
 
   // The cards' self-reported heights keyed by entry id. The pin effect reads
   // the last entry's row, so a streaming card's growth re-pins even when no
-  // new item lands. Off-screen cards are unmounted, so the map tracks the
-  // rendered window, not the whole session.
+  // new item lands. Off-screen cards unmount but their entries stay: the
+  // map is bounded by the session's entries and dies with the mount.
   const cardHeights = $state<Record<string, number>>({});
 
   // Pin (the Chat pattern + the streaming extension): re-runs when the
