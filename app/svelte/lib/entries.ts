@@ -290,7 +290,7 @@ export function applyToolEvent(
           (x) => (x.kind === 'message' || x.kind === 'interrupted') && x.calls?.includes(ev.tool_call_id)
         );
       }
-      const card: Entry = { id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running' };
+      const card: Entry = { id: ev.tool_call_id, kind: 'tool', name: ev.name, status: 'running', call_id: ev.tool_call_id };
       if (ai >= 0) ne.splice(ai + 1, 0, card);
       else ne.push(card);
     }

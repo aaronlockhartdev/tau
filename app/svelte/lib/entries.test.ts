@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { collapseToolCalls, decodeEntry, resolveBlobs } from './entries';
+import { applyToolEvent, collapseToolCalls, decodeEntry, resolveBlobs } from './entries';
 import type { Entry, ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
@@ -81,6 +81,27 @@ describe('collapseToolCalls (two-phase tool record)', () => {
       decodeEntry(toolView('3', 'c1', 'out1'))
     ];
     expect(collapseToolCalls(entries)).toHaveLength(2);
+  });
+  it('pairs the live-streamed card with the file call-phase entry (call_id stamped on stream)', () => {
+    // Mid-turn the tail fetch pulled the call-phase entry (empty output, recorded
+    // before dispatch); at turn end the post-turn pump streams the same call to
+    // completion. Without call_id on the streamed card, pair() cannot match the
+    // two and a duplicate empty card survives.
+    const fileCall = decodeEntry(toolView('2', 'c1', ''));
+    let { entries } = applyToolEvent(
+      { type: 'tool_start', workspace: 'w', session: 's', call_id: 'c1', tool_call_id: 'c1', name: 'task_create' },
+      [fileCall],
+      []
+    );
+    ({ entries } = applyToolEvent(
+      { type: 'tool_end', workspace: 'w', session: 's', call_id: 'c1', tool_call_id: 'c1', name: 'task_create', output: 'created 1' },
+      entries,
+      []
+    ));
+    expect(entries.find((e) => e.id === 'c1')).toMatchObject({ kind: 'tool', call_id: 'c1', output: 'created 1' });
+    const c1 = collapseToolCalls(entries).filter((e) => e.kind === 'tool' && e.call_id === 'c1');
+    expect(c1).toHaveLength(1);
+    expect(c1[0]).toMatchObject({ output: 'created 1' });
   });
 });
 

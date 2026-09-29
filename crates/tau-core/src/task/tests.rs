@@ -187,7 +187,7 @@ fn failing_evidence_marks_the_criterion_failed() {
 fn assignment_keeps_the_record_in_the_creators_session() {
     let dir = tempfile::tempdir().unwrap();
     let mut creator = session_in(dir.path(), "parent");
-    let mut worker = session_in(dir.path(), "child");
+    let worker = session_in(dir.path(), "child");
     create(
         &mut creator,
         "task-1",
@@ -288,7 +288,7 @@ fn handoff_keeps_the_task_in_progress() {
 fn active_tasks_excludes_assigned_tasks() {
     let dir = tempfile::tempdir().unwrap();
     let mut a = session_in(dir.path(), "a");
-    let mut b = session_in(dir.path(), "b");
+    let b = session_in(dir.path(), "b");
     create(&mut a, "task-1", "t", vec![], vec![criterion("c")]).unwrap();
     start(&mut a, "task-1").unwrap();
     assert_eq!(active_tasks(&load(&a).unwrap()).len(), 1);
