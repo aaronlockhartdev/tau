@@ -14,12 +14,8 @@
   const STICK_TOLERANCE = -1.5;
   // A session opens pinned at its tail: the first page is the tail.
   const OPEN_TAIL = 20;
-  const FETCH_MARGIN = 5; // fetch hysteresis, in cards
-  // Render buffer: a wider band keeps neighbors measured, so a height change
-  // (a tool card expanding) re-slices a window whose item sizes are known
-  // rather than estimated -- the estimated-size re-slice is what briefly lands
-  // one card in two slots (the duplicate-pending-card flicker).
-  const BUFFER = 900;
+  const FETCH_MARGIN = 5; // ≈ one 600px buffer of 120px cards
+  const BUFFER = 600;
 
   const cur = $derived(store.current);
   // This mount's session. A plain const, not the derived: at destroy the
