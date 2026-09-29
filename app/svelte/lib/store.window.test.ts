@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
 
-import type { AnyEntry, Command, CommandOutput, Entry, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from './protocol';
+import type { Command, CommandOutput, Entry, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from './protocol';
 import { applySessionList, openSession } from './sessions';
 import { applyToolEvent, decodeEntry } from './entries';
 import { fetchWindow, openWorkspace, store } from './store.svelte';
@@ -172,8 +172,8 @@ describe('fetchWindow', () => {
     await fetchWindow('s1', 0, 50);
     const e = store.sessions['s1'].entries[0];
     expect(e?.kind).toBe('om');
-    expect((e as AnyEntry)?.text).toBe('* 🔴 (16:21) user set up a workbench');
-    expect((e as AnyEntry)?.text).not.toContain('[object Object]');
+    expect(e?.text).toBe('* 🔴 (16:21) user set up a workbench');
+    expect(e?.text).not.toContain('[object Object]');
   });
 });
 

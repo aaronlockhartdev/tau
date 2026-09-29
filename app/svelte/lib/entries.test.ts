@@ -3,7 +3,6 @@ import {
   applyToolEvent,
   collapseToolCalls,
   decodeEntry,
-  groupToolCalls,
   mergeHydrated,
   resolveBlobs
 } from './entries';
@@ -260,23 +259,3 @@ describe('mergeHydrated (live entry positioning)', () => {
   });
 });
 
-describe('groupToolCalls (parallel batch grouping)', () => {
-  const v = (id: string, kind: string, payload: Record<string, unknown>): ViewEntry => ({
-    id,
-    parent: null,
-    kind,
-    timestamp: 1,
-    payload,
-    blob: null,
-    first_kept: null
-  });
-  it('groups consecutive tool cards into a tool_group; singles stay', () => {
-    const tool = (id: string) => decodeEntry(v(id, 'tool', { call_id: id, name: 'bash', output: 'ok' }));
-    const msg = (id: string) => decodeEntry(v(id, 'message', { text: id }));
-    // [msg, tool, tool, msg, tool] → [msg, group(2), msg, tool]
-    const out = groupToolCalls([msg('1'), tool('2'), tool('3'), msg('4'), tool('5')]);
-    expect(out.map((e) => e.kind)).toEqual(['message', 'tool_group', 'message', 'tool']);
-    const grp = out[1] as Extract<Entry, { kind: 'tool_group' }>;
-    expect(grp.children.map((c) => c.id)).toEqual(['2', '3']);
-  });
-});

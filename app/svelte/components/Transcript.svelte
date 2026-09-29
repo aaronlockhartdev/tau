@@ -7,7 +7,6 @@
   import { onDestroy, untrack } from 'svelte';
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
-  import ToolGroup from './ToolGroup.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
   import type { Entry } from '../lib/protocol';
 
@@ -66,6 +65,22 @@
   ]);
   type Row = (typeof all)[number];
 
+  // For each tool card in a run of 2+ consecutive tools, its index in the
+  // run and the run's size. Rendered on the cards themselves (an indicator on
+  // the first, a connector line on all) — NOT a separate item: collapsing a
+  // run into one item changes the item count and stales virtua's size cache,
+  // which is what produced the overlapping cards + blank gaps.
+  const batchOf = $derived.by(() => {
+    const m = new Map<string, { index: number; size: number }>();
+    let run: string[] = [];
+    const flush = () => {
+      if (run.length >= 2) run.forEach((id, i) => m.set(id, { index: i, size: run.length }));
+      run = [];
+    };
+    for (const e of all) if (e.kind === 'tool') run.push(e.id); else flush();
+    flush();
+    return m;
+  });
   // Pin (the Chat pattern): when the rendered set changes and the stick flag
   // is set, end-align the last item. A scrollTo to the current position is a
   // browser no-op, so an already-at-bottom pin is a fixed point.
@@ -190,13 +205,6 @@
             <div class="waiting">
               <span class="dots"><i></i><i></i><i></i></span>
             </div>
-          {:else if e.kind === 'tool_group'}
-            {@const hk = cur ? `${cur}:${e.id}` : e.id}
-            <ToolGroup
-              entry={e as Extract<Entry, { kind: 'tool_group' }>}
-              heightKey={hk}
-              turn={turnLabel(idx)}
-            />
           {:else}
             {@const hk = cur ? `${cur}:${e.id}` : e.id}
             <EntryCard
@@ -205,6 +213,7 @@
               sourceLabel={sourceLabelFor(e)}
               parentLabel={parentLabel}
               turn={turnLabel(idx)}
+              batch={e.kind === 'tool' ? batchOf.get(e.id) : undefined}
             />
           {/if}
         {/snippet}

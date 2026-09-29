@@ -184,17 +184,12 @@ export type Entry =
   | { id: string; kind: 'user'; text: string; source?: string; skill?: SkillRef; msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> } }
   | MessageEntry
   | { id: string; kind: 'tool'; text?: string; name?: string; call_id?: string; args?: Record<string, unknown>; output?: string; status?: 'ok' | 'running' | 'error' }
-  | { id: string; kind: 'tool_group'; children: Entry[] }
   | { id: string; kind: 'om'; text: string; thinking?: string; input?: string; suggestedResponse?: string; model?: string }
   | { id: string; kind: 'system'; text: string }
   | { id: string; kind: 'spawn-snapshot'; text: string }
   | { id: string; kind: 'subagent'; text: string; payload?: SubagentPayload }
   | { id: string; kind: 'task'; text: string; payload?: TaskPayload }
   | AnyEntry;
-
-// An entry the EntryCard renders directly: every kind except the synthetic
-// tool_group (which the Transcript dispatches to ToolGroup instead).
-export type CardEntry = Exclude<Entry, { kind: 'tool_group' }>;
 
 // A streamed assistant message in flight: the live slot until stream_end
 // promotes it (an interrupted partial keeps its slot's id).

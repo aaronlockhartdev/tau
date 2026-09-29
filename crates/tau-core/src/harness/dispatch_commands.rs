@@ -106,6 +106,11 @@ impl Core {
                     return Ok(CommandOutput::None);
                 }
                 live.stop.store(true, Ordering::SeqCst);
+                // The agent's own stop flag is what append_assistant reads to
+                // mark the entry interrupted; the LiveSession flag above only
+                // cuts the stream. Both must be set, or a user stop renders as
+                // a normal completion.
+                live.agent.stop_flag().store(true, Ordering::SeqCst);
                 Ok(CommandOutput::None)
             }
 

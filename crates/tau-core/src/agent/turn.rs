@@ -455,22 +455,6 @@ impl AgentSession {
                 // some do intermittently on tool-call segments of a turn that
                 // ran to completion. `turn_killed` covers a stop that landed
                 // before the turn; the live flags cover one mid-flight.
-                // Interrupted means the user cut the turn (stop button, a
-                // force send, or a session close) -- not that the provider
-                // omitted [DONE], which some do intermittently on tool-call
-                // segments of a turn that ran to completion.
-                // Interrupted means the user cut this call (stop button, a
-                // force send, or a session close) -- not that the provider
-                // omitted [DONE], which some do intermittently on tool-call
-                // segments of a turn that ran to completion.
-                // Interrupted means the user cut the turn (stop button, a
-                // force send, or a session close) -- not that the provider
-                // omitted [DONE], which some do intermittently on tool-call
-                // segments of a turn that ran to completion.
-                // Interrupted means the user cut the turn (stop button, a
-                // force send, or a session close) -- not that the provider
-                // omitted [DONE], which some do intermittently on tool-call
-                // segments of a turn that ran to completion.
                 interrupted: turn_forced
                     || self.kill.load(Ordering::SeqCst)
                     || self.stop.load(Ordering::SeqCst)

@@ -7,16 +7,18 @@
   import { store } from '../lib/store.svelte';
   import { md as renderMarkdown, argsLines, valueLinesOf } from '../lib/markdown';
   import { splitJsonPayload } from '../lib/entries';
-  import type { CardEntry } from '../lib/protocol';
+  import type { Entry } from '../lib/protocol';
 
   let {
     entry,
+    batch,
     heightKey,
     sourceLabel = '',
     parentLabel = '',
     turn = ''
   }: {
-    entry: CardEntry;
+    entry: Entry;
+    batch?: { index: number; size: number };
     heightKey: string;
     sourceLabel?: string;
     parentLabel?: string;
@@ -247,7 +249,10 @@
   {/each}
 {/snippet}
 {#if hasContent}
-<div class="wrap" bind:this={el}>
+<div class="wrap" class:batch={!!batch} bind:this={el}>
+  {#if batch && batch.index === 0}
+    <div class="batch-mark">⊞ {batch.size} batched</div>
+  {/if}
   {#if turn}
     <div class="thd">{turn}</div>
   {/if}
@@ -464,6 +469,18 @@
 <style>
   .wrap {
     margin: 0 16px 4px;
+  }
+  /* A card in a parallel batch: a quiet connector line on the left ties the
+     run together; the first card carries the count. */
+  .wrap.batch {
+    margin-left: 10px;
+    padding-left: 10px;
+    border-left: 2px solid var(--line);
+  }
+  .batch-mark {
+    font: 10px var(--mono);
+    color: var(--muted);
+    margin: 0 0 3px 18px;
   }
   .thd {
     display: flex;

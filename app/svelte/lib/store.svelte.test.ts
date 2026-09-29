@@ -10,7 +10,6 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) })
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
 
 import {
-  type AnyEntry,
   type Command,
   type CommandOutput,
   type Entry,
@@ -324,7 +323,7 @@ describe('applyEvents: streaming', () => {
       { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'cd', reasoning: null },
       { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
     ]);
-    expect((s.entries[0] as AnyEntry)?.text).toBe('abcd');
+    expect(s.entries[0]?.text).toBe('abcd');
   });
 
   it('closes a stream that ended before we saw its start, out of the buffer', () => {
@@ -335,7 +334,7 @@ describe('applyEvents: streaming', () => {
     ]);
     expect(s.entries).toHaveLength(1);
     expect(s.entries[0]?.id).toBe('c1');
-    expect((s.entries[0] as AnyEntry)?.text).toBe('x');
+    expect(s.entries[0]?.text).toBe('x');
   });
 
   it('computes TPS over the call duration', async () => {
