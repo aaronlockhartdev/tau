@@ -118,6 +118,10 @@ type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 /// consumed): the app re-emits the queue snapshot so the GUI's queue pane
 /// doesn't stay stale until the turn boundary.
 pub(crate) type QueueEventHook = Arc<dyn Fn() + Send + Sync>;
+/// Fired the moment a child report is queued for the steering lane (text,
+/// source, and the parent's next entry id): the app emits a `SteeringReport`
+/// so the GUI shows the report now, not at the next LLM-call boundary.
+pub(crate) type NotifyHook = Arc<dyn Fn(String, String, u64) + Send + Sync>;
 
 struct Inner {
     store: SessionStore,
@@ -137,6 +141,7 @@ struct Inner {
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
     queue_event_hook: Option<QueueEventHook>,
+    notify_hook: Option<NotifyHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -209,6 +214,7 @@ impl AgentSession {
                 om_model: p.om_model,
                 om_status_hook: None,
                 queue_event_hook: None,
+                notify_hook: None,
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
@@ -281,12 +287,22 @@ impl AgentSession {
     fn queue_notified(&self, text: impl Into<String>, lane: Lane, source: String) {
         let mut inner = self.inner.lock().unwrap();
         self.stop.store(false, Ordering::SeqCst);
+        let text = text.into();
+        // A steering report is surfaced the moment it is queued (the GUI shows
+        // it now); a follow-up is silent until it is dequeued.
+        let notify = matches!(lane, Lane::Steering).then(|| {
+            (inner.notify_hook.clone(), text.clone(), source.clone(), inner.store.next_id())
+        });
         inner.queue.push_back(Queued {
-            text: text.into(),
+            text,
             lane,
             source: Some(source),
             skill: None,
         });
+        drop(inner);
+        if let Some((Some(hook), text, source, seq)) = notify {
+            hook(text, source, seq);
+        }
     }
 
     /// A persistent stop (ticket #23): cuts the in-flight stream —
@@ -477,6 +493,10 @@ impl AgentSession {
 
     pub(crate) fn set_queue_event_hook(&self, hook: Option<QueueEventHook>) {
         self.inner.lock().unwrap().queue_event_hook = hook;
+    }
+
+    pub(crate) fn set_notify_hook(&self, hook: Option<NotifyHook>) {
+        self.inner.lock().unwrap().notify_hook = hook;
     }
 
     /// The live entry sink, set on this session's store (the append choke

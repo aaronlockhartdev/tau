@@ -468,19 +468,22 @@
 
 <style>
   .wrap {
-    margin: 0 16px 4px;
+    margin: 0 16px 8px;
   }
   /* A card in a parallel batch: a quiet connector line on the left ties the
      run together; the first card carries the count. */
   .wrap.batch {
-    margin-left: 10px;
+    /* No margin-left override: the line sits at 16px, inline with the
+       other cards' left edge. The padding clears the content from it. */
     padding-left: 10px;
     border-left: 2px solid var(--line);
   }
   .batch-mark {
     font: 10px var(--mono);
     color: var(--muted);
-    margin: 0 0 3px 18px;
+    /* Negative margin pulls the mark's left edge onto the line, so the
+       line runs straight down under it. */
+    margin: 0 0 3px -12px;
   }
   .thd {
     display: flex;
