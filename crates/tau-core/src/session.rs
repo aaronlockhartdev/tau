@@ -14,8 +14,8 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Seek, Write};
-use std::sync::Arc;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tau_protocol::snapshot::SessionMeta;
 
 /// Session file format version — a versioned surface separate from the

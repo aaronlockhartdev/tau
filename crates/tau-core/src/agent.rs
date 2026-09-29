@@ -179,6 +179,10 @@ pub struct AgentSession {
     /// at each call), it stays set until the next send — a sub-agent soft
     /// stop cuts the stream this way.
     stop: Arc<AtomicBool>,
+    /// A closed session is a one-way transition: set by `SessionClose`, never
+    /// cleared (unlike `stop`, which a new send resets). Marks the in-flight
+    /// turn's segment interrupted.
+    closed: Arc<AtomicBool>,
 }
 
 impl AgentSession {
@@ -203,6 +207,7 @@ impl AgentSession {
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
+            closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -280,6 +285,13 @@ impl AgentSession {
     /// stays set until the next send.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::SeqCst);
+    }
+
+    /// Mark the session closed: a one-way transition that interrupts the
+    /// in-flight turn (set by `SessionClose`; unlike `stop`, a new send does
+    /// not reset it).
+    pub fn mark_closed(&self) {
+        self.closed.store(true, Ordering::SeqCst);
     }
 
     /// The persistent stop flag (a forwarding seam can share it so one

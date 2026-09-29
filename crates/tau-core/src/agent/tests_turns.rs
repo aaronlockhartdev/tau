@@ -234,7 +234,9 @@ async fn force_kills_the_stream_and_keeps_the_partial() {
     agent.process().await.unwrap();
     let entries = entries_of(&agent.inner.lock().unwrap().store);
     let assistant = entries.iter().find(|e| e.kind == KIND_ASSISTANT).unwrap();
-    assert!(assistant.payload["interrupted"].as_bool().unwrap());
+    // A transport cut (the stream dropped, no user stop) is not an
+    // interruption -- only a user stop/force/close is.
+    assert!(!assistant.payload["interrupted"].as_bool().unwrap());
     assert_eq!(assistant.payload["text"], "a");
 }
 #[tokio::test]

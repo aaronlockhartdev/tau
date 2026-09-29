@@ -410,20 +410,18 @@ impl Core {
                 let event = match entry.kind.as_str() {
                     crate::agent::KIND_TOOL => {
                         let p = &entry.payload;
-                        let call_id = p.get("call_id")
+                        let call_id = p
+                            .get("call_id")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("")
                             .to_string();
-                        let name = p.get("name")
+                        let name = p
+                            .get("name")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("tool")
                             .to_string();
-                        let output = p.get("output")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
-                        if output.is_null()
-                            || output.as_str().is_some_and(str::is_empty)
-                        {
+                        let output = p.get("output").cloned().unwrap_or(serde_json::Value::Null);
+                        if output.is_null() || output.as_str().is_some_and(str::is_empty) {
                             Event::ToolStart {
                                 workspace: ws.clone(),
                                 session: sid.clone(),
@@ -454,13 +452,14 @@ impl Core {
                             kind: entry.kind.clone(),
                             timestamp: entry.timestamp,
                             payload: entry.payload.clone(),
-                            blob: entry.blob.as_ref().map(|b| {
-                                tau_protocol::snapshot::BlobRef {
+                            blob: entry
+                                .blob
+                                .as_ref()
+                                .map(|b| tau_protocol::snapshot::BlobRef {
                                     id: b.id.clone(),
                                     size: b.size,
                                     hash: b.hash.clone(),
-                                }
-                            }),
+                                }),
                             first_kept: entry.first_kept_entry_id.clone(),
                         },
                     },

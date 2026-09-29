@@ -245,6 +245,7 @@ impl Core {
                         }
                     }
                     live.stop.store(true, Ordering::SeqCst);
+                    live.agent.mark_closed();
                     if let Some(sup) = live.agent.subagents() {
                         sup.stop_all(StoppedBy::User);
                     }

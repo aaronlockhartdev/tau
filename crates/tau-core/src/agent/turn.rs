@@ -16,6 +16,13 @@ impl AgentSession {
 
     async fn run_turn(&self) -> Result<(), AgentError> {
         let mut rounds = 0usize;
+        // A force send or stop that targeted this turn is captured before the
+        // call loop clears the per-call kill flag; it marks every segment of
+        // the turn interrupted, not just the one cut mid-flight.
+        let turn_killed = self.kill.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst);
+        // A force/stop that landed before the turn applies to the first call
+        // only; later calls in the turn are fresh.
+        let mut first_call = true;
         loop {
             rounds += 1;
             if rounds > MAX_ROUNDS {
@@ -150,7 +157,8 @@ impl AgentSession {
                 stop: self.stop.clone(),
             };
             let result = self.provider.call(&request, &mut sink).await?;
-            self.append_assistant(&result)?;
+            self.append_assistant(&result, turn_killed && first_call)?;
+            first_call = false;
 
             if !result.completed {
                 // A force-killed turn skips the OM pass: the Observer needs
@@ -188,6 +196,9 @@ impl AgentSession {
                 break;
             }
         }
+        // A force/stop that cut this turn is consumed here: it must not bleed
+        // into the next turn (the one a force send starts).
+        self.kill.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -418,7 +429,7 @@ impl AgentSession {
         )
     }
 
-    fn append_assistant(&self, result: &TurnResult) -> Result<(), AgentError> {
+    fn append_assistant(&self, result: &TurnResult, turn_forced: bool) -> Result<(), AgentError> {
         // A partial cut before anything arrived has nothing to record
         // (review N10): an empty, call-less interrupted entry is noise.
         if !result.completed
@@ -433,7 +444,31 @@ impl AgentSession {
             tau_protocol::payload::AssistantPayload {
                 text: result.text.clone(),
                 reasoning: result.reasoning.clone(),
-                interrupted: !result.completed,
+                // Interrupted means the user cut the turn (stop button or a
+                // force send) -- not that the provider omitted [DONE], which
+                // some do intermittently on tool-call segments of a turn that
+                // ran to completion. `turn_killed` covers a stop that landed
+                // before the turn; the live flags cover one mid-flight.
+                // Interrupted means the user cut the turn (stop button, a
+                // force send, or a session close) -- not that the provider
+                // omitted [DONE], which some do intermittently on tool-call
+                // segments of a turn that ran to completion.
+                // Interrupted means the user cut this call (stop button, a
+                // force send, or a session close) -- not that the provider
+                // omitted [DONE], which some do intermittently on tool-call
+                // segments of a turn that ran to completion.
+                // Interrupted means the user cut the turn (stop button, a
+                // force send, or a session close) -- not that the provider
+                // omitted [DONE], which some do intermittently on tool-call
+                // segments of a turn that ran to completion.
+                // Interrupted means the user cut the turn (stop button, a
+                // force send, or a session close) -- not that the provider
+                // omitted [DONE], which some do intermittently on tool-call
+                // segments of a turn that ran to completion.
+                interrupted: turn_forced
+                    || self.kill.load(Ordering::SeqCst)
+                    || self.stop.load(Ordering::SeqCst)
+                    || self.closed.load(Ordering::SeqCst),
                 usage: result.usage.clone(),
                 calls: result.calls.clone(),
             }
