@@ -114,6 +114,11 @@ fn lane_name(lane: Lane) -> &'static str {
 /// protocol event.
 type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 
+/// Fired when the lane queue changes mid-turn (a steering/force message is
+/// consumed): the app re-emits the queue snapshot so the GUI's queue pane
+/// doesn't stay stale until the turn boundary.
+pub(crate) type QueueEventHook = Arc<dyn Fn() + Send + Sync>;
+
 struct Inner {
     store: SessionStore,
     system_prompt: String,
@@ -129,6 +134,9 @@ struct Inner {
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
     om_status_hook: Option<OmStatusHook>,
+    /// Fired when the lane queue changes mid-turn (steering/force consumed)
+    /// so the app can re-emit the queue snapshot (the GUI's queue pane).
+    queue_event_hook: Option<QueueEventHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -200,6 +208,7 @@ impl AgentSession {
                 om: p.om,
                 om_model: p.om_model,
                 om_status_hook: None,
+                queue_event_hook: None,
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
@@ -464,6 +473,10 @@ impl AgentSession {
     /// The OM-run observer (the app's om_status emitter); `None` clears it.
     pub fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
         self.inner.lock().unwrap().om_status_hook = hook;
+    }
+
+    pub(crate) fn set_queue_event_hook(&self, hook: Option<QueueEventHook>) {
+        self.inner.lock().unwrap().queue_event_hook = hook;
     }
 
     /// The live entry sink, set on this session's store (the append choke

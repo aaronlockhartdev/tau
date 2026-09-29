@@ -406,6 +406,18 @@ impl Core {
             let tx = self.events_tx.clone();
             let ws = workspace.id.clone();
             let sid = provider.session.clone();
+            // The queue hook gets its own clones (the entry hook moves these).
+            let q_tx = tx.clone();
+            let q_ws = ws.clone();
+            let q_sid = sid.clone();
+            let q_agent = agent.clone();
+            agent.set_queue_event_hook(Some(Arc::new(move || {
+                let _ = q_tx.try_send(Event::Queue {
+                    workspace: q_ws.clone(),
+                    session: q_sid.clone(),
+                    items: q_agent.queued_items(),
+                });
+            })));
             agent.set_entry_event_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
                 let event = match entry.kind.as_str() {
                     crate::agent::KIND_TOOL => {
@@ -440,9 +452,17 @@ impl Core {
                             }
                         }
                     }
-                    // Streamed (assistant) and optimistically-pushed (user)
-                    // entries have their own live path: no double-emit.
-                    crate::agent::KIND_ASSISTANT | crate::agent::KIND_USER => return,
+                    // Streamed assistant entries have their own live path.
+                    crate::agent::KIND_ASSISTANT => return,
+                    // A steering notification (a child report) is not
+                    // optimistically pushed, so it gets a live emit; a
+                    // regular user send is optimistic: skip.
+                    crate::agent::KIND_USER
+                        if entry.payload.get("lane").and_then(|l| l.as_str())
+                            != Some("steering") =>
+                    {
+                        return;
+                    }
                     _ => Event::EntryLive {
                         workspace: ws.clone(),
                         session: sid.clone(),

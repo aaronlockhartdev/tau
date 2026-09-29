@@ -2,6 +2,7 @@ use super::*;
 
 use crate::agent::testkit::*;
 use crate::provider::canned_cut;
+use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
 async fn task_tools_run_through_the_loop_and_the_gate_enforces_evidence() {
@@ -196,6 +197,31 @@ async fn steering_lands_on_the_next_llm_call() {
     );
     assert_eq!(entries[1].payload["text"], "steer me");
     assert_eq!(entries[1].payload["lane"], "steering");
+}
+
+#[tokio::test]
+async fn steering_consumption_fires_the_queue_hook() {
+    let dir = tempfile::tempdir().unwrap();
+    let body1 = sse(
+        "",
+        &[("bash".into(), "c1".into(), r#"{"command":"true"}"#.into())],
+    );
+    let body2 = sse("after steering", &[]);
+    let provider = Arc::new(ScriptedProvider::new(vec![body1, body2]));
+    let agent = make_agent(dir.path(), provider);
+    // A queue-change hook: fired when a steering/force message is consumed
+    // mid-turn, so the app can re-emit the queue snapshot now (not at the
+    // turn boundary).
+    let fired = Arc::new(AtomicUsize::new(0));
+    let fired_clone = fired.clone();
+    agent.set_queue_event_hook(Some(Arc::new(move || {
+        fired_clone.fetch_add(1, Ordering::SeqCst);
+    })));
+    agent.send("start", Lane::FollowUp);
+    agent.send("steer me", Lane::Steering);
+    agent.process().await.unwrap();
+    // The mid-turn steering consumption fired the hook.
+    assert!(fired.load(Ordering::SeqCst) >= 1);
 }
 
 #[tokio::test]

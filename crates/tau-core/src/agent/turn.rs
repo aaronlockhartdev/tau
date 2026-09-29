@@ -41,7 +41,7 @@ impl AgentSession {
             }
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
-            let delivered = {
+            let (delivered, queue_hook) = {
                 let mut inner = self.inner.lock().unwrap();
                 let mut out = Vec::new();
                 inner.queue.retain(|m| {
@@ -52,8 +52,14 @@ impl AgentSession {
                         true
                     }
                 });
-                out
+                (out, inner.queue_event_hook.clone())
             };
+            // A steering/force consumption is a queue change: let the app
+            // re-emit the snapshot so the GUI's queue pane updates now, not
+            // at the turn boundary.
+            if let Some(hook) = queue_hook.as_deref().filter(|_| !delivered.is_empty()) {
+                hook();
+            }
             for msg in delivered {
                 self.append_user(msg).await?;
             }
