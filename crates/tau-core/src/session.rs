@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Seek, Write};
+use std::sync::Arc;
 use std::path::{Path, PathBuf};
 use tau_protocol::snapshot::SessionMeta;
 
@@ -165,6 +166,8 @@ impl Entry {
 ///
 /// One writer per session; reads are paged (`entries_range`, `entries_since`)
 /// — there is deliberately no full-dump read API (spec §3 protocol rule).
+pub(crate) type EntryEventHook = Arc<dyn Fn(&Entry) + Send + Sync>;
+
 pub struct SessionStore {
     id: String,
     root: PathBuf,
@@ -191,6 +194,11 @@ pub struct SessionStore {
     /// (an external writer — the 10k fixture test), so a live read never
     /// serves a stale log.
     file_len: u64,
+    /// A live entry sink (the app maps each appended entry to a protocol
+    /// event). Set by the owning session; `None` for stores with no live
+    /// surface. Fired at the append choke point so every write path — the
+    /// turn loop, the task tools, the OM — emits.
+    entry_event_hook: Option<EntryEventHook>,
 }
 
 /// Storage errors.
@@ -261,7 +269,14 @@ impl SessionStore {
             entries: Vec::new(),
             entry_len: Vec::new(),
             file_len: 0,
+            entry_event_hook: None,
         }
+    }
+
+    /// Set the live entry sink (the app maps each appended entry to a
+    /// protocol event); `None` clears it.
+    pub fn set_entry_event_hook(&mut self, hook: Option<EntryEventHook>) {
+        self.entry_event_hook = hook;
     }
     /// A fixed timestamp for every write (the test seam that makes the
     /// shared fixture byte-deterministic, roadmap G handoff 1).
@@ -532,7 +547,11 @@ impl SessionStore {
         payload: Value,
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
-        self.append_line(self.new_entry(kind, payload, None), parent)
+        let entry = self.append_line(self.new_entry(kind, payload, None), parent)?;
+        if let Some(hook) = &self.entry_event_hook {
+            hook(&entry);
+        }
+        Ok(entry)
     }
 
     /// The active leaf: the persisted branch choice if any, else the last

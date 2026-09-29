@@ -442,25 +442,15 @@ impl AgentSession {
     }
 
     pub(super) fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
-        let (live, hook) = {
-            let mut inner = self.inner.lock().unwrap();
-            // A fresh session has no leaf: the first entry starts the branch.
-            // Any other failure is a storage error and propagates.
-            let parent = match inner.store.leaf() {
-                Ok(leaf) => leaf.map(|e| e.id),
-                Err(e) => return Err(AgentError::Session(e)),
-            };
-            let parent = parent.as_deref();
-            inner.store.append(kind, payload, parent)?;
-            // The entry just written is the new leaf: capture it and the hook
-            // under the lock, then fire the hook outside it (the app's mapper
-            // re-locks this session, and the guard is not reentrant).
-            let live = inner.store.leaf().ok().flatten();
-            (live, inner.entry_event_hook.clone())
+        let mut inner = self.inner.lock().unwrap();
+        // A fresh session has no leaf: the first entry starts the branch.
+        // Any other failure is a storage error and propagates.
+        let parent = match inner.store.leaf() {
+            Ok(leaf) => leaf.map(|e| e.id),
+            Err(e) => return Err(AgentError::Session(e)),
         };
-        if let (Some(live), Some(hook)) = (live, hook) {
-            hook(&live);
-        }
+        let parent = parent.as_deref();
+        inner.store.append(kind, payload, parent)?;
         Ok(())
     }
 
