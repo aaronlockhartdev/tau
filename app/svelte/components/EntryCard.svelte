@@ -3,10 +3,7 @@
   // other kinds are unified cards whose header is an icon plus a quiet
   // label; reasoning is a cardless grey "thinking" line. Tool calls are a
   // chip row that expands to structured key/value args plus the output.
-  // The card reports its rendered height on mount and on content change;
-  // the transcript owns the heights map and the track relayout.
 
-  import { onMount } from 'svelte';
   import { store } from '../lib/store.svelte';
   import { md as renderMarkdown, argsLines, valueLinesOf } from '../lib/markdown';
   import { splitJsonPayload } from '../lib/entries';
@@ -15,28 +12,18 @@
   let {
     entry,
     heightKey,
-    report,
     sourceLabel = '',
     parentLabel = '',
     turn = ''
   }: {
     entry: Entry;
     heightKey: string;
-    report?: (h: number) => void;
     sourceLabel?: string;
     parentLabel?: string;
     turn?: 'you' | 'agent' | '';
   } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
-
-  function measure() {
-    if (el && report) report(el.offsetHeight);
-  }
-
-  onMount(() => {
-    measure();
-  });
 
   // Expansion state: the store map is the persistence layer (the window
   // unmounts off-screen cards, so a purely local state would reset to
@@ -81,19 +68,6 @@
   const obsThinkMd = $derived(
     entry.kind === 'om' && entry.thinking ? renderMarkdown(entry.thinking.trim()) : ''
   );
-  $effect(() => {
-    void entry.text;
-    if (entry.kind === 'message' || entry.kind === 'interrupted') void entry.reasoning;
-    if (entry.kind === 'tool') void entry.output;
-    void toolOut;
-    void open.output;
-    void open.tool;
-    void open.task;
-    void open.think;
-    void open.obs;
-    void thinkSynced;
-    measure();
-  });
 
   // Provider text arrives with decorative leading/trailing newlines;
   // pre-wrap would render them as blank lines inside the card.
@@ -489,7 +463,7 @@
 
 <style>
   .wrap {
-    margin: 0 16px 10px;
+    margin: 0 16px 4px;
   }
   .thd {
     display: flex;
@@ -759,6 +733,12 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     margin: 6px 0;
+  }
+  :global(.md p) {
+    margin: 0;
+  }
+  :global(.md p + p) {
+    margin-top: 6px;
   }
   :global(.md code) {
     font: 12px var(--mono);

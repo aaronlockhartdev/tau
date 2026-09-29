@@ -1,29 +1,19 @@
 <script lang="ts">
   // Virtualized transcript on virtua: the library owns windowing and
   // per-item measurement; this file carries only the blessed stick-to-bottom
-  // pattern (virtua's Svelte Chat example) plus one extension — the pin
-  // effect also tracks the last card's measured height, so a streaming reply
-  // follows the viewport while its height grows without a new item landing.
-  // Paged hydration (spec §8) is driven from virtua's visible range via
-  // findItemIndex over the scroll offset.
-  import { onDestroy, onMount, untrack } from 'svelte';
+  // pattern (virtua's Svelte Chat example). Paged hydration (spec §8) is
+  // driven from virtua's visible range via findItemIndex over the scroll
+  // offset.
+  import { onDestroy, untrack } from 'svelte';
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow } from '../lib/store.svelte';
   import type { Entry } from '../lib/protocol';
 
-  // Must match .scroll's padding-top: the padding sits before the track in
-  // scroll coordinates, so the pin target adds it back to land flush on the
-  // last card (virtua's coordinates start at the track).
-  const TOP_PAD = 14;
   // Sub-pixel tolerance at fractional devicePixelRatio (the Chat story's).
   const STICK_TOLERANCE = -1.5;
   // A session opens pinned at its tail: the first page is the tail.
   const OPEN_TAIL = 20;
-  // Sessions at or under this size hydrate in full on open (no stubs): a
-  // re-open re-pins to the tail, so an older entry in a small session would
-  // otherwise sit unhydrated until scrolled to.
-  const FULL_OPEN_THRESHOLD = 200;
   const FETCH_MARGIN = 5; // ≈ one 600px buffer of 120px cards
   const BUFFER = 600;
 
@@ -42,10 +32,6 @@
   // VirtualizerHandle.
   let ref = $state<VirtualizerHandle | undefined>(undefined);
   let shouldStickToBottom = $state(true);
-  // Last reported scroll offset: detects a user scroll up (offset dropping) so
-  // the pin can release instead of fighting a mid-read against an expanding
-  // card.
-  let lastScrollOffset = 0;
 
   const entries = $derived(cur ? store.sessions[cur].entries : []);
   const live = $derived(cur ? store.sessions[cur].live : []);
@@ -63,7 +49,9 @@
   });
 
   // Live entries sit at the tail of the virtual list (the running message is
-  // the most recent thing in the session).
+  // the most recent thing in the session). While a turn awaits first output a
+  // synthetic "waiting" item ends the list, so the pin scrolls the ellipses
+  // into view (they are a virtualized item, not a separate DOM node).
   const all = $derived([
     ...entries,
     ...live.map((l) => ({
@@ -72,41 +60,21 @@
       text: l.text,
       reasoning: l.reasoning,
       usage: undefined
-    }))
+    })),
+    ...(awaiting ? [{ id: '__waiting__', kind: 'waiting' as const, text: '', reasoning: undefined, usage: undefined }] : [])
   ]);
   type Row = (typeof all)[number];
 
-  // The cards' self-reported heights keyed by entry id. The pin effect reads
-  // the last entry's row, so a streaming card's growth re-pins even when no
-  // new item lands. Off-screen cards unmount but their entries stay: the
-  // map is bounded by the session's entries and dies with the mount.
-  const cardHeights = $state<Record<string, number>>({});
-
-  // Pin (the Chat pattern + the streaming extension): re-runs when the
-  // rendered set changes (a new item, a hydration, a stream delta — `all`
-  // is a fresh array on each), when the last card's measured height
-  // changes, or when the stick flag re-arms. A scrollTo to the current
-  // position is a browser no-op, so an already-at-bottom pin is a fixed
-  // point.
+  // Pin (the Chat pattern): when the rendered set changes and the stick flag
+  // is set, end-align the last item. A scrollTo to the current position is a
+  // browser no-op, so an already-at-bottom pin is a fixed point.
   $effect(() => {
     if (!ref) return;
     const n = all.length;
     if (n === 0) return;
-    const lastId = all[n - 1].id;
-    void cardHeights[lastId];
-    if (!shouldStickToBottom) return;
-    ref.scrollToIndex(n - 1, { align: 'end', offset: TOP_PAD });
-    // virtua's size cache can lag a just-landed card's height, leaving the
-    // end-aligned scroll short of the true bottom: a direct DOM scroll to the
-    // bottom is the robust catch.
-    if (el) el.scrollTop = el.scrollHeight;
-  });
-
-  // The turn's ellipses appeared (a new turn, pre-first-output): jump to the
-  // very bottom so they're visible. They sit below the last card — past the
-  // virtualized items — so a direct DOM scroll, not scrollToIndex.
-  $effect(() => {
-    if (awaiting && el) el.scrollTop = el.scrollHeight;
+    if (shouldStickToBottom) {
+      ref.scrollToIndex(n - 1, { align: 'end' });
+    }
   });
 
   // Paged read around the visible window (spec §8): virtua's range drives
@@ -122,13 +90,10 @@
   const duringTurn = new Map<string, { start: number; end: number }>();
   function onVirtuaScroll(offset: number): void {
     if (!ref) return;
-    // A user scroll up (offset dropping past a small threshold) releases the
-    // pin: a rapidly expanding card otherwise re-arms the stick and yanks the
-    // view back to the tail mid-read.
-    const scrolledUp = offset < lastScrollOffset - 4;
-    lastScrollOffset = offset;
+    // The blessed stick-to-bottom check: at the bottom within a sub-pixel
+    // tolerance. Scrolling up drops below the tolerance and releases the pin —
+    // no direction tracking.
     shouldStickToBottom =
-      !scrolledUp &&
       offset - ref.getScrollSize() + ref.getViewportSize() >= STICK_TOLERANCE;
     const c = cur;
     const n = all.length;
@@ -153,7 +118,7 @@
     const c = cur;
     if (!c) return;
     const n = untrack(() => all.length);
-    const count = n <= FULL_OPEN_THRESHOLD ? n : Math.min(OPEN_TAIL, n);
+    const count = Math.min(OPEN_TAIL, n);
     lastFetched.set(c, { start: n - count, end: n });
     void fetchWindow(c, n - count, count);
     if (store.sessions[c]?.turn !== 'idle') {
@@ -182,13 +147,6 @@
   $effect(() => {
     void store.tailJump;
     shouldStickToBottom = true;
-  });
-
-  onMount(() => {
-    // The boot pin is a direct DOM write: the virtua driver observes the
-    // scroll element a tick after mount, so a handle scroll scheduled before
-    // that would race it; the DOM write always lands.
-    if (el) el.scrollTop = el.scrollHeight;
   });
 
   onDestroy(() => {
@@ -227,24 +185,22 @@
         onscroll={onVirtuaScroll}
       >
         {#snippet children(e: Row, idx: number)}
-          {@const hk = cur ? `${cur}:${e.id}` : e.id}
-          <EntryCard
-            entry={e}
-            heightKey={hk}
-            report={(h) => {
-              if (cardHeights[e.id] !== h) cardHeights[e.id] = h;
-            }}
-            sourceLabel={sourceLabelFor(e)}
-            parentLabel={parentLabel}
-            turn={turnLabel(idx)}
-          />
+          {#if e.kind === 'waiting'}
+            <div class="waiting">
+              <span class="dots"><i></i><i></i><i></i></span>
+            </div>
+          {:else}
+            {@const hk = cur ? `${cur}:${e.id}` : e.id}
+            <EntryCard
+              entry={e}
+              heightKey={hk}
+              sourceLabel={sourceLabelFor(e)}
+              parentLabel={parentLabel}
+              turn={turnLabel(idx)}
+            />
+          {/if}
         {/snippet}
       </Virtualizer>
-      {#if awaiting}
-        <div class="waiting">
-          <span class="dots"><i></i><i></i><i></i></span>
-        </div>
-      {/if}
     </div>
   {/if}
 </div>
@@ -257,7 +213,6 @@
     overflow-anchor: none;
     min-height: 0;
     position: relative;
-    padding-top: 14px;
   }
   .scroll.empty {
     display: flex;
@@ -279,7 +234,7 @@
     width: 100%;
   }
   .waiting {
-    padding: 8px 16px 12px;
+    padding: 0 16px 12px;
   }
   .dots {
     display: inline-flex;
