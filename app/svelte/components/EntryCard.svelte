@@ -451,10 +451,10 @@
       </div>
     {:else if (entry.text && entry.text.trim()) || entry.kind === 'interrupted'}
       <div class="card2" class:interrupted={entry.kind === 'interrupted'}>
+        <div class="txt2 md">{@html md}</div>
         {#if entry.kind === 'interrupted'}
           <div class="intmark">⚡ interrupted</div>
         {/if}
-        <div class="txt2 md">{@html md}</div>
       </div>
     {/if}
   {/if}
@@ -727,7 +727,7 @@
   .intmark {
     font: 11px var(--mono);
     color: var(--amber);
-    margin-bottom: 4px;
+    margin-top: 6px;
   }
   /* The renderer's output arrives via @html, outside scoping. */
   :global(pre.code) {

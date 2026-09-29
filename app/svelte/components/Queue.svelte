@@ -20,11 +20,10 @@
     {#if reports.length > 0}
       <div class="qlabel">subagent reports</div>
     {/if}
-    {#each reports as p, idx (p.text + ':' + idx)}
+    {#each reports as p (p.text)}
       <div class="qrow qsub">
         <span class="qsrc" title={p.source ?? ''}>sub-agent {(p.source ?? '').split('-').pop()}</span>
         <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, p.source ?? null, idx)}>✕</button>
       </div>
     {/each}
     {#if steering.length > 0}
