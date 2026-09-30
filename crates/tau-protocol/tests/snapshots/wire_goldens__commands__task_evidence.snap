@@ -1,0 +1,12 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::TaskEvidence\n{\n    session: \"s1\".into(), task: \"t-1\".into(), criterion: \"fast\".into(),\n    summary: \"bench attached\".into(), passed: Some(true),\n}"
+---
+{
+  "type": "task_evidence",
+  "session": "s1",
+  "task": "t-1",
+  "criterion": "fast",
+  "summary": "bench attached",
+  "passed": true
+}

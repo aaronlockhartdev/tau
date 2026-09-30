@@ -1,0 +1,20 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::EntryUpsert\n{ workspace: \"w1\".into(), session: \"s1\".into(), entry: view_entry(), }"
+---
+{
+  "type": "entry_upsert",
+  "workspace": "w1",
+  "session": "s1",
+  "entry": {
+    "id": "00000007",
+    "parent": "00000006",
+    "kind": "assistant",
+    "timestamp": 1700000000123,
+    "payload": {
+      "text": "hello"
+    },
+    "blob": null,
+    "first_kept": null
+  }
+}

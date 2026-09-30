@@ -1,0 +1,61 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: output
+---
+{
+  "kind": "snapshot",
+  "snapshot": {
+    "workspace": {
+      "id": "w1",
+      "name": "tau",
+      "cwd": "/tmp/tau"
+    },
+    "session": {
+      "id": "s1",
+      "workspace": "w1",
+      "title": "Brave Otter",
+      "parent": null,
+      "created": 1700000000000,
+      "leaf": "00000042",
+      "model": "qwen3.8-27b",
+      "usage": null,
+      "archived": false
+    },
+    "entries": [
+      {
+        "id": "00000007",
+        "parent": null,
+        "kind": "assistant",
+        "timestamp": 1700000000123,
+        "size": 42,
+        "preview": "hello",
+        "first_kept": null
+      }
+    ],
+    "om": {
+      "observation_tokens": 18000,
+      "pending_tokens": 1000,
+      "reflector_threshold": 40000
+    },
+    "live": {
+      "queue": [],
+      "turn": "running",
+      "subagents": [
+        {
+          "handle": "s1-1",
+          "child": "s2",
+          "agent_type": "general",
+          "context_mode": "fresh",
+          "state": "running",
+          "waiting_on": null,
+          "last_message": null,
+          "usage": null,
+          "task": null,
+          "resume_contract": null
+        }
+      ],
+      "tasks": []
+    },
+    "cursor": "00000042"
+  }
+}

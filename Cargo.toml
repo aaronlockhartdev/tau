@@ -20,7 +20,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
 names = { version = "0.14", default-features = false }
 rand = "0.10"
 proptest = "1.11"
-insta = "1"
+insta = { version = "1", features = ["json"] }
 sha2 = "0.10"
 notify = "8.2"
 notify-debouncer-full = "0.7"

@@ -1,0 +1,13 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::SessionEntries\n{\n    session: \"s1\".into(), since: None, range:\n    Some(tau_protocol::snapshot::EntryRange { start: 0, count: 100 }),\n}"
+---
+{
+  "type": "session_entries",
+  "session": "s1",
+  "since": null,
+  "range": {
+    "start": 0,
+    "count": 100
+  }
+}

@@ -1,0 +1,11 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::FileRead\n{\n    workspace: \"w1\".into(), path: \"src/core.rs\".into(), offset: Some(10),\n    limit: Some(50),\n}"
+---
+{
+  "type": "file_read",
+  "workspace": "w1",
+  "path": "src/core.rs",
+  "offset": 10,
+  "limit": 50
+}

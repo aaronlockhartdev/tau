@@ -1,0 +1,16 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "TaskEvent::Created\n{\n    title: \"ship the parser\".into(), steps:\n    vec![Step\n    {\n        text: \"write the parser\".into(), expected_output: \"tests pass\".into(),\n        status: StepStatus::Pending,\n    }], criteria: vec![],\n}"
+---
+{
+  "event": "created",
+  "title": "ship the parser",
+  "steps": [
+    {
+      "text": "write the parser",
+      "expected_output": "tests pass",
+      "status": "pending"
+    }
+  ],
+  "criteria": []
+}

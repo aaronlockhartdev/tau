@@ -1,0 +1,15 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "CommandOutput::Skills\n{\n    skills:\n    vec![SkillInfo\n    {\n        name: \"s\".into(), description: \"d\".into(), location:\n        \"/p/.agents/skills/s/SKILL.md\".into(), model_invocation: false,\n    }],\n}"
+---
+{
+  "kind": "skills",
+  "skills": [
+    {
+      "name": "s",
+      "description": "d",
+      "location": "/p/.agents/skills/s/SKILL.md",
+      "model_invocation": false
+    }
+  ]
+}

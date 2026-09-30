@@ -1,0 +1,10 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::BlobRead\n{ workspace: \"w1\".into(), id: \"00000063\".into(), hash: \"0\".repeat(16), }"
+---
+{
+  "type": "blob_read",
+  "workspace": "w1",
+  "id": "00000063",
+  "hash": "0000000000000000"
+}
