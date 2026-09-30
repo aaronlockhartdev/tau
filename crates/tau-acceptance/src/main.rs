@@ -30,8 +30,6 @@ use tau_core::task::KIND_TASK;
 use tau_core::tools;
 
 const CAP: u64 = 300;
-
-
 struct Ctx {
     endpoint: String,
     model: String,
@@ -348,10 +346,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
     if assigned {
         let linked = tasks.iter().any(|e| {
             e.payload.get("event").and_then(Value::as_str) == Some("assigned")
-                && e.payload
-                    .get("worker")
-                    .and_then(Value::as_str)
-                    == Some(child_id.as_str())
+                && e.payload.get("worker").and_then(Value::as_str) == Some(child_id.as_str())
         });
         if !linked {
             return Err(

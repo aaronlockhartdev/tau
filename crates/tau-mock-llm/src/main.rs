@@ -14,12 +14,7 @@ async fn main() {
     while let Some(a) = args.next() {
         match a.as_str() {
             "--port" => port = args.next().and_then(|p| p.parse().ok()).expect("--port N"),
-            "--scenarios" => {
-                scenarios = args
-                    .next()
-                    .map(PathBuf::from)
-                    .expect("--scenarios DIR")
-            }
+            "--scenarios" => scenarios = args.next().map(PathBuf::from).expect("--scenarios DIR"),
             other => {
                 eprintln!("unknown argument {other:?}");
                 std::process::exit(2);
@@ -27,8 +22,7 @@ async fn main() {
         }
     }
     let set = Arc::new(
-        scenario::ScenarioSet::load_dir(&scenarios)
-            .unwrap_or_else(|e| panic!("scenarios: {e}")),
+        scenario::ScenarioSet::load_dir(&scenarios).unwrap_or_else(|e| panic!("scenarios: {e}")),
     );
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await

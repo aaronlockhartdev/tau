@@ -85,7 +85,11 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
       # mock (started here); a live endpoint is a local opt-in.
       suite="$1"; shift
       if [ -z "$TAU_ENDPOINT" ]; then
-        start_mock || { report "$suite" FAIL "the mock LLM failed to start (see /tmp/tau-mock-llm.log)"; return 1; }
+        # One mock for the whole run: a second start would fail the port
+        # rebind and every later suite would report a mock failure.
+        if [ -z "$mock_pid" ]; then
+          start_mock || { report "$suite" FAIL "the mock LLM failed to start (see /tmp/tau-mock-llm.log)"; return 1; }
+        fi
         TAU_ENDPOINT="http://127.0.0.1:$MOCK_PORT/v1"
       fi
       out=$(TAU_ENDPOINT="$TAU_ENDPOINT" TAU_MODEL="$TAU_MODEL" \
@@ -162,15 +166,23 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
         e2e)
           if command -v node >/dev/null 2>&1; then
             # Self-sufficient on a clean checkout (sweep finding X4): the
-            # E2E driver needs the debug binary with the e2e feature; build
-            # it when missing.
-            if [ ! -x target/debug/tau-app ]; then
-              if ! cargo build -p tau-app --features e2e; then
-                report e2e FAIL "debug binary build failed"
-                continue
-              fi
+            # E2E driver needs the debug binary WITH the e2e feature (the
+            # embedded WebDriver plugin). The build is a no-op when that
+            # exact build is current — but it must not be skipped on mere
+            # existence: a feature-less debug build satisfies the test yet
+            # lacks the plugin.
+            if ! cargo build -p tau-app --features e2e; then
+              report e2e FAIL "debug binary build failed"
+              continue
             fi
-            out=$(cd app && npm run test:frontend 2>&1); status=$?
+            # The WebKitGTK webview wants an X display (spec §13): headless
+            # Linux runs under xvfb, as the launch smoke already does.
+            if [ "$(uname)" = "Linux" ] && [ -z "$DISPLAY" ]; then
+              out=$(cd app && xvfb-run -a npm run test:frontend 2>&1)
+            else
+              out=$(cd app && npm run test:frontend 2>&1)
+            fi
+            status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c 'PASS  ')
               report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-all}: replay of the real dogfood session pair + the mock-LLM leg + the realistic large stress session)"

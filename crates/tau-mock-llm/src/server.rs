@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::scenario::{ScenarioSet, WireRequest, render_frames};
@@ -101,7 +101,9 @@ async fn stream_response(sock: &mut TcpStream, set: &ScenarioSet, body: &[u8]) {
     let frames = render_frames(turn, &scenario.usage, seq);
     let _ = reply_headers(sock).await;
     for frame in frames {
-        let _ = sock.write_all(format!("data: {frame}\n\n").as_bytes()).await;
+        let _ = sock
+            .write_all(format!("data: {frame}\n\n").as_bytes())
+            .await;
         let _ = sock.flush().await;
         tokio::time::sleep(FRAME_GAP).await;
     }

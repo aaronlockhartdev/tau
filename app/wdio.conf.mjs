@@ -24,7 +24,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const APP = import.meta.dirname;
 const ROOT = path.join(APP, '..');
 const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
-const FIXTURE_SHA256 = '2a4f08174fe7f7e1042833632aebe7f9899839be89fb5a4d41e70df183f72139';
+// Re-pinned 2026-09-30: the id series is 1-based (the store mints after
+// loading the file), which rewrote every id line in the fixture. The
+// generator is byte-deterministic (fixed clock, static content, no temp
+// paths) — verified two runs, identical sha256.
+const FIXTURE_SHA256 = 'fe6751612f042561d0d2343dc792e58456567ea93c386f2dac136aa407450a19';
 const FIXTURE_SESSION = 'session';
 // The real session pair the replay leg runs against (recorded by the app
 // itself during the 2026-09-24 dogfood; committed, hash-pinned like the

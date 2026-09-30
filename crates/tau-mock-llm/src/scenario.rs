@@ -52,11 +52,7 @@ pub struct Scenario {
 }
 
 impl Scenario {
-    pub fn new(
-        pattern: impl Into<String>,
-        turns: Vec<Turn>,
-        usage: Usage,
-    ) -> Self {
+    pub fn new(pattern: impl Into<String>, turns: Vec<Turn>, usage: Usage) -> Self {
         Self {
             pattern: pattern.into(),
             turns,
@@ -131,10 +127,13 @@ impl ScenarioSet {
         for path in paths {
             let raw = std::fs::read_to_string(&path)
                 .map_err(|e| format!("read {}: {e}", path.display()))?;
-            let mut scenario: Scenario = serde_json::from_str(&raw)
-                .map_err(|e| format!("parse {}: {e}", path.display()))?;
+            let mut scenario: Scenario =
+                serde_json::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
             if scenario.turns.is_empty() {
-                return Err(format!("{}: a scenario needs at least one turn", path.display()));
+                return Err(format!(
+                    "{}: a scenario needs at least one turn",
+                    path.display()
+                ));
             }
             // The counter is not deserializable; start it fresh.
             scenario.counter = AtomicUsize::new(0);
@@ -148,6 +147,10 @@ impl ScenarioSet {
 
     pub fn len(&self) -> usize {
         self.scenarios.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.scenarios.is_empty()
     }
 
     /// The scenario a request belongs to: the `instructions` text first
@@ -182,17 +185,17 @@ impl ScenarioSet {
 /// per function call, `response.completed` with usage, `[DONE]`.
 pub fn render_frames(turn: &Turn, usage: &Usage, seq: usize) -> Vec<String> {
     let id = format!("mock-resp-{seq}");
-    let mut frames = vec![json!({
-        "type": "response.created",
-        "response": { "id": id }
-    })
-    .to_string()];
+    let mut frames = vec![
+        json!({
+            "type": "response.created",
+            "response": { "id": id }
+        })
+        .to_string(),
+    ];
     if let Some(text) = &turn.text {
         for chunk in chunk_text(text) {
-            frames.push(
-                json!({ "type": "response.output_text.delta", "delta": chunk })
-                    .to_string(),
-            );
+            frames
+                .push(json!({ "type": "response.output_text.delta", "delta": chunk }).to_string());
         }
     }
     for (i, call) in turn.calls.iter().enumerate() {
@@ -233,10 +236,7 @@ fn chunk_text(text: &str) -> Vec<String> {
     if chars.len() <= WIDTH {
         return vec![text.to_owned()];
     }
-    chars
-        .chunks(WIDTH)
-        .map(|c| c.iter().collect())
-        .collect()
+    chars.chunks(WIDTH).map(|c| c.iter().collect()).collect()
 }
 
 #[cfg(test)]

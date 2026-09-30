@@ -19,7 +19,7 @@ e2e = [
     "tauri/devtools",
 ]
 [dependencies]
-tauri = "2.11"
+tauri = { version = "2.11", features = [] }
 tauri-plugin-dialog = "2"
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the agent's window into the UI

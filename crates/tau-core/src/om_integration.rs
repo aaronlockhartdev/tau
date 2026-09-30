@@ -117,7 +117,6 @@ fn record_from_entry(store: &SessionStore, entry: &Entry) -> Result<OmRecord, Om
 }
 
 impl OmState {
-
     /// Persist the record as a new `om` entry (the newest entry wins).
     pub fn save(&self, store: &mut SessionStore) -> Result<(), crate::session::Error> {
         let parent = store.leaf()?.map(|e| e.id);

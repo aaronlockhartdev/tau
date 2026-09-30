@@ -6,9 +6,7 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tau_core::config::{Provider, Requests};
-use tau_core::provider::{
-    self, InputEntry, InputMessage, ResponseRequest, TurnEvent, TurnSink,
-};
+use tau_core::provider::{self, InputEntry, InputMessage, ResponseRequest, TurnEvent, TurnSink};
 use tau_mock_llm::scenario::{Call, Scenario, ScenarioSet, Turn, Usage};
 use tau_mock_llm::server;
 
@@ -86,7 +84,11 @@ async fn a_text_turn_streams_and_decodes_through_the_real_client() {
     assert!(result.completed, "the [DONE]-terminated stream is complete");
     assert_eq!(result.usage.unwrap().total_tokens, 18);
     // The text arrived as deltas (streaming fidelity), not one lump.
-    let deltas = sink.0.iter().filter(|e| matches!(e, TurnEvent::Text(_))).count();
+    let deltas = sink
+        .0
+        .iter()
+        .filter(|e| matches!(e, TurnEvent::Text(_)))
+        .count();
     assert!(deltas >= 1, "at least one text delta was streamed");
 }
 
