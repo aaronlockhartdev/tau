@@ -11,3 +11,5 @@ app/src-tauri/capabilities/e2e.json
 # agent skills: pulled per-machine from skills-lock.json (npx skills)
 .agents/skills/
 .pi/skills/
+# vitest coverage output
+app/coverage/
