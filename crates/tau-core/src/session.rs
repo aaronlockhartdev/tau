@@ -453,11 +453,6 @@ impl SessionStore {
     }
 
     fn append_line(&mut self, mut entry: Entry, parent: Option<&str>) -> Result<Entry, Error> {
-        // A fresh, unopened store minted its first id before open() ran
-        // (the fixtures expect 0, then 2, 3, ...): open() resets the
-        // counter to 1, so the sentinel 0 lands and the counter resumes
-        // at 2 — keep that id space exactly.
-        let was_unopened = !self.loaded;
         self.ensure_open()?;
         // A loaded store whose file is gone (deleted, or archived out
         // from under it) is in an inconsistent state: refuse the append
@@ -504,9 +499,6 @@ impl SessionStore {
         // The id was reserved up front (mint_id): advance the counter past
         // it, never double-advance.
         self.next = self.next.max(entry.id.parse::<u64>().unwrap_or(0) + 1);
-        if was_unopened {
-            self.next += 1;
-        }
         self.loaded = true;
         Ok(entry)
     }

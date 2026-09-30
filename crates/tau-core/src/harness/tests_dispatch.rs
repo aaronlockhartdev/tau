@@ -477,9 +477,9 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
         other => panic!("expected entries: {other:?}"),
     };
     assert_eq!(window.len(), 2);
-    assert_eq!(window[0].id, "00000002");
+    assert_eq!(window[0].id, "00000001");
     assert_eq!(window[0].payload["text"], "msg 1");
-    assert_eq!(window[1].id, "00000003");
+    assert_eq!(window[1].id, "00000002");
     assert_eq!(window[1].payload["text"], "msg 2");
     // A since-read from the first entry: everything after it.
     let out = core
@@ -495,7 +495,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
     };
     assert_eq!(
         since.iter().map(|e| e.id.clone()).collect::<Vec<_>>(),
-        vec!["00000002", "00000003", "00000004", "00000005"]
+        vec!["00000001", "00000002", "00000003", "00000004"]
     );
     // The snapshot: five metadata rows, the cursor at the leaf.
     let snap = match core
@@ -508,7 +508,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
         other => panic!("expected snapshot: {other:?}"),
     };
     assert_eq!(snap.entries.len(), 5);
-    assert_eq!(snap.cursor, "00000005");
+    assert_eq!(snap.cursor, "00000004");
 }
 
 /// A blob-backed entry (ADR-0005): `blob_read` decodes the sidecar and
