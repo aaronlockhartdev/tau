@@ -44,3 +44,20 @@ pub mod command {
             })?
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use tau_core::harness::CoreBuilder;
+
+    use super::CoreState;
+
+    #[test]
+    fn the_state_wrapper_round_trips_the_core_arc() {
+        let core = CoreBuilder::custom(BTreeMap::new()).build();
+        let wrapped = CoreState(Arc::clone(&core));
+        assert!(Arc::ptr_eq(&core, &wrapped.0));
+    }
+}
