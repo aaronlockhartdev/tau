@@ -1,0 +1,16 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::Queue\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), items:\n    vec![QueuedItem\n    {\n        text: \"next\".into(), lane: tau_protocol::MessageLane::FollowUp,\n        source: Some(\"s2\".into()),\n    }],\n}"
+---
+{
+  "type": "queue",
+  "workspace": "w1",
+  "session": "s1",
+  "items": [
+    {
+      "text": "next",
+      "lane": "follow_up",
+      "source": "s2"
+    }
+  ]
+}

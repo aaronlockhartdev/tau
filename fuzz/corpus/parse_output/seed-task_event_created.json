@@ -1,0 +1,12 @@
+{
+  "event": "created",
+  "title": "ship the parser",
+  "steps": [
+    {
+      "text": "write the parser",
+      "expected_output": "tests pass",
+      "status": "pending"
+    }
+  ],
+  "criteria": []
+}

@@ -1,0 +1,11 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::SubagentSpawn\n{\n    session: \"s1\".into(), agent_type: \"general\".into(), brief:\n    \"do the thing\".into(), context_mode: tau_protocol::ContextMode::Compacted,\n}"
+---
+{
+  "type": "subagent_spawn",
+  "session": "s1",
+  "agent_type": "general",
+  "brief": "do the thing",
+  "context_mode": "compacted"
+}

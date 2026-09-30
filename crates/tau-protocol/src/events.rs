@@ -131,7 +131,8 @@ pub enum SubagentEventKind {
     },
 }
 
-/// A child's structured state (the protocol's mirror of the core's 5-state
+/// The child's structured state (the protocol's mirror of the core's 5-state
+/// machine): full-state per handle, so any frame self-heals a lost batch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubagentInfo {
     pub handle: String,
@@ -345,5 +346,67 @@ mod tests {
             let back: Event = serde_json::from_str(&json).unwrap();
             assert_eq!(&back, ev, "round-trip mismatch for {json}");
         }
+    }
+
+    /// A lost or corrupted event must fail decode, not surface as a silent
+    /// no-op on the multiplexed channel (#13 idempotent-cumulative relies on
+    /// the snapshot self-heal, which only works if bad frames are dropped).
+    #[test]
+    fn event_unknown_type_is_data_error() {
+        let err = serde_json::from_str::<Event>(r#"{"type":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    /// The sub-agent kind's wire shape is the panel's contract: each
+    /// transition tags on `kind`, and an unknown tag refuses to decode.
+    #[test]
+    fn subagent_kind_wire_shape() {
+        let kinds = vec![
+            SubagentEventKind::Spawned {
+                handle: "h1".into(),
+                child: "s2".into(),
+                agent_type: "general".into(),
+                context_mode: ContextMode::Fresh,
+                title: "t".into(),
+            },
+            SubagentEventKind::State {
+                handle: "h1".into(),
+                child: "s2".into(),
+                state: "done".into(),
+                detail: None,
+                note: Some("n".into()),
+            },
+            SubagentEventKind::Notified {
+                child: "s2".into(),
+                wake: "done".into(),
+                text: "t".into(),
+                output: None,
+            },
+        ];
+        for kind in &kinds {
+            let json = serde_json::to_string(kind).unwrap();
+            let back: SubagentEventKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(&back, kind, "round-trip mismatch for {json}");
+        }
+        let err = serde_json::from_str::<SubagentEventKind>(r#"{"kind":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    #[test]
+    fn session_and_system_kinds_reject_unknown_tags() {
+        let err = serde_json::from_str::<SessionEventKind>(r#"{"kind":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        let err = serde_json::from_str::<SystemEventKind>(r#"{"kind":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        // The unit variants' exact wire tags (the gauge and status bar key
+        // off them).
+        assert_eq!(
+            serde_json::to_string(&OmStatusKind::Observing).unwrap(),
+            "\"observing\""
+        );
+        assert_eq!(
+            serde_json::to_string(&SystemEventKind::ProviderChanged).unwrap(),
+            r#"{"kind":"provider_changed"}"#
+        );
     }
 }

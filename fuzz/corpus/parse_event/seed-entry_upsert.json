@@ -1,0 +1,16 @@
+{
+  "type": "entry_upsert",
+  "workspace": "w1",
+  "session": "s1",
+  "entry": {
+    "id": "00000007",
+    "parent": "00000006",
+    "kind": "assistant",
+    "timestamp": 1700000000123,
+    "payload": {
+      "text": "hello"
+    },
+    "blob": null,
+    "first_kept": null
+  }
+}

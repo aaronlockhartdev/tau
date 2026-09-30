@@ -1,0 +1,66 @@
+[package]
+name = "tau-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Independent workspace: the fuzz crate must not join the root workspace
+# (cargo-fuzz README, workspace convention) — keeps the root manifest untouched.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = "1"
+serde_json = "1"
+tempfile = "3"
+
+[dependencies.tau-core]
+path = "../crates/tau-core"
+
+[dependencies.tau-protocol]
+path = "../crates/tau-protocol"
+
+[[bin]]
+name = "parse_command"
+path = "fuzz_targets/parse_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_event"
+path = "fuzz_targets/parse_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_output"
+path = "fuzz_targets/parse_output.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_sse"
+path = "fuzz_targets/parse_sse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_session"
+path = "fuzz_targets/parse_session.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "roundtrip_command"
+path = "fuzz_targets/roundtrip_command.rs"
+test = false
+doc = false
+bench = false

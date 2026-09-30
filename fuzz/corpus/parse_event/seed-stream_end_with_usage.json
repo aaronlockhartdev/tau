@@ -1,0 +1,13 @@
+{
+  "type": "stream_end",
+  "workspace": "w1",
+  "session": "s1",
+  "call_id": "c1",
+  "interrupted": false,
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "total_tokens": 120,
+    "cached_prompt_tokens": 40
+  }
+}

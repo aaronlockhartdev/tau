@@ -1,0 +1,60 @@
+# Supply-chain gate (phase 1): advisories + licenses + duplicates, one tool
+# (cargo-deny subsumes cargo-audit — research/testing-rust.md §5). The fuzz
+# crate is its own workspace (fuzz/Cargo.toml) and is not in this graph.
+
+[advisories]
+# Tauri's GTK/ICU transitive chain carries unmaintained notices with no safe
+# upgrade (proc-macro-error, unic-*); fail only if a DIRECT dep is unmaintained.
+unmaintained = "workspace"
+
+[licenses]
+# The permissive + OSI set the lockfile resolves to. BSL-1.0 is present only
+# via xxhash-rust (a direct dependency, hashline's xxh32) — source-available,
+# not OSI-approved: a user decision item, see the phase-1 report.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[licenses.private]
+# Workspace members and the vendored third_party are not published.
+ignore = true
+
+# The workspace members are the project's own AGPL code.
+[[licenses.exceptions]]
+allow = ["AGPL-3.0-only"]
+name = "tau-acceptance"
+
+[[licenses.exceptions]]
+allow = ["AGPL-3.0-only"]
+name = "tau-app"
+
+[[licenses.exceptions]]
+allow = ["AGPL-3.0-only"]
+name = "tau-core"
+
+[[licenses.exceptions]]
+allow = ["AGPL-3.0-only"]
+name = "tau-protocol"
+
+[bans]
+# Duplicate crates are reported, not blocked, until the lockfile is deduped.
+multiple-versions = "warn"
+
+[sources]
+
+# The e2e feature pulls tauri-plugin-pilot from git (app/src-tauri).
+allow-git = ["https://github.com/mpiton/tauri-pilot"]
