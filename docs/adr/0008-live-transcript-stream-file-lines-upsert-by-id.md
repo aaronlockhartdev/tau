@@ -1,0 +1,42 @@
+# Live transcript: stream the file's own lines (upsert-by-id), not deltas
+
+**Status**: accepted (2026-09-29) — settled in direct design discussion. In response to persistent live-vs-file reconciliation defects in the transcript: a child's steering report rendering only after a reload; a tool call rendering twice (its file id and its streamed `call_id` twin); newly-landed file copies yanked to the top of the list. Revises ADR-0006's live-transport model (delta stream + paged reads + metadata snapshot); builds on ADR-0005's file format. Supersedes the reconciliation layer it describes.
+
+**Context**: ADR-0006 makes the GUI a stateless renderer rebuilt from an ephemeral snapshot (entry *metadata*, no payloads) + a delta event stream (coalesced at 25 ms) + paged reads for payloads. The live path therefore carries **two representations of the same transcript** — the paged-read file data and the live delta/event data — joined by a reconciliation layer (`mergeHydrated`, `applyToolEvent`, `isTwin`, `collapseToolCalls`). That reconciler has been a standing source of defects, each individually patchable but structurally recurring:
+
+- a child's steering report (a `user` entry carrying a source id) was text-folded into a same-text live slot and dropped when the live buffer cleared at turn end, so it appeared only on reload;
+- a tool call rendered twice — its file id and its streamed `call_id` twin both survived — because the arriving file copy was skipped in favor of the already-settled streamed twin;
+- a new file copy was positioned by a lexicographic id compare over the *mixed* numeric/non-numeric id space; since `0… < 4… < u… < call_…`, every file copy sorted ahead of in-flight streamed entries and piled up at the top of the list.
+
+The root cause is that the wire format (deltas) and the file format (finalized entries) differ, so the GUI must *reconcile* two encodings of one data set. Patching the reconciler treats symptoms.
+
+**Decision**: unify the wire and file format. The core emits each entry as **exactly the JSON line it writes to the session file** — `{type, id, parentId, timestamp, payload, crc}` — and tees that line to (a) the GUI over the event channel and (b) the session file. The GUI holds the transcript as a **`Map<id, entry>`** whose only live operation is **`upsert(id, entry)`**. Wire and file are the same object; the GUI's map and the file's last-per-id projection are the same data *by construction*, not by reconciliation.
+
+The model:
+
+- **One format, two sinks.** A state change yields one file-line JSON; the core streams it to the GUI and (finalized) appends it to the file. No delta encoding, no separate live representation.
+- **One id per item, stable for its life.** The id is minted at first creation and reused on every re-emission. A tool call is **one id**, re-emitted call→result (the two-phase call/result pairing and `collapseToolCalls` disappear). An assistant response is one id, re-emitted as it grows.
+- **Id ownership.** The core mints every entry id from a single global, per-session, monotonic counter — the file's primary key *and* the transcript's sort order. The GUI renders a card **when the core emits it**; the first emission carries the id, so there is no client-generated id, no optimistic render, and no swap. That is free here: the send→echo round-trip is a same-machine IPC hop (~1–5 ms), imperceptible, so waiting for the authoritative id costs nothing and avoids a phantom card if the send is rejected. A send while a turn is in flight is queued and its card lands on injection; the immediate "received" feedback is the queue pane (live snapshot), not a speculative transcript card. Core-minting also keeps ids collision-free for the multi-client/remote case ADR-0006 designs toward.
+- **Upsert-by-id is the only GUI op.** Each line replaces the map entry for that id. Transcript order is fixed by the **creation id** (monotonic); re-emissions mutate in place and never reposition. The mis-ordering class is removed.
+- **Streaming is re-emitting the growing entry.** The in-progress assistant response is its entry re-emitted as a full snapshot on a frame-aligned cadence — not a separate `s.live` buffer. The `s.live` buffer, the live→file handoff, and the delta coalescer are all deleted.
+- **Compact file (persistence policy).** The on-disk file keeps **one line per item** — the finalized entry — append-only per ADR-0005, no compaction pass. Growing snapshots are **wire-only** (streamed for liveness, never persisted). The file is the compact at-rest projection; the wire is the verbose live projection; both share the format and converge to one map. The per-line CRC (ADR-0005) is computed at persist time and **verified on file read only**; the wire is a trusted same-machine channel and is not CRC-checked.
+- **Reload / reconnect = last-per-id.** Reading a session: read the file lines, keep the last line per id, order by creation id. A mid-turn disconnect resyncs identically, and the next full-snapshot emission resumes the in-progress entry (self-healing — no delta reconstruction). Initial materialization of a long session is a paged read of the N most recent finalized entries (ADR-0006's paged reads remain for *initial* load); the live path after that is the upsert stream. The `Map<id, entry>` holds only the **materialized** entries (viewport + scroll buffer + live); the full count and structure for virtualization come from the metadata snapshot (ADR-0006), so a large session's memory stays bounded. Because the file is one line per id, a paged read needs no last-per-id dedup.
+
+**Emission cadence (frame-aligned).** Full-snapshot re-emission is bounded to the display frame rate: the core coalesces tokens into a ~16 ms window and emits **at most once per frame (60 fps)** — the smoothness ceiling, since re-rendering faster than the refresh rate produces states the screen cannot show. Multiple tokens in a frame batch into one snapshot. This caps the main-thread re-render (markdown re-parse + DOM update + virtua re-measure) at the frame rate, keeps per-response IPC in the low-MB range (trivial for a same-machine channel), and is perceptually identical to per-token for text.
+
+**Consequences**:
+
+- The reconciliation layer is deleted: `mergeHydrated`, `applyToolEvent`, `isTwin`, `collapseToolCalls`, the `s.live` buffer, the delta coalescer, the two-phase tool pairing. The GUI transcript is one id-keyed map; live and reload are identical.
+- The defect class (vanishing-on-reload, duplication, mis-ordering, desync) is removed by construction.
+- IPC volume rises vs. deltas (full snapshots); bounded by the frame-aligned cadence, acceptable for a local channel.
+- ADR-0006's "stateless renderer from metadata snapshot + delta stream" is revised, for the live transcript, to "id-keyed map fed by file-line upserts"; the snapshot projection and paged reads remain for initial materialization and for sessions not currently live.
+- Existing session files are unaffected (already one finalized line per item); the change is in the live wire path and the GUI, not the at-rest file format.
+
+**Considered**:
+
+- *Keep deltas + paged reads, fix the reconciler* (the path taken while drafting this) — each defect is patchable, but the two-representation reconciliation is the standing risk; rejected as the end state.
+- *Ephemeral streaming overlay* (file = truth for complete entries, a separate `s.live` for the in-progress response, live events as "re-read the tail" signals) — cleaner than the status quo but keeps two channels and a live→file handoff; the unified upsert model subsumes it (the overlay *is* the entry being updated).
+- *Persist every snapshot + compact at turn end* (purist "file == wire verbatim") — correct, but bloats the live file and adds a compaction/rewrite pass that fights ADR-0005's append-only rule; the compact-file policy achieves the same GUI convergence without it.
+- *Client mints the entry id / optimistic render* — rejected: the entry id is the transcript's sort order (a core-owned global counter that advances from async activity the client cannot see), so a client-minted id collides or mis-orders; and in a local app the send→echo hop is ~ms, so an optimistic render buys no perceived latency — the GUI renders on the first emission.
+
+**Tuning constants** (set in the implementation, not load-bearing to the design): the frame coalescing window (~16 ms); the initial-load page size (~100–200 entries); the snapshot metadata size threshold.
