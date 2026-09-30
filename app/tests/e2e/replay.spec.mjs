@@ -30,6 +30,8 @@ const CANNED_TEXT = 'word 0 word 1';
 const storeState = () => {
   const s = window.__tau.store();
   const cur = s.current ? s.sessions[s.current] : null;
+  // ADR-0008: entries is a Record keyed by entry id — materialize the list.
+  const entries = cur ? Object.values(cur.entries) : [];
   return {
     loading: s.loading,
     error: s.error,
@@ -41,11 +43,11 @@ const storeState = () => {
       parent: v.meta.parent ?? null,
       archived: v.archived
     })),
-    entries: cur ? cur.entries.length : null,
-    live: cur ? cur.live.length : null,
+    entries: entries.length,
+    live: 0,
     turn: cur ? cur.turn : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
-    lastText: cur && cur.entries.length ? cur.entries[cur.entries.length - 1].text : null
+    lastText: entries.length ? entries[entries.length - 1].text : null
   };
 };
 

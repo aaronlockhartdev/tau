@@ -20,7 +20,7 @@ import {
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
-const ws = process.env.TAU_E2E_WS;
+const ws = process.env.TAU_E2E_WS_MOCK;
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
 if (!ws) throw new Error('mock context unset — the wdio config did not run onPrepare');
 
@@ -56,8 +56,10 @@ describe('mock E2E: a streamed text turn (deterministic mock LLM)', () => {
     expect(sid).toBeTruthy();
   });
 
-  it('the model menu switches the session to mock/mock-model', async () => {
-    await selectModel('mock/mock-model');
+  it('the model menu switches the session to mock/mock-model-2', async () => {
+    // The mock workspace's provider offers twin models; the switch is the
+    // real menu interaction (the mock server ignores the model id).
+    await selectModel('mock/mock-model-2');
   });
 
   it('a Composer send streams the scripted text turn to committed entries', async () => {
@@ -66,7 +68,7 @@ describe('mock E2E: a streamed text turn (deterministic mock LLM)', () => {
     const settled = await waitSettle(60000);
     check(
       'the turn committed a user entry and a message entry',
-      settled.entries === before + 2 && settled.entryKinds.join(',') === 'user,message',
+      settled.entries === before + 2 && settled.entryKinds.slice(-2).join(',') === 'user,message',
       `entries ${before} → ${settled.entries} (${settled.entryKinds})`
     );
     check(

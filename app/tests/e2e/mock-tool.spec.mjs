@@ -24,7 +24,7 @@ import {
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
-const ws = process.env.TAU_E2E_WS;
+const ws = process.env.TAU_E2E_WS_MOCK;
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
 if (!ws) throw new Error('mock context unset — the wdio config did not run onPrepare');
 
@@ -60,8 +60,10 @@ describe('mock E2E: tool calls the app executes and renders', () => {
     expect(sid).toBeTruthy();
   });
 
-  it('the model menu switches the session to mock/mock-model', async () => {
-    await selectModel('mock/mock-model');
+  it('the model menu switches the session to mock/mock-model-2', async () => {
+    // The mock workspace's provider offers twin models; the switch is the
+    // real menu interaction (the mock server ignores the model id).
+    await selectModel('mock/mock-model-2');
   });
 
   it('a Composer send runs the scripted write → read → text sequence', async () => {
@@ -71,8 +73,9 @@ describe('mock E2E: tool calls the app executes and renders', () => {
     // a starved CI webview gets the full deadline.
     const settled = await waitSettle(120000);
     check(
-      'the turn committed user + write + read + message entries',
-      settled.entries === before + 4 && settled.entryKinds.join(',') === 'user,tool,tool,message',
+      'the turn committed the user + 3 call entries + 2 tool entries',
+      settled.entries === before + 6 &&
+        settled.entryKinds.slice(-6).join(',') === 'user,message,tool,message,tool,message',
       `entries ${before} → ${settled.entries} (${settled.entryKinds})`
     );
     check(

@@ -35,33 +35,32 @@ expect.extend({
 const storeState = () => {
   const s = window.__tau.store();
   const cur = s.current ? s.sessions[s.current] : null;
+  // entries is a Record keyed by entry id (sessions.ts) — materialize the
+  // list (insertion order = file order) for the readers below.
+  const entries = cur ? Object.values(cur.entries) : [];
   return {
     loading: s.loading,
     error: s.error,
     workspaces: s.workspaces.map((w) => w.id),
     current: s.current,
     model: cur ? cur.meta.model ?? null : null,
-    entries: cur ? cur.entries.length : null,
-    entryKinds: cur ? cur.entries.map((e) => e.kind) : [],
-    toolNames: cur ? cur.entries.filter((e) => e.kind === 'tool').map((e) => e.name) : [],
-    taskTitles: cur
-      ? cur.tasks.map((t) => `${t.id}:${t.status}`)
-      : [],
-    toolDetails: cur
-      ? cur.entries
-          .filter((e) => e.kind === 'tool')
-          .map((e) => ({
-            name: e.name,
-            path: typeof e.args?.path === 'string' ? e.args.path : null,
-            outputSnippet: (e.output ?? '').slice(0, 120)
-          }))
-      : [],
-    live: cur ? cur.live.length : null,
-    liveTexts: cur ? cur.live.map((l) => l.text.length) : [],
-    turn: cur ? cur.turn : null,
+    entries: entries.length,
+    entryKinds: entries.map((e) => e.kind),
+    toolNames: entries.filter((e) => e.kind === 'tool').map((e) => e.name),
+    taskTitles: cur ? Object.values(cur.tasks ?? {}).map((t) => `${t.id}:${t.status}`) : [],
+    toolDetails: entries
+      .filter((e) => e.kind === 'tool')
+      .map((e) => ({
+        name: e.name,
+        path: typeof e.args?.path === 'string' ? e.args.path : null,
+        outputSnippet: (e.output ?? '').slice(0, 120)
+      })),
+    live: cur ? (cur.live?.length ?? 0) : null,
+    liveTexts: cur ? (cur.live ?? []).map((l) => l.text.length) : [],
+    turn: cur ? cur.turn ?? null : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     renderRange: s.renderRange,
-    lastText: cur && cur.entries.length ? cur.entries[cur.entries.length - 1].text : null
+    lastText: entries.length ? entries[entries.length - 1].text : null
   };
 };
 
@@ -196,11 +195,23 @@ export async function selectModel(qualified) {
   check(`model switch: the session model is ${qualified}`, s.model === qualified, `model=${s.model}`);
 }
 
-// A user message through the Composer: type into .cin, click .send.
+// A user message through the Composer: DOM-level (like the rest of this
+// harness — the embedded WebDriver's element resolution is flaky against
+// Svelte re-renders). The native value setter + input event is what
+// Svelte's bind:value listens for, so the real submit path runs.
 export async function uiSend(text) {
-  const cin = await $('cin');
-  await cin.addValue(text);
-  await (await $('send')).click();
+  await browser.execute((t) => {
+    const cin = document.querySelector('.cin');
+    if (!cin) throw new Error('composer input (.cin) missing');
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+    setter.call(cin, t);
+    cin.dispatchEvent(new Event('input', { bubbles: true }));
+  }, text);
+  await browser.execute(() => {
+    const send = document.querySelector('.send');
+    if (!send) throw new Error('composer send button (.send) missing');
+    send.click();
+  });
 }
 
 // The turn settle bar: idle, no live stream, a quiet re-read.

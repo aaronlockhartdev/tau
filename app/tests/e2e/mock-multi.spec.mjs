@@ -19,7 +19,7 @@ import {
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
-const ws = process.env.TAU_E2E_WS;
+const ws = process.env.TAU_E2E_WS_MOCK;
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
 if (!ws) throw new Error('mock context unset — the wdio config did not run onPrepare');
 
@@ -54,8 +54,10 @@ describe('mock E2E: session creation + a scripted 3-turn sequence', () => {
     expect(sid).toBeTruthy();
   });
 
-  it('the model menu switches the session to mock/mock-model', async () => {
-    await selectModel('mock/mock-model');
+  it('the model menu switches the session to mock/mock-model-2', async () => {
+    // The mock workspace's provider offers twin models; the switch is the
+    // real menu interaction (the mock server ignores the model id).
+    await selectModel('mock/mock-model-2');
   });
 
   it('three Composer sends walk the scripted 1 → 2 → 3 sequence', async () => {
@@ -79,8 +81,8 @@ describe('mock E2E: session creation + a scripted 3-turn sequence', () => {
   it('the session holds all six entries in send order', async () => {
     const s = await readStore();
     check(
-      'six entries: three user / three message, in order',
-      s.entries === 6 && s.entryKinds.join(',') === 'user,message,user,message,user,message',
+      'seven entries: the model note + three user / three message, in order',
+      s.entries === 7 && s.entryKinds.slice(-6).join(',') === 'user,message,user,message,user,message',
       JSON.stringify(s.entryKinds)
     );
   });
