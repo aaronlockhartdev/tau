@@ -71,6 +71,10 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Lint
+        working-directory: app
+        run: npx eslint .
+
       - name: Build
         working-directory: app
         run: npm run build
@@ -81,7 +85,13 @@ jobs:
 
       - name: Test
         working-directory: app
-        run: npm run test
+        run: npx vitest run --coverage
+
+      - name: Upload coverage
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: frontend-coverage
+          path: app/coverage/
 
   macos-acceptance:
     runs-on: macos-15
