@@ -9,7 +9,6 @@
 //! are absent until tickets #22/#23/#24 wire their producers; the document
 //! narrows as features finalize (ADR-0006).
 
-pub mod coalesce;
 pub mod payload;
 pub mod snapshot;
 

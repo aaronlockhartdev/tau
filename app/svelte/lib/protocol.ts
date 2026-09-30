@@ -426,13 +426,13 @@ export type SystemEventKind =
 
 export type Event =
   | { type: 'stream_start'; workspace: string; session: string; call_id: string }
-  | { type: 'stream_delta'; workspace: string; session: string; call_id: string; text: string; reasoning: string | null }
   | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null }
-  | { type: 'tool_start'; workspace: string; session: string; call_id: string; tool_call_id: string; name: string }
-  | { type: 'tool_end'; workspace: string; session: string; call_id: string; tool_call_id: string; name: string; output: unknown }
-  // A non-streamed entry landed in the log (task/subagent/om card, and future
-  // kinds): folded into the transcript live, decoded like a paged-read row.
-  | { type: 'entry_live'; workspace: string; session: string; entry: ViewEntry }
+  // A transcript entry is upserted: the exact file-line view the session log
+  // holds (or will hold when finalized). The store sets map[id] = entry — the
+  // only live transcript op (ADR-0008). Carries the streaming assistant entry
+  // (re-emitted frame-aligned as it grows), tool entries (one id, call→result),
+  // and every discrete card. The card renders on first sight, updates in place.
+  | { type: 'entry_upsert'; workspace: string; session: string; entry: ViewEntry }
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }
   // The session's OM activity (the turn-end Observer/Reflector run): the

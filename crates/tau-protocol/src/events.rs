@@ -12,15 +12,6 @@ pub enum Event {
         session: String,
         call_id: String,
     },
-    /// A coalesced stream delta (text and/or reasoning appended since the
-    /// last flush for this call).
-    StreamDelta {
-        workspace: String,
-        session: String,
-        call_id: String,
-        text: String,
-        reasoning: Option<String>,
-    },
     /// The call ends and its assistant entry is committed; `interrupted`
     /// means the stream was cut (force/stop) and the partial stands (spec
     /// §6/§7). The GUI reconciles the live bubble against the entry.
@@ -31,29 +22,14 @@ pub enum Event {
         interrupted: bool,
         usage: Option<Usage>,
     },
-    /// A tool the model requested starts running (spec §8 tool events).
-    ToolStart {
-        workspace: String,
-        session: String,
-        call_id: String,
-        tool_call_id: String,
-        name: String,
-    },
-    /// A tool finishes; `output` is idempotent — the GUI replaces on
-    /// receive, so a lost batch self-heals on the next page read.
-    ToolEnd {
-        workspace: String,
-        session: String,
-        call_id: String,
-        tool_call_id: String,
-        name: String,
-        output: Value,
-    },
-    /// A non-streamed entry landed in the session log. The GUI folds it into
-    /// the transcript live — task/subagent/om cards and any future card kind —
-    /// instead of waiting for the next paged read. Carries the full persisted
-    /// view; the GUI decodes it exactly as it decodes a paged-read row.
-    EntryLive {
+    /// A transcript entry is upserted: the exact file-line view the session
+    /// log holds (or will hold when finalized). The GUI sets `map[id] = entry`
+    /// — the only live transcript op (ADR-0008). Carries the streaming
+    /// assistant entry (re-emitted frame-aligned as it grows), tool entries
+    /// (one id, call→result), and every discrete card (subagent/task/om/
+    /// steering). The GUI renders a card on first sight and updates it in
+    /// place; transcript order is fixed by the id.
+    EntryUpsert {
         workspace: String,
         session: String,
         entry: ViewEntry,
@@ -226,13 +202,6 @@ mod tests {
                 session: "s1".into(),
                 call_id: "c1".into(),
             },
-            Event::StreamDelta {
-                workspace: "w1".into(),
-                session: "s1".into(),
-                call_id: "c1".into(),
-                text: "partial".into(),
-                reasoning: Some("thinking…".into()),
-            },
             Event::StreamEnd {
                 workspace: "w1".into(),
                 session: "s1".into(),
@@ -245,20 +214,18 @@ mod tests {
                     cached_prompt_tokens: 0,
                 }),
             },
-            Event::ToolStart {
+            Event::EntryUpsert {
                 workspace: "w1".into(),
                 session: "s1".into(),
-                call_id: "c1".into(),
-                tool_call_id: "call_1".into(),
-                name: "read".into(),
-            },
-            Event::ToolEnd {
-                workspace: "w1".into(),
-                session: "s1".into(),
-                call_id: "c1".into(),
-                tool_call_id: "call_1".into(),
-                name: "read".into(),
-                output: Value::String("the file".into()),
+                entry: ViewEntry {
+                    id: "00000007".into(),
+                    parent: None,
+                    kind: "assistant".into(),
+                    timestamp: 123,
+                    payload: json!({ "text": "hello" }),
+                    blob: None,
+                    first_kept: None,
+                },
             },
             Event::Queue {
                 workspace: "w1".into(),
