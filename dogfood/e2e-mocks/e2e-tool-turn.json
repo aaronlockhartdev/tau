@@ -1,0 +1,22 @@
+{
+  "match": "e2e-tool-turn",
+  "turns": [
+    {
+      "calls": [
+        {
+          "name": "write",
+          "arguments": { "path": "e2e-mock.txt", "content": "mock tool turn payload\n" }
+        }
+      ]
+    },
+    {
+      "calls": [
+        { "name": "read", "arguments": { "path": "e2e-mock.txt" } }
+      ]
+    },
+    {
+      "text": "Wrote e2e-mock.txt and read it back. (e2e tool turn done)"
+    }
+  ],
+  "usage": { "input_tokens": 305, "output_tokens": 96, "total_tokens": 401 }
+}
