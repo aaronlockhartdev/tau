@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  applyToolEvent,
-  collapseToolCalls,
-  decodeEntry,
-  mergeHydrated,
-  resolveBlobs
-} from './entries';
-import type { Entry, MessageEntry, ViewEntry } from './protocol';
+import { decodeEntry, resolveBlobs, upsertEntry } from './entries';
+import type { Entry, ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
 // stripped) plus the run's display details for the observation card.
@@ -34,95 +28,59 @@ function omView(): ViewEntry {
   };
 }
 
-// A two-phase tool record as the file carries it: the call entry (empty
-// output, recorded before dispatch) and the result entry (same call_id).
-function toolView(id: string, callId: string, output: string): ViewEntry {
-  return {
+describe('upsertEntry (ADR-0008)', () => {
+  it('a first sight creates the card under its id', () => {
+    const entries: Record<string, Entry> = {};
+    upsertEntry(entries, omView());
+    expect(Object.keys(entries)).toEqual(['5']);
+    expect(entries['5'].kind).toBe('om');
+  });
+
+  it('a re-emission updates the slot in place and never repositions it', () => {
+    const v = (id: string, text: string): ViewEntry => ({
+      id,
+      parent: null,
+      kind: 'assistant',
+      timestamp: 1,
+      payload: { text, reasoning: 'r' },
+      blob: null,
+      first_kept: null
+    });
+    const entries: Record<string, Entry> = {};
+    upsertEntry(entries, v('00000001', 'hel'));
+    upsertEntry(entries, v('00000002', 'other'));
+    upsertEntry(entries, v('00000001', 'hello'));
+    expect(Object.keys(entries)).toEqual(['00000001', '00000002']);
+    const e = entries['00000001'];
+    if (e.kind === 'message' || e.kind === 'interrupted') expect(e.text).toBe('hello');
+  });
+});
+describe('decodeEntry (tool)', () => {
+  const toolView = (id: string, output: string): ViewEntry => ({
     id,
     parent: null,
     kind: 'tool',
     timestamp: 1,
-    payload: { call_id: callId, name: 'task_create', args: { title: 't' }, output },
+    payload: { call_id: 'c1', name: 'bash', args: {}, output },
     blob: null,
     first_kept: null
-  };
-}
-
-describe('collapseToolCalls (two-phase tool record)', () => {
-  it('folds a call + result pair into the call slot, keeping its position', () => {
-    const entries: Entry[] = [
-      { id: '1', kind: 'user', text: 'go' },
-      decodeEntry(toolView('2', 'c1', '')),
-      { id: '3', kind: 'task', text: 'task: t', payload: { event: 'created' } } as Entry,
-      decodeEntry(toolView('4', 'c1', 'created 1'))
-    ];
-    const out = collapseToolCalls(entries);
-    expect(out).toHaveLength(3);
-    expect(out[1]).toMatchObject({ id: '2', kind: 'tool', output: 'created 1' });
-    expect(out[2]).toMatchObject({ id: '3', kind: 'task' });
   });
 
-  it('leaves a lone result (pre-change file) untouched', () => {
-    const entries: Entry[] = [decodeEntry(toolView('2', 'c1', 'created 1'))];
-    expect(collapseToolCalls(entries)).toHaveLength(1);
+  it('a call-phase tool (empty output) decodes to running, not ok', () => {
+    const entries: Record<string, Entry> = {};
+    upsertEntry(entries, toolView('3', ''));
+    const e = entries['3'];
+    expect(e.kind).toBe('tool');
+    if (e.kind === 'tool') expect(e.status).toBe('running');
   });
 
-  it('keeps each pair to its own call_id', () => {
-    const entries: Entry[] = [
-      decodeEntry(toolView('2', 'c1', '')),
-      decodeEntry(toolView('3', 'c1', 'out1')),
-      decodeEntry(toolView('4', 'c2', '')),
-      decodeEntry(toolView('5', 'c2', 'out2'))
-    ];
-    const out = collapseToolCalls(entries);
-    expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ id: '2', output: 'out1' });
-    expect(out[1]).toMatchObject({ id: '4', output: 'out2' });
-  });
-  it('collapses a batch (every call recorded before any result) by call_id', () => {
-    const entries: Entry[] = [
-      decodeEntry(toolView('2', 'c1', '')),
-      decodeEntry(toolView('3', 'c2', '')),
-      decodeEntry(toolView('4', 'c1', 'out1')),
-      decodeEntry(toolView('5', 'c2', 'out2'))
-    ];
-    const out = collapseToolCalls(entries);
-    expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ id: '2', output: 'out1' });
-    expect(out[1]).toMatchObject({ id: '3', output: 'out2' });
-  });
-
-  it('drops a re-read of a result whose call slot already shows the output', () => {
-    const entries: Entry[] = [
-      { id: '2', kind: 'tool', call_id: 'c1', output: 'out1', status: 'ok' } as Entry,
-      { id: '4', kind: 'tool', call_id: 'c2', output: 'out2', status: 'ok' } as Entry,
-      decodeEntry(toolView('3', 'c1', 'out1'))
-    ];
-    expect(collapseToolCalls(entries)).toHaveLength(2);
-  });
-  it('pairs the live-streamed card with the file call-phase entry (call_id stamped on stream)', () => {
-    // Mid-turn the tail fetch pulled the call-phase entry (empty output, recorded
-    // before dispatch); at turn end the post-turn pump streams the same call to
-    // completion. Without call_id on the streamed card, pair() cannot match the
-    // two and a duplicate empty card survives.
-    const fileCall = decodeEntry(toolView('2', 'c1', ''));
-    let { entries } = applyToolEvent(
-      { type: 'tool_start', workspace: 'w', session: 's', call_id: 'c1', tool_call_id: 'c1', name: 'task_create' },
-      [fileCall],
-      []
-    );
-    ({ entries } = applyToolEvent(
-      { type: 'tool_end', workspace: 'w', session: 's', call_id: 'c1', tool_call_id: 'c1', name: 'task_create', output: 'created 1' },
-      entries,
-      []
-    ));
-    expect(entries.find((e) => e.id === 'c1')).toMatchObject({ kind: 'tool', call_id: 'c1', output: 'created 1' });
-    const c1 = collapseToolCalls(entries).filter((e) => e.kind === 'tool' && e.call_id === 'c1');
-    expect(c1).toHaveLength(1);
-    expect(c1[0]).toMatchObject({ output: 'created 1' });
+  it('a result-phase tool (non-empty output) decodes to ok', () => {
+    const entries: Record<string, Entry> = {};
+    upsertEntry(entries, toolView('4', 'done'));
+    const e = entries['4'];
+    if (e.kind === 'tool') expect(e.status).toBe('ok');
   });
 });
-
 
 describe('decodeEntry (om)', () => {
   it('strips the observation-group wrapper tags from the text', () => {
@@ -193,113 +151,3 @@ describe('resolveBlobs (om)', () => {
     expect(views[0].blob).toBe(v.blob);
   });
 });
-
-describe('mergeHydrated (live entry positioning)', () => {
-  it('inserts a mid-file live entry at its file position, not the end', () => {
-    const v = (id: string, kind: string): ViewEntry => ({
-      id,
-      parent: null,
-      kind,
-      timestamp: 1,
-      payload: {},
-      blob: null,
-      first_kept: null
-    });
-    // Existing entries in file order, with a gap at position 3.
-    const entries: Entry[] = [
-      decodeEntry(v('00000001', 'message')),
-      decodeEntry(v('00000002', 'message')),
-      decodeEntry(v('00000004', 'message')),
-      decodeEntry(v('00000005', 'message'))
-    ];
-    // A live subagent card lands at file position 3 (between 2 and 4).
-    const { entries: out } = mergeHydrated(entries, [], [v('00000003', 'subagent')]);
-    expect(out.map((e) => e.id)).toEqual([
-      '00000001',
-      '00000002',
-      '00000003',
-      '00000004',
-      '00000005'
-    ]);
-  });
-
-  it('replaces a streamed tool card with its file copy at the file position', () => {
-    const tool = (id: string, callId: string, output: string): ViewEntry => ({
-      id,
-      parent: null,
-      kind: 'tool',
-      timestamp: 1,
-      payload: { call_id: callId, name: 'bash', output },
-      blob: null,
-      first_kept: null
-    });
-    const msg = (id: string): ViewEntry => ({
-      id,
-      parent: null,
-      kind: 'message',
-      timestamp: 1,
-      payload: { text: id },
-      blob: null,
-      first_kept: null
-    });
-    // The file copy (00000002) is hydrated at its file position; the streamed
-    // twin (id = call_id) sits at the tail from the live ToolStart.
-    const entries: Entry[] = [
-      decodeEntry(msg('00000001')),
-      decodeEntry(tool('00000002', 'call_abc', 'done')),
-      decodeEntry(msg('00000003')),
-      decodeEntry(tool('call_abc', 'call_abc', 'done'))
-    ];
-    // A re-read of the file copy collapses the streamed twin: the card moves
-    // to the file copy's position and the tail twin is dropped.
-    const { entries: out } = mergeHydrated(entries, [], [
-      tool('00000002', 'call_abc', 'done')
-    ]);
-    expect(out.map((e) => e.id)).toEqual(['00000001', '00000002', '00000003']);
-  });
-
-  it('inserts a steering report (user + source) even when a live slot has the same text', () => {
-    const userView = (id: string, text: string, source?: string): ViewEntry => ({
-      id,
-      parent: null,
-      kind: 'user',
-      timestamp: 1,
-      payload: source ? { text, source } : { text },
-      blob: null,
-      first_kept: null
-    });
-    // A streaming live slot carries the same text as the incoming report. The
-    // report is a 'user' card with a child source, so it is a distinct card:
-    // it must be inserted, not folded into the same-text live slot (which is
-    // what dropped steering reports until a reload re-decoded them).
-    const live: MessageEntry[] = [{ id: 'stream-1', kind: 'message', text: 'ship it' }];
-    const { entries: out, live: outLive } = mergeHydrated([], live, [
-      userView('00000001', 'ship it', 'child-session-id')
-    ]);
-    expect(out.map((e) => e.id)).toEqual(['00000001']);
-    // The live slot is preserved — the report did not adopt it.
-    expect(outLive.map((e) => e.id)).toEqual(['stream-1']);
-  });
-
-  it('still folds a plain user message (no source) into a same-text live slot', () => {
-    const userView = (id: string, text: string): ViewEntry => ({
-      id,
-      parent: null,
-      kind: 'user',
-      timestamp: 1,
-      payload: { text },
-      blob: null,
-      first_kept: null
-    });
-    // A plain user message (no source) repeating a live slot's text is the
-    // optimistic-push twin: it adopts the live slot, not a new card. The
-    // source guard must not disturb this dedup path.
-    const live: MessageEntry[] = [{ id: 'stream-1', kind: 'message', text: 'ship it' }];
-    const { entries: out, live: outLive } = mergeHydrated([], live, [
-      userView('00000001', 'ship it')
-    ]);
-    expect(out).toEqual([]);
-    expect(outLive.map((e) => e.id)).toEqual(['stream-1']);
-  });
-});
-

@@ -3,11 +3,11 @@
   // .svelte module file because runes only transform there; components
   // import the exported `store` binding.
   //
-  // The GUI is a stateless renderer (ADR-0006): every mutation is a
-  // command round-trip or an event application, so a rebuild from
-  // snapshot + events always converges. The snapshot is a metadata
-  // skeleton (no payloads); paged reads around the viewport fill the
-  // cards in (spec §8).
+  // The GUI is a stateless renderer (ADR-0006, live transport per
+  // ADR-0008): every mutation is a command round-trip or an event
+  // application, so a rebuild from snapshot + events always converges.
+  // The transcript is an id-keyed map — entry_upsert carries the file's
+  // own line, paged reads materialize the rest (spec §8).
 
   import {
     command,
@@ -15,11 +15,10 @@
     type Event,
     type SessionMeta,
     type SkillInfo,
-    type ViewEntry,
     type Workspace
   } from './protocol';
   import { presentation } from './presentation.svelte';
-  import { decodeEntry, resolveBlobs, type PendingDelta, applyStreamEvent, applyToolEvent, mergeHydrated } from './entries';
+  import { decodeEntry, resolveBlobs, upsertEntry } from './entries';
   import {
     applySessionList,
     applySubagentEvent,
@@ -119,9 +118,6 @@
     });
   }
 
-  // Deltas that land before their stream_start (a GUI connecting mid-stream):
-  // buffered per call until the start or end arrives.
-  let pendingDeltas = new Map<string, PendingDelta>();
   // Per-call clock (ms epoch) by call_id: TPS = a call's output tokens over
   // its own stream duration, shown in the status bar.
   let callStartMs = new Map<string, number>();
@@ -190,8 +186,6 @@
   (window as unknown as { __tau?: unknown }).__tau = {
     applyEvents,
     store: () => store,
-    liveTexts: () =>
-      (store.current ? store.sessions[store.current]?.live ?? [] : []).map((l) => l.text.length),
     // send/stop/openWorkspace/closeWorkspace/switchSession/fetchWindow
     // are module exports the rig drives directly; hoisted above.
     send,
@@ -391,7 +385,6 @@
     delete store.pane[ws.id];
     // The closed tab drops out of the selection too (no dangling member).
     store.tabSelected = store.tabSelected.filter((x) => x !== ws.id);
-    pendingDeltas.clear();
     if (redirect) await redirectCurrent();
   }
 
@@ -643,9 +636,7 @@
           blobsInFlight.set(key, read);
           return read;
         });
-        const m = mergeHydrated(cur.entries, cur.live, views);
-        cur.entries = m.entries;
-        cur.live = m.live;
+        for (const v of views) upsertEntry(cur.entries, v);
       } finally {
         windowsInFlight.delete(key);
       }
@@ -659,12 +650,9 @@
     if (sid === null || text.trim() === '') return;
     const s = sessionOf(sid);
     s.pending = s.pending.filter((p) => !(p.text === text && p.lane === lane));
-  // The user bubble appears at send time; the core's file copy of the
-  // same entry hydrates later and is dropped against this one (twin).
-  // A rejected send never reaches the core, so its twin never arrives —
-  // the optimistic entry is spliced back out instead of ghosting.
-  const optimisticId = `u-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  s.entries.push({ id: optimisticId, kind: 'user', text });
+  // No optimistic card (ADR-0008): the core mints the entry id and the
+  // card lands on the send's entry_upsert echo (~ms away on the local
+  // channel); a rejected send simply never echoes.
   store.tailJump++;
   try {
     clearError();
@@ -675,12 +663,10 @@
       lane: lane === 'follow-up' ? 'follow_up' : lane
     });
     // The turn is dispatched: it is now 'starting' — waiting for the model's
-    // first output (prefill + request latency). stream_start / tool_start move
+    // first output (prefill + request latency). stream_start / a tool upsert
     // it to running; the waiting indicator and the stop button key off this.
     if (s.turn === 'idle') s.turn = 'starting';
   } catch (e) {
-    const i = s.entries.findIndex((x) => x.id === optimisticId);
-    if (i >= 0) s.entries.splice(i, 1);
     store.error = errText(e);
   }
   }
@@ -755,20 +741,12 @@
       if (!s) continue;
       switch (ev.type) {
         case 'stream_start': {
-          s.live = applyStreamEvent(ev, s.entries, s.live, pendingDeltas).live;
           callStartMs.set(ev.call_id, Date.now());
           s.tps = 0;
           s.turn = 'running';
           break;
         }
-        case 'stream_delta': {
-          s.live = applyStreamEvent(ev, s.entries, s.live, pendingDeltas).live;
-          break;
-        }
         case 'stream_end': {
-          const m = applyStreamEvent(ev, s.entries, s.live, pendingDeltas);
-          s.entries = m.entries;
-          s.live = m.live;
           if (ev.usage) {
             s.usage = ev.usage;
             const started = callStartMs.get(ev.call_id);
@@ -778,36 +756,14 @@
             }
             callStartMs.delete(ev.call_id);
           }
-          if (s.live.length === 0) {
-            s.turn = 'idle';
-            // Post-turn reconciliation (GUI side): the session file is the
-            // record — re-read the tail so tool entries and the final
-            // assistant state land even if their events raced the stream.
-            void fetchWindow(sid, Math.max(0, s.entries.length - 50), 50);
-          }
-          s.meta.leaf = m.fin?.id ?? s.entries[s.entries.length - 1]?.id ?? s.meta.leaf;
+          // No tail re-read: the finalized lines already landed as upserts.
+          s.turn = 'idle';
           break;
         }
-        case 'tool_start': {
-          const m = applyToolEvent(ev, s.entries, s.live);
-          s.entries = m.entries;
-          s.live = m.live;
+        case 'entry_upsert': {
+          upsertEntry(s.entries, ev.entry);
           // A tool call is the model's first output: leave 'starting'.
-          if (s.turn === 'starting') s.turn = 'running';
-          break;
-        }
-        case 'tool_end': {
-          s.entries = applyToolEvent(ev, s.entries, s.live).entries;
-          break;
-        }
-        case 'entry_live': {
-          // A non-streamed entry landed (task/subagent/om card, and future
-          // kinds): fold it into the transcript live, the same way a paged
-          // read's row is decoded + merged (the twin/dedup logic absorbs a
-          // page read that already carries it).
-          const { entries, live } = mergeHydrated(s.entries, s.live, [ev.entry]);
-          s.entries = entries;
-          s.live = live;
+          if (s.turn === 'starting' && ev.entry.kind === 'tool') s.turn = 'running';
           break;
         }
         case 'queue': {
@@ -847,9 +803,8 @@
           if (ev.kind.kind === 'error') {
             store.error = ev.kind.message;
             // A turn that failed before its first output (a provider 4xx, a
-            // connect failure, an open failure) emits only this System event —
-            // no stream/tool event to move the turn out of 'starting'.
-            if (s.turn === 'starting' && s.live.length === 0) s.turn = 'idle';
+            // no output event to move the turn out of 'starting'.
+            if (s.turn === 'starting') s.turn = 'idle';
           }
           break;
         }

@@ -51,6 +51,31 @@ pub(crate) fn manual_session(
         subagents: None,
         child: None,
     }));
+    // ADR-0008: the same entry tee the app's build_live wires — every
+    // appended entry (and each wire-only re-emission) rides the shared
+    // channel as an EntryUpsert.
+    {
+        let tx = core.events_tx.clone();
+        let ws = workspace.id.clone();
+        let sid = provider.session.clone();
+        let up_tx = tx.clone();
+        let up_ws = ws.clone();
+        let up_sid = sid.clone();
+        agent.set_entry_event_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
+            let _ = tx.try_send(Event::EntryUpsert {
+                workspace: ws.clone(),
+                session: sid.clone(),
+                entry: super::sessions::entry_to_view(entry),
+            });
+        })));
+        agent.set_entry_upsert_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
+            let _ = up_tx.try_send(Event::EntryUpsert {
+                workspace: up_ws.clone(),
+                session: up_sid.clone(),
+                entry: super::sessions::entry_to_view(entry),
+            });
+        })));
+    }
     let live = Arc::new(LiveSession {
         meta: Mutex::new(SessionMeta {
             id: provider.session.clone(),

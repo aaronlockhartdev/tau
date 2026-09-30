@@ -1,7 +1,7 @@
 use super::*;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 impl AgentSession {
     /// Run turns until the queue is empty.
     pub async fn process(&self) -> Result<(), AgentError> {
@@ -158,12 +158,31 @@ impl AgentSession {
             // A force has already killed the stream it targeted; every
             // fresh call starts un-killed (spec §7).
             self.kill.store(false, Ordering::SeqCst);
-            let mut sink = KillSink {
+            // The call's assistant entry is minted up front (ADR-0008):
+            // the streamed snapshots and the final append share the one id.
+            let (entry_id, parent, timestamp, upsert) = {
+                let mut inner = self.inner.lock().unwrap();
+                let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
+                (
+                    inner.store.mint_id(),
+                    parent,
+                    inner.store.now(),
+                    inner.entry_upsert_hook.clone(),
+                )
+            };
+            let mut sink = StreamEntrySink {
                 kill: self.kill.clone(),
                 stop: self.stop.clone(),
+                id: entry_id.clone(),
+                parent,
+                timestamp,
+                upsert,
+                text: String::new(),
+                reasoning: String::new(),
+                last: None,
             };
             let result = self.provider.call(&request, &mut sink).await?;
-            self.append_assistant(&result, turn_killed && first_call)?;
+            self.append_assistant(&entry_id, &result, turn_killed && first_call)?;
             first_call = false;
 
             if !result.completed {
@@ -216,22 +235,37 @@ impl AgentSession {
                 name: call.name.clone(),
                 args: args.clone(),
             };
-            // The call entry is recorded before dispatch: a side-effect
-            // tool (task_*, subagent_*) appends to this store during
-            // dispatch, and its effect must land after the call that
-            // caused it. The output is only known after dispatch, so the
-            // call entry carries an empty output and a result entry with
-            // the same call_id carries the real one.
-            self.append(
-                KIND_TOOL,
-                tau_protocol::payload::ToolPayload {
-                    call_id: call.call_id.clone(),
-                    name: call.name.clone(),
-                    args: args.clone(),
-                    output: tau_protocol::payload::ToolOutput::Text(String::new()),
-                }
-                .to_value(),
-            )?;
+            // One id per call (ADR-0008): the call phase re-emits the entry
+            // wire-only (empty output); the result persists the same id, so
+            // the file keeps one line for the call.
+            let (entry_id, parent, timestamp, upsert) = {
+                let mut inner = self.inner.lock().unwrap();
+                let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
+                (
+                    inner.store.mint_id(),
+                    parent,
+                    inner.store.now(),
+                    inner.entry_upsert_hook.clone(),
+                )
+            };
+            if let Some(hook) = &upsert {
+                hook(&Entry {
+                    id: entry_id.clone(),
+                    parent,
+                    kind: KIND_TOOL.to_owned(),
+                    timestamp,
+                    payload: tau_protocol::payload::ToolPayload {
+                        call_id: call.call_id.clone(),
+                        name: call.name.clone(),
+                        args: args.clone(),
+                        output: tau_protocol::payload::ToolOutput::Text(String::new()),
+                    }
+                    .to_value(),
+                    blob: None,
+                    first_kept_entry_id: None,
+                    crc: None,
+                });
+            }
             let output = if call.name == "task_assign" {
                 // Cross-session: routed through the supervisor, which runs
                 // both sides on the sessions' own stores (review B3).
@@ -288,7 +322,8 @@ impl AgentSession {
                     tools::dispatch(&self.cwd(), &tc, self.turn_config().image_max_bytes).await
                 }
             };
-            self.append(
+            self.append_id(
+                &entry_id,
                 KIND_TOOL,
                 tau_protocol::payload::ToolPayload {
                     call_id: call.call_id.clone(),
@@ -440,7 +475,12 @@ impl AgentSession {
         )
     }
 
-    fn append_assistant(&self, result: &TurnResult, turn_forced: bool) -> Result<(), AgentError> {
+    fn append_assistant(
+        &self,
+        id: &str,
+        result: &TurnResult,
+        turn_forced: bool,
+    ) -> Result<(), AgentError> {
         // A partial cut before anything arrived has nothing to record
         // (review N10): an empty, call-less interrupted entry is noise.
         if !result.completed
@@ -450,7 +490,8 @@ impl AgentSession {
         {
             return Ok(());
         }
-        self.append(
+        self.append_id(
+            id,
             KIND_ASSISTANT,
             tau_protocol::payload::AssistantPayload {
                 text: result.text.clone(),
@@ -472,6 +513,13 @@ impl AgentSession {
     }
 
     pub(super) fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
+        let id = self.inner.lock().unwrap().store.mint_id();
+        self.append_id(&id, kind, payload)
+    }
+
+    /// Append under a pre-minted id (ADR-0008): the re-emitted item keeps
+    /// the id its first emission carried.
+    pub(super) fn append_id(&self, id: &str, kind: &str, payload: Value) -> Result<(), AgentError> {
         let mut inner = self.inner.lock().unwrap();
         // A fresh session has no leaf: the first entry starts the branch.
         // Any other failure is a storage error and propagates.
@@ -480,7 +528,7 @@ impl AgentSession {
             Err(e) => return Err(AgentError::Session(e)),
         };
         let parent = parent.as_deref();
-        inner.store.append(kind, payload, parent)?;
+        inner.store.append_entry(id, kind, payload, parent)?;
         Ok(())
     }
 
@@ -499,25 +547,89 @@ impl AgentSession {
 
 /// The sink the loop gives the provider: the per-call kill flag (force)
 /// or the persistent stop flag (ticket #23) stops the stream (spec §7).
-struct KillSink {
+/// It also accumulates the streamed text and re-emits it as the growing
+/// assistant entry (ADR-0008's wire-only snapshots), at most one per
+/// display frame.
+struct StreamEntrySink {
     kill: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
+    id: String,
+    parent: Option<String>,
+    timestamp: u64,
+    upsert: Option<EntryEventHook>,
+    text: String,
+    reasoning: String,
+    last: Option<Instant>,
 }
 
-/// The stop-flag poll cadence: a human clicking stop, not a tight race.
-const STOP_POLL_MS: u64 = 50;
+/// The snapshot cadence: one re-emission per display frame (ADR-0008).
+const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(16);
 
-impl TurnSink for KillSink {
-    fn event(&mut self, _: crate::provider::TurnEvent) -> bool {
-        !self.kill.load(Ordering::SeqCst) && !self.stop.load(Ordering::SeqCst)
+impl TurnSink for StreamEntrySink {
+    fn event(&mut self, event: TurnEvent) -> bool {
+        if self.kill.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        match &event {
+            TurnEvent::Text(t) => {
+                self.text.push_str(t);
+                self.emit_snapshot();
+            }
+            TurnEvent::Reasoning(t) => {
+                self.reasoning.push_str(t);
+                self.emit_snapshot();
+            }
+            // Completed carries no content; the final append's upsert is
+            // the stream's last emission.
+            TurnEvent::Completed(_) => {}
+        }
+        true
     }
     fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(stop_flags(&self.kill, &self.stop))
     }
 }
 
+impl StreamEntrySink {
+    /// The frame-aligned re-emission: at most one snapshot per window, the
+    /// first token opening the card.
+    fn emit_snapshot(&mut self) {
+        let Some(hook) = &self.upsert else {
+            return;
+        };
+        let now = Instant::now();
+        if self
+            .last
+            .is_some_and(|t| now.duration_since(t) < SNAPSHOT_INTERVAL)
+        {
+            return;
+        }
+        self.last = Some(now);
+        let entry = Entry {
+            id: self.id.clone(),
+            parent: self.parent.clone(),
+            kind: KIND_ASSISTANT.to_owned(),
+            timestamp: self.timestamp,
+            payload: tau_protocol::payload::AssistantPayload {
+                text: self.text.clone(),
+                reasoning: self.reasoning.clone(),
+                interrupted: false,
+                usage: None,
+                calls: vec![],
+            }
+            .to_value(),
+            blob: None,
+            first_kept_entry_id: None,
+            crc: None,
+        };
+        hook(&entry);
+    }
+}
+/// The stop-flag poll cadence: a human clicking stop, not a tight race.
+const STOP_POLL_MS: u64 = 50;
+
 /// The prefill half of a kill/stop (spec §7): a poll over the flags so the
-/// provider can tear the in-flight request down before the first stream
+/// provider tears the in-flight request down before the first stream
 /// event arrives.
 async fn stop_flags(kill: &AtomicBool, stop: &AtomicBool) {
     loop {

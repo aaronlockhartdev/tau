@@ -57,10 +57,8 @@ async fn closing_a_session_stops_its_in_flight_turn() {
             matches!(
                 e,
                 Event::StreamStart { session, .. }
-                    | Event::StreamDelta { session, .. }
                     | Event::StreamEnd { session, .. }
-                    | Event::ToolStart { session, .. }
-                    | Event::ToolEnd { session, .. }
+                    | Event::EntryUpsert { session, .. }
                     if *session == session_id
             )
         })
@@ -132,9 +130,14 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
         if events.iter().any(|e| matches!(e, Event::StreamEnd { .. }))
             && events
                 .iter()
-                .filter(|e| matches!(e, Event::ToolEnd { .. }))
+                .filter(|e| {
+                    matches!(
+                        e,
+                        Event::EntryUpsert { entry, .. } if entry.kind == "tool"
+                    )
+                })
                 .count()
-                >= 1
+                >= 2
         {
             break;
         }
@@ -142,33 +145,43 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     }
     let events = collected.lock().unwrap().clone();
 
-    // The stream: one start, deltas coalesced into one, one end with
-    // the usage; the tool batch: a start/end pair; a starter send while
-    // idle is the turn itself and never sits in the queue.
+    // The stream: one start, the growing assistant entry (frame-aligned
+    // snapshots), one end with the usage; the tool batch: one id, re-emitted
+    // call → result; a starter send while idle is the turn itself and never
+    // sits in the queue.
     assert!(
         events
             .iter()
             .any(|e| matches!(e, Event::StreamStart { .. })),
         "no stream start: {events:?}"
     );
-    let deltas = events
-        .iter()
-        .filter(|e| matches!(e, Event::StreamDelta { .. }))
-        .count();
-    assert!(
-        deltas >= 1,
-        "no stream deltas (coalesced burst): {events:?}"
-    );
-    let Some(Event::StreamDelta {
-        text, reasoning, ..
-    }) = events
-        .iter()
-        .find(|e| matches!(e, Event::StreamDelta { .. }))
-    else {
-        panic!("missing delta: {events:?}");
+    let Some(Event::EntryUpsert { entry: first, .. }) = events.iter().find(|e| {
+        matches!(
+            e,
+            Event::EntryUpsert { entry, .. } if entry.kind == "assistant"
+        )
+    }) else {
+        panic!("no assistant upsert: {events:?}");
     };
-    assert_eq!(text, "partial");
-    assert_eq!(reasoning.as_deref(), Some("thinking"));
+    assert_eq!(first.payload["text"], "partial");
+    // The final emission is the file line: it carries the calls.
+    let Some(Event::EntryUpsert {
+        entry: final_assistant,
+        ..
+    }) = events.iter().rev().find(|e| {
+        matches!(
+            e,
+            Event::EntryUpsert { entry, .. } if entry.kind == "assistant"
+        )
+    })
+    else {
+        panic!("no final assistant upsert: {events:?}");
+    };
+    assert_eq!(final_assistant.payload["reasoning"], "thinking");
+    assert_eq!(
+        final_assistant.payload["calls"].as_array().map(|c| c.len()),
+        Some(1)
+    );
     let Some(Event::StreamEnd {
         interrupted, usage, ..
     }) = events.iter().find(|e| matches!(e, Event::StreamEnd { .. }))
@@ -177,16 +190,31 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     };
     assert!(!interrupted);
     assert_eq!(usage.map(|u| u.total_tokens), Some(15));
+    // The tool call: one id, re-emitted call → result (ADR-0008); the
+    // post-turn reconciliation re-sends the file line, so the id appears
+    // with an empty output and again with the result's.
+    let tools: Vec<&tau_protocol::snapshot::ViewEntry> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EntryUpsert { entry, .. } if entry.kind == "tool" => Some(entry),
+            _ => None,
+        })
+        .collect();
+    assert!(!tools.is_empty(), "no tool upserts: {events:?}");
+    let first_tool_id = tools[0].id.clone();
     assert!(
-        events.iter().any(|e| matches!(e, Event::ToolStart { .. })),
-        "no tool start: {events:?}"
+        tools
+            .iter()
+            .any(|t| t.id == first_tool_id && t.payload["output"] == serde_json::json!("")),
+        "no call-phase emission for {first_tool_id}: {tools:?}"
     );
-    let Some(Event::ToolEnd { name, .. }) =
-        events.iter().find(|e| matches!(e, Event::ToolEnd { .. }))
-    else {
-        panic!("no tool end: {events:?}");
-    };
-    assert_eq!(name, "bash");
+    assert!(
+        tools
+            .iter()
+            .any(|t| { t.id == first_tool_id && t.payload["output"] != serde_json::json!("") }),
+        "no result emission for {first_tool_id}: {tools:?}"
+    );
+    assert_eq!(tools[0].payload["name"], "bash");
     let queues: Vec<&Event> = events
         .iter()
         .filter(|e| matches!(e, Event::Queue { .. }))

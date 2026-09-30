@@ -9,9 +9,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
 
-import type { Command, CommandOutput, Entry, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from './protocol';
+import type { Command, CommandOutput, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from './protocol';
 import { applySessionList, openSession } from './sessions';
-import { applyToolEvent, decodeEntry } from './entries';
+import { decodeEntry } from './entries';
 import { fetchWindow, openWorkspace, store } from './store.svelte';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
@@ -89,9 +89,9 @@ beforeEach(() => {
 });
 
 describe('fetchWindow', () => {
-  it('a paged copy arriving mid-turn hydrates the live slot in place (the streamed id is kept)', async () => {
+  it('a paged read updates an in-flight entry in place (one id, no twin)', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    store.sessions['s1'].live = [{ id: 'c1', kind: 'message', text: 'hello', reasoning: '' }];
+    store.sessions['s1'].entries['42'] = { id: '42', kind: 'message', text: 'hello', reasoning: '' };
     mockIPC((cmd) => {
       if (cmd.type === 'session_entries') {
         return { kind: 'entries', entries: [entryView('42', 'assistant', { text: 'hello', reasoning: 'r' })] };
@@ -100,44 +100,25 @@ describe('fetchWindow', () => {
     });
     await fetchWindow('s1', 0, 50);
     const s = store.sessions['s1'];
-    expect(s.entries).toHaveLength(0);
-    const l = s.live[0];
-    expect(l.id).toBe('c1');
-    if (l.kind === 'message' || l.kind === 'interrupted') {
-      expect(l.text).toBe('hello');
-      expect(l.reasoning).toBe('r');
-    }
-  });
-
-  it('a first-arriving file copy of an already-settled streamed twin replaces it (the file copy is canonical)', async () => {
-    store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    store.sessions['s1'].entries.push({ id: 'c1', kind: 'message', text: 'hello', reasoning: '' });
-    mockIPC((cmd) => {
-      if (cmd.type === 'session_entries') {
-        return { kind: 'entries', entries: [entryView('42', 'assistant', { text: 'hello', reasoning: 'r' })] };
-      }
-      return { kind: 'none' };
-    });
-    await fetchWindow('s1', 0, 50);
-    const s = store.sessions['s1'];
-    expect(s.entries).toHaveLength(1);
-    expect(s.entries[0].id).toBe('42');
-    const e = s.entries[0];
+    expect(Object.keys(s.entries)).toEqual(['42']);
+    const e = s.entries['42'];
     if (e.kind === 'message' || e.kind === 'interrupted') {
+      expect(e.text).toBe('hello');
       expect(e.reasoning).toBe('r');
     }
   });
 
-  it('a file entry with no twin appends in arrival order', async () => {
+  it('a paged read of a new id materializes the card in creation order', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    store.sessions['s1'].entries['1'] = { id: '1', kind: 'user', text: 'first' };
     mockIPC((cmd) => {
       if (cmd.type === 'session_entries') {
-        return { kind: 'entries', entries: [entryView('1', 'user', { text: 'first' })] };
+        return { kind: 'entries', entries: [entryView('2', 'assistant', { text: 'second', interrupted: false })] };
       }
       return { kind: 'none' };
     });
     await fetchWindow('s1', 0, 50);
-    expect(store.sessions['s1'].entries[0]?.id).toBe('1');
+    expect(Object.keys(store.sessions['s1'].entries)).toEqual(['1', '2']);
   });
 
   it('a blob-backed om entry resolves via blob_read and renders the observation text', async () => {
@@ -170,7 +151,7 @@ describe('fetchWindow', () => {
       return { kind: 'none' };
     });
     await fetchWindow('s1', 0, 50);
-    const e = store.sessions['s1'].entries[0];
+    const e = Object.values(store.sessions['s1'].entries)[0];
     expect(e?.kind).toBe('om');
     expect(e?.text).toBe('* 🔴 (16:21) user set up a workbench');
     expect(e?.text).not.toContain('[object Object]');
@@ -252,13 +233,13 @@ describe('workspace tab round trip (switch away and back)', () => {
     expect(entries).toHaveLength(1);
     const s = store.sessions['s1'];
     // Every card kind lands in the re-opened session with its full payload.
-    expect(s.entries.map((e) => e.kind)).toEqual(['user', 'message', 'tool']);
-    const a = s.entries[1];
+    expect(Object.values(s.entries).map((e) => e.kind)).toEqual(['user', 'message', 'tool']);
+    const a = Object.values(s.entries)[1];
     if (a.kind === 'message' || a.kind === 'interrupted') {
       expect(a.text).toBe(full);
       expect(a.reasoning).toBe('r');
     }
-    const t = s.entries[2];
+    const t = Object.values(s.entries)[2];
     if (t.kind === 'tool') {
       expect(t.name).toBe('bash');
       expect(t.status).toBe('ok');
@@ -268,35 +249,19 @@ describe('workspace tab round trip (switch away and back)', () => {
 });
 
 describe('tool failure status (dogfood 2026-09-24: a failed tool showed a check mark)', () => {
-  function runningTool(): Entry[] {
-    return [{ id: 't1', kind: 'tool', name: 'bash', status: 'running' }];
-  }
-
-  function toolEnd(output: unknown) {
-    return {
-      type: 'tool_end' as const,
-      workspace: WS.id,
-      session: 's1',
-      call_id: 'c1',
-      tool_call_id: 't1',
-      name: 'bash',
-      output
-    };
-  }
-
   it('a non-zero exit is an error, a zero exit is ok', () => {
-    const failed = applyToolEvent(toolEnd('exit 1\n--- stderr ---\nboom'), runningTool(), []);
-    if (failed.entries[0].kind === 'tool') expect(failed.entries[0].status).toBe('error');
-    const ok = applyToolEvent(toolEnd('exit 0\n--- stdout ---\nhi'), runningTool(), []);
-    if (ok.entries[0].kind === 'tool') expect(ok.entries[0].status).toBe('ok');
+    const failed = decodeEntry(entryView('1', 'tool', { name: 'bash', args: { command: 'ls' }, output: 'exit 1\n--- stderr ---\nboom' }));
+    if (failed.kind === 'tool') expect(failed.status).toBe('error');
+    const ok = decodeEntry(entryView('2', 'tool', { name: 'bash', args: {}, output: 'exit 0\n--- stdout ---\nhi' }));
+    if (ok.kind === 'tool') expect(ok.status).toBe('ok');
   });
 
   it('a spawn/timeout failure is an error', () => {
-    const m = applyToolEvent(toolEnd('bash: timed out after 60s'), runningTool(), []);
-    if (m.entries[0].kind === 'tool') expect(m.entries[0].status).toBe('error');
+    const e = decodeEntry(entryView('3', 'tool', { name: 'bash', args: {}, output: 'bash: timed out after 60s' }));
+    if (e.kind === 'tool') expect(e.status).toBe('error');
   });
 
-  it('the reload path decodes a persisted failure the same way', () => {
+  it('the live upsert and the reload path decode a failure the same way', () => {
     const e = decodeEntry(entryView('1', 'tool', { name: 'bash', args: { command: 'false' }, output: 'exit 2' }));
     if (e.kind === 'tool') expect(e.status).toBe('error');
     const ok = decodeEntry(entryView('2', 'tool', { name: 'bash', args: {}, output: 'exit 0' }));

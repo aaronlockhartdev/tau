@@ -145,7 +145,7 @@ pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
 /// endpoint: the `canned()` test seam promoted to a provider entry so the
 /// GUI's real-app E2E can drive deterministic turns through the real core.
 /// A documented test hook, not a product surface — debug builds only
-/// (roadmap G, the 25 ms coalesced-stream acceptance bar).
+/// (roadmap G, the coalesced-stream acceptance bar).
 #[cfg(debug_assertions)]
 pub const CANNED_SCHEME: &str = "canned://";
 

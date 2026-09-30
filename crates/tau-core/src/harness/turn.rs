@@ -131,40 +131,13 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                 }
             }
             crate::agent::KIND_TOOL => {
-                let call_id = live
-                    .provider
-                    .calls
-                    .lock()
-                    .unwrap()
-                    .get(calls_before + assistant_index.saturating_sub(1))
-                    .cloned()
-                    .unwrap_or_default();
-                let tool_call_id = entry
-                    .payload
-                    .get("call_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
-                let name = entry
-                    .payload
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned();
-                core.emit(Event::ToolStart {
+                // The live hook already upserted this entry; the post-turn
+                // pass re-emits the file line (a lossy-channel dedup,
+                // idempotent by construction).
+                core.emit(Event::EntryUpsert {
                     workspace: workspace.clone(),
                     session: session.clone(),
-                    call_id: call_id.clone(),
-                    tool_call_id: tool_call_id.clone(),
-                    name: name.clone(),
-                });
-                core.emit(Event::ToolEnd {
-                    workspace: workspace.clone(),
-                    session: session.clone(),
-                    call_id,
-                    tool_call_id,
-                    name,
-                    output: entry.payload.get("output").cloned().unwrap_or(Value::Null),
+                    entry: entry_to_view(entry),
                 });
             }
             crate::task::KIND_TASK => {

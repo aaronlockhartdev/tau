@@ -33,8 +33,7 @@
   let ref = $state<VirtualizerHandle | undefined>(undefined);
   let shouldStickToBottom = $state(true);
 
-  const entries = $derived(cur ? store.sessions[cur].entries : []);
-  const live = $derived(cur ? store.sessions[cur].live : []);
+  const entries = $derived(cur ? store.sessions[cur].entries : {});
   // The pre-first-output window: a turn is dispatched but no stream/tool
   // event has landed yet. The animated dots sit at the tail of the track.
   const awaiting = $derived(cur ? store.sessions[cur].turn === 'starting' : false);
@@ -48,19 +47,12 @@
     return p ? store.sessions[p]?.meta.title ?? '' : '';
   });
 
-  // Live entries sit at the tail of the virtual list (the running message is
-  // the most recent thing in the session). While a turn awaits first output a
-  // synthetic "waiting" item ends the list, so the pin scrolls the ellipses
-  // into view (they are a virtualized item, not a separate DOM node).
+  // The transcript is the entry map's values in creation-id order
+  // (ADR-0008). While a turn awaits first output a synthetic "waiting" item
+  // ends the list, so the pin scrolls the ellipses into view (a
+  // virtualized item, not a separate DOM node).
   const all = $derived([
-    ...entries,
-    ...live.map((l) => ({
-      id: l.id,
-      kind: 'message' as const,
-      text: l.text,
-      reasoning: l.reasoning,
-      usage: undefined
-    })),
+    ...Object.values(entries),
     ...(awaiting ? [{ id: '__waiting__', kind: 'waiting' as const, text: '', reasoning: undefined, usage: undefined }] : [])
   ]);
   type Row = (typeof all)[number];

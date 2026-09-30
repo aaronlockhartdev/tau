@@ -8,9 +8,9 @@
 use crate::config::ToolBatchPolicy;
 use crate::provider::{
     CallOutput, FunctionCall, FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage,
-    ReasoningEffort, ResponseRequest, ToolSpec, TurnProviderRef, TurnResult, TurnSink,
+    ReasoningEffort, ResponseRequest, ToolSpec, TurnEvent, TurnProviderRef, TurnResult, TurnSink,
 };
-use crate::session::{Entry, SessionStore};
+use crate::session::{Entry, EntryEventHook, SessionStore};
 use crate::tools;
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -137,6 +137,10 @@ struct Inner {
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
     om_status_hook: Option<OmStatusHook>,
+    /// Wire-only entry upserts (ADR-0008): a re-emitted entry before its
+    /// file line lands (the streaming assistant, the tool's call phase);
+    /// the harness shapes it into the protocol's EntryUpsert.
+    entry_upsert_hook: Option<EntryEventHook>,
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
     queue_event_hook: Option<QueueEventHook>,
@@ -211,6 +215,7 @@ impl AgentSession {
                 om: p.om,
                 om_model: p.om_model,
                 om_status_hook: None,
+                entry_upsert_hook: None,
                 queue_event_hook: None,
                 subagents: p.subagents,
                 child: p.child,
@@ -289,7 +294,7 @@ impl AgentSession {
         let text = text.into();
         let steering = matches!(lane, Lane::Steering);
         // A steering report is appended to the file the moment it is queued, so
-        // the EntryLive event fires now and the GUI shows the report immediately
+        // the EntryUpsert event fires now and the GUI shows the report immediately
         // (not at the next LLM-call boundary, which for an idle parent may be a
         // long way off). The in_file flag tells the turn loop's dequeue to skip
         // the second append.
@@ -505,8 +510,13 @@ impl AgentSession {
 
     /// The live entry sink, set on this session's store (the append choke
     /// point); `None` clears it.
-    pub(crate) fn set_entry_event_hook(&self, hook: Option<crate::session::EntryEventHook>) {
+    pub(crate) fn set_entry_event_hook(&self, hook: Option<EntryEventHook>) {
         self.inner.lock().unwrap().store.set_entry_event_hook(hook);
+    }
+
+    /// The wire-only upsert sink (ADR-0008); `None` clears it.
+    pub(crate) fn set_entry_upsert_hook(&self, hook: Option<EntryEventHook>) {
+        self.inner.lock().unwrap().entry_upsert_hook = hook;
     }
 
     /// The session's model for the next turn's calls (the `session_set_model`

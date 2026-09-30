@@ -83,19 +83,24 @@ async fn task_tools_run_through_the_loop_and_the_gate_enforces_evidence() {
             .unwrap()
             .to_owned()
     };
-    // The call entry is recorded before dispatch: each task record (a side
-    // effect) lands after the tool call that caused it, never before.
+    // The call that caused a task record (a side effect during dispatch)
+    // carries the smaller id: in transcript order the effect lands after
+    // the call (ADR-0008: one line per call, persisted at the result).
     let call = entries
         .iter()
-        .position(|e| e.kind == KIND_TOOL && e.payload["call_id"] == "c1")
-        .unwrap();
+        .find(|e| e.kind == KIND_TOOL && e.payload["call_id"] == "c1")
+        .unwrap()
+        .id
+        .clone();
     let effect = entries
         .iter()
-        .position(|e| e.kind == crate::task::KIND_TASK)
-        .unwrap();
+        .find(|e| e.kind == crate::task::KIND_TASK)
+        .unwrap()
+        .id
+        .clone();
     assert!(
         call < effect,
-        "the call entry must precede the task record: {entries:?}"
+        "the call's id must precede the task record's: {entries:?}"
     );
     assert!(out("c1").contains("created task-1"), "{}", out("c1"));
     assert!(out("c2").contains("[in_progress]"), "{}", out("c2"));
@@ -148,23 +153,15 @@ async fn tool_calls_roundtrip_through_the_session() {
     agent.process().await.unwrap();
     let entries = entries_of(&agent.inner.lock().unwrap().store);
     let kinds: Vec<&str> = entries.iter().map(|e| e.kind.as_str()).collect();
-    // Two tool entries per call: the call (recorded before dispatch, empty
-    // output) and the result (same call_id, the real output).
+    // One tool entry per call (ADR-0008): the call's line carries the
+    // result's output.
     assert_eq!(
         kinds,
-        vec![
-            KIND_USER,
-            KIND_ASSISTANT,
-            KIND_TOOL,
-            KIND_TOOL,
-            KIND_ASSISTANT
-        ]
+        vec![KIND_USER, KIND_ASSISTANT, KIND_TOOL, KIND_ASSISTANT]
     );
     assert_eq!(entries[2].payload["call_id"], "c1");
     assert_eq!(entries[2].payload["name"], "read");
-    assert_eq!(entries[2].payload["output"], "");
-    assert_eq!(entries[3].payload["call_id"], "c1");
-    assert!(entries[3].payload["output"].as_str().unwrap().contains("a"));
+    assert!(entries[2].payload["output"].as_str().unwrap().contains("a"));
 }
 
 #[tokio::test]
@@ -190,7 +187,6 @@ async fn steering_lands_on_the_next_llm_call() {
             KIND_USER,
             KIND_USER,
             KIND_ASSISTANT,
-            KIND_TOOL,
             KIND_TOOL,
             KIND_ASSISTANT
         ]
@@ -488,7 +484,7 @@ async fn runaway_turn_stops_with_a_visible_note() {
     );
     assert_eq!(
         entries.iter().filter(|e| e.kind == KIND_TOOL).count(),
-        2 * MAX_ROUNDS
+        MAX_ROUNDS
     );
 }
 

@@ -213,10 +213,13 @@ async fn live_run_streams_the_event_pipe() {
         let started = events
             .iter()
             .any(|e| matches!(e, Event::StreamStart { .. }));
-        let deltaed = events
-            .iter()
-            .any(|e| matches!(e, Event::StreamDelta { .. }));
-        if started && deltaed {
+        let upserted = events.iter().any(|e| {
+            matches!(
+                e,
+                Event::EntryUpsert { entry, .. } if entry.kind == "assistant"
+            )
+        });
+        if started && upserted {
             break;
         }
         if std::time::Instant::now() > deadline {
@@ -228,25 +231,33 @@ async fn live_run_streams_the_event_pipe() {
     let events = collected.lock().unwrap().clone();
     let text: String = events
         .iter()
-        .filter_map(|e| match e {
-            Event::StreamDelta { text, .. } => Some(text.clone()),
+        .rev()
+        .find_map(|e| match e {
+            Event::EntryUpsert { entry, .. } if entry.kind == "assistant" => {
+                entry.payload["text"].as_str().map(str::to_owned)
+            }
             _ => None,
         })
-        .collect();
+        .unwrap_or_default();
     let end = events
         .iter()
         .find(|e| matches!(e, Event::StreamEnd { .. }))
         .cloned();
     eprintln!(
-        "live run: {} deltas ({} chars); end: {:?}",
+        "live run: {} assistant upserts ({} chars); end: {:?}",
         events
             .iter()
-            .filter(|e| matches!(e, Event::StreamDelta { .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::EntryUpsert { entry, .. } if entry.kind == "assistant"
+                )
+            })
             .count(),
         text.chars().count(),
         end
     );
-    assert!(!text.is_empty(), "deltas arrived but carried no text");
+    assert!(!text.is_empty(), "upserts arrived but carried no text");
 }
 /// End-to-end sub-agent lifecycle (ticket #23 N3): a spawned child runs
 /// its scripted `parent_notify {done}` turn, the supervisor resolves it,

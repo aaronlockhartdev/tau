@@ -76,43 +76,29 @@ impl TurnSink for ForwardSink<'_> {
                 call_id: self.call_id.clone(),
             });
         }
-        match &event {
-            TurnEvent::Text(t) => self.send(Event::StreamDelta {
+        // Text/reasoning deltas are the loop's sink's: they become the
+        // growing entry's snapshots (ADR-0008), not channel events.
+        if let TurnEvent::Completed(u) = &event {
+            self.completed
+                .lock()
+                .unwrap()
+                .insert(self.call_id.clone(), true);
+            self.send(Event::StreamEnd {
                 workspace: self.workspace.clone(),
                 session: self.session.clone(),
                 call_id: self.call_id.clone(),
-                text: t.clone(),
-                reasoning: None,
-            }),
-            TurnEvent::Reasoning(t) => self.send(Event::StreamDelta {
-                workspace: self.workspace.clone(),
-                session: self.session.clone(),
-                call_id: self.call_id.clone(),
-                text: String::new(),
-                reasoning: Some(t.clone()),
-            }),
-            TurnEvent::Completed(u) => {
-                self.completed
-                    .lock()
-                    .unwrap()
-                    .insert(self.call_id.clone(), true);
-                self.send(Event::StreamEnd {
-                    workspace: self.workspace.clone(),
-                    session: self.session.clone(),
-                    call_id: self.call_id.clone(),
-                    interrupted: false,
-                    usage: Some(Usage {
-                        input_tokens: u.input_tokens,
-                        output_tokens: u.output_tokens,
-                        total_tokens: u.total_tokens,
-                        cached_prompt_tokens: u
-                            .prompt_tokens_details
-                            .as_ref()
-                            .map(|d| d.cached_tokens)
-                            .unwrap_or(0),
-                    }),
-                });
-            }
+                interrupted: false,
+                usage: Some(Usage {
+                    input_tokens: u.input_tokens,
+                    output_tokens: u.output_tokens,
+                    total_tokens: u.total_tokens,
+                    cached_prompt_tokens: u
+                        .prompt_tokens_details
+                        .as_ref()
+                        .map(|d| d.cached_tokens)
+                        .unwrap_or(0),
+                }),
+            });
         }
         // A stop cuts the stream at the next delta (the loop records the
         // partial as interrupted, spec §7).

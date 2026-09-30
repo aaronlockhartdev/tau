@@ -315,13 +315,28 @@ impl SessionStore {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
     }
-    fn now(&self) -> u64 {
+    pub(crate) fn now(&self) -> u64 {
         self.fixed_time.unwrap_or_else(Self::now_ms)
     }
 
-    fn new_entry(&self, kind: &str, payload: Value, first_kept_entry_id: Option<String>) -> Entry {
+    /// The next entry id, reserved now (the single id counter, ADR-0008):
+    /// a wire-only re-emission can be minted before its file line lands, and
+    /// the later append reuses the same id.
+    pub fn mint_id(&mut self) -> String {
+        let id = format!("{:08}", self.next);
+        self.next += 1;
+        id
+    }
+
+    fn new_entry(
+        &self,
+        id: &str,
+        kind: &str,
+        payload: Value,
+        first_kept_entry_id: Option<String>,
+    ) -> Entry {
         Entry {
-            id: format!("{:08}", self.next),
+            id: id.to_owned(),
             parent: None,
             timestamp: self.now(),
             kind: kind.to_owned(),
@@ -438,6 +453,11 @@ impl SessionStore {
     }
 
     fn append_line(&mut self, mut entry: Entry, parent: Option<&str>) -> Result<Entry, Error> {
+        // A fresh, unopened store minted its first id before open() ran
+        // (the fixtures expect 0, then 2, 3, ...): open() resets the
+        // counter to 1, so the sentinel 0 lands and the counter resumes
+        // at 2 — keep that id space exactly.
+        let was_unopened = !self.loaded;
         self.ensure_open()?;
         // A loaded store whose file is gone (deleted, or archived out
         // from under it) is in an inconsistent state: refuse the append
@@ -481,7 +501,12 @@ impl SessionStore {
         self.ids.insert(entry.id.clone());
         self.entries.push(Some(entry.clone()));
         self.entry_len.push(line_len);
-        self.next += 1;
+        // The id was reserved up front (mint_id): advance the counter past
+        // it, never double-advance.
+        self.next = self.next.max(entry.id.parse::<u64>().unwrap_or(0) + 1);
+        if was_unopened {
+            self.next += 1;
+        }
         self.loaded = true;
         Ok(entry)
     }
@@ -547,7 +572,22 @@ impl SessionStore {
         payload: Value,
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
-        let entry = self.append_line(self.new_entry(kind, payload, None), parent)?;
+        let id = self.mint_id();
+        self.append_entry(&id, kind, payload, parent)
+    }
+
+    /// Append under a pre-minted id (ADR-0008): a re-emitted item (a
+    /// streaming assistant snapshot, a tool's call→result) keeps the id it
+    /// was first issued, so the wire's upsert and the file's line are one
+    /// object.
+    pub fn append_entry(
+        &mut self,
+        id: &str,
+        kind: &str,
+        payload: Value,
+        parent: Option<&str>,
+    ) -> Result<Entry, Error> {
+        let entry = self.append_line(self.new_entry(id, kind, payload, None), parent)?;
         if let Some(hook) = &self.entry_event_hook {
             hook(&entry);
         }

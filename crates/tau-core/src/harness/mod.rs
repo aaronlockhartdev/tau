@@ -7,16 +7,16 @@
 //!
 //! The core is the single owner of state (ADR-0006): workspaces and live
 //! sessions live here; the GUI rebuilds from snapshots + the event stream.
-//! Stream deltas reach clients through the provider seam — a forwarding
-//! provider that wraps the loop's provider (the loop itself is untouched) —
-//! and the 25 ms coalescer in the event pump.
+//! Transcript entries reach clients as file-line upserts (ADR-0008): the
+//! turn loop re-emits the growing assistant entry frame-aligned, and the
+//! forwarding provider mirrors the turn's stream start/end.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use crate::agent::{AgentSession, Lane, SessionParams, TurnConfig};
 use crate::config::{self, Config};
@@ -32,7 +32,6 @@ use crate::subagent::{
 };
 use crate::tools;
 use serde_json::{Value, json};
-use tau_protocol::coalesce::Coalescer;
 use tau_protocol::snapshot::{
     EntryMeta, EntryStatus, LiveState, OmSnapshot, SessionMeta, Snapshot, TurnState, ViewEntry,
     Workspace,

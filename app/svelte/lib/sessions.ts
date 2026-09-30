@@ -6,7 +6,6 @@
 // formalize; the store keeps state and IPC, the module owns the rules.
 import type {
   Entry,
-  MessageEntry,
   QueuedItem,
   SessionMeta,
   Snapshot,
@@ -26,8 +25,9 @@ export interface PendingMsg {
 
 export interface SessionState {
   meta: SessionMeta;
-  entries: Entry[];
-  live: MessageEntry[];
+  // The materialized entry map (ADR-0008): id → decoded card, in creation
+  // order. entry_upsert is the only live op; paged reads fill the rest.
+  entries: Record<string, Entry>;
   usage: Usage | null;
   // Output tokens/second of the session's most recent turn (status bar).
   tps: number;
@@ -70,17 +70,21 @@ function snapshotToState(snap: Snapshot): SessionState {
     meta,
     // metadata skeleton: the card shows the preview until a paged read
     // replaces it with the payload.
-    entries: snap.entries.map((m) => ({
-      id: m.id,
-      kind:
-        m.kind === 'assistant'
-          ? m.status === 'interrupted'
-            ? 'interrupted'
-            : 'message'
-          : m.kind,
-      text: m.preview
-    })),
-    live: [],
+    entries: Object.fromEntries(
+      snap.entries.map((m): [string, Entry] => [
+        m.id,
+        {
+          id: m.id,
+          kind:
+            m.kind === 'assistant'
+              ? m.status === 'interrupted'
+                ? 'interrupted'
+                : 'message'
+              : m.kind,
+          text: m.preview
+        }
+      ])
+    ),
     usage: meta.usage,
     turn: snap.live.turn === 'running' ? 'running' : 'idle',
     tps: 0,
@@ -109,8 +113,7 @@ export function makeStub(
 ): SessionState {
   return {
     meta,
-    entries: [],
-    live: [],
+    entries: {},
     usage: null,
     tps: 0,
     turn: state === 'running' ? 'running' : 'idle',

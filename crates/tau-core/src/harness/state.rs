@@ -7,8 +7,6 @@ use super::*;
 /// few directory reads, depth ≤ 4) is trivial, so there is nothing to
 /// gain from a longer window, and 500 ms reads as instant in the GUI.
 pub(crate) const WATCH_DEBOUNCE: Duration = Duration::from_millis(500);
-/// The coalescing window: 25 ms (spec §8, ADR-0006).
-pub(crate) const COALESCE_MS: u64 = 25;
 /// The files pane's excluded dir names (design #30): a hard requirement,
 /// not an optimization — on Linux inotify a recursive watch is one
 /// descriptor per directory (this repo: 4,471, 3,777 under `target/`).
@@ -290,16 +288,10 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         Event::StreamStart {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
-        Event::StreamDelta {
-            workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
         Event::StreamEnd {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
-        Event::ToolStart {
-            workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::ToolEnd {
+        Event::EntryUpsert {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
         Event::Queue {
@@ -315,9 +307,6 @@ fn event_route(event: &Event) -> (String, Option<String>) {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
         Event::TaskChanged {
-            workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::EntryLive {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
     }
@@ -604,11 +593,4 @@ pub(crate) fn lane_to_message_lane(lane: Lane) -> MessageLane {
         Lane::Steering => MessageLane::Steering,
         Lane::FollowUp => MessageLane::FollowUp,
     }
-}
-
-pub(crate) fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }

@@ -125,22 +125,7 @@ impl Core {
             .map_err(|e| ProtocolError::Other {
                 message: e.to_string(),
             })?;
-        Ok(entries
-            .iter()
-            .map(|e| ViewEntry {
-                id: e.id.clone(),
-                parent: e.parent.clone(),
-                kind: e.kind.clone(),
-                timestamp: e.timestamp,
-                payload: e.payload.clone(),
-                blob: e.blob.as_ref().map(|b| tau_protocol::snapshot::BlobRef {
-                    id: b.id.clone(),
-                    size: b.size,
-                    hash: b.hash.clone(),
-                }),
-                first_kept: e.first_kept_entry_id.clone(),
-            })
-            .collect())
+        Ok(entries.iter().map(super::sessions::entry_to_view).collect())
     }
 
     /// A closed session is a file: open it read-only and project it the way
@@ -247,22 +232,7 @@ impl Core {
                 });
             }
         };
-        Ok(entries
-            .iter()
-            .map(|e| ViewEntry {
-                id: e.id.clone(),
-                parent: e.parent.clone(),
-                kind: e.kind.clone(),
-                timestamp: e.timestamp,
-                payload: e.payload.clone(),
-                blob: e.blob.as_ref().map(|b| tau_protocol::snapshot::BlobRef {
-                    id: b.id.clone(),
-                    size: b.size,
-                    hash: b.hash.clone(),
-                }),
-                first_kept: e.first_kept_entry_id.clone(),
-            })
-            .collect())
+        Ok(entries.iter().map(super::sessions::entry_to_view).collect())
     }
 }
 /// The entry tree's one-line preview: the entry's first text line, cut at

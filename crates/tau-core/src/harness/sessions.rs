@@ -398,15 +398,15 @@ impl Core {
                 });
             })));
         }
-        // The core's entry hook carries each entry as it lands; this closure
-        // maps it to the protocol on the shared channel, so the GUI renders the
-        // card live (tools → ToolStart/ToolEnd, the rest → EntryLive). The
-        // post-turn pump stays as a dedup reconciliation.
+        // ADR-0008: the entry hook is the file-line tee — every appended
+        // entry rides the shared channel as an EntryUpsert, the only live
+        // transcript op. The post-turn pump stays as a dedup reconciliation.
         {
             let tx = self.events_tx.clone();
             let ws = workspace.id.clone();
             let sid = provider.session.clone();
-            // The queue hook gets its own clones (the entry hook moves these).
+            // The queue and upsert hooks get their own clones (the entry
+            // hook moves these).
             let q_tx = tx.clone();
             let q_ws = ws.clone();
             let q_sid = sid.clone();
@@ -418,73 +418,25 @@ impl Core {
                     items: q_agent.queued_items(),
                 });
             })));
+            // The wire-only re-emissions (the streaming assistant, the
+            // tool's call phase) take the same mapping — same event, same
+            // channel.
+            let u_tx = tx.clone();
+            let u_ws = ws.clone();
+            let u_sid = sid.clone();
+            agent.set_entry_upsert_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
+                let _ = u_tx.try_send(Event::EntryUpsert {
+                    workspace: u_ws.clone(),
+                    session: u_sid.clone(),
+                    entry: entry_to_view(entry),
+                });
+            })));
             agent.set_entry_event_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
-                let event = match entry.kind.as_str() {
-                    crate::agent::KIND_TOOL => {
-                        let p = &entry.payload;
-                        let call_id = p
-                            .get("call_id")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        let name = p
-                            .get("name")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("tool")
-                            .to_string();
-                        let output = p.get("output").cloned().unwrap_or(serde_json::Value::Null);
-                        if output.is_null() || output.as_str().is_some_and(str::is_empty) {
-                            Event::ToolStart {
-                                workspace: ws.clone(),
-                                session: sid.clone(),
-                                call_id: call_id.clone(),
-                                tool_call_id: call_id,
-                                name,
-                            }
-                        } else {
-                            Event::ToolEnd {
-                                workspace: ws.clone(),
-                                session: sid.clone(),
-                                call_id: call_id.clone(),
-                                tool_call_id: call_id,
-                                name,
-                                output,
-                            }
-                        }
-                    }
-                    // Streamed assistant entries have their own live path.
-                    crate::agent::KIND_ASSISTANT => return,
-                    // A steering notification (a child report) is not
-                    // optimistically pushed, so it gets a live emit; a
-                    // regular user send is optimistic: skip.
-                    crate::agent::KIND_USER
-                        if entry.payload.get("lane").and_then(|l| l.as_str())
-                            != Some("steering") =>
-                    {
-                        return;
-                    }
-                    _ => Event::EntryLive {
-                        workspace: ws.clone(),
-                        session: sid.clone(),
-                        entry: tau_protocol::snapshot::ViewEntry {
-                            id: entry.id.clone(),
-                            parent: entry.parent.clone(),
-                            kind: entry.kind.clone(),
-                            timestamp: entry.timestamp,
-                            payload: entry.payload.clone(),
-                            blob: entry
-                                .blob
-                                .as_ref()
-                                .map(|b| tau_protocol::snapshot::BlobRef {
-                                    id: b.id.clone(),
-                                    size: b.size,
-                                    hash: b.hash.clone(),
-                                }),
-                            first_kept: entry.first_kept_entry_id.clone(),
-                        },
-                    },
-                };
-                let _ = tx.try_send(event);
+                let _ = tx.try_send(Event::EntryUpsert {
+                    workspace: ws.clone(),
+                    session: sid.clone(),
+                    entry: entry_to_view(entry),
+                });
             })));
         }
         let meta = SessionMeta {
@@ -557,6 +509,27 @@ pub(crate) fn derive_turn(
             .then(|| (session.to_owned(), config.cache.retention)),
         context_window: def.and_then(|d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
+    }
+}
+
+/// A session entry as its file-line view (ADR-0008): the object the
+/// upsert stream carries and the GUI's id-keyed map stores.
+pub(crate) fn entry_to_view(entry: &crate::session::Entry) -> ViewEntry {
+    ViewEntry {
+        id: entry.id.clone(),
+        parent: entry.parent.clone(),
+        kind: entry.kind.clone(),
+        timestamp: entry.timestamp,
+        payload: entry.payload.clone(),
+        blob: entry
+            .blob
+            .as_ref()
+            .map(|b| tau_protocol::snapshot::BlobRef {
+                id: b.id.clone(),
+                size: b.size,
+                hash: b.hash.clone(),
+            }),
+        first_kept: entry.first_kept_entry_id.clone(),
     }
 }
 

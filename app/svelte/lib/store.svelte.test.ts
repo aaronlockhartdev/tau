@@ -24,7 +24,6 @@ import {
   type Workspace
 } from './protocol';
 import { applySessionList, openSession, touchChild } from './sessions';
-import { applyToolEvent, decodeEntry } from './entries';
 import {
   applyEvents,
   archiveSession,
@@ -268,10 +267,18 @@ describe('openWorkspace concurrency', () => {
   });
 });
 
-describe('applyEvents: streaming', () => {
+describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
   function oneSession() {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     return store.sessions['s1'];
+  }
+  function upsert(id: string, kind: string, payload: Record<string, unknown>) {
+    return {
+      type: 'entry_upsert' as const,
+      workspace: WS.id,
+      session: 's1',
+      entry: entryView(id, kind, payload)
+    };
   }
 
   it('a turn that fails before its first output leaves "starting" (no stuck running badge)', () => {
@@ -283,58 +290,44 @@ describe('applyEvents: streaming', () => {
     expect(s.turn).toBe('idle');
   });
 
-  it('streams a turn to completion: live fills, the final entry lands with usage', () => {
+  it('streams a turn to completion: upserts grow the card, stream_end idles the turn with usage', () => {
     const s = oneSession();
     applyEvents([
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'hel', reasoning: 'thinking' },
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'lo', reasoning: null },
+      upsert('00000001', 'assistant', { text: 'hel', reasoning: 'thinking', interrupted: false }),
+      upsert('00000001', 'assistant', { text: 'hello', reasoning: 'thinking', interrupted: false }),
       { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE }
     ]);
-    expect(s.live).toHaveLength(0);
     expect(s.turn).toBe('idle');
     expect(s.usage).toEqual(USAGE);
-    expect(s.entries).toHaveLength(1);
-    const e = s.entries[0];
+    const e = s.entries['00000001'];
+    expect(e).toBeTruthy();
     expect(e.kind).toBe('message');
-    expect(e.id).toBe('c1');
     if (e.kind === 'message' || e.kind === 'interrupted') {
       expect(e.text).toBe('hello');
       expect(e.reasoning).toBe('thinking');
-      expect(e.usage).toEqual(USAGE);
     }
   });
 
-  it('marks an interrupted stream as such', () => {
+  it('a card renders on first sight; a re-emission updates it in place, never repositioning', () => {
+    const s = oneSession();
+    applyEvents([
+      upsert('00000001', 'user', { text: 'hi' }),
+      upsert('00000002', 'assistant', { text: 'a', interrupted: false }),
+      upsert('00000001', 'user', { text: 'hi' })
+    ]);
+    expect(Object.keys(s.entries)).toEqual(['00000001', '00000002']);
+    expect(s.entries['00000001']?.kind).toBe('user');
+  });
+
+  it('marks an interrupted response as such (the payload flag decides the kind)', () => {
     const s = oneSession();
     applyEvents([
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'ab', reasoning: null },
+      upsert('00000001', 'assistant', { text: 'ab', interrupted: true }),
       { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: true, usage: null }
     ]);
-    expect(s.entries[0]?.kind).toBe('interrupted');
-  });
-
-  it('buffers deltas that land before their start and folds them in', () => {
-    const s = oneSession();
-    applyEvents([
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'ab', reasoning: null },
-      { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'cd', reasoning: null },
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
-    ]);
-    expect(s.entries[0]?.text).toBe('abcd');
-  });
-
-  it('closes a stream that ended before we saw its start, out of the buffer', () => {
-    const s = oneSession();
-    applyEvents([
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'x', reasoning: null },
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
-    ]);
-    expect(s.entries).toHaveLength(1);
-    expect(s.entries[0]?.id).toBe('c1');
-    expect(s.entries[0]?.text).toBe('x');
+    expect(s.entries['00000001']?.kind).toBe('interrupted');
   });
 
   it('computes TPS over the call duration', async () => {
@@ -350,16 +343,18 @@ describe('applyEvents: streaming', () => {
     vi.useRealTimers();
   });
 
-  it('settles live entries before a tool card lands, and ends the tool on tool_end', () => {
+  it('a tool call is one card: the call upsert starts it, the result upsert fills the output', () => {
     const s = oneSession();
     applyEvents([
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'run ls', reasoning: null },
-      { type: 'tool_start', workspace: WS.id, session: 's1', call_id: 'c1', tool_call_id: 't1', name: 'bash' },
-      { type: 'tool_end', workspace: WS.id, session: 's1', call_id: 'c1', tool_call_id: 't1', name: 'bash', output: 'ok' }
+      upsert('00000001', 'assistant', { text: 'run ls', interrupted: false }),
+      upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' } }),
+      upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' }, output: 'ok' }),
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
     ]);
-    expect(s.entries.map((e) => e.kind)).toEqual(['message', 'tool']);
-    const tool = s.entries[1];
+    const tools = Object.values(s.entries).filter((e) => e.kind === 'tool');
+    expect(tools).toHaveLength(1);
+    const tool = tools[0];
     if (tool.kind === 'tool') {
       expect(tool.name).toBe('bash');
       expect(tool.status).toBe('ok');
@@ -367,17 +362,13 @@ describe('applyEvents: streaming', () => {
     }
   });
 
-  it('keeps two tools of one call as two cards (keyed on tool_call_id)', () => {
+  it('keeps two tools of one call as two cards (one id each)', () => {
     const s = oneSession();
     applyEvents([
-      { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
-      { type: 'stream_delta', workspace: WS.id, session: 's1', call_id: 'c1', text: 'x', reasoning: null },
-      { type: 'tool_start', workspace: WS.id, session: 's1', call_id: 'c1', tool_call_id: 't1', name: 'a' },
-      { type: 'tool_start', workspace: WS.id, session: 's1', call_id: 'c1', tool_call_id: 't2', name: 'b' },
-      { type: 'tool_end', workspace: WS.id, session: 's1', call_id: 'c1', tool_call_id: 't1', name: 'a', output: 1 },
-      { type: 'tool_end', workspace: WS.id, session: 's1', call_id: 'c1', tool_call_id: 't2', name: 'b', output: 2 }
+      upsert('00000001', 'tool', { call_id: 't1', name: 'a', output: 1 }),
+      upsert('00000002', 'tool', { call_id: 't2', name: 'b', output: 2 })
     ]);
-    const tools = s.entries.filter((e) => e.kind === 'tool');
+    const tools = Object.values(s.entries).filter((e) => e.kind === 'tool');
     expect(tools).toHaveLength(2);
   });
 });
@@ -419,7 +410,7 @@ describe('applyEvents: queueing', () => {
     expect(p[1].source).toBe('s1-1');
   });
 
-  it('send(): the optimistic user bubble lands, the lane maps, the duplicate queues dedupe', async () => {
+  it('send(): the user card lands on the core upsert echo (no optimistic card), the lane maps, the duplicate queues dedupe', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     store.current = 's1';
     applyEvents([
@@ -428,19 +419,25 @@ describe('applyEvents: queueing', () => {
     const before = store.tailJump;
     await send('hi', 'steering');
     expect(store.sessions['s1'].pending).toHaveLength(0);
-    const s = store.sessions['s1'];
-    const bubble = s.entries[s.entries.length - 1];
-    expect(bubble.kind).toBe('user');
-    if (bubble.kind === 'user') {
-      expect(bubble.text).toBe('hi');
-      expect(bubble.id.startsWith('u-')).toBe(true);
-    }
+    // ADR-0008: no client-minted card — the core's echo is the card.
+    expect(Object.keys(store.sessions['s1'].entries)).toEqual([]);
+    applyEvents([
+      {
+        type: 'entry_upsert',
+        workspace: WS.id,
+        session: 's1',
+        entry: entryView('00000001', 'user', { text: 'hi', lane: 'steering' })
+      }
+    ]);
+    const card = store.sessions['s1'].entries['00000001'];
+    expect(card).toBeTruthy();
+    if (card.kind === 'user') expect(card.text).toBe('hi');
     expect(store.tailJump).toBe(before + 1);
     const calls = mockInvoke.mock.calls.map((c) => (c[1] as { command: Command }).command);
     expect(calls.at(-1)).toEqual({ type: 'message_send', session: 's1', text: 'hi', lane: 'steering' });
   });
 
-  it('a failed send splices the optimistic bubble back out (no ghost, no twin on retry)', async () => {
+  it('a failed send leaves no card (no ghost, no twin on retry)', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     store.current = 's1';
     defaultIPC({
@@ -450,10 +447,10 @@ describe('applyEvents: queueing', () => {
     });
     await send('hi', 'steering');
     expect(store.error).toBe('provider 500');
-    expect(store.sessions['s1'].entries).toHaveLength(0);
+    expect(Object.keys(store.sessions['s1'].entries)).toEqual([]);
     // a retry of the same text must not stack a second ghost
     await send('hi', 'steering');
-    expect(store.sessions['s1'].entries).toHaveLength(0);
+    expect(Object.keys(store.sessions['s1'].entries)).toEqual([]);
   });
 });
 
