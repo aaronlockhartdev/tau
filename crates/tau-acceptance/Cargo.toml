@@ -10,3 +10,4 @@ tokio = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
+libc = "0.2"  # [DEBUG-a4f2] temporary probe

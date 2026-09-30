@@ -34,16 +34,18 @@ test:
     (cd app && npm run test)
 
 # Spec §1 in-scope suites; `just acceptance <suite…>` filters (default: all).
-# The live ones (live-*) run only when TAU_LIVE=1 — a skipped live suite is
-# not a failure, a red one is.
+# The live-* suites run against the deterministic mock LLM by default (red =
+# a code problem, phase 1 §4); TAU_ENDPOINT / TAU_MODEL opt in a live
+# endpoint for dogfood.
 acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     #!/bin/sh
     set -u
     cd "{{justfile_directory()}}"
 
-    TAU_LIVE="${TAU_LIVE:-0}"
-    TAU_ENDPOINT="${TAU_ENDPOINT:-https://llms.aaronlockhart.dev/v1}"
+    TAU_ENDPOINT="${TAU_ENDPOINT:-}"
     TAU_MODEL="${TAU_MODEL:-qwen3.8-27b}"
+    MOCK_PORT="${MOCK_PORT:-8123}"
+    mock_pid=""
 
     pass=0
     fail=0
@@ -59,12 +61,32 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
       printf '%-28s %s  %s\n' "$1" "$2" "$3"
     }
 
+    start_mock() {
+      # The deterministic mock LLM (phase 1 §4): `just build` already builds
+      # it (workspace member); a standalone run gets a targeted build.
+      if [ ! -x target/release/tau-mock-llm ]; then
+        cargo build --release -p tau-mock-llm > /tmp/tau-mock-build.log 2>&1 || return 1
+      fi
+      : > /tmp/tau-mock-llm.log
+      ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios dogfood/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
+      mock_pid=$!
+      i=0
+      while [ $i -lt 100 ]; do
+        grep -q "listening" /tmp/tau-mock-llm.log 2>/dev/null && return 0
+        kill -0 "$mock_pid" 2>/dev/null || return 1
+        i=$((i + 1))
+        sleep 0.1
+      done
+      return 1
+    }
+
     run_driver() {
-      # $1 = suite, $2... = driver args
+      # $1 = suite, $2... = driver args. No TAU_ENDPOINT = the deterministic
+      # mock (started here); a live endpoint is a local opt-in.
       suite="$1"; shift
-      if [ "$TAU_LIVE" != "1" ]; then
-        report "$suite" SKIP "TAU_LIVE unset (set TAU_LIVE=1 with TAU_ENDPOINT/TAU_MODEL)"
-        return 0
+      if [ -z "$TAU_ENDPOINT" ]; then
+        start_mock || { report "$suite" FAIL "the mock LLM failed to start (see /tmp/tau-mock-llm.log)"; return 1; }
+        TAU_ENDPOINT="http://127.0.0.1:$MOCK_PORT/v1"
       fi
       out=$(TAU_ENDPOINT="$TAU_ENDPOINT" TAU_MODEL="$TAU_MODEL" \
         ./target/release/tau-acceptance "$suite" "$@" 2>&1)
@@ -99,7 +121,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     }
 
     echo "tau v0 acceptance — $(date -u '+%Y-%m-%d %H:%M UTC')"
-    echo "endpoint: $TAU_ENDPOINT  model: $TAU_MODEL  live: $TAU_LIVE"
+    echo "endpoint: ${TAU_ENDPOINT:-mock:127.0.0.1:$MOCK_PORT}  model: $TAU_MODEL"
     echo ""
 
     for suite in {{suites}}; do
@@ -151,7 +173,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
             out=$(cd app && npm run test:frontend 2>&1); status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c 'PASS  ')
-              report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-all}: replay of the real dogfood session pair + the 10k stress fixture)"
+              report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-all}: replay of the real dogfood session pair + the mock-LLM leg + the realistic large stress session)"
             else
               report e2e FAIL "$(echo "$out" | grep -m1 'FAIL  ' || echo 'the real-app E2E failed')"
             fi
@@ -164,6 +186,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
           ;;
       esac
     done
+    [ -n "$mock_pid" ] && kill "$mock_pid" 2>/dev/null
 
     echo ""
     echo "summary: $pass passed, $fail failed, $skip skipped"

@@ -1,12 +1,15 @@
 //! End-to-end acceptance driver (ticket #27).
 //!
-//! Suites: `live-tools` multi-turn with the four core tools (live),
-//! `live-subagent` a sub-agent spawned by the model plus its task pointer
-//! (live), `live-om` OM compaction on a synthesized long session (live
-//! observe/reflect), `core` branching + manual archive round-trip (offline).
-//! The live suites read `TAU_ENDPOINT` / `TAU_MODEL` (or `--endpoint` /
-//! `--model`) and cap every generation at 300 output tokens; the script
-//! gates them, the driver does not.
+//! Suites: `live-tools` multi-turn with the four core tools (mock by
+//! default), `live-subagent` a sub-agent spawned by the scripted model plus
+//! its task pointer (mock by default), `live-om` OM compaction on a
+//! synthesized long session (mock observe/reflect), `core` branching +
+//! manual archive round-trip (offline).
+//! The live-* suites read `TAU_ENDPOINT` / `TAU_MODEL` (or `--endpoint` /
+//! `--model`); the justfile defaults them to the deterministic mock LLM
+//! (phase 1 §4), a live endpoint stays a local opt-in. They cap every
+//! generation at 300 output tokens; the script gates them, the driver does
+//! not.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -27,6 +30,21 @@ use tau_core::task::KIND_TASK;
 use tau_core::tools;
 
 const CAP: u64 = 300;
+
+#[cfg(unix)]
+fn dbg_rss(stage: &str) {
+    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF as libc::c_int, &mut r) };
+    eprintln!("[DEBUG-a4f2] {stage} maxrss_bytes={}", r.ru_maxrss);
+}
+
+#[cfg(unix)]
+fn dbg_rss_file(stage: &str, path: &std::path::Path) {
+    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF as libc::c_int, &mut r) };
+    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(u64::MAX);
+    eprintln!("[DEBUG-a4f2] {stage} maxrss_bytes={} session_file_bytes={}", r.ru_maxrss, len);
+}
 
 struct Ctx {
     endpoint: String,
@@ -98,11 +116,11 @@ const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use 
 
 /// live-subagent's parent gets the sub-agent + task tools named too.
 const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
-
 async fn live_tools(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
     let (id, store) = new_session(ws.path());
+    dbg_rss("live-tools:enter");
     let (_, prov) = production(ctx);
     let agent = AgentSession::new(SessionParams {
         store,
@@ -118,15 +136,18 @@ async fn live_tools(ctx: &Ctx) -> Result<(), String> {
         subagents: None,
         child: None,
     });
+    dbg_rss("live-tools:after_core_build");
     agent.send(
         "Do exactly this: 1) read notes.txt, 2) edit the line containing 'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write the file out.txt with the single line 'done'. Then reply 'finished'.",
         Lane::Steering,
     );
     agent.process().await.map_err(|e| e.to_string())?;
+    dbg_rss("live-tools:after_process");
     drop(agent);
 
     let store = SessionStore::for_workspace(ws.path(), &id);
     let entries = all_entries(&store);
+    dbg_rss("live-tools:after_all_entries");
     let calls = tool_calls(&entries);
     for name in ["read", "write", "edit", "bash"] {
         if !calls.contains(&name) {
@@ -213,7 +234,9 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
             requests: Requests::default(),
         }),
         model: ctx.model.clone(),
-        system_prompt: SUBAGENT_PROMPT.into(),
+        system_prompt: format!(
+            "{SUBAGENT_PROMPT}\n\nYou are a child sub-agent on an assigned task; report to the parent when done."
+        ),
         om: Om::default(),
         om_model: String::new(),
         tool_batch_on_force: Default::default(),
@@ -380,6 +403,8 @@ fn prose(i: usize) -> String {
 async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let ws = temp_ws();
     let (id, mut store) = new_session(ws.path());
+    let sess_path = ws.path().join(".tau").join("sessions").join(format!("{}.jsonl", id));
+    dbg_rss_file("live-om:enter", &sess_path);
     // A synthesized long raw window (no model needed for the raw): ~48 KB of
     // prose ≈ 12k tokens — far past the lowered observe threshold.
     let mut prev: Option<String> = None;
@@ -389,6 +414,7 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             .map_err(|e| e.to_string())?;
         prev = Some(e.id);
     }
+    dbg_rss_file("live-om:after_seed", &sess_path);
     let store = SessionStore::for_workspace(ws.path(), &id);
     let om = OmState::from_config(
         &Om {
@@ -417,11 +443,13 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
         subagents: None,
         child: None,
     });
+    dbg_rss_file("live-om:after_core_build", &sess_path);
     agent.send(
         "Summarize the expedition notes above in two sentences. Do not use any tools.",
         Lane::FollowUp,
     );
     agent.process().await.map_err(|e| e.to_string())?;
+    dbg_rss_file("live-om:after_process_1", &sess_path);
     // A second turn: the observation from the first turn-end observe sits
     // past the (lowered) reflect threshold, so the Reflector fires.
     agent.send(
@@ -576,6 +604,7 @@ fn main() {
         .enable_all()
         .build()
         .expect("runtime");
+    dbg_rss("main:before_suite");
     let start = std::time::Instant::now();
     let result = match suite {
         "live-tools" => rt.block_on(live_tools(&ctx)),

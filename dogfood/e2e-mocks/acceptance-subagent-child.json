@@ -1,0 +1,38 @@
+{
+  "match": "You are a child sub-agent on an assigned task",
+  "turns": [
+    {
+      "calls": [
+        { "name": "task_start", "arguments": { "task": "task-1" } }
+      ]
+    },
+    {
+      "calls": [
+        {
+          "name": "task_evidence",
+          "arguments": {
+            "task": "task-1",
+            "criterion": "the child reports ok",
+            "summary": "child reports ok",
+            "passed": true
+          }
+        }
+      ]
+    },
+    {
+      "calls": [
+        { "name": "task_finish", "arguments": { "task": "task-1" } }
+      ]
+    },
+    {
+      "calls": [
+        {
+          "name": "parent_notify",
+          "arguments": { "text": "ok", "done": true, "output": { "status": "ok" } }
+        }
+      ]
+    },
+    { "text": "ok" }
+  ],
+  "usage": { "input_tokens": 240, "output_tokens": 72, "total_tokens": 312 }
+}

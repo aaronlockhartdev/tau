@@ -1,0 +1,9 @@
+{
+  "match": "Your observations will be the ONLY",
+  "turns": [
+    {
+      "text": "<observations>\n- The user asked for a two-sentence summary of the expedition notes; the notes cover the northern pass, the river delta, and the stone markers at every bend.\n</observations>"
+    }
+  ],
+  "usage": { "input_tokens": 3400, "output_tokens": 52, "total_tokens": 3452 }
+}
