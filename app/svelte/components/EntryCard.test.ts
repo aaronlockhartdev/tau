@@ -82,7 +82,7 @@ describe('EntryCard', () => {
       kind: 'message',
       text: 'the answer',
       reasoning: 'pondering deeply',
-      usage: { input_tokens: 1200, output_tokens: 340 }
+      usage: { input_tokens: 1200, output_tokens: 340, total_tokens: 1540, cached_prompt_tokens: 0 }
     });
     await tick();
     expect(screen.getByText('the answer')).toBeInTheDocument();
