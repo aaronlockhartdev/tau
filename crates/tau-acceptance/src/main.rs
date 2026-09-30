@@ -561,8 +561,10 @@ fn core_offline() -> Result<(), String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut suite = "";
-    let mut endpoint = std::env::var("TAU_ENDPOINT")
-        .unwrap_or_else(|_| "https://llms.aaronlockhart.dev/v1".into());
+    // Empty default = the deterministic mock (the contract in this file's
+    // header); a live endpoint is an explicit opt-in.
+    let mut endpoint =
+        std::env::var("TAU_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:8123/v1".into());
     let mut model = std::env::var("TAU_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
     let mut i = 1;
     while i < args.len() {

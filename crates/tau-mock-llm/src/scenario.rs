@@ -65,6 +65,9 @@ impl Scenario {
     /// end of the script clamps to the final turn (a stuck client repeats
     /// the ending instead of hanging).
     pub fn next_turn(&self) -> (usize, &Turn) {
+        // load_dir rejects an empty script; the guard is for direct `new`
+        // callers (an empty `turns` would underflow the clamp).
+        assert!(!self.turns.is_empty(), "a scenario needs at least one turn");
         let n = self.counter.fetch_add(1, Ordering::SeqCst);
         let i = n.min(self.turns.len() - 1);
         (i, &self.turns[i])

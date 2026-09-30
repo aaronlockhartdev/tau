@@ -418,3 +418,25 @@ fn session_ids_are_distinct_and_well_formed() {
     assert_eq!(a.len(), 12);
     assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
 }
+
+#[test]
+fn a_fresh_handle_mints_past_the_files_ids() {
+    // The 80GB runaway (2026-09-30): a freshly created handle for an
+    // EXISTING file used to mint from its empty in-memory counter, re-
+    // issuing an id the file already held (duplicate id -> cyclic parent
+    // chain). Minting now loads the file first.
+    let dir = tempfile::tempdir().unwrap();
+    let mut first = store(dir.path(), "s1");
+    first.create().unwrap();
+    let last = first
+        .append("message", serde_json::json!({"text": "seed"}), None)
+        .unwrap();
+
+    let mut fresh = store(dir.path(), "s1");
+    let minted = fresh.mint_id();
+    assert!(
+        minted > last.id,
+        "fresh handle minted {minted}, at or below the file's last id {}",
+        last.id
+    );
+}

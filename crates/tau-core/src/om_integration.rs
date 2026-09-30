@@ -74,8 +74,8 @@ impl OmState {
 
     /// The current record: the last `om` entry on the active branch,
     /// reconstructed on open (spec §4: the record is appended, not
-    /// maintained in place). A storage failure is a storage failure — a
-    /// corrupted file must not masquerade as fresh OM state.
+    /// maintained in place). A newest om entry that cannot be decoded
+    /// (corrupt payload, missing sidecar) degrades to an empty record —
     pub fn load_record(store: &mut SessionStore) -> Result<OmRecord, OmError> {
         // Snapshot consistency: resolve the leaf BEFORE the entry read. The
         // walk runs over the entry list from that read, and the leaf's

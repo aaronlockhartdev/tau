@@ -55,8 +55,8 @@ const storeState = () => {
         path: typeof e.args?.path === 'string' ? e.args.path : null,
         outputSnippet: (e.output ?? '').slice(0, 120)
       })),
-    live: cur ? (cur.live?.length ?? 0) : null,
-    liveTexts: cur ? (cur.live ?? []).map((l) => l.text.length) : [],
+    live: cur ? cur.live.queue.length : null,
+    liveTexts: cur ? cur.live.queue.map((l) => l.text.length) : [],
     turn: cur ? cur.turn ?? null : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     renderRange: s.renderRange,
