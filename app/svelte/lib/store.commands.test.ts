@@ -49,7 +49,9 @@ function meta(id: string, workspace = WS.id, extra: Partial<SessionMeta> = {}): 
   };
 }
 
-function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Partial<LiveState> } = {}) {
+function snap(
+  sid: string,
+  extra: { session?: Partial<SessionMeta>; live?: Partial<LiveState> } = {}): Extract<CommandOutput, { kind: 'snapshot' }> {
   return {
     kind: 'snapshot' as const,
     snapshot: {
@@ -380,8 +382,10 @@ describe('the open_folder_requested listener (File → Open Folder…)', () => {
     const { listen } = await import('@tauri-apps/api/event');
     const mockListen = vi.mocked(listen);
     let folderHandler: ((e: unknown) => Promise<void>) | null = null;
-    mockListen.mockImplementation(async (topic: string, handler: (e: unknown) => Promise<void>) => {
-      if (topic === 'open_folder_requested') folderHandler = handler;
+    // Tauri types the listener callback void-returning, but the app registers an
+    // async handler — the capture site needs the double cast.
+    mockListen.mockImplementation(async (topic, handler) => {
+      if (topic === 'open_folder_requested') folderHandler = handler as unknown as (e: unknown) => Promise<void>;
       return () => {};
     });
     openFolder.mockResolvedValue('/picked/dir');
@@ -413,8 +417,8 @@ describe('the open_folder_requested listener (File → Open Folder…)', () => {
     const { listen } = await import('@tauri-apps/api/event');
     const mockListen = vi.mocked(listen);
     let folderHandler: ((e: unknown) => Promise<void>) | null = null;
-    mockListen.mockImplementation(async (topic: string, handler: (e: unknown) => Promise<void>) => {
-      if (topic === 'open_folder_requested') folderHandler = handler;
+    mockListen.mockImplementation(async (topic, handler) => {
+      if (topic === 'open_folder_requested') folderHandler = handler as unknown as (e: unknown) => Promise<void>;
       return () => {};
     });
     openFolder.mockResolvedValue(null);
@@ -470,7 +474,19 @@ describe('system workspace_opened (syncWorkspaces, live boot rule)', () => {
 describe('the dev seam (window.__tau)', () => {
   it('exposes applyEvents, the store and the command helpers', async () => {
     const { applyEvents: seamApply, store: seamStore, send: seamSend, stop: seamStop, openWorkspace: seamOpen, closeWorkspace: seamClose, switchSession: seamSwitch, fetchWindow: seamFetch, sessionSetModel } =
-      (window as unknown as { __tau: Record<string, unknown> }).__tau;
+      (window as unknown as {
+        __tau: {
+          applyEvents: typeof applyEvents;
+          store: () => typeof store;
+          send: typeof send;
+          stop: typeof stop;
+          openWorkspace: typeof openWorkspace;
+          closeWorkspace: typeof closeWorkspace;
+          switchSession: typeof switchSession;
+          fetchWindow: typeof fetchWindow;
+          sessionSetModel: (session: string, model: string) => Promise<unknown>;
+        }
+      }).__tau;
     expect(seamApply).toBe(applyEvents);
     expect(seamStore()).toBe(store);
     expect(seamSend).toBe(send);

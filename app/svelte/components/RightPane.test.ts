@@ -15,10 +15,10 @@ import {
   openSessionById,
   resetMockStore,
   seedState
-} from '../lib/testing/mock-store.svelte';
+} from '../lib/testing/mock-store.svelte.ts';
 
 vi.mock('../lib/store.svelte', async () => {
-  const m = await import('../lib/testing/mock-store.svelte');
+  const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 

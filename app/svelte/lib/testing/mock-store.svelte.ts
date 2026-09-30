@@ -1,4 +1,3 @@
-<script module>
 // Shared vi.mock factory for store.svelte in component tests.
 //
 // The store must be a genuine $state proxy: the components' $derived/$effect
@@ -6,13 +5,15 @@
 // update. The command surface is vi.fn()s — tests assert the wire calls the
 // UI made, and stub return values per test.
 //
-// Plain JS on purpose: a `.svelte` module script is not type-checked, and a
-// `.svelte.ts` rename would force `allowImportingTsExtensions` into the
-// app's tsconfig (out of scope for the test work).
+// A `.svelte.ts` module (not `.svelte`) so svelte-check sees the named
+// exports; it needs `allowImportingTsExtensions` in tsconfig.json.
 import { vi } from 'vitest';
-import { makeStub } from '../sessions';
+import type { FilesCache } from '../files';
+import type { PaneState } from '../panes';
+import type { SkillInfo, SessionMeta, Workspace } from '../protocol';
+import { makeStub, type SessionState } from '../sessions';
 
-export function paneDefault() {
+export function paneDefault(): PaneState {
   return {
     ltab: 'sessions',
     rtab: 'tasks',
@@ -33,20 +34,20 @@ export function freshDefaults() {
     modelMenuOpen: false,
     reasoningOpen: true,
     entryOpen: new Map(),
-    workspaces: [],
-    current: null,
+    workspaces: [] as Workspace[],
+    current: null as string | null,
     tailJump: 0,
-    sessions: {},
+    sessions: {} as Record<string, SessionState>,
     loading: false,
-    error: null,
+    error: null as string | null,
     renderRange: '',
     renderMs: 0,
-    skills: {},
-    files: {},
-    fileErrors: {},
-    pane: {},
-    tabSelected: [],
-    tabSelAnchor: null
+    skills: {} as Record<string, SkillInfo[]>,
+    files: {} as FilesCache,
+    fileErrors: {} as Record<string, Record<string, string>>,
+    pane: {} as Record<string, PaneState>,
+    tabSelected: [] as string[],
+    tabSelAnchor: null as string | null
   };
 }
 
@@ -77,11 +78,11 @@ export const fetchWindow = vi.fn(async () => {});
 export const toggleAllReasoning = vi.fn();
 export const windowTitle = vi.fn(() => 'tau');
 
-export function pane(ws) {
+export function pane(ws: string | null): PaneState | null {
   if (!ws) return null;
   return store.pane[ws] ?? null;
 }
-export function ensurePane(ws) {
+export function ensurePane(ws: string): PaneState {
   if (!store.pane[ws]) {
     store.pane[ws] = paneDefault();
   }
@@ -115,7 +116,7 @@ const commandFns = [
   windowTitle
 ];
 
-export function resetMockStore(partial = {}) {
+export function resetMockStore(partial: Partial<typeof store> = {}) {
   const d = freshDefaults();
   Object.assign(store, d, partial);
   for (const fn of commandFns) fn.mockReset();
@@ -124,9 +125,16 @@ export function resetMockStore(partial = {}) {
 
 // A full SessionState from a meta plus optional overrides — built with the
 // real makeStub so the shape stays honest.
-// opts: { parent, state, waitingOn, mru, over }
-export function seedState(meta, opts = {}) {
+export function seedState(
+  meta: SessionMeta,
+  opts: {
+    parent?: string | null;
+    state?: SessionState['state'];
+    waitingOn?: string | null;
+    mru?: number;
+    over?: Partial<SessionState>;
+  } = {}
+) {
   const { parent = null, state = 'idle', waitingOn = null, mru = 1, over = {} } = opts;
   return { ...makeStub(meta, parent, state, waitingOn, mru), ...over };
 }
-</script>

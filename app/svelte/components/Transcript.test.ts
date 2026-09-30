@@ -10,10 +10,10 @@ import type { Entry, SessionMeta } from '../lib/protocol';
 import type { SessionState } from '../lib/sessions';
 import Transcript from './Transcript.svelte';
 import { drives } from '../lib/testing/VirtualizerMock.svelte';
-import { fetchWindow, mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte';
+import { fetchWindow, mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte.ts';
 
 vi.mock('../lib/store.svelte', async () => {
-  const m = await import('../lib/testing/mock-store.svelte');
+  const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 vi.mock('virtua/svelte', async () => ({

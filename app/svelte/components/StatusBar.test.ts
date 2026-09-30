@@ -5,10 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/svelte';
 import type { SessionMeta } from '../lib/protocol';
 import StatusBar from './StatusBar.svelte';
-import { mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte';
+import { mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte.ts';
 
 vi.mock('../lib/store.svelte', async () => {
-  const m = await import('../lib/testing/mock-store.svelte');
+  const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 

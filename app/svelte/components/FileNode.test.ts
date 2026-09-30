@@ -6,10 +6,10 @@ import { cleanup, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import type { FileEntry } from '../lib/protocol';
 import FileNode from './FileNode.svelte';
-import { mockStore, resetMockStore, retryDirFetch, toggleFileDir } from '../lib/testing/mock-store.svelte';
+import { mockStore, resetMockStore, retryDirFetch, toggleFileDir } from '../lib/testing/mock-store.svelte.ts';
 
 vi.mock('../lib/store.svelte', async () => {
-  const m = await import('../lib/testing/mock-store.svelte');
+  const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 
@@ -45,7 +45,7 @@ describe('FileNode', () => {
     // nested node carries the deeper indent
     const kids = document.querySelectorAll('.node');
     expect(kids).toHaveLength(3);
-    expect(kids[1]!.style.getPropertyValue('--indent')).toBe('10px');
+    expect((kids[1] as HTMLElement).style.getPropertyValue('--indent')).toBe('10px');
   });
 
   it('a listed dir shows the failure note when its fetch failed', () => {

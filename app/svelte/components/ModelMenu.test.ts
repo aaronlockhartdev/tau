@@ -6,12 +6,12 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/protocol';
 import ModelMenu from './ModelMenu.svelte';
-import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/mock-store.svelte';
+import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/mock-store.svelte.ts';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 vi.mock('../lib/store.svelte', async () => {
-  const m = await import('../lib/testing/mock-store.svelte');
+  const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 

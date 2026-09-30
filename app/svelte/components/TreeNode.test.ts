@@ -44,7 +44,7 @@ describe('TreeNode', () => {
 
   it('depth drives the indent custom property', () => {
     render(TreeNodeFixture, { props: { text: 'deep', depth: 3 } });
-    expect(document.querySelector('.node')!.style.getPropertyValue('--indent')).toBe('30px');
+    expect((document.querySelector('.node') as HTMLElement).style.getPropertyValue('--indent')).toBe('30px');
   });
 
   it('a row click calls onRow with the mouse event', async () => {

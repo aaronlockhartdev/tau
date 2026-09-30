@@ -6,7 +6,8 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": []
+    "types": [],
+    "allowImportingTsExtensions": true
   },
   "include": ["svelte/**/*.ts", "svelte/**/*.svelte"]
 }
