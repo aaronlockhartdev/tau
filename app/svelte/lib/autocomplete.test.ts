@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { filterSuggestions, slashToken, type Suggestion } from './autocomplete';
 
 const ALL: Suggestion[] = [
-  { id: 'model', name: '/model', desc: "switch the session's model" },
+  { id: 'model', name: '/model', desc: 'switch the session\'s model' },
   { id: 'help', name: '/help', desc: 'list commands' },
   { id: 'skill:alpha', name: '/skill:alpha', desc: 'a' },
   { id: 'skill:bravo', name: '/skill:bravo', desc: 'b' }

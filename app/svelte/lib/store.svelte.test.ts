@@ -12,8 +12,6 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
 import {
   type Command,
   type CommandOutput,
-  type Entry,
-  type EntryMeta,
   type LiveState,
   type SessionMeta,
   type SkillInfo,
@@ -26,14 +24,11 @@ import {
 import { applySessionList, openSession, touchChild } from './sessions';
 import {
   applyEvents,
-  archiveSession,
   closeWorkspace,
   closeWorkspaces,
-  deleteSession,
   init,
   openWorkspace,
   retryDirFetch,
-  restoreSession,
   send,
   store,
   switchSession,

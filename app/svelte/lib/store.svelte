@@ -18,7 +18,7 @@
     type Workspace
   } from './protocol';
   import { presentation } from './presentation.svelte';
-  import { decodeEntry, resolveBlobs, upsertEntry } from './entries';
+  import { resolveBlobs, upsertEntry } from './entries';
   import {
     applySessionList,
     applySubagentEvent,
@@ -27,7 +27,6 @@
     type PendingMsg,
     type SessionState,
     setArchived,
-    touchChild,
     windowTitle as windowTitleOf
   } from './sessions';
   export type { PendingMsg, SessionState } from './sessions';
@@ -277,10 +276,10 @@
     const sid = latest
       ? latest.id
       : ((await command({
-          type: 'session_new',
-          workspace: real.id,
-          title: null
-        })) as { kind: 'session'; session: SessionMeta }).session.id;
+        type: 'session_new',
+        workspace: real.id,
+        title: null
+      })) as { kind: 'session'; session: SessionMeta }).session.id;
     await switchSession(sid);
   }
 
@@ -650,25 +649,25 @@
     if (sid === null || text.trim() === '') return;
     const s = sessionOf(sid);
     s.pending = s.pending.filter((p) => !(p.text === text && p.lane === lane));
-  // No optimistic card (ADR-0008): the core mints the entry id and the
-  // card lands on the send's entry_upsert echo (~ms away on the local
-  // channel); a rejected send simply never echoes.
-  store.tailJump++;
-  try {
-    clearError();
-    await command({
-      type: 'message_send',
-      session: sid,
-      text,
-      lane: lane === 'follow-up' ? 'follow_up' : lane
-    });
-    // The turn is dispatched: it is now 'starting' — waiting for the model's
-    // first output (prefill + request latency). stream_start / a tool upsert
-    // it to running; the waiting indicator and the stop button key off this.
-    if (s.turn === 'idle') s.turn = 'starting';
-  } catch (e) {
-    store.error = errText(e);
-  }
+    // No optimistic card (ADR-0008): the core mints the entry id and the
+    // card lands on the send's entry_upsert echo (~ms away on the local
+    // channel); a rejected send simply never echoes.
+    store.tailJump++;
+    try {
+      clearError();
+      await command({
+        type: 'message_send',
+        session: sid,
+        text,
+        lane: lane === 'follow-up' ? 'follow_up' : lane
+      });
+      // The turn is dispatched: it is now 'starting' — waiting for the model's
+      // first output (prefill + request latency). stream_start / a tool upsert
+      // it to running; the waiting indicator and the stop button key off this.
+      if (s.turn === 'idle') s.turn = 'starting';
+    } catch (e) {
+      store.error = errText(e);
+    }
   }
 
   export async function stop(): Promise<void> {

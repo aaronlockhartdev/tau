@@ -165,12 +165,12 @@ export type TaskPayload =
   | { event: 'finished'; id: string; force: boolean; reason: string | null }
   | { event: 'blocked'; id: string; reason: string; needs: string | null }
   | {
-      event: 'assigned';
-      id: string;
-      // creator's copy: the worker's session; worker's copy: the record.
-      worker?: string;
-      record?: { title: string; status: string; steps: Step[]; criteria: Criterion[]; evidence: Evidence[]; blockers: Blocker[]; created_in: string };
-    }
+    event: 'assigned';
+    id: string;
+    // creator's copy: the worker's session; worker's copy: the record.
+    worker?: string;
+    record?: { title: string; status: string; steps: Step[]; criteria: Criterion[]; evidence: Evidence[]; blockers: Blocker[]; created_in: string };
+  }
   | { event: 'handed_off'; id: string; output: Record<string, unknown> }
   | { event: 'cancelled'; id: string; reason: string }
   | { event: 'pointer'; id: string; status: string }
@@ -469,7 +469,7 @@ export async function command(cmd: Command): Promise<CommandOutput> {
     // neither stringifies to anything useful on its own.
     const o = e as { message?: string; what?: string } | string;
     const msg = typeof o === 'string' ? o : o?.message ?? o?.what ?? String(o);
-    throw new Error(msg);
+    throw new Error(msg, { cause: e });
   }
 }
 

@@ -84,15 +84,15 @@
   const toolOut = $derived(
     entry.kind === 'tool'
       ? [
-          entry.name === 'bash'
-            ? typeof entry.args?.command === 'string'
-              ? entry.args.command
-              : ''
-            : '',
-          entry.output ?? ''
-        ]
-          .filter(Boolean)
-          .join('\n\n')
+        entry.name === 'bash'
+          ? typeof entry.args?.command === 'string'
+            ? entry.args.command
+            : ''
+          : '',
+        entry.output ?? ''
+      ]
+        .filter(Boolean)
+        .join('\n\n')
       : ''
   );
   // The chip's one-line summary: the argument that names the operation.
@@ -116,14 +116,14 @@
   const toolIcon = $derived(
     entry.kind === 'tool'
       ? (['read', 'write', 'edit'].includes(entry.name ?? '')
-          ? 'i-file'
-          : entry.name?.startsWith('subagent_') || entry.name === 'parent_notify'
-            ? 'i-bot'
-            : entry.name === 'recall'
-              ? 'i-search'
-              : entry.name?.startsWith('task_')
-                ? 'i-check'
-                : 'i-term')
+        ? 'i-file'
+        : entry.name?.startsWith('subagent_') || entry.name === 'parent_notify'
+          ? 'i-bot'
+          : entry.name === 'recall'
+            ? 'i-search'
+            : entry.name?.startsWith('task_')
+              ? 'i-check'
+              : 'i-term')
       : 'i-term'
   );
 

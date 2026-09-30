@@ -163,5 +163,5 @@ describe('LeftPane', () => {
     await user.click(rows[1]);
     await user.keyboard('{/Shift}');
     expect(mockStore.pane[WS].selected).toEqual(['s1', 's2']);
-});
+  });
 });

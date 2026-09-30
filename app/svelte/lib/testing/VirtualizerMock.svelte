@@ -13,17 +13,13 @@
   import type { Snippet } from 'svelte';
 
   let {
-    scrollRef = undefined,
     data = [],
     getKey = (d: unknown) => String(d),
-    bufferSize = 0,
     onscroll = undefined,
     children
   }: {
-    scrollRef?: HTMLElement | undefined;
     data: unknown[];
     getKey?: (d: unknown) => string;
-    bufferSize?: number;
     onscroll?: (offset: number) => void;
     children: Snippet<[unknown, number]>;
   } = $props();

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json --tsgo && vite build",
     "preview": "vite preview",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:frontend": "HOME=/tmp/tau-e2e-home wdio run wdio.conf.mjs",
     "tauri": "tauri"

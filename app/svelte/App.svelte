@@ -50,7 +50,6 @@
   const loading = $derived(store.loading);
   const error = $derived(store.error);
   const focus = $derived(store.focus);
-  const title = $derived(cur?.meta.title ?? cur?.meta.id ?? 'New session');
 </script>
 
 <div class="shell">
