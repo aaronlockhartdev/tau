@@ -1,0 +1,16 @@
+[package]
+name = "tau-mock-llm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# `net` beyond the workspace feature set: the server is a raw TcpListener
+# (the provider/tests/server.rs pattern), no HTTP framework.
+tokio = { workspace = true, features = ["net"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+reqwest = { workspace = true }
+tau-core = { path = "../tau-core" }
