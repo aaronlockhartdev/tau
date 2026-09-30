@@ -162,3 +162,238 @@ pub struct Snapshot {
     /// The last entry id: a durable cursor for `entries-since` reads.
     pub cursor: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// The snapshot's size contract (spec §8: no payloads, < 2 MB) rides on
+    /// this: the near-universal `Ok` status is omitted on the wire, so the
+    /// 10k-entry skeleton stays a skeleton.
+    #[test]
+    fn entry_status_wire_contract() {
+        let meta = EntryMeta {
+            id: "e1".into(),
+            parent: None,
+            kind: "message".into(),
+            timestamp: 1,
+            size: 10,
+            preview: "hi".into(),
+            first_kept: None,
+            status: EntryStatus::Ok,
+        };
+        let v = serde_json::to_value(&meta).unwrap();
+        assert!(v.get("status").is_none(), "Ok must be off the wire");
+
+        let interrupted = EntryMeta {
+            status: EntryStatus::Interrupted,
+            ..meta.clone()
+        };
+        let v = serde_json::to_value(&interrupted).unwrap();
+        assert_eq!(v["status"], "interrupted");
+
+        // And both decode back: a missing field lands on the default.
+        let back: EntryMeta = serde_json::from_value(v).unwrap();
+        assert_eq!(back.status, EntryStatus::Interrupted);
+        let v = serde_json::to_value(&meta).unwrap();
+        let back: EntryMeta = serde_json::from_value(v).unwrap();
+        assert_eq!(back, meta);
+    }
+
+    /// Archived is a spec-defaulted flag (ADR-0005): session files written
+    /// before the flag existed must decode as unarchived, not fail.
+    #[test]
+    fn session_meta_archived_defaults_false() {
+        let meta: SessionMeta =
+            serde_json::from_str(r#"{"id":"s1","workspace":"w1","created":1}"#).unwrap();
+        assert!(!meta.archived);
+        assert!(meta.title.is_none());
+        assert!(meta.leaf.is_none());
+
+        let v = json!({ "id": "s1", "workspace": "w1", "created": 1, "archived": true });
+        assert!(serde_json::from_value::<SessionMeta>(v).unwrap().archived);
+    }
+
+    #[test]
+    fn snapshot_types_roundtrip() {
+        let ws = Workspace {
+            id: "w1".into(),
+            name: "tau".into(),
+            cwd: "/tmp/tau".into(),
+        };
+        let ws_back: Workspace =
+            serde_json::from_str(&serde_json::to_string(&ws).unwrap()).unwrap();
+        assert_eq!(ws_back, ws);
+
+        let range = EntryRange {
+            start: 5,
+            count: 50,
+        };
+        let range_back: EntryRange =
+            serde_json::from_str(&serde_json::to_string(&range).unwrap()).unwrap();
+        assert_eq!(range_back, range);
+
+        let blob = BlobRef {
+            id: "e9".into(),
+            size: 4096,
+            hash: "0011".into(),
+        };
+        let blob_back: BlobRef =
+            serde_json::from_str(&serde_json::to_string(&blob).unwrap()).unwrap();
+        assert_eq!(blob_back, blob);
+
+        let entry = ViewEntry {
+            id: "e1".into(),
+            parent: Some("e0".into()),
+            kind: "assistant".into(),
+            timestamp: 7,
+            payload: json!({ "text": "hi" }),
+            blob: Some(blob),
+            first_kept: Some("e2".into()),
+        };
+        let entry_back: ViewEntry =
+            serde_json::from_str(&serde_json::to_string(&entry).unwrap()).unwrap();
+        assert_eq!(entry_back, entry);
+
+        // A payload-less entry (sidecar blob) is the common page-read shape.
+        let bare = ViewEntry {
+            blob: None,
+            first_kept: None,
+            parent: None,
+            ..entry
+        };
+        let bare_back: ViewEntry =
+            serde_json::from_str(&serde_json::to_string(&bare).unwrap()).unwrap();
+        assert_eq!(bare_back, bare);
+
+        // source is default-None: a user's own queued message carries no tag.
+        let item: QueuedItem =
+            serde_json::from_str(r#"{"text":"next","lane":"steering"}"#).unwrap();
+        assert!(item.source.is_none());
+        let item_back: QueuedItem =
+            serde_json::from_str(&serde_json::to_string(&item).unwrap()).unwrap();
+        assert_eq!(item_back, item);
+
+        assert_eq!(
+            serde_json::to_string(&TurnState::Running).unwrap(),
+            "\"running\""
+        );
+        let turn: TurnState = serde_json::from_str("\"idle\"").unwrap();
+        assert_eq!(turn, TurnState::Idle);
+    }
+
+    #[test]
+    fn live_state_and_full_snapshot_roundtrip() {
+        let live = LiveState {
+            queue: vec![QueuedItem {
+                text: "next".into(),
+                lane: MessageLane::FollowUp,
+                source: Some("s2".into()),
+            }],
+            turn: TurnState::Running,
+            subagents: vec![crate::SubagentInfo {
+                handle: "h1".into(),
+                child: "s2".into(),
+                agent_type: "general".into(),
+                context_mode: crate::ContextMode::Fresh,
+                state: "running".into(),
+                waiting_on: None,
+                last_message: None,
+                usage: None,
+                task: None,
+                resume_contract: None,
+            }],
+            tasks: vec![],
+        };
+        let live_back: LiveState =
+            serde_json::from_str(&serde_json::to_string(&live).unwrap()).unwrap();
+        assert_eq!(live_back, live);
+
+        let om = OmSnapshot {
+            observation_tokens: 100,
+            pending_tokens: 5,
+            reflector_threshold: 40_000,
+        };
+        let om_back: OmSnapshot =
+            serde_json::from_str(&serde_json::to_string(&om).unwrap()).unwrap();
+        assert_eq!(om_back, om);
+
+        let snap = Snapshot {
+            workspace: Workspace {
+                id: "w1".into(),
+                name: "w".into(),
+                cwd: "/tmp/w".into(),
+            },
+            session: SessionMeta {
+                id: "s1".into(),
+                workspace: "w1".into(),
+                title: None,
+                parent: None,
+                created: 1,
+                leaf: Some("e9".into()),
+                model: Some("m".into()),
+                usage: None,
+                archived: false,
+            },
+            entries: vec![EntryMeta {
+                id: "e1".into(),
+                parent: None,
+                kind: "user".into(),
+                timestamp: 1,
+                size: 4,
+                preview: "hi".into(),
+                first_kept: None,
+                status: EntryStatus::Ok,
+            }],
+            om,
+            live,
+            cursor: "e9".into(),
+        };
+        let snap_back: Snapshot =
+            serde_json::from_str(&serde_json::to_string(&snap).unwrap()).unwrap();
+        assert_eq!(snap_back, snap);
+    }
+
+    #[test]
+    fn snapshot_parse_negatives() {
+        // An unknown turn state and a cursorless snapshot are data errors —
+        // the GUI rebuilds its whole projection from this, so a half-decoded
+        // snapshot is worse than none.
+        let err = serde_json::from_str::<TurnState>("\"paused\"").unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        let err = serde_json::from_str::<ViewEntry>(r#"{"id":"e1"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        let mut v = serde_json::to_value(Snapshot {
+            workspace: Workspace {
+                id: "w".into(),
+                name: "w".into(),
+                cwd: "/w".into(),
+            },
+            session: SessionMeta {
+                id: "s".into(),
+                workspace: "w".into(),
+                title: None,
+                parent: None,
+                created: 0,
+                leaf: None,
+                model: None,
+                usage: None,
+                archived: false,
+            },
+            entries: vec![],
+            om: OmSnapshot::default(),
+            live: LiveState {
+                queue: vec![],
+                turn: TurnState::Idle,
+                subagents: vec![],
+                tasks: vec![],
+            },
+            cursor: "e1".into(),
+        })
+        .unwrap();
+        v.as_object_mut().unwrap().remove("cursor");
+        let err = serde_json::from_value::<Snapshot>(v).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+}
