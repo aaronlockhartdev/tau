@@ -245,6 +245,27 @@ describe('EntryCard', () => {
     expect(screen.getByText('⚡ interrupted')).toBeInTheDocument();
   });
 
+  it('a skill user entry shows the preview and dblclick reveals the full text', async () => {
+    const body = 'y'.repeat(250);
+    mount({
+      id: 'e1',
+      kind: 'user',
+      text: body,
+      skill: { name: 'alpha', location: '/skills/alpha' }
+    });
+    expect(screen.getByText('skill · alpha')).toBeInTheDocument();
+    expect(screen.queryByText(body)).toBeNull();
+    await user.dblClick(screen.getByRole('button', { name: /skill · alpha/ }));
+    expect(screen.getByText(body)).toBeInTheDocument();
+  });
+
+  it('a spawn snapshot renders its body', () => {
+    const { container } = mount({ id: 'e1', kind: 'spawn-snapshot', text: 'spawned with the brief' });
+    expect(container.querySelector('.wrap')).not.toBeNull();
+    expect(screen.getByText('spawn snapshot')).toBeInTheDocument();
+    expect(screen.getByText('spawned with the brief')).toBeInTheDocument();
+  });
+
   it('a fully empty entry renders nothing', () => {
     const { container } = mount({ id: 'e1', kind: 'message', text: '' });
     expect(container.querySelector('.wrap')).toBeNull();

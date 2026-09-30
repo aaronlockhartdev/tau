@@ -40,6 +40,8 @@ function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
+const user = userEvent.setup();
+
 const file = (name: string, path: string, dir = false): FileEntry => ({
   name,
   path,
@@ -77,7 +79,7 @@ describe('LeftPane', () => {
   it('lists the root files under the files tab', async () => {
     seed({ files: { [WS]: { '.': [file('a.txt', '/a.txt')] } } });
     await mount();
-    await userEvent.click(screen.getByRole('button', { name: 'files' }));
+    await user.click(screen.getByRole('button', { name: 'files' }));
     expect(screen.getByText('a.txt')).toBeInTheDocument();
   });
 
@@ -147,4 +149,20 @@ describe('LeftPane', () => {
     fireEvent.click(document.body);
     expect(q.selected).toEqual([]);
   });
+
+  it('a shift click spans the selection across the visible rows', async () => {
+    seed({
+      sessions: {
+        s1: seedState(meta('s1'), { mru: 2 }),
+        s2: seedState(meta('s2'), { mru: 1 })
+      }
+    });
+    await mount();
+    const rows = screen.getAllByText(/s1|s2/).map((el) => el.closest('.trow') as HTMLElement);
+    await user.click(rows[0]);
+    await user.keyboard('{Shift>}');
+    await user.click(rows[1]);
+    await user.keyboard('{/Shift}');
+    expect(mockStore.pane[WS].selected).toEqual(['s1', 's2']);
+});
 });
