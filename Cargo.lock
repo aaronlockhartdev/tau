@@ -4114,6 +4114,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tau-mock-llm"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tau-core",
+ "tokio",
+]
+
+[[package]]
 name = "tau-protocol"
 version = "0.1.0"
 dependencies = [
