@@ -2,7 +2,7 @@
 // The model menu: fetched from provider_list on open, grouped by provider,
 // the current model dot-highlighted; a pick issues setModel and closes.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/protocol';
 import ModelMenu from './ModelMenu.svelte';
@@ -44,7 +44,6 @@ function mockIPC(handler: (cmd: Command) => CommandOutput | Promise<CommandOutpu
 }
 
 beforeEach(() => {
-  cleanup();
   resetMockStore();
   mockInvoke.mockReset();
   mockInvoke.mockImplementation(async () => ({ kind: 'none' as const }));

@@ -5,7 +5,7 @@
 // driver registry.
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import type { Entry, SessionMeta } from '../lib/protocol';
 import type { SessionState } from '../lib/sessions';
 import Transcript from './Transcript.svelte';
@@ -57,7 +57,6 @@ async function mount(): Promise<void> {
 }
 
 beforeEach(() => {
-  cleanup();
   seed(0);
 });
 

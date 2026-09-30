@@ -2,7 +2,7 @@
 // The status bar: state · workspace · session name · om gauge on the left,
 // the cost group (in/out/cache, tps while streaming) on the right.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import type { SessionMeta } from '../lib/protocol';
 import StatusBar from './StatusBar.svelte';
 import { mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte.ts';
@@ -29,7 +29,6 @@ function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
 }
 
 beforeEach(() => {
-  cleanup();
   resetMockStore();
 });
 

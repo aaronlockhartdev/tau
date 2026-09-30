@@ -3,7 +3,7 @@
 // ("next opportunity"), then follow-up ("after work completes"); each
 // deletable row issues deleteQueueItem with its section index.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import type { SessionMeta } from '../lib/protocol';
 import Queue from './Queue.svelte';
@@ -30,7 +30,6 @@ function meta(id: string): SessionMeta {
 }
 
 beforeEach(() => {
-  cleanup();
   resetMockStore();
 });
 

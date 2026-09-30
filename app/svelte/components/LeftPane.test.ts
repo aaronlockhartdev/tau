@@ -5,7 +5,7 @@
 // when the root fetch failed.
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import type { FileEntry, SessionMeta } from '../lib/protocol';
 import type { SessionState } from '../lib/sessions';
@@ -71,7 +71,6 @@ async function mount(): Promise<void> {
 }
 
 beforeEach(() => {
-  cleanup();
   seed();
 });
 

@@ -2,7 +2,7 @@
 // One files-tree node: a file row is inert; a dir row toggles its listing
 // (fetch on first expand) or re-fetches when the last listing failed.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import type { FileEntry } from '../lib/protocol';
 import FileNode from './FileNode.svelte';
@@ -18,7 +18,6 @@ const dir = (name: string, path: string): FileEntry => ({ name, path, dir: true,
 const file = (name: string, path: string): FileEntry => ({ name, path, dir: false, size: 1 });
 
 beforeEach(() => {
-  cleanup();
   resetMockStore();
 });
 

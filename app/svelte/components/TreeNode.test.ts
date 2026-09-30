@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
 // The shared row shell: indent, chevron states, class tints, and the
 // keyboard/click routing (row click, dblclick, chevron toggle, Enter).
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import TreeNodeFixture from '../lib/testing/TreeNodeFixture.svelte';
-
-beforeEach(cleanup);
 
 describe('TreeNode', () => {
   it('renders the label snippet', () => {
