@@ -51,7 +51,6 @@ pub struct OmState {
     /// history vanishing (spec §4).
     pub changed: bool,
 }
-
 impl OmState {
     /// Fold the config's absolute `buffer_increment` into the module's
     /// `buffer_activation` ratio (1 − increment/threshold; the two forms
@@ -94,9 +93,30 @@ impl OmState {
             .into_iter()
             .rev()
             .find(|e| e.kind == KIND_OM)
-            .and_then(|e| serde_json::from_value(e.payload).ok())
+            .and_then(|e| record_from_entry(store, &e).ok())
             .unwrap_or_default())
     }
+}
+
+/// The record an `om` entry carries: the inline payload, or — when the
+/// record crossed the blob threshold (a long observation log) — the decoded
+/// sidecar. A blob-backed record must not read back empty: a null payload
+/// is a storage shape, not an absence, and the record is the session's OM
+/// state (spec §4).
+fn record_from_entry(store: &SessionStore, entry: &Entry) -> Result<OmRecord, OmError> {
+    if !entry.payload.is_null() {
+        return serde_json::from_value(entry.payload.clone())
+            .map_err(|e| OmError::Session(crate::session::Error::Other(e.to_string())));
+    }
+    let Some(blob) = &entry.blob else {
+        return Ok(OmRecord::default());
+    };
+    let bytes = store.resolve_blob(blob)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| OmError::Session(crate::session::Error::Other(e.to_string())))
+}
+
+impl OmState {
 
     /// Persist the record as a new `om` entry (the newest entry wins).
     pub fn save(&self, store: &mut SessionStore) -> Result<(), crate::session::Error> {
@@ -117,6 +137,12 @@ pub fn branch_entries(entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
     let mut path = Vec::new();
     let mut cur = leaf_id;
     while let Some(id) = cur {
+        // Cycle guard: a legitimate chain visits each entry at most once, so
+        // a walk longer than the entry count means a corrupted file (duplicate
+        // ids) — stop instead of looping forever (the live-om 80GB regression).
+        if path.len() >= entries.len() {
+            break;
+        }
         let Some(entry) = by_id.get(id) else {
             break;
         };

@@ -265,7 +265,10 @@ impl SessionStore {
             parent: None,
             loaded: false,
             ids: HashSet::new(),
-            next: 0,
+            // 1-based, matching open()'s empty-file baseline and the id
+            // series real sessions carry: a fresh session's first entry is
+            // 00000001 whether or not the store reloads before minting.
+            next: 1,
             entries: Vec::new(),
             entry_len: Vec::new(),
             file_len: 0,
@@ -323,6 +326,11 @@ impl SessionStore {
     /// a wire-only re-emission can be minted before its file line lands, and
     /// the later append reuses the same id.
     pub fn mint_id(&mut self) -> String {
+        // Mint only after the file is known: an unloaded store starts at
+        // 0 and would re-issue ids an existing session already holds
+        // (duplicate id -> cyclic parent chain; see the live-om 80GB
+        // regression). A failed open surfaces on the following append.
+        let _ = self.ensure_open();
         let id = format!("{:08}", self.next);
         self.next += 1;
         id

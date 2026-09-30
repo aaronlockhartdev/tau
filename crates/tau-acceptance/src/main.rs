@@ -31,20 +31,6 @@ use tau_core::tools;
 
 const CAP: u64 = 300;
 
-#[cfg(unix)]
-fn dbg_rss(stage: &str) {
-    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF as libc::c_int, &mut r) };
-    eprintln!("[DEBUG-a4f2] {stage} maxrss_bytes={}", r.ru_maxrss);
-}
-
-#[cfg(unix)]
-fn dbg_rss_file(stage: &str, path: &std::path::Path) {
-    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF as libc::c_int, &mut r) };
-    let len = std::fs::metadata(path).map(|m| m.len()).unwrap_or(u64::MAX);
-    eprintln!("[DEBUG-a4f2] {stage} maxrss_bytes={} session_file_bytes={}", r.ru_maxrss, len);
-}
 
 struct Ctx {
     endpoint: String,
@@ -120,7 +106,6 @@ async fn live_tools(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
     let (id, store) = new_session(ws.path());
-    dbg_rss("live-tools:enter");
     let (_, prov) = production(ctx);
     let agent = AgentSession::new(SessionParams {
         store,
@@ -136,18 +121,15 @@ async fn live_tools(ctx: &Ctx) -> Result<(), String> {
         subagents: None,
         child: None,
     });
-    dbg_rss("live-tools:after_core_build");
     agent.send(
         "Do exactly this: 1) read notes.txt, 2) edit the line containing 'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write the file out.txt with the single line 'done'. Then reply 'finished'.",
         Lane::Steering,
     );
     agent.process().await.map_err(|e| e.to_string())?;
-    dbg_rss("live-tools:after_process");
     drop(agent);
 
     let store = SessionStore::for_workspace(ws.path(), &id);
     let entries = all_entries(&store);
-    dbg_rss("live-tools:after_all_entries");
     let calls = tool_calls(&entries);
     for name in ["read", "write", "edit", "bash"] {
         if !calls.contains(&name) {
@@ -354,30 +336,45 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         .find(|e| e.kind == KIND_SUBAGENT)
         .and_then(|e| e.payload.get("state").and_then(Value::as_str))
         .unwrap_or("");
-    // Task linkage, when the parent assigned one: the record copied into
-    // the child (the live record), and a terminal child forces a terminal
+    // Task linkage, when the parent assigned one: the record never leaves
+    // the parent file (single source of truth — Supervisor::child_task),
+    // the child's file carries no task entries, the parent's Assigned event
+    // points at the child's session, and a terminal child forces a terminal
     // pointer — no task dangles in_progress after a done/failed child.
     let tasks: Vec<&Entry> = pentries.iter().filter(|e| e.kind == KIND_TASK).collect();
     let assigned = tasks
         .iter()
         .any(|e| e.payload.get("event").and_then(Value::as_str) == Some("assigned"));
     if assigned {
-        if !centries.iter().any(|e| e.kind == KIND_TASK) {
+        let linked = tasks.iter().any(|e| {
+            e.payload.get("event").and_then(Value::as_str) == Some("assigned")
+                && e.payload
+                    .get("worker")
+                    .and_then(Value::as_str)
+                    == Some(child_id.as_str())
+        });
+        if !linked {
             return Err(
-                "live-subagent: the task was assigned but the child's session has no task record"
+                "live-subagent: the parent's Assigned event does not point at the child session"
+                    .into(),
+            );
+        }
+        if centries.iter().any(|e| e.kind == KIND_TASK) {
+            return Err(
+                "live-subagent: the child's session carries task entries (the record must stay in the parent file)"
                     .into(),
             );
         }
         if matches!(child_state, "done" | "failed") {
+            // The completion gate (resolve_assigned_task) resolves the task
+            // on the parent's file: all criteria satisfied -> finished,
+            // otherwise handed_off (the terminal markers; a `pointer` event
+            // is never written in v0).
             let terminal = tasks.iter().any(|e| {
-                e.payload.get("event").and_then(Value::as_str) == Some("pointer")
-                    && matches!(
-                        e.payload
-                            .get("status")
-                            .and_then(Value::as_str)
-                            .unwrap_or(""),
-                        "completed" | "handed_off" | "blocked" | "done" | "cancelled"
-                    )
+                matches!(
+                    e.payload.get("event").and_then(Value::as_str).unwrap_or(""),
+                    "finished" | "handed_off" | "cancelled"
+                )
             });
             if !terminal {
                 return Err(format!(
@@ -403,18 +400,15 @@ fn prose(i: usize) -> String {
 async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let ws = temp_ws();
     let (id, mut store) = new_session(ws.path());
-    let sess_path = ws.path().join(".tau").join("sessions").join(format!("{}.jsonl", id));
-    dbg_rss_file("live-om:enter", &sess_path);
     // A synthesized long raw window (no model needed for the raw): ~48 KB of
     // prose ≈ 12k tokens — far past the lowered observe threshold.
     let mut prev: Option<String> = None;
     for i in 0..40 {
         let e = store
-            .append("message", json!({ "text": prose(i) }), prev.as_deref())
+            .append("user", json!({ "text": prose(i) }), prev.as_deref())
             .map_err(|e| e.to_string())?;
         prev = Some(e.id);
     }
-    dbg_rss_file("live-om:after_seed", &sess_path);
     let store = SessionStore::for_workspace(ws.path(), &id);
     let om = OmState::from_config(
         &Om {
@@ -443,13 +437,11 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
         subagents: None,
         child: None,
     });
-    dbg_rss_file("live-om:after_core_build", &sess_path);
     agent.send(
         "Summarize the expedition notes above in two sentences. Do not use any tools.",
         Lane::FollowUp,
     );
     agent.process().await.map_err(|e| e.to_string())?;
-    dbg_rss_file("live-om:after_process_1", &sess_path);
     // A second turn: the observation from the first turn-end observe sits
     // past the (lowered) reflect threshold, so the Reflector fires.
     agent.send(
@@ -604,7 +596,6 @@ fn main() {
         .enable_all()
         .build()
         .expect("runtime");
-    dbg_rss("main:before_suite");
     let start = std::time::Instant::now();
     let result = match suite {
         "live-tools" => rt.block_on(live_tools(&ctx)),

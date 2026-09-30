@@ -10,13 +10,13 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
         .append(
             "user",
             json!({ "text": "l".repeat(300), "lane": "follow-up" }),
-            Some("00000004"),
+            Some("00000005"),
         )
         .unwrap();
-    let g1 = om::wrap_in_observation_group("first obs", "00000000:00000001", "a", None);
+    let g1 = om::wrap_in_observation_group("first obs", "00000001:00000002", "a", None);
     let g2 = om::wrap_in_observation_group(
         "merged obs",
-        "00000002:00000003,00000004:00000005",
+        "00000003:00000004,00000005:00000006",
         "b",
         None,
     );
@@ -26,15 +26,15 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
     };
     // Simple range: exactly its two entries.
     let out = recall(&mut store, &record, &json!({ "group": "a" }));
-    assert!(out.contains("00000000"), "{out}");
     assert!(out.contains("00000001"), "{out}");
-    assert!(!out.contains("00000002"), "{out}");
+    assert!(out.contains("00000002"), "{out}");
+    assert!(!out.contains("00000003"), "{out}");
     // Merged span: first segment's start to the last segment's end.
     let out = recall(&mut store, &record, &json!({ "group": "b" }));
-    for id in ["00000002", "00000003", "00000004", "00000005"] {
+    for id in ["00000003", "00000004", "00000005", "00000006"] {
         assert!(out.contains(id), "{out}");
     }
-    assert!(!out.contains("00000001"), "{out}");
+    assert!(!out.contains("00000002"), "{out}");
     // The 200-char preview.
     assert!(out.contains(&"l".repeat(200)), "{out}");
     assert!(!out.contains(&"l".repeat(201)), "{out}");
