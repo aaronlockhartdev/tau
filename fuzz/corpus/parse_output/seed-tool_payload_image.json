@@ -1,0 +1,12 @@
+{
+  "call_id": "c1",
+  "name": "read",
+  "args": {
+    "path": "a.png"
+  },
+  "output": {
+    "type": "image",
+    "media_type": "image/png",
+    "data_base64": "AAAA"
+  }
+}

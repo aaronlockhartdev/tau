@@ -1,0 +1,9 @@
+{
+  "type": "session_entries",
+  "session": "s1",
+  "since": null,
+  "range": {
+    "start": 0,
+    "count": 100
+  }
+}

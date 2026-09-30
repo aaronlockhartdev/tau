@@ -1,0 +1,13 @@
+{
+  "type": "subagent_event",
+  "workspace": "w1",
+  "session": "s1",
+  "kind": {
+    "kind": "spawned",
+    "handle": "s1-1",
+    "child": "s2",
+    "agent_type": "general",
+    "context_mode": "fresh",
+    "title": "rusty-nail"
+  }
+}

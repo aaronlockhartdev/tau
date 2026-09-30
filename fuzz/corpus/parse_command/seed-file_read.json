@@ -1,0 +1,7 @@
+{
+  "type": "file_read",
+  "workspace": "w1",
+  "path": "src/core.rs",
+  "offset": 10,
+  "limit": 50
+}

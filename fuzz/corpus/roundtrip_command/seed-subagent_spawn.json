@@ -1,0 +1,7 @@
+{
+  "type": "subagent_spawn",
+  "session": "s1",
+  "agent_type": "general",
+  "brief": "do the thing",
+  "context_mode": "compacted"
+}

@@ -1,0 +1,12 @@
+{
+  "type": "queue",
+  "workspace": "w1",
+  "session": "s1",
+  "items": [
+    {
+      "text": "next",
+      "lane": "follow_up",
+      "source": "s2"
+    }
+  ]
+}

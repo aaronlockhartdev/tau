@@ -1,0 +1,8 @@
+{
+  "type": "file_tree_changed",
+  "workspace": "w1",
+  "changed": [
+    "src",
+    "src/core"
+  ]
+}

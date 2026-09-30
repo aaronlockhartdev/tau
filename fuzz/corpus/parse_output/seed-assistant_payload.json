@@ -1,0 +1,13 @@
+{
+  "text": "done",
+  "reasoning": "",
+  "interrupted": false,
+  "calls": [
+    {
+      "id": "f1",
+      "call_id": "c1",
+      "name": "bash",
+      "arguments": "{\"command\":\"cargo test\"}"
+    }
+  ]
+}

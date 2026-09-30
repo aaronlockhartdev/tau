@@ -1,0 +1,21 @@
+{
+  "id": "t-1",
+  "title": "ship the parser",
+  "status": "active",
+  "steps": [
+    {
+      "text": "write the parser",
+      "expected_output": "tests pass",
+      "status": "active"
+    }
+  ],
+  "criteria": [],
+  "evidence": [],
+  "blockers": [],
+  "decisions": [],
+  "notes": [
+    "started"
+  ],
+  "created_in": "s1",
+  "updated": 1700000000000
+}
