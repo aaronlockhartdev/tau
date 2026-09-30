@@ -53,7 +53,7 @@
   // workspace skills in name order; matches narrows it per keystroke.
   const all: Suggestion[] = $derived.by(() => {
     const out: Suggestion[] = [
-      { id: 'model', name: '/model', desc: "switch the session's model" },
+      { id: 'model', name: '/model', desc: 'switch the session\'s model' },
       { id: 'help', name: '/help', desc: 'list commands' }
     ];
     for (const s of [...skills].sort((a, b) => a.name.localeCompare(b.name))) {

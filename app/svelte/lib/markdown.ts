@@ -25,12 +25,6 @@ function hl(code: string): string {
   return s;
 }
 
-interface Seg {
-  code?: string;
-  lang?: string;
-  txt?: string;
-}
-
 // A fenced code block: the highlighter's output wrapped in the app's .code
 // pre (markdownit's highlight hook returns the block verbatim).
 function highlight(code: string, lang: string): string {

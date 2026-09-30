@@ -79,8 +79,8 @@ export function decodeEntry(v: ViewEntry): Entry {
         reasoning: p.reasoning ? String(p.reasoning) : undefined,
         calls: Array.isArray(p.calls)
           ? p.calls
-              .map((c) => String((c as { call_id?: unknown }).call_id ?? ''))
-              .filter(Boolean)
+            .map((c) => String((c as { call_id?: unknown }).call_id ?? ''))
+            .filter(Boolean)
           : undefined,
         usage: 'usage' in p ? (p.usage as Usage | undefined) : undefined
       };

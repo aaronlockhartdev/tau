@@ -272,9 +272,9 @@
     session.archived
       ? undefined
       : () => {
-          const q = pane(ws);
-          if (q) q.renamingId = session.meta.id;
-        }
+        const q = pane(ws);
+        if (q) q.renamingId = session.meta.id;
+      }
   }
   onToggle={kids.length > 0 ? () => toggleGroup(session.meta.id) : undefined}
   onContext={onContext}
