@@ -27,7 +27,7 @@ fn promote_with_no_buffered_chunks_is_false() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 2, 50);
     let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
-    assert_eq!(state.promote(&mut store).unwrap(), false);
+    assert!(!state.promote(&mut store).unwrap());
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn promote_leaves_chunks_buffered_at_or_below_the_floor() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 4, 50);
     let mut state = state_with_two_chunks(5000);
-    assert_eq!(state.promote(&mut store).unwrap(), false);
+    assert!(!state.promote(&mut store).unwrap());
     assert_eq!(state.buffered.len(), 2);
     assert!(state.record.cursor.is_none());
 }

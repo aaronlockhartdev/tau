@@ -19,10 +19,7 @@ fn entry(kind: &str, payload: serde_json::Value) -> Entry {
 
 #[test]
 fn preview_reads_the_first_line_and_caps_at_80_chars() {
-    let e = entry(
-        crate::agent::KIND_USER,
-        json!({ "text": "short" }),
-    );
+    let e = entry(crate::agent::KIND_USER, json!({ "text": "short" }));
     assert_eq!(snapshot::preview(&e), "short");
 
     let long = "x".repeat(90);
@@ -32,10 +29,7 @@ fn preview_reads_the_first_line_and_caps_at_80_chars() {
     assert!(out.ends_with('…'));
 
     // Only the first line: the rest is dropped.
-    let e = entry(
-        crate::agent::KIND_USER,
-        json!({ "text": "first\nsecond" }),
-    );
+    let e = entry(crate::agent::KIND_USER, json!({ "text": "first\nsecond" }));
     assert_eq!(snapshot::preview(&e), "first");
 }
 
@@ -57,10 +51,7 @@ fn preview_falls_back_through_note_state_output_name() {
         "the output"
     );
     assert_eq!(
-        snapshot::preview(&entry(
-            crate::agent::KIND_TOOL,
-            json!({ "name": "bash" })
-        )),
+        snapshot::preview(&entry(crate::agent::KIND_TOOL, json!({ "name": "bash" }))),
         "bash"
     );
 }

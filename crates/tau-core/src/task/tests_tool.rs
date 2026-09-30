@@ -19,7 +19,14 @@ fn session_in(dir: &std::path::Path, id: &str) -> SessionStore {
 /// A created task with one criterion: the shared fixture for the
 /// transition tests.
 fn with_task(store: &mut SessionStore) {
-    create(store, "task-1", "ship it", Vec::new(), vec![criterion("it builds")]).unwrap();
+    create(
+        store,
+        "task-1",
+        "ship it",
+        Vec::new(),
+        vec![criterion("it builds")],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -209,16 +216,18 @@ fn the_full_lifecycle_runs_create_start_evidence_finish() {
         "task_create",
         &json!({ "title": "ship it", "criteria": ["it builds"] }),
     );
-    assert!(tool_call(&mut store, "task_start", &json!({ "task": "task-1" }))
-        .contains("in_progress"));
-    assert!(tool_call(
-        &mut store,
-        "task_evidence",
-        &json!({ "task": "task-1", "criterion": "it builds", "summary": "green" })
-    )
-    .contains("task-1"));
-    assert!(tool_call(&mut store, "task_finish", &json!({ "task": "task-1" }))
-        .contains("done"));
+    assert!(
+        tool_call(&mut store, "task_start", &json!({ "task": "task-1" })).contains("in_progress")
+    );
+    assert!(
+        tool_call(
+            &mut store,
+            "task_evidence",
+            &json!({ "task": "task-1", "criterion": "it builds", "summary": "green" })
+        )
+        .contains("task-1")
+    );
+    assert!(tool_call(&mut store, "task_finish", &json!({ "task": "task-1" })).contains("done"));
 }
 
 #[test]

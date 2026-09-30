@@ -1,5 +1,5 @@
-use super::*;
 use super::server::*;
+use super::*;
 
 #[tokio::test]
 async fn list_models_success_parses_the_data_array() {

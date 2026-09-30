@@ -52,9 +52,7 @@ fn done_body() -> String {
         "call_id": "c1",
         "arguments": args.to_string(),
     });
-    format!(
-        "data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}\n\ndata: [DONE]\n\n"
-    )
+    format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}\n\ndata: [DONE]\n\n")
 }
 
 /// A plain text turn (no `parent_notify`): the nudge path keeps the child
@@ -75,6 +73,7 @@ struct Rig {
     #[allow(dead_code)]
     cwd: tempfile::TempDir,
     core: Arc<Core>,
+    workspace: String,
     parent: String,
 }
 
@@ -105,6 +104,7 @@ async fn rig(body: String, slow_ms: u64) -> Rig {
     Rig {
         cwd: tmp,
         core,
+        workspace: workspace.id,
         parent: parent.id,
     }
 }
@@ -286,7 +286,7 @@ async fn subagent_stop_of_an_unknown_handle_is_not_found() {
             // A handle on the open parent with a bogus child number:
             // the dispatch arm resolves the parent first, so this reaches
             // the supervisor's own unknown-handle refusal.
-            handle: format!("{}-999", rig.parent).into(),
+            handle: format!("{}-999", rig.parent),
         })
         .unwrap_err();
     assert!(
@@ -364,9 +364,7 @@ async fn a_force_send_to_a_running_child_stops_it_first() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    panic!(
-        "the forced send left no stop-then-resume signature:\n{content}"
-    );
+    panic!("the forced send left no stop-then-resume signature:\n{content}");
 }
 
 #[tokio::test]
@@ -490,10 +488,7 @@ async fn task_assign_to_a_child_sets_the_worker_pointer() {
         })
         .unwrap();
     let task = task_in(&rig, &rig.parent);
-    assert!(
-        task.worker.is_some(),
-        "the assignment points at the worker"
-    );
+    assert!(task.worker.is_some(), "the assignment points at the worker");
 }
 
 #[tokio::test]
@@ -576,4 +571,282 @@ async fn task_cancel_via_dispatch_terminates_the_task() {
         .unwrap();
     let task = task_in(&rig, &rig.parent);
     assert_eq!(task.status, "cancelled");
+}
+
+#[tokio::test]
+async fn provider_list_is_served_sorted_by_name() {
+    let rig = rig(done_body(), 0).await;
+    match rig.core.dispatch(Command::ProviderList).unwrap() {
+        CommandOutput::Providers { providers } => {
+            let names: Vec<&str> = providers.iter().map(|p| p.name.as_str()).collect();
+            let mut sorted = names.clone();
+            sorted.sort();
+            assert_eq!(names, sorted, "the list is name-sorted");
+        }
+        other => panic!("expected providers: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn provider_mutations_are_unsupported_in_v0() {
+    let rig = rig(done_body(), 0).await;
+    let err = rig
+        .core
+        .dispatch(Command::ProviderAdd {
+            name: "x".into(),
+            base_url: "http://x/v1".into(),
+            key_env: String::new(),
+            models: vec!["m".into()],
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, tau_protocol::ProtocolError::Unsupported { .. }),
+        "v0 providers are config-file-driven: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn file_read_pages_lines_and_file_list_names_them() {
+    let rig = rig(done_body(), 0).await;
+    std::fs::write(
+        rig.cwd.path().join("notes.txt"),
+        ["one", "two", "three"].join("\n") + "\n",
+    )
+    .unwrap();
+
+    // offset 1, limit 1: the second line only.
+    match rig
+        .core
+        .dispatch(Command::FileRead {
+            workspace: rig.workspace.clone(),
+            path: "notes.txt".into(),
+            offset: Some(1),
+            limit: Some(1),
+        })
+        .unwrap()
+    {
+        CommandOutput::File { file } => {
+            assert_eq!(file.text, "two");
+            assert!(!file.truncated);
+        }
+        other => panic!("expected a file: {other:?}"),
+    }
+
+    match rig
+        .core
+        .dispatch(Command::FileList {
+            workspace: rig.workspace.clone(),
+            path: ".".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Files { files } => {
+            assert!(
+                files.iter().any(|f| f.name == "notes.txt" && !f.dir),
+                "the listing names the file: {files:?}"
+            );
+        }
+        other => panic!("expected files: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn file_read_of_a_missing_file_is_an_error() {
+    let rig = rig(done_body(), 0).await;
+    let err = rig
+        .core
+        .dispatch(Command::FileRead {
+            workspace: rig.workspace.clone(),
+            path: "nope.txt".into(),
+            offset: None,
+            limit: None,
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, tau_protocol::ProtocolError::Other { .. }),
+        "{err:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_stop_of_a_plain_session_is_accepted() {
+    // The non-child MessageStop arm: fire-and-forget flag setting.
+    let rig = rig(done_body(), 0).await;
+    let out = rig
+        .core
+        .dispatch(Command::MessageStop {
+            session: rig.parent.clone(),
+        })
+        .unwrap();
+    assert!(
+        matches!(out, CommandOutput::None),
+        "a stop is not an error state: {out:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_fork_spawn_copies_the_parent_file() {
+    let rig = rig(done_body(), 0).await;
+    // Give the parent an entry to fork: a task record in its file.
+    rig.core
+        .dispatch(Command::TaskCreate {
+            session: rig.parent.clone(),
+            title: "the parent's work".into(),
+        })
+        .unwrap();
+    let info = match rig
+        .core
+        .dispatch(Command::SubagentSpawn {
+            session: rig.parent.clone(),
+            agent_type: "general".into(),
+            brief: "forked work".into(),
+            context_mode: ContextMode::Fork,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    // A fork's file starts as a branched copy of the parent's entries —
+    // more than its own header + spawn record.
+    let child_file = rig
+        .cwd
+        .path()
+        .join(".tau/sessions")
+        .join(format!("{}.jsonl", info.child));
+    let content = std::fs::read_to_string(&child_file).unwrap();
+    let lines: Vec<&str> = content.lines().collect();
+    assert!(
+        lines.len() > 3,
+        "the fork carries the parent's entries ({} lines): {content}",
+        lines.len()
+    );
+    assert!(content.contains("\"type\":\"task\""), "{content}");
+}
+
+#[tokio::test]
+async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
+    // Phase 1: a provider-bearing core writes the session file.
+    let tmp = tempfile::tempdir().unwrap();
+    let seeded = CoreBuilder::custom(dead_providers()).build();
+    let ws = match seeded
+        .dispatch(Command::WorkspaceOpen {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Workspace { workspace } => workspace,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    let session = match seeded
+        .dispatch(Command::SessionNew {
+            workspace: ws.id,
+            title: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    // One real entry, so the disk projection has something to show.
+    seeded
+        .dispatch(Command::TaskCreate {
+            session: session.id.clone(),
+            title: "on file".into(),
+        })
+        .unwrap();
+    drop(seeded);
+
+    // Phase 2: a provider-less core on the same directory cannot build a
+    // live session (no providers), so the open serves the session
+    // read-only from its file.
+    let empty: std::collections::BTreeMap<String, tau_core::config::Provider> =
+        std::collections::BTreeMap::new();
+    let core = CoreBuilder::custom(empty).build();
+    core.dispatch(Command::WorkspaceOpen {
+        cwd: tmp.path().to_string_lossy().into_owned(),
+    })
+    .unwrap();
+    match core
+        .dispatch(Command::SessionOpen {
+            session: session.id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => {
+            assert_eq!(snapshot.session.id, session.id);
+            assert_eq!(snapshot.entries.len(), 1);
+            assert_eq!(snapshot.entries[0].kind, "task");
+        }
+        other => panic!("expected a snapshot: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn entries_of_a_closed_session_are_served_from_disk() {
+    // The workspace stays open (entries_from_disk resolves the owning
+    // workspace from the open set); the session is closed, so the read
+    // falls back to the file.
+    let rig = rig(done_body(), 0).await;
+    let session = rig.parent.clone();
+    // Give the session a real entry: a header-only file has no entries.
+    rig.core
+        .dispatch(Command::TaskCreate {
+            session: session.clone(),
+            title: "on file".into(),
+        })
+        .unwrap();
+    rig.core
+        .dispatch(Command::SessionClose {
+            session: session.clone(),
+        })
+        .unwrap();
+
+    // By range: a paged read from the file.
+    match rig
+        .core
+        .dispatch(Command::SessionEntries {
+            session: session.clone(),
+            since: None,
+            range: Some(tau_protocol::snapshot::EntryRange { start: 0, count: 2 }),
+        })
+        .unwrap()
+    {
+        CommandOutput::Entries { entries } => {
+            let dump = std::fs::read_to_string(
+                rig.cwd
+                    .path()
+                    .join(".tau/sessions")
+                    .join(format!("{}.jsonl", session)),
+            )
+            .unwrap_or_default();
+            assert!(!entries.is_empty(), "file: {dump}");
+        }
+        other => panic!("expected entries: {other:?}"),
+    }
+
+    // A second identical read: the disk path is repeatable.
+    let out = rig
+        .core
+        .dispatch(Command::SessionEntries {
+            session: session.clone(),
+            since: None,
+            range: Some(tau_protocol::snapshot::EntryRange { start: 0, count: 2 }),
+        })
+        .unwrap();
+    assert!(matches!(out, CommandOutput::Entries { .. }));
+
+    // A session no open workspace owns is refused by name.
+    let err = rig
+        .core
+        .dispatch(Command::SessionEntries {
+            session: "no-such-session".into(),
+            since: None,
+            range: Some(tau_protocol::snapshot::EntryRange { start: 0, count: 1 }),
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, tau_protocol::ProtocolError::Other { .. }),
+        "{err:?}"
+    );
 }

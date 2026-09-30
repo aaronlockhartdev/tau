@@ -78,11 +78,11 @@ mod tests_archive_edges;
 #[cfg(test)]
 mod tests_dispatch;
 #[cfg(test)]
-mod tests_snapshot;
-#[cfg(test)]
 mod tests_model;
 #[cfg(test)]
 mod tests_skills;
+#[cfg(test)]
+mod tests_snapshot;
 #[cfg(test)]
 mod tests_stream;
 #[cfg(test)]

@@ -179,8 +179,7 @@ pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> Sto
 }
 
 pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {
-    find(store, id)?
-        .ok_or_else(|| format!("task {id}: not found in this session"))?;
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))?;
     append_event(
         store,
         id,
