@@ -82,7 +82,7 @@ jobs:
           tool: nextest@0.9.146
 
       - name: Coverage (no floor)
-        run: cargo llvm-cov --workspace --nextest --lcov --html --output-dir coverage
+        run: cargo llvm-cov nextest --workspace --lcov --html --output-dir coverage
 
       - uses: actions/upload-artifact@v7.0.1
         with:
