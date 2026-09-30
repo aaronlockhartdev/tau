@@ -82,6 +82,8 @@ mod tests_model;
 #[cfg(test)]
 mod tests_skills;
 #[cfg(test)]
+mod tests_snapshot;
+#[cfg(test)]
 mod tests_stream;
 #[cfg(test)]
 mod tests_turn_config;

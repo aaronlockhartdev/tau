@@ -61,7 +61,7 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
                     steps.len(),
                     criteria.len()
                 ),
-                Err(e) => e,
+                Err(e) => format!("task_create: {e}"),
             }
         }
         "task_start" => {
@@ -70,7 +70,7 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
             };
             match start(store, id) {
                 Ok(t) => report(&t),
-                Err(e) => e,
+                Err(e) => format!("task_start: {e}"),
             }
         }
         "task_evidence" => {
@@ -99,7 +99,7 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
             };
             match add_evidence(store, id, ev) {
                 Ok(t) => report(&t),
-                Err(e) => e,
+                Err(e) => format!("task_evidence: {e}"),
             }
         }
         "task_block" => {
@@ -116,7 +116,7 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
                 args.get("needs").and_then(Value::as_str).map(str::to_owned),
             ) {
                 Ok(t) => report(&t),
-                Err(e) => e,
+                Err(e) => format!("task_block: {e}"),
             }
         }
         "task_finish" => {
@@ -132,7 +132,7 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
                     .map(str::to_owned),
             ) {
                 Ok(t) => report(&t),
-                Err(e) => e,
+                Err(e) => format!("task_finish: {e}"),
             }
         }
         "task_cancel" => {
@@ -147,7 +147,7 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
                     .map(str::to_owned),
             ) {
                 Ok(t) => report(&t),
-                Err(e) => e,
+                Err(e) => format!("task_cancel: {e}"),
             }
         }
         other => format!("unknown task tool {other}"),
