@@ -70,7 +70,6 @@ fn plain_body(deltas: usize) -> String {
 
 struct Rig {
     /// Keeps the workspace dir alive for the rig's lifetime.
-    #[allow(dead_code)]
     cwd: tempfile::TempDir,
     core: Arc<Core>,
     workspace: String,
@@ -278,14 +277,15 @@ async fn subagent_message_steers_a_running_child() {
 }
 
 #[tokio::test]
-async fn subagent_stop_of_an_unknown_handle_is_not_found() {
+async fn subagent_stop_of_an_unknown_handle_is_refused() {
     let rig = rig(done_body(), 0).await;
     let err = rig
         .core
         .dispatch(Command::SubagentStop {
             // A handle on the open parent with a bogus child number:
             // the dispatch arm resolves the parent first, so this reaches
-            // the supervisor's own unknown-handle refusal.
+            // the supervisor's own unknown-handle refusal (ticket #38 tracks the
+            // canonical unknown-entity error shape).
             handle: format!("{}-999", rig.parent),
         })
         .unwrap_err();
@@ -347,7 +347,7 @@ async fn a_force_send_to_a_running_child_stops_it_first() {
     // the send resumes it (a `running` state event) with the message. That
     // stop-then-resume pair, plus the delivered message, is the boundary's
     // observable signature. (Note: the resume's `send` clears the stop
-    // flag — ticket #23 — so the in-flight turn is not cut; see the report.)
+    // flag — ticket #23 — so the in-flight turn is not cut.)
     let path = rig
         .cwd
         .path()
