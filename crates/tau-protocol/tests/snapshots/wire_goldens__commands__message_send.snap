@@ -1,0 +1,10 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::MessageSend\n{\n    session: \"s1\".into(), text: \"hi\".into(), lane:\n    tau_protocol::MessageLane::Steering,\n}"
+---
+{
+  "type": "message_send",
+  "session": "s1",
+  "text": "hi",
+  "lane": "steering"
+}

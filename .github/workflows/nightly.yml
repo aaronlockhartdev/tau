@@ -1,0 +1,58 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_dispatch:
+
+jobs:
+  fuzz-long:
+    # The long leg of the fuzz split: 1 h per target + corpus trim
+    # (cargo-fuzz book CI pattern; the PR leg is fuzz-smoke in ci.yml).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: swatinem/rust-cache@v2.9.2
+
+      - uses: taiki-e/install-action@v2.87.20
+        with:
+          tool: cargo-fuzz@0.13.2
+
+      - name: Fuzz long (1 h per target) + corpus trim
+        run: |
+          cd fuzz
+          cargo +nightly fuzz build
+          for t in parse_command parse_event parse_output parse_sse parse_session roundtrip_command; do
+            cargo +nightly fuzz run "$t" -- -max_total_time=3600
+            cargo +nightly fuzz cmin "$t"
+          done
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: fuzz-artifacts-nightly
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+
+  miri:
+    # UB/aliasing checks scoped to the pure protocol crate — never a PR gate
+    # (research/testing-rust.md §6: Miri can't run the network/FFI paths).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: miri
+
+      - uses: swatinem/rust-cache@v2.9.2
+
+      - name: Miri (tau-protocol)
+        run: cargo +nightly miri test -p tau-protocol

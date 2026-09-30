@@ -1,0 +1,12 @@
+data: {"response":{"id":"mock-resp-0"},"type":"response.created"}
+
+data: {"delta":"mock fallback: no scenario match","type":"response.output_text.delta"}
+
+data: {"delta":"ed this request; the turn ends h","type":"response.output_text.delta"}
+
+data: {"delta":"ere.","type":"response.output_text.delta"}
+
+data: {"response":{"id":"mock-resp-0","usage":{"input_tokens":120,"output_tokens":48,"total_tokens":168}},"type":"response.completed"}
+
+data: [DONE]
+

@@ -1,0 +1,21 @@
+{
+  "task": "t-1",
+  "title": "ship the parser",
+  "status": "active",
+  "current_step": {
+    "text": "write the parser",
+    "expected_output": "tests pass",
+    "status": "active"
+  },
+  "steps": [
+    {
+      "text": "write the parser",
+      "expected_output": "tests pass",
+      "status": "active"
+    }
+  ],
+  "evidence": [],
+  "gaps": [],
+  "blockers": [],
+  "next_action": "complete: write the parser (expected: tests pass)"
+}

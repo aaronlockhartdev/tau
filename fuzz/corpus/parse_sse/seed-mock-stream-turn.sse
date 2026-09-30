@@ -1,0 +1,16 @@
+data: {"response":{"id":"mock-resp-0"},"type":"response.created"}
+
+data: {"delta":"Lorem ipsum dolor sit amet, cons","type":"response.output_text.delta"}
+
+data: {"delta":"ectetur adipiscing elit, sed do ","type":"response.output_text.delta"}
+
+data: {"delta":"eiusmod tempor incididunt ut lab","type":"response.output_text.delta"}
+
+data: {"delta":"ore et dolore magna aliqua. (e2e","type":"response.output_text.delta"}
+
+data: {"delta":" text turn)","type":"response.output_text.delta"}
+
+data: {"response":{"id":"mock-resp-0","usage":{"input_tokens":210,"output_tokens":64,"total_tokens":274}},"type":"response.completed"}
+
+data: [DONE]
+

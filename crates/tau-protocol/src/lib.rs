@@ -667,4 +667,97 @@ mod tests {
             assert_eq!(&back, out, "round-trip mismatch for {json}");
         }
     }
+
+    /// The tagged-union contract on the negative side: an unknown `type` tag
+    /// is a data error (the GUI's parity script and the core's dispatch both
+    /// rely on Err, never a panic, for an off-surface command).
+    #[test]
+    fn command_unknown_tag_is_data_error() {
+        let err = serde_json::from_str::<Command>(r#"{"type":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    #[test]
+    fn command_malformed_json_is_syntax_error() {
+        let err = serde_json::from_str::<Command>(r#"{"type":"workspace_list"} x"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Syntax);
+    }
+
+    #[test]
+    fn command_missing_required_field_is_data_error() {
+        // message_send without its text/lane: a truncated or hand-edited
+        // command must fail decode, not dispatch as something else.
+        let err = serde_json::from_str::<Command>(r#"{"type":"message_send","session":"s1"}"#)
+            .unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    #[test]
+    fn command_output_unknown_kind_is_data_error() {
+        let err = serde_json::from_str::<CommandOutput>(r#"{"kind":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    /// The error's wire shape is the transport contract: every variant tags
+    /// on `kind`, and an unknown kind refuses to decode.
+    #[test]
+    fn protocol_error_wire_shape() {
+        let cases = vec![
+            (
+                ProtocolError::Unsupported {
+                    message: "m".into(),
+                },
+                r#"{"kind":"unsupported","message":"m"}"#,
+            ),
+            (
+                ProtocolError::NotFound { what: "w".into() },
+                r#"{"kind":"not_found","what":"w"}"#,
+            ),
+            (
+                ProtocolError::Other {
+                    message: "m".into(),
+                },
+                r#"{"kind":"other","message":"m"}"#,
+            ),
+        ];
+        for (err, wire) in cases {
+            assert_eq!(&serde_json::to_string(&err).unwrap(), wire);
+            let back: ProtocolError = serde_json::from_str(wire).unwrap();
+            assert_eq!(back, err);
+        }
+        let err = serde_json::from_str::<ProtocolError>(r#"{"kind":"bogus"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    #[test]
+    fn lane_and_context_mode_reject_unknown_tags() {
+        for bad in ["urgent", "force ", "FO"] {
+            let json = format!("\"{bad}\"");
+            let err = serde_json::from_str::<MessageLane>(&json).unwrap_err();
+            assert_eq!(err.classify(), serde_json::error::Category::Data);
+        }
+        for bad in ["fresh", "compacted", "fork"] {
+            let json = format!("\"{bad}\"");
+            let back: ContextMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(serde_json::to_string(&back).unwrap(), format!("\"{bad}\""));
+        }
+        let err = serde_json::from_str::<ContextMode>(r#""clone""#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+    }
+
+    /// `Usage` is #[serde(default)]: a partial usage object from a deviating
+    /// server must decode with zeros, not fail the whole event.
+    #[test]
+    fn usage_defaults_when_fields_missing() {
+        let u: Usage = serde_json::from_str(r#"{"input_tokens":5}"#).unwrap();
+        assert_eq!(
+            u,
+            Usage {
+                input_tokens: 5,
+                ..Usage::default()
+            }
+        );
+        let u: Usage = serde_json::from_str("{}").unwrap();
+        assert_eq!(u, Usage::default());
+    }
 }

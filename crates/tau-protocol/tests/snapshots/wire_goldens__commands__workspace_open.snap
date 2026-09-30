@@ -1,0 +1,8 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::WorkspaceOpen { cwd: \"/tmp/tau\".into() }"
+---
+{
+  "type": "workspace_open",
+  "cwd": "/tmp/tau"
+}

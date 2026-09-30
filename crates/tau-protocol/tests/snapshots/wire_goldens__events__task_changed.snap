@@ -1,0 +1,23 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::TaskChanged\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), tasks:\n    vec![Task\n    {\n        id: \"t-1\".into(), title: \"do it\".into(), status: \"pending\".into(),\n        steps: vec![], criteria: vec![], evidence: vec![], blockers: vec![],\n        decisions: vec![], notes: vec![], worker: None, created_in: None,\n        updated: 0,\n    }],\n}"
+---
+{
+  "type": "task_changed",
+  "workspace": "w1",
+  "session": "s1",
+  "tasks": [
+    {
+      "id": "t-1",
+      "title": "do it",
+      "status": "pending",
+      "steps": [],
+      "criteria": [],
+      "evidence": [],
+      "blockers": [],
+      "decisions": [],
+      "notes": [],
+      "updated": 0
+    }
+  ]
+}

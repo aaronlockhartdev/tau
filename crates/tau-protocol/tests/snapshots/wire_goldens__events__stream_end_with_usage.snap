@@ -1,0 +1,17 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::StreamEnd\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), call_id: \"c1\".into(),\n    interrupted: false, usage:\n    Some(Usage\n    {\n        input_tokens: 100, output_tokens: 20, total_tokens: 120,\n        cached_prompt_tokens: 40,\n    }),\n}"
+---
+{
+  "type": "stream_end",
+  "workspace": "w1",
+  "session": "s1",
+  "call_id": "c1",
+  "interrupted": false,
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 20,
+    "total_tokens": 120,
+    "cached_prompt_tokens": 40
+  }
+}

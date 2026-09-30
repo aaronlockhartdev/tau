@@ -1,0 +1,18 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "vec![ProtocolError::Unsupported\n{ message: \"subagents land with ticket #23\".into() }, ProtocolError::NotFound\n{ what: \"session s1\".into() }, ProtocolError::Other\n{ message: \"disk full\".into() },]"
+---
+[
+  {
+    "kind": "unsupported",
+    "message": "subagents land with ticket #23"
+  },
+  {
+    "kind": "not_found",
+    "what": "session s1"
+  },
+  {
+    "kind": "other",
+    "message": "disk full"
+  }
+]

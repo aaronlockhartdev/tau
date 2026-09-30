@@ -1,0 +1,8 @@
+target
+# Fuzzer-grown corpus stays local; curated real-payload seeds are tracked.
+corpus/*
+!corpus/*/
+corpus/*/*
+!corpus/*/seed-*
+artifacts
+coverage

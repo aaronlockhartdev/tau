@@ -1,0 +1,17 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::SubagentEvent\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), kind:\n    tau_protocol::SubagentEventKind::Spawned\n    {\n        handle: \"s1-1\".into(), child: \"s2\".into(), agent_type:\n        \"general\".into(), context_mode: tau_protocol::ContextMode::Fresh,\n        title: \"rusty-nail\".into(),\n    },\n}"
+---
+{
+  "type": "subagent_event",
+  "workspace": "w1",
+  "session": "s1",
+  "kind": {
+    "kind": "spawned",
+    "handle": "s1-1",
+    "child": "s2",
+    "agent_type": "general",
+    "context_mode": "fresh",
+    "title": "rusty-nail"
+  }
+}

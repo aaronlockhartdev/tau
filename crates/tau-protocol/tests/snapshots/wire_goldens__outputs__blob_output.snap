@@ -1,0 +1,10 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "CommandOutput::Blob\n{ payload: serde_json::json!({ \"active_observations\": \"obs\" }), }"
+---
+{
+  "kind": "blob",
+  "payload": {
+    "active_observations": "obs"
+  }
+}

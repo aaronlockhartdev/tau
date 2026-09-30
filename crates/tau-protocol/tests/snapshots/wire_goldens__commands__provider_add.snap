@@ -1,0 +1,13 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Command::ProviderAdd\n{\n    name: \"vllm\".into(), base_url: \"http://localhost:8000/v1\".into(), key_env:\n    \"VLLM_KEY\".into(), models: vec![\"qwen3.8-27b\".into()],\n}"
+---
+{
+  "type": "provider_add",
+  "name": "vllm",
+  "base_url": "http://localhost:8000/v1",
+  "key_env": "VLLM_KEY",
+  "models": [
+    "qwen3.8-27b"
+  ]
+}

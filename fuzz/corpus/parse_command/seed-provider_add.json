@@ -1,0 +1,9 @@
+{
+  "type": "provider_add",
+  "name": "vllm",
+  "base_url": "http://localhost:8000/v1",
+  "key_env": "VLLM_KEY",
+  "models": [
+    "qwen3.8-27b"
+  ]
+}
