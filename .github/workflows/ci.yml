@@ -198,8 +198,12 @@ jobs:
       - name: Build
         run: just build
 
-      - name: Launch smoke
-        run: just acceptance launch
+      - name: Acceptance (full set — deterministic mock LLM)
+        # launch + live-tools + live-subagent + live-om + core + e2e in one
+        # run: the live-* suites run against the mock (phase 1 §4), so the
+        # whole set is a CI gate; e2e stays on the replay leg here (the 10k
+        # stress leg is a local perf bar — docs/research/tauri-ci.md §4).
+        run: TAU_E2E_MODE=replay just acceptance
 
       - name: Upload dmg (distribution artifact)
         uses: actions/upload-artifact@v7.0.1
@@ -259,11 +263,11 @@ jobs:
       - name: Build
         run: just build
 
-      - name: Acceptance (offline core suite)
-        run: just acceptance core
-
-      - name: Launch smoke (xvfb)
-        run: just acceptance launch
+      - name: Acceptance (full set — deterministic mock LLM)
+        # launch + live-tools + live-subagent + live-om + core + e2e in one
+        # run (the justfile wraps the headless e2e leg in xvfb); e2e stays
+        # on the replay leg (the 10k stress leg is a local perf bar).
+        run: TAU_E2E_MODE=replay just acceptance
 
       - name: Rust tests before E2E (official CI guide)
         run: cargo test -p tau-core

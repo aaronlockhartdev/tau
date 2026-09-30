@@ -1,0 +1,9 @@
+{
+  "match": "Summarize the expedition",
+  "turns": [
+    {
+      "text": "The expedition crossed the northern pass under a low amber sky and mapped the river delta. Along the way the team catalogued the stone markers found at every bend of the river."
+    }
+  ],
+  "usage": { "input_tokens": 3200, "output_tokens": 44, "total_tokens": 3244 }
+}

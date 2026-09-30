@@ -18,10 +18,10 @@ fn plan_picks_observe_at_activation_and_commit_advances_the_cursor() {
     state.commit(&mut store, &mut action, &result).unwrap();
     assert_eq!(action, TurnEndAction::Done);
     let cursor = state.record.cursor.clone().unwrap();
-    assert_eq!(cursor.entry_id, "00000002");
+    assert_eq!(cursor.entry_id, "00000003");
     let groups = crate::om::parse_observation_groups(&state.record.active_observations);
     assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].range, "00000000:00000002");
+    assert_eq!(groups[0].range, "00000001:00000003");
     assert!(groups[0].content.contains("workbench"));
     assert_eq!(state.record.pending_tokens, 0);
     // The observation persists across a re-load from the session file.

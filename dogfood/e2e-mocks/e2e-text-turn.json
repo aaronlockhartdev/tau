@@ -1,0 +1,9 @@
+{
+  "match": "e2e-text-turn",
+  "turns": [
+    {
+      "text": "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. (e2e text turn)"
+    }
+  ],
+  "usage": { "input_tokens": 210, "output_tokens": 64, "total_tokens": 274 }
+}

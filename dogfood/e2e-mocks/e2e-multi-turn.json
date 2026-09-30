@@ -1,0 +1,9 @@
+{
+  "match": "e2e-multi-turn",
+  "turns": [
+    { "text": "First response of the scripted sequence. (e2e multi-turn 1 of 3)" },
+    { "text": "Second response of the scripted sequence. (e2e multi-turn 2 of 3)" },
+    { "text": "Third response of the scripted sequence. (e2e multi-turn 3 of 3)" }
+  ],
+  "usage": { "input_tokens": 150, "output_tokens": 40, "total_tokens": 190 }
+}

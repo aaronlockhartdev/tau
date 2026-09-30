@@ -1,8 +1,9 @@
 // WebdriverIO config for the real-app E2E (roadmap G/G2): the DEBUG Tauri
 // binary against a test workspace, driven over the embedded WebDriver
 // server (tauri-plugin-wdio-webdriver). Replaces the retired tauri-pilot
-// harness. Two legs (user, 2026-09-24 — the functional leg replays a REAL
-// recorded session, not a synthetic one):
+// harness. Three legs (replay/stress per the user's 2026-09-24 decision —
+// the functional leg replays a REAL recorded session, not a synthetic one;
+// mock per phase 1 §4, 2026-09-30):
 //   replay — the dogfood session pair (dogfood/sessions/*.jsonl, the real
 //     parent→child pair the app recorded while building todo.py): hydration,
 //     the parent→child tree, a fresh canned:// turn, archive cascade, and
@@ -10,6 +11,9 @@
 //   stress — the generated 10k-entry fixture (windowing, boot pin under
 //     load, the 500 ms perf bar): local only, a starved CI webview can't
 //     meet its budgets.
+//   mock — the deterministic tau-mock-llm scenarios (hash-pinned): streamed
+//     text, tool-call rendering, and multi-turn sequencing against the fake
+//     LLM.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -20,7 +24,11 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const APP = import.meta.dirname;
 const ROOT = path.join(APP, '..');
 const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
-const FIXTURE_SHA256 = '2a4f08174fe7f7e1042833632aebe7f9899839be89fb5a4d41e70df183f72139';
+// Re-pinned 2026-09-30: the id series is 1-based (the store mints after
+// loading the file), which rewrote every id line in the fixture. The
+// generator is byte-deterministic (fixed clock, static content, no temp
+// paths) — verified two runs, identical sha256.
+const FIXTURE_SHA256 = 'fe6751612f042561d0d2343dc792e58456567ea93c386f2dac136aa407450a19';
 const FIXTURE_SESSION = 'session';
 // The real session pair the replay leg runs against (recorded by the app
 // itself during the 2026-09-24 dogfood; committed, hash-pinned like the
@@ -31,6 +39,15 @@ const DOGFOOD_PARENT = '9b94bcc9eade.jsonl';
 const DOGFOOD_CHILD = 'f12bed0d762f.jsonl';
 const DOGFOOD_PARENT_SHA256 = 'b0a573f53d85505557d110c20b29d9bacb8f2d546b27b65d8f60ff1623b2feb2';
 const DOGFOOD_CHILD_SHA256 = '22a5fa26baedae78cb70ef2ad79dbfd7f3549e55e1ca82af945b37356d69c541';
+// The deterministic mock LLM (phase 1 §4): hash-pinned scenario files
+// served by the tau-mock-llm binary; the mock leg's workspace points its
+// `mock` provider at it and the specs switch their sessions to mock-model.
+const MOCK_PORT = 8123;
+const MOCK_SCENARIOS = {
+  'e2e-text-turn.json': '5c1643e3bf0086324282fc0f605d12f7b8b7fabdec9e0556309ca13df7ebb9a9',
+  'e2e-tool-turn.json': '6aca5c25e849fbb2419c525251fd6987554c6ca8248e7dcd4f5627b8683b8479',
+  'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115'
+};
 const PARENT_ID = '9b94bcc9eade';
 const CHILD_ID = 'f12bed0d762f';
 const VITE_URL = 'http://127.0.0.1:5173/';
@@ -38,13 +55,23 @@ const OUTPUT_DIR = path.join(ROOT, 'target', 'e2e');
 
 // Mode split: replay = the real session pair (CI + local); stress = the
 // 10k generated fixture, local only (docs/research/tauri-ci.md §4: a
-// starved CI webview cannot meet the stress budgets); all = both, the
-// local acceptance default. CI runs replay by default.
-const mode = process.env.TAU_E2E_MODE ?? (process.env.CI ? 'replay' : 'all');
-if (mode !== 'replay' && mode !== 'stress' && mode !== 'all')
-  throw new Error(`TAU_E2E_MODE must be replay|stress|all (got ${mode})`);
-const legs = mode === 'all' ? ['replay', 'stress'] : [mode];
+// starved CI webview cannot meet the stress budgets); mock = the
+// deterministic tau-mock-llm scenarios (CI + local); no TAU_E2E_MODE =
+// the local default (all three), CI runs replay + mock.
+const ALL_LEGS = ['replay', 'stress', 'mock'];
+const CI_LEGS = ['replay', 'mock'];
+const mode = process.env.TAU_E2E_MODE;
+if (mode && !ALL_LEGS.includes(mode))
+  throw new Error(`TAU_E2E_MODE must be one of ${ALL_LEGS.join('|')} (got ${mode})`);
+const legs = mode ? [mode] : (process.env.CI ? CI_LEGS : ALL_LEGS);
 
+// One spec file per leg, except mock: one spec per scripted feature
+// (text streaming, tool-call rendering, multi-turn sequencing).
+const LEG_SPECS = {
+  replay: ['replay.spec.mjs'],
+  stress: ['stress.spec.mjs'],
+  mock: ['mock-text.spec.mjs', 'mock-tool.spec.mjs', 'mock-multi.spec.mjs']
+};
 // The isolated HOME keeps the run from touching the real ~/.config/tau; an
 // empty system dir is what makes the boot check (no workspace auto-opens)
 // deterministic. It is a FIXED path (not mkdtemp) set in the test:frontend
@@ -79,29 +106,82 @@ function checkDogfood() {
   }
 }
 
+function checkMockScenarios() {
+  for (const [file, pinned] of Object.entries(MOCK_SCENARIOS)) {
+    const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'dogfood', 'e2e-mocks', file))).digest('hex');
+    if (sha !== pinned) throw new Error(`mock scenario drifted: ${file}`);
+  }
+}
+
 // The minimal test workspace: the session file(s) under .tau/sessions/ and
 // the canned:// text provider in the *project* config (.tau/config.toml) —
 // the production layering merge a session reads through (spec §12); the
-// isolated HOME's system layer stays empty. The replay leg copies the real
-// dogfood pair (hash-pinned above); the stress leg materializes the shared
-// 10k fixture.
-function makeWorkspace() {
-  const ws = path.join(tmp, 'ws');
-  fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
+// isolated HOME's system layer stays empty. One workspace PER LEG, because
+// the core pins a session to the *first* provider of the merged config
+// (BTreeMap order) at registration and session_set_model only swaps the
+// model id: replay needs canned first, mock needs mock as the sole
+// provider. Replay/stress specs read TAU_E2E_WS (the first leg's
+// workspace, as before); the mock specs read TAU_E2E_WS_MOCK.
+const CANNED_CONFIG = ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', ''].join('\n');
+function makeWorkspaces() {
+  const dirs = {};
+  // The model menu lists the *system* layer only (harness ProviderList),
+  // so the mock leg also puts the mock provider in the isolated home's
+  // system config: the menu then offers it, and the same-named project
+  // entry keeps the merged config coherent (spec §12 layering — a
+  // project entry of the same name replaces the system one).
+  if (legs.includes('mock')) {
+    fs.writeFileSync(
+      path.join(E2E_HOME, '.config', 'tau', 'config.toml'),
+      [
+        '[providers.mock]',
+        `base_url = "http://127.0.0.1:${MOCK_PORT}/v1"`,
+        '',
+        '[providers.mock.models."mock-model"]',
+        '',
+        '[providers.mock.models."mock-model-2"]',
+        ''
+      ].join('\n')
+    );
+  }
+  // 'all' keeps the original single shared workspace for replay + stress
+  // (the stress spec's all-mode branch reads the dogfood pair from it);
+  // single-leg runs get their own dir.
+  const shared = legs.includes('replay') && legs.includes('stress');
   for (const leg of legs) {
+    const ws = shared
+      ? path.join(tmp, 'ws')
+      : path.join(tmp, leg === 'mock' ? 'ws-mock' : leg === 'stress' ? 'ws-stress' : 'ws');
+    fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
     if (leg === 'replay') {
       fs.copyFileSync(path.join(DOGFOOD, DOGFOOD_PARENT), path.join(ws, '.tau', 'sessions', DOGFOOD_PARENT));
       fs.copyFileSync(path.join(DOGFOOD, DOGFOOD_CHILD), path.join(ws, '.tau', 'sessions', DOGFOOD_CHILD));
-    } else {
+      fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
+    } else if (leg === 'stress') {
       fs.copyFileSync(FIXTURE, path.join(ws, '.tau', 'sessions', `${FIXTURE_SESSION}.jsonl`));
+      fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
+    } else {
+      // The mock provider is the sole entry: a fresh session defaults to
+      // mock-model, and the twin model entries let a spec switch models
+      // through the real menu UI (the mock server ignores the model id —
+      // the scenario's match string selects the script).
+      fs.writeFileSync(
+        path.join(ws, '.tau', 'config.toml'),
+        [
+          '[providers.mock]',
+          `base_url = "http://127.0.0.1:${MOCK_PORT}/v1"`,
+          '',
+          '[providers.mock.models."mock-model"]',
+          '',
+          '[providers.mock.models."mock-model-2"]',
+          ''
+        ].join('\n')
+      );
     }
+    dirs[leg] = ws;
   }
-  fs.writeFileSync(
-    path.join(ws, '.tau', 'config.toml'),
-    ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', ''].join('\n')
-  );
   fs.mkdirSync(xdg, { recursive: true, mode: 0o700 });
-  return ws;
+  return dirs;
 }
 
 function binaryPath() {
@@ -138,6 +218,21 @@ function startVite() {
   devProc.stderr.on('data', log);
 }
 
+// The deterministic mock LLM for the mock leg: the compiled binary over
+// the hash-pinned scenario dir (built here so a fresh checkout works).
+let mockProc = null;
+function startMock() {
+  sh('cargo', ['build', '-p', 'tau-mock-llm']);
+  mockProc = spawn(
+    path.join(ROOT, 'target', 'debug', 'tau-mock-llm'),
+    ['--port', String(MOCK_PORT), '--scenarios', path.join(ROOT, 'dogfood', 'e2e-mocks')],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }
+  );
+  const log = (d) => process.stderr.write(`[mock-llm] ${d}`);
+  mockProc.stdout.on('data', log);
+  mockProc.stderr.on('data', log);
+}
+
 async function poll(fn, ms, label) {
   const t0 = Date.now();
   for (;;) {
@@ -156,6 +251,11 @@ function teardown() {
   } catch {
     // already gone
   }
+  try {
+    if (mockProc) mockProc.kill('SIGKILL');
+  } catch {
+    // already gone
+  }
 }
 process.on('exit', teardown);
 
@@ -169,14 +269,18 @@ async function onPrepare() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   for (const leg of legs) {
     if (leg === 'stress') buildFixture();
+    else if (leg === 'mock') checkMockScenarios();
     else checkDogfood();
   }
-  const ws = makeWorkspace();
+  const workspaces = makeWorkspaces();
   // The spec runs in a separate worker process — the shared context travels
   // over the worker's inherited environment (the service talks to the app
   // the same way).
-  process.env.TAU_E2E_MODE = mode;
-  process.env.TAU_E2E_WS = ws;
+  // Assigning undefined to process.env writes the string "undefined" —
+  // the worker re-imports this config and would reject it.
+  if (mode) process.env.TAU_E2E_MODE = mode;
+  process.env.TAU_E2E_WS = workspaces.replay ?? workspaces.stress ?? workspaces.mock;
+  process.env.TAU_E2E_WS_MOCK = workspaces.mock ?? '';
   process.env.TAU_E2E_TMP = tmp;
   process.env.TAU_E2E_PARENT = PARENT_ID;
   process.env.TAU_E2E_CHILD = CHILD_ID;
@@ -193,6 +297,17 @@ async function onPrepare() {
     60000,
     'vite dev server'
   );
+  if (legs.includes('mock')) {
+    startMock();
+    await poll(
+      () =>
+        fetch(`http://127.0.0.1:${MOCK_PORT}/models`).then((r) => {
+          if (!r.ok) throw new Error(`mock answered ${r.status}`);
+        }),
+      30000,
+      'the mock LLM'
+    );
+  }
 }
 
 function onComplete() {
@@ -200,7 +315,7 @@ function onComplete() {
 }
 
 export const config = {
-  specs: legs.map((leg) => path.join(APP, 'tests', 'e2e', `${leg}.spec.mjs`)),
+specs: legs.flatMap((leg) => LEG_SPECS[leg].map((f) => path.join(APP, 'tests', 'e2e', f))),
 
   maxInstances: 1,
 
@@ -245,6 +360,10 @@ export const config = {
   outputDir: OUTPUT_DIR,
   logLevel: 'info',
   bail: 0,
+  // The stack's own CI flake log (F1, macOS embedded-provider idle stalls)
+  // clears on retry: one same-run recovery per spec file on CI; local stays
+  // 0 so a flake that clears on retry is still visible where it matters.
+  specFileRetries: process.env.CI ? 1 : 0,
 
   // Framework-level waiting (the structural fix for the pilot era's fixed
   // 10 s eval budget): generous element-wait and connection-retry budgets;

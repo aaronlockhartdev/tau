@@ -81,7 +81,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     // Observe: the log is non-empty and the cursor sits on turn 1's
     // last raw entry (the raw window for turn 2 is the new user entry).
     assert!(state.record.active_observations.contains("obs"));
-    assert_eq!(state.record.cursor.unwrap().entry_id, "00000006");
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000007");
     // Reflect: the tagged reflection committed its <observations>
     // content only, as generation 1.
     assert_eq!(state.record.generation, 1);

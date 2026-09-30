@@ -1,12 +1,15 @@
 //! End-to-end acceptance driver (ticket #27).
 //!
-//! Suites: `live-tools` multi-turn with the four core tools (live),
-//! `live-subagent` a sub-agent spawned by the model plus its task pointer
-//! (live), `live-om` OM compaction on a synthesized long session (live
-//! observe/reflect), `core` branching + manual archive round-trip (offline).
-//! The live suites read `TAU_ENDPOINT` / `TAU_MODEL` (or `--endpoint` /
-//! `--model`) and cap every generation at 300 output tokens; the script
-//! gates them, the driver does not.
+//! Suites: `live-tools` multi-turn with the four core tools (mock by
+//! default), `live-subagent` a sub-agent spawned by the scripted model plus
+//! its task pointer (mock by default), `live-om` OM compaction on a
+//! synthesized long session (mock observe/reflect), `core` branching +
+//! manual archive round-trip (offline).
+//! The live-* suites read `TAU_ENDPOINT` / `TAU_MODEL` (or `--endpoint` /
+//! `--model`); the justfile defaults them to the deterministic mock LLM
+//! (phase 1 §4), a live endpoint stays a local opt-in. They cap every
+//! generation at 300 output tokens; the script gates them, the driver does
+//! not.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
@@ -27,7 +30,6 @@ use tau_core::task::KIND_TASK;
 use tau_core::tools;
 
 const CAP: u64 = 300;
-
 struct Ctx {
     endpoint: String,
     model: String,
@@ -98,7 +100,6 @@ const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use 
 
 /// live-subagent's parent gets the sub-agent + task tools named too.
 const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
-
 async fn live_tools(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
@@ -213,7 +214,9 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
             requests: Requests::default(),
         }),
         model: ctx.model.clone(),
-        system_prompt: SUBAGENT_PROMPT.into(),
+        system_prompt: format!(
+            "{SUBAGENT_PROMPT}\n\nYou are a child sub-agent on an assigned task; report to the parent when done."
+        ),
         om: Om::default(),
         om_model: String::new(),
         tool_batch_on_force: Default::default(),
@@ -331,30 +334,42 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         .find(|e| e.kind == KIND_SUBAGENT)
         .and_then(|e| e.payload.get("state").and_then(Value::as_str))
         .unwrap_or("");
-    // Task linkage, when the parent assigned one: the record copied into
-    // the child (the live record), and a terminal child forces a terminal
+    // Task linkage, when the parent assigned one: the record never leaves
+    // the parent file (single source of truth — Supervisor::child_task),
+    // the child's file carries no task entries, the parent's Assigned event
+    // points at the child's session, and a terminal child forces a terminal
     // pointer — no task dangles in_progress after a done/failed child.
     let tasks: Vec<&Entry> = pentries.iter().filter(|e| e.kind == KIND_TASK).collect();
     let assigned = tasks
         .iter()
         .any(|e| e.payload.get("event").and_then(Value::as_str) == Some("assigned"));
     if assigned {
-        if !centries.iter().any(|e| e.kind == KIND_TASK) {
+        let linked = tasks.iter().any(|e| {
+            e.payload.get("event").and_then(Value::as_str) == Some("assigned")
+                && e.payload.get("worker").and_then(Value::as_str) == Some(child_id.as_str())
+        });
+        if !linked {
             return Err(
-                "live-subagent: the task was assigned but the child's session has no task record"
+                "live-subagent: the parent's Assigned event does not point at the child session"
+                    .into(),
+            );
+        }
+        if centries.iter().any(|e| e.kind == KIND_TASK) {
+            return Err(
+                "live-subagent: the child's session carries task entries (the record must stay in the parent file)"
                     .into(),
             );
         }
         if matches!(child_state, "done" | "failed") {
+            // The completion gate (resolve_assigned_task) resolves the task
+            // on the parent's file: all criteria satisfied -> finished,
+            // otherwise handed_off (the terminal markers; a `pointer` event
+            // is never written in v0).
             let terminal = tasks.iter().any(|e| {
-                e.payload.get("event").and_then(Value::as_str) == Some("pointer")
-                    && matches!(
-                        e.payload
-                            .get("status")
-                            .and_then(Value::as_str)
-                            .unwrap_or(""),
-                        "completed" | "handed_off" | "blocked" | "done" | "cancelled"
-                    )
+                matches!(
+                    e.payload.get("event").and_then(Value::as_str).unwrap_or(""),
+                    "finished" | "handed_off" | "cancelled"
+                )
             });
             if !terminal {
                 return Err(format!(
@@ -385,7 +400,7 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let mut prev: Option<String> = None;
     for i in 0..40 {
         let e = store
-            .append("message", json!({ "text": prose(i) }), prev.as_deref())
+            .append("user", json!({ "text": prose(i) }), prev.as_deref())
             .map_err(|e| e.to_string())?;
         prev = Some(e.id);
     }
@@ -546,8 +561,10 @@ fn core_offline() -> Result<(), String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut suite = "";
-    let mut endpoint = std::env::var("TAU_ENDPOINT")
-        .unwrap_or_else(|_| "https://llms.aaronlockhart.dev/v1".into());
+    // Empty default = the deterministic mock (the contract in this file's
+    // header); a live endpoint is an explicit opt-in.
+    let mut endpoint =
+        std::env::var("TAU_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:8123/v1".into());
     let mut model = std::env::var("TAU_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
     let mut i = 1;
     while i < args.len() {

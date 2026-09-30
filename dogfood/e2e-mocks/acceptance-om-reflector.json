@@ -1,0 +1,9 @@
+{
+  "match": "Your memory observation reflections will be the ONLY",
+  "turns": [
+    {
+      "text": "<observations>\n- Expedition notes summarized on request: northern pass, river delta, stone markers at every bend.\n- A short weather sentence was added after the summary.\n</observations>"
+    }
+  ],
+  "usage": { "input_tokens": 3600, "output_tokens": 40, "total_tokens": 3640 }
+}

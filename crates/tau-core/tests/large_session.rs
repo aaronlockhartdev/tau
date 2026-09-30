@@ -33,7 +33,8 @@ fn run(n: u64) {
     reader.open().unwrap();
     let open_ms = t.elapsed().as_millis();
 
-    let cursor = format!("{:08}", n - 1);
+    // Ids are 1-based (the file's first entry is 00000001).
+    let cursor = format!("{:08}", n);
     let t = Instant::now();
     let tail = reader.entries_since(&cursor).unwrap();
     let since_ms = t.elapsed().as_millis();
@@ -45,7 +46,7 @@ fn run(n: u64) {
     let range_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    let tail100 = reader.entries_since(&format!("{:08}", n - 101)).unwrap();
+    let tail100 = reader.entries_since(&format!("{:08}", n - 100)).unwrap();
     let since100_ms = t.elapsed().as_millis();
 
     eprintln!(

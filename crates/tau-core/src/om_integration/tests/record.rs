@@ -80,3 +80,65 @@ fn fork_copies_observations_and_cursor_without_a_prefix() {
     assert!(!fork.prefix_demoted);
     assert!(fork.live_observations() == "frozenlive");
 }
+
+#[test]
+fn a_record_over_the_blob_threshold_round_trips() {
+    // A record past the 100 KB blob threshold stores a null inline
+    // payload + zstd sidecar; the readback must resolve the sidecar,
+    // not fall back to an empty record (silent OM state loss on every
+    // reopen — the long-observation-log case).
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.record.active_observations = "obs ".repeat(30_000); // 120 KB > 100 KB
+    state.record.cursor = Some(Cursor {
+        entry_id: "00000001".into(),
+        timestamp: 5,
+    });
+    state.save(&mut store).unwrap();
+
+    // The test must exercise the blob path: the newest om entry is
+    // stored with a null inline payload and a sidecar reference.
+    let om_entries: Vec<_> = store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e.kind == KIND_OM)
+        .collect();
+    let newest = om_entries.last().unwrap();
+    assert!(
+        newest.payload.is_null(),
+        "expected the blob path, got an inline payload"
+    );
+    assert!(newest.blob.is_some());
+
+    let reloaded = OmState::load_record(&mut store).unwrap();
+    assert_eq!(
+        reloaded.active_observations,
+        state.record.active_observations
+    );
+    assert_eq!(reloaded.cursor, state.record.cursor);
+}
+
+#[test]
+fn a_corrupt_duplicate_id_cycle_terminates() {
+    // A duplicate id makes the parent chain cyclic; the branch walk must
+    // terminate, not clone entries forever (the 80GB runaway's amplifier).
+    let a: Entry = serde_json::from_str(
+        r#"{"id":"00000001","parentId":"00000002","timestamp":1,"type":"user","payload":{"text":"a"}}"#,
+    )
+    .unwrap();
+    let b: Entry = serde_json::from_str(
+        r#"{"id":"00000002","parentId":"00000001","timestamp":2,"type":"user","payload":{"text":"b"}}"#,
+    )
+    .unwrap();
+    let entries = vec![a, b];
+    let branch = branch_entries(&entries, Some("00000001"));
+    assert!(
+        branch.len() <= entries.len(),
+        "the walk escaped the entry count: {} entries",
+        branch.len()
+    );
+}
