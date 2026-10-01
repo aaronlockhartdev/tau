@@ -6,10 +6,9 @@
   // Items are deletable; the core's queue events are the source of truth,
   // so deletion is optimistic with resync.
 
-  import { store, deleteQueueItem } from '../lib/store.svelte';
+  import { deleteQueueItem, currentSession } from '../lib/store.svelte';
 
-  const cur = $derived(store.current);
-  const s = $derived(cur ? store.sessions[cur] : null);
+  const s = $derived(currentSession());
   const reports = $derived(s ? s.pending.filter((p) => p.source) : []);
   const steering = $derived(s ? s.pending.filter((p) => p.lane === 'steering' && !p.source) : []);
   const followUp = $derived(s ? s.pending.filter((p) => p.lane === 'follow-up' && !p.source) : []);

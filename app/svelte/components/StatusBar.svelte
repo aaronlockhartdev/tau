@@ -2,9 +2,9 @@
   // One unsplit bar: a left context group (state · workspace · session
   // name · the om gauge) and a right cost group (in · out · cache, and
   // tps only while streaming).
-  import { store } from '../lib/store.svelte';
+  import { store, currentSession } from '../lib/store.svelte';
 
-  const s = $derived(store.current ? store.sessions[store.current] : null);
+  const s = $derived(currentSession());
   const running = $derived(s?.turn === 'running' || s?.turn === 'starting');
   const name = $derived(s?.meta.title ?? s?.meta.id ?? '—');
   const ws = $derived(

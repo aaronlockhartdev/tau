@@ -6,12 +6,12 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, newSession, retryDirFetch, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, type PaneState } from '../lib/store.svelte';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
   import FileNode from './FileNode.svelte';
 
-  const ws = $derived(store.current ? store.sessions[store.current]?.meta.workspace ?? null : null);
+  const ws = $derived(currentSession()?.meta.workspace ?? null);
   const p = $derived<PaneState | null>(pane(ws));
   $effect(() => {
     if (ws) ensurePane(ws);
@@ -32,7 +32,7 @@
   // spans.
   const visibleIds = $derived.by(() => {
     if (ws === null) return [];
-    const active = store.current ? store.sessions[store.current] ?? null : null;
+    const active = currentSession();
     const q = pane(ws);
     const out: string[] = [];
     const walk = (ids: string[]): void => {
@@ -77,10 +77,11 @@
   </div>
   {#if p && ws}
     {#if p.ltab === 'files'}
+      {@const root = fileCache(ws)}
       <div class="sec">
-        {#if ws && store.files[ws]?.['.']}
+        {#if root?.['.']}
           <div class="tree">
-            {#each store.files[ws]['.'] as f (f.path)}
+            {#each root['.'] as f (f.path)}
               <FileNode entry={f} ws={ws} />
             {/each}
           </div>

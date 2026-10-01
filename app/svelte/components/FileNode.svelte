@@ -6,12 +6,12 @@
   // and svelte-check chokes on its renamed props).
   import FileNode from './FileNode.svelte';
   import TreeNode from './TreeNode.svelte';
-  import { store, toggleFileDir, retryDirFetch } from '../lib/store.svelte';
+  import { store, toggleFileDir, retryDirFetch, fileCache } from '../lib/store.svelte';
   import type { FileEntry } from '../lib/protocol';
 
   let { entry, ws, depth = 0 }: { entry: FileEntry; ws: string; depth?: number } = $props();
 
-  const children = $derived(store.files[ws]?.[entry.path] ?? null);
+  const children = $derived(fileCache(ws)?.[entry.path] ?? null);
 
   function toggle(): void {
     if (!entry.dir) return;

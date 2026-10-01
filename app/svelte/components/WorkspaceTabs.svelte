@@ -9,6 +9,7 @@
 
   import {
     store,
+    currentSession,
     openWorkspace,
     closeWorkspace,
     closeWorkspaces,
@@ -95,7 +96,7 @@
     {#each store.workspaces as w (w.id)}
       <div
         class="tab"
-        class:active={store.current && store.sessions[store.current]?.meta.workspace === w.id}
+        class:active={currentSession()?.meta.workspace === w.id}
         class:multi={store.tabSelected.includes(w.id)}
       >
         <button class="tabname" oncontextmenu={(e) => onTabContext(e, w)} onclick={(e) => onTabClick(e, w)}>

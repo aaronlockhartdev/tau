@@ -6,6 +6,7 @@
   // session expanded), an array is the explicit set the user has toggled.
   import {
     store,
+    currentSession,
     pane,
     openSessionById,
     renameSession,
@@ -36,7 +37,7 @@
     visibleIds: string[];
   } = $props();
 
-  const active = $derived(store.current ? store.sessions[store.current] ?? null : null);
+  const active = $derived(currentSession());
   const kids = $derived(
     sessions.filter((s) => s.parent === session.meta.id).sort((a, b) => b.mru - a.mru)
   );

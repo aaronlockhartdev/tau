@@ -8,10 +8,10 @@
   // detail sections. The sub-agents panel renders a tree (nesting
   // supported) — double-click opens the sub-agent's session, which is an
   // ordinary session (a tab opens for it).
-  import { store, pane, ensurePane, openSessionById, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, openSessionById, currentSession, type PaneState } from '../lib/store.svelte';
   import type { Task, SubagentInfo } from '../lib/protocol';
 
-  const cur = $derived(store.current ? store.sessions[store.current] : null);
+  const cur = $derived(currentSession());
   const ws = $derived(cur?.meta.workspace ?? null);
   const p = $derived<PaneState | null>(pane(ws));
   $effect(() => {

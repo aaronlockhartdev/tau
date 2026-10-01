@@ -13,6 +13,7 @@
     command,
     isTauri,
     type Event,
+    type FileEntry,
     type SessionMeta,
     type SkillInfo,
     type Workspace
@@ -107,6 +108,18 @@
     return p;
   }
 
+  // Read facade (F2): the current-session and per-workspace pane / file-cache
+  // reads the views each re-derived from the raw bag with their own null
+  // discipline, centralized so the bag is an implementation detail. Read-only.
+
+  export function currentSession(): SessionState | null {
+    const c = store.current;
+    return c ? store.sessions[c] ?? null : null;
+  }
+
+  export function fileCache(ws: string): Record<string, FileEntry[]> | undefined {
+    return store.files[ws];
+  }
   export function toggleAllReasoning(): void {
     store.reasoningOpen = !store.reasoningOpen;
   }

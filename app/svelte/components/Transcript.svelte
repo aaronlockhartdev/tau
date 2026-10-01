@@ -7,7 +7,7 @@
   import { onDestroy, untrack } from 'svelte';
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
-  import { store, fetchWindow } from '../lib/store.svelte';
+  import { store, fetchWindow, currentSession } from '../lib/store.svelte';
   import type { Entry } from '../lib/protocol';
 
   // Sub-pixel tolerance at fractional devicePixelRatio (the Chat story's).
@@ -18,6 +18,7 @@
   const BUFFER = 600;
 
   const cur = $derived(store.current);
+  const curSession = $derived(currentSession());
   // This mount's session. A plain const, not the derived: at destroy the
   // derived re-reads store.current (already the next session), which made
   // the prune below a dead branch.
@@ -33,17 +34,17 @@
   let ref = $state<VirtualizerHandle | undefined>(undefined);
   let shouldStickToBottom = $state(true);
 
-  const entries = $derived(cur ? store.sessions[cur]!.entries : {});
+  const entries = $derived(curSession ? curSession.entries : {});
   // The pre-first-output window: a turn is dispatched but no stream/tool
   // event has landed yet. The animated dots sit at the tail of the track.
-  const awaiting = $derived(cur ? store.sessions[cur]!.turn === 'starting' : false);
+  const awaiting = $derived(curSession?.turn === 'starting');
   // A sub-agent notification's label: the child session's own title.
   const sourceLabelFor = (e: Entry): string =>
     e.kind === 'user' ? (e.source ? store.sessions[e.source]?.meta.title ?? '' : '') : '';
   // The parent → child direction: a user entry inside a child session is
   // the parent's message (task assignment, steering, follow-up).
   const parentLabel = $derived.by(() => {
-    const p = cur ? store.sessions[cur]?.meta.parent : null;
+    const p = curSession?.meta.parent ?? null;
     return p ? store.sessions[p]?.meta.title ?? '' : '';
   });
 

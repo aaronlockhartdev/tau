@@ -10,13 +10,15 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: (...args: unknown[]) => openFolder(...args) }));
 
-import { type Command, type CommandOutput, type SessionMeta, type LiveState, type Workspace } from './protocol';
+import { type Command, type CommandOutput, type FileEntry, type SessionMeta, type LiveState, type Workspace } from './protocol';
 import { openSession } from './sessions';
 import {
   applyEvents,
   closeWorkspace,
+  currentSession,
   deleteQueueItem,
   ensurePane,
+  fileCache,
   fetchWindow,
   init,
   newSession,
@@ -343,6 +345,32 @@ describe('deleteQueueItem', () => {
     await deleteQueueItem('a', 'steering', null, 0);
     expect(store.sessions['s1']!.pending).toHaveLength(0);
     expect(store.error).toBeNull();
+  });
+});
+
+describe('read facade (F2)', () => {
+  it('currentSession returns the current session', () => {
+    oneSession();
+    expect(currentSession()?.meta.id).toBe('s1');
+  });
+
+  it('currentSession is null with no current session', () => {
+    expect(currentSession()).toBeNull();
+  });
+
+  it('currentSession is null when the current id is not in the bag', () => {
+    store.current = 'ghost';
+    expect(currentSession()).toBeNull();
+  });
+
+  it('fileCache returns the workspace listing', () => {
+    const e: FileEntry = { name: 'a.txt', path: '.', dir: false, size: 3 };
+    store.files = { w1: { '.': [e] } };
+    expect(fileCache('w1')?.['.']).toEqual([e]);
+  });
+
+  it('fileCache is undefined for a missing workspace', () => {
+    expect(fileCache('nope')).toBeUndefined();
   });
 });
 

@@ -14,7 +14,7 @@
   // /model and /help): arrows navigate, Enter completes, Tab completes,
   // Esc dismisses; completion is plain text until send, and the /skill:
   // expansion happens at the message_send boundary, not here.
-  import { store, send, stop, type PendingMsg } from '../lib/store.svelte';
+  import { store, send, stop, currentSession, type PendingMsg } from '../lib/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
   import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';
 
@@ -27,23 +27,18 @@
     { id: 'follow-up', label: 'follow-up', title: 'deliver after the model finishes its turn' }
   ];
 
-  const running = $derived(
-    store.current
-      ? store.sessions[store.current]!.turn === 'running' ||
-          store.sessions[store.current]!.turn === 'starting'
-      : false
-  );
+  const cur = $derived(currentSession());
+  const running = $derived(cur?.turn === 'running' || cur?.turn === 'starting');
 
   let inputEl = $state<HTMLTextAreaElement | null>(null);
 
-  // The dropdown's data source: the current session's workspace skill
-  // registry (a disable-model-invocation skill is here too — the
-  // dropdown is its only door).
-  const cur = $derived(store.current ? store.sessions[store.current] : null);
   // A session archived while open keeps its transcript, but the composer
   // goes quiet: the core rejects sends to an archived session (ADR-0005),
   // so the input is replaced by a restore hint (dogfood B4).
   const archived = $derived(cur?.archived ?? false);
+  // The dropdown's data source: the current session's workspace skill
+  // registry (a disable-model-invocation skill is here too — the
+  // dropdown is its only door).
   const skills: SkillInfo[] = $derived.by(() => {
     const ws = cur?.meta.workspace;
     return ws ? (store.skills[ws] ?? []) : [];

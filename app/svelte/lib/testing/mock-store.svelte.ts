@@ -10,7 +10,7 @@
 import { vi } from 'vitest';
 import type { FilesCache } from '../files';
 import type { PaneState } from '../panes';
-import type { SkillInfo, SessionMeta, Workspace } from '../protocol';
+import type { FileEntry, SkillInfo, SessionMeta, Workspace } from '../protocol';
 import { makeStub, type SessionState } from '../sessions';
 
 export function paneDefault(): PaneState {
@@ -89,6 +89,15 @@ export function ensurePane(ws: string): PaneState {
   return store.pane[ws];
 }
 
+// Read facade (F2): mirrors the store's current-session / file-cache accessors.
+export function currentSession(): SessionState | null {
+  const c = store.current;
+  return c ? store.sessions[c] ?? null : null;
+}
+
+export function fileCache(ws: string): Record<string, FileEntry[]> | undefined {
+  return store.files[ws];
+}
 // Re-seed the same $state object in place (the mock factory runs once per
 // test file; a re-assignment would break the components' tracked references)
 // and clear the command fns.
