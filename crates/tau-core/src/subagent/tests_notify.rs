@@ -407,7 +407,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
 /// child's file stays task-free, and the parent's record carries the
 /// child's work, applied under the parent's own lock.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_childs_task_tools_route_to_the_parents_store() {
+async fn a_child_task_tools_route_to_the_parents_store() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
     store.create().unwrap();

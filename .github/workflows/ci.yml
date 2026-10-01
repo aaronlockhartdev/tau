@@ -56,6 +56,15 @@ jobs:
       - name: Supply chain
         run: cargo deny check
 
+  typos:
+    # Repo-wide spelling gate; pinned to the current release (crates.io
+    # typos-cli 1.50.3). No inputs needed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: crate-ci/typos@v1.50.3
+
   rust-coverage:
     # Report only — the 80% aim is a review-time standard, not a gate
     # (agreed phase-1 direction); --fail-under-lines is the one-flag upgrade.

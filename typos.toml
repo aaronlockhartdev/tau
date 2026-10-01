@@ -1,0 +1,26 @@
+# Spelling exceptions for the typos PR gate (`.github/workflows/ci.yml`).
+# Each entry is a false positive, not a blessed typo.
+
+[files]
+# Generated coverage report (committed artifact) — not source.
+extend-exclude = ["coverage/"]
+
+[default.extend-words]
+# The npm virtual-scroller package (docs + string literals).
+virtua = "virtua"
+Virtua = "Virtua"
+# Three-character test fixtures (partial command / entry text in test data).
+hel = "hel"
+# Valid word, used throughout the skills and entries test suites.
+unparseable = "unparseable"
+# "mis-" prefix in docs (mis-cites, mis-ordering).
+mis = "mis"
+# Intentional "mak[es]" in the Tauri research doc.
+mak = "mak"
+# Test-data string in the protocol fuzz vectors.
+FO = "FO"
+
+[default.extend-identifiers]
+# The npm virtual-scroller package (imports + component names).
+virtua = "virtua"
+Virtua = "Virtua"
