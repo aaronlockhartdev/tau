@@ -1,5 +1,5 @@
 //! The one real Tauri surface (G4): the command's managed-state wiring
-//! (the `CoreState` TypeId, spec §8), the `spawn_blocking` hop, and the
+//! (the `CoreState` `TypeId`, spec §8), the `spawn_blocking` hop, and the
 //! `JoinError → ProtocolError` mapping. `tauri::test` is marked unstable,
 //! so the suite is one test.
 

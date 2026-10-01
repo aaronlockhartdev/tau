@@ -12,6 +12,7 @@ use tau_protocol::snapshot::{EntryRange, Snapshot};
 use tau_protocol::{Command, CommandOutput};
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one end-to-end snapshot bound check; splitting is refactoring
 async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
     let tmp = tempfile::tempdir().unwrap();
     let mut providers = BTreeMap::new();
@@ -130,5 +131,5 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         other => panic!("expected entries: {other:?}"),
     };
     assert_eq!(entries.len(), 100);
-    assert!(!entries[0].payload.get("text").is_none());
+    assert!(entries[0].payload.get("text").is_some());
 }

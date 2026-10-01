@@ -24,5 +24,5 @@ fn main() {
         std::fs::remove_file(&e2e).expect("remove capabilities/e2e.json");
     }
 
-    tauri_build::build()
+    tauri_build::build();
 }
