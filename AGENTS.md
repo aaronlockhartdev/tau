@@ -37,6 +37,36 @@ Rules, not suggestions. Enforced in CI where mechanical, in review where not.
 
 **Doc comments** appear only on public API items whose contract is not self-evident from the signature — one line where possible, with a spec/ADR citation when a rule comes from one.
 
+## Best practices
+
+**Rust**
+- Conversions: `as_*` (free view), `to_*` (allocating/computing), `into_*` (consuming); single-value wrappers expose `into_inner()`.
+- Getters are bare names (`id()`); no `get_` prefix.
+- Every error type implements `std::error::Error` + `Display`; `Display` messages lowercase, concise, no trailing punctuation; `Result<T, ()>` is not an error design.
+- Types on a public surface (protocol payloads/events, `tau-core` public API) eagerly implement the common std traits that apply (`Debug`, `Clone`, `PartialEq`/`Eq`, `Hash`, `Default`).
+
+**Tauri**
+- `app.security.csp` must be a restrictive policy; `csp: null` is a violation.
+- Global state and business logic live in the core process; the frontend stays a thin renderer.
+- Commands are `async`; extract owned handles before any blocking/await work.
+- Errors cross IPC only as tagged serializable `ProtocolError`; no ad-hoc `String` paths.
+- High-frequency streams: coalesced `emit` batches or `Channel` — never a raw per-item loop.
+- Capabilities: individual `allow-*` grants; a `:default` set needs a reason in the file.
+- Adding a `#[tauri::command]` is a deliberate, reviewable decision (the command set is the IPC attack surface).
+- Window creation from async context only (dormant — single-window v0).
+- Everything across the IPC boundary is a typed protocol value; no raw `serde_json::Value`.
+- `withGlobalTauri: true` stays (tauri-pilot dependency) — documented, not a rule.
+
+**Svelte**
+- `$effect` is for the outside world only (DOM, timers, third-party libs, logging) — never for synchronising state; that is `$derived`. Reactive reads needed after an `await` are captured into a local before the `await`.
+- Shared state lives in `.svelte.ts` modules exporting an object binding; functions mutate internals, exports are never reassigned. No context, no `svelte/store`.
+- Components: snippets over `<slot>`; `onX` props over `on:`; every `$props()` destructure type-annotated.
+
+**TypeScript**
+- `tsconfig`: `strict` + `verbatimModuleSyntax` + `isolatedModules` + `noUncheckedIndexedAccess` + `noFallthroughCasesInSwitch`. (`exactOptionalPropertyTypes` deferred — protocol decision; `noUnusedLocals`/`noUnusedParameters` skipped — ESLint owns that rule.)
+
+Rationale and sources: `docs/research/refactor-{rust,tauri,svelte}.md`.
+
 ## Testing
 
 **Placement.** Rust: simple correctness tests colocate (`#[cfg(test)] mod tests` in the same file); tests that cross a module boundary live in the crate's `tests/` dir. TS: `*.test.ts` colocated next to the code.
