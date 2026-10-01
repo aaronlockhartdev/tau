@@ -254,7 +254,7 @@ impl AgentSession {
     /// A `/skill:` invocation expanded at the app's `message_send` boundary
     /// (ticket #28): `text` is already the expansion template; the payload
     /// carries the skill's identity for the GUI's block.
-    pub fn send_skill(&self, text: impl Into<String>, lane: Lane, name: &str, location: &str) {
+    pub(crate) fn send_skill(&self, text: impl Into<String>, lane: Lane, name: &str, location: &str) {
         let mut inner = self.inner.lock().unwrap();
         self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
@@ -275,7 +275,7 @@ impl AgentSession {
     /// A wake message with provenance (ticket #23): the child's result
     /// lands on the follow-up lane tagged with the child's session id, so
     /// the notification entry carries child provenance (ADR-0001).
-    pub fn send_notified(&self, text: impl Into<String>, source: String) {
+    pub(crate) fn send_notified(&self, text: impl Into<String>, source: String) {
         self.queue_notified(text, Lane::FollowUp, source)
     }
 
@@ -328,13 +328,13 @@ impl AgentSession {
     /// Mark the session closed: a one-way transition that interrupts the
     /// in-flight turn (set by `SessionClose`; unlike `stop`, a new send does
     /// not reset it).
-    pub fn mark_closed(&self) {
+    pub(crate) fn mark_closed(&self) {
         self.closed.store(true, Ordering::SeqCst);
     }
 
     /// The persistent stop flag (a forwarding seam can share it so one
     /// flag cuts at both the transport mirror and the loop sink).
-    pub fn stop_flag(&self) -> Arc<AtomicBool> {
+    pub(crate) fn stop_flag(&self) -> Arc<AtomicBool> {
         self.stop.clone()
     }
 
@@ -348,7 +348,7 @@ impl AgentSession {
     /// turn-starting send, the one the in-flight turn will deliver first.
     /// The harness uses it to decide whether a failed turn-start still has
     /// a pending message to surface in the queue's projection.
-    pub fn first_pending(&self) -> Option<(String, Lane)> {
+    pub(crate) fn first_pending(&self) -> Option<(String, Lane)> {
         self.inner
             .lock()
             .unwrap()
@@ -360,7 +360,7 @@ impl AgentSession {
     /// The session's pending messages as the GUI's queue shows them: a
     /// projection of the loop's queue (the single source of truth), taken
     /// at emit time — the GUI keeps no second ledger of its own.
-    pub fn queued_items(&self) -> Vec<tau_protocol::snapshot::QueuedItem> {
+    pub(crate) fn queued_items(&self) -> Vec<tau_protocol::snapshot::QueuedItem> {
         let inner = self.inner.lock().unwrap();
         inner
             .queue
@@ -374,20 +374,20 @@ impl AgentSession {
     }
 
     /// The child-side link (a child session's `parent_notify` routing).
-    pub fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
+    pub(crate) fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
         self.inner.lock().unwrap().child.clone()
     }
 
     /// This session's supervisor (None for a child session — children
     /// cannot spawn, so the supervisor is parent-side only).
-    pub fn subagents(&self) -> Option<Arc<crate::subagent::Supervisor>> {
+    pub(crate) fn subagents(&self) -> Option<Arc<crate::subagent::Supervisor>> {
         self.inner.lock().unwrap().subagents.clone()
     }
 
     /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
     /// the parent session's raw history (a compacted child's frozen prefix
     /// points there); everything else is this session's own log.
-    pub fn recall_scoped(&self, args: &Value) -> String {
+    pub(crate) fn recall_scoped(&self, args: &Value) -> String {
         if args.get("scope").and_then(Value::as_str) == Some("parent") {
             let (link, cwd) = {
                 let inner = self.inner.lock().unwrap();
@@ -424,7 +424,7 @@ impl AgentSession {
 
     /// The parent's task-routing target (child sessions only): set at
     /// spawn from the supervisor's attached parent.
-    pub fn set_parent_task_store(&self, parent: Option<Weak<AgentSession>>) {
+    pub(crate) fn set_parent_task_store(&self, parent: Option<Weak<AgentSession>>) {
         self.inner.lock().unwrap().parent_task_store = parent;
     }
 
@@ -461,21 +461,21 @@ impl AgentSession {
         self.task_tool_dispatch(&tc.name, &tc.args)
     }
     /// The session store's header timestamp (epoch ms).
-    pub fn store_created(&self) -> u64 {
+    pub(crate) fn store_created(&self) -> u64 {
         self.inner.lock().unwrap().store.created()
     }
 
     /// Run one operation against this session's own store — the
     /// single-writer surface for other components (the sub-agent task
     /// gate, the app's task commands; review B3).
-    pub fn with_task_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
+    pub(crate) fn with_task_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
         let mut inner = self.inner.lock().unwrap();
         f(&mut inner.store)
     }
 
     /// The seven task tools (the app's task commands; the model's dispatch
     /// uses `task_tool`) — both share the child→parent routing.
-    pub fn task_tool_call(&self, name: &str, args: &Value) -> String {
+    pub(crate) fn task_tool_call(&self, name: &str, args: &Value) -> String {
         self.task_tool_dispatch(name, args)
     }
 
@@ -495,7 +495,7 @@ impl AgentSession {
 
     #[cfg(test)]
     /// Test-only OM state injection (the sub-agent module's tests).
-    pub fn set_om(&self, om: Option<crate::om_integration::OmState>) {
+    pub(crate) fn set_om(&self, om: Option<crate::om_integration::OmState>) {
         self.inner.lock().unwrap().om = om;
     }
 
@@ -521,37 +521,37 @@ impl AgentSession {
 
     /// The session's model for the next turn's calls (the `session_set_model`
     /// command's live half; provider resolution happens at the call).
-    pub fn set_model(&self, model: String) {
+    pub(crate) fn set_model(&self, model: String) {
         self.inner.lock().unwrap().model = model;
     }
 
     /// The turn's provider options (spec §12, #35): re-derived when the
     /// session's model changes, so clamping and reasoning levels track the
     /// active model.
-    pub fn set_turn_config(&self, turn: TurnConfig) {
+    pub(crate) fn set_turn_config(&self, turn: TurnConfig) {
         self.inner.lock().unwrap().turn = turn;
     }
 
     /// Append a record entry against the active leaf (the sub-agent
     /// lifecycle records, ticket #23).
-    pub fn append_entry(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
+    pub(crate) fn append_entry(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
         self.append(kind, payload)
     }
 
-    pub fn model(&self) -> String {
+    pub(crate) fn model(&self) -> String {
         self.inner.lock().unwrap().model.clone()
     }
 
-    pub fn tools(&self) -> Vec<ToolSpec> {
+    pub(crate) fn tools(&self) -> Vec<ToolSpec> {
         self.inner.lock().unwrap().tools.clone()
     }
 
-    pub fn system_prompt(&self) -> String {
+    pub(crate) fn system_prompt(&self) -> String {
         self.inner.lock().unwrap().system_prompt.clone()
     }
 
     /// The session's OM state (ticket #22); `None` = OM disabled.
-    pub fn om_state(&self) -> Option<crate::om_integration::OmState> {
+    pub(crate) fn om_state(&self) -> Option<crate::om_integration::OmState> {
         self.inner.lock().unwrap().om.clone()
     }
 }
