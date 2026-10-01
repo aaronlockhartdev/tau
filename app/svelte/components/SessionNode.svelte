@@ -15,6 +15,7 @@
     type SessionState
   } from '../lib/store.svelte';
   import { groupIsOpen } from '../lib/sessions';
+  import { nextSelection } from '../lib/selection';
   import { tick } from 'svelte';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -24,15 +25,15 @@
     depth = 0,
     ws,
     sessions,
-    rangeBetween
+    visibleIds
   }: {
     session: SessionState;
     depth?: number;
     ws: string;
     sessions: SessionState[];
-    // The visible-order range helper (the left pane owns the flat order
-    // a shift range spans).
-    rangeBetween: (a: string, b: string) => string[];
+    // The visible row order (the left pane owns the flat order a shift
+    // range spans).
+    visibleIds: string[];
   } = $props();
 
   const active = $derived(store.current ? store.sessions[store.current] : null);
@@ -67,20 +68,17 @@
     const q = pane(ws);
     if (!q) return;
     const id = session.meta.id;
-    if (e.shiftKey) {
-      const anchor = q.selAnchor ?? q.selected[0] ?? id;
-      q.selected = rangeBetween(anchor, id);
-      return;
-    }
-    if (e.metaKey || e.ctrlKey) {
-      q.selected = q.selected.includes(id)
-        ? q.selected.filter((x) => x !== id)
-        : [...q.selected, id];
-      q.selAnchor = id;
-      return;
-    }
-    q.selected = [];
+    // The tree selects just the clicked row when a shift anchor is stale;
+    // for that fallback the rule never returns null.
+    q.selected =
+      nextSelection(visibleIds, q.selected, q.selAnchor, id, {
+        shift: e.shiftKey,
+        multi: e.metaKey || e.ctrlKey,
+        shiftFallback: 'clicked'
+      }) ?? [id];
+    if (e.shiftKey) return;
     q.selAnchor = id;
+    if (e.metaKey || e.ctrlKey) return;
     if (session.archived) return;
     void openSessionById(id);
   }
@@ -292,7 +290,7 @@
 {#if kids.length > 0 && groupOpen(session.meta.id)}
   <div class="kids">
     {#each kids as c (c.meta.id)}
-      <SessionNode session={c} depth={depth + 1} ws={ws} sessions={sessions} rangeBetween={rangeBetween} />
+      <SessionNode session={c} depth={depth + 1} ws={ws} sessions={sessions} visibleIds={visibleIds} />
     {/each}
   </div>
 {/if}

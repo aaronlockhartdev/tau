@@ -50,13 +50,6 @@
     if (q?.archOpen) walk(archived.map((s) => s.meta.id));
     return out;
   });
-  function rangeBetween(a: string, b: string): string[] {
-    const o = visibleIds;
-    const i = o.indexOf(a);
-    const j = o.indexOf(b);
-    if (i === -1 || j === -1) return [b];
-    return o.slice(Math.min(i, j), Math.max(i, j) + 1);
-  }
 
   // Click-away: a click that lands outside every session row clears the
   // selection (document-level, so no static element takes a handler).
@@ -118,7 +111,7 @@
             <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
             {#each top as s (s.meta.id)}
-              <SessionNode session={s} ws={ws} sessions={sessions} rangeBetween={rangeBetween} />
+              <SessionNode session={s} ws={ws} sessions={sessions} visibleIds={visibleIds} />
             {/each}
           {/if}
         </div>
@@ -129,7 +122,7 @@
           </button>
           {#if p.archOpen}
             {#each archived as s (s.meta.id)}
-              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} rangeBetween={rangeBetween} />
+              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} visibleIds={visibleIds} />
             {/each}
           {/if}
         </div>

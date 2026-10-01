@@ -1,6 +1,8 @@
 // The pane view state (spec §9) and the tab-strip multiselect (B2): the
 // store keeps the state, this module owns the pure rules over it.
 
+import { nextSelection } from './selection';
+
 export interface PaneState {
   ltab: 'files' | 'sessions';
   rtab: 'tasks' | 'subs';
@@ -47,28 +49,20 @@ export interface TabSelection {
   anchor: string | null;
 }
 
-// The tab strip's multiselect (B2): cmd/ctrl toggles a tab in and out,
-// shift spans from the anchor in tab order, a plain click clears the
-// selection (the caller then activates the tab).
+// The tab strip's multiselect (B2): a thin adapter over nextSelection —
+// the shared rule; the tab strip keeps the selection (and returns the
+// same object) when a shift anchor is stale.
 export function applyTabSelect(
   prev: TabSelection,
   workspaceIds: string[],
   ws: string,
   e: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean }
 ): TabSelection {
-  if (e.shiftKey) {
-    const anchor = prev.anchor ?? prev.selected[0] ?? ws;
-    const a = workspaceIds.indexOf(anchor);
-    const b = workspaceIds.indexOf(ws);
-    if (a < 0 || b < 0) return prev;
-    const [lo, hi] = a < b ? [a, b] : [b, a];
-    return { selected: workspaceIds.slice(lo, hi + 1), anchor: prev.anchor };
-  }
-  if (e.metaKey || e.ctrlKey) {
-    const selected = prev.selected.includes(ws)
-      ? prev.selected.filter((x) => x !== ws)
-      : [...prev.selected, ws];
-    return { selected, anchor: ws };
-  }
-  return { selected: [], anchor: ws };
+  const selected = nextSelection(workspaceIds, prev.selected, prev.anchor, ws, {
+    shift: e.shiftKey,
+    multi: e.metaKey || e.ctrlKey,
+    shiftFallback: 'keep'
+  });
+  if (selected === null) return prev;
+  return { selected, anchor: e.shiftKey ? prev.anchor : ws };
 }

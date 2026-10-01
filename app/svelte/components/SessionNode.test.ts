@@ -43,8 +43,8 @@ function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
-// The visible-order range helper: inclusive, in the given order.
-const rangeBetween = (a: string, b: string): string[] => (a === b ? [a] : [a, b]);
+// The visible row order the shift range spans.
+const visibleIds = ['s1'];
 
 type SeedOver = {
   sessions?: Record<string, SessionState>;
@@ -70,7 +70,7 @@ async function mount(
       depth: props.depth ?? 0,
       ws: WS,
       sessions: props.sessions ?? [node],
-      rangeBetween
+      visibleIds
     }
   });
   await tick();
