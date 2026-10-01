@@ -108,7 +108,7 @@ function checkDogfood() {
 
 function checkMockScenarios() {
   for (const [file, pinned] of Object.entries(MOCK_SCENARIOS)) {
-  const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'e2e-mocks', file))).digest('hex');
+    const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'e2e-mocks', file))).digest('hex');
     if (sha !== pinned) throw new Error(`mock scenario drifted: ${file}`);
   }
 }
