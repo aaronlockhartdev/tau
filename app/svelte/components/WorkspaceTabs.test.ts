@@ -110,7 +110,7 @@ describe('WorkspaceTabs', () => {
 
   it('right-click opens an archive menu for the single tab', async () => {
     render(WorkspaceTabs);
-    fireEvent.contextMenu(screen.getByText('alpha'));
+    await fireEvent.contextMenu(screen.getByText('alpha'));
     expect(screen.getByRole('menu')).toHaveTextContent('archive');
     await userEvent.click(screen.getByRole('menuitem'));
     expect(closeWorkspaces).toHaveBeenCalledWith([W1]);
@@ -120,18 +120,18 @@ describe('WorkspaceTabs', () => {
   it('right-clicking a selected tab archives the whole selection', async () => {
     seed({ tabSelected: ['w1', 'w2'] });
     render(WorkspaceTabs);
-    fireEvent.contextMenu(screen.getByText('alpha'));
+    await fireEvent.contextMenu(screen.getByText('alpha'));
     expect(screen.getByRole('menuitem')).toHaveTextContent('archive (2)');
     await userEvent.click(screen.getByRole('menuitem'));
     expect(closeWorkspaces).toHaveBeenCalledWith([W1, W2]);
   });
 
-  it('Escape clears the selection and closes the menu', () => {
+  it('Escape clears the selection and closes the menu', async () => {
     seed({ tabSelected: ['w1'] });
     render(WorkspaceTabs);
-    fireEvent.contextMenu(screen.getByText('alpha'));
+    await fireEvent.contextMenu(screen.getByText('alpha'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: 'Escape' });
+    await fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
     expect(mockStore.tabSelected).toEqual([]);
   });

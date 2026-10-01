@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 const { openFolder } = vi.hoisted(() => ({ openFolder: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: (...args: unknown[]) => openFolder(...args) }));
 
 import { type Command, type CommandOutput, type SessionMeta, type LiveState, type Workspace } from './protocol';
@@ -140,7 +140,7 @@ beforeEach(() => {
   freshStore();
   mockInvoke.mockReset();
   openFolder.mockReset();
-  mockInvoke.mockImplementation(async () => ({ kind: 'none' as const }));
+  mockInvoke.mockImplementation(() => Promise.resolve({ kind: 'none' as const }));
 });
 
 describe('send / stop guards', () => {
@@ -384,9 +384,9 @@ describe('the open_folder_requested listener (File → Open Folder…)', () => {
     let folderHandler: ((e: unknown) => Promise<void>) | null = null;
     // Tauri types the listener callback void-returning, but the app registers an
     // async handler — the capture site needs the double cast.
-    mockListen.mockImplementation(async (topic, handler) => {
+    mockListen.mockImplementation((topic, handler) => {
       if (topic === 'open_folder_requested') folderHandler = handler as unknown as (e: unknown) => Promise<void>;
-      return () => {};
+      return Promise.resolve(() => {});
     });
     openFolder.mockResolvedValue('/picked/dir');
     mockIPC((cmd) => {
@@ -417,9 +417,9 @@ describe('the open_folder_requested listener (File → Open Folder…)', () => {
     const { listen } = await import('@tauri-apps/api/event');
     const mockListen = vi.mocked(listen);
     let folderHandler: ((e: unknown) => Promise<void>) | null = null;
-    mockListen.mockImplementation(async (topic, handler) => {
+    mockListen.mockImplementation((topic, handler) => {
       if (topic === 'open_folder_requested') folderHandler = handler as unknown as (e: unknown) => Promise<void>;
-      return () => {};
+      return Promise.resolve(() => {});
     });
     openFolder.mockResolvedValue(null);
     defaultIPC();
@@ -472,7 +472,7 @@ describe('system workspace_opened (syncWorkspaces, live boot rule)', () => {
 });
 
 describe('the dev seam (window.__tau)', () => {
-  it('exposes applyEvents, the store and the command helpers', async () => {
+  it('exposes applyEvents, the store and the command helpers', () => {
     const { applyEvents: seamApply, store: seamStore, send: seamSend, stop: seamStop, openWorkspace: seamOpen, closeWorkspace: seamClose, switchSession: seamSwitch, fetchWindow: seamFetch, sessionSetModel } =
       (window as unknown as {
         __tau: {
@@ -498,7 +498,7 @@ describe('the dev seam (window.__tau)', () => {
     expect(typeof sessionSetModel).toBe('function');
   });
 
-  it('omStatus applies an om_status event for the current session', async () => {
+  it('omStatus applies an om_status event for the current session', () => {
     oneSession();
     const { omStatus } = (window as unknown as { __tau: { omStatus: (k: 'observing' | 'reflecting' | 'idle') => void } })
       .__tau;

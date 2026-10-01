@@ -68,6 +68,10 @@ export function valueLinesOf(v: unknown, depth: number): string[] {
   return [String(v)];
 }
 
+function scalarText(v: unknown): string {
+  return typeof v === 'string' ? v : String(v);
+}
+
 function objLines(o: Record<string, unknown>, depth: number): string[] {
   const out: string[] = [];
   for (const [k, v] of Object.entries(o)) {
@@ -75,7 +79,7 @@ function objLines(o: Record<string, unknown>, depth: number): string[] {
       out.push(bullet(depth, `${k}:`));
       out.push(...valueLinesOf(v, depth + 1));
     } else {
-      out.push(bullet(depth, `${k}: ${v === null ? '' : String(v)}`));
+      out.push(bullet(depth, `${k}: ${v === null ? '' : scalarText(v)}`));
     }
   }
   return out;
@@ -92,7 +96,7 @@ function itemLines(o: Record<string, unknown>, depth: number): string[] {
     const rest = Object.entries(o).filter(([k, v]) => k !== headKey && v !== null);
     const tail = rest
       .filter(([, v]) => typeof v !== 'object')
-      .map(([k, v]) => `${k}: ${v}`)
+      .map(([k, v]) => `${k}: ${scalarText(v)}`)
       .join(', ');
     return [bullet(depth, tail ? `${head} — ${tail}` : head)];
   }

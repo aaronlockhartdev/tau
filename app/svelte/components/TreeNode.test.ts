@@ -51,7 +51,7 @@ describe('TreeNode', () => {
     render(TreeNodeFixture, { props: { text: 'a', onRow } });
     await user.click(screen.getByText('a'));
     expect(onRow).toHaveBeenCalledTimes(1);
-    expect(onRow.mock.calls[0]![0]).toBeInstanceOf(MouseEvent);
+    expect(onRow.mock.calls[0][0]).toBeInstanceOf(MouseEvent);
   });
 
   it('a double click calls onRowDbl', async () => {
@@ -80,24 +80,24 @@ describe('TreeNode', () => {
     expect(onRow).not.toHaveBeenCalled();
   });
 
-  it('Enter routes to onRow when present', () => {
+  it('Enter routes to onRow when present', async () => {
     const onRow = vi.fn();
     render(TreeNodeFixture, { props: { text: 'a', onRow } });
-    fireEvent.keyDown(document.querySelector('.trow')!, { key: 'Enter' });
+    await fireEvent.keyDown(document.querySelector('.trow')!, { key: 'Enter' });
     expect(onRow).toHaveBeenCalledTimes(1);
   });
 
-  it('Enter routes to onToggle when there is no onRow', () => {
+  it('Enter routes to onToggle when there is no onRow', async () => {
     const onToggle = vi.fn();
     render(TreeNodeFixture, { props: { text: 'a', expanded: false, onToggle } });
-    fireEvent.keyDown(document.querySelector('.trow')!, { key: ' ' });
+    await fireEvent.keyDown(document.querySelector('.trow')!, { key: ' ' });
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it('a context menu calls onContext', () => {
+  it('a context menu calls onContext', async () => {
     const onContext = vi.fn();
     render(TreeNodeFixture, { props: { text: 'a', onContext } });
-    fireEvent.contextMenu(document.querySelector('.trow')!);
+    await fireEvent.contextMenu(document.querySelector('.trow')!);
     expect(onContext).toHaveBeenCalledTimes(1);
   });
 });

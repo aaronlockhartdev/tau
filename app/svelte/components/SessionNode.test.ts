@@ -186,7 +186,7 @@ describe('SessionNode', () => {
 
   it('right-click offers archive for a live row', async () => {
     await mount(seed());
-    fireEvent.contextMenu(rowOf('s1'));
+    await fireEvent.contextMenu(rowOf('s1'));
     expect(screen.getByRole('menuitem')).toHaveTextContent('archive');
     await userEvent.click(screen.getByRole('menuitem'));
     expect(archiveSession).toHaveBeenCalledWith('s1');
@@ -197,7 +197,7 @@ describe('SessionNode', () => {
     const s = seed();
     s.archived = true;
     await mount(s);
-    fireEvent.contextMenu(rowOf('s1'));
+    await fireEvent.contextMenu(rowOf('s1'));
     const items = screen.getAllByRole('menuitem').map((el) => el.textContent);
     expect(items).toEqual(expect.arrayContaining(['restore', 'delete']));
     await userEvent.click(screen.getByRole('menuitem', { name: 'restore' }));
@@ -209,7 +209,7 @@ describe('SessionNode', () => {
     const s1 = seed({ sessions: { s1: seedState(meta('s1')), s2 } });
     mockStore.pane[WS].selected = ['s1', 's2'];
     await mount(s1, { sessions: [s1, s2] });
-    fireEvent.contextMenu(rowOf('s1'));
+    await fireEvent.contextMenu(rowOf('s1'));
     expect(screen.getByRole('menuitem')).toHaveTextContent('archive (2)');
     await userEvent.click(screen.getByRole('menuitem'));
     expect(archiveSession).toHaveBeenCalledWith('s1');
@@ -231,9 +231,9 @@ describe('SessionNode', () => {
 
   it('Escape closes the context menu', async () => {
     await mount(seed());
-    fireEvent.contextMenu(rowOf('s1'));
+    await fireEvent.contextMenu(rowOf('s1'));
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    fireEvent.keyDown(document, { key: 'Escape' });
+    await fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
@@ -241,7 +241,7 @@ describe('SessionNode', () => {
     const s = seed();
     s.archived = true;
     await mount(s);
-    fireEvent.contextMenu(rowOf('s1'));
+    await fireEvent.contextMenu(rowOf('s1'));
     await userEvent.click(screen.getByRole('menuitem', { name: 'delete' }));
     expect(deleteSession).toHaveBeenCalledWith(WS, 's1');
   });

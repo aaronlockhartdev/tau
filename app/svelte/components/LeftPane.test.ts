@@ -90,7 +90,7 @@ describe('LeftPane', () => {
     await userEvent.click(note);
     expect(retryDirFetch).toHaveBeenCalledWith(WS, '.');
     retryDirFetch.mockClear();
-    fireEvent.keyDown(note, { key: 'Enter' });
+    await fireEvent.keyDown(note, { key: 'Enter' });
     expect(retryDirFetch).toHaveBeenCalledWith(WS, '.');
   });
 
@@ -145,7 +145,7 @@ describe('LeftPane', () => {
     await mount();
     const q = mockStore.pane[WS];
     q.selected = ['s1'];
-    fireEvent.click(document.body);
+    await fireEvent.click(document.body);
     expect(q.selected).toEqual([]);
   });
 

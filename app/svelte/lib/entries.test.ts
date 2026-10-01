@@ -128,7 +128,7 @@ describe('resolveBlobs (om)', () => {
       blob: { id: '00000063', size: 218_000, hash: '0'.repeat(16) },
       first_kept: null
     };
-    const views = await resolveBlobs([v], async () => ({
+    const views = await resolveBlobs([v], () => Promise.resolve({
       active_observations: 'the observation text'
     }));
     const e = decodeEntry(views[0]) as { kind: string; text: string };

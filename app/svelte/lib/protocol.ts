@@ -462,13 +462,13 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 
 export async function command(cmd: Command): Promise<CommandOutput> {
   try {
-    return (await invoke<CommandOutput>('tau_command', { command: cmd })) as CommandOutput;
+    return await invoke<CommandOutput>('tau_command', { command: cmd });
   } catch (e) {
     // The Rust side rejects with the deserialized ProtocolError: a plain
     // object carrying message (other/unsupported) or what (not_found) —
     // neither stringifies to anything useful on its own.
     const o = e as { message?: string; what?: string } | string;
-    const msg = typeof o === 'string' ? o : o?.message ?? o?.what ?? String(o);
+    const msg = typeof o === 'string' ? o : o?.message ?? o?.what ?? JSON.stringify(o);
     throw new Error(msg, { cause: e });
   }
 }

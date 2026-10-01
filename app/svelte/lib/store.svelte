@@ -62,6 +62,7 @@
     workspaces: [] as Workspace[],
     current: null as string | null,
     tailJump: 0,
+    /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion -- the $state generic accepts the bare literal; the casts pin the inferred type ({} → Record<...>) */
     sessions: {} as Record<string, SessionState>,
     loading: false,
     error: null as string | null,
@@ -83,6 +84,7 @@
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>,
+    /* eslint-enable @typescript-eslint/no-unnecessary-type-assertion */
     // The tab strip's multiselect (B2): the pane's session-select shape
     // (PaneState's selected/selAnchor), but global — a selection can span
     // tabs of several workspaces, so it keys on nothing.
@@ -151,17 +153,20 @@
       // File → Open Folder… (native menu, ticket #29 B1): the picker runs
       // the dialog plugin's proven path (incl. scope handling); the store
       // just opens the result as a workspace.
-      void listen('open_folder_requested', async () => {
+      void listen('open_folder_requested', () => {
+        void openFolderFlow();
+      });
+      async function openFolderFlow() {
         try {
           const picked = await pickDirectory({ directory: true, multiple: false });
           const dir = Array.isArray(picked) ? picked[0] : picked;
           if (typeof dir !== 'string' || dir === '') return;
           const name = dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
-          openWorkspace({ id: '', name, cwd: dir });
+          void openWorkspace({ id: '', name, cwd: dir });
         } catch (e) {
           store.error = errText(e);
         }
-      });
+      }
       const out = await command({ type: 'workspace_list' });
       if (out.kind !== 'workspaces') throw new Error('unexpected workspace_list output');
       store.workspaces = out.workspaces;
@@ -262,7 +267,7 @@
     // The pane's first listing (ticket #32): the root, listed on open —
     // every other dir is fetched on expansion.
     store.files = ensureWorkspace(store.files, real.id);
-    fetchDir(real.id, '.');
+    void fetchDir(real.id, '.');
     // Archived sessions are listed (for the archive folder) but can't be
     // opened; auto-open the most recent live one, else start a fresh session.
     const unarchived =

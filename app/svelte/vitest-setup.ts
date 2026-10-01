@@ -14,5 +14,5 @@ if (!('ResizeObserver' in globalThis)) {
     unobserve(): void {}
     disconnect(): void {}
   }
-  globalThis.ResizeObserver = RO as unknown as typeof ResizeObserver;
+  globalThis.ResizeObserver = RO;
 }

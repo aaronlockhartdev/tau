@@ -30,14 +30,79 @@ export default [
     ]
   },
   js.configs.recommended,
-  ...tseslint.configs.recommended,
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    // Wave rule (phase 2 section 0): >50 findings, dropped. The bulk is
+    // .svelte importing .svelte — a module form TypeScript cannot resolve.
+    rules: {
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off'
+    }
+  },
+  {
+    // .svelte script blocks that import other .svelte files: TypeScript
+    // cannot resolve those modules, so the imported values are error-typed
+    // and these two rules only report that artifact where it hits.
+    // The store test files consume store.svelte's named exports directly.
+    files: [
+      '**/*.svelte',
+      'svelte/lib/store.svelte.test.ts',
+      'svelte/lib/store.window.test.ts',
+      'svelte/lib/store.commands.test.ts',
+      'svelte/lib/store.sessions.test.ts'
+    ],
+    rules: {
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-redundant-type-constituents': 'off'
+    }
+  },
+  {
+    // Type-aware rules need parser services: the project service resolves
+    // each file's tsconfig (v8 has no default for it).
+    files: ['**/*.ts'],
+    languageOptions: { parserOptions: { projectService: true } }
+  },
   ...sveltePlugin.configs['flat/recommended'],
+  {
+    // The type-checked preset applies to every file, but the .mjs config
+    // files have no type information — the typed rules crash on them, so
+    // the typed subset is off there (the untyped rules still apply).
+    files: ['**/*.mjs'],
+    rules: {
+      '@typescript-eslint/await-thenable': 'off',
+      '@typescript-eslint/no-array-delete': 'off',
+      '@typescript-eslint/no-base-to-string': 'off',
+      '@typescript-eslint/no-duplicate-type-constituents': 'off',
+      '@typescript-eslint/no-floating-promises': 'off',
+      '@typescript-eslint/no-for-in-array': 'off',
+      '@typescript-eslint/no-implied-eval': 'off',
+      '@typescript-eslint/no-misused-promises': 'off',
+      '@typescript-eslint/no-redundant-type-constituents': 'off',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-enum-comparison': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-unary-minus': 'off',
+      '@typescript-eslint/only-throw-error': 'off',
+      '@typescript-eslint/prefer-promise-reject-errors': 'off',
+      '@typescript-eslint/require-await': 'off',
+      '@typescript-eslint/restrict-plus-operands': 'off',
+      '@typescript-eslint/restrict-template-expressions': 'off',
+      '@typescript-eslint/unbound-method': 'off'
+    }
+  },
   {
     files: ['**/*.svelte', '**/*.svelte.js', '**/*.svelte.ts'],
     languageOptions: {
       globals: globals.browser,
       parser: svelteParser,
       parserOptions: {
+        projectService: true,
         parser: tseslint.parser,
         extraFileExtensions: ['.svelte'],
         svelteConfig

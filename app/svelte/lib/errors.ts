@@ -10,7 +10,8 @@ export function errText(e: unknown): string {
     try {
       return JSON.stringify(e);
     } catch {
-      return String(e);
+      const last: unknown = e;
+      return String(last);
     }
   }
   return String(e);

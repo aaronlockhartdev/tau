@@ -64,7 +64,7 @@ export const openWorkspace = vi.fn(async () => {});
 export const closeWorkspace = vi.fn(async () => {});
 export const closeWorkspaces = vi.fn(async () => {});
 export const tabSelect = vi.fn();
-export const newSession = vi.fn(async () => null);
+export const newSession = vi.fn(() => Promise.resolve(null));
 export const openSessionById = vi.fn(async () => {});
 export const renameSession = vi.fn(async () => {});
 export const archiveSession = vi.fn(async () => {});

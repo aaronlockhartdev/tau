@@ -9,7 +9,7 @@ import ModelMenu from './ModelMenu.svelte';
 import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/mock-store.svelte.ts';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) as Promise<unknown> }));
 vi.mock('../lib/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
@@ -46,7 +46,7 @@ function mockIPC(handler: (cmd: Command) => CommandOutput | Promise<CommandOutpu
 beforeEach(() => {
   resetMockStore();
   mockInvoke.mockReset();
-  mockInvoke.mockImplementation(async () => ({ kind: 'none' as const }));
+  mockInvoke.mockImplementation(() => Promise.resolve({ kind: 'none' as const }));
   mockStore.sessions = { s1: seedState(meta('s1', 'dev/qwen3.8')) };
   mockStore.current = 's1';
 });
@@ -93,7 +93,7 @@ describe('ModelMenu', () => {
     });
     render(ModelMenu);
     await screen.findByText('openrouter');
-    fireEvent.keyDown(window, { key: 'Escape' });
+    await fireEvent.keyDown(window, { key: 'Escape' });
     expect(mockStore.modelMenuOpen).toBe(false);
   });
 
@@ -104,7 +104,7 @@ describe('ModelMenu', () => {
     });
     render(ModelMenu);
     await screen.findByText('openrouter');
-    fireEvent.click(document.querySelector('.scrim')!);
+    await fireEvent.click(document.querySelector('.scrim')!);
     expect(mockStore.modelMenuOpen).toBe(false);
   });
 

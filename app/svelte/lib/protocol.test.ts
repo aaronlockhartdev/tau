@@ -5,8 +5,8 @@ const { mockInvoke, mockListen } = vi.hoisted(() => ({
   mockInvoke: vi.fn(),
   mockListen: vi.fn()
 }));
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: (...args: unknown[]) => mockListen(...args) }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) as Promise<unknown> }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: (...args: unknown[]) => mockListen(...args) as Promise<() => void> }));
 
 import { command, isTauri, onEvents, type Command } from './protocol';
 
@@ -42,7 +42,7 @@ describe('command', () => {
 
   it('stringifies a rejection with neither field', async () => {
     mockInvoke.mockRejectedValue({ code: 7 });
-    await expect(command({ type: 'workspace_list' })).rejects.toThrow('[object Object]');
+    await expect(command({ type: 'workspace_list' })).rejects.toThrow('{"code":7}');
   });
 });
 
@@ -52,13 +52,13 @@ describe('onEvents', () => {
     mockListen.mockImplementation((topic: string, handler: (e: { payload: unknown[] }) => void) => {
       expect(topic).toBe('tau://event');
       cb = (events) => handler({ payload: events });
-      return async () => {};
+      return () => {};
     });
     const got: unknown[] = [];
     const unlisten = await onEvents((evts) => got.push(...evts));
     cb!([{ type: 'system', workspace: 'w', session: null, kind: { kind: 'provider_changed' } }]);
     expect(got).toHaveLength(1);
-    await unlisten();
+    unlisten();
   });
 });
 

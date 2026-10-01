@@ -9,5 +9,5 @@
     "types": [],
     "allowImportingTsExtensions": true
   },
-  "include": ["svelte/**/*.ts", "svelte/**/*.svelte"]
+  "include": ["svelte/**/*.ts", "svelte/**/*.svelte", "vite.config.ts"]
 }

@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
-vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }));
-vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(async () => null) }));
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 
 import type { Command, CommandOutput, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from './protocol';
 import { applySessionList, openSession } from './sessions';
@@ -84,7 +84,7 @@ beforeEach(() => {
   freshStore();
   mockInvoke.mockReset();
   // A safe no-op default; tests that expect a specific route override it.
-  mockInvoke.mockImplementation(async () => ({ kind: 'none' as const }));
+  mockInvoke.mockImplementation(() => Promise.resolve({ kind: 'none' as const }));
   vi.useRealTimers();
 });
 
