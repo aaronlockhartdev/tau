@@ -70,7 +70,7 @@ describe('scrollFetches (hysteresis + mid-turn union)', () => {
   });
 });
 
-describe('openFetches (open-tail + mid-turn union)', () => {
+describe('openFetches (open-tail, one-shot, mid-turn union)', () => {
   it('fetches the tail: the last OPEN_TAIL entries', () => {
     const st = makeWindowingState();
     expect(openFetches(st, 'c', 30, 'idle')).toEqual([{ session: 'c', start: 10, count: 20 }]);
@@ -95,6 +95,33 @@ describe('openFetches (open-tail + mid-turn union)', () => {
     const st = makeWindowingState();
     openFetches(st, 'c', 30, 'idle');
     expect(st.duringTurn.get('c')).toBeUndefined();
+  });
+
+  it('does not re-issue on a re-fire for the same session (one-shot)', () => {
+    const st = makeWindowingState();
+    openFetches(st, 'c', 30, 'idle');
+    expect(openFetches(st, 'c', 30, 'idle')).toEqual([]);
+  });
+
+  it('unions on a same-session re-fire while a turn runs, without re-issuing', () => {
+    const st = makeWindowingState();
+    openFetches(st, 'c', 30, 'idle');
+    expect(openFetches(st, 'c', 31, 'starting')).toEqual([]);
+    // the union widens from the empty {0,0} default
+    expect(st.duringTurn.get('c')).toEqual({ start: 0, end: 31 });
+  });
+
+  it('issues its own tail for a different session', () => {
+    const st = makeWindowingState();
+    openFetches(st, 'c', 30, 'idle');
+    expect(openFetches(st, 'd', 10, 'idle')).toEqual([{ session: 'd', start: 0, count: 10 }]);
+  });
+
+  it('a dropped flag re-arms the one-shot (a closed session reopens)', () => {
+    const st = makeWindowingState();
+    openFetches(st, 'c', 30, 'idle');
+    st.openedFor = null;
+    expect(openFetches(st, 'c', 30, 'idle')).toEqual([{ session: 'c', start: 10, count: 20 }]);
   });
 });
 

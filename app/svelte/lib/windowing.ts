@@ -21,10 +21,12 @@ export type TurnState = 'idle' | 'starting' | 'running';
 export interface WindowingState {
   lastFetched: Map<string, Range>;
   duringTurn: Map<string, Range>;
+  // The session the open-tail page was issued for: the one-shot guard (#42).
+  openedFor: string | null;
 }
 
 export function makeWindowingState(): WindowingState {
-  return { lastFetched: new Map(), duringTurn: new Map() };
+  return { lastFetched: new Map(), duringTurn: new Map(), openedFor: null };
 }
 
 // Hysteresis margin (≈ one 600px buffer of 120px cards): a scroll only
@@ -61,9 +63,11 @@ export function scrollFetches(
   return [{ session, start: visible.start, count: visible.end - visible.start }];
 }
 
-// A session opens pinned at its tail: the first page is the tail (one-shot per
-// open; the caller guards the re-fire). While a turn is in flight, the tail
-// range is unioned into the mid-turn set.
+// A session opens pinned at its tail: the first page is the tail. One-shot
+// per session (#42): a turn change re-fires the effect (it reads the turn
+// for the mid-turn union) without re-issuing the page, but the union is
+// still recorded so the turn-end re-read heals. The caller drops openedFor
+// when no session is live, so a closed session's reopen re-issues.
 export function openFetches(
   st: WindowingState,
   session: string,
@@ -72,8 +76,10 @@ export function openFetches(
 ): FetchRequest[] {
   const count = Math.min(OPEN_TAIL, total);
   const range: Range = { start: total - count, end: total };
-  st.lastFetched.set(session, range);
   if (turn !== 'idle') union(st, session, range);
+  if (st.openedFor === session) return [];
+  st.openedFor = session;
+  st.lastFetched.set(session, range);
   return [{ session, start: range.start, count }];
 }
 

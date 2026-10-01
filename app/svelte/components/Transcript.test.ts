@@ -86,6 +86,20 @@ describe('Transcript', () => {
     expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
   });
 
+  it('re-issues the tail when a closed session reopens', async () => {
+    seed(30);
+    await mount();
+    fetchWindow.mockClear();
+    // A close drops the session and the current: the one-shot must not
+    // survive a reopen of the same id.
+    resetMockStore({ current: null, sessions: {} });
+    await tick();
+    seed(30);
+    await tick();
+    expect(fetchWindow).toHaveBeenCalledTimes(1);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
+  });
+
   it('fetches a page when the visible range drifts beyond the hysteresis margin', async () => {
     seed(30);
     await mount();
@@ -106,7 +120,9 @@ describe('Transcript', () => {
     fetchWindow.mockClear();
     mockStore.sessions.c1!.turn = 'idle';
     await tick();
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
+    // the one-shot suppresses the open-tail re-issue; only the union re-read lands
+    expect(fetchWindow).toHaveBeenCalledTimes(1);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 30);
   });
 
   it('unions a mid-turn scroll into the turn-end re-read', async () => {
@@ -115,15 +131,14 @@ describe('Transcript', () => {
     fetchWindow.mockClear();
     // A scroll while the turn runs widens the mid-turn union beyond the
     // open-tail page; the turn-end re-read covers the whole union. The
-    // open-tail effect also re-fires on the turn change (it reads the turn
-    // for the union), re-issuing the tail page — pinned as current behaviour.
+    // open-tail effect re-fires on the turn change (it reads the turn for
+    // the union) but the one-shot suppresses the re-issue.
     drives[0]!(0);
     await tick();
     mockStore.sessions.c1!.turn = 'idle';
     await tick();
-    expect(fetchWindow).toHaveBeenCalledTimes(3);
+    expect(fetchWindow).toHaveBeenCalledTimes(2);
     expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 0);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
     expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 30);
   });
 

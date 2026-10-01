@@ -40,6 +40,8 @@ export default [
     files: [
       '**/*.svelte',
       '**/*.mjs',
+      'svelte/lib/commands.ts',
+      'svelte/lib/commands.test.ts',
       'svelte/lib/store.svelte.test.ts',
       'svelte/lib/store.window.test.ts',
       'svelte/lib/store.commands.test.ts',

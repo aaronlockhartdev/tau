@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-// The store's command surface and small read helpers: send/stop/newSession/
-// rename/setModel/deleteQueueItem, pane access, the window title, and the
-// dev seam (window.__tau) — the gaps in the boot/events suites.
+// The store's command surface and small read helpers: send/stop/setModel/
+// deleteQueueItem, pane access, the window title, and the dev seam
+// (window.__tau) — the gaps in the boot/events suites.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -19,18 +19,14 @@ import {
   deleteQueueItem,
   ensurePane,
   fileCache,
-  fetchWindow,
   init,
-  newSession,
+  fetchWindow,
   openWorkspace,
   pane,
-  renameSession,
-  send,
   setModel,
-  store,
+  send,
   stop,
-  refetchSessionList,
-  runSessionCommand,
+  store,
   switchSession,
   toggleAllReasoning,
   windowTitle
@@ -192,61 +188,6 @@ describe('send / stop guards', () => {
   });
 });
 
-describe('newSession / renameSession', () => {
-  it('newSession opens the fresh session and drops into inline rename', async () => {
-    defaultIPC();
-    ensurePane(WS.id); // the pane exists in the real app (the left pane creates it)
-    const sid = await newSession(WS.id);
-    expect(sid).toBe('s2');
-    expect(store.current).toBe('s2');
-    expect(pane(WS.id)?.renamingId).toBe('s2');
-  });
-
-  it('newSession with an explicit title sends it', async () => {
-    defaultIPC();
-    await newSession(WS.id, 'my title');
-    const calls = mockInvoke.mock.calls.map((c) => (c[1] as { command: Command }).command);
-    expect(calls).toContainEqual({ type: 'session_new', workspace: WS.id, title: 'my title' });
-  });
-
-  it('a failed newSession surfaces the banner and returns null', async () => {
-    defaultIPC({
-      session_new: () => {
-        throw new Error('no workspace');
-      }
-    });
-    const sid = await newSession(WS.id);
-    expect(sid).toBeNull();
-    expect(store.error).toBe('no workspace');
-  });
-
-  it('renameSession of a blank title is a no-op', async () => {
-    oneSession();
-    await renameSession('s1', '   ');
-    expect(mockInvoke).not.toHaveBeenCalled();
-  });
-
-  it('renameSession trims, sends, and updates the row title', async () => {
-    oneSession();
-    defaultIPC();
-    await renameSession('s1', '  trimmed  ');
-    const call = mockInvoke.mock.calls.at(-1)![1] as { command: Command };
-    expect(call.command).toEqual({ type: 'session_rename', session: 's1', title: 'trimmed' });
-    expect(store.sessions['s1']!.meta.title).toBe('trimmed');
-  });
-
-  it('a failed rename surfaces the banner and keeps the old title', async () => {
-    oneSession();
-    mockIPC((cmd) => {
-      if (cmd.type === 'session_rename') throw new Error('rename failed');
-      return { kind: 'none' };
-    });
-    await renameSession('s1', 'x');
-    expect(store.error).toBe('rename failed');
-    expect(store.sessions['s1']!.meta.title).toBeNull();
-  });
-});
-
 describe('setModel', () => {
   it('is a no-op with no current session', async () => {
     await setModel('gpt');
@@ -279,67 +220,6 @@ describe('setModel', () => {
     await setModel('dev/nope');
     expect(store.error).toBe('no such model');
     expect(store.sessions['s1']!.meta.model).toBeNull();
-  });
-});
-
-describe('session command wrapper (F5)', () => {
-  it('on success: clears the banner, invokes, and runs the follow-up', async () => {
-    oneSession();
-    defaultIPC();
-    store.error = 'stale';
-    const seen: string[] = [];
-    const ok = await runSessionCommand(
-      { type: 'session_rename', session: 's1', title: 'x' },
-      (out) => {
-        seen.push(out.kind);
-      }
-    );
-    expect(ok).toBe(true);
-    expect(store.error).toBeNull();
-    expect(seen).toEqual(['none']);
-  });
-
-  it('on invoke failure: sets the banner and skips the follow-up', async () => {
-    oneSession();
-    mockIPC((cmd) => {
-      if (cmd.type === 'session_rename') throw new Error('boom');
-      return { kind: 'none' };
-    });
-    let ran = false;
-    const ok = await runSessionCommand(
-      { type: 'session_rename', session: 's1', title: 'x' },
-      () => {
-        ran = true;
-      }
-    );
-    expect(ok).toBe(false);
-    expect(store.error).toBe('boom');
-    expect(ran).toBe(false);
-  });
-
-  it('refetchSessionList applies the refetched list', async () => {
-    oneSession();
-    defaultIPC({ session_list: () => ({ kind: 'sessions', sessions: [meta('s9')] }) });
-    const seen: string[] = [];
-    await refetchSessionList(WS.id, (list) => {
-      for (const s of list) seen.push(s.id);
-    });
-    expect(seen).toEqual(['s9']);
-    expect(store.error).toBeNull();
-  });
-
-  it('refetchSessionList surfaces the banner on a failed refetch', async () => {
-    oneSession();
-    mockIPC((cmd) => {
-      if (cmd.type === 'session_list') throw new Error('list gone');
-      return { kind: 'none' };
-    });
-    let ran = false;
-    await refetchSessionList(WS.id, () => {
-      ran = true;
-    });
-    expect(ran).toBe(false);
-    expect(store.error).toBe('list gone');
   });
 });
 

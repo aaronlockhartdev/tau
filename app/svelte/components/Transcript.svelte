@@ -122,13 +122,17 @@
     }
   }
 
-  // A session opens pinned at its tail, so the first page is the tail. One-shot
-  // per session — `all` is read untracked or every stream delta would re-issue
-  // it. It still re-fires on a turn change: the policy reads the turn for the
-  // mid-turn union, so the effect tracks it (the tail page is re-issued then).
+  // A session opens pinned at its tail, so the first page is the tail. The
+  // policy one-shots it per session: `all` is read untracked, and a turn
+  // change re-fires the effect (it reads the turn for the mid-turn union)
+  // without re-issuing the page. When no session is live the one-shot drops,
+  // so a closed session's reopen issues its tail again.
   $effect(() => {
     const c = cur;
-    if (!c) return;
+    if (!c || !store.sessions[c]) {
+      win.openedFor = null;
+      return;
+    }
     const n = untrack(() => all.length);
     for (const f of openFetches(win, c, n, turnOf(c))) void fetchWindow(c, f.start, f.count);
   });
