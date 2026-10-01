@@ -5,7 +5,7 @@
 //! raw. No lossy one-shot summarization.
 //!
 //! Prompts and threshold math are ported verbatim from Mastra (Apache-2.0;
-//! `test/fixtures/references/mastra-om/` holds the pinned upstream files the fidelity
+//! `fixtures/references/mastra-om/` holds the pinned upstream files the fidelity
 //! tests diff against). This module is pure: no I/O, no model calls — the
 //! integration ticket wires it to the session store and provider.
 
@@ -14,7 +14,7 @@ use std::fmt;
 
 /// OM configuration (spec §4: all thresholds configurable; ADR-0004).
 /// Defaults match Mastra's `OBSERVATIONAL_MEMORY_DEFAULTS`
-/// (`test/fixtures/references/mastra-om/constants.ts`).
+/// (`fixtures/references/mastra-om/constants.ts`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OmConfig {
@@ -24,11 +24,11 @@ pub struct OmConfig {
     pub reflect_threshold: u32,
     /// Raw tokens retained after activation: a ratio in (0, 1) of the message
     /// threshold, or an absolute count when ≥ 1000
-    /// (`test/fixtures/references/mastra-om/thresholds.ts` `resolveRetentionFloor`).
+    /// (`fixtures/references/mastra-om/thresholds.ts` `resolveRetentionFloor`).
     pub buffer_activation: f64,
     /// Dynamic threshold as overflow guard (spec §4): when true, the message
     /// threshold expands into unused observation space up to the shared total
-    /// budget (`test/fixtures/references/mastra-om/thresholds.ts` `calculateDynamicThreshold`).
+    /// budget (`fixtures/references/mastra-om/thresholds.ts` `calculateDynamicThreshold`).
     pub share_token_budget: bool,
 }
 

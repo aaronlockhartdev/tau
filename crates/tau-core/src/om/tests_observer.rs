@@ -8,7 +8,7 @@ fn extraction_instructions_match_upstream_byte_for_byte() {
     let expected = ts_literal(&ts, "export const OBSERVER_EXTRACTION_INSTRUCTIONS = ");
     assert_eq!(
         OBSERVER_EXTRACTION_INSTRUCTIONS, expected,
-        "extraction instructions drifted from test/fixtures/references/mastra-om/observer-agent.ts"
+        "extraction instructions drifted from fixtures/references/mastra-om/observer-agent.ts"
     );
 }
 

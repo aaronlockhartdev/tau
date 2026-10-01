@@ -4,7 +4,7 @@
 // harness. Three legs (replay/stress per the user's 2026-09-24 decision —
 // the functional leg replays a REAL recorded session, not a synthetic one;
 // mock per phase 1 §4, 2026-09-30):
-//   replay — the real session pair (test/fixtures/sessions/*.jsonl, the
+//   replay — the real session pair (fixtures/sessions/*.jsonl, the
 //     parent→child pair the app recorded while building todo.py): hydration,
 //     the parent→child tree, a fresh canned:// turn, archive cascade, and
 //     re-open convergence asserted against the session's real content.
@@ -32,7 +32,7 @@ const FIXTURE_SHA256 = 'fe6751612f042561d0d2343dc792e58456567ea93c386f2dac136aa4
 const FIXTURE_SESSION = 'session';
 // The real session pair the replay leg runs against (recorded by the app
 // itself during the 2026-09-24 dogfood; committed, hash-pinned like the
-const SESSIONS_DIR = path.join(ROOT, 'test', 'fixtures', 'sessions');
+const SESSIONS_DIR = path.join(ROOT, 'fixtures', 'sessions');
 // Session files are named by session id (the app's own convention —
 // list_workspace skips a file whose header id does not match its name).
 const PARENT_SESSION = '9b94bcc9eade.jsonl';
@@ -108,7 +108,7 @@ function checkDogfood() {
 
 function checkMockScenarios() {
   for (const [file, pinned] of Object.entries(MOCK_SCENARIOS)) {
-    const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'e2e-mocks', file))).digest('hex');
+    const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'fixtures', 'e2e-mocks', file))).digest('hex');
     if (sha !== pinned) throw new Error(`mock scenario drifted: ${file}`);
   }
 }
@@ -225,7 +225,7 @@ function startMock() {
   sh('cargo', ['build', '-p', 'tau-mock-llm']);
   mockProc = spawn(
     path.join(ROOT, 'target', 'debug', 'tau-mock-llm'),
-    ['--port', String(MOCK_PORT), '--scenarios', path.join(ROOT, 'test', 'fixtures', 'e2e-mocks')],
+    ['--port', String(MOCK_PORT), '--scenarios', path.join(ROOT, 'fixtures', 'e2e-mocks')],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }
   );
   const log = (d) => process.stderr.write(`[mock-llm] ${d}`);

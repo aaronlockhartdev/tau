@@ -77,7 +77,7 @@ Rationale and sources: `docs/research/refactor-{rust,tauri,svelte}.md`.
 
 **Frontend.** Vitest + `@testing-library/svelte`; settle effects with `await tick()` / `vi.waitFor`, no fixed sleeps. Rationale: `docs/research/testing-frontend-e2e.md`.
 
-**Acceptance and E2E.** The `live-*` acceptance suites are mock-first — deterministic `tau-mock-llm` with hash-pinned scenarios in `test/fixtures/e2e-mocks/`, so a red is a code problem, never a network/model problem; a real endpoint is a local dogfood opt-in via `TAU_ENDPOINT`/`TAU_MODEL`. E2E drives the DEBUG binary (built with `--features e2e`) over its embedded WebDriver server; `TAU_E2E_MODE` selects the leg (replay in CI, stress local).
+**Acceptance and E2E.** The `live-*` acceptance suites are mock-first — deterministic `tau-mock-llm` with hash-pinned scenarios in `fixtures/e2e-mocks/`, so a red is a code problem, never a network/model problem; a real endpoint is a local dogfood opt-in via `TAU_ENDPOINT`/`TAU_MODEL`. E2E drives the DEBUG binary (built with `--features e2e`) over its embedded WebDriver server; `TAU_E2E_MODE` selects the leg (replay in CI, stress local).
 
 **Tests are code.** The comment discipline, rustfmt/`clippy -D warnings`, and file-size limits above apply to test files.
 

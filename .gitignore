@@ -1,6 +1,6 @@
 /target
 # the app's own project state when developing tau in this repo (sweep finding T4);
-# test/fixtures/sessions/ is the deliberate hash-pinned E2E fixture and stays tracked
+# fixtures/sessions/ is the deliberate hash-pinned E2E fixture and stays tracked
 .tau/
 # cargo-llvm-cov HTML report dir (the CI rust-coverage job writes it; never tracked)
 /coverage/

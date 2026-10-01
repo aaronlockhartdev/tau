@@ -1,5 +1,5 @@
 // Mock leg, feature 3 (phase 1 §4): session creation plus a scripted
-// multi-turn sequence. The scenario (test/fixtures/e2e-mocks/e2e-multi-turn.json)
+// multi-turn sequence. The scenario (fixtures/e2e-mocks/e2e-multi-turn.json)
 // answers its Nth request with its Nth scripted reply — three Composer
 // sends walk the sequence 1 → 2 → 3, each pair (user + assistant)
 // committed in order.

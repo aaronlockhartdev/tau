@@ -68,7 +68,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
         cargo build --release -p tau-mock-llm > /tmp/tau-mock-build.log 2>&1 || return 1
       fi
       : > /tmp/tau-mock-llm.log
-      ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios test/fixtures/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
+      ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios fixtures/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
       mock_pid=$!
       i=0
       while [ $i -lt 100 ]; do

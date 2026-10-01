@@ -148,7 +148,7 @@ jobs:
             -not -path '*/node_modules/*' \
             -not -path './target/*' \
             -not -path '*/dist/*' \
-            -not -path './test/fixtures/references/*' -print0 \
+            -not -path './fixtures/references/*' -print0 \
             | xargs -0 wc -l \
             | awk '$1 > 1000 && $2 != "total" { print "over the 1000-line hard limit: " $2 " (" $1 " lines)"; bad = 1 } END { if (bad) exit 1 }'
   frontend:

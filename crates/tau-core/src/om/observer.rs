@@ -1,7 +1,7 @@
 /// Verbatim from `packages/memory/src/processors/observational-memory/observer-agent.ts`
 /// (`OBSERVER_EXTRACTION_INSTRUCTIONS`)) of the pinned upstream commit.
 /// Byte-for-byte: the fidelity test diffs this against the copy in
-/// `test/fixtures/references/mastra-om/`.
+/// `fixtures/references/mastra-om/`.
 pub const OBSERVER_EXTRACTION_INSTRUCTIONS: &str = r#"CRITICAL: DISTINGUISH USER ASSERTIONS FROM QUESTIONS
 
 When the user TELLS you something about themselves, mark it as an assertion:
@@ -388,7 +388,7 @@ const MAX_OBSERVATION_LINE_CHARS: usize = 10_000;
 /// Enforce the per-line length cap, keeping the upstream truncation marker.
 /// The cut is char-safe: a boundary that would split an emoji/astral
 /// character drops it whole (mastra `safeSlice`,
-/// `test/fixtures/references/mastra-om/string-utils.ts`) — observation lines are
+/// `fixtures/references/mastra-om/string-utils.ts`) — observation lines are
 /// emoji-dense by design, and a split character is invalid output.
 pub fn sanitize_observation_lines(observations: &str) -> String {
     observations

@@ -1,6 +1,6 @@
 pub(crate) fn mastra_file(name: &str) -> String {
     let path = format!(
-        "{}/../../test/fixtures/references/mastra-om/{}",
+        "{}/../../fixtures/references/mastra-om/{}",
         env!("CARGO_MANIFEST_DIR"),
         name
     );

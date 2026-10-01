@@ -1,5 +1,5 @@
 // Mock leg, feature 2 (phase 1 §4): simulated tool calls the app executes
-// and renders. The scripted turn (test/fixtures/e2e-mocks/e2e-tool-turn.json)
+// and renders. The scripted turn (fixtures/e2e-mocks/e2e-tool-turn.json)
 // issues a `write` then a `read` as complete-JSON-string function_call
 // items — the real provider loop dispatches them to the real tool
 // executor — and ends with a text reply. Asserted at three levels: the
