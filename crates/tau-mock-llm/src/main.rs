@@ -10,7 +10,7 @@ use tau_mock_llm::{scenario, server};
 async fn main() {
     let mut args = std::env::args().skip(1);
     let mut port: u16 = 8123;
-    let mut scenarios = PathBuf::from("dogfood/e2e-mocks");
+    let mut scenarios = PathBuf::from("test/fixtures/e2e-mocks");
     while let Some(a) = args.next() {
         match a.as_str() {
             "--port" => port = args.next().and_then(|p| p.parse().ok()).expect("--port N"),

@@ -24,7 +24,7 @@ const ws = process.env.TAU_E2E_WS_MOCK;
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
 if (!ws) throw new Error('mock context unset — the wdio config did not run onPrepare');
 
-// The scenario's marker (dogfood/e2e-mocks/e2e-text-turn.json) and the
+// The scenario's marker (test/fixtures/e2e-mocks/e2e-text-turn.json) and the
 // scripted reply it streams.
 const MARKER = 'e2e-text-turn';
 const TEXT = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit';

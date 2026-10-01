@@ -1,7 +1,7 @@
 import MarkdownIt from 'markdown-it';
 
-// Markdown + syntax highlighting, ported from the prototype's renderer
-// (prototype/gui-ia/index.html): code segments are PROTECTED from markdown
+// Markdown + syntax highlighting, ported from the prototype's renderer:
+// code segments are PROTECTED from markdown
 // interpretation — fences are split out first and only non-code text gets
 // inline rules, with inline code placeholdered so it is never re-parsed.
 

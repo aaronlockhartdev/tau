@@ -589,7 +589,7 @@ fn main() {
     }
     if suite.is_empty() {
         eprintln!(
-            "usage: tau-acceptance <live-tools|live-subagent|live-om|core> [--endpoint URL] [--model NAME]"
+            "usage: tau-test <live-tools|live-subagent|live-om|core> [--endpoint URL] [--model NAME]"
         );
         std::process::exit(2);
     }

@@ -31,13 +31,13 @@ allow = [
 ]
 
 [licenses.private]
-# Workspace members and the vendored third_party are not published.
+# Workspace members and the test fixture references are not published.
 ignore = true
 
 # The workspace members are the project's own AGPL code.
 [[licenses.exceptions]]
 allow = ["AGPL-3.0-only"]
-name = "tau-acceptance"
+name = "tau-test"
 
 [[licenses.exceptions]]
 allow = ["AGPL-3.0-only"]

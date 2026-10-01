@@ -1,7 +1,9 @@
 /target
 # the app's own project state when developing tau in this repo (sweep finding T4);
-# dogfood/sessions/ is the deliberate hash-pinned E2E fixture and stays tracked
+# test/fixtures/sessions/ is the deliberate hash-pinned E2E fixture and stays tracked
 .tau/
+# cargo-llvm-cov HTML report dir (the CI rust-coverage job writes it; never tracked)
+/coverage/
 node_modules/
 dist/
 # svelte-check --tsgo writes transpiled .svelte files here (TS 7 native diagnostics)

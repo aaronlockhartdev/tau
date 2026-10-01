@@ -4,7 +4,7 @@
 // harness. Three legs (replay/stress per the user's 2026-09-24 decision —
 // the functional leg replays a REAL recorded session, not a synthetic one;
 // mock per phase 1 §4, 2026-09-30):
-//   replay — the dogfood session pair (dogfood/sessions/*.jsonl, the real
+//   replay — the real session pair (test/fixtures/sessions/*.jsonl, the
 //     parent→child pair the app recorded while building todo.py): hydration,
 //     the parent→child tree, a fresh canned:// turn, archive cascade, and
 //     re-open convergence asserted against the session's real content.
@@ -32,13 +32,13 @@ const FIXTURE_SHA256 = 'fe6751612f042561d0d2343dc792e58456567ea93c386f2dac136aa4
 const FIXTURE_SESSION = 'session';
 // The real session pair the replay leg runs against (recorded by the app
 // itself during the 2026-09-24 dogfood; committed, hash-pinned like the
-const DOGFOOD = path.join(ROOT, 'dogfood', 'sessions');
+const SESSIONS_DIR = path.join(ROOT, 'test', 'fixtures', 'sessions');
 // Session files are named by session id (the app's own convention —
 // list_workspace skips a file whose header id does not match its name).
-const DOGFOOD_PARENT = '9b94bcc9eade.jsonl';
-const DOGFOOD_CHILD = 'f12bed0d762f.jsonl';
-const DOGFOOD_PARENT_SHA256 = 'b0a573f53d85505557d110c20b29d9bacb8f2d546b27b65d8f60ff1623b2feb2';
-const DOGFOOD_CHILD_SHA256 = '22a5fa26baedae78cb70ef2ad79dbfd7f3549e55e1ca82af945b37356d69c541';
+const PARENT_SESSION = '9b94bcc9eade.jsonl';
+const CHILD_SESSION = 'f12bed0d762f.jsonl';
+const PARENT_SESSION_SHA256 = 'b0a573f53d85505557d110c20b29d9bacb8f2d546b27b65d8f60ff1623b2feb2';
+const CHILD_SESSION_SHA256 = '22a5fa26baedae78cb70ef2ad79dbfd7f3549e55e1ca82af945b37356d69c541';
 // The deterministic mock LLM (phase 1 §4): hash-pinned scenario files
 // served by the tau-mock-llm binary; the mock leg's workspace points its
 // `mock` provider at it and the specs switch their sessions to mock-model.
@@ -98,17 +98,17 @@ function buildFixture() {
 
 function checkDogfood() {
   for (const [file, pinned] of [
-    [DOGFOOD_PARENT, DOGFOOD_PARENT_SHA256],
-    [DOGFOOD_CHILD, DOGFOOD_CHILD_SHA256]
+    [PARENT_SESSION, PARENT_SESSION_SHA256],
+    [CHILD_SESSION, CHILD_SESSION_SHA256]
   ]) {
-    const sha = createHash('sha256').update(fs.readFileSync(path.join(DOGFOOD, file))).digest('hex');
-    if (sha !== pinned) throw new Error(`dogfood session drifted: ${file}`);
+    const sha = createHash('sha256').update(fs.readFileSync(path.join(SESSIONS_DIR, file))).digest('hex');
+    if (sha !== pinned) throw new Error(`session fixture drifted: ${file}`);
   }
 }
 
 function checkMockScenarios() {
   for (const [file, pinned] of Object.entries(MOCK_SCENARIOS)) {
-    const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'dogfood', 'e2e-mocks', file))).digest('hex');
+  const sha = createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'test', 'fixtures', 'e2e-mocks', file))).digest('hex');
     if (sha !== pinned) throw new Error(`mock scenario drifted: ${file}`);
   }
 }
@@ -145,7 +145,7 @@ function makeWorkspaces() {
     );
   }
   // 'all' keeps the original single shared workspace for replay + stress
-  // (the stress spec's all-mode branch reads the dogfood pair from it);
+  // (the stress spec's all-mode branch reads the session pair from it);
   // single-leg runs get their own dir.
   const shared = legs.includes('replay') && legs.includes('stress');
   for (const leg of legs) {
@@ -154,8 +154,8 @@ function makeWorkspaces() {
       : path.join(tmp, leg === 'mock' ? 'ws-mock' : leg === 'stress' ? 'ws-stress' : 'ws');
     fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
     if (leg === 'replay') {
-      fs.copyFileSync(path.join(DOGFOOD, DOGFOOD_PARENT), path.join(ws, '.tau', 'sessions', DOGFOOD_PARENT));
-      fs.copyFileSync(path.join(DOGFOOD, DOGFOOD_CHILD), path.join(ws, '.tau', 'sessions', DOGFOOD_CHILD));
+      fs.copyFileSync(path.join(SESSIONS_DIR, PARENT_SESSION), path.join(ws, '.tau', 'sessions', PARENT_SESSION));
+      fs.copyFileSync(path.join(SESSIONS_DIR, CHILD_SESSION), path.join(ws, '.tau', 'sessions', CHILD_SESSION));
       fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
     } else if (leg === 'stress') {
       fs.copyFileSync(FIXTURE, path.join(ws, '.tau', 'sessions', `${FIXTURE_SESSION}.jsonl`));
@@ -225,7 +225,7 @@ function startMock() {
   sh('cargo', ['build', '-p', 'tau-mock-llm']);
   mockProc = spawn(
     path.join(ROOT, 'target', 'debug', 'tau-mock-llm'),
-    ['--port', String(MOCK_PORT), '--scenarios', path.join(ROOT, 'dogfood', 'e2e-mocks')],
+    ['--port', String(MOCK_PORT), '--scenarios', path.join(ROOT, 'test', 'fixtures', 'e2e-mocks')],
     { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] }
   );
   const log = (d) => process.stderr.write(`[mock-llm] ${d}`);

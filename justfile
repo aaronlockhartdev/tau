@@ -68,7 +68,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
         cargo build --release -p tau-mock-llm > /tmp/tau-mock-build.log 2>&1 || return 1
       fi
       : > /tmp/tau-mock-llm.log
-      ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios dogfood/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
+      ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios test/fixtures/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
       mock_pid=$!
       i=0
       while [ $i -lt 100 ]; do
@@ -93,7 +93,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
         TAU_ENDPOINT="http://127.0.0.1:$MOCK_PORT/v1"
       fi
       out=$(TAU_ENDPOINT="$TAU_ENDPOINT" TAU_MODEL="$TAU_MODEL" \
-        ./target/release/tau-acceptance "$suite" "$@" 2>&1)
+        ./target/release/tau-test "$suite" "$@" 2>&1)
       status=$?
       if [ $status -eq 0 ]; then
         report "$suite" PASS "$(echo "$out" | tail -1)"
@@ -131,7 +131,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     for suite in {{suites}}; do
       case "$suite" in
         launch)
-          if just build > /tmp/tau-acceptance-build.log 2>&1; then
+          if just build > /tmp/tau-test-build.log 2>&1; then
             if [ "$(uname)" = "Darwin" ]; then
               bin="target/release/bundle/macos/Tau.app/Contents/MacOS/tau-app"
               if [ ! -x "$bin" ]; then
@@ -149,14 +149,14 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
               fi
             fi
           else
-            report launch FAIL "just build failed (see /tmp/tau-acceptance-build.log)"
+            report launch FAIL "just build failed (see /tmp/tau-test-build.log)"
           fi
           ;;
         live-tools|live-subagent|live-om)
           run_driver "$suite"
           ;;
         core)
-          out=$(./target/release/tau-acceptance core 2>&1); status=$?
+          out=$(./target/release/tau-test core 2>&1); status=$?
           if [ $status -eq 0 ]; then
             report core PASS "$(echo "$out" | tail -1)"
           else

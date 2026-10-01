@@ -1,5 +1,5 @@
 // The replay leg of the real-app E2E (roadmap G/G2, user 2026-09-24): the
-// DEBUG Tauri binary against the REAL dogfood session pair — the parent
+// DEBUG Tauri binary against the REAL session pair (test/fixtures/sessions) — the parent
 // (ruthless-rest, 27 lines) and its spawned sub-agent child (nutritious-gold,
 // 35 lines) the app recorded while building todo.py. The assertions run
 // against the sessions' real content (titles, tails, entry counts), not a

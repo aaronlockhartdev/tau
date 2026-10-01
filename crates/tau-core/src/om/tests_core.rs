@@ -45,7 +45,7 @@ fn reflector_threshold_is_configurable() {
 
 #[test]
 fn dynamic_threshold_uses_the_worked_example() {
-    // The example in third_party/mastra-om/thresholds.ts (30k:40k, 70k total).
+    // The example in test/fixtures/references/mastra-om/thresholds.ts (30k:40k, 70k total).
     let c = OmConfig {
         share_token_budget: true,
         ..Default::default()

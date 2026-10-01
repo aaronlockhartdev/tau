@@ -4099,17 +4099,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 
 [[package]]
-name = "tau-acceptance"
-version = "0.1.0"
-dependencies = [
- "reqwest",
- "serde_json",
- "tau-core",
- "tempfile",
- "tokio",
-]
-
-[[package]]
 name = "tau-app"
 version = "0.1.0"
 dependencies = [
@@ -4168,6 +4157,17 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "tau-test"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "tau-core",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

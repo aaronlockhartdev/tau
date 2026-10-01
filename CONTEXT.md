@@ -112,5 +112,5 @@ The deterministic end-to-end proof of the spec §1 in-scope list: launch, the fo
 _Avoid_: E2E (that is the acceptance suite's app-driving leg, not the suite)
 
 **Mock LLM**:
-The deterministic stand-in for a provider in acceptance: `tau-mock-llm`, serving the Responses API dialect (ADR-0003) from hash-pinned scenario files in `dogfood/e2e-mocks/` — test data, not a fake product (ADR-0009).
+The deterministic stand-in for a provider in acceptance: `tau-mock-llm`, serving the Responses API dialect (ADR-0003) from hash-pinned scenario files in `test/fixtures/e2e-mocks/` — test data, not a fake product (ADR-0009).
 _Avoid_: fake provider, stub LLM
