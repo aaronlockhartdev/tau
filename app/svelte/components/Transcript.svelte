@@ -91,10 +91,7 @@
   });
 
   // Paged read around the visible window (spec §8): virtua's range drives
-  // fetchWindow. Hysteresis: a scroll burst moves the window a little each
-  // frame, and re-fetching on every move pipelines IPC (each page also
-  // costs an O(n) merge) — only fetch when the range has drifted beyond the
-  // last fetch by ~a buffer.
+  // fetchWindow through the windowing policy (lib/windowing.ts).
   // The windowing policy's bookkeeping (F1): last-fetched per session (the
   // hysteresis) and the ranges hydrated while a turn was in flight (the
   // mid-turn union the turn-end effect re-reads). Plain maps — the policy's
