@@ -32,29 +32,32 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
-    // Wave rule (phase 2 section 0): >50 findings, dropped. The bulk is
-    // .svelte importing .svelte — a module form TypeScript cannot resolve.
-    rules: {
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off'
-    }
-  },
-  {
-    // .svelte script blocks that import other .svelte files: TypeScript
-    // cannot resolve those modules, so the imported values are error-typed
-    // and these two rules only report that artifact where it hits.
-    // The store test files consume store.svelte's named exports directly.
+    // tsc limitation, not a strictness choice: the ESLint project service
+    // cannot parse .svelte modules, so .svelte files — and .ts files that
+    // import store.svelte — see error-typed imports and no-unsafe-* fires on
+    // every use ("a type that cannot be resolved"). svelte-check (svelte2tsx)
+    // types these files correctly; the typed rules are enforced everywhere else.
     files: [
       '**/*.svelte',
+      '**/*.mjs',
       'svelte/lib/store.svelte.test.ts',
       'svelte/lib/store.window.test.ts',
       'svelte/lib/store.commands.test.ts',
-      'svelte/lib/store.sessions.test.ts'
+      'svelte/lib/store.sessions.test.ts',
+      'svelte/lib/presentation.svelte.test.ts',
+      'svelte/components/Transcript.test.ts',
+      'svelte/main.ts'
     ],
     rules: {
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-enum-comparison': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
+      '@typescript-eslint/no-unsafe-unary-minus': 'off',
+      // PaneState et al. are imported from .svelte modules here: error-typed
+      // constituents, same artifact class.
       '@typescript-eslint/no-redundant-type-constituents': 'off'
     }
   },
@@ -81,13 +84,6 @@ export default [
       '@typescript-eslint/no-misused-promises': 'off',
       '@typescript-eslint/no-redundant-type-constituents': 'off',
       '@typescript-eslint/no-unnecessary-type-assertion': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-enum-comparison': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unsafe-unary-minus': 'off',
       '@typescript-eslint/only-throw-error': 'off',
       '@typescript-eslint/prefer-promise-reject-errors': 'off',
       '@typescript-eslint/require-await': 'off',
@@ -126,7 +122,16 @@ export default [
     // The virtua bind site needs `as any` (documented at the ref declaration);
     // svelte 5.57 predates svelte/typed's InstanceOf, so no cast-free form type-checks.
     files: ['svelte/components/Transcript.svelte'],
-    rules: { '@typescript-eslint/no-explicit-any': 'off' }
+    rules: {
+      // The one `any` in the frontend: the virtua bind site (no cast-free form
+      // type-checks on svelte 5.57). no-unsafe-* rides along: the bind value is
+      // that `any`.
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off'
+    }
   },
   {
     rules: {

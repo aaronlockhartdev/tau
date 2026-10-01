@@ -23,7 +23,7 @@ describe('presentation prefs', () => {
 
   it('persists to localStorage on change', () => {
     setPresentation({ hideThinking: true });
-    const raw = JSON.parse(localStorage.getItem(KEY) ?? '');
+    const raw: unknown = JSON.parse(localStorage.getItem(KEY) ?? '');
     expect(raw).toEqual({
       reasoningVisibleByDefault: true,
       hideThinking: true,
