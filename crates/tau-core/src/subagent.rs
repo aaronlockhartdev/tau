@@ -8,7 +8,7 @@
 //! Every transition is a `subagent` entry in the child's session file —
 //! the child's file is the record; the in-memory state is its live view.
 
-use crate::agent::{AgentSession, Lane, SessionParams, TurnConfig};
+use crate::agent::{AgentSession, Lane, TurnConfig};
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::om_integration::{self, OmState};

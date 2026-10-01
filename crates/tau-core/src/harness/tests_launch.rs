@@ -2,16 +2,16 @@
 //! wiring defaults, without a dispatch round-trip.
 
 use super::{
-    testkit::{collect_events, open_ws, providers},
     AgentSession, Config, CoreBuilder, Event, SessionRole, SessionStore,
+    testkit::{collect_events, open_ws, providers},
 };
 use crate::agent_type::builtin_general;
 use crate::config::{Om, Provider, SubAgents, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::subagent::testkit::{CannedFactory, TestBridge, TestDriver};
 use crate::subagent::{Supervisor, SupervisorParams};
-use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 
 fn canned_provider() -> crate::provider::TurnProviderRef {
     crate::provider::canned("data: [DONE]\n\n")
@@ -55,9 +55,9 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
         .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let seen = collected.lock().unwrap().iter().any(|e| {
-            matches!(e, Event::EntryUpsert { session, .. } if session == &agent_sid(&agent))
-        });
+        let seen = collected.lock().unwrap().iter().any(
+            |e| matches!(e, Event::EntryUpsert { session, .. } if session == &agent_sid(&agent)),
+        );
         if seen {
             break;
         }
@@ -72,8 +72,7 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
 fn agent_sid(agent: &AgentSession) -> String {
     // The store is consumed by the constructor: the id is re-read through
     // the session's own store.
-    agent
-        .with_task_store(|s| s.id().to_owned())
+    agent.with_task_store(|s| s.id().to_owned())
 }
 
 #[tokio::test]
@@ -168,9 +167,16 @@ fn launch_child_routes_task_tools_through_the_parent() {
 
     // A task on the parent's file — the single source of truth.
     let created = parent.with_task_store(|s| {
-        crate::task::tool_call(s, "task_create", &serde_json::json!({ "title": "child ping" }))
+        crate::task::tool_call(
+            s,
+            "task_create",
+            &serde_json::json!({ "title": "child ping" }),
+        )
     });
-    assert!(created.starts_with("created task-1: child ping"), "{created}");
+    assert!(
+        created.starts_with("created task-1: child ping"),
+        "{created}"
+    );
 
     // The supervisor the child's link routes to (a direct build).
     let sup = Supervisor::new(SupervisorParams {
@@ -191,8 +197,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
-        bridge: Arc::new(TestBridge::default())
-            as Arc<dyn crate::subagent::SubagentBridge>,
+        bridge: Arc::new(TestBridge::default()) as Arc<dyn crate::subagent::SubagentBridge>,
         driver: Arc::new(TestDriver),
     });
 
@@ -214,10 +219,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
     .unwrap();
 
     // A child is a leaf: the planning tools are refused on the child.
-    let refused = child.task_tool_call(
-        "task_create",
-        &serde_json::json!({ "title": "no" }),
-    );
+    let refused = child.task_tool_call("task_create", &serde_json::json!({ "title": "no" }));
     assert!(
         refused.starts_with("task_create: not available in a child session"),
         "{refused}"
@@ -225,8 +227,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
 
     // The worker tools route to the parent's store: the child sees the
     // parent's task.
-    let started = child
-        .task_tool_call("task_start", &serde_json::json!({ "task": "task-1" }));
+    let started = child.task_tool_call("task_start", &serde_json::json!({ "task": "task-1" }));
     assert!(started.contains("task-1"), "{started}");
     assert!(started.contains("child ping"), "{started}");
 }

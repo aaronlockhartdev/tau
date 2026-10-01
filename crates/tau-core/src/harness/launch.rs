@@ -113,10 +113,7 @@ impl AgentSession {
                     om: Some(OmState::from_config(&d.om, record)),
                     om_model: d.om_model,
                     subagents: None,
-                    child: Some(Arc::new(crate::subagent::ChildLink {
-                        supervisor,
-                        handle,
-                    })),
+                    child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
                 });
                 // The child's task tools route to the parent's store (the
                 // shared task model); the `Weak` upgrades per call.
@@ -134,8 +131,7 @@ impl AgentSession {
                     // Building the supervisor (the bridge cycle) needs the
                     // core's seams; a pre-built one (the test seam) needs
                     // none of them.
-                    let (Some(core), Some(workspace), Some(config)) =
-                        (core, workspace, config)
+                    let (Some(core), Some(workspace), Some(config)) = (core, workspace, config)
                     else {
                         return Err(ProtocolError::Other {
                             message:
@@ -143,13 +139,15 @@ impl AgentSession {
                                     .into(),
                         });
                     };
-                    return root_session(core, workspace, config, store, provider);
+                    return root_session(&core, &workspace, &config, store, provider);
                 };
                 // A pre-built supervisor (the test seam): adopt the
                 // supervisor's values, wire no events.
                 let d = sup.inherited();
-                let record = OmState::load_record(&mut store)
-                    .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+                let record =
+                    OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
                 let agent = Arc::new(Self::new(SessionParams {
                     store,
                     system_prompt: d.system_prompt,
@@ -174,9 +172,9 @@ impl AgentSession {
 /// The root assembly: the provider/model resolution, the prompt, the
 /// bridge↔supervisor cycle, the session, and the four event hooks.
 fn root_session(
-    core: Arc<Core>,
-    workspace: Workspace,
-    config: Config,
+    core: &Arc<Core>,
+    workspace: &Workspace,
+    config: &Config,
     mut store: SessionStore,
     provider: TurnProviderRef,
 ) -> Result<Arc<AgentSession>, ProtocolError> {
@@ -209,13 +207,14 @@ fn root_session(
     let model = last_model_note(&mut store).unwrap_or(model);
     // The turn's provider options (spec §12, #35): resolved from the
     // merged config + this model's facts, once, at registration.
-    let turn = derive_turn(&config, &first, &model, store.id());
+    let turn = derive_turn(config, &first, &model, store.id());
     let cwd = PathBuf::from(&workspace.cwd);
 
     // The per-session OM record (ticket #22): reconstructed from the
     // file on open; a fresh session starts with the default record.
-    let record = OmState::load_record(&mut store)
-        .map_err(|e| ProtocolError::Other { message: e.to_string() })?;
+    let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
+        message: e.to_string(),
+    })?;
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
@@ -228,7 +227,7 @@ fn root_session(
     // own build). The catalog is the last layer — after the context
     // files, so a user AGENTS.md is never drowned — and a spawned child
     // inherits it through this prompt.
-    let skills = core.refresh_skills(&workspace);
+    let skills = core.refresh_skills(workspace);
     if let Some(catalog) = crate::skills::catalog(&skills) {
         system_prompt.push_str("\n\n");
         system_prompt.push_str(&catalog);
@@ -237,24 +236,23 @@ fn root_session(
     // The bridge and the supervisor reference each other: build the
     // bridge with an empty weak and patch it in after construction.
     let bridge = Arc::new(SessionSubagentBridge {
-        core: core.clone(),
+        core: Arc::clone(core),
         workspace: workspace.id.clone(),
         client: core.client.clone(),
         provider: first.clone(),
         requests: config.requests.clone(),
         sup: Mutex::new(None),
     });
-    let factory: Arc<dyn ChildProviderFactory> =
-        core.child_factory.clone().unwrap_or_else(|| {
-            Arc::new(ForwardingChildFactory {
-                client: core.client.clone(),
-                provider: first.clone(),
-                requests: config.requests.clone(),
-                tx: core.events_tx.clone(),
-                pipe: core.pipe.clone(),
-                workspace: workspace.id.clone(),
-            })
-        });
+    let factory: Arc<dyn ChildProviderFactory> = core.child_factory.clone().unwrap_or_else(|| {
+        Arc::new(ForwardingChildFactory {
+            client: core.client.clone(),
+            provider: first.clone(),
+            requests: config.requests.clone(),
+            tx: core.events_tx.clone(),
+            pipe: core.pipe.clone(),
+            workspace: workspace.id.clone(),
+        })
+    });
     let sup = Supervisor::new(SupervisorParams {
         parent_session: store.id().to_owned(),
         cwd: cwd.clone(),
@@ -270,11 +268,10 @@ fn root_session(
         depth: 0,
         bridge: bridge.clone() as Arc<dyn SubagentBridge>,
         driver: Arc::new(TurnChildDriver {
-            core: Arc::downgrade(&core),
+            core: Arc::downgrade(core),
         }),
     });
     bridge.sup.lock().unwrap().replace(Arc::downgrade(&sup));
-
     let sid = store.id().to_owned();
     let agent = Arc::new(AgentSession::new(SessionParams {
         store,
@@ -290,7 +287,7 @@ fn root_session(
         subagents: Some(sup.clone()),
         child: None,
     }));
-    wire_events(&core, &workspace, &sid, &agent);
+    wire_events(core, workspace, &sid, &agent);
     sup.attach_parent(agent.clone());
     Ok(agent)
 }

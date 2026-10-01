@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::agent::SessionParams;
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
 

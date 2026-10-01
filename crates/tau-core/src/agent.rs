@@ -254,7 +254,13 @@ impl AgentSession {
     /// A `/skill:` invocation expanded at the app's `message_send` boundary
     /// (ticket #28): `text` is already the expansion template; the payload
     /// carries the skill's identity for the GUI's block.
-    pub(crate) fn send_skill(&self, text: impl Into<String>, lane: Lane, name: &str, location: &str) {
+    pub(crate) fn send_skill(
+        &self,
+        text: impl Into<String>,
+        lane: Lane,
+        name: &str,
+        location: &str,
+    ) {
         let mut inner = self.inner.lock().unwrap();
         self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
@@ -270,13 +276,6 @@ impl AgentSession {
         } else {
             inner.queue.push_back(msg);
         }
-    }
-
-    /// A wake message with provenance (ticket #23): the child's result
-    /// lands on the follow-up lane tagged with the child's session id, so
-    /// the notification entry carries child provenance (ADR-0001).
-    pub(crate) fn send_notified(&self, text: impl Into<String>, source: String) {
-        self.queue_notified(text, Lane::FollowUp, source)
     }
 
     /// The steering variant of `send_notified`: a child that reports while
@@ -546,6 +545,7 @@ impl AgentSession {
         self.inner.lock().unwrap().tools.clone()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn system_prompt(&self) -> String {
         self.inner.lock().unwrap().system_prompt.clone()
     }
