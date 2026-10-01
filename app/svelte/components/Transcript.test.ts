@@ -109,6 +109,24 @@ describe('Transcript', () => {
     expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
   });
 
+  it('unions a mid-turn scroll into the turn-end re-read', async () => {
+    seed(30, { turn: 'running' });
+    await mount();
+    fetchWindow.mockClear();
+    // A scroll while the turn runs widens the mid-turn union beyond the
+    // open-tail page; the turn-end re-read covers the whole union. The
+    // open-tail effect also re-fires on the turn change (it reads the turn
+    // for the union), re-issuing the tail page — pinned as current behaviour.
+    drives[0]!(0);
+    await tick();
+    mockStore.sessions.c1!.turn = 'idle';
+    await tick();
+    expect(fetchWindow).toHaveBeenCalledTimes(3);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 0);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 30);
+  });
+
   it('prunes its expansion state when the session is dropped', async () => {
     seed(1);
     mockStore.entryOpen.set('c1:e0:tool', true);

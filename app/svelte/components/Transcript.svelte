@@ -8,13 +8,17 @@
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow, currentSession } from '../lib/store.svelte';
+  import {
+    makeWindowingState,
+    openFetches,
+    scrollFetches,
+    turnEndFetches,
+    type TurnState
+  } from '../lib/windowing';
   import type { Entry } from '../lib/protocol';
 
   // Sub-pixel tolerance at fractional devicePixelRatio (the Chat story's).
   const STICK_TOLERANCE = -1.5;
-  // A session opens pinned at its tail: the first page is the tail.
-  const OPEN_TAIL = 20;
-  const FETCH_MARGIN = 5; // ≈ one 600px buffer of 120px cards
   const BUFFER = 600;
 
   const cur = $derived(store.current);
@@ -91,12 +95,17 @@
   // frame, and re-fetching on every move pipelines IPC (each page also
   // costs an O(n) merge) — only fetch when the range has drifted beyond the
   // last fetch by ~a buffer.
-  const lastFetched = new Map<string, { start: number; end: number }>();
-  // Ranges hydrated while a turn was in flight. A mid-turn read can capture a
-  // streamed assistant before it is finalized (empty), and the page is only
-  // re-read on scroll, so it stays stale while the user watches the tail. The
-  // turn-end effect below re-reads the union to heal those entries.
-  const duringTurn = new Map<string, { start: number; end: number }>();
+  // The windowing policy's bookkeeping (F1): last-fetched per session (the
+  // hysteresis) and the ranges hydrated while a turn was in flight (the
+  // mid-turn union the turn-end effect re-reads). Plain maps — the policy's
+  // own state, not reactive.
+  const win = makeWindowingState();
+
+  // The current session's turn state (the policy's hysteresis / union input).
+  function turnOf(c: string): TurnState {
+    return store.sessions[c]?.turn ?? 'idle';
+  }
+
   function onVirtuaScroll(offset: number): void {
     if (!ref) return;
     // The blessed stick-to-bottom check: at the bottom within a sub-pixel
@@ -109,46 +118,32 @@
     if (!c || n === 0) return;
     const start = Math.max(0, ref.findItemIndex(offset));
     const end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
-    const last = lastFetched.get(c);
-    if (last && start >= last.start - FETCH_MARGIN && end <= last.end + FETCH_MARGIN) return;
-    lastFetched.set(c, { start, end });
-    store.renderRange = `${start}–${end} of ${n}`;
-    void fetchWindow(c, start, end - start);
-    if (store.sessions[c]?.turn !== 'idle') {
-      const d = duringTurn.get(c) ?? { start: 0, end: 0 };
-      duringTurn.set(c, { start: Math.min(d.start, start), end: Math.max(d.end, end) });
+    const fetches = scrollFetches(win, c, { start, end }, turnOf(c));
+    if (fetches.length > 0) {
+      store.renderRange = `${start}–${end} of ${n}`;
+      for (const f of fetches) void fetchWindow(c, f.start, f.count);
     }
   }
 
-  // A session opens pinned at its tail, so the first page is the tail.
-  // One-shot per session — `all` is read untracked or every stream delta
-  // would re-issue it.
+  // A session opens pinned at its tail, so the first page is the tail. One-shot
+  // per session — `all` is read untracked or every stream delta would re-issue
+  // it. It still re-fires on a turn change: the policy reads the turn for the
+  // mid-turn union, so the effect tracks it (the tail page is re-issued then).
   $effect(() => {
     const c = cur;
     if (!c) return;
     const n = untrack(() => all.length);
-    const count = Math.min(OPEN_TAIL, n);
-    lastFetched.set(c, { start: n - count, end: n });
-    void fetchWindow(c, n - count, count);
-    if (store.sessions[c]?.turn !== 'idle') {
-      const d = duringTurn.get(c) ?? { start: 0, end: 0 };
-      duringTurn.set(c, { start: Math.min(d.start, n - count), end: Math.max(d.end, n) });
-    }
+    for (const f of openFetches(win, c, n, turnOf(c))) void fetchWindow(c, f.start, f.count);
   });
 
-  // A turn just ended: re-read the ranges hydrated while it ran, directly
-  // (bypassing the scroll hysteresis). Entries finalized since the in-flight
+  // A turn just ended: re-read the ranges hydrated while it ran (the policy
+  // bypasses the scroll hysteresis). Entries finalized since the in-flight
   // read — a streamed assistant captured empty before its turn ended — are now
   // final, so the re-read heals the empty-then-filled cards.
   $effect(() => {
     const c = cur;
     if (!c) return;
-    const t = store.sessions[c]?.turn;
-    if (t !== 'idle') return;
-    const r = duringTurn.get(c);
-    if (!r) return;
-    duringTurn.delete(c);
-    void fetchWindow(c, r.start, r.end - r.start);
+    for (const f of turnEndFetches(win, c, turnOf(c))) void fetchWindow(c, f.start, f.count);
   });
 
   // A new send re-arms the pin (explicitly: the jump to the fresh user
