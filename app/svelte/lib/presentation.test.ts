@@ -283,13 +283,13 @@ describe('present', () => {
   });
 
   it('an unknown kind degrades to a plain text card, not a throw', () => {
-    const c = cardOf({ id: 'e1', kind: 'mystery', text: 'hello' } as Entry);
+    const c = cardOf({ id: 'e1', kind: 'mystery', text: 'hello' });
     expect(c.header).toBeNull();
     expect(c.sections).toEqual([{ type: 'md', html: md('hello') }]);
   });
 
   it('an unknown kind without text renders nothing', () => {
-    expect(present({ id: 'e1', kind: 'mystery' } as Entry, ctx)).toBeNull();
+    expect(present({ id: 'e1', kind: 'mystery' }, ctx)).toBeNull();
   });
 
   it('a fully empty entry renders nothing', () => {
