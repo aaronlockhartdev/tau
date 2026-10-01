@@ -56,3 +56,42 @@ jobs:
 
       - name: Miri (tau-protocol)
         run: cargo +nightly miri test -p tau-protocol
+
+  asan:
+    # ASan on the full workspace — nightly only: too slow for a PR gate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: swatinem/rust-cache@v2.9.2
+
+      - name: ASan
+        run: RUSTFLAGS="-Zsanitizer=address" cargo +nightly test --workspace
+
+  tsan:
+    # TSan on the full workspace — nightly only: too slow for a PR gate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - uses: swatinem/rust-cache@v2.9.2
+
+      - uses: taiki-e/install-action@v2.87.20
+        with:
+          tool: cargo-machete@0.9.2
+
+      - name: Machete (unused-deps scan — informational)
+        # The tool self-declares imprecision, so this reports, not gates.
+        continue-on-error: true
+        run: cargo +nightly machete
+
+      - name: TSan
+        run: RUSTFLAGS="-Zsanitizer=thread" cargo +nightly test --workspace
