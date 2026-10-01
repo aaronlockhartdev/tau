@@ -5,6 +5,10 @@ on:
     - cron: "30 2 * * *"
   workflow_dispatch:
 
+# Least-privilege GITHUB_TOKEN: no job here needs write access.
+permissions:
+  contents: read
+
 jobs:
   fuzz-long:
     # The long leg of the fuzz split: 1 h per target + corpus trim

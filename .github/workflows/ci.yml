@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Least-privilege GITHUB_TOKEN: no job here needs write access.
+permissions:
+  contents: read
+
 jobs:
   rust:
     runs-on: ${{ matrix.os }}
