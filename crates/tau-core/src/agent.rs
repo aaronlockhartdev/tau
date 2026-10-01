@@ -278,7 +278,7 @@ impl AgentSession {
         }
     }
 
-    /// The steering variant of `send_notified`: a child that reports while
+    /// A child that reports while
     /// the parent's turn is in flight lands on the steering lane, so the
     /// report rides the current turn's next LLM call — temporally correct
     /// where a follow-up would splice it into a later, unrelated turn.

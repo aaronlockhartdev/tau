@@ -71,13 +71,11 @@ pub(crate) use watchers::*;
 #[cfg(test)]
 mod testkit;
 #[cfg(test)]
-#[cfg(test)]
 mod tests_archive;
 #[cfg(test)]
 mod tests_archive_disk;
 #[cfg(test)]
 mod tests_archive_edges;
-#[cfg(test)]
 #[cfg(test)]
 mod tests_dispatch;
 #[cfg(test)]
