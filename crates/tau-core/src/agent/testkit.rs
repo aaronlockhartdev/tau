@@ -1,4 +1,5 @@
 use super::*;
+use crate::harness::SessionRole;
 use crate::provider::canned;
 
 pub(crate) fn session_in(dir: &std::path::Path) -> SessionStore {
@@ -7,21 +8,20 @@ pub(crate) fn session_in(dir: &std::path::Path) -> SessionStore {
     store
 }
 
-pub(crate) fn make_agent(dir: &std::path::Path, provider: TurnProviderRef) -> AgentSession {
-    AgentSession::new(SessionParams {
-        store: session_in(dir),
-        system_prompt: "be terse".into(),
-        model: "test-model".into(),
-        tools: tools::tool_specs(),
-        cwd: dir.to_path_buf(),
-        provider,
-        tool_batch_on_force: ToolBatchPolicy::Complete,
-        turn: TurnConfig::default(),
-        om: None,
-        om_model: String::new(),
-        subagents: None,
-        child: None,
-    })
+pub(crate) fn make_agent(dir: &std::path::Path, provider: TurnProviderRef) -> Arc<AgentSession> {
+    AgentSession::launch(
+        session_in(dir),
+        SessionRole::Bare {
+            provider,
+            system_prompt: "be terse".into(),
+            model: "test-model".into(),
+            tools: tools::tool_specs(),
+            cwd: dir.to_path_buf(),
+            turn: TurnConfig::default(),
+            tool_batch_on_force: ToolBatchPolicy::Complete,
+        },
+    )
+    .unwrap()
 }
 
 pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {

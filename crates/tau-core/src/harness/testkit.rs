@@ -37,20 +37,19 @@ pub(crate) fn manual_session(
         calls: Arc::new(Mutex::new(Vec::new())),
         completed: Arc::new(Mutex::new(HashMap::new())),
     });
-    let agent = Arc::new(AgentSession::new(SessionParams {
+    let agent = AgentSession::launch(
         store,
-        system_prompt: "You are Tau, a coding agent.".into(),
-        model: "model".into(),
-        tools: tools::tool_specs(),
-        cwd: cwd.clone(),
-        provider: provider.clone(),
-        tool_batch_on_force: Default::default(),
-        turn,
-        om: None,
-        om_model: String::new(),
-        subagents: None,
-        child: None,
-    }));
+        SessionRole::Bare {
+            provider: provider.clone(),
+            system_prompt: "You are Tau, a coding agent.".into(),
+            model: "model".into(),
+            tools: tools::tool_specs(),
+            cwd: cwd.clone(),
+            turn,
+            tool_batch_on_force: Default::default(),
+        },
+    )
+    .unwrap();
     // ADR-0008: the same entry tee the app's build_live wires — every
     // appended entry (and each wire-only re-emission) rides the shared
     // channel as an EntryUpsert.

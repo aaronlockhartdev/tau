@@ -344,7 +344,7 @@ async fn force_mid_stream_kills_the_stream_and_preempts_contemporaneous_steering
         "data: [DONE]\n\n"
     );
     let provider = crate::provider::canned_slow(body, 40);
-    let agent = Arc::new(make_agent(dir.path(), provider));
+    let agent = make_agent(dir.path(), provider);
     agent.send("go", Lane::FollowUp);
     let killer = {
         let agent = agent.clone();
