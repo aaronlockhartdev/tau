@@ -1,8 +1,9 @@
 use super::{
-    AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildLink, ChildState, ContextMode,
-    KIND_SUBAGENT, Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionParams, SessionStore,
-    SpawnNotice, Spawned, StateNotice, Supervisor, json, om_integration, title_on_disk, tools,
+    AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildState, ContextMode, KIND_SUBAGENT,
+    Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned,
+    StateNotice, Supervisor, json, om_integration, title_on_disk, tools,
 };
+use crate::harness::SessionRole;
 
 impl Supervisor {
     /// Spawn a child (spec §5.1): async — this only sets things up; the
@@ -162,28 +163,24 @@ impl Supervisor {
                 .collect(),
             None => tools::child_tool_specs(),
         };
-        let agent = Arc::new(AgentSession::new(SessionParams {
+        // The role carries the child's wiring (R2); the spawn keeps the
+        // context-mode and agent-type resolution.
+        let agent = AgentSession::launch(
             store,
-            system_prompt: child_prompt,
-            model: child_model.clone(),
-            tools: child_tools,
-            cwd: self.cwd.clone(),
-            provider: provider.clone(),
-            tool_batch_on_force: self.tool_batch_on_force,
-            turn: self.turn.clone(),
-            om: Some(OmState::from_config(&self.om, record)),
-            om_model: self.om_model.clone(),
-            subagents: None,
-            child: Some(Arc::new(ChildLink {
+            SessionRole::Child {
                 supervisor: Arc::clone(self),
+                parent: Arc::downgrade(&parent_agent),
+                provider: provider.clone(),
+                system_prompt: child_prompt,
+                model: child_model.clone(),
+                tools: child_tools,
+                record,
                 handle: handle.clone(),
-            })),
-        }));
-        // The child's task tools route to the parent's store (the shared
-        // task model): the `Weak` upgrades per call, so a dropped parent
-        // degrades to the child's own store.
-        agent.set_parent_task_store(Some(Arc::downgrade(&parent_agent)));
-
+            },
+        )
+        // The child role has no fallible step (the provider, the record,
+        // and the values are the spawn's resolved ones).
+        .expect("the child role has no fallible steps");
         let created = agent.store_created();
         let stop = agent.stop_flag();
         let child = Arc::new(Child {
