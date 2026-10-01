@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Architecture review for tau</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+      import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+      mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "loose" });
+    </script>
+    <style>
+      .seam { stroke-dasharray: 4 4; }
+      .leak { stroke: #dc2626; }
+      .deep { background: linear-gradient(135deg, #0f172a, #1e293b); }
+      .box { border: 1.5px solid #94a3b8; border-radius: 6px; }
+      .box-deep { border: 3px solid #0f172a; border-radius: 6px; }
+      .lbl { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+    </style>
+  </head>
+  <body class="bg-stone-50 text-slate-900 font-sans">
+    <main class="max-w-5xl mx-auto px-6 py-12 space-y-12">
+
+      <header class="space-y-4">
+        <h1 class="font-serif text-3xl">Architecture review — <span class="italic">tau</span></h1>
+        <p class="text-sm text-slate-500">2026-10-01 · deepening opportunities over the Rust core and the Svelte frontend · hot spots weighted by change history since 2026-09-20</p>
+        <div class="flex gap-6 text-xs text-slate-500">
+          <span><span class="inline-block w-4 h-3 border-2 border-slate-400 align-middle"></span> module</span>
+          <span><span class="inline-block w-6 border-t-2 border-dashed border-slate-400 align-middle"></span> seam</span>
+          <span><span class="inline-block w-6 border-t-2 border-red-600 align-middle"></span> leakage</span>
+          <span><span class="inline-block w-4 h-3 deep align-middle"></span> deep module</span>
+        </div>
+      </header>
+
+      <section id="candidates" class="space-y-14">
+
+        <!-- ============ RUST ============ -->
+        <h2 class="font-serif text-xl text-slate-400 uppercase tracking-widest pt-4">Rust core</h2>
+
+        <!-- R2 (ranked #1 by heat × friction) -->
+        <article id="r2" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">R2 · Put session assembly behind a small constructor</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">harness/sessions.rs :330–440 · subagent/spawn.rs :100–175 · agent.rs :204–232, :498–531 · agent/testkit.rs · harness/testkit.rs</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">Before — the interface is the wiring</p>
+              <div class="space-y-1.5">
+                <div class="box h-8 flex items-center px-3 text-xs">bridge ↔ supervisor circular-reference dance</div>
+                <div class="box h-8 flex items-center px-3 text-xs">SupervisorParams — 13 fields</div>
+                <div class="box h-8 flex items-center px-3 text-xs">SessionParams — 10 fields</div>
+                <div class="box h-8 flex items-center px-3 text-xs">set_om_status_hook (kind-string → event)</div>
+                <div class="box h-8 flex items-center px-3 text-xs">set_queue_event_hook</div>
+                <div class="box h-8 flex items-center px-3 text-xs">set_entry_upsert_hook · set_entry_event_hook</div>
+                <div class="text-xs text-red-600 mt-2">spawn.rs re-assembles the same 10 fields; both test kits re-derive the rest</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">After — one constructor</p>
+              <div class="box-deep deep text-slate-100 p-4 h-40 flex flex-col justify-center">
+                <p class="lbl text-slate-300">session constructor</p>
+                <p class="text-sm mt-2">workspace · config · store · role · event channel</p>
+                <p class="text-xs text-slate-400 mt-3">bridge cycle, param assembly, and kind-string → event shaping live inside</p>
+              </div>
+              <p class="text-xs text-slate-500 mt-2">test kits collapse to “build a session with a canned provider”</p>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> bringing one running session into existence means learning six wiring steps at five sites — the hottest code in the crate (harness/ = 37 commits since 09-20).</p>
+          <p><span class="font-semibold">Solution:</span> a core-side constructor takes workspace, config, store, role, and the event channel; returns a live session with hooks wired.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>locality: wiring changes touch one module</li>
+            <li>leverage: one interface, five call sites</li>
+            <li>assembly bugs become constructible in one call</li>
+            <li>test surface stops <em>being</em> the wiring knowledge</li>
+          </ul>
+        </article>
+
+        <!-- R1 -->
+        <article id="r1" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">R1 · Give the tool surface one owner</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">tools.rs (7 spec builders + core dispatch) · agent/turn.rs :269–325 · agent.rs :436–500 · subagent/spawn.rs :19, :148 · harness/sessions.rs :56</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">Before — name-string matching in five places</p>
+              <pre class="mermaid">
+flowchart TB
+  T[turn loop] -->|name == "task_assign"| A[task store]
+  T -->|starts_with "task_"| A
+  T -->|name == "recall"| R[scoped recall]
+  T -->|starts_with "subagent_"| S[supervisor]
+  T -->|name == "parent_notify"| S
+  T -->|everything else| C[core tools]
+  P[spawn.rs] -.filter by agent type.-> C
+  X[agent.rs child refusal] -.re-matches task_*.-> T
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class P,X leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">After — role in, surface out</p>
+              <pre class="mermaid">
+flowchart TB
+  T[turn loop] -->|dispatch against my surface| SRF
+  subgraph SRF [tool surface — deep]
+    direction TB
+    R1[role → specs]
+    R2[call → routed output]
+    R3[child refusal rule]
+  end
+  classDef deep fill:#0f172a,color:#e2e8f0;
+  class SRF deep
+              </pre>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> “which tools does this session role get, and where does a call route?” is answered by name-string matching in at least five places; adding one tool means finding all of them by grep. A past bug from this scatter is documented at turn.rs :318.</p>
+          <p><span class="font-semibold">Solution:</span> one tool-surface module owns both halves of the mapping: role → specs, and call → routed output (core, supervisor, child link, task store, scoped recall).</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>locality: the role→tool map lives once</li>
+            <li>“child gets no task_create” = one direct test</li>
+            <li>turn loop stops knowing tool names</li>
+            <li>the load-bearing comment gets a home</li>
+          </ul>
+        </article>
+
+        <!-- R3 -->
+        <article id="r3" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">R3 · Pull the pointer model behind the ChildLink interface</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">harness/snapshot.rs :38–52 · harness/turn.rs :208, :250 · harness/dispatch_commands.rs :27–33, :90 · dispatch_sessions.rs :235, :310 · subagent.rs :250 · subagent/spawn.rs :54–58</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">Before — the ADR-0001 invariant enforced at six sites</p>
+              <pre class="mermaid">
+flowchart LR
+  H[handle "parent-2"] -.parsed with rsplit_once.-> D[dispatch_commands]
+  S1[snapshot] -->|child_link? re-open parent store| F[creator's session file]
+  S2[turn projection] --> F
+  S3[dispatch ×4] --> F
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class H,D leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">After — the interface owns the projection</p>
+              <pre class="mermaid">
+flowchart LR
+  C[ChildLink — deep] -->|task view: folded, filtered to worker| F[creator's session file]
+  C -->|route message / stop via parent| P[parent session]
+  classDef deep fill:#0f172a,color:#e2e8f0;
+  class C deep
+              </pre>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> six harness sites each re-derive “am I a child? who is my parent?” and re-open the parent's store; one of them recovers the parent id by <em>parsing the handle string</em> against a format minted elsewhere — a parent id containing “-” breaks it silently.</p>
+          <p><span class="font-semibold">Solution:</span> ChildLink exposes what callers want — this session's task view, and routing through the parent; the handle becomes opaque.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>locality: the pointer invariant lives at its seam</li>
+            <li>“child's task view == parent filtered” = one test</li>
+            <li>handle round-trip testable without a supervisor</li>
+            <li>ADR-0001 gets <em>cheaper</em> to keep true</li>
+          </ul>
+        </article>
+
+        <!-- R4 -->
+        <article id="r4" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">R4 · Make the turn-end OM pass one call</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">agent/turn.rs :344–460 (om_turn_end) · om_integration.rs :40–130 · om_integration/turn_end.rs :109–290</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">Before — the turn loop orchestrates OM policy by hand</p>
+              <div class="space-y-1.5">
+                <div class="box h-7 flex items-center px-3 text-xs bg-red-50">turn loop: read unobserved</div>
+                <div class="box h-7 flex items-center px-3 text-xs bg-red-50">turn loop: compute pending tokens</div>
+                <div class="box h-7 flex items-center px-3 text-xs bg-amber-50">om: activation (buffer / idle gap)</div>
+                <div class="box h-7 flex items-center px-3 text-xs bg-red-50">turn loop: promote</div>
+                <div class="box h-7 flex items-center px-3 text-xs bg-amber-50">om: plan</div>
+                <div class="box h-7 flex items-center px-3 text-xs bg-red-50">turn loop: build observer request + status strings</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">After — the policy owns its sequence</p>
+              <div class="box h-8 flex items-center px-3 text-xs">turn loop: kill check (turn policy)</div>
+              <div class="box-deep deep text-slate-100 p-4 h-36 flex flex-col justify-center">
+                <p class="lbl text-slate-300">OmState — settle this turn's observations</p>
+                <p class="text-xs text-slate-400 mt-2">unobserved → activation → plan → observe / reflect, with its own store reads and status hook</p>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the OM policy — the heart of ADR-0004 — is split between the turn loop (sequence, store reads, status strings) and turn_end.rs (plan/commit); this is where the 80 GB bug lived, and the sequencing is only exercisable by running a whole turn.</p>
+          <p><span class="font-semibold">Solution:</span> one OmState method — “settle this turn's observations against this store” — owns the whole sequence.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>the sequence becomes a direct test surface</li>
+            <li>turn loop keeps only turn policy</li>
+            <li>ADR-0004's policy gets a home</li>
+          </ul>
+        </article>
+
+        <!-- R5 -->
+        <article id="r5" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">R5 · Shrink AgentSession's accessor surface</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process · do with R2</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">agent.rs (27 pub fn; ~15 are single-field reads/writes of <span class="italic">inner</span>) · 42 inner.lock() sites across agent.rs + turn.rs</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">Before — interface ≈ struct map (mass diagram)</p>
+              <div class="flex items-end gap-6 justify-center h-44">
+                <div class="text-center">
+                  <div class="w-24 h-36 bg-slate-300 border border-slate-400"></div>
+                  <p class="lbl mt-1">interface (27 fn)</p>
+                </div>
+                <div class="text-center">
+                  <div class="w-24 h-40 bg-slate-500 border border-slate-600"></div>
+                  <p class="lbl mt-1">implementation</p>
+                </div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">After — behaviour, not fields (mass diagram)</p>
+              <div class="flex items-end gap-6 justify-center h-44">
+                <div class="text-center">
+                  <div class="w-24 h-10 bg-emerald-600 border border-emerald-700"></div>
+                  <p class="lbl mt-1">interface (send/process/stop + projections)</p>
+                </div>
+                <div class="text-center">
+                  <div class="w-24 h-40 bg-slate-500 border border-slate-600"></div>
+                  <p class="lbl mt-1">implementation</p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the surface exposes the implementation's fields one <span class="font-mono text-xs">pub fn</span> at a time; the harness's snapshot builder and dispatch layer reach through them, and every accessor is a lock site a future caller can build on.</p>
+          <p><span class="font-semibold">Solution:</span> the harness gets projections as behaviour (a snapshot method, a task-view method per R3); the rest drops to <span class="font-mono text-xs">pub(crate)</span>.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>reorganizing inner stops being a cross-crate event</li>
+            <li>depth: small interface, same behaviour</li>
+          </ul>
+        </article>
+
+        <!-- ============ FRONTEND ============ -->
+        <h2 class="font-serif text-xl text-slate-400 uppercase tracking-widest pt-4">Svelte frontend</h2>
+
+        <!-- F1 -->
+        <article id="f1" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">F1 · Extract the transcript windowing policy</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">local-substitutable</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">components/Transcript.svelte (3 $effects) · lib/store.svelte (fetchWindow: in-flight dedupe, session re-resolution, blob dedupe)</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">Before — the policy is smeared</p>
+              <pre class="mermaid">
+flowchart TB
+  E1[$effect: scroll] --> F[which page gets fetched, when]
+  E2[$effect: open-tail] --> F
+  E3[$effect: turn-end re-read] --> F
+  SW[store.fetchWindow] --> F
+  classDef smeared fill:#fee2e2,stroke:#dc2626;
+  class F smeared
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">After — one pure policy module</p>
+              <pre class="mermaid">
+flowchart TB
+  T[Transcript — adapter: virtualizer, stick-to-bottom, render] --> P
+  subgraph P [windowing policy — deep, pure]
+    direction TB
+    S[(visible range, last-fetched per direction, turn state)] --> Q[fetch requests]
+  end
+  classDef deep fill:#0f172a,color:#e2e8f0;
+  class P deep
+              </pre>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the area with the documented recurring-defect history (flicker → buffer widen → revert → mid-turn re-read → tab-round-trip loss) has no single owner; tests must mount the component and drive a mock virtualizer to reach it.</p>
+          <p><span class="font-semibold">Solution:</span> a pure module: state machine over (visible range, last-fetched, turn state) → fetch requests, owning hysteresis, open-tail, the mid-turn union, and the turn-end re-read.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>the interface is the test surface: policy unit-tested directly</li>
+            <li>locality: every future scroll bug lands in one module</li>
+            <li>component keeps rendering; stops deciding fetches</li>
+          </ul>
+        </article>
+
+        <!-- F2 -->
+        <article id="f2" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">F2 · A read facade over the store bag</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-emerald-100 text-emerald-800">Strong</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">lib/store.svelte (the raw $state bag) · 8 components: App, Composer, ModelMenu, Queue, LeftPane, RightPane, SessionNode, Transcript · mock-store.svelte.ts</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">Before — the bag is the interface</p>
+              <pre class="mermaid">
+flowchart LR
+  A[App] --> B[store bag: 20+ raw fields]
+  C[Composer] --> B
+  D[Queue] --> B
+  E[LeftPane] --> B
+  F[RightPane] --> B
+  G[SessionNode] --> B
+  H[Transcript] --> B
+  B -.each site repeats current ? sessions[current] : null.-> N[null discipline ×8]
+  classDef leak stroke:#dc2626,stroke-width:2px;
+  class N leak
+              </pre>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-2">After — derived accessors with guarantees</p>
+              <pre class="mermaid">
+flowchart LR
+  A[8 components] --> FAC
+  subgraph FAC [read facade — small]
+    direction TB
+    S1[current session-or-null]
+    S2[pane for workspace]
+    S3[file cache for workspace]
+  end
+  FAC --> B[bag — implementation detail]
+  classDef deep fill:#0f172a,color:#e2e8f0;
+  class FAC deep
+              </pre>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> eight components each re-derive “current session / this pane / this file cache” from the raw bag with their own null discipline; the mock seam duplicates the bag field-by-field.</p>
+          <p><span class="font-semibold">Solution:</span> a thin read layer of derived accessors; the bag becomes an implementation detail.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>leverage: null discipline lives in one place</li>
+            <li>mock store shrinks to the facade shape</li>
+            <li>new bag fields stop leaking into views</li>
+          </ul>
+        </article>
+
+        <!-- F3 -->
+        <article id="f3" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">F3 · One owner for entry presentation</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">lib/entries.ts (decode) · lib/markdown.ts (render) · components/EntryCard.svelte (814 LOC; 10-branch per-kind ladder)</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">Before — “how does kind X render?” spans three files</p>
+              <div class="flex gap-2 justify-center h-24 items-center">
+                <div class="box px-3 py-2 text-xs">entries.ts<br/><span class="text-slate-400">decode</span></div>
+                <div class="box px-3 py-2 text-xs">markdown.ts<br/><span class="text-slate-400">render</span></div>
+                <div class="box px-3 py-2 text-xs">EntryCard<br/><span class="text-slate-400">label · icon · rows · preview</span></div>
+              </div>
+              <p class="text-xs text-red-600 text-center mt-2">adding a kind touches 3–4 files</p>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">After — Entry in, presentable shape out</p>
+              <div class="flex gap-2 justify-center h-24 items-center">
+                <div class="box-deep deep text-slate-100 px-4 py-2 text-xs">presentation module<br/><span class="text-slate-400">label · icon · kv rows · sections · slots</span></div>
+                <div class="box px-3 py-2 text-xs">EntryCard<br/><span class="text-slate-400">generic renderer</span></div>
+              </div>
+              <p class="text-xs text-slate-500 text-center mt-2">kind knowledge testable without mounting a component</p>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> kind→presentation knowledge is distributed across decode, render, and a 10-branch ladder in the card; no single owner of the mapping.</p>
+          <p><span class="font-semibold">Solution:</span> a presentation module maps Entry → presentable shape; the card becomes a generic renderer over it.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>locality: one kind, one place</li>
+            <li>814-LOC card drops decision logic, keeps DOM</li>
+          </ul>
+        </article>
+
+        <!-- F4 -->
+        <article id="f4" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">F4 · One home for the selection rule</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">lib/panes.ts (applyTabSelect — pure) · components/SessionNode.svelte (onRowClick — inline re-implementation) · LeftPane (rangeBetween, prop-drilled)</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">Before — the rule exists twice</p>
+              <div class="flex gap-3 justify-center h-20 items-center">
+                <div class="box px-3 py-2 text-xs">panes.ts<br/><span class="text-slate-400">tabs variant</span></div>
+                <div class="box px-3 py-2 text-xs border-red-300">SessionNode<br/><span class="text-red-500">tree variant, inline</span></div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">After — parameterized by the ordered id sequence</p>
+              <div class="flex justify-center h-20 items-center">
+                <div class="box-deep deep text-slate-100 px-4 py-2 text-xs">selection rule<br/><span class="text-slate-400">cmd/ctrl toggle · shift range · click clears</span></div>
+              </div>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> the multi-select interaction rule is implemented twice; a semantics change can desync the two trees.</p>
+          <p><span class="font-semibold">Solution:</span> one selection module owning both variants.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>locality: one rule, one home</li>
+            <li>small, mechanical</li>
+          </ul>
+        </article>
+
+        <!-- F5 -->
+        <article id="f5" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">F5 · One convergence wrapper for session commands</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-amber-100 text-amber-800">Worth exploring</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">in-process</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">lib/store.svelte — five commands (archive / restore / delete / switch / new / rename) each re-spell the same dance</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">Before — the dance spelled five times</p>
+              <div class="space-y-1">
+                <div class="box h-6 flex items-center px-3 text-xs">clear banner → invoke → refetch session_list → reapply</div>
+                <div class="box h-6 flex items-center px-3 text-xs">clear banner → invoke → refetch session_list → reapply</div>
+                <div class="box h-6 flex items-center px-3 text-xs">clear banner → invoke → refetch session_list → reapply …</div>
+              </div>
+            </div>
+            <div class="rounded-lg border border-slate-200 bg-white p-4">
+              <p class="lbl text-slate-400 mb-3">After — the convergence rule lives once</p>
+              <div class="box-deep deep text-slate-100 h-16 flex items-center px-3 text-xs">“run a session command, then converge the list”</div>
+              <p class="text-xs text-slate-500 mt-2">per-command differences pass as parameters — not flattened</p>
+            </div>
+          </div>
+          <p><span class="font-semibold">Problem:</span> five commands each re-spell “clear banner → invoke → on success refetch + reapply → on failure banner”, with subtle per-command diffs.</p>
+          <p><span class="font-semibold">Solution:</span> one wrapper owning the refetch rule; the diffs stay visible as parameters.</p>
+          <ul class="text-sm list-disc list-inside text-slate-700 space-y-0.5">
+            <li>locality: what a session mutation implies, stated once</li>
+          </ul>
+        </article>
+
+        <!-- F6 -->
+        <article id="f6" class="space-y-4">
+          <div class="flex items-center gap-3">
+            <h3 class="font-serif text-2xl">F6 · Expansion state behind open / toggle / isOpen</h3>
+            <span class="text-xs font-semibold px-2 py-1 rounded bg-slate-200 text-slate-600">Speculative</span>
+            <span class="text-xs px-2 py-1 rounded bg-slate-200 text-slate-600">framework-blocked</span>
+          </div>
+          <p class="font-mono text-sm text-slate-600">components/EntryCard.svelte — the store's entryOpen Map + a local $state mirror + a global-reasoning override sync effect (Svelte 5.57: no Map proxying)</p>
+          <p><span class="font-semibold">Problem:</span> the card must know three layers of its own expansion state — a workaround for a framework limitation.</p>
+          <p><span class="font-semibold">Solution (if pursued):</span> an expansion-state module owning the two-layer sync behind <span class="font-mono text-xs">open / toggle / isOpen</span>.</p>
+          <p class="text-sm text-slate-500">The workaround is stable, commented, and tested — revisit only if the framework limitation goes away or the card keeps growing.</p>
+        </article>
+
+      </section>
+
+      <section id="top-recommendation" class="pt-8">
+        <div class="rounded-xl border-2 border-emerald-600 bg-white p-8">
+          <p class="lbl text-emerald-700 mb-2">Top recommendation</p>
+          <h3 class="font-serif text-2xl mb-2"><a href="#f1" class="hover:underline">F1 · Extract the transcript windowing policy</a></h3>
+          <p class="text-slate-700">Narrowest scope, the strongest defect-return history in the change log, and the testability payoff is immediate — the same pure-module extraction pattern (C9–C11) that already worked in this codebase.</p>
+          <p class="text-sm text-slate-500 mt-3">On the Rust side the corresponding first move is <a href="#r2" class="hover:underline text-emerald-700">R2, the session constructor</a> — the hottest cluster, paid on every change.</p>
+        </div>
+      </section>
+
+    </main>
+  </body>
+</html>
