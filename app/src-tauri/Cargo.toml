@@ -36,8 +36,6 @@ tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
 tokio = { workspace = true }
 
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
 
 [dev-dependencies]
 # the `test` feature gates `tauri::test::mock_app` (an unstable API —

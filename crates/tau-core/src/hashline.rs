@@ -53,18 +53,18 @@ impl fmt::Display for EditError {
         match self {
             Self::Stale { anchor } => write!(
                 f,
-                "stale anchor \"{anchor}\": not in the file's current anchor set. Re-read the file and copy the fresh 3-char anchors (the 3 chars before {SEP})."
+                "stale anchor \"{anchor}\": not in the file's current anchor set; re-read the file and copy the fresh 3-char anchors (the 3 chars before {SEP})"
             ),
             Self::TooLarge => write!(f, "{TooManyLines}"),
             Self::Reversed { from, to } => write!(
                 f,
-                "reversed range: \"{from}\" resolves after \"{to}\". Swap from/to."
+                "reversed range: \"{from}\" resolves after \"{to}\"; swap from/to"
             ),
             Self::BadAnchor(a) => write!(
                 f,
-                "invalid anchor \"{a}\": expected a bare 3-char alphanumeric (e.g. \"wUp\")."
+                "invalid anchor \"{a}\": expected a bare 3-char alphanumeric (e.g. \"wUp\")"
             ),
-            Self::EmptyFile => write!(f, "cannot empty a non-empty file via edit; use write."),
+            Self::EmptyFile => write!(f, "cannot empty a non-empty file via edit; use write"),
         }
     }
 }
@@ -173,6 +173,7 @@ pub fn render(content: &str) -> Result<Vec<String>, TooManyLines> {
 }
 
 /// One edit: a `[from, to]` anchor range (inclusive) replaced by `content`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Edit {
     pub from: String,
     pub to: String,

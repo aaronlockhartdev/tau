@@ -118,7 +118,7 @@ pub trait ChildProviderFactory: Send + Sync {
 
 /// The parent-side notice for a child state transition: the GUI badge and
 /// snapshot refresh. Idempotent-cumulative — the full state of one handle.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StateNotice {
     pub parent: String,
     pub handle: String,
@@ -131,7 +131,7 @@ pub struct StateNotice {
 }
 
 /// A spawn notice (the protocol's `subagent_spawned` event).
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpawnNotice {
     pub parent: String,
     pub handle: String,
@@ -146,7 +146,7 @@ pub struct SpawnNotice {
 /// A wake (ADR-0001 wake rules): the implementation appends the
 /// notification to the parent's active branch (child provenance) and starts
 /// a turn there.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WakeNotice {
     pub parent: String,
     pub child: String,

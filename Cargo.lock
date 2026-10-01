@@ -4102,7 +4102,6 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 name = "tau-app"
 version = "0.1.0"
 dependencies = [
- "libc",
  "serde_json",
  "tau-core",
  "tau-protocol",

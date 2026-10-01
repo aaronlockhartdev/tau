@@ -38,7 +38,7 @@ pub struct BufferedChunk {
 
 /// Per-session OM state, owned by the agent loop (the loop performs no OM
 /// discovery of its own — the caller seeds this, like the system prompt).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OmState {
     pub config: OmConfig,
     pub record: OmRecord,
