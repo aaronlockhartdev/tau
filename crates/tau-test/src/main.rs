@@ -11,13 +11,14 @@
 //! generation at 300 output tokens; the script gates them, the driver does
 //! not.
 
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::{Value, json};
 use tau_core::agent::{AgentSession, Lane, SessionParams, TurnConfig};
 use tau_core::agent_type::builtin_general;
-use tau_core::config::{Om, Provider, Requests, SubAgents};
+use tau_core::config::{Om, Provider, Requests, SubAgents, ToolBatchPolicy};
 use tau_core::om::OmRecord;
 use tau_core::om_integration::OmState;
 use tau_core::provider;
@@ -112,7 +113,7 @@ async fn live_tools(ctx: &Ctx) -> Result<(), String> {
         tools: tools::tool_specs(),
         cwd: ws.path().into(),
         provider: prov,
-        tool_batch_on_force: Default::default(),
+        tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         om: None,
         om_model: String::new(),
@@ -173,7 +174,7 @@ impl ChildDriver for AcceptanceDriver {
 }
 
 /// The driver-side bridge: no GUI events; a wake delivers the child's result
-/// to the parent loop exactly as the app does (send_notified_steer, provenance).
+/// to the parent loop exactly as the app does (`send_notified_steer`, provenance).
 struct AcceptanceBridge {
     parent: Mutex<Weak<AgentSession>>,
 }
@@ -197,6 +198,7 @@ impl SubagentBridge for AcceptanceBridge {
     }
 }
 
+#[allow(clippy::too_many_lines)] // the suite is one flat driver flow; splitting is refactoring
 async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     let (id, store) = new_session(ws.path());
@@ -219,7 +221,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         ),
         om: Om::default(),
         om_model: String::new(),
-        tool_batch_on_force: Default::default(),
+        tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         caps: SubAgents::default(),
         depth: 0,
@@ -235,7 +237,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         tools: tools::agent_tool_specs(),
         cwd: ws.path().into(),
         provider: prov,
-        tool_batch_on_force: Default::default(),
+        tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         om: None,
         om_model: String::new(),
@@ -308,7 +310,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         .filter_map(|f| {
             f.file_stem()
                 .and_then(|n| n.to_str())
-                .map(|n| n.to_string())
+                .map(std::string::ToString::to_string)
         })
         .find(|n| n.as_str() != id.as_str())
         .ok_or("live-subagent: no child session file")?;
@@ -384,10 +386,11 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
 fn prose(i: usize) -> String {
     let mut s = String::new();
     for j in 0..24 {
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "Note {i}-{j}: the expedition crossed the northern pass under a low amber sky, \
              mapping the river delta and cataloguing the stone markers found at every bend. "
-        ));
+        );
     }
     s
 }
@@ -397,12 +400,12 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let (id, mut store) = new_session(ws.path());
     // A synthesized long raw window (no model needed for the raw): ~48 KB of
     // prose ≈ 12k tokens — far past the lowered observe threshold.
-    let mut prev: Option<String> = None;
+    let mut parent_id: Option<String> = None;
     for i in 0..40 {
         let e = store
-            .append("user", json!({ "text": prose(i) }), prev.as_deref())
+            .append("user", json!({ "text": prose(i) }), parent_id.as_deref())
             .map_err(|e| e.to_string())?;
-        prev = Some(e.id);
+        parent_id = Some(e.id);
     }
     let store = SessionStore::for_workspace(ws.path(), &id);
     let om = OmState::from_config(
@@ -425,7 +428,7 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
         tools: tools::tool_specs(),
         cwd: ws.path().into(),
         provider: prov,
-        tool_batch_on_force: Default::default(),
+        tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         om: Some(om),
         om_model: String::new(),
@@ -469,11 +472,9 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     // reflector output that the (tested) escalation path drops, so the
     // second entry is reported, not required.
     // Observation-log entry count: far below u32::MAX.
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "observation-log entry count, well under u32::MAX"
-    )]
-    Ok(Some(om_entries.len() as u32))
+    Ok(Some(u32::try_from(om_entries.len()).expect(
+        "observation-log entry count; well under u32::MAX",
+    )))
 }
 
 async fn live_om(ctx: &Ctx) -> Result<(), String> {
@@ -493,7 +494,6 @@ async fn live_om(ctx: &Ctx) -> Result<(), String> {
             }
             Ok(None) if attempt == 1 => {
                 eprintln!("live-om: observe did not land (attempt {attempt}), retrying");
-                continue;
             }
             Ok(None) => {
                 return Err(
@@ -512,7 +512,7 @@ fn core_offline() -> Result<(), String> {
     let (id, mut store) = new_session(ws.path());
     // Trunk: three entries, then branch from the second.
     let mut prev: Option<String> = None;
-    let mut second = String::new();
+    let mut second: Option<String> = None;
     for i in 0..3usize {
         let e = store
             .append(
@@ -522,13 +522,13 @@ fn core_offline() -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
         if i == 1 {
-            second = e.id.clone();
+            second = Some(e.id.clone());
         }
         prev = Some(e.id);
     }
     // The branch: append to the second entry (a new parentId forks it).
     let b1 = store
-        .append("message", json!({ "text": "branch 1" }), Some(&second))
+        .append("message", json!({ "text": "branch 1" }), second.as_deref())
         .map_err(|e| e.to_string())?;
     let b2 = store
         .append(
