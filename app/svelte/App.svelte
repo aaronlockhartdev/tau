@@ -15,7 +15,7 @@
   import ModelMenu from './components/ModelMenu.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, newSession, windowTitle } from './lib/store.svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle, currentSession } from './lib/store.svelte';
   import { isTauri } from './lib/protocol';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
@@ -35,7 +35,7 @@
   function onKeydown(e: KeyboardEvent): void {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
       e.preventDefault();
-      const ws = store.current ? (store.sessions[store.current]?.meta.workspace ?? null) : null;
+      const ws = currentSession()?.meta.workspace ?? null;
       if (ws) void newSession(ws);
       return;
     }
@@ -46,7 +46,7 @@
   }
   onMount(() => window.addEventListener('keydown', onKeydown));
   onDestroy(() => window.removeEventListener('keydown', onKeydown));
-  const cur = $derived(store.current ? store.sessions[store.current] : null);
+  const cur = $derived(currentSession());
   const loading = $derived(store.loading);
   const error = $derived(store.error);
   const focus = $derived(store.focus);
