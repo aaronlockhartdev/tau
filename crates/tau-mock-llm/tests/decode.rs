@@ -1,6 +1,7 @@
 //! The mock is correct iff the real client decodes it: every test below
 //! drives `tau_core::provider` (the production SSE decode pipeline) at a
 //! live mock server — no hand-rolled SSE assertions.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::sync::Arc;
 

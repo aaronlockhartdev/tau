@@ -1,6 +1,7 @@
 //! 10k-entry session fixture — seeds the performance item for acceptance
 //! ticket #27 (a ~10k-entry session must paginate in bounded, measured time;
 //! spec §3: no full-dump read path).
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::time::Instant;
 use tau_core::session::SessionStore;

@@ -8,6 +8,7 @@
 //! queue, session, and system groups. Sub-agent, task, and om event groups
 //! are absent until tickets #22/#23/#24 wire their producers; the document
 //! narrows as features finalize (ADR-0006).
+#![cfg_attr(test, allow(clippy::unwrap_used), allow(clippy::panic))]
 
 pub mod payload;
 pub mod snapshot;

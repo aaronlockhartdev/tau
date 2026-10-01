@@ -33,6 +33,16 @@ notify-debouncer-full = "0.7"
 pedantic = { level = "warn", priority = -1 }
 as_conversions = "deny"
 string_slice = "deny"
+# The panic fence (AGENTS.md Best practices → Rust): production code must
+# not panic on foreseeable failure — expect() with a stated invariant, or a
+# Result path, not unwrap()/panic!(). Test code and the test-harness crates
+# (tau-test, tau-mock-llm) are exempted per-crate below. The two "warn"s
+# flip to "deny" once the production conversions land.
+unwrap_used = "warn"
+panic = "warn"
+# Zero-tolerance everywhere: dbg! is a debugging artifact, never shipped.
+# (the clippy lint is named `dbg_macro`)
+dbg_macro = "deny"
 # The docs lints conflict with the codified comment discipline (AGENTS.md):
 # doc comments are for public API items whose contract is not self-evident,
 # not mandatory on every Result/panic/unsafe surface.

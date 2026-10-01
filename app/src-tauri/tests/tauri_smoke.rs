@@ -2,6 +2,7 @@
 //! (the `CoreState` `TypeId`, spec §8), the `spawn_blocking` hop, and the
 //! `JoinError → ProtocolError` mapping. `tauri::test` is marked unstable,
 //! so the suite is one test.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::collections::BTreeMap;
 

@@ -1,6 +1,7 @@
 //! The 10k-entry performance bar (spec §8): the snapshot is a metadata
 //! skeleton — no payloads, < 2 MB — and the paged reads it points at stay
 //! consistent with it.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::collections::BTreeMap;
 

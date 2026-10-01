@@ -4,6 +4,7 @@
 //! snapshot pins the full field-level shape. Values are fixed test
 //! constants, so no redactions are needed; a changed `.snap` means the wire
 //! shape moved and the TS mirror must move with it.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use serde_json::json;
 use tau_protocol::snapshot::{SessionMeta, ViewEntry, Workspace};

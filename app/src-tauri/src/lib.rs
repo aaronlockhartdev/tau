@@ -2,6 +2,7 @@
 //! composition — state, dispatch, the event pump, the watchers — lives in
 //! `tau_core::harness`; this crate carries the one Tauri surface: the
 //! command, the managed-state wrapper, and the binary's menu.
+#![cfg_attr(test, allow(clippy::unwrap_used), allow(clippy::panic))]
 
 use std::sync::Arc;
 

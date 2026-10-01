@@ -2,6 +2,7 @@
 //! `Core::dispatch` boundary the way the Tauri app drives it: a scripted
 //! child factory behind `CoreBuilder::with_child_factory`, real sessions,
 //! and only protocol types on the wire.
+#![allow(clippy::unwrap_used, clippy::panic)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

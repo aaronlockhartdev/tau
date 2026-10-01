@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::panic)]
 use proptest::prelude::*;
 use tau_core::hashline::{canon, line_hashes, normalize};
 use tau_core::provider::SseParser;

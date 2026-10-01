@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::panic)]
 use proptest::prelude::*;
 use tau_protocol::{Command, CommandOutput, Event};
 

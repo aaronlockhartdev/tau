@@ -4,6 +4,7 @@
 //! E2E to consume. The bytes must not depend on when the test runs — the
 //! fixed clock is what makes a re-run byte-identical (the Rust tests, the
 //! snapshot test, and the E2E all read this one artifact).
+#![allow(clippy::unwrap_used, clippy::panic)]
 //!
 //! The content is a realistic long-running session: 50 dev goals, each
 //! worked through 200 entries (a user goal, a plan, a 197-call tool loop,
