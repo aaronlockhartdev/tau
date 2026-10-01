@@ -93,11 +93,13 @@ jobs:
         continue-on-error: true
         run: cargo +nightly machete
 
-      - name: Redundant clone scan (nursery lint — informational)
-        # redundant_clone is nursery (nightly-only, FPs expected): reports so
-        # the trend is visible, does not gate.
+      - name: Nursery lint scan (report-only — informational)
+        # `redundant_clone` and `missing_const_for_fn` are nursery (nightly-only,
+        # FPs expected): reports so trends are visible, does not gate.
         continue-on-error: true
-        run: cargo +nightly clippy --workspace --all-targets -- -W clippy::redundant_clone
+        run: >-
+          cargo +nightly clippy --workspace --all-targets --
+          -W clippy::redundant_clone -W clippy::missing_const_for_fn
 
       - name: TSan
         run: RUSTFLAGS="-Zsanitizer=thread" cargo +nightly test --workspace
