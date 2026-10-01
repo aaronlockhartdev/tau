@@ -337,7 +337,7 @@ mod payloads {
     fn assistant_payload() {
         let p = AssistantPayload {
             text: "done".into(),
-            reasoning: "".into(),
+            reasoning: String::new(),
             interrupted: false,
             usage: None,
             calls: vec![FunctionCall {

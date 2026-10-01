@@ -113,7 +113,7 @@ pub enum SubagentEventKind {
     },
     /// A lifecycle transition (all five states, incl. stop and its
     /// provenance); `detail` carries the state's payload (done's output,
-    /// failed's reason, idle's waiting_on, stopped's by).
+    /// failed's reason, idle's `waiting_on`, stopped's by).
     State {
         handle: String,
         child: String,
@@ -197,6 +197,7 @@ mod tests {
     /// (workspace + session ids on every event) is the shape a lossy
     /// transport needs (#13).
     #[test]
+    #[allow(clippy::too_many_lines)] // exhaustive per-variant round trip; splitting is refactoring
     fn event_variants_roundtrip() {
         let events = vec![
             Event::StreamStart {

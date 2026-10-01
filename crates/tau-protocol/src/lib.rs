@@ -381,6 +381,7 @@ mod tests {
 
     /// Every command variant round-trips through its golden JSON shape.
     #[test]
+    #[allow(clippy::too_many_lines)] // exhaustive per-variant round trip; splitting is refactoring
     fn command_variants_roundtrip() {
         let commands = vec![
             Command::WorkspaceOpen {
@@ -551,6 +552,7 @@ mod tests {
     /// serialize a sequence payload — `workspace_list` failed on the wire
     /// and the app launched with zero workspaces.
     #[test]
+    #[allow(clippy::too_many_lines)] // exhaustive per-variant round trip; splitting is refactoring
     fn command_output_variants_roundtrip() {
         let ws = snapshot::Workspace {
             id: "w1".into(),

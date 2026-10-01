@@ -27,6 +27,7 @@ pub enum StepStatus {
 }
 
 impl StepStatus {
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             StepStatus::Pending => "pending",
@@ -54,6 +55,7 @@ pub enum CriterionStatus {
 }
 
 impl CriterionStatus {
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             CriterionStatus::Pending => "pending",
@@ -297,6 +299,7 @@ pub enum TaskEvent {
 
 impl TaskEvent {
     /// The entry payload: the variant's fields plus the task id.
+    #[must_use]
     pub fn to_value(&self, id: &str) -> Value {
         let mut v = serde_json::to_value(self).unwrap_or(Value::Null);
         if let Some(obj) = v.as_object_mut() {
@@ -316,6 +319,7 @@ impl TaskEvent {
 }
 
 /// The resume contract derived from a task's current state (spec §5.3).
+#[must_use]
 pub fn resume_contract(task: &Task) -> ResumeContract {
     let current = task
         .steps
@@ -333,16 +337,16 @@ pub fn resume_contract(task: &Task) -> ResumeContract {
     } else if task.status == "cancelled" {
         "cancelled".to_owned()
     } else if task.status == "blocked" {
-        task.blockers
-            .last()
-            .map(|b| {
+        task.blockers.last().map_or_else(
+            || "unblock".to_owned(),
+            |b| {
                 if let Some(needs) = &b.needs {
                     format!("unblock: {needs}")
                 } else {
                     format!("unblock: {}", b.reason)
                 }
-            })
-            .unwrap_or_else(|| "unblock".to_owned())
+            },
+        )
     } else if let Some(step) = current.as_ref() {
         format!(
             "complete: {} (expected: {})",
@@ -413,11 +417,11 @@ pub struct OutputTokensDetails {
 }
 
 impl TurnUsage {
+    #[must_use]
     pub fn reasoning_tokens(&self) -> u64 {
         self.output_tokens_details
             .as_ref()
-            .map(|d| d.reasoning_tokens)
-            .unwrap_or(0)
+            .map_or(0, |d| d.reasoning_tokens)
     }
 }
 
@@ -474,7 +478,7 @@ mod tests {
         );
     }
 
-    /// The skip_serializing_if wire contract: unset optionals are absent from
+    /// The `skip_serializing_if` wire contract: unset optionals are absent from
     /// the entry line, not serialized as nulls (ADR-0005 free-form line).
     #[test]
     fn evidence_wire_omits_unset_optionals() {
@@ -503,8 +507,8 @@ mod tests {
         assert_eq!(v["step"], "s1");
     }
 
-    /// The task fold's contract: every variant survives a to_value →
-    /// from_value round trip with its id intact.
+    /// The task fold's contract: every variant survives a `to_value` →
+    /// `from_value` round trip with its id intact.
     #[test]
     fn task_event_value_roundtrip() {
         let events = vec![
@@ -625,7 +629,7 @@ mod tests {
         }
     }
 
-    /// spec §5.3: the resume contract's next_action is the compaction-safety
+    /// spec §5.3: the resume contract's `next_action` is the compaction-safety
     /// payload — each status branch must produce its exact wording.
     #[test]
     fn resume_contract_next_action_per_state() {
