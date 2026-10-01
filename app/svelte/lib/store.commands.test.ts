@@ -29,6 +29,8 @@ import {
   setModel,
   store,
   stop,
+  refetchSessionList,
+  runSessionCommand,
   switchSession,
   toggleAllReasoning,
   windowTitle
@@ -277,6 +279,67 @@ describe('setModel', () => {
     await setModel('dev/nope');
     expect(store.error).toBe('no such model');
     expect(store.sessions['s1']!.meta.model).toBeNull();
+  });
+});
+
+describe('session command wrapper (F5)', () => {
+  it('on success: clears the banner, invokes, and runs the follow-up', async () => {
+    oneSession();
+    defaultIPC();
+    store.error = 'stale';
+    const seen: string[] = [];
+    const ok = await runSessionCommand(
+      { type: 'session_rename', session: 's1', title: 'x' },
+      (out) => {
+        seen.push(out.kind);
+      }
+    );
+    expect(ok).toBe(true);
+    expect(store.error).toBeNull();
+    expect(seen).toEqual(['none']);
+  });
+
+  it('on invoke failure: sets the banner and skips the follow-up', async () => {
+    oneSession();
+    mockIPC((cmd) => {
+      if (cmd.type === 'session_rename') throw new Error('boom');
+      return { kind: 'none' };
+    });
+    let ran = false;
+    const ok = await runSessionCommand(
+      { type: 'session_rename', session: 's1', title: 'x' },
+      () => {
+        ran = true;
+      }
+    );
+    expect(ok).toBe(false);
+    expect(store.error).toBe('boom');
+    expect(ran).toBe(false);
+  });
+
+  it('refetchSessionList applies the refetched list', async () => {
+    oneSession();
+    defaultIPC({ session_list: () => ({ kind: 'sessions', sessions: [meta('s9')] }) });
+    const seen: string[] = [];
+    await refetchSessionList(WS.id, (list) => {
+      for (const s of list) seen.push(s.id);
+    });
+    expect(seen).toEqual(['s9']);
+    expect(store.error).toBeNull();
+  });
+
+  it('refetchSessionList surfaces the banner on a failed refetch', async () => {
+    oneSession();
+    mockIPC((cmd) => {
+      if (cmd.type === 'session_list') throw new Error('list gone');
+      return { kind: 'none' };
+    });
+    let ran = false;
+    await refetchSessionList(WS.id, () => {
+      ran = true;
+    });
+    expect(ran).toBe(false);
+    expect(store.error).toBe('list gone');
   });
 });
 
