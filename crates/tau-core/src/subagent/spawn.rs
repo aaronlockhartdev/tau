@@ -156,13 +156,7 @@ impl Supervisor {
             ty.body.clone()
         };
         let child_model = ty.model.clone().unwrap_or_else(|| self.model.clone());
-        let child_tools = match &ty.tools {
-            Some(allowed) => tools::child_tool_specs()
-                .into_iter()
-                .filter(|s| allowed.iter().any(|a| a == &s.name))
-                .collect(),
-            None => tools::child_tool_specs(),
-        };
+        let child_tools = tools::surface::child_specs(ty.tools.as_deref());
         // The role carries the child's wiring (R2); the spawn keeps the
         // context-mode and agent-type resolution.
         let agent = AgentSession::launch(

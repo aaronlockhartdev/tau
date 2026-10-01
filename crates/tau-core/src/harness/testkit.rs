@@ -43,7 +43,7 @@ pub(crate) fn manual_session(
             provider: provider.clone(),
             system_prompt: "You are Tau, a coding agent.".into(),
             model: "model".into(),
-            tools: tools::tool_specs(),
+            tools: tools::surface::bare_specs(),
             cwd: cwd.clone(),
             turn,
             tool_batch_on_force: Default::default(),

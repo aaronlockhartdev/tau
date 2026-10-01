@@ -1,9 +1,8 @@
 use super::{
     AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
     FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage, KIND_ASSISTANT,
-    KIND_SYSTEM, KIND_TOOL, KIND_USER, Lane, MAX_ROUNDS, Ordering, PathBuf, Queued,
-    ResponseRequest, ToolBatchPolicy, TurnConfig, TurnEvent, TurnResult, TurnSink, Value,
-    lane_name, tools,
+    KIND_SYSTEM, KIND_TOOL, KIND_USER, Lane, MAX_ROUNDS, Ordering, Queued, ResponseRequest,
+    ToolBatchPolicy, TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name, tools,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -272,62 +271,22 @@ impl AgentSession {
                     crc: None,
                 });
             }
-            let output = if call.name == "task_assign" {
-                // Cross-session: routed through the supervisor, which runs
-                // both sides on the sessions' own stores (review B3).
-                let sup = {
-                    let inner = self.inner.lock().unwrap();
-                    inner.subagents.clone()
-                };
-                match sup {
-                    Some(sup) => {
-                        let task = tc.args.get("task").and_then(Value::as_str).unwrap_or("");
-                        let worker = tc.args.get("worker").and_then(Value::as_str).unwrap_or("");
-                        match sup.assign_task(task, worker) {
-                            Ok(()) => format!("assigned {task} to {worker}").into(),
-                            Err(e) => e.into(),
-                        }
-                    }
-                    None => "task_assign: this session has no sub-agents".into(),
-                }
-            } else if call.name.starts_with("task_") {
-                // Tasks live in this session's own store (spec §5.3) — parent
-                // and child alike. Routed before the sub-agent surface so a
-                // child (which has no supervisor) still gets its tools.
-                self.task_tool(&tc).into()
-            } else if call.name == "recall" {
-                self.recall_scoped(&args).into()
-            } else {
-                // The sub-agent surface routes outside the core tools: the
-                // parent's supervisor tools, or the child's `parent_notify`
-                // (ticket #23); everything else is a core tool. The links
-                // are cloned under the lock and invoked outside it: the
-                // routes re-lock this session's `inner` (a child notify
-                // records a state entry; a spawn reads the parent's OM
-                // record), and the lock is not reentrant.
-                let (sup, link) = {
-                    let inner = self.inner.lock().unwrap();
-                    (inner.subagents.clone(), inner.child.clone())
-                };
-                // Route by name, not by which link exists: a parent session
-                // carries a supervisor AND core tools (ticket #23's original
-                // `if let Some(sup)` swallowed every core tool into
-                // route_parent, which only knows sub-agent names), and a
-                // child carries a link AND core tools.
-                if call.name.starts_with("subagent_") {
-                    match sup {
-                        Some(sup) => crate::subagent::route_parent(&sup, &tc).into(),
-                        None => format!("{}: not available in this session", call.name).into(),
-                    }
-                } else if call.name == "parent_notify" {
-                    match link {
-                        Some(link) => link.notify(&args).into(),
-                        None => "parent_notify: not available in a top-level session".into(),
-                    }
-                } else {
-                    tools::dispatch(&self.cwd(), &tc, self.turn_config().image_max_bytes).await
-                }
+            // The surface routes the call (R1): the loop matches no tool
+            // names — the table in tools::surface owns the mapping. The
+            // links are cloned under the lock and invoked outside it: the
+            // routes re-lock this session's `inner` (a child notify
+            // records a state entry; a spawn reads the parent's OM
+            // record), and the lock is not reentrant.
+            let (sup, link, cwd, image_max) = {
+                let inner = self.inner.lock().unwrap();
+                (
+                    inner.subagents.clone(),
+                    inner.child.clone(),
+                    inner.cwd.clone(),
+                    inner.turn.image_max_bytes,
+                )
             };
+            let output = tools::surface::dispatch(self, &cwd, image_max, sup, link, &tc).await;
             self.append_id(
                 &entry_id,
                 KIND_TOOL,
@@ -536,10 +495,6 @@ impl AgentSession {
         let parent = parent.as_deref();
         inner.store.append_entry(id, kind, payload, parent)?;
         Ok(())
-    }
-
-    fn cwd(&self) -> PathBuf {
-        self.inner.lock().unwrap().cwd.clone()
     }
 
     fn tool_batch_on_force(&self) -> ToolBatchPolicy {

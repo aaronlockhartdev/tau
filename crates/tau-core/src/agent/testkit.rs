@@ -15,7 +15,7 @@ pub(crate) fn make_agent(dir: &std::path::Path, provider: TurnProviderRef) -> Ar
             provider,
             system_prompt: "be terse".into(),
             model: "test-model".into(),
-            tools: tools::tool_specs(),
+            tools: tools::surface::bare_specs(),
             cwd: dir.to_path_buf(),
             turn: TurnConfig::default(),
             tool_batch_on_force: ToolBatchPolicy::Complete,

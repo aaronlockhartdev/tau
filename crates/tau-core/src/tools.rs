@@ -335,7 +335,10 @@ pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>)
 }
 
 mod impls;
+pub mod surface;
 use impls::{bash, edit, read, write};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_surface;
