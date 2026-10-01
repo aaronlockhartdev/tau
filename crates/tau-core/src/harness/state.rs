@@ -93,6 +93,10 @@ pub struct Core {
     pub(crate) events_rx: Mutex<Option<mpsc::Receiver<Event>>>,
     /// The test-seam child provider factory (None in production builds).
     pub(crate) child_factory: Option<Arc<dyn ChildProviderFactory>>,
+    /// Child handle → parent session (the spawn's record, R3): the handle
+    /// is opaque — a command carrying it resolves the parent from here,
+    /// never from the handle's format.
+    pub(crate) child_handles: Mutex<HashMap<String, String>>,
     /// Self-reference for the seams that need an `Arc<Core>` (the child
     /// driver/factory/bridge); set in `build`.
     pub(crate) self_weak: Mutex<Option<Weak<Core>>>,
@@ -190,6 +194,7 @@ impl CoreBuilder {
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             child_factory: self.child_factory.clone(),
+            child_handles: Mutex::new(HashMap::new()),
         });
         core.self_weak
             .lock()
@@ -554,6 +559,20 @@ impl Core {
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("session {session} is not open"),
             })
+    }
+
+    /// Record a spawn's handle→parent (the handle is opaque: the registry
+    /// is the record of which parent minted it, R3).
+    pub(crate) fn register_child_handle(&self, handle: &str, parent: &str) {
+        self.child_handles
+            .lock()
+            .unwrap()
+            .insert(handle.to_owned(), parent.to_owned());
+    }
+
+    /// The parent that minted a child handle (the spawn registry, R3).
+    pub(crate) fn child_parent(&self, handle: &str) -> Option<String> {
+        self.child_handles.lock().unwrap().get(handle).cloned()
     }
 
     /// The write refusal for an archived session (ADR-0005): its live

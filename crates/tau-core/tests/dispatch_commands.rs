@@ -242,17 +242,16 @@ async fn subagent_message_to_an_unknown_handle_is_refused() {
     let err = rig
         .core
         .dispatch(Command::SubagentMessage {
+            // A handle no spawn registered (the spawn registry is the
+            // record, R3): the canonical unknown-entity shape (ticket #38).
             handle: format!("{}-9", rig.parent),
             text: Some("hello".into()),
         })
         .unwrap_err();
-    match err {
-        tau_protocol::ProtocolError::Other { message } => assert!(
-            message.contains("no sub-agent"),
-            "the refusal names the missing child: {message}"
-        ),
-        other => panic!("expected a clean refusal, got: {other:?}"),
-    }
+    assert!(
+        matches!(err, tau_protocol::ProtocolError::NotFound { .. }),
+        "an unknown handle is a refusal: {err:?}"
+    );
 }
 
 #[tokio::test]
@@ -282,15 +281,14 @@ async fn subagent_stop_of_an_unknown_handle_is_refused() {
     let err = rig
         .core
         .dispatch(Command::SubagentStop {
-            // A handle on the open parent with a bogus child number:
-            // the dispatch arm resolves the parent first, so this reaches
-            // the supervisor's own unknown-handle refusal (ticket #38 tracks the
-            // canonical unknown-entity error shape).
+            // A handle no spawn registered: the spawn registry is the
+            // record of which parent minted a handle (R3), so the refusal
+            // is the canonical unknown-entity shape (ticket #38).
             handle: format!("{}-999", rig.parent),
         })
         .unwrap_err();
     assert!(
-        matches!(err, tau_protocol::ProtocolError::Other { .. }),
+        matches!(err, tau_protocol::ProtocolError::NotFound { .. }),
         "an unknown handle is a refusal: {err:?}"
     );
 }

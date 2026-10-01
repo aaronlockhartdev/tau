@@ -34,28 +34,11 @@ impl Core {
             .and_then(usage_of);
         let meta = live.meta.lock().unwrap().clone();
         // A child's task pane is a projection of the parent's store (the
-        // shared task model): the child's file carries no task entries, so
-        // its open/switch snapshot folds the parent's file, filtered to
-        // worker == the child.
-        let tasks = if let Some(parent) = live
-            .agent
-            .child_link()
-            .map(|l| l.parent_session().to_owned())
-        {
-            let mut pstore = SessionStore::for_workspace(&live.cwd, &parent);
-            pstore
-                .open()
-                .ok()
-                .and_then(|_| pstore.entries_range(0, usize::MAX).ok())
-                .map(|entries| {
-                    crate::task::fold_entries(&entries)
-                        .into_iter()
-                        .filter(|t| t.worker.as_ref().is_some_and(|w| w.session == meta.id))
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            crate::task::fold_entries(&entries)
+        // shared task model): the link owns the projection (R3) — the
+        // snapshot no longer re-opens the parent's store.
+        let tasks = match live.agent.child_link() {
+            Some(link) => link.task_view(&live.cwd),
+            None => crate::task::fold_entries(&entries),
         };
         let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
         Ok(Snapshot {

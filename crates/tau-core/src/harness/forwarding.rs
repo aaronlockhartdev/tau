@@ -272,6 +272,10 @@ impl SubagentBridge for SessionSubagentBridge {
         else {
             return;
         };
+        // The handle is opaque (R3): record which parent minted it — the
+        // GUI's handle-carrying commands resolve the parent from the
+        // registry, never from the handle's format.
+        self.core.register_child_handle(&n.handle, &n.parent);
         let Some(parent_live) = self.core.sessions.lock().unwrap().get(&n.parent).cloned() else {
             return;
         };

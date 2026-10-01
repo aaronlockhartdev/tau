@@ -394,12 +394,9 @@ impl AgentSession {
             };
             match link {
                 Some(link) => {
-                    let parent_id = link
-                        .handle()
-                        .rsplit_once('-')
-                        .map(|(s, _)| s.to_owned())
-                        .unwrap_or_default();
-                    let mut store = SessionStore::for_workspace(&cwd, &parent_id);
+                    // The parent id comes from the link (R3): the handle
+                    // is opaque, never parsed.
+                    let mut store = SessionStore::for_workspace(&cwd, link.parent_session());
                     match store.open() {
                         Ok(()) => match crate::om_integration::OmState::load_record(&mut store) {
                             Ok(record) => crate::om_integration::recall(&mut store, &record, args),

@@ -236,17 +236,13 @@ impl Core {
                     // state event, the parent's wake) — a bare stop flag
                     // would let the child's drive burn its one-shot nudge
                     // into a bogus `failed`.
-                    if let Some(link) = live.agent.child_link() {
-                        let parent = link
-                            .handle()
-                            .rsplit_once('-')
-                            .map(|(s, _)| s.to_owned())
-                            .unwrap_or_default();
-                        if let Ok(parent_live) = self.live(&parent)
-                            && let Some(sup) = parent_live.agent.subagents()
-                        {
-                            let _ = sup.stop_handle(link.handle(), StoppedBy::User);
-                        }
+                    // The parent's id comes from the link (R3): the handle
+                    // is opaque, never parsed.
+                    if let Some(link) = live.agent.child_link()
+                        && let Ok(parent_live) = self.live(link.parent_session())
+                        && let Some(sup) = parent_live.agent.subagents()
+                    {
+                        let _ = sup.stop_handle(link.handle(), StoppedBy::User);
                     }
                     live.stop.store(true, Ordering::SeqCst);
                     live.agent.mark_closed();

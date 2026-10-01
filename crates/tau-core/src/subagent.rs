@@ -257,9 +257,10 @@ impl ChildLink {
         &self.handle
     }
 
-    /// The parent's session id (the handle is `{parent}-{n}`).
+    /// The parent's session id: the supervisor's own — the handle is
+    /// opaque (R3), never parsed for its parent.
     pub fn parent_session(&self) -> &str {
-        self.handle.rsplit_once('-').map(|(s, _)| s).unwrap_or("")
+        self.supervisor.parent_session()
     }
 
     /// The `parent_notify` tool handler (ticket #23): `done:true` requires
@@ -270,10 +271,55 @@ impl ChildLink {
         self.supervisor.notify(&self.handle, args)
     }
 
+    /// A message to this child, routed through the parent's supervisor
+    /// (the GUI's send to a child, ADR-0001): a running child takes it
+    /// on its lane; a non-running one is resumed with it.
+    pub fn send(&self, text: String, lane: Lane) -> Result<String, String> {
+        self.supervisor.message(&self.handle, Some(text), lane)
+    }
+
+    /// Stop this child through the parent's supervisor (the GUI's stop):
+    /// the terminal `Stopped{by: User}` record, the freed slot, the
+    /// parent's wake.
+    pub fn stop(&self) -> Result<String, String> {
+        self.supervisor.stop(&self.handle, StoppedBy::User)
+    }
+
     /// Whether the child is still `Running` (the loop's quiescence check,
     /// ADR-0001: the core auto-terminates a child's loop on done).
     pub fn is_running(&self) -> bool {
         self.supervisor.child_running(&self.handle)
+    }
+
+    /// This child's view of the parent's tasks (ADR-0001: the child's
+    /// pane is a projection of the creator's record): folded from the
+    /// parent's file, filtered to worker == this child. Empty when the
+    /// parent's file is unreadable.
+    pub fn task_view(&self, cwd: &Path) -> Vec<Task> {
+        let Some(worker) = self.supervisor.child_session_id(&self.handle) else {
+            return Vec::new();
+        };
+        let mut store = SessionStore::for_workspace(cwd, self.supervisor.parent_session());
+        let Ok(()) = store.open() else {
+            return Vec::new();
+        };
+        let Ok(entries) = store.entries_range(0, usize::MAX) else {
+            return Vec::new();
+        };
+        crate::task::fold_entries(&entries)
+            .into_iter()
+            .filter(|t| t.worker.as_ref().is_some_and(|w| w.session == worker))
+            .collect()
+    }
+
+    /// The parent's full task list, folded from its file (the single
+    /// source of truth); `None` when the file can't be read — a failed
+    /// read must not emit an authoritative empty list.
+    pub fn parent_tasks(&self, cwd: &Path) -> Option<Vec<Task>> {
+        let mut store = SessionStore::for_workspace(cwd, self.supervisor.parent_session());
+        store.open().ok()?;
+        let entries = store.entries_range(0, usize::MAX).ok()?;
+        Some(crate::task::fold_entries(&entries))
     }
 }
 
@@ -422,6 +468,12 @@ impl Supervisor {
         }
     }
 
+    /// The parent's session id (the supervisor's own — the child's
+    /// pointer to it; the handle stays opaque, R3).
+    pub fn parent_session(&self) -> &str {
+        &self.parent_session
+    }
+
     /// The parent's loop (attached once by the caller after the parent's
     /// `AgentSession` exists).
     pub fn attach_parent(&self, agent: Arc<AgentSession>) {
@@ -494,6 +546,16 @@ impl Supervisor {
             .unwrap()
             .get(handle)
             .map(|c| c.agent.clone())
+    }
+
+    /// The child's session id for a handle (the children map is the
+    /// record; the handle stays opaque, R3).
+    pub fn child_session_id(&self, handle: &str) -> Option<String> {
+        self.children
+            .lock()
+            .unwrap()
+            .get(handle)
+            .map(|c| c.session_id.clone())
     }
 
     /// Every child's session id (the child-targeted TaskChanged routing).
@@ -656,6 +718,8 @@ mod tests_acceptance;
 mod tests_caps;
 #[cfg(test)]
 mod tests_context_modes;
+#[cfg(test)]
+mod tests_link;
 #[cfg(test)]
 mod tests_notify;
 #[cfg(test)]

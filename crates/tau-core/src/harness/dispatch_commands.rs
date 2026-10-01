@@ -27,28 +27,19 @@ impl Core {
                 // (the parent's subagent_message semantics: a running
                 // child gets a steering-lane message; a non-running one is
                 // resumed with it, ADR-0001).
+                // A child session takes messages through its link (R3):
+                // the link's supervisor is the parent's. The parent must
+                // be live — a closed parent has no routing surface.
                 if let Some(link) = live.agent.child_link() {
-                    let parent = link
-                        .handle()
-                        .rsplit_once('-')
-                        .map(|(s, _)| s.to_owned())
-                        .unwrap_or_default();
-                    let parent_live = self.live(&parent)?;
-                    let sup =
-                        parent_live
-                            .agent
-                            .subagents()
-                            .ok_or_else(|| ProtocolError::Other {
-                                message: "child's parent has no supervisor".into(),
-                            })?;
+                    self.live(link.parent_session())?;
                     let lane = if lane == MessageLane::Force {
-                        sup.stop(link.handle(), StoppedBy::User)
+                        link.stop()
                             .map_err(|e| ProtocolError::Other { message: e })?;
                         Lane::Steering
                     } else {
                         lane_to_lane(lane)
                     };
-                    sup.message(link.handle(), Some(text.clone()), lane)
+                    link.send(text.clone(), lane)
                         .map_err(|e| ProtocolError::Other { message: e })?;
                     return Ok(CommandOutput::None);
                 }
@@ -90,21 +81,13 @@ impl Core {
                 // terminal Stopped state, the freed slot, the parent's
                 // wake. A bare stream cut would leave the child running —
                 // the nudge path resumes it.
+                // A child session stops through its link (R3): the
+                // terminal Stopped state, the freed slot, the parent's
+                // wake. A bare stream cut would leave the child running —
+                // the nudge path resumes it. The parent must be live.
                 if let Some(link) = live.agent.child_link() {
-                    let parent = link
-                        .handle()
-                        .rsplit_once('-')
-                        .map(|(s, _)| s.to_owned())
-                        .unwrap_or_default();
-                    let parent_live = self.live(&parent)?;
-                    let sup =
-                        parent_live
-                            .agent
-                            .subagents()
-                            .ok_or_else(|| ProtocolError::Other {
-                                message: "child's parent has no supervisor".into(),
-                            })?;
-                    sup.stop(link.handle(), StoppedBy::User)
+                    self.live(link.parent_session())?;
+                    link.stop()
                         .map_err(|e| ProtocolError::Other { message: e })?;
                     return Ok(CommandOutput::None);
                 }
@@ -144,12 +127,13 @@ impl Core {
                 })
             }
             Command::SubagentState { handle } => {
-                // The handle is `<parent-session>-<n>`; the supervisor
-                // lives on the parent.
-                let session = handle
-                    .rsplit_once('-')
-                    .map(|(s, _)| s.to_owned())
-                    .unwrap_or_default();
+                // The handle is opaque (R3): the parent comes from the
+                // spawn registry, never the handle's format.
+                let session =
+                    self.child_parent(&handle)
+                        .ok_or_else(|| ProtocolError::NotFound {
+                            what: format!("subagent {handle}"),
+                        })?;
                 let live = self.live(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
@@ -199,10 +183,11 @@ impl Core {
                 }
             }
             Command::SubagentMessage { handle, text } => {
-                let session = handle
-                    .rsplit_once('-')
-                    .map(|(s, _)| s.to_owned())
-                    .unwrap_or_default();
+                let session =
+                    self.child_parent(&handle)
+                        .ok_or_else(|| ProtocolError::NotFound {
+                            what: format!("subagent {handle}"),
+                        })?;
                 let live = self.live_unarchived(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
@@ -219,10 +204,11 @@ impl Core {
                 })
             }
             Command::SubagentStop { handle } => {
-                let session = handle
-                    .rsplit_once('-')
-                    .map(|(s, _)| s.to_owned())
-                    .unwrap_or_default();
+                let session =
+                    self.child_parent(&handle)
+                        .ok_or_else(|| ProtocolError::NotFound {
+                            what: format!("subagent {handle}"),
+                        })?;
                 let live = self.live_unarchived(&session)?;
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),

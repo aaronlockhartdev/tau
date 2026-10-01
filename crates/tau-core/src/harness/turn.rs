@@ -4,6 +4,7 @@ use super::{
     Arc, Core, Entry, Event, LiveSession, Ordering, SessionStore, SystemEventKind, Value,
     entry_to_view, usage_of,
 };
+use crate::subagent::ChildLink;
 
 /// The post-turn reconciliation (spec §8 idempotent updates): the session
 /// file is the record; the events it implies are derived here, after
@@ -206,12 +207,8 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // model): the child's own fold would report no change, so the
     // projection is re-emitted from the parent — the parent's list and
     // the child's slice.
-    if let Some(parent) = live
-        .agent
-        .child_link()
-        .map(|l| l.parent_session().to_owned())
-    {
-        core.emit_task_projection(&workspace, &live.cwd, &session, &parent);
+    if let Some(link) = live.agent.child_link() {
+        core.emit_task_projection(&workspace, &live.cwd, &session, &link);
     }
     live.turn.store(false, Ordering::SeqCst);
 }
@@ -248,12 +245,8 @@ impl Core {
             let meta = live.meta.lock().unwrap();
             (meta.workspace.clone(), live.cwd.clone())
         };
-        if let Some(parent) = live
-            .agent
-            .child_link()
-            .map(|l| l.parent_session().to_owned())
-        {
-            self.emit_task_projection(&workspace, &cwd, session, &parent);
+        if let Some(link) = live.agent.child_link() {
+            self.emit_task_projection(&workspace, &cwd, session, &link);
             return;
         }
         let mut store = SessionStore::for_workspace(&cwd, session);
@@ -275,25 +268,22 @@ impl Core {
     /// A task change in the parent (the single source of truth) is emitted
     /// twice: the parent's own full list, and — for the named child — that
     /// child's projection (worker == the child), which fills the child's
-    /// task pane.
+    /// task pane. The link owns the parent's read (R3).
     pub(crate) fn emit_task_projection(
         &self,
         workspace: &str,
         cwd: &std::path::Path,
         child: &str,
-        parent: &str,
+        link: &ChildLink,
     ) {
-        let mut store = SessionStore::for_workspace(cwd, parent);
-        if store.open().is_err() {
-            return; // the parent's file is gone; the next open rebuilds
-        }
-        let Ok(entries) = store.entries_range(0, usize::MAX) else {
-            return; // a failed read is not an empty task list (torn-append race)
+        // The link's parent read: None = the parent's file can't be read —
+        // a failed read is not an empty task list (torn-append race).
+        let Some(tasks) = link.parent_tasks(cwd) else {
+            return;
         };
-        let tasks = crate::task::fold_entries(&entries);
         self.emit(Event::TaskChanged {
             workspace: workspace.to_owned(),
-            session: parent.to_owned(),
+            session: link.parent_session().to_owned(),
             tasks: tasks.clone(),
         });
         let projected: Vec<crate::task::Task> = tasks
@@ -308,7 +298,6 @@ impl Core {
             });
         }
     }
-
     /// Child-targeted TaskChanged for each of this session's children that
     /// owns a task: the child's pane is a projection of this session's
     /// list, filtered to worker == the child.
