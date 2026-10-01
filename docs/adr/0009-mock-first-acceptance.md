@@ -1,0 +1,9 @@
+# Acceptance is mock-first: the LLM boundary is deterministic in the test gate
+
+**Status**: accepted (2026-09-30) — settled during the phase-1 test/CI overhaul (section 4); `TAU_LIVE`-gated live-model acceptance retired as a gate (spec §13 erratum 2026-09-30).
+
+The acceptance suite proves the spec §1 in-scope list end to end: launch, a multi-turn session on the four core tools, a model-spawned sub-agent, OM compaction on a long session, branching/archive, and the real app on a pinned session fixture. Run against a live model, a red is ambiguous — code, network, or model — so the suite could not serve as a CI gate. **Decision**: the `live-*` suites run by default against a **deterministic mock LLM** — `tau-mock-llm`, a dedicated crate serving the Responses API dialect (ADR-0003) from hash-pinned scenario files in `dogfood/e2e-mocks/` — and the whole set, E2E replay leg included, is a CI gate on both platforms. A red is a code problem, never a network/model problem. Pointing a suite at a real endpoint remains a local dogfood opt-in (`TAU_ENDPOINT`/`TAU_MODEL`); `TAU_LIVE` is retired — no code path reads it.
+
+**Considered**: live-model acceptance in CI — rejected: non-reproducible reds, cost, and model-side variance would gate merges on things the repo cannot fix. No acceptance gate over the live-* behaviors — rejected: tools, sub-agents, and OM are the product's core; ungated, they regress silently.
+
+**Consequences**: the mock must stay dialect-faithful to the `responses` API (a mock drift is a fidelity bug, tracked like any other); scenario files are test data and are hash-pinned like the dogfood session fixtures; a real-model check is a dogfood act, not a gate.

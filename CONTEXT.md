@@ -57,7 +57,7 @@ A concurrent agent-loop instance in `tau-core` working a delegated task in its o
 _Avoid_: child agent, worker (implies a generic process)
 
 **Task**:
-A first-class unit of work: enforced state machine (pending → in-progress → done / blocked / cancelled), ordered steps with expected outputs, acceptance criteria, evidence. Stored as append-only events **in the owning session's file** (on assignment, the worker's session becomes the live record); tasks do not outlive their session (user override 2026-09-17). Completion is **evidence-gated**; completable by the parent or a sub-agent, whose finish resolves it as completed / handed_off / blocked (ADR-0001, ADR-0006).
+A first-class unit of work: enforced state machine (pending → in-progress → done / blocked / cancelled), ordered steps with expected outputs, acceptance criteria, evidence. Stored as append-only events **in the owning session's file** — the record never leaves the creator's file (pointer model, ADR-0001); the worker's pane is a projection of it, and the child's terminal notify runs the completion gate on the creator's file. Tasks do not outlive their session (user override 2026-09-17). Completion is **evidence-gated**; completable by the parent or a sub-agent, whose finish resolves it as completed / handed_off / blocked (ADR-0001, ADR-0006).
 _Avoid_: job, ticket (a ticket is a wayfinding/issue concept)
 
 **Handoff**:
@@ -106,3 +106,11 @@ _Avoid_: prompt files
 **Security model**:
 In v0: **transparency, not enforcement** (ADR-0007, user decision 2026-09-17) — no sandbox, no permission popups, no per-tool policy; tools run with the user's privileges; sub-agent output marked untrusted is the one enforced boundary; the GUI's legibility affordances (per-tool cards, kill, force, sub-agent visibility) are the security feature; a post-v0 security ticket decides what enforcement comes back.
 _Avoid_: trust flow, permission system (v0 has neither)
+
+**Acceptance** (suite):
+The deterministic end-to-end proof of the spec §1 in-scope list: launch, the four core tools in a live multi-turn session, a model-spawned sub-agent, OM compaction, branching/archive, and the real app on a pinned session fixture. The `live-*` suites run against the mock LLM by default so a red is a code problem, never a network/model problem — which is what makes the whole set a CI gate (ADR-0009).
+_Avoid_: E2E (that is the acceptance suite's app-driving leg, not the suite)
+
+**Mock LLM**:
+The deterministic stand-in for a provider in acceptance: `tau-mock-llm`, serving the Responses API dialect (ADR-0003) from hash-pinned scenario files in `dogfood/e2e-mocks/` — test data, not a fake product (ADR-0009).
+_Avoid_: fake provider, stub LLM
