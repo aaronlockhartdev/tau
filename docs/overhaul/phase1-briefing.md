@@ -61,7 +61,7 @@ citations: `docs/research/testing-rust.md` and `docs/research/testing-frontend-e
    default (deterministic; red = code problem); `--endpoint`/`--model` stay for local live
    dogfood.
 
-## Test conventions (formalized for phase 1; land in AGENTS.md when the phase completes)
+## Test conventions (formalized for phase 1; landed in AGENTS.md with the phase completion)
 
 - **Rust**: simple correctness tests colocated (`#[cfg(test)] mod tests` in the same file);
   module/boundary-crossing tests in the crate's `tests/` dir; `#[tokio::test]` for async

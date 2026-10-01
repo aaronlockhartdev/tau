@@ -37,6 +37,20 @@ Rules, not suggestions. Enforced in CI where mechanical, in review where not.
 
 **Doc comments** appear only on public API items whose contract is not self-evident from the signature — one line where possible, with a spec/ADR citation when a rule comes from one.
 
+## Testing
+
+**Placement.** Rust: simple correctness tests colocate (`#[cfg(test)] mod tests` in the same file); tests that cross a module boundary live in the crate's `tests/` dir. TS: `*.test.ts` colocated next to the code.
+
+**Positive and negative.** Every behavior gets a positive and a negative test. Negatives assert the `Result` (specific `Err` via `matches!`); `#[should_panic]` only where the path genuinely panics.
+
+**Rust.** `#[tokio::test]` for async — the `multi_thread` flavor only when the test needs it. One tool per job: `nextest` (all Rust test runs), `cargo-llvm-cov` (coverage: report-only CI artifact, ≥80% is a review-time aim, no floor), `cargo-fuzz` (`fuzz/`; ~300 s smoke per target on PR, 1 h + corpus `cmin` nightly), `insta` (snapshot goldens; CI fails on new/changed — keep that), `proptest` (properties), `cargo-deny` (supply chain), Miri on the pure crates (nightly only). Selection rationale with primary sources: `docs/research/testing-rust.md`.
+
+**Frontend.** Vitest + `@testing-library/svelte`; settle effects with `await tick()` / `vi.waitFor`, no fixed sleeps. Rationale: `docs/research/testing-frontend-e2e.md`.
+
+**Acceptance and E2E.** The `live-*` acceptance suites are mock-first — deterministic `tau-mock-llm` with hash-pinned scenarios in `dogfood/e2e-mocks/`, so a red is a code problem, never a network/model problem; a real endpoint is a local dogfood opt-in via `TAU_ENDPOINT`/`TAU_MODEL`. E2E drives the DEBUG binary (built with `--features e2e`) over its embedded WebDriver server; `TAU_E2E_MODE` selects the leg (replay in CI, stress local).
+
+**Tests are code.** The comment discipline, rustfmt/`clippy -D warnings`, and file-size limits above apply to test files.
+
 ## Verifying UI work
 
 Confirm a visual bug by taking a screenshot of the running app and reading it — a green DOM assertion does not prove the UI renders correctly.
