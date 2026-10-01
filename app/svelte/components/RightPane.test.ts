@@ -122,7 +122,7 @@ describe('RightPane', () => {
     expect(screen.getByText('task t1')).toBeInTheDocument();
     expect(screen.queryByText('task t2')).toBeNull();
     await user.click(screen.getByRole('button', { name: /history · 1/ }));
-    expect(mockStore.pane[WS].historyOpen).toBe(true);
+    expect(mockStore.pane[WS]?.historyOpen).toBe(true);
     expect(screen.getByText('task t2')).toBeInTheDocument();
   });
 
@@ -211,7 +211,7 @@ describe('RightPane', () => {
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
     const row = screen.getByRole('button', { name: /worker one/ });
     await user.click(row);
-    expect(mockStore.pane[WS].selSub).toBe('h1');
+    expect(mockStore.pane[WS]?.selSub).toBe('h1');
     expect(row).toHaveClass('sel');
   });
 
@@ -235,7 +235,7 @@ describe('RightPane', () => {
     const subsTab = screen.getByRole('button', { name: 'sub-agents' });
     expect(screen.getByRole('button', { name: 'tasks' })).toHaveClass('on');
     await user.click(subsTab);
-    expect(mockStore.pane[WS].rtab).toBe('subs');
+    expect(mockStore.pane[WS]?.rtab).toBe('subs');
     expect(subsTab).toHaveClass('on');
     expect(screen.queryByText('No tasks — ask the agent to make one')).toBeNull();
   });
@@ -256,6 +256,6 @@ describe('RightPane', () => {
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
     const kids = screen.getAllByText('worker two');
     expect(kids).toHaveLength(1);
-    expect(kids[0].closest('.srow2')).toHaveClass('d2');
+    expect(kids[0]!.closest('.srow2')).toHaveClass('d2');
   });
 });

@@ -95,7 +95,7 @@ describe('WorkspaceTabs', () => {
   it('the × closes that workspace', async () => {
     render(WorkspaceTabs);
     const xs = screen.getAllByLabelText('Close workspace');
-    await userEvent.click(xs[0]);
+    await userEvent.click(xs[0]!);
     expect(closeWorkspace).toHaveBeenCalledWith(W1);
   });
 

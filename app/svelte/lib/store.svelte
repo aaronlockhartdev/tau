@@ -202,7 +202,7 @@
       applyEvents([
         {
           type: 'om_status',
-          workspace: store.current ? store.sessions[store.current].meta.workspace : '',
+          workspace: store.current ? store.sessions[store.current]!.meta.workspace : '',
           session: store.current ?? '',
           kind
         }
@@ -555,7 +555,7 @@
         const alive = new Set(list.sessions.map((s) => s.id));
         const next = { ...store.sessions };
         for (const id of Object.keys(next)) {
-          if (next[id].meta.workspace === ws && !alive.has(id)) delete next[id];
+          if (next[id]!.meta.workspace === ws && !alive.has(id)) delete next[id];
         }
         store.sessions = applySessionList(next, list.sessions);
       }

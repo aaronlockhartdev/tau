@@ -218,7 +218,7 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
     }
     out = touchChild(out, sid, sub.child, sub.state, existing.mru, sub.waiting_on, null);
     if (sub.waiting_on === null && sub.state !== 'idle') {
-      const c = out[sub.child];
+      const c = out[sub.child]!;
       out = { ...out, [sub.child]: { ...c, waiting_on: null } };
     }
   }

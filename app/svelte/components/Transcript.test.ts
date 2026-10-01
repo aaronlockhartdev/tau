@@ -90,13 +90,13 @@ describe('Transcript', () => {
     seed(30);
     await mount();
     fetchWindow.mockClear();
-    drives[0](0);
+    drives[0]!(0);
     await tick();
     expect(fetchWindow).toHaveBeenCalledTimes(1);
     expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 0);
     expect(mockStore.renderRange).toBe('0–0 of 30');
     // A second scroll inside the margin must not re-fetch.
-    drives[0](0);
+    drives[0]!(0);
     expect(fetchWindow).toHaveBeenCalledTimes(1);
   });
 
@@ -104,7 +104,7 @@ describe('Transcript', () => {
     seed(30, { turn: 'running' });
     await mount();
     fetchWindow.mockClear();
-    mockStore.sessions.c1.turn = 'idle';
+    mockStore.sessions.c1!.turn = 'idle';
     await tick();
     expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
   });

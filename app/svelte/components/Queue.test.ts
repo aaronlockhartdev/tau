@@ -100,7 +100,7 @@ describe('Queue', () => {
     render(Queue);
     const user = userEvent.setup();
     const dels = screen.getAllByRole('button');
-    await user.click(dels[1]);
+    await user.click(dels[1]!);
     expect(deleteQueueItem).toHaveBeenCalledWith('second', 'steering', null, 1);
     // the mock keeps the rows; the last button is the follow-up section's (index 0 there)
     await user.click(screen.getAllByRole('button').at(-1)!);

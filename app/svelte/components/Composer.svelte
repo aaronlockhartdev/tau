@@ -29,8 +29,8 @@
 
   const running = $derived(
     store.current
-      ? store.sessions[store.current].turn === 'running' ||
-          store.sessions[store.current].turn === 'starting'
+      ? store.sessions[store.current]!.turn === 'running' ||
+          store.sessions[store.current]!.turn === 'starting'
       : false
   );
 

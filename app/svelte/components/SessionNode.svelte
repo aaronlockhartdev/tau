@@ -36,7 +36,7 @@
     visibleIds: string[];
   } = $props();
 
-  const active = $derived(store.current ? store.sessions[store.current] : null);
+  const active = $derived(store.current ? store.sessions[store.current] ?? null : null);
   const kids = $derived(
     sessions.filter((s) => s.parent === session.meta.id).sort((a, b) => b.mru - a.mru)
   );

@@ -33,10 +33,10 @@
   let ref = $state<VirtualizerHandle | undefined>(undefined);
   let shouldStickToBottom = $state(true);
 
-  const entries = $derived(cur ? store.sessions[cur].entries : {});
+  const entries = $derived(cur ? store.sessions[cur]!.entries : {});
   // The pre-first-output window: a turn is dispatched but no stream/tool
   // event has landed yet. The animated dots sit at the tail of the track.
-  const awaiting = $derived(cur ? store.sessions[cur].turn === 'starting' : false);
+  const awaiting = $derived(cur ? store.sessions[cur]!.turn === 'starting' : false);
   // A sub-agent notification's label: the child session's own title.
   const sourceLabelFor = (e: Entry): string =>
     e.kind === 'user' ? (e.source ? store.sessions[e.source]?.meta.title ?? '' : '') : '';
@@ -169,7 +169,7 @@
   // V2 turn headers: 'you' on the user's own messages, 'agent' on the first
   // entry of a response block.
   function turnLabel(idx: number): 'you' | 'agent' | '' {
-    const e = all[idx];
+    const e = all[idx]!;
     if (e.kind === 'user' && !e.source && !e.skill) return 'you';
     const prev = all[idx - 1];
     return prev && prev.kind === 'user' ? 'agent' : '';

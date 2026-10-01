@@ -91,8 +91,8 @@ describe('session archive / restore / delete', () => {
       })
     });
     await archiveSession('s1');
-    expect(store.sessions['s1'].archived).toBe(true);
-    expect(store.sessions['s1'].state).toBe('idle');
+    expect(store.sessions['s1']?.archived).toBe(true);
+    expect(store.sessions['s1']?.state).toBe('idle');
     expect(store.sessions['s2']).toBeTruthy();
   });
 
@@ -107,7 +107,7 @@ describe('session archive / restore / delete', () => {
     });
     await archiveSession('c1');
     expect(called).toEqual([]);
-    expect(store.sessions['c1'].archived).toBe(false);
+    expect(store.sessions['c1']?.archived).toBe(false);
   });
 
   it('restore: the archive flag converges on the refetched list', async () => {
@@ -117,7 +117,7 @@ describe('session archive / restore / delete', () => {
       session_list: () => ({ kind: 'sessions', sessions: [meta('s1', WS.id, { archived: false })] })
     });
     await restoreSession(WS.id, 's1');
-    expect(store.sessions['s1'].archived).toBe(false);
+    expect(store.sessions['s1']?.archived).toBe(false);
   });
 
   it('delete: the session and its cascade leave the store on the refetch', async () => {

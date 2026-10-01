@@ -53,7 +53,7 @@ describe('StatusBar', () => {
         om: { kind: 'idle', observation_tokens: 1200, pending_tokens: 0, reflector_threshold: 1500 }
       }
     });
-    mockStore.sessions['s1'].meta = meta('s1', { title: 'alpha' });
+    mockStore.sessions['s1']!.meta = meta('s1', { title: 'alpha' });
     mockStore.workspaces = [WS];
     render(StatusBar);
     expect(screen.getByText('proj')).toBeInTheDocument();

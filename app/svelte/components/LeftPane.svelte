@@ -32,13 +32,13 @@
   // spans.
   const visibleIds = $derived.by(() => {
     if (ws === null) return [];
-    const active = store.current ? store.sessions[store.current] : null;
+    const active = store.current ? store.sessions[store.current] ?? null : null;
     const q = pane(ws);
     const out: string[] = [];
     const walk = (ids: string[]): void => {
       for (const id of ids) {
         out.push(id);
-        const s = store.sessions[id];
+        const s = store.sessions[id]!;
         const kids = sessions
           .filter((k) => k.parent === id)
           .sort((a, b) => b.mru - a.mru)

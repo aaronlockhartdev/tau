@@ -136,14 +136,14 @@ describe('LeftPane', () => {
   it('switches tabs', async () => {
     await mount();
     await userEvent.click(screen.getByRole('button', { name: 'files' }));
-    expect(mockStore.pane[WS].ltab).toBe('files');
+    expect(mockStore.pane[WS]?.ltab).toBe('files');
     await userEvent.click(screen.getByRole('button', { name: 'sessions' }));
-    expect(mockStore.pane[WS].ltab).toBe('sessions');
+    expect(mockStore.pane[WS]?.ltab).toBe('sessions');
   });
 
   it('a click away from the rows clears the selection', async () => {
     await mount();
-    const q = mockStore.pane[WS];
+    const q = mockStore.pane[WS]!;
     q.selected = ['s1'];
     await fireEvent.click(document.body);
     expect(q.selected).toEqual([]);
@@ -158,10 +158,10 @@ describe('LeftPane', () => {
     });
     await mount();
     const rows = screen.getAllByText(/s1|s2/).map((el) => el.closest('.trow') as HTMLElement);
-    await user.click(rows[0]);
+    await user.click(rows[0]!);
     await user.keyboard('{Shift>}');
-    await user.click(rows[1]);
+    await user.click(rows[1]!);
     await user.keyboard('{/Shift}');
-    expect(mockStore.pane[WS].selected).toEqual(['s1', 's2']);
+    expect(mockStore.pane[WS]?.selected).toEqual(['s1', 's2']);
   });
 });

@@ -170,7 +170,7 @@ describe('send / stop guards', () => {
     });
     await send('hi', 'steering');
     expect(store.error).toBe('provider 500');
-    expect(store.sessions['s1'].turn).toBe('idle');
+    expect(store.sessions['s1']!.turn).toBe('idle');
   });
 
   it('stop with no current session is a no-op', async () => {
@@ -228,7 +228,7 @@ describe('newSession / renameSession', () => {
     await renameSession('s1', '  trimmed  ');
     const call = mockInvoke.mock.calls.at(-1)![1] as { command: Command };
     expect(call.command).toEqual({ type: 'session_rename', session: 's1', title: 'trimmed' });
-    expect(store.sessions['s1'].meta.title).toBe('trimmed');
+    expect(store.sessions['s1']!.meta.title).toBe('trimmed');
   });
 
   it('a failed rename surfaces the banner and keeps the old title', async () => {
@@ -239,7 +239,7 @@ describe('newSession / renameSession', () => {
     });
     await renameSession('s1', 'x');
     expect(store.error).toBe('rename failed');
-    expect(store.sessions['s1'].meta.title).toBeNull();
+    expect(store.sessions['s1']!.meta.title).toBeNull();
   });
 });
 
@@ -251,7 +251,7 @@ describe('setModel', () => {
 
   it('is a no-op for an empty or unchanged model', async () => {
     oneSession();
-    store.sessions['s1'].meta.model = 'gpt';
+    store.sessions['s1']!.meta.model = 'gpt';
     await setModel('');
     await setModel('gpt');
     expect(mockInvoke).not.toHaveBeenCalled();
@@ -263,7 +263,7 @@ describe('setModel', () => {
     await setModel('dev/qwen3.8');
     const call = mockInvoke.mock.calls.at(-1)![1] as { command: Command };
     expect(call.command).toEqual({ type: 'session_set_model', session: 's1', model: 'dev/qwen3.8' });
-    expect(store.sessions['s1'].meta.model).toBe('dev/qwen3.8');
+    expect(store.sessions['s1']!.meta.model).toBe('dev/qwen3.8');
   });
 
   it('a failed setModel surfaces the banner and keeps the old model', async () => {
@@ -274,7 +274,7 @@ describe('setModel', () => {
     });
     await setModel('dev/nope');
     expect(store.error).toBe('no such model');
-    expect(store.sessions['s1'].meta.model).toBeNull();
+    expect(store.sessions['s1']!.meta.model).toBeNull();
   });
 });
 
@@ -307,7 +307,7 @@ describe('deleteQueueItem', () => {
         })
     });
     await deleteQueueItem('dup', 'steering', null, 1);
-    const pending = store.sessions['s1'].pending;
+    const pending = store.sessions['s1']!.pending;
     expect(pending).toHaveLength(2);
     expect(pending.map((p) => `${p.text}:${p.lane}`)).toEqual(['dup:steering', 'dup:follow-up']);
   });
@@ -326,9 +326,9 @@ describe('deleteQueueItem', () => {
         })
     });
     await deleteQueueItem('a', 'steering', null, 0);
-    const pending = store.sessions['s1'].pending;
+    const pending = store.sessions['s1']!.pending;
     expect(pending).toHaveLength(2);
-    expect(pending[1].source).toBe('s1-1');
+    expect(pending[1]!.source).toBe('s1-1');
   });
 
   it('a failed resync keeps the optimistic deletion (the queue event will resync)', async () => {
@@ -341,7 +341,7 @@ describe('deleteQueueItem', () => {
       return { kind: 'none' };
     });
     await deleteQueueItem('a', 'steering', null, 0);
-    expect(store.sessions['s1'].pending).toHaveLength(0);
+    expect(store.sessions['s1']!.pending).toHaveLength(0);
     expect(store.error).toBeNull();
   });
 });
@@ -503,7 +503,7 @@ describe('the dev seam (window.__tau)', () => {
     const { omStatus } = (window as unknown as { __tau: { omStatus: (k: 'observing' | 'reflecting' | 'idle') => void } })
       .__tau;
     omStatus('observing');
-    expect(store.sessions['s1'].om.kind).toBe('observing');
+    expect(store.sessions['s1']!.om.kind).toBe('observing');
   });
 
   it('sessionSetModel forwards to the command', async () => {

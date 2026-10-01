@@ -69,21 +69,21 @@ describe('touchChild', () => {
   it('fills a late spawn title only when the stub has no name', () => {
     let m: SessionMap = touchChild({}, 'p', 'c', 'running', 5, null, null);
     m = touchChild(m, 'p', 'c', 'running', 6, null, 'worker');
-    expect(m['c'].meta.title).toBe('worker');
+    expect(m['c']!.meta.title).toBe('worker');
     m = touchChild(m, 'p', 'c', 'done', 7, null, 'too late');
-    expect(m['c'].meta.title).toBe('worker');
+    expect(m['c']!.meta.title).toBe('worker');
   });
 
   it('keeps the row mru when correcting an existing child', () => {
     let m: SessionMap = touchChild({}, 'p', 'c', 'running', 100, null, 'x');
     m = touchChild(m, 'p', 'c', 'done', 999, null, null);
-    expect(m['c'].mru).toBe(999);
+    expect(m['c']!.mru).toBe(999);
   });
 
   it('a new child inherits the parent workspace', () => {
     const m = touchChild({ p: makeStub(meta('p'), null, 'idle', null, 1) }, 'p', 'c', 'running', 5);
-    expect(m['c'].meta.workspace).toBe(WS.id);
-    expect(m['c'].parent).toBe('p');
+    expect(m['c']!.meta.workspace).toBe(WS.id);
+    expect(m['c']!.parent).toBe('p');
   });
 });
 
@@ -91,7 +91,7 @@ describe('applySessionList', () => {
   it('an existing row adopts the list archive flag (the list is the authority)', () => {
     const map: SessionMap = { s1: makeStub(meta('s1'), null, 'idle', null, 1) };
     const out = applySessionList(map, [meta('s1', { archived: true })]);
-    expect(out['s1'].archived).toBe(true);
+    expect(out['s1']!.archived).toBe(true);
     // an unchanged flag keeps the row reference (no reactive churn)
     const same = applySessionList(out, [meta('s1', { archived: true })]);
     expect(same['s1']).toBe(out['s1']);
@@ -99,8 +99,8 @@ describe('applySessionList', () => {
 
   it('a new id materializes as a stub with its list parent', () => {
     const out = applySessionList({}, [meta('c', { parent: 'p' })]);
-    expect(out['c'].parent).toBe('p');
-    expect(out['c'].entries).toEqual({});
+    expect(out['c']!.parent).toBe('p');
+    expect(out['c']!.entries).toEqual({});
   });
 });
 
@@ -108,8 +108,8 @@ describe('setArchived', () => {
   it('converges the row on the command meta', () => {
     const map: SessionMap = { s1: makeStub(meta('s1'), null, 'idle', null, 1) };
     const out = setArchived(map, 's1', meta('s1', { archived: true, title: 'renamed' }));
-    expect(out['s1'].archived).toBe(true);
-    expect(out['s1'].meta.title).toBe('renamed');
+    expect(out['s1']!.archived).toBe(true);
+    expect(out['s1']!.meta.title).toBe('renamed');
   });
 
   it('an unknown session leaves the map alone', () => {
@@ -160,7 +160,7 @@ describe('groupIsOpen', () => {
     const p = makeStub(meta('p', { parent: 'gp' }), 'gp', 'idle', null, 2);
     const a = makeStub(meta('a', { parent: 'p' }), 'p', 'idle', null, 3);
     const all = [gp, p, a];
-    const act = all[2];
+    const act = all[2]!;
     expect(groupIsOpen({ openGroups: null }, gp, act, all)).toBe(true);
     expect(groupIsOpen({ openGroups: null }, p, act, all)).toBe(true);
   });
@@ -175,9 +175,9 @@ describe('applySubagentEvent (lib level)', () => {
   it('a state event for an unknown handle registers the child (no mirror — the spawn is the mirror source)', () => {
     const map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
     const out = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: 'idle', detail: { waiting_on: 'user' }, note: null }, 7);
-    expect(out['c'].state).toBe('idle');
-    expect(out['c'].waiting_on).toBe('user');
-    expect(out['p'].subagents).toHaveLength(0);
+    expect(out['c']!.state).toBe('idle');
+    expect(out['c']!.waiting_on).toBe('user');
+    expect(out['p']!.subagents).toHaveLength(0);
   });
 
   it('a state event updates the mirror and clears a stale wait for non-idle states', () => {
@@ -185,9 +185,9 @@ describe('applySubagentEvent (lib level)', () => {
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 7);
     map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: 'idle', detail: { waiting_on: 'user' }, note: null }, 8);
     map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: 'done', detail: null, note: 'finished' }, 9);
-    expect(map['p'].subagents[0].state).toBe('done');
-    expect(map['p'].subagents[0].waiting_on).toBeNull();
-    expect(map['p'].subagents[0].last_message).toBe('finished');
+    expect(map['p']!.subagents[0]!.state).toBe('done');
+    expect(map['p']!.subagents[0]!.waiting_on).toBeNull();
+    expect(map['p']!.subagents[0]!.last_message).toBe('finished');
   });
 
   it('a notified event with no child row updates the mirror only', () => {
@@ -195,9 +195,9 @@ describe('applySubagentEvent (lib level)', () => {
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 7);
     delete map['c'];
     const out = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'idle', text: 'hi', output: null }, 9);
-    expect(out['p'].subagents[0].state).toBe('idle');
-    expect(out['p'].subagents[0].waiting_on).toBe('parent');
-    expect(out['p'].subagents[0].last_message).toBe('hi');
+    expect(out['p']!.subagents[0]!.state).toBe('idle');
+    expect(out['p']!.subagents[0]!.waiting_on).toBe('parent');
+    expect(out['p']!.subagents[0]!.last_message).toBe('hi');
   });
 
   it('a notified event on an unknown session leaves the map alone', () => {
@@ -209,7 +209,7 @@ describe('applySubagentEvent (lib level)', () => {
     let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h1', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'one' }, 7);
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h2', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'two' }, 8);
-    expect(map['p'].subagents).toHaveLength(1);
-    expect(map['p'].subagents[0].handle).toBe('h2');
+    expect(map['p']!.subagents).toHaveLength(1);
+    expect(map['p']!.subagents[0]!.handle).toBe('h2');
   });
 });

@@ -51,7 +51,7 @@ describe('TreeNode', () => {
     render(TreeNodeFixture, { props: { text: 'a', onRow } });
     await user.click(screen.getByText('a'));
     expect(onRow).toHaveBeenCalledTimes(1);
-    expect(onRow.mock.calls[0][0]).toBeInstanceOf(MouseEvent);
+    expect(onRow.mock.calls[0]![0]).toBeInstanceOf(MouseEvent);
   });
 
   it('a double click calls onRowDbl', async () => {

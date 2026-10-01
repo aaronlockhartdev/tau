@@ -91,7 +91,7 @@ beforeEach(() => {
 describe('fetchWindow', () => {
   it('a paged read updates an in-flight entry in place (one id, no twin)', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    store.sessions['s1'].entries['42'] = { id: '42', kind: 'message', text: 'hello', reasoning: '' };
+    store.sessions['s1']!.entries['42'] = { id: '42', kind: 'message', text: 'hello', reasoning: '' };
     mockIPC((cmd) => {
       if (cmd.type === 'session_entries') {
         return { kind: 'entries', entries: [entryView('42', 'assistant', { text: 'hello', reasoning: 'r' })] };
@@ -99,9 +99,9 @@ describe('fetchWindow', () => {
       return { kind: 'none' };
     });
     await fetchWindow('s1', 0, 50);
-    const s = store.sessions['s1'];
+    const s = store.sessions['s1']!;
     expect(Object.keys(s.entries)).toEqual(['42']);
-    const e = s.entries['42'];
+    const e = s.entries['42']!;
     if (e.kind === 'message' || e.kind === 'interrupted') {
       expect(e.text).toBe('hello');
       expect(e.reasoning).toBe('r');
@@ -110,7 +110,7 @@ describe('fetchWindow', () => {
 
   it('a paged read of a new id materializes the card in creation order', async () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    store.sessions['s1'].entries['1'] = { id: '1', kind: 'user', text: 'first' };
+    store.sessions['s1']!.entries['1'] = { id: '1', kind: 'user', text: 'first' };
     mockIPC((cmd) => {
       if (cmd.type === 'session_entries') {
         return { kind: 'entries', entries: [entryView('2', 'assistant', { text: 'second', interrupted: false })] };
@@ -118,7 +118,7 @@ describe('fetchWindow', () => {
       return { kind: 'none' };
     });
     await fetchWindow('s1', 0, 50);
-    expect(Object.keys(store.sessions['s1'].entries)).toEqual(['1', '2']);
+    expect(Object.keys(store.sessions['s1']!.entries)).toEqual(['1', '2']);
   });
 
   it('a blob-backed om entry resolves via blob_read and renders the observation text', async () => {
@@ -151,7 +151,7 @@ describe('fetchWindow', () => {
       return { kind: 'none' };
     });
     await fetchWindow('s1', 0, 50);
-    const e = Object.values(store.sessions['s1'].entries)[0];
+    const e = Object.values(store.sessions['s1']!.entries)[0];
     expect(e?.kind).toBe('om');
     expect(e?.text).toBe('* 🔴 (16:21) user set up a workbench');
     expect(e?.text).not.toContain('[object Object]');
@@ -231,15 +231,15 @@ describe('workspace tab round trip (switch away and back)', () => {
       (c) => (c[1] as { command: Command }).command.type === 'session_entries'
     );
     expect(entries).toHaveLength(1);
-    const s = store.sessions['s1'];
+    const s = store.sessions['s1']!;
     // Every card kind lands in the re-opened session with its full payload.
     expect(Object.values(s.entries).map((e) => e.kind)).toEqual(['user', 'message', 'tool']);
-    const a = Object.values(s.entries)[1];
+    const a = Object.values(s.entries)[1]!;
     if (a.kind === 'message' || a.kind === 'interrupted') {
       expect(a.text).toBe(full);
       expect(a.reasoning).toBe('r');
     }
-    const t = Object.values(s.entries)[2];
+    const t = Object.values(s.entries)[2]!;
     if (t.kind === 'tool') {
       expect(t.name).toBe('bash');
       expect(t.status).toBe('ok');

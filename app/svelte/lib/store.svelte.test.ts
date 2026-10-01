@@ -181,7 +181,7 @@ describe('boot (init)', () => {
     await init();
     expect(store.workspaces).toEqual([WS]);
     expect(store.current).toBe('s1');
-    const s = store.sessions['s1'];
+    const s = store.sessions['s1']!;
     expect(s).toBeTruthy();
     expect(s.meta.id).toBe('s1');
     expect(store.files[WS.id]).toEqual({});
@@ -265,7 +265,7 @@ describe('openWorkspace concurrency', () => {
 describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
   function oneSession() {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    return store.sessions['s1'];
+    return store.sessions['s1']!;
   }
   function upsert(id: string, kind: string, payload: Record<string, unknown>) {
     return {
@@ -295,7 +295,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     ]);
     expect(s.turn).toBe('idle');
     expect(s.usage).toEqual(USAGE);
-    const e = s.entries['00000001'];
+    const e = s.entries['00000001']!;
     expect(e).toBeTruthy();
     expect(e.kind).toBe('message');
     if (e.kind === 'message' || e.kind === 'interrupted') {
@@ -349,7 +349,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     ]);
     const tools = Object.values(s.entries).filter((e) => e.kind === 'tool');
     expect(tools).toHaveLength(1);
-    const tool = tools[0];
+    const tool = tools[0]!;
     if (tool.kind === 'tool') {
       expect(tool.name).toBe('bash');
       expect(tool.status).toBe('ok');
@@ -383,7 +383,7 @@ describe('applyEvents: queueing', () => {
         ]
       }
     ]);
-    expect(store.sessions['s1'].pending.map((p) => p.lane)).toEqual(['force', 'steering', 'follow-up']);
+    expect(store.sessions['s1']!.pending.map((p) => p.lane)).toEqual(['force', 'steering', 'follow-up']);
   });
 
   it('a sourced item (a sub-agent report) keeps its provenance', () => {
@@ -399,10 +399,10 @@ describe('applyEvents: queueing', () => {
         ]
       }
     ]);
-    const p = store.sessions['s1'].pending;
+    const p = store.sessions['s1']!.pending;
     expect(p).toHaveLength(2);
-    expect(p[0].source).toBeUndefined();
-    expect(p[1].source).toBe('s1-1');
+    expect(p[0]!.source).toBeUndefined();
+    expect(p[1]!.source).toBe('s1-1');
   });
 
   it('send(): the user card lands on the core upsert echo (no optimistic card), the lane maps, the duplicate queues dedupe', async () => {
@@ -413,9 +413,9 @@ describe('applyEvents: queueing', () => {
     ]);
     const before = store.tailJump;
     await send('hi', 'steering');
-    expect(store.sessions['s1'].pending).toHaveLength(0);
+    expect(store.sessions['s1']!.pending).toHaveLength(0);
     // ADR-0008: no client-minted card — the core's echo is the card.
-    expect(Object.keys(store.sessions['s1'].entries)).toEqual([]);
+    expect(Object.keys(store.sessions['s1']!.entries)).toEqual([]);
     applyEvents([
       {
         type: 'entry_upsert',
@@ -424,7 +424,7 @@ describe('applyEvents: queueing', () => {
         entry: entryView('00000001', 'user', { text: 'hi', lane: 'steering' })
       }
     ]);
-    const card = store.sessions['s1'].entries['00000001'];
+    const card = store.sessions['s1']!.entries['00000001']!;
     expect(card).toBeTruthy();
     if (card.kind === 'user') expect(card.text).toBe('hi');
     expect(store.tailJump).toBe(before + 1);
@@ -442,10 +442,10 @@ describe('applyEvents: queueing', () => {
     });
     await send('hi', 'steering');
     expect(store.error).toBe('provider 500');
-    expect(Object.keys(store.sessions['s1'].entries)).toEqual([]);
+    expect(Object.keys(store.sessions['s1']!.entries)).toEqual([]);
     // a retry of the same text must not stack a second ghost
     await send('hi', 'steering');
-    expect(Object.keys(store.sessions['s1'].entries)).toEqual([]);
+    expect(Object.keys(store.sessions['s1']!.entries)).toEqual([]);
   });
 });
 
@@ -454,7 +454,7 @@ describe('session switch', () => {
     store.sessions = applySessionList({}, [meta('p'), meta('c', WS.id, { parent: 'p' })]);
     defaultIPC({ session_open: () => snap('c', { session: { title: 'child' } }) });
     await switchSession('c');
-    const s = store.sessions['c'];
+    const s = store.sessions['c']!;
     expect(store.current).toBe('c');
     expect(s.parent).toBe('p');
     expect(s.meta.title).toBe('child');
@@ -476,10 +476,10 @@ describe('session switch', () => {
 
   it('re-opening a session preserves the row mru (no tree reshuffle away from the clicked row)', async () => {
     store.sessions = applySessionList({}, [meta('s1')]);
-    store.sessions['s1'].mru = 9999;
+    store.sessions['s1']!.mru = 9999;
     defaultIPC();
     await switchSession('s1');
-    expect(store.sessions['s1'].mru).toBe(9999);
+    expect(store.sessions['s1']!.mru).toBe(9999);
   });
 
   it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the mru)', async () => {
@@ -497,18 +497,18 @@ describe('session switch', () => {
         })
     });
     await switchSession('p');
-    expect(store.sessions['c'].state).toBe('done');
-    expect(store.sessions['c'].mru).toBe(5000);
+    expect(store.sessions['c']!.state).toBe('done');
+    expect(store.sessions['c']!.mru).toBe(5000);
     expect(store.sessions['d']).toBeTruthy();
-    expect(store.sessions['d'].state).toBe('running');
-    expect(store.sessions['d'].parent).toBe('p');
+    expect(store.sessions['d']!.state).toBe('running');
+    expect(store.sessions['d']!.parent).toBe('p');
   });
 
   it('synthesizes the tab entry for a disk-restored child with no live supervisor', async () => {
     store.sessions = touchChild(applySessionList({}, [meta('p')]), 'p', 'c', 'done', 1, 'parent');
     defaultIPC({ session_open: () => snap('p') });
     await switchSession('p');
-    expect(store.sessions['p'].subagents).toEqual([sub('c', { state: 'done' })]);
+    expect(store.sessions['p']!.subagents).toEqual([sub('c', { state: 'done' })]);
   });
 
   it('a branch_move event moves the leaf', () => {
@@ -516,7 +516,7 @@ describe('session switch', () => {
     applyEvents([
       { type: 'session_event', workspace: WS.id, session: 's1', kind: { kind: 'branch_move', leaf: '7' } }
     ]);
-    expect(store.sessions['s1'].meta.leaf).toBe('7');
+    expect(store.sessions['s1']!.meta.leaf).toBe('7');
   });
 });
 
@@ -699,10 +699,10 @@ describe('guards', () => {
   it('task_changed: an unchanged re-emit is a no-op, a change replaces', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     const tasks: Task[] = [];
-    store.sessions['s1'].tasks = tasks;
-    const beforeRef = store.sessions['s1'].tasks;
+    store.sessions['s1']!.tasks = tasks;
+    const beforeRef = store.sessions['s1']!.tasks;
     applyEvents([{ type: 'task_changed', workspace: WS.id, session: 's1', tasks }]);
-    expect(store.sessions['s1'].tasks).toBe(beforeRef);
+    expect(store.sessions['s1']!.tasks).toBe(beforeRef);
     const other: Task[] = [
       {
         id: 't1',
@@ -718,14 +718,14 @@ describe('guards', () => {
       }
     ];
     applyEvents([{ type: 'task_changed', workspace: WS.id, session: 's1', tasks: other }]);
-    expect(store.sessions['s1'].tasks).not.toBe(beforeRef);
-    expect(store.sessions['s1'].tasks).toEqual(other);
+    expect(store.sessions['s1']!.tasks).not.toBe(beforeRef);
+    expect(store.sessions['s1']!.tasks).toEqual(other);
   });
 
   it('om_status drives the gauge kind; system errors surface', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     applyEvents([{ type: 'om_status', workspace: WS.id, session: 's1', kind: 'observing' }]);
-    expect(store.sessions['s1'].om.kind).toBe('observing');
+    expect(store.sessions['s1']!.om.kind).toBe('observing');
     applyEvents([
       {
         type: 'system',
@@ -770,11 +770,11 @@ describe('subagent_event', () => {
         }
       }
     ]);
-    expect(store.sessions['p'].subagents).toHaveLength(1);
-    expect(store.sessions['p'].subagents[0].state).toBe('running');
+    expect(store.sessions['p']!.subagents).toHaveLength(1);
+    expect(store.sessions['p']!.subagents[0]!.state).toBe('running');
     expect(store.sessions['c']).toBeTruthy();
-    expect(store.sessions['c'].state).toBe('running');
-    expect(store.sessions['c'].meta.title).toBe('worker');
+    expect(store.sessions['c']!.state).toBe('running');
+    expect(store.sessions['c']!.meta.title).toBe('worker');
   });
 
   it('state: the mirror and the child row update, the declared wait rides the detail', () => {
@@ -787,10 +787,10 @@ describe('subagent_event', () => {
         kind: { kind: 'state', handle: 'c', child: 'c', state: 'idle', detail: { waiting_on: 'user' }, note: null }
       }
     ]);
-    expect(store.sessions['p'].subagents[0].state).toBe('idle');
-    expect(store.sessions['p'].subagents[0].waiting_on).toBe('user');
-    expect(store.sessions['c'].state).toBe('idle');
-    expect(store.sessions['c'].waiting_on).toBe('user');
+    expect(store.sessions['p']!.subagents[0]!.state).toBe('idle');
+    expect(store.sessions['p']!.subagents[0]!.waiting_on).toBe('user');
+    expect(store.sessions['c']!.state).toBe('idle');
+    expect(store.sessions['c']!.waiting_on).toBe('user');
   });
 
   it('notified: the wake maps onto a terminal state (stopped must not read back as idle)', () => {
@@ -803,8 +803,8 @@ describe('subagent_event', () => {
         kind: { kind: 'notified', child: 'c', wake: 'stopped', text: 'done', output: null }
       }
     ]);
-    expect(store.sessions['p'].subagents[0].state).toBe('stopped');
-    expect(store.sessions['c'].state).toBe('stopped');
+    expect(store.sessions['p']!.subagents[0]!.state).toBe('stopped');
+    expect(store.sessions['c']!.state).toBe('stopped');
   });
 
   it('task_changed: a child-targeted emission fills the child pane (the projection)', () => {
@@ -840,7 +840,7 @@ describe('subagent_event', () => {
       }
     ];
     applyEvents([{ type: 'task_changed', workspace: WS.id, session: 'c', tasks: projected }]);
-    expect(store.sessions['c'].tasks).toEqual(projected);
+    expect(store.sessions['c']!.tasks).toEqual(projected);
   });
 });
 
@@ -858,7 +858,7 @@ describe('files pane', () => {
       return { kind: 'none' };
     });
     toggleFileDir('w1', 'src');
-    expect(Object.keys(store.files['w1'])).toEqual(['src']);
+    expect(Object.keys(store.files['w1'] ?? {})).toEqual(['src']);
     await vi.waitFor(() => expect(listed).toEqual(['src']));
     toggleFileDir('w1', 'src');
     expect(store.files['w1']).toEqual({});
@@ -915,7 +915,7 @@ describe('files pane', () => {
     await vi.waitFor(() => expect(store.fileErrors['w1']?.['src']).toBe('permission denied'));
     fail = false;
     retryDirFetch('w1', 'src');
-    await vi.waitFor(() => expect(store.files['w1']['src']).toEqual([f]));
+    await vi.waitFor(() => expect(store.files['w1']!['src']).toEqual([f]));
     expect(store.fileErrors['w1']?.['src']).toBeUndefined();
   });
 });

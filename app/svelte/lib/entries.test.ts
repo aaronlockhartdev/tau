@@ -33,7 +33,7 @@ describe('upsertEntry (ADR-0008)', () => {
     const entries: Record<string, Entry> = {};
     upsertEntry(entries, omView());
     expect(Object.keys(entries)).toEqual(['5']);
-    expect(entries['5'].kind).toBe('om');
+    expect(entries['5']!.kind).toBe('om');
   });
 
   it('a re-emission updates the slot in place and never repositions it', () => {
@@ -51,7 +51,7 @@ describe('upsertEntry (ADR-0008)', () => {
     upsertEntry(entries, v('00000002', 'other'));
     upsertEntry(entries, v('00000001', 'hello'));
     expect(Object.keys(entries)).toEqual(['00000001', '00000002']);
-    const e = entries['00000001'];
+    const e = entries['00000001']!;
     if (e.kind === 'message' || e.kind === 'interrupted') expect(e.text).toBe('hello');
   });
 });
@@ -69,7 +69,7 @@ describe('decodeEntry (tool)', () => {
   it('a call-phase tool (empty output) decodes to running, not ok', () => {
     const entries: Record<string, Entry> = {};
     upsertEntry(entries, toolView('3', ''));
-    const e = entries['3'];
+    const e = entries['3']!;
     expect(e.kind).toBe('tool');
     if (e.kind === 'tool') expect(e.status).toBe('running');
   });
@@ -77,7 +77,7 @@ describe('decodeEntry (tool)', () => {
   it('a result-phase tool (non-empty output) decodes to ok', () => {
     const entries: Record<string, Entry> = {};
     upsertEntry(entries, toolView('4', 'done'));
-    const e = entries['4'];
+    const e = entries['4']!;
     if (e.kind === 'tool') expect(e.status).toBe('ok');
   });
 });
@@ -131,7 +131,7 @@ describe('resolveBlobs (om)', () => {
     const views = await resolveBlobs([v], () => Promise.resolve({
       active_observations: 'the observation text'
     }));
-    const e = decodeEntry(views[0]) as { kind: string; text: string };
+    const e = decodeEntry(views[0]!) as { kind: string; text: string };
     expect(e.kind).toBe('om');
     expect(e.text).toBe('the observation text');
   });
@@ -147,8 +147,8 @@ describe('resolveBlobs (om)', () => {
       first_kept: null
     };
     const views = await resolveBlobs([v], () => Promise.reject(new Error('no such file')));
-    expect(views[0].payload).toBeNull();
-    expect(views[0].blob).toBe(v.blob);
+    expect(views[0]!.payload).toBeNull();
+    expect(views[0]!.blob).toBe(v.blob);
   });
 });
 
@@ -160,13 +160,13 @@ describe('resolveBlobs (non-blob views)', () => {
   it('leaves a populated payload alone', async () => {
     const v = view('user', { text: 'hi' }, null);
     const out = await resolveBlobs([v], () => Promise.reject(new Error('must not fetch')));
-    expect(out[0].payload).toEqual({ text: 'hi' });
+    expect(out[0]!.payload).toEqual({ text: 'hi' });
   });
 
   it('leaves a null payload without a blob pointer alone', async () => {
     const v = view('system', null, null);
     const out = await resolveBlobs([v], () => Promise.reject(new Error('must not fetch')));
-    expect(out[0].payload).toBeNull();
+    expect(out[0]!.payload).toBeNull();
   });
 });
 

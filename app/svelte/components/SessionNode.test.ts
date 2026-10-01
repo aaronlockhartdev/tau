@@ -127,7 +127,7 @@ describe('SessionNode', () => {
     await mount(seed());
     await userEvent.click(rowOf('s1'));
     expect(openSessionById).toHaveBeenCalledWith('s1');
-    const q = mockStore.pane[WS];
+    const q = mockStore.pane[WS]!;
     expect(q.selAnchor).toBe('s1');
     expect(q.selected).toEqual([]);
   });
@@ -138,16 +138,16 @@ describe('SessionNode', () => {
     await user.click(rowOf('s1'));
     await user.keyboard('{/Meta}');
     expect(openSessionById).not.toHaveBeenCalled();
-    expect(mockStore.pane[WS].selected).toEqual(['s1']);
+    expect(mockStore.pane[WS]!.selected).toEqual(['s1']);
   });
 
   it('a shift click spans from the anchor', async () => {
     await mount(seed());
-    mockStore.pane[WS].selAnchor = 's1';
+    mockStore.pane[WS]!.selAnchor = 's1';
     await user.keyboard('{Shift>}');
     await user.click(rowOf('s1'));
     await user.keyboard('{/Shift}');
-    expect(mockStore.pane[WS].selected).toEqual(['s1']);
+    expect(mockStore.pane[WS]!.selected).toEqual(['s1']);
     expect(openSessionById).not.toHaveBeenCalled();
   });
 
@@ -176,11 +176,11 @@ describe('SessionNode', () => {
 
   it('Escape cancels the rename', async () => {
     await mount(seed());
-    mockStore.pane[WS].renamingId = 's1';
+    mockStore.pane[WS]!.renamingId = 's1';
     await tick();
     const input = screen.getByLabelText('rename session');
     await userEvent.keyboard('{Escape}');
-    expect(mockStore.pane[WS].renamingId).toBeNull();
+    expect(mockStore.pane[WS]!.renamingId).toBeNull();
     expect(input).not.toBeInTheDocument();
   });
 
@@ -207,25 +207,25 @@ describe('SessionNode', () => {
   it('right-clicking a selected row acts on the whole selection', async () => {
     const s2 = seedState(meta('s2'));
     const s1 = seed({ sessions: { s1: seedState(meta('s1')), s2 } });
-    mockStore.pane[WS].selected = ['s1', 's2'];
+    mockStore.pane[WS]!.selected = ['s1', 's2'];
     await mount(s1, { sessions: [s1, s2] });
     await fireEvent.contextMenu(rowOf('s1'));
     expect(screen.getByRole('menuitem')).toHaveTextContent('archive (2)');
     await userEvent.click(screen.getByRole('menuitem'));
     expect(archiveSession).toHaveBeenCalledWith('s1');
     expect(archiveSession).toHaveBeenCalledWith('s2');
-    expect(mockStore.pane[WS].selected).toEqual([]);
+    expect(mockStore.pane[WS]!.selected).toEqual([]);
   });
 
   it('children render under an open group; the chevron toggles it', async () => {
     const parent = seedState(meta('p1'));
     const child = seedState(meta('c1', { parent: 'p1' }), { parent: 'p1' });
     seed({ sessions: { p1: parent, c1: child }, current: 'p1' });
-    mockStore.pane[WS].openGroups = ['p1'];
+    mockStore.pane[WS]!.openGroups = ['p1'];
     await mount(parent, { sessions: [parent, child] });
     expect(screen.getByText('c1')).toBeInTheDocument();
     await userEvent.click(document.querySelector('.chev')!);
-    expect(mockStore.pane[WS].openGroups).toEqual([]);
+    expect(mockStore.pane[WS]!.openGroups).toEqual([]);
     expect(screen.queryByText('c1')).toBeNull();
   });
 
