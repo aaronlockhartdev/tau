@@ -1,4 +1,5 @@
 use super::*;
+use crate::harness::SessionRole;
 use crate::provider::{self, ResponseRequest, TurnSink};
 use crate::session::SessionStore;
 use std::time::Duration;
@@ -200,25 +201,22 @@ pub(crate) fn harness_full(
         bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
         driver: Arc::new(TestDriver),
     });
-    // A scripted parent loop (the parent is a full session).
+    // A scripted parent loop (the parent is a full session): the
+    // constructor adopts the pre-built supervisor (the test seam).
     let mut store = SessionStore::for_workspace(dir, "parent");
     store.create().unwrap();
     let parent_provider = Arc::new(ScriptedProvider::new(parent_bodies));
-    let parent = Arc::new(AgentSession::new(SessionParams {
+    let parent = AgentSession::launch(
         store,
-        system_prompt: "be terse".into(),
-        model: "test-model".into(),
-        tools: tools::agent_tool_specs(),
-        cwd: dir.to_path_buf(),
-        provider: parent_provider,
-        tool_batch_on_force: ToolBatchPolicy::Complete,
-        turn: TurnConfig::default(),
-        om: None,
-        om_model: String::new(),
-        subagents: Some(Arc::clone(&sup)),
-        child: None,
-    }));
-    sup.attach_parent(parent);
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider: parent_provider,
+            supervisor: Some(Arc::clone(&sup)),
+        },
+    )
+    .unwrap();
     (sup, bridge, factory)
 }
 
