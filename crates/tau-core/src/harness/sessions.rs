@@ -2,12 +2,10 @@
 
 use super::thinking::thinking_adjusted_max_output;
 use super::{
-    AgentSession, Arc, AtomicBool, AtomicU64, ChildProviderFactory, Config, Core, Event,
-    ForwardingChildFactory, ForwardingProvider, HashMap, LiveSession, MAX_TITLE_LEN, Mutex,
-    OmStatusKind, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionParams, SessionStore,
-    SessionSubagentBridge, SkillInfo, SubagentBridge, Supervisor, SupervisorParams,
-    TurnChildDriver, TurnConfig, ViewEntry, Workspace, context, last_model_note, session_inner,
-    session_name, skill_info, tools, unique_name,
+    AgentSession, Arc, AtomicBool, AtomicU64, Config, Core, Event, ForwardingProvider, HashMap,
+    LiveSession, MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
+    SessionRole, SessionStore, SkillInfo, TurnConfig, ViewEntry, Workspace, session_inner,
+    session_name, skill_info, unique_name,
 };
 
 impl Core {
@@ -241,18 +239,19 @@ impl Core {
         self.build_live(workspace, store, title, created)
     }
 
-    /// The shared live-registration path (fresh create and re-open): builds
-    /// the provider, the supervisor, and the agent around the given store.
+    /// The shared live-registration path (fresh create and re-open): the
+    /// constructor builds the session around the given store (R2); this
+    /// keeps the provider the live shell binds and the registration.
     pub(crate) fn build_live(
         &self,
         workspace: &Workspace,
-        mut store: SessionStore,
+        store: SessionStore,
         title: Option<String>,
         created: u64,
     ) -> Result<SessionMeta, ProtocolError> {
         let parent = store.parent().map(str::to_string);
         let config = self.workspace_config(workspace);
-        let (name, provider) = config
+        let (_, provider) = config
             .providers
             .iter()
             .next()
@@ -260,56 +259,11 @@ impl Core {
             .ok_or_else(|| ProtocolError::Other {
                 message: "no providers configured; add a [providers.x] section".into(),
             })?;
-        // `generation.default_model` wins; an empty or unknown value falls
-        // back to the provider's first model (BTreeMap order).
-        let default = config.generation.default_model.clone();
-        let model = if !default.is_empty() && provider.models.contains_key(&default) {
-            default
-        } else {
-            provider
-                .models
-                .keys()
-                .next()
-                .cloned()
-                .ok_or_else(|| ProtocolError::Other {
-                    message: format!("provider {name} has no models"),
-                })?
-        };
-        // A session that picked a non-default model (session_set_model) keeps
-        // it across close and re-open: the file's last `model:` note is the
-        // record (a fresh session has none and takes the provider default).
-        let model = last_model_note(&mut store).unwrap_or(model);
-        // The turn's provider options (spec §12, #35): resolved from the
-        // merged config + this model's facts, once, at registration.
-        let turn = derive_turn(&config, &provider, &model, store.id());
-        let cwd = PathBuf::from(&workspace.cwd);
-
-        // The per-session OM record (ticket #22): reconstructed from the
-        // file on open; a fresh session starts with the default record.
-        let record = crate::om_integration::OmState::load_record(&mut store).map_err(|e| {
-            ProtocolError::Other {
-                message: e.to_string(),
-            }
-        })?;
-
-        // The loop assembles no context of its own: base prompt + context
-        // files (spec §10) are built here, once, at session creation.
-        let layers = context::discover(&cwd, &self.system_dir_of());
-        let mut system_prompt = context::assemble("You are Tau, a coding agent.", &layers);
-
-        // Skills (tickets #28/#31): discovery runs at session open/reopen
-        // — the catalog is frozen at that moment (a running session's prompt
-        // is not re-derived; new sessions pick up watcher changes at their
-        // own build). The catalog is the last layer — after the context
-        // files, so a user AGENTS.md is never drowned — and a spawned child
-        // inherits it through this prompt.
-        let skills = self.refresh_skills(workspace);
-        if let Some(catalog) = crate::skills::catalog(&skills) {
-            system_prompt.push_str("\n\n");
-            system_prompt.push_str(&catalog);
-        }
-
-        let provider = ForwardingProvider {
+        let self_arc = self.self_arc().expect("session_new on a built core");
+        // The live shell's provider (the stream-forwarding seam); the
+        // constructor re-derives the same first provider for the
+        // supervisor's child factory.
+        let provider = Arc::new(ForwardingProvider {
             inner: session_inner(&self.client, &provider, &config.requests),
             tx: self.events_tx.clone(),
             pipe: self.pipe.clone(),
@@ -319,132 +273,17 @@ impl Core {
             call_seq: AtomicU64::new(0),
             calls: Arc::new(Mutex::new(Vec::new())),
             completed: Arc::new(Mutex::new(HashMap::new())),
-        };
-        let provider = Arc::new(provider);
-        // Ticket #23: this session's supervisor (children live here; a
-        // child session carries none — the depth cap is structural).
-        let self_arc = self.self_arc().expect("session_new on a built core");
-        let first_provider = config
-            .providers
-            .iter()
-            .next()
-            .map(|(_, p)| p.clone())
-            .expect("provider checked above");
-        let factory: Arc<dyn ChildProviderFactory> =
-            self.child_factory.clone().unwrap_or_else(|| {
-                Arc::new(ForwardingChildFactory {
-                    client: self.client.clone(),
-                    provider: first_provider.clone(),
-                    requests: config.requests.clone(),
-                    tx: self.events_tx.clone(),
-                    pipe: self.pipe.clone(),
-                    workspace: workspace.id.clone(),
-                })
-            });
-        // The bridge and the supervisor reference each other: build the
-        // bridge with an empty weak and patch it in after construction.
-        let bridge = Arc::new(SessionSubagentBridge {
-            core: self_arc.clone(),
-            workspace: workspace.id.clone(),
-            client: self.client.clone(),
-            provider: first_provider.clone(),
-            requests: config.requests.clone(),
-            sup: Mutex::new(None),
         });
-        let sup = Supervisor::new(SupervisorParams {
-            parent_session: provider.session.clone(),
-            cwd: cwd.clone(),
-            provider: factory,
-            model: model.clone(),
-            system_prompt: system_prompt.clone(),
-            om: config.om.clone(),
-            om_model: config.om.om_model.clone(),
-            tool_batch_on_force: config.requests.tool_batch_on_force,
-            turn: turn.clone(),
-            caps: config.subagents.clone(),
-            types: crate::agent_type::discover(self.system_dir.as_deref(), &cwd),
-            depth: 0,
-            bridge: bridge.clone() as Arc<dyn SubagentBridge>,
-            driver: Arc::new(TurnChildDriver {
-                core: Arc::downgrade(&self_arc),
-            }),
-        });
-        bridge.sup.lock().unwrap().replace(Arc::downgrade(&sup));
-        let agent = Arc::new(AgentSession::new(SessionParams {
+        let agent = AgentSession::launch(
             store,
-            system_prompt,
-            model: model.clone(),
-            tools: tools::agent_tool_specs(),
-            cwd: cwd.clone(),
-            provider: provider.clone(),
-            tool_batch_on_force: config.requests.tool_batch_on_force,
-            turn,
-            om: Some(crate::om_integration::OmState::from_config(
-                &config.om, record,
-            )),
-            om_model: config.om.om_model.clone(),
-            subagents: Some(sup.clone()),
-            child: None,
-        }));
-        // The core's om_status hook takes the kind string; this closure
-        // shapes it into the protocol event on the shared channel.
-        {
-            let tx = self.events_tx.clone();
-            let ws = workspace.id.clone();
-            let sid = provider.session.clone();
-            agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
-                let _ = tx.try_send(Event::OmStatus {
-                    workspace: ws.clone(),
-                    session: sid.clone(),
-                    kind: match kind {
-                        "observing" => OmStatusKind::Observing,
-                        "reflecting" => OmStatusKind::Reflecting,
-                        _ => OmStatusKind::Idle,
-                    },
-                });
-            })));
-        }
-        // ADR-0008: the entry hook is the file-line tee — every appended
-        // entry rides the shared channel as an EntryUpsert, the only live
-        // transcript op. The post-turn pump stays as a dedup reconciliation.
-        {
-            let tx = self.events_tx.clone();
-            let ws = workspace.id.clone();
-            let sid = provider.session.clone();
-            // The queue and upsert hooks get their own clones (the entry
-            // hook moves these).
-            let q_tx = tx.clone();
-            let q_ws = ws.clone();
-            let q_sid = sid.clone();
-            let q_agent = agent.clone();
-            agent.set_queue_event_hook(Some(Arc::new(move || {
-                let _ = q_tx.try_send(Event::Queue {
-                    workspace: q_ws.clone(),
-                    session: q_sid.clone(),
-                    items: q_agent.queued_items(),
-                });
-            })));
-            // The wire-only re-emissions (the streaming assistant, the
-            // tool's call phase) take the same mapping — same event, same
-            // channel.
-            let u_tx = tx.clone();
-            let u_ws = ws.clone();
-            let u_sid = sid.clone();
-            agent.set_entry_upsert_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
-                let _ = u_tx.try_send(Event::EntryUpsert {
-                    workspace: u_ws.clone(),
-                    session: u_sid.clone(),
-                    entry: entry_to_view(entry),
-                });
-            })));
-            agent.set_entry_event_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
-                let _ = tx.try_send(Event::EntryUpsert {
-                    workspace: ws.clone(),
-                    session: sid.clone(),
-                    entry: entry_to_view(entry),
-                });
-            })));
-        }
+            SessionRole::Root {
+                core: Some(self_arc),
+                workspace: Some(workspace.clone()),
+                config: Some(config),
+                provider: provider.clone(),
+                supervisor: None,
+            },
+        )?;
         let meta = SessionMeta {
             id: provider.session.clone(),
             workspace: workspace.id.clone(),
@@ -452,24 +291,23 @@ impl Core {
             parent,
             created,
             leaf: None,
-            model: Some(model),
+            model: Some(agent.model()),
             usage: None,
             archived: false,
         };
         let live = Arc::new(LiveSession {
             meta: Mutex::new(meta.clone()),
-            agent: agent.clone(),
+            agent,
             stop: provider.stop.clone(),
             turn: AtomicBool::new(false),
             provider,
-            cwd,
+            cwd: PathBuf::from(&workspace.cwd),
         });
         let id = live.meta.lock().unwrap().id.clone();
         self.sessions
             .lock()
             .unwrap()
             .insert(id.clone(), live.clone());
-        sup.attach_parent(live.agent.clone());
         Ok(meta)
     }
 }

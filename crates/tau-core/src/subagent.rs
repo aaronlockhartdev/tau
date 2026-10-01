@@ -248,8 +248,8 @@ impl Child {
 /// The child-side link a child's loop carries: routes `parent_notify` to
 /// the child's supervisor.
 pub struct ChildLink {
-    supervisor: Arc<Supervisor>,
-    handle: String,
+    pub(crate) supervisor: Arc<Supervisor>,
+    pub(crate) handle: String,
 }
 
 impl ChildLink {
@@ -323,6 +323,19 @@ pub struct Supervisor {
     driver: Arc<dyn ChildDriver>,
 }
 
+/// The values a session built around this supervisor inherits (the
+/// constructor's `Root`/`Child` roles): the parent's cwd, model, prompt,
+/// turn config, and OM wiring.
+pub(crate) struct Inherited {
+    pub(crate) cwd: std::path::PathBuf,
+    pub(crate) model: String,
+    pub(crate) system_prompt: String,
+    pub(crate) turn: TurnConfig,
+    pub(crate) om: Om,
+    pub(crate) om_model: String,
+    pub(crate) tool_batch_on_force: ToolBatchPolicy,
+}
+
 /// The supervisor's construction inputs (the dispatch assembles them from
 /// the session's config and the parent's binding).
 pub struct SupervisorParams {
@@ -394,6 +407,19 @@ impl Supervisor {
             bridge: p.bridge,
             driver: p.driver,
         })
+    }
+
+    /// The inherited bundle (see `Inherited`).
+    pub(crate) fn inherited(&self) -> Inherited {
+        Inherited {
+            cwd: self.cwd.clone(),
+            model: self.model.clone(),
+            system_prompt: self.system_prompt.clone(),
+            turn: self.turn.clone(),
+            om: self.om.clone(),
+            om_model: self.om_model.clone(),
+            tool_batch_on_force: self.tool_batch_on_force,
+        }
     }
 
     /// The parent's loop (attached once by the caller after the parent's

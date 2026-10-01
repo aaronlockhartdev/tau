@@ -500,7 +500,7 @@ impl AgentSession {
     }
 
     /// The OM-run observer (the app's om_status emitter); `None` clears it.
-    pub fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
+    pub(crate) fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
         self.inner.lock().unwrap().om_status_hook = hook;
     }
 
