@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::*;
 use crate::harness::SessionRole;
 use crate::provider::canned;
@@ -35,14 +37,16 @@ pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
             "call_id": call_id,
             "arguments": args,
         });
-        body.push_str(&format!(
+        let _ = write!(
+            body,
             "data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}\n\n"
-        ));
+        );
     }
     if !text.is_empty() {
-        body.push_str(&format!(
+        let _ = write!(
+            body,
             "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\n"
-        ));
+        );
     }
     body.push_str(
         "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
@@ -51,14 +55,14 @@ pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
     body
 }
 
-/// Like sse(), but the text is JSON-escaped (multi-line deltas).
+/// Like `sse()`, but the text is JSON-escaped (multi-line deltas).
 pub(crate) fn sse_json(text: &str) -> String {
     let delta = serde_json::json!({ "type": "response.output_text.delta", "delta": text });
     let done = serde_json::json!({
         "type": "response.completed",
         "response": { "usage": { "input_tokens": 1, "output_tokens": 1, "total_tokens": 2 } }
     });
-    format!("data: {}\n\ndata: {}\n\ndata: [DONE]\n\n", delta, done)
+    format!("data: {delta}\n\ndata: {done}\n\ndata: [DONE]\n\n")
 }
 
 /// A canned provider scripted per call: each entry is (sse body, calls).

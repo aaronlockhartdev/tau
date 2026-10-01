@@ -1,5 +1,6 @@
 //! The shared harness test kit: the canned provider set, the scripted bodies, the child stubs, the session plumbing, and the bounded event waits.
 
+use std::fmt::Write as _;
 use std::sync::atomic::AtomicUsize;
 
 use super::*;
@@ -46,7 +47,7 @@ pub(crate) fn manual_session(
             tools: tools::surface::bare_specs(),
             cwd: cwd.clone(),
             turn,
-            tool_batch_on_force: Default::default(),
+            tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
         },
     )
     .unwrap();
@@ -108,7 +109,7 @@ pub(crate) fn canned_body() -> String {
         r#"{"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bash","arguments":"{\"command\":\"ls\"}"}}"#,
         r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}"#,
     ] {
-        body.push_str(&format!("data: {frame}\n\n"));
+        let _ = write!(body, "data: {frame}\n\n");
     }
     body
 }
@@ -195,7 +196,7 @@ pub(crate) fn plain_body() -> String {
     format!("{data}\n\ndata: [DONE]\n\n")
 }
 
-/// One scripted turn: parent_notify done with a structured output.
+/// One scripted turn: `parent_notify` done with a structured output.
 pub(crate) fn done_body() -> String {
     let call_id = "c1".to_string();
     let args = json!({
@@ -248,9 +249,10 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
             break;
         }
         last = state;
-        if tokio::time::Instant::now() > deadline {
-            panic!("the child never finished (last state: {last})");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the child never finished (last state: {last})"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     // The done wake: wait for the parent's turn to start (the wake's
@@ -266,9 +268,10 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
         if running {
             break;
         }
-        if tokio::time::Instant::now() > deadline {
-            panic!("the done wake never started the parent's turn");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the done wake never started the parent's turn"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
@@ -282,9 +285,10 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
         if !running {
             break;
         }
-        if tokio::time::Instant::now() > deadline {
-            panic!("the parent's wake turn never settled");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the parent's wake turn never settled"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     info

@@ -8,6 +8,7 @@ use super::{
 };
 
 impl Core {
+    #[allow(clippy::too_many_lines)] // one command per arm; splitting is refactoring
     pub(crate) fn dispatch_session(
         self: &Arc<Self>,
         cmd: Command,
@@ -111,114 +112,111 @@ impl Core {
                         message: "model is empty".into(),
                     });
                 }
-                match self.live(&session) {
-                    Ok(live) => {
-                        let old = live.meta.lock().unwrap().model.clone();
-                        if old.as_deref() == Some(model.as_str()) {
-                            return Ok(CommandOutput::None);
-                        }
-                        // The same meta-mutation path as a rename: the
-                        // in-memory meta is what snapshot() and
-                        // session_list() serve, so a re-open must not
-                        // revert the change; the agent's own model drives
-                        // the next turn's calls.
-                        live.meta.lock().unwrap().model = Some(model.clone());
-                        live.agent.set_model(model.clone());
-                        // #35: the model-specific options (output-cap clamp,
-                        // reasoning level) track the active model —
-                        // re-derived from the workspace config.
-                        let ws_id = live.meta.lock().unwrap().workspace.clone();
-                        if let Ok(ws) = self.workspace(&ws_id) {
-                            let config = self.workspace_config(&ws);
-                            if let Some((_, p)) = config.providers.iter().next() {
-                                live.agent
-                                    .set_turn_config(derive_turn(&config, p, &model, &session));
-                            }
-                        }
-                        live.agent
-                            .append_entry(
-                                crate::agent::KIND_SYSTEM,
-                                json!({ "note": model_note(&old, &model) }),
-                            )
-                            .map_err(|e| ProtocolError::Other {
-                                message: e.to_string(),
-                            })?;
-                        Ok(CommandOutput::None)
+                if let Ok(live) = self.live(&session) {
+                    let old = live.meta.lock().unwrap().model.clone();
+                    if old.as_deref() == Some(model.as_str()) {
+                        return Ok(CommandOutput::None);
                     }
-                    // A closed session is a file: the header carries no
-                    // model, so the quiet entries are the record — the
-                    // last `model:` note on the branch is the current one.
-                    Err(_) => {
-                        let cwd = self
-                            .workspaces
-                            .lock()
-                            .unwrap()
-                            .values()
-                            .find(|w| {
-                                Self::session_access(w)
-                                    .iter()
-                                    .any(|m| m.id == session && !m.archived)
-                            })
-                            .map(|w| PathBuf::from(w.cwd.clone()))
-                            .ok_or_else(|| ProtocolError::Other {
-                                message: "unknown session".into(),
-                            })?;
-                        let mut store = SessionStore::for_workspace(&cwd, &session);
-                        store.open().map_err(|e| ProtocolError::Other {
+                    // The same meta-mutation path as a rename: the
+                    // in-memory meta is what snapshot() and
+                    // session_list() serve, so a re-open must not
+                    // revert the change; the agent's own model drives
+                    // the next turn's calls.
+                    live.meta.lock().unwrap().model = Some(model.clone());
+                    live.agent.set_model(model.clone());
+                    // #35: the model-specific options (output-cap clamp,
+                    // reasoning level) track the active model —
+                    // re-derived from the workspace config.
+                    let ws_id = live.meta.lock().unwrap().workspace.clone();
+                    if let Ok(ws) = self.workspace(&ws_id) {
+                        let config = self.workspace_config(&ws);
+                        if let Some((_, p)) = config.providers.iter().next() {
+                            live.agent
+                                .set_turn_config(derive_turn(&config, p, &model, &session));
+                        }
+                    }
+                    live.agent
+                        .append_entry(
+                            crate::agent::KIND_SYSTEM,
+                            json!({ "note": model_note(old.as_deref(), &model) }),
+                        )
+                        .map_err(|e| ProtocolError::Other {
                             message: e.to_string(),
                         })?;
-                        let old = last_model_note(&mut store);
-                        if old.as_deref() == Some(model.as_str()) {
-                            return Ok(CommandOutput::None);
-                        }
-                        let leaf = store.leaf().ok().flatten().map(|e| e.id);
-                        store
-                            .append(
-                                crate::agent::KIND_SYSTEM,
-                                json!({ "note": model_note(&old, &model) }),
-                                leaf.as_deref(),
-                            )
-                            .map_err(|e| ProtocolError::Other {
-                                message: e.to_string(),
-                            })?;
-                        Ok(CommandOutput::None)
+                    Ok(CommandOutput::None)
+                }
+                // A closed session is a file: the header carries no
+                // model, so the quiet entries are the record — the
+                // last `model:` note on the branch is the current one.
+                else {
+                    let cwd = self
+                        .workspaces
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .find(|w| {
+                            Self::session_access(w)
+                                .iter()
+                                .any(|m| m.id == session && !m.archived)
+                        })
+                        .map(|w| PathBuf::from(w.cwd.clone()))
+                        .ok_or_else(|| ProtocolError::Other {
+                            message: "unknown session".into(),
+                        })?;
+                    let mut store = SessionStore::for_workspace(&cwd, &session);
+                    store.open().map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
+                    let old = last_model_note(&mut store);
+                    if old.as_deref() == Some(model.as_str()) {
+                        return Ok(CommandOutput::None);
                     }
+                    let leaf = store.leaf().ok().flatten().map(|e| e.id);
+                    store
+                        .append(
+                            crate::agent::KIND_SYSTEM,
+                            json!({ "note": model_note(old.as_deref(), &model) }),
+                            leaf.as_deref(),
+                        )
+                        .map_err(|e| ProtocolError::Other {
+                            message: e.to_string(),
+                        })?;
+                    Ok(CommandOutput::None)
                 }
             }
             Command::SessionOpen { session } => {
-                match self.live(&session) {
-                    Ok(live) => Ok(CommandOutput::Snapshot {
+                if let Ok(live) = self.live(&session) {
+                    Ok(CommandOutput::Snapshot {
                         snapshot: self.snapshot(&live)?,
-                    }),
-                    // A closed session is a file: re-register it as live so
-                    // it can be resumed (a restart drops the in-memory live
-                    // map); if no known workspace owns it, serve read-only.
-                    Err(_) => {
-                        let ws = self
-                            .workspaces
-                            .lock()
-                            .unwrap()
-                            .values()
-                            .find(|w| {
-                                Path::new(&w.cwd)
-                                    .join(".tau")
-                                    .join("sessions")
-                                    .join(format!("{session}.jsonl"))
-                                    .exists()
-                            })
-                            .cloned();
-                        if let Some(ws) = ws
-                            && let Ok(_meta) = self.session_reopen(&ws, &session)
-                            && let Ok(live) = self.live(&session)
-                        {
-                            return Ok(CommandOutput::Snapshot {
-                                snapshot: self.snapshot(&live)?,
-                            });
-                        }
-                        Ok(CommandOutput::Snapshot {
-                            snapshot: self.snapshot_from_disk(&session)?,
+                    })
+                // A closed session is a file: re-register it as live so
+                // it can be resumed (a restart drops the in-memory live
+                // map); if no known workspace owns it, serve read-only.
+                } else {
+                    let ws = self
+                        .workspaces
+                        .lock()
+                        .unwrap()
+                        .values()
+                        .find(|w| {
+                            Path::new(&w.cwd)
+                                .join(".tau")
+                                .join("sessions")
+                                .join(format!("{session}.jsonl"))
+                                .exists()
                         })
+                        .cloned();
+                    if let Some(ws) = ws
+                        && let Ok(_meta) = self.session_reopen(&ws, &session)
+                        && let Ok(live) = self.live(&session)
+                    {
+                        return Ok(CommandOutput::Snapshot {
+                            snapshot: self.snapshot(&live)?,
+                        });
                     }
+                    Ok(CommandOutput::Snapshot {
+                        snapshot: self.snapshot_from_disk(&session)?,
+                    })
                 }
             }
             Command::SessionClose { session } => {
@@ -279,7 +277,7 @@ impl Core {
                     self.sessions
                         .lock()
                         .unwrap()
-                        .insert(session.to_owned(), live.clone());
+                        .insert(session.clone(), live.clone());
                     return Err(ProtocolError::Other {
                         message: format!(
                             "session {session} started a turn while deleting — stop it and retry"
@@ -313,7 +311,7 @@ impl Core {
                         message: self.archive_refusal_for_child(
                             &session,
                             &meta.workspace,
-                            &meta.parent,
+                            meta.parent.as_deref(),
                         ),
                     });
                 }

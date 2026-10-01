@@ -5,6 +5,7 @@ use crate::provider::canned_cut;
 use std::sync::atomic::AtomicUsize;
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one end-to-end task-gate flow; splitting is refactoring
 async fn task_tools_run_through_the_loop_and_the_gate_enforces_evidence() {
     let dir = tempfile::tempdir().unwrap();
     let store = session_in(dir.path());
@@ -60,8 +61,8 @@ async fn task_tools_run_through_the_loop_and_the_gate_enforces_evidence() {
             ),
             sse("done", &[]),
         ])),
-        tool_batch_on_force: Default::default(),
-        turn: Default::default(),
+        tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+        turn: crate::agent::TurnConfig::default(),
         om: None,
         om_model: String::new(),
         subagents: None,
@@ -161,7 +162,7 @@ async fn tool_calls_roundtrip_through_the_session() {
     );
     assert_eq!(entries[2].payload["call_id"], "c1");
     assert_eq!(entries[2].payload["name"], "read");
-    assert!(entries[2].payload["output"].as_str().unwrap().contains("a"));
+    assert!(entries[2].payload["output"].as_str().unwrap().contains('a'));
 }
 
 #[tokio::test]
@@ -368,14 +369,14 @@ async fn force_mid_stream_kills_the_stream_and_preempts_contemporaneous_steering
             KIND_ASSISTANT
         ]
     );
-    let killed = &entries[1];
+    let stopped = &entries[1];
     assert!(
-        killed.payload["interrupted"].as_bool().unwrap(),
-        "{killed:?}"
+        stopped.payload["interrupted"].as_bool().unwrap(),
+        "{stopped:?}"
     );
     // a, b, c land before the 100 ms force (d is at 120 ms); under a
     // loaded runner the 80 ms c may lose the race, so accept ab or abc.
-    let partial = killed.payload["text"].as_str().unwrap();
+    let partial = stopped.payload["text"].as_str().unwrap();
     assert!(
         partial == "ab" || partial == "abc",
         "partial was {partial:?}"
@@ -388,12 +389,11 @@ async fn force_mid_stream_kills_the_stream_and_preempts_contemporaneous_steering
 }
 
 /// Live acceptance (ticket #19): a four-tool session against the hosted
-/// vLLM endpoint; skipped unless TAU_TEST_ENDPOINT is set.
+/// vLLM endpoint; skipped unless `TAU_TEST_ENDPOINT` is set.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_tool_calling_session() {
-    let base = match std::env::var("TAU_TEST_ENDPOINT") {
-        Ok(base) => base,
-        Err(_) => return,
+    let Ok(base) = std::env::var("TAU_TEST_ENDPOINT") else {
+        return;
     };
     let model = std::env::var("TAU_TEST_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
     let dir = tempfile::tempdir().unwrap();

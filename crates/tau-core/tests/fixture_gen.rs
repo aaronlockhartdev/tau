@@ -88,6 +88,7 @@ const OUTPUTS: &[&str] = &[
 ];
 
 #[test]
+#[allow(clippy::too_many_lines)] // one fixture-generation pass; splitting is refactoring
 fn the_shared_fixture_is_written_and_hashed() {
     let tmp = tempfile::tempdir().unwrap();
     let mut store = SessionStore::for_workspace(tmp.path(), "session").with_fixed_time(FIXED_TIME);
@@ -95,8 +96,8 @@ fn the_shared_fixture_is_written_and_hashed() {
     let mut prev: Option<String> = None;
     let mut n = 0u64;
     for g in 0..50u64 {
-        let goal = GOALS[g as usize % GOALS.len()];
-        let file = FILES[g as usize % FILES.len()];
+        let goal = GOALS[usize::try_from(g).expect("loop index 0..50") % GOALS.len()];
+        let file = FILES[usize::try_from(g).expect("loop index 0..50") % FILES.len()];
         let e = store
             .append(
                 "user",
@@ -132,7 +133,7 @@ fn the_shared_fixture_is_written_and_hashed() {
                     "call_id": format!("call-{n}"),
                     "name": "grep",
                     "args": { "pattern": "KIND_TOOL", "path": "src/" },
-                    "output": OUTPUTS[k as usize % OUTPUTS.len()]
+                    "output": OUTPUTS[usize::try_from(k).expect("loop index 0..197") % OUTPUTS.len()]
                 }),
                 2 => serde_json::json!({
                     "call_id": format!("call-{n}"),
@@ -143,8 +144,8 @@ fn the_shared_fixture_is_written_and_hashed() {
                 3 => serde_json::json!({
                     "call_id": format!("call-{n}"),
                     "name": "bash",
-                    "args": { "command": COMMANDS[k as usize % COMMANDS.len()] },
-                    "output": OUTPUTS[(k + 3) as usize % OUTPUTS.len()]
+                    "args": { "command": COMMANDS[usize::try_from(k).expect("loop index 0..197") % COMMANDS.len()] },
+                    "output": OUTPUTS[usize::try_from(k + 3).expect("loop index 0..197 + 3") % OUTPUTS.len()]
                 }),
                 _ => serde_json::json!({
                     "call_id": format!("call-{n}"),
@@ -174,15 +175,15 @@ fn the_shared_fixture_is_written_and_hashed() {
     }
     assert_eq!(n, 10_000);
 
-    let root = std::env::var("CARGO_TARGET_DIR")
-        .ok()
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
+    let root = std::env::var("CARGO_TARGET_DIR").ok().map_or_else(
+        || {
             // The crate's manifest dir is `{workspace}/crates/tau-core`.
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
                 .join("target")
-        });
+        },
+        std::path::PathBuf::from,
+    );
     let dir = root.join("test-fixture");
     std::fs::create_dir_all(&dir).unwrap();
     let bytes = std::fs::read(store.path()).unwrap();

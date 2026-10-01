@@ -1,4 +1,4 @@
-//! ChildLink's pointer-model tests (R3): the handle is opaque — mint,
+//! `ChildLink`'s pointer-model tests (R3): the handle is opaque — mint,
 //! store, and routing all go through the supervisor, and a parent id
 //! containing a hyphen (the historical breakage case for the handle's
 //! format) resolves unambiguously.
@@ -27,6 +27,7 @@ fn sup_with_parent(
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
         parent_session: parent_session.into(),
         cwd: dir.to_path_buf(),
@@ -40,7 +41,7 @@ fn sup_with_parent(
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
-        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     // A scripted parent loop (the parent is a full session): the

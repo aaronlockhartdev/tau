@@ -6,6 +6,7 @@ use super::{
 };
 
 impl Core {
+    #[allow(clippy::too_many_lines)] // one command per arm; splitting is refactoring
     pub(crate) fn dispatch_command(
         self: &Arc<Self>,
         cmd: Command,
@@ -46,7 +47,7 @@ impl Core {
                 match skill {
                     Some((name, location)) => {
                         live.agent
-                            .send_skill(expanded, lane_to_lane(lane), &name, &location)
+                            .send_skill(expanded, lane_to_lane(lane), &name, &location);
                     }
                     None => live.agent.send(expanded, lane_to_lane(lane)),
                 }

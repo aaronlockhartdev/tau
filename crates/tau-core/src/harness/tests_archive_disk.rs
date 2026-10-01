@@ -82,7 +82,7 @@ async fn a_never_opened_session_archives_from_disk() {
         .find(|m| m.id == child)
         .expect("the child is listed");
     assert!(m.archived, "the child archives with its parent");
-    assert!(m.parent.as_deref() == Some(parent.as_str()));
+    assert_eq!(m.parent.as_deref(), Some(parent.as_str()));
     // The other root, also never opened, archives the same way.
     let out = core
         .dispatch(Command::SessionArchive {

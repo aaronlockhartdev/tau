@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub struct Skill {
 /// the project's (its `.tau/skills/`, then the cross-client
 /// `.agents/skills/`). Project wins over system; within a scope the
 /// first in the sorted scan wins and the shadow is logged.
+#[must_use]
 pub fn discover(
     system_dir: Option<&Path>,
     user_home: Option<&Path>,
@@ -175,9 +177,9 @@ fn parse(raw: &str, location: &Path) -> Option<Skill> {
         name,
         description,
         location: location.to_path_buf(),
-        model_invocation: !fields
+        model_invocation: fields
             .get("disable-model-invocation")
-            .is_some_and(|v| v == "true"),
+            .is_none_or(|v| v != "true"),
     })
 }
 
@@ -252,13 +254,16 @@ fn unquote(v: &str) -> String {
     if v.len() >= 2
         && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\'')))
     {
-        v[1..v.len() - 1].to_owned()
+        v.get(1..v.len() - 1)
+            .expect("the quote check bounds the slice")
+            .to_owned()
     } else {
         v.to_owned()
     }
 }
 
 /// The body of a `SKILL.md`: everything after the closing `---`, trimmed.
+#[must_use]
 pub fn body(raw: &str) -> String {
     let rest = raw
         .strip_prefix("---\n")
@@ -266,8 +271,7 @@ pub fn body(raw: &str) -> String {
     match rest {
         Some(r) => r
             .split_once("\n---")
-            .map(|(_, b)| b.trim().to_owned())
-            .unwrap_or_else(|| r.trim().to_owned()),
+            .map_or_else(|| r.trim().to_owned(), |(_, b)| b.trim().to_owned()),
         None => raw.trim().to_owned(),
     }
 }
@@ -281,7 +285,7 @@ pub fn expand(name: &str, body: &str, dir: &Path, args: Option<&str>) -> String 
         dir.display()
     );
     if let Some(a) = args.map(str::trim).filter(|a| !a.is_empty()) {
-        out.push_str(&format!("\n\nUser request: {a}"));
+        let _ = write!(out, "\n\nUser request: {a}");
     }
     out
 }
@@ -289,6 +293,7 @@ pub fn expand(name: &str, body: &str, dir: &Path, args: Option<&str>) -> String 
 /// The tier-1 disclosure (the standard's `<available_skills>` block plus
 /// its file-read behavioral instruction): `None` when no
 /// model-invocable skill exists — the prompt omits the block entirely.
+#[must_use]
 pub fn catalog(skills: &[Skill]) -> Option<String> {
     let listed: Vec<&Skill> = skills.iter().filter(|s| s.model_invocation).collect();
     if listed.is_empty() {
@@ -296,12 +301,13 @@ pub fn catalog(skills: &[Skill]) -> Option<String> {
     }
     let mut xml = String::from("<available_skills>\n");
     for s in listed {
-        xml.push_str(&format!(
+        let _ = write!(
+            xml,
             "  <skill>\n    <name>{}</name>\n    <description>{}</description>\n    <location>{}</location>\n  </skill>\n",
             s.name,
             s.description,
             s.location.display()
-        ));
+        );
     }
     xml.push_str("</available_skills>");
     Some(format!(

@@ -5,6 +5,7 @@ use super::{
 
 /// The seven task tools (spec §5.4): free text + ids in, core-enforced
 /// transitions; diagnostics are results, never panics.
+#[allow(clippy::too_many_lines)] // one tool per arm; splitting is refactoring
 pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
     match name {
         "task_create" => {
@@ -53,10 +54,9 @@ pub fn tool_call(store: &mut SessionStore, name: &str, args: &Value) -> String {
                 }
                 None => Vec::new(),
             };
-            let n = load(store)
-                .map(|t| t.iter().filter(|t| t.id.starts_with("task-")).count())
-                .unwrap_or(0)
-                + 1;
+            let n = load(store).map_or(0, |t| {
+                t.iter().filter(|t| t.id.starts_with("task-")).count()
+            }) + 1;
             let id = format!("task-{n}");
             match create(store, &id, title, steps.clone(), criteria.clone()) {
                 Ok(()) => format!(

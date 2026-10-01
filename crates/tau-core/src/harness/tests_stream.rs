@@ -63,7 +63,7 @@ async fn task_commands_emit_a_task_changed_event() {
     assert_eq!(tasks[0].status, "pending");
 }
 
-/// Child-targeted TaskChanged (the shared task model): a task assigned to
+/// Child-targeted `TaskChanged` (the shared task model): a task assigned to
 /// a child is emitted for the child's session as well — the child's pane
 /// is a projection of the parent's store, and the child's own file is
 /// task-free.
@@ -152,16 +152,13 @@ async fn a_task_assigned_to_a_child_is_emitted_for_the_child_session() {
 }
 
 /// A live dogfood run, registered with the core the way `SessionNew` does:
-/// opt in with TAU_ENDPOINT (optionally TAU_MODEL) — the TAU_LIVE gate was
+/// opt in with `TAU_ENDPOINT` (optionally `TAU_MODEL`) — the `TAU_LIVE` gate was
 /// retired in phase 1 §4.
 #[tokio::test]
 async fn live_run_streams_the_event_pipe() {
-    let endpoint = match std::env::var("TAU_ENDPOINT") {
-        Ok(e) => e,
-        Err(_) => {
-            eprintln!("live run skipped (TAU_ENDPOINT not set)");
-            return;
-        }
+    let Ok(endpoint) = std::env::var("TAU_ENDPOINT") else {
+        eprintln!("live run skipped (TAU_ENDPOINT not set)");
+        return;
     };
     let model = std::env::var("TAU_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
     let mut hosted = providers();

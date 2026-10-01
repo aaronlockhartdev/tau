@@ -96,8 +96,6 @@ pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payl
 pub type CannedStream = (Vec<TurnEvent>, Vec<(usize, FunctionCall)>);
 
 pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
-    let mut parser = SseParser::new();
-    let payloads = parser.feed(body.as_bytes())?;
     struct RecordSink(Vec<TurnEvent>);
     impl TurnSink for RecordSink {
         fn event(&mut self, event: TurnEvent) -> bool {
@@ -105,6 +103,8 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
             true
         }
     }
+    let mut parser = SseParser::new();
+    let payloads = parser.feed(body.as_bytes())?;
     let mut sink = RecordSink(Vec::new());
     let mut result = TurnResult::default();
     let mut calls = Vec::new();
@@ -162,7 +162,7 @@ pub async fn stream_turn(
                     // retry it, like a connect timeout.
                     ProviderError::IdleTimeout => true,
                     ProviderError::Status { status, .. } => (500..599).contains(status),
-                    _ => false,
+                    ProviderError::MalformedStream(_) => false,
                 };
                 if !retryable || attempt >= requests.retries {
                     return Err(e);
@@ -215,7 +215,7 @@ async fn attempt_one_turn(
         sent = tokio::time::timeout_at(tokio::time::Instant::now() + head, &mut sending) => sent,
         // A stop before the headers tears the request down before it is
         // answered: nothing received, the empty partial stands (spec §7).
-        _ = sink.stop_signal() => return Ok(TurnResult::default()),
+        () = sink.stop_signal() => return Ok(TurnResult::default()),
     } {
         Ok(Ok(response)) => response,
         Ok(Err(e)) => return Err(ProviderError::Request(e)),
@@ -245,7 +245,7 @@ async fn attempt_one_turn(
             ) => got,
             // A stop during prefill (before the first token) aborts the
             // request: the partial — possibly empty — stands, like a kill.
-            _ = sink.stop_signal() => break 'outer,
+            () = sink.stop_signal() => break 'outer,
         } {
             Ok(Ok(Some(chunk))) => {
                 // A received chunk restarts the idle deadline.

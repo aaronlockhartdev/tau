@@ -1,5 +1,8 @@
 use super::{Path, PathBuf, ToolOutput, hashline};
 use base64::Engine;
+use std::fmt::Write as _;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 fn resolve(cwd: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
@@ -28,7 +31,7 @@ pub(super) async fn read(
         // #36: a bounded read — an oversized image is a loud refusal, not a
         // silent drop (stateless, it would ride every request).
         if let Some(cap) = image_max_bytes
-            && bytes.len() as u64 > cap
+            && u64::try_from(bytes.len()).expect("byte length, well under u64::MAX") > cap
         {
             return format!(
                 "read: {} is a {media_type} image of {} bytes, over the {cap}-byte cap — not returned",
@@ -59,23 +62,17 @@ pub(super) async fn read(
         Ok(rows) => rows,
         Err(e) => return e.to_string().into(),
     };
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "tool arguments; the pager takes no more rows than exist"
-    )]
-    let offset = args
-        .get("offset")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(1)
-        .max(1) as usize;
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "tool arguments; the pager takes no more rows than exist"
-    )]
+    let offset = usize::try_from(
+        args.get("offset")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(1)
+            .max(1),
+    )
+    .expect("tool offset fits in usize on the supported 64-bit targets");
     let limit = args
         .get("limit")
-        .and_then(|v| v.as_u64())
-        .map(|v| v as usize);
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|v| usize::try_from(v).ok());
     let total = rows.len();
     let shown: Vec<String> = rows
         .iter()
@@ -85,12 +82,13 @@ pub(super) async fn read(
         .collect();
     let mut out = shown.join("\n");
     if offset - 1 + shown.len() < total {
-        out.push_str(&format!(
+        let _ = write!(
+            out,
             "\n… truncated (showing lines {}–{} of {})",
             offset,
             offset - 1 + shown.len(),
             total
-        ));
+        );
     }
     out.into()
 }
@@ -162,8 +160,7 @@ fn write_atomic_inner(
     {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         temp = temp.join(format!(".tmp-{}-{nanos}", std::process::id()));
     }
     let mut file = std::fs::OpenOptions::new()
@@ -173,8 +170,6 @@ fn write_atomic_inner(
     let result = (|| {
         use std::io::Write;
         file.write_all(content.as_bytes())?;
-        #[cfg(unix)]
-        use std::os::unix::fs::PermissionsExt;
         if let Some(mode) = existing_mode {
             let mut perm = file.metadata()?.permissions().clone();
             perm.set_mode(mode);
@@ -251,7 +246,7 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     };
     let timeout_secs = args
         .get("timeout_secs")
-        .and_then(|v| v.as_u64())
+        .and_then(serde_json::Value::as_u64)
         .unwrap_or(60)
         .max(1);
     let child = tokio::process::Command::new("bash")

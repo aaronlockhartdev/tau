@@ -113,9 +113,9 @@ fn usage_of_reads_the_core_shape_and_cached_tokens() {
 
 #[test]
 fn model_note_is_quiet_on_the_first_change_and_arrow_after() {
-    assert_eq!(snapshot::model_note(&None, "gpt-5"), "model: gpt-5");
+    assert_eq!(snapshot::model_note(None, "gpt-5"), "model: gpt-5");
     assert_eq!(
-        snapshot::model_note(&Some("gpt-5".into()), "claude-opus-4-8"),
+        snapshot::model_note(Some("gpt-5"), "claude-opus-4-8"),
         "model: gpt-5 → claude-opus-4-8"
     );
 }

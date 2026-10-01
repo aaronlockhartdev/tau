@@ -7,9 +7,20 @@ fn reflector_template_from_ts() -> String {
     let at = ts
         .find("You are the memory consciousness of an AI assistant")
         .expect("reflector template");
-    let open = ts[..at].rfind('`').expect("template open");
-    let close = at + ts[at..].find('`').expect("template close");
-    strip_current_task(&ts[open + 1..close])
+    let open = ts
+        .get(..at)
+        .expect("offset from find() is a char boundary")
+        .rfind('`')
+        .expect("template open");
+    let close = at
+        + ts.get(at..)
+            .expect("offset from find() is a char boundary")
+            .find('`')
+            .expect("template close");
+    strip_current_task(
+        ts.get(open + 1..close)
+            .expect("offsets from find() are char boundaries"),
+    )
 }
 
 fn fill_reflector_slots(template: &str) -> String {
@@ -22,11 +33,29 @@ fn fill_reflector_slots(template: &str) -> String {
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES);
     let name = "suggestedResponseEnabled";
     let i = built.find(&format!("${{\n    {name}")).expect(name);
-    let j = i + built[i..].find('}').expect("ternary end") + 1;
-    let span = &built[i..j];
+    let j = i
+        + built
+            .get(i..)
+            .expect("offset from find() is a char boundary")
+            .find('}')
+            .expect("ternary end")
+        + 1;
+    let span = built
+        .get(i..j)
+        .expect("offsets from find() are char boundaries");
     let a = span.find('\'').expect("branch open");
     let b = span.find("'\n").expect("branch close");
-    built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
+    built = format!(
+        "{}{}{}",
+        built
+            .get(..i)
+            .expect("offset from find() is a char boundary"),
+        span.get(a + 1..b)
+            .expect("offsets from find() are char boundaries"),
+        built
+            .get(j..)
+            .expect("offset from find() is a char boundary")
+    );
     built.replace("${customInstructions}", "")
 }
 
@@ -50,10 +79,16 @@ fn compression_guidance_matches_upstream() {
         let marker = format!("  {}: `", index + 1);
         let at = ts.find(&marker).expect(&marker);
         let open = at + marker.len() - 1;
-        let close = open + 1 + ts[open + 1..].find('`').expect("guidance close");
+        let close = open
+            + 1
+            + ts.get(open + 1..)
+                .expect("offset from find() is a char boundary")
+                .find('`')
+                .expect("guidance close");
         assert_eq!(
             *level,
-            &ts[open + 1..close],
+            ts.get(open + 1..close)
+                .expect("offsets from find() are char boundaries"),
             "compression level {} drifted",
             index + 1
         );

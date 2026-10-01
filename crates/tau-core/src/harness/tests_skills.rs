@@ -160,7 +160,7 @@ async fn build_live_puts_the_catalog_after_the_context_files() {
         other => panic!("expected a session: {other:?}"),
     };
     let live = core.live(&session.id).unwrap();
-    let prompt = live.agent.system_prompt().to_owned();
+    let prompt = live.agent.system_prompt().clone();
     let ctx = prompt
         .find("project context")
         .expect("the project's AGENTS.md layer is present");

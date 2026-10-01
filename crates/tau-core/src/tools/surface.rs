@@ -16,6 +16,7 @@ use std::sync::Arc;
 /// The specs a role's session presents to the model: the builders in
 /// tools.rs, composed by role. The agent-type allowlist (a `.md` type's
 /// tool subset) applies to the child role only.
+#[must_use]
 pub fn specs_for(role: &SessionRole, agent_tools: Option<&[String]>) -> Vec<ToolSpec> {
     match role {
         SessionRole::Root { .. } => root_specs(),
@@ -26,17 +27,20 @@ pub fn specs_for(role: &SessionRole, agent_tools: Option<&[String]>) -> Vec<Tool
 
 /// A non-child session's tool set: the core tools + the sub-agent tools +
 /// the task tools.
+#[must_use]
 pub fn root_specs() -> Vec<ToolSpec> {
     super::agent_tool_specs()
 }
 
 /// A bare session's tool set: the core tools.
+#[must_use]
 pub fn bare_specs() -> Vec<ToolSpec> {
     super::tool_specs()
 }
 
 /// The child's tool set with the spawn-time agent-type filter (spec §5.5):
 /// a `.md` type's `tools` allowlist subsets the child's default set.
+#[must_use]
 pub fn child_specs(agent_tools: Option<&[String]>) -> Vec<ToolSpec> {
     let base = super::child_tool_specs();
     match agent_tools {
@@ -52,6 +56,7 @@ pub fn child_specs(agent_tools: Option<&[String]>) -> Vec<ToolSpec> {
 /// state, never on the assigned record (spec §5.3); the refusal is the
 /// caller's only view. Shared by the model's dispatch and the app's
 /// task-command surface — the same rule on both paths.
+#[must_use]
 pub fn task_child_refusal(is_child: bool, name: &str) -> Option<String> {
     if is_child && matches!(name, "task_create" | "task_assign" | "task_cancel") {
         Some(format!(
@@ -69,7 +74,7 @@ pub fn task_child_refusal(is_child: bool, name: &str) -> Option<String> {
 ///
 /// Invariant: route by name, not by which link exists — a parent session
 /// carries a supervisor AND core tools (ticket #23's original
-/// `if let Some(sup)` swallowed every core tool into route_parent, which
+/// `if let Some(sup)` swallowed every core tool into `route_parent`, which
 /// only knows sub-agent names), and a child carries a link AND core tools.
 pub async fn dispatch(
     session: &AgentSession,

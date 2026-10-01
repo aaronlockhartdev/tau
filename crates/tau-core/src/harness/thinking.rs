@@ -19,11 +19,11 @@ pub(super) fn thinking_adjusted_max_output(
     if level == ThinkingLevel::Off {
         return base.map(u64::from);
     }
-    let budget = thinking_budget(level, budgets) as u64;
+    let budget = u64::from(thinking_budget(level, budgets));
     match (base, model_max) {
-        (Some(b), Some(m)) => Some((b as u64 + budget).min(m as u64)),
-        (Some(b), None) => Some(b as u64 + budget),
-        (None, Some(m)) => Some(m as u64),
+        (Some(b), Some(m)) => Some((u64::from(b) + budget).min(u64::from(m))),
+        (Some(b), None) => Some(u64::from(b) + budget),
+        (None, Some(m)) => Some(u64::from(m)),
         (None, None) => None,
     }
 }

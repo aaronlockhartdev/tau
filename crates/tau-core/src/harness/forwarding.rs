@@ -102,8 +102,7 @@ impl TurnSink for ForwardSink<'_> {
                     cached_prompt_tokens: u
                         .prompt_tokens_details
                         .as_ref()
-                        .map(|d| d.cached_tokens)
-                        .unwrap_or(0),
+                        .map_or(0, |d| d.cached_tokens),
                 }),
             });
         }
@@ -179,8 +178,7 @@ pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInf
             cached_prompt_tokens: u
                 .prompt_tokens_details
                 .as_ref()
-                .map(|d| d.cached_tokens)
-                .unwrap_or(0),
+                .map_or(0, |d| d.cached_tokens),
         }),
         task: i.task.clone(),
         resume_contract: i.resume_contract.clone(),

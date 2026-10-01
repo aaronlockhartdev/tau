@@ -47,6 +47,7 @@ impl OmConfig {
     /// The effective Observer threshold for the current observation size
     /// (`calculateDynamicThreshold`): with a shared budget, raw history may
     /// grow into unused observation space — `max(total - observed, base)`.
+    #[must_use]
     pub fn observe_threshold_for(&self, observation_tokens: u32) -> u32 {
         if !self.share_token_budget {
             return self.observe_threshold;
@@ -63,26 +64,39 @@ impl OmConfig {
     #[allow(
         clippy::cast_sign_loss,
         clippy::cast_possible_truncation,
-        reason = "ratio clamped to [0,1]: the product stays in [0, observe_threshold], far below u32::MAX"
+        clippy::as_conversions,
+        clippy::cast_precision_loss,
+        reason = "f64 to u64 has no TryFrom; ratio clamped to [0,1] keeps the product within [0, observe_threshold]"
     )]
+    #[must_use]
     pub fn buffer_increment(&self) -> u32 {
         let ratio = self.buffer_activation.clamp(0.0, 1.0);
-        (self.observe_threshold as f64 * (1.0 - ratio)).round() as u32
+        u32::try_from((f64::from(self.observe_threshold) * (1.0 - ratio)).round() as u64)
+            .expect("ratio clamped to [0,1]: the product stays in [0, observe_threshold]")
     }
 
     /// Raw tokens kept after activation (`resolveRetentionFloor`).
     #[allow(
+        clippy::as_conversions,
         clippy::cast_sign_loss,
         clippy::cast_possible_truncation,
-        reason = "soft-token config values: ratio clamped to [0,1], activation guarded >= 1000.0 — non-negative, far below u32::MAX"
+        reason = "f64↔u64/u32 has no std TryFrom; soft-token config values stay far below u32::MAX"
+    )]
+    #[must_use]
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_precision_loss,
+        reason = "f64 to u64 / u64 to f64 have no TryFrom; the product stays within [0, observe_threshold]"
     )]
     pub fn retention_floor(&self) -> u32 {
-        let threshold = self.observe_threshold as u64;
+        let threshold = u64::from(self.observe_threshold);
         if self.buffer_activation >= 1000.0 {
-            return self.buffer_activation as u32;
+            return u32::try_from(self.buffer_activation as u64)
+                .expect("guarded >= 1000.0, far below u32::MAX");
         }
         let ratio = self.buffer_activation.clamp(0.0, 1.0);
-        (threshold as f64 * (1.0 - ratio)).round() as u32
+        u32::try_from((threshold as f64 * (1.0 - ratio)).round() as u64)
+            .expect("ratio clamped to [0,1]: the product stays in [0, threshold]")
     }
 }
 
@@ -90,18 +104,21 @@ impl OmConfig {
 /// which shrinks as the observation log fills the shared budget
 /// (`getStatus` `shouldObserve`; `calculateDynamicThreshold` takes the
 /// current observation token count).
+#[must_use]
 pub fn should_observe(pending_tokens: u32, observed_tokens: u32, config: &OmConfig) -> bool {
     pending_tokens >= config.observe_threshold_for(observed_tokens)
 }
 
 /// Reflector trigger: observation tokens reached the threshold
 /// (`getStatus` `shouldReflect`).
+#[must_use]
 pub const fn should_reflect(observation_tokens: u32, config: &OmConfig) -> bool {
     observation_tokens >= config.reflect_threshold
 }
 
 /// A reflection pass must shrink the log (mastra `validateCompression`):
 /// a non-smaller output is discarded and the ladder escalates.
+#[must_use]
 pub fn validate_compression(source: &str, reflected: &str) -> bool {
     token_count(reflected) < token_count(source)
 }
@@ -120,6 +137,7 @@ pub struct ChunkTokens(pub u32);
     clippy::cast_possible_truncation,
     reason = "observation-log-sized token counts, well under u32::MAX"
 )]
+#[must_use]
 pub fn projected_message_removal(
     chunks: &[ChunkTokens],
     config: &OmConfig,
@@ -128,8 +146,8 @@ pub fn projected_message_removal(
     if chunks.is_empty() {
         return 0;
     }
-    let retention_floor = config.retention_floor() as u64;
-    let target = (current_pending_tokens as u64).saturating_sub(retention_floor);
+    let retention_floor = u64::from(config.retention_floor());
+    let target = u64::from(current_pending_tokens).saturating_sub(retention_floor);
     if target == 0 {
         return 0;
     }
@@ -139,8 +157,8 @@ pub fn projected_message_removal(
     let mut best_over_tokens: u64 = 0;
     let mut best_under_tokens: u64 = 0;
     for (i, chunk) in chunks.iter().enumerate() {
-        cumulative += chunk.0 as u64;
-        let boundary = (i + 1) as u32;
+        cumulative += u64::from(chunk.0);
+        let boundary = u32::try_from(i + 1).expect("message chunk count, well under u32::MAX");
         if cumulative >= target {
             if best_over_boundary == 0 || cumulative < best_over_tokens {
                 best_over_boundary = boundary;
@@ -153,17 +171,21 @@ pub fn projected_message_removal(
 
     let max_overshoot = retention_floor * 95 / 100;
     let overshoot = best_over_tokens.saturating_sub(target);
-    let remaining_after_over = (current_pending_tokens as u64).saturating_sub(best_over_tokens);
-    let remaining_after_under = (current_pending_tokens as u64).saturating_sub(best_under_tokens);
+    let remaining_after_over = u64::from(current_pending_tokens).saturating_sub(best_over_tokens);
+    let remaining_after_under = u64::from(current_pending_tokens).saturating_sub(best_under_tokens);
     let min_remaining = 1000u64.min(retention_floor);
 
+    let over =
+        u32::try_from(best_over_tokens).expect("single-message chunk sum, well under u32::MAX");
+    let under =
+        u32::try_from(best_under_tokens).expect("single-message chunk sum, well under u32::MAX");
     if best_over_boundary > 0 && overshoot <= max_overshoot && remaining_after_over >= min_remaining
     {
-        best_over_tokens as u32
+        over
     } else if best_under_tokens > 0 && remaining_after_under >= min_remaining {
-        best_under_tokens as u32
+        under
     } else if best_over_boundary > 0 {
-        best_over_tokens as u32
+        over
     } else {
         chunks[0].0
     }
@@ -214,6 +236,7 @@ impl OmRecord {
     /// the managed suffix — one continuous log (ADR-0004); a demoted prefix
     /// drops out of the live context (it stays in the session file, reachable
     /// via `recall`; spec §4 overflow ladder).
+    #[must_use]
     pub fn live_observations(&self) -> String {
         if self.prefix_demoted {
             return self.active_observations.clone();
@@ -225,11 +248,13 @@ impl OmRecord {
     /// log with the internal `--- message boundary ---` delimiters stripped.
     /// Those markers are cache-stability chunk delimiters for reflect/compact,
     /// not memory content — mastra's main-agent context carries none (spec §4).
+    #[must_use]
     pub fn agent_observations(&self) -> String {
         strip_boundary_markers(&self.live_observations())
     }
 
     /// What the Reflector sees and rewrites: the managed suffix only.
+    #[must_use]
     pub fn reflect_source(&self) -> &str {
         &self.active_observations
     }
@@ -251,16 +276,15 @@ impl fmt::Display for Cursor {
 
 /// Soft token estimate for thresholding (spec §4: "a single estimator is
 /// sufficient since thresholds are soft"). ~4 chars/token, no dependencies.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "soft estimator over message-sized text, well under u32::MAX"
-)]
+#[must_use]
 pub fn token_count(text: &str) -> u32 {
-    (text.chars().count() / 4) as u32
+    u32::try_from(text.chars().count() / 4)
+        .expect("soft estimator over message-sized text, well under u32::MAX")
 }
 
 /// The cache-stability delimiter the Observer appends observations after
 /// (spec §4; mastra `strategy-base.ts` `createMessageBoundary`).
+#[must_use]
 pub fn message_boundary(iso_timestamp: &str) -> String {
     format!("--- message boundary ({iso_timestamp}) ---")
 }
@@ -290,6 +314,7 @@ fn strip_boundary_markers(text: &str) -> String {
 
 /// Split the observation log into cache-stable chunks at boundary delimiters
 /// (mastra `splitObservationContextChunks`: one system message per chunk).
+#[must_use]
 pub fn split_observation_chunks(observations: &str) -> Vec<String> {
     let mut chunks: Vec<String> = Vec::new();
     let mut current = String::new();
@@ -311,6 +336,7 @@ pub fn split_observation_chunks(observations: &str) -> Vec<String> {
 
 /// Append a new observation after a fresh boundary (spec §4: appends keep
 /// the stable prefix intact for prompt caching).
+#[must_use]
 pub fn append_observation(existing: &str, iso_timestamp: &str, new_observation: &str) -> String {
     let mut out = existing.to_owned();
     if !out.is_empty() && !out.ends_with('\n') {

@@ -253,6 +253,7 @@ fn root_session(
             workspace: workspace.id.clone(),
         })
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
         parent_session: store.id().to_owned(),
         cwd: cwd.clone(),
@@ -266,7 +267,7 @@ fn root_session(
         caps: config.subagents.clone(),
         types: crate::agent_type::discover(core.system_dir.as_deref(), &cwd),
         depth: 0,
-        bridge: bridge.clone() as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TurnChildDriver {
             core: Arc::downgrade(core),
         }),
@@ -292,7 +293,7 @@ fn root_session(
     Ok(agent)
 }
 
-/// The root's four event hooks: the om_status kind-string shaping, the
+/// The root's four event hooks: the `om_status` kind-string shaping, the
 /// queue projection, and the two entry tees (ADR-0008's file-line
 /// upserts).
 fn wire_events(core: &Core, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {

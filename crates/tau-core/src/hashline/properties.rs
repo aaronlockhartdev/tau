@@ -44,7 +44,7 @@ proptest! {
         let edit = Edit {
             from: hashes[at].clone(),
             to: hashes[at].clone(),
-            content: replacement.to_string(),
+            content: replacement.clone(),
         };
         let edited = apply_edit(&content, &edit).unwrap();
         for (i, line) in lines.iter().enumerate() {
@@ -113,7 +113,7 @@ proptest! {
         };
         let edited = apply_edit(&content, &edit).unwrap();
         let mut expected: Vec<String> = lines[..from].to_vec();
-        expected.push(replacement.to_string());
+        expected.push(replacement.clone());
         expected.extend(lines[to + 1..].iter().cloned());
         assert_eq!(edited.content, expected.join("\n"));
         let re = line_hashes(&edited.content).unwrap();

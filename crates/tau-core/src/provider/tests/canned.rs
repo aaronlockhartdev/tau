@@ -1,5 +1,6 @@
 use super::server::*;
 use super::*;
+use tokio::io::AsyncWriteExt;
 
 #[test]
 fn decode_stream_extracts_function_calls_and_reasoning_dialect() {
@@ -136,11 +137,16 @@ impl TurnSink for KillAfterOne {
 #[tokio::test]
 async fn mid_body_drop_keeps_the_partial_turn() {
     // Server that sends one delta and drops the connection.
+    struct Keep;
+    impl TurnSink for Keep {
+        fn event(&mut self, _: TurnEvent) -> bool {
+            true
+        }
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let (mut sock, _) = listener.accept().await.unwrap();
-        use tokio::io::AsyncWriteExt;
         let partial = "HTTP/1.1 200 OK
 content-type: text/event-stream
 
@@ -154,12 +160,6 @@ data: "
         drop(sock);
     });
     let request = ResponseRequest::new("m", None, vec![]);
-    struct Keep;
-    impl TurnSink for Keep {
-        fn event(&mut self, _: TurnEvent) -> bool {
-            true
-        }
-    }
     let result = stream_turn(
         &reqwest::Client::new(),
         &provider_for(&format!("http://{addr}")),

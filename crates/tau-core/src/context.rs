@@ -17,6 +17,7 @@ pub struct Layer {
 }
 
 /// Discover the context-file layers for `cwd` (the workspace root).
+#[must_use]
 pub fn discover(cwd: &Path, global: &Path) -> Vec<Layer> {
     let mut layers = Vec::new();
     push_layer(&mut layers, global);
@@ -24,10 +25,10 @@ pub fn discover(cwd: &Path, global: &Path) -> Vec<Layer> {
     // The walk-up chain from cwd to the filesystem root, reversed so the
     // directories are ordered root-first (global, then far to near, cwd last).
     let mut chain: Vec<PathBuf> = vec![cwd.to_path_buf()];
-    let mut dir = cwd.parent().map(|p| p.to_path_buf());
+    let mut dir = cwd.parent().map(std::path::Path::to_path_buf);
     while let Some(parent) = dir {
         chain.push(parent.clone());
-        dir = parent.parent().map(|p| p.to_path_buf());
+        dir = parent.parent().map(std::path::Path::to_path_buf);
     }
     chain.reverse();
     for dir in chain {
@@ -50,6 +51,7 @@ fn push_layer(layers: &mut Vec<Layer>, dir: &Path) {
 
 /// Assemble the system prompt: the agent type's base prompt, then each layer
 /// (the type's prompt is never inherited from a parent — spec §10).
+#[must_use]
 pub fn assemble(base: &str, layers: &[Layer]) -> String {
     if layers.is_empty() {
         return base.to_owned();

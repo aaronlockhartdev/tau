@@ -27,8 +27,7 @@ impl Core {
         }
         self.home_watcher.lock().unwrap().replace(watcher);
         let core = Arc::clone(self);
-        spawn_watcher_consumer(&core, rx, move |_core, _batch| {
-            let core = _core;
+        spawn_watcher_consumer(&core, rx, move |core, _batch| {
             for ws in core.workspaces.lock().unwrap().values() {
                 core.refresh_skills(ws);
             }
@@ -58,8 +57,7 @@ impl Core {
             return;
         };
         let id = workspace.id.clone();
-        spawn_watcher_consumer(&core, rx, move |_core, _batch| {
-            let core = _core;
+        spawn_watcher_consumer(&core, rx, move |core, _batch| {
             if let Ok(ws) = core.workspace(&id) {
                 core.refresh_skills(&ws);
             }
@@ -167,12 +165,9 @@ pub(crate) fn tree_changed_dirs(cwd: &str, batch: &Batch) -> Vec<String> {
     let mut out = Vec::new();
     let mut unmatched = false;
     for path in batch {
-        let rel = match path.strip_prefix(cwd) {
-            Ok(r) => r,
-            Err(_) => {
-                unmatched = true;
-                continue;
-            }
+        let Ok(rel) = path.strip_prefix(cwd) else {
+            unmatched = true;
+            continue;
         };
         let components = rel.components();
         // A change inside an excluded subtree is not the pane's business.
@@ -224,7 +219,7 @@ pub(crate) fn list_dir(cwd: &Path, dir: &Path) -> Vec<FileEntry> {
         let size = if is_dir {
             0
         } else {
-            ent.metadata().map(|m| m.len()).unwrap_or(0)
+            ent.metadata().map_or(0, |m| m.len())
         };
         let rel = path.strip_prefix(cwd).unwrap_or(path.as_path());
         let rel = if rel.as_os_str().is_empty() {

@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::*;
 use crate::harness::SessionRole;
 use crate::provider::{self, ResponseRequest, TurnSink};
@@ -115,7 +117,7 @@ impl provider::TurnProvider for CannedChildProvider {
     }
 }
 
-/// (name, call_id, arguments-json) → a canned SSE body.
+/// (name, `call_id`, arguments-json) → a canned SSE body.
 pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
     let mut body = String::new();
     for (name, call_id, args) in calls {
@@ -123,13 +125,14 @@ pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
             "id": call_id, "type": "function_call", "name": name,
             "call_id": call_id, "arguments": args,
         });
-        body.push_str(&format!(
+        let _ = write!(
+            body,
             "data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}\n\n"
-        ));
+        );
     }
     if !text.is_empty() {
         let delta = json!({ "type": "response.output_text.delta", "delta": text });
-        body.push_str(&format!("data: {delta}\n\n"));
+        let _ = write!(body, "data: {delta}\n\n");
     }
     body.push_str(
         "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
@@ -198,7 +201,7 @@ pub(crate) fn harness_full(
         caps,
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
-        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        bridge: bridge.clone(),
         driver: Arc::new(TestDriver),
     });
     // A scripted parent loop (the parent is a full session): the

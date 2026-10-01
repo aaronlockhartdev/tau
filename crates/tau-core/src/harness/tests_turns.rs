@@ -77,11 +77,11 @@ async fn closing_a_session_stops_its_in_flight_turn() {
     );
 }
 
-/// A task command emits a task_changed event carrying the file's
+/// A task command emits a `task_changed` event carrying the file's
 /// folded task list — the GUI's tasks tab is event-driven (spec §8),
 /// never polled; the payload is a projection of the file.
 #[tokio::test]
-
+#[allow(clippy::too_many_lines)] // one end-to-end turn flow; splitting is refactoring
 async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(providers()).build();
@@ -179,7 +179,9 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     };
     assert_eq!(final_assistant.payload["reasoning"], "thinking");
     assert_eq!(
-        final_assistant.payload["calls"].as_array().map(|c| c.len()),
+        final_assistant.payload["calls"]
+            .as_array()
+            .map(std::vec::Vec::len),
         Some(1)
     );
     let Some(Event::StreamEnd {
@@ -228,7 +230,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
 }
 
 /// A send that lands while a turn is in flight must not spawn a second
-/// concurrent process(): the message is queued and the in-flight turn
+/// concurrent `process()`: the message is queued and the in-flight turn
 /// absorbs it (spec §7/§8 single writer, review B1).
 #[tokio::test]
 
@@ -312,6 +314,7 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
 /// A canned SSE stream forwarded through the real event pipe —
 /// deterministic, no network, runs in CI.
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one end-to-end turn flow; splitting is refactoring
 async fn a_live_om_run_emits_om_status_events() {
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(providers()).build();
@@ -349,7 +352,7 @@ async fn a_live_om_run_emits_om_status_events() {
         tools: tools::agent_tool_specs(),
         cwd: cwd.clone(),
         provider: provider.clone(),
-        tool_batch_on_force: Default::default(),
+        tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
         turn: TurnConfig::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &om,

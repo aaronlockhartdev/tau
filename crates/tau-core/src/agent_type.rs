@@ -24,6 +24,7 @@ pub struct AgentType {
 
 /// The always-present built-in type (spec §5.5): inherits the session's
 /// tools and model, fresh is the default.
+#[must_use]
 pub fn builtin_general() -> AgentType {
     AgentType {
         name: "general".into(),
@@ -38,6 +39,7 @@ pub fn builtin_general() -> AgentType {
 /// Discover the registry: the built-in `general` first, then system
 /// `agents/*.md`, then project `.tau/agents/*.md` (project wins on a name
 /// collision, spec §5.5).
+#[must_use]
 pub fn discover(system_dir: Option<&Path>, project_root: &Path) -> Vec<AgentType> {
     let mut types = vec![builtin_general()];
     if let Some(dir) = system_dir.map(|d| d.join("agents")) {
@@ -76,7 +78,7 @@ fn dir_of(dir: &Path) -> Vec<AgentType> {
 }
 
 /// A type file: `---` frontmatter (name / description / tools / model /
-/// context_mode) over the system-prompt body.
+/// `context_mode`) over the system-prompt body.
 fn parse(raw: &str) -> Option<AgentType> {
     let rest = raw.strip_prefix("---\n")?;
     let (fm, body) = rest.split_once("\n---")?;

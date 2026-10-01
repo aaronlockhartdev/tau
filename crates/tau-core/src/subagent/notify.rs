@@ -145,7 +145,7 @@ impl Supervisor {
             // forced (completed / handed_off / blocked), and the
             // creator's pointer is mirrored. Runs before the state set so
             // the Done record and the wake see the final task state.
-            self.resolve_assigned_task(&child, &output);
+            self.resolve_assigned_task(&child, output.as_ref());
             // Quiescence, not death (ADR-0001): the loop ends, the
             // concurrency slot frees, and the parent is woken always.
             if let Err(e) = child.set_state(&ChildState::Done {
@@ -209,10 +209,11 @@ impl Supervisor {
     /// truth; the child's file carries no task entries.
     ///
     /// - all criteria satisfied → `done`
-    /// - not satisfied, not blocked → `handed_off` (stays in_progress;
+    /// - not satisfied, not blocked → `handed_off` (stays `in_progress`;
     ///   the output becomes the resume contract, the parent decides)
     /// - already blocked (the child called `task_block`) → stays blocked
-    fn resolve_assigned_task(&self, child: &Child, output: &Option<Value>) {
+    #[allow(clippy::too_many_lines)] // one task-resolution gate; splitting is refactoring
+    fn resolve_assigned_task(&self, child: &Child, output: Option<&Value>) {
         let Some(parent) = self.parent.lock().unwrap().clone() else {
             return;
         };
@@ -226,7 +227,7 @@ impl Supervisor {
                     .as_ref()
                     .is_some_and(|w| w.session == child.session_id)
             })?;
-            let output = output.as_ref().unwrap_or(&Value::Null);
+            let output = output.unwrap_or(&Value::Null);
             if task.status == crate::task::STATUS_IN_PROGRESS {
                 let gate = task
                     .criteria

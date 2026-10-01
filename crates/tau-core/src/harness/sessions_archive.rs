@@ -56,8 +56,7 @@ impl Core {
                         .insert(session.to_owned(), live.clone());
                     let child = sup
                         .state_info(&handle)
-                        .map(|i| i.child)
-                        .unwrap_or_else(|| handle.clone());
+                        .map_or_else(|| handle.clone(), |i| i.child);
                     return Err(ProtocolError::Other {
                         message: format!(
                             "child session {child} is still running — stop it and retry"
@@ -179,11 +178,7 @@ impl Core {
         // on-disk meta carries the parent link.
         if let Some(parent) = store.parent() {
             return Err(ProtocolError::Other {
-                message: self.archive_refusal_for_child(
-                    session,
-                    &workspace.id,
-                    &Some(parent.to_string()),
-                ),
+                message: self.archive_refusal_for_child(session, &workspace.id, Some(parent)),
             });
         }
         // The children that archive with it: the workspace's disk scan is

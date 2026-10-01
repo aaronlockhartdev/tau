@@ -8,6 +8,7 @@ use crate::harness::SessionRole;
 impl Supervisor {
     /// Spawn a child (spec §5.1): async — this only sets things up; the
     /// child's loop runs on its own task and reports through `parent_notify`.
+    #[allow(clippy::too_many_lines)] // one spawn setup; splitting is refactoring
     pub fn spawn(
         self: &Arc<Self>,
         agent_type: &str,
@@ -52,20 +53,17 @@ impl Supervisor {
 
         // The child's session file: a fresh file (fresh/compacted) or a
         // branched copy of the parent's entry tree (fork, spec §5.1).
-        let mut store = match context_mode {
-            ContextMode::Fork => {
-                let mut source = SessionStore::for_workspace(&self.cwd, &self.parent_session);
-                source
-                    .open()
-                    .map_err(|e| format!("subagent_spawn: cannot fork: {e}"))?;
-                SessionStore::fork_from(&source, &session_id)
-                    .map_err(|e| format!("subagent_spawn: fork failed: {e}"))?
-            }
-            _ => {
-                let mut store = SessionStore::for_workspace(&self.cwd, &session_id);
-                store.create().map_err(|e| format!("subagent_spawn: {e}"))?;
-                store
-            }
+        let mut store = if context_mode == ContextMode::Fork {
+            let mut source = SessionStore::for_workspace(&self.cwd, &self.parent_session);
+            source
+                .open()
+                .map_err(|e| format!("subagent_spawn: cannot fork: {e}"))?;
+            SessionStore::fork_from(&source, &session_id)
+                .map_err(|e| format!("subagent_spawn: fork failed: {e}"))?
+        } else {
+            let mut store = SessionStore::for_workspace(&self.cwd, &session_id);
+            store.create().map_err(|e| format!("subagent_spawn: {e}"))?;
+            store
         };
         // The header carries the parent link too, so the nesting survives a
         // restart (the spawn record below is the entry-level provenance).
@@ -75,7 +73,7 @@ impl Supervisor {
 
         // The spawn record: the parent link (session id + originating tool
         // call id) is the child's durable provenance (ADR-0001).
-        let leaf = store.leaf().map(|l| l.map(|e| e.id)).unwrap_or(None);
+        let leaf = store.leaf().map_or(None, |l| l.map(|e| e.id));
         store
             .append(
                 KIND_SUBAGENT,
@@ -262,9 +260,8 @@ impl Supervisor {
                     child.wake.notified().await;
                     continue;
                 }
-                // done ends the drive: a done child is quiescent, and a
-                // resume of it starts a fresh drive (the message path).
-                ChildState::Done { .. } => break,
+                // done/stopped/failed end the drive: a done child is
+                // quiescent, and a resume starts a fresh drive (the message path).
                 _ => break,
             }
             match sup.driver.drive(&child.session_id, &child.agent).await {

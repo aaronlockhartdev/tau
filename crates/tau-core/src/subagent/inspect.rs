@@ -19,7 +19,7 @@ impl Supervisor {
             store
                 .open()
                 .ok()
-                .and_then(|_| store.leaf().ok().flatten())
+                .and_then(|()| store.leaf().ok().flatten())
                 .and_then(|leaf| {
                     let entries = store.entries_range(0, usize::MAX).ok()?;
                     let branch = om_integration::branch_entries(&entries, Some(&leaf.id));

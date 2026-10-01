@@ -114,6 +114,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -127,7 +128,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         caps: SubAgents::default(),
         depth: 0,
         types,
-        bridge: bridge as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
@@ -183,6 +184,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -196,7 +198,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         caps: SubAgents::default(),
         depth: 0,
         types: crate::agent_type::discover(None, dir.path()),
-        bridge: bridge as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
@@ -237,6 +239,7 @@ async fn the_depth_cap() {
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
         });
+        let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
         Supervisor::new(SupervisorParams {
             parent_session: "parent".into(),
             cwd: dir.path().to_path_buf(),
@@ -253,7 +256,7 @@ async fn the_depth_cap() {
             },
             types: vec![crate::agent_type::builtin_general()],
             depth,
-            bridge: bridge as Arc<dyn SubagentBridge>,
+            bridge: subagent_bridge,
             driver: Arc::new(TestDriver),
         })
     };
@@ -315,10 +318,11 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         notify: Arc::new(tokio::sync::Notify::new()),
         calls: AtomicUsize::new(0),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
-        provider: factory as Arc<dyn ChildProviderFactory>,
+        provider: factory.clone(),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
         om: Om::default(),
@@ -328,8 +332,8 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         caps: SubAgents::default(),
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
-        bridge: bridge as Arc<dyn SubagentBridge>,
-        driver: Arc::clone(&driver) as Arc<dyn ChildDriver>,
+        bridge: subagent_bridge,
+        driver: driver.clone(),
     });
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
     store.create().unwrap();
@@ -380,8 +384,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
                 && e.payload
                     .get("note")
                     .and_then(|n| n.as_str())
-                    .map(|n| n.starts_with("Nudge"))
-                    .unwrap_or(false)
+                    .is_some_and(|n| n.starts_with("Nudge"))
         })
         .count();
     assert_eq!(

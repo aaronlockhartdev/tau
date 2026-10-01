@@ -74,7 +74,7 @@ impl Watcher {
     /// an optimization — on Linux inotify a recursive watch is one descriptor
     /// per directory (this repo: 4,471, 3,777 under `target/`), so the watch
     /// set is walked by hand and every non-excluded dir is added
-    /// `NonRecursive`. On macOS FSEvents the stream has no per-dir
+    /// `NonRecursive`. On macOS `FSEvents` the stream has no per-dir
     /// descriptors, so one recursive watch suffices and the consumer
     /// post-filters events by prefix.
     pub fn add_excluded(&mut self, root: &Path, exclusions: &[&str]) {

@@ -63,7 +63,7 @@ pub struct Core {
     pub(crate) configs: Mutex<HashMap<String, Config>>,
     /// Per-workspace skill registry (tickets #28/#31): built at session
     /// open and refreshed by the file watcher; consulted by the
-    /// message_send boundary and `skill_list`.
+    /// `message_send` boundary and `skill_list`.
     pub(crate) skills: Mutex<HashMap<String, Vec<SkillInfo>>>,
     /// The home-level skill roots (`{system}/skills` + `{home}/.agents/skills`),
     /// watched once globally (ticket #31): identical for every workspace, so
@@ -130,6 +130,7 @@ impl CoreBuilder {
     }
 
     /// A test shape: no config files, an explicit provider list.
+    #[must_use]
     pub fn custom(providers: BTreeMap<String, crate::config::Provider>) -> Self {
         Self {
             system_dir: None,
@@ -142,23 +143,27 @@ impl CoreBuilder {
 
     /// A test seam: child sessions get this factory's provider (scripted
     /// child turns).
+    #[must_use]
     pub fn with_child_factory(mut self, f: Arc<dyn ChildProviderFactory>) -> Self {
         self.child_factory = Some(f);
         self
     }
 
     /// A test seam: a custom system dir (the workspaces.json location).
+    #[must_use]
     pub fn with_system_dir(mut self, dir: PathBuf) -> Self {
         self.system_dir = Some(dir);
         self
     }
 
     /// A test seam: a custom home (the home-level `.agents/skills/` root).
+    #[must_use]
     pub fn with_home(mut self, home: PathBuf) -> Self {
         self.home = Some(home);
         self
     }
 
+    #[must_use]
     pub fn build(self) -> Arc<Core> {
         let (events_tx, rx) = mpsc::channel(1024);
         let core = Arc::new(Core {
@@ -292,30 +297,31 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         Event::System {
             workspace, session, ..
         } => (workspace.clone(), session.clone()),
-        Event::SkillListChanged { workspace, .. } => (workspace.clone(), None),
-        Event::FileTreeChanged { workspace, .. } => (workspace.clone(), None),
+        Event::SkillListChanged { workspace, .. } | Event::FileTreeChanged { workspace, .. } => {
+            (workspace.clone(), None)
+        }
         Event::StreamStart {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::StreamEnd {
+        }
+        | Event::StreamEnd {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::EntryUpsert {
+        }
+        | Event::EntryUpsert {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::Queue {
+        }
+        | Event::Queue {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::SessionEvent {
+        }
+        | Event::SessionEvent {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::OmStatus {
+        }
+        | Event::OmStatus {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::SubagentEvent {
+        }
+        | Event::SubagentEvent {
             workspace, session, ..
-        } => (workspace.clone(), Some(session.clone())),
-        Event::TaskChanged {
+        }
+        | Event::TaskChanged {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
     }
@@ -343,30 +349,27 @@ pub(crate) fn pipe_send(
     workspace: String,
     session: Option<String>,
 ) {
-    match tx.try_send(event) {
-        Ok(()) => {
-            if counters.overflow_pending.swap(false, Ordering::Relaxed) {
-                let total = counters.dropped.load(Ordering::Relaxed);
-                let summary = Event::System {
-                    workspace,
-                    session,
-                    kind: SystemEventKind::Error {
-                        message: format!(
-                            "event pipe overflow: {total} event(s) dropped — the view may be missing events; reload"
-                        ),
-                    },
-                };
-                // The summary can miss too (the channel refills in the
-                // same instant): then it stays owed.
-                if tx.try_send(summary).is_err() {
-                    counters.overflow_pending.store(true, Ordering::Relaxed);
-                }
+    if let Ok(()) = tx.try_send(event) {
+        if counters.overflow_pending.swap(false, Ordering::Relaxed) {
+            let total = counters.dropped.load(Ordering::Relaxed);
+            let summary = Event::System {
+                workspace,
+                session,
+                kind: SystemEventKind::Error {
+                    message: format!(
+                        "event pipe overflow: {total} event(s) dropped — the view may be missing events; reload"
+                    ),
+                },
+            };
+            // The summary can miss too (the channel refills in the
+            // same instant): then it stays owed.
+            if tx.try_send(summary).is_err() {
+                counters.overflow_pending.store(true, Ordering::Relaxed);
             }
         }
-        Err(_) => {
-            counters.dropped.fetch_add(1, Ordering::Relaxed);
-            counters.overflow_pending.store(true, Ordering::Relaxed);
-        }
+    } else {
+        counters.dropped.fetch_add(1, Ordering::Relaxed);
+        counters.overflow_pending.store(true, Ordering::Relaxed);
     }
 }
 impl Core {
@@ -401,7 +404,7 @@ impl Core {
             .unwrap_or_default()
     }
 
-    pub(crate) fn open_workspace(&self, cwd: &str) -> Result<Workspace, ProtocolError> {
+    pub(crate) fn open_workspace(&self, cwd: &str) -> Workspace {
         let cwd = cwd.trim().to_owned();
         let id = format!("w-{:x}", xxhash_rust::xxh3::xxh3_64(cwd.as_bytes()));
         let name = Path::new(&cwd)
@@ -427,7 +430,7 @@ impl Core {
         self.set_workspace_open(&workspace, true);
         self.start_project_watcher(&workspace);
         self.start_tree_watcher(&workspace);
-        Ok(workspace)
+        workspace
     }
 
     pub(crate) fn workspace(&self, id: &str) -> Result<Workspace, ProtocolError> {
@@ -443,7 +446,7 @@ impl Core {
 
     /// The workspace's skill registry (ticket #28): the per-workspace
     /// cache; a workspace with no session opened yet is discovered on
-    /// demand (skill_list at workspace open). The watcher refreshes the
+    /// demand (`skill_list` at workspace open). The watcher refreshes the
     /// slot between opens (ticket #31), so a stale list never outlives a
     /// change.
     fn load_workspace_index(&self) -> Vec<WorkspaceIndexEntry> {
@@ -467,8 +470,7 @@ impl Core {
             let path = dir.join("workspaces.json");
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
+                .map_or(0, |d| d.as_nanos());
             let tmp = dir.join(format!("workspaces.json.tmp-{nanos:016x}"));
             if std::fs::write(&tmp, raw).is_ok() {
                 let _ = std::fs::rename(&tmp, path);

@@ -20,12 +20,22 @@ fn output_format_matches_upstream_assembly() {
     // (the legacy continuation sections spliced in, which is what the
     // `||` evaluates to with no extractors).
     let tpl_at = ts.find("Use priority levels:").expect("template");
-    let open = ts[..tpl_at].rfind('`').expect("template open backtick");
+    let open = ts
+        .get(..tpl_at)
+        .expect("offset from find() is a char boundary")
+        .rfind('`')
+        .expect("template open backtick");
     let close = tpl_at
-        + ts[tpl_at..]
+        + ts.get(tpl_at..)
+            .expect("offset from find() is a char boundary")
             .find("${extractorSections")
             .expect("extractor slot");
-    let expected = strip_current_task(&format!("{}{}", &ts[open + 1..close], legacy));
+    let expected = strip_current_task(&format!(
+        "{}{}",
+        ts.get(open + 1..close)
+            .expect("offsets from find() are char boundaries"),
+        legacy
+    ));
     assert_eq!(
         OBSERVER_OUTPUT_FORMAT, expected,
         "output format drifted from the upstream buildObserverOutputFormat"
@@ -60,11 +70,24 @@ fn observer_prompt_matches_upstream_template() {
     // sentence (the multiThread branch shares it).
     let opening = "You are the memory consciousness of an AI assistant.";
     let first = ts.find(opening).expect("first occurrence");
-    let rest = &ts[first + opening.len()..];
+    let rest = ts
+        .get(first + opening.len()..)
+        .expect("offset from find() is a char boundary");
     let at = first + opening.len() + rest.find(opening).expect("second occurrence");
-    let open = ts[..at].rfind('`').expect("template open");
-    let close = at + ts[at..].find('`').expect("template close");
-    let template = strip_current_task(&ts[open + 1..close]);
+    let open = ts
+        .get(..at)
+        .expect("offset from find() is a char boundary")
+        .rfind('`')
+        .expect("template open");
+    let close = at
+        + ts.get(at..)
+            .expect("offset from find() is a char boundary")
+            .find('`')
+            .expect("template close");
+    let template = strip_current_task(
+        ts.get(open + 1..close)
+            .expect("offsets from find() are char boundaries"),
+    );
     assert_eq!(
         OBSERVER_PROMPT_TEMPLATE, template,
         "observer system template drifted from the upstream non-multithreaded branch"
@@ -81,11 +104,29 @@ fn observer_prompt_matches_upstream_template() {
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES);
     let name = "suggestedResponseEnabled";
     let i = built.find(&format!("${{\n    {name}")).expect(name);
-    let j = i + built[i..].find('}').expect("ternary end") + 1;
-    let span = &built[i..j];
+    let j = i
+        + built
+            .get(i..)
+            .expect("offset from find() is a char boundary")
+            .find('}')
+            .expect("ternary end")
+        + 1;
+    let span = built
+        .get(i..j)
+        .expect("offsets from find() are char boundaries");
     let a = span.find('\'').expect("branch open");
     let b = span.find("'\n").expect("branch close");
-    built = format!("{}{}{}", &built[..i], &span[a + 1..b], &built[j..]);
+    built = format!(
+        "{}{}{}",
+        built
+            .get(..i)
+            .expect("offset from find() is a char boundary"),
+        span.get(a + 1..b)
+            .expect("offsets from find() are char boundaries"),
+        built
+            .get(j..)
+            .expect("offset from find() is a char boundary")
+    );
     built = built.replace("${customInstructions}", "");
     assert_eq!(observer_system_prompt(), built);
 }

@@ -33,14 +33,14 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     let obs_text = format!(
         "<observations>obs {}</observations>",
         (0..900)
-            .map(|i| format!("L{:04} data", i))
+            .map(|i| format!("L{i:04} data"))
             .collect::<Vec<_>>()
             .join("\n")
     );
     let ref_text = format!(
         "<observations>condensed {}</observations>",
         (0..200)
-            .map(|i| format!("c{:04}", i))
+            .map(|i| format!("c{i:04}"))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -100,7 +100,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     assert_eq!(hints, 1, "the hint is one-shot: {seen:?}");
 }
 
-/// The OM-run status hook (the app's om_status emitter): each run
+/// The OM-run status hook (the app's `om_status` emitter): each run
 /// reports its kind at start and `idle` at the end, in order.
 #[tokio::test]
 async fn om_runs_notify_the_status_hook_in_order() {
@@ -126,14 +126,14 @@ async fn om_runs_notify_the_status_hook_in_order() {
     let obs_text = format!(
         "<observations>obs {}</observations>",
         (0..900)
-            .map(|i| format!("L{:04} data", i))
+            .map(|i| format!("L{i:04} data"))
             .collect::<Vec<_>>()
             .join("\n")
     );
     let ref_text = format!(
         "<observations>condensed {}</observations>",
         (0..200)
-            .map(|i| format!("c{:04}", i))
+            .map(|i| format!("c{i:04}"))
             .collect::<Vec<_>>()
             .join("\n")
     );
@@ -201,14 +201,14 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
     let obs_text = format!(
         "<observations>obs {}</observations>",
         (0..900)
-            .map(|i| format!("L{:04} data", i))
+            .map(|i| format!("L{i:04} data"))
             .collect::<Vec<_>>()
             .join("\n")
     );
     let ref_text = format!(
         "<observations>condensed {}</observations>",
         (0..200)
-            .map(|i| format!("c{:04}", i))
+            .map(|i| format!("c{i:04}"))
             .collect::<Vec<_>>()
             .join("\n")
     );

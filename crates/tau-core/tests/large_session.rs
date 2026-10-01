@@ -34,18 +34,17 @@ fn run(n: u64) {
     let open_ms = t.elapsed().as_millis();
 
     // Ids are 1-based (the file's first entry is 00000001).
-    let cursor = format!("{:08}", n);
+    let cursor = format!("{n:08}");
     let t = Instant::now();
     let tail = reader.entries_since(&cursor).unwrap();
     let since_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "the fixture size is a small entry count"
-    )]
     let page = reader
-        .entries_range((n / 2) as usize, (n / 2 + 100) as usize)
+        .entries_range(
+            usize::try_from(n / 2).expect("fixture entry count, well under usize::MAX"),
+            usize::try_from(n / 2 + 100).expect("fixture entry count, well under usize::MAX"),
+        )
         .unwrap();
     let range_ms = t.elapsed().as_millis();
 

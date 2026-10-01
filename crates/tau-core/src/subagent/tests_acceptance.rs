@@ -9,6 +9,7 @@ use crate::subagent::testkit::*;
 /// nudge-exhausts to failed — and every transition is a session entry
 /// with a protocol (bridge) event.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one end-to-end lifecycle flow; splitting is refactoring
 async fn the_lifecycle_acceptance_flow() {
     let dir = tempfile::tempdir().unwrap();
     // Parent script: spawn three children (one call each), then end.

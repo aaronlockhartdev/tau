@@ -75,7 +75,10 @@ fn state_machine_rejects_illegal_transitions() {
     assert_eq!(t.steps[0].status, StepStatus::Active);
     // block, then re-start from blocked
     block(&mut store, "task-1", "stuck", Some("needs ci".into())).unwrap();
-    assert!(start(&mut store, "task-1").unwrap().status == STATUS_IN_PROGRESS);
+    assert_eq!(
+        start(&mut store, "task-1").unwrap().status,
+        STATUS_IN_PROGRESS
+    );
     // double start is illegal
     assert!(start(&mut store, "task-1").is_err());
     // a done task rejects everything

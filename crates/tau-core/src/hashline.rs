@@ -40,7 +40,7 @@ pub enum EditError {
     Stale { anchor: String },
     /// The file exceeds the 238,328-line anchor cap; fall back to `write`.
     TooLarge,
-    /// anchor_from resolves after anchor_to.
+    /// `anchor_from` resolves after `anchor_to`.
     Reversed { from: String, to: String },
     /// Not a bare 3-char anchor from the alphabet.
     BadAnchor(String),
@@ -74,10 +74,12 @@ impl fmt::Display for EditError {
 /// CRLF (and lone CR) line endings become LF. The reference normalizes on
 /// read, so canon, hashing, and the content written back all agree on line
 /// endings — an edit never leaves a CRLF file half-converted.
+#[must_use]
 pub fn normalize(content: &str) -> String {
     content.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+#[must_use]
 pub fn canon(line: &str) -> String {
     line.chars()
         .filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n'))
@@ -89,7 +91,7 @@ fn split_lines(content: &str) -> Vec<String> {
         return vec![String::new()];
     }
     let mut lines: Vec<String> = content.split('\n').map(str::to_owned).collect();
-    if lines.last().is_some_and(|l| l.is_empty()) {
+    if lines.last().is_some_and(std::string::String::is_empty) {
         lines.pop();
     }
     lines
@@ -141,21 +143,18 @@ pub fn line_hashes(content: &str) -> Result<Vec<String>, TooManyLines> {
     let mut out = Vec::with_capacity(lines.len());
     for line in &lines {
         // 62^3 hash space: a u32 holds it, so the narrowing is safe.
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "HASH_SPACE is 62^3, below u32::MAX"
-        )]
-        let base = ((xxhash_rust::xxh32::xxh32(canon(line).as_bytes(), 0) >> 14)
-            % HASH_SPACE as u32) as usize;
-        let idx = if !used[base] {
-            used[base] = true;
-            hint = (base + STRIDE) % HASH_SPACE;
-            base
-        } else {
+        let base = usize::try_from(xxhash_rust::xxh32::xxh32(canon(line).as_bytes(), 0) >> 14)
+            .expect("u32 fits in usize on the supported 64-bit targets")
+            % HASH_SPACE;
+        let idx = if used[base] {
             let idx = next_zero(&mut used, hint)?;
             used[idx] = true;
             hint = (idx + STRIDE) % HASH_SPACE;
             idx
+        } else {
+            used[base] = true;
+            hint = (base + STRIDE) % HASH_SPACE;
+            base
         };
         out.push(idx_to_hash(idx));
     }
@@ -197,6 +196,7 @@ pub struct Edited {
 /// only — cross-edit tombstone persistence (the reference's hash store) is
 /// outside v0's per-edit allocation scope, so a later edit may re-allocate a
 /// freed slot.
+#[allow(clippy::too_many_lines)] // one allocation pass over the edit; splitting is refactoring
 fn stable_hashes(
     old_content: &str,
     old_hashes: &[String],
@@ -232,7 +232,10 @@ fn stable_hashes(
         0
     };
     // Survivors after the span shift by the net line-count change.
-    let shift = new.len() as i64 - old.len() as i64 + span_len as i64 - span_len as i64;
+    let shift = i64::try_from(new.len()).expect("line count is capped at 62^3")
+        - i64::try_from(old.len()).expect("line count is capped at 62^3")
+        + i64::try_from(span_len).expect("span length is at most the line count")
+        - i64::try_from(span_len).expect("span length is at most the line count");
 
     // Candidate new positions per old canon (in order).
     let mut by_canon: HashMap<String, Vec<usize>> = HashMap::new();
@@ -252,13 +255,13 @@ fn stable_hashes(
         let Some(candidates) = by_canon.get_mut(&canon(&old[i])) else {
             continue;
         };
-        #[allow(
-            clippy::cast_sign_loss,
-            clippy::cast_possible_truncation,
-            reason = "the clamp bounds the result to [0, new.len()]"
-        )]
         let target = if i > span_end {
-            (i as i64 + shift).clamp(0, new.len() as i64) as usize
+            let t = i64::try_from(i).expect("line index is capped at 62^3") + shift;
+            let t = t.clamp(
+                0,
+                i64::try_from(new.len()).expect("line count is capped at 62^3"),
+            );
+            usize::try_from(t).expect("the clamp keeps the result in [0, new.len()]")
         } else {
             i
         };
@@ -288,21 +291,18 @@ fn stable_hashes(
             continue;
         }
         // 62^3 hash space: a u32 holds it, so the narrowing is safe.
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "HASH_SPACE is 62^3, below u32::MAX"
-        )]
-        let base = ((xxhash_rust::xxh32::xxh32(canon(&new[i]).as_bytes(), 0) >> 14)
-            % HASH_SPACE as u32) as usize;
-        let idx = if !used[base] {
-            used[base] = true;
-            hint = (base + STRIDE) % HASH_SPACE;
-            base
-        } else {
+        let base = usize::try_from(xxhash_rust::xxh32::xxh32(canon(&new[i]).as_bytes(), 0) >> 14)
+            .expect("u32 fits in usize on the supported 64-bit targets")
+            % HASH_SPACE;
+        let idx = if used[base] {
             let idx = next_zero(&mut used, hint)?;
             used[idx] = true;
             hint = (idx + STRIDE) % HASH_SPACE;
             idx
+        } else {
+            used[base] = true;
+            hint = (base + STRIDE) % HASH_SPACE;
+            base
         };
         new_hashes[i] = Some(idx_to_hash(idx));
     }
@@ -353,7 +353,7 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
         Vec::new()
     } else {
         let mut r: Vec<String> = edit.content.split('\n').map(str::to_owned).collect();
-        if r.last().is_some_and(|l| l.is_empty()) {
+        if r.last().is_some_and(std::string::String::is_empty) {
             r.pop();
         }
         r

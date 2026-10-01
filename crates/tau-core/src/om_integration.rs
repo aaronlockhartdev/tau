@@ -3,6 +3,8 @@
 //! turn-end observe/reflect, Phase-2 buffered chunks, context assembly, the
 //! `recall` tool, and the compacted-spawn frozen prefix.
 
+use std::fmt::Write as _;
+
 use crate::om::{self, Cursor, OmConfig, OmRecord};
 use crate::session::{Entry, SessionStore};
 use serde_json::Value;
@@ -55,17 +57,23 @@ impl OmState {
     /// Fold the config's absolute `buffer_increment` into the module's
     /// `buffer_activation` ratio (1 − increment/threshold; the two forms
     /// agree at the defaults: 6k over 30k = 0.8).
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "config thresholds are token counts, well under u32::MAX"
-    )]
+    #[must_use]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
-        let observe = om.observe_threshold.max(1) as f64;
-        let activation = (1.0 - om.buffer_increment as f64 / observe).clamp(0.0, 1.0);
+        let observe = f64::from(
+            u32::try_from(om.observe_threshold.max(1))
+                .expect("token threshold, well under u32::MAX"),
+        );
+        let activation = (1.0
+            - f64::from(
+                u32::try_from(om.buffer_increment).expect("token increment, well under u32::MAX"),
+            ) / observe)
+            .clamp(0.0, 1.0);
         Self {
             config: OmConfig {
-                observe_threshold: om.observe_threshold as u32,
-                reflect_threshold: om.reflect_threshold as u32,
+                observe_threshold: u32::try_from(om.observe_threshold)
+                    .expect("token threshold, well under u32::MAX"),
+                reflect_threshold: u32::try_from(om.reflect_threshold)
+                    .expect("token threshold, well under u32::MAX"),
                 buffer_activation: activation,
                 share_token_budget: false,
             },
@@ -134,6 +142,7 @@ impl OmState {
 
 /// The active branch, root to leaf: the leaf's parent chain walked over the
 /// file-order entries (the cursor is path-scoped, spec §4).
+#[must_use]
 pub fn branch_entries(entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
     let by_id: std::collections::HashMap<&str, &Entry> =
         entries.iter().map(|e| (e.id.as_str(), e)).collect();
@@ -162,6 +171,7 @@ pub fn branch_entries(entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
 /// prefix (which the fork undemotes: in the child it is owned context,
 /// reflectable like any of the child's own material), carried as the
 /// fork's suffix.
+#[must_use]
 pub fn fork_record(parent: &OmRecord) -> OmRecord {
     OmRecord {
         frozen_prefix: String::new(),
@@ -241,7 +251,7 @@ fn transcript(entries: &[Entry]) -> String {
         if text.trim().is_empty() {
             continue;
         }
-        out.push_str(&format!("[{}] {}\n", entry.kind, text));
+        let _ = writeln!(out, "[{}] {}", entry.kind, text);
     }
     out
 }
@@ -331,16 +341,14 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
     let end_idx = entries
         .iter()
         .position(|e| e.id == end)
-        .map(|i| i + 1)
-        .unwrap_or(entries.len());
-    entries[start_idx..end_idx]
-        .iter()
-        .map(|e| {
-            let text = entry_text(e);
-            let preview: String = text.chars().take(200).collect();
-            format!("{} {} {}\n", e.id, e.kind, preview)
-        })
-        .collect()
+        .map_or(entries.len(), |i| i + 1);
+    let mut out = String::new();
+    for e in &entries[start_idx..end_idx] {
+        let text = entry_text(e);
+        let preview: String = text.chars().take(200).collect();
+        let _ = writeln!(out, "{} {} {}", e.id, e.kind, preview);
+    }
+    out
 }
 
 /// The idle gap before the latest turn, in seconds: the timestamp distance
@@ -348,6 +356,7 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
 /// v0 activates pending buffered chunks on a fixed idle timeout, not on
 /// provider-cache TTLs). Zero when the branch starts with the turn's user
 /// entry (a fresh session).
+#[must_use]
 pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
     let branch = branch_entries(all, leaf_id);
     // Back over the current turn's model output (assistant + tool entries)

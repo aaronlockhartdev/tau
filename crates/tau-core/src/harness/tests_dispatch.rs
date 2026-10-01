@@ -512,7 +512,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
 }
 
 /// A blob-backed entry (ADR-0005): `blob_read` decodes the sidecar and
-/// returns the payload; a missing id is a clean NotFound, a tampered hash
+/// returns the payload; a missing id is a clean `NotFound`, a tampered hash
 /// a clean Other.
 #[tokio::test]
 async fn blob_read_decodes_the_sidecar_and_errors_are_clean() {
@@ -538,7 +538,7 @@ async fn blob_read_decodes_the_sidecar_and_errors_are_clean() {
             assert_eq!(
                 payload,
                 json!({ "active_observations": "x".repeat(120_000) })
-            )
+            );
         }
         other => panic!("expected a blob: {other:?}"),
     }

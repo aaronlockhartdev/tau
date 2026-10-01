@@ -18,8 +18,8 @@ impl Supervisor {
         let child = self.resolve(name_or_id).ok_or_else(|| {
             format!("subagent_message: no sub-agent {name_or_id} in this session")
         })?;
-        match child.state() {
-            ChildState::Running => match &text {
+        if child.state() == ChildState::Running {
+            match &text {
                 Some(text) => {
                     child.agent.send(text.clone(), lane);
                     child.set_last_message(text);
@@ -27,45 +27,42 @@ impl Supervisor {
                     Ok(format!("delivered to {}", child.name))
                 }
                 None => Ok(format!("sub-agent {} is already running", child.name)),
-            },
-            _ => {
-                // Resume from any non-running state (ADR-0001 supplement:
-                // all non-running states are deliberately resumable; the
-                // only asymmetry is the provenance the stop recorded).
-                let was_quiescent = matches!(
-                    *child.state.lock().unwrap(),
-                    ChildState::Stopped { .. }
-                        | ChildState::Failed { .. }
-                        | ChildState::Done { .. }
-                );
-                // A quiescent child holds no slot; the resume re-acquires
-                // one against the cap.
-                if was_quiescent {
-                    self.check_cap(true)?;
-                }
-                let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
-                child.set_state(&ChildState::Running)?;
-                child.wake.notify_one();
-                self.bridge.state(&StateNotice {
-                    parent: self.parent_session.clone(),
-                    handle: child.handle.clone(),
-                    child: child.session_id.clone(),
-                    state: ChildState::Running,
-                    note: Some("resumed".into()),
-                    resume_contract: None,
-                });
-                child.agent.send(text, Lane::FollowUp);
-                // A drive ended by stop/failure/done is gone: this resume
-                // starts a fresh one (only an idle drive persists and
-                // wakes on its own). The nudge budget resets with the new
-                // work period.
-                if was_quiescent {
-                    let drive_gen = child.drive_gen.fetch_add(1, Ordering::SeqCst) + 1;
-                    tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone(), drive_gen));
-                }
-                child.nudge_sent.store(false, Ordering::SeqCst);
-                Ok(format!("resumed sub-agent {}", child.name))
             }
+        } else {
+            // Resume from any non-running state (ADR-0001 supplement:
+            // all non-running states are deliberately resumable; the
+            // only asymmetry is the provenance the stop recorded).
+            let was_quiescent = matches!(
+                *child.state.lock().unwrap(),
+                ChildState::Stopped { .. } | ChildState::Failed { .. } | ChildState::Done { .. }
+            );
+            // A quiescent child holds no slot; the resume re-acquires
+            // one against the cap.
+            if was_quiescent {
+                self.check_cap(true)?;
+            }
+            let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
+            child.set_state(&ChildState::Running)?;
+            child.wake.notify_one();
+            self.bridge.state(&StateNotice {
+                parent: self.parent_session.clone(),
+                handle: child.handle.clone(),
+                child: child.session_id.clone(),
+                state: ChildState::Running,
+                note: Some("resumed".into()),
+                resume_contract: None,
+            });
+            child.agent.send(text, Lane::FollowUp);
+            // A drive ended by stop/failure/done is gone: this resume
+            // starts a fresh one (only an idle drive persists and
+            // wakes on its own). The nudge budget resets with the new
+            // work period.
+            if was_quiescent {
+                let drive_gen = child.drive_gen.fetch_add(1, Ordering::SeqCst) + 1;
+                tokio::spawn(Self::drive_loop(Arc::clone(self), child.clone(), drive_gen));
+            }
+            child.nudge_sent.store(false, Ordering::SeqCst);
+            Ok(format!("resumed sub-agent {}", child.name))
         }
     }
 

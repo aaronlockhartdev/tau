@@ -20,6 +20,7 @@ pub const STATUS_CANCELLED: &str = "cancelled";
 /// Fold a session's task entries into current task state. Task state is
 /// session-scoped, not branch-scoped (spec §5.3): the fold walks every
 /// entry, so forking does not destroy a task created on the parent branch.
+#[must_use]
 pub fn fold_entries(entries: &[crate::session::Entry]) -> Vec<Task> {
     let mut tasks: std::collections::BTreeMap<String, Task> = std::collections::BTreeMap::new();
     for e in entries {
@@ -49,6 +50,7 @@ pub fn fold_entries(entries: &[crate::session::Entry]) -> Vec<Task> {
     tasks.into_values().collect()
 }
 
+#[allow(clippy::too_many_lines)] // one exhaustive event→state transition; splitting is refactoring
 fn apply_event(task: &mut Task, event: &TaskEvent) {
     match event {
         TaskEvent::Created {
@@ -57,34 +59,35 @@ fn apply_event(task: &mut Task, event: &TaskEvent) {
             criteria,
         } => {
             if task.status == STATUS_PENDING {
-                task.title = title.clone();
-                task.steps = steps.clone();
-                task.criteria = criteria.clone();
+                title.clone_into(&mut task.title);
+                steps.clone_into(&mut task.steps);
+                criteria.clone_into(&mut task.criteria);
             }
         }
         // On the creator's session: the task is assigned away (pointer).
         // On the worker's session: the record copy arrives (full state).
         TaskEvent::Assigned { worker, record } => {
             if let Some(worker) = worker {
-                task.status = STATUS_IN_PROGRESS.to_owned();
+                STATUS_IN_PROGRESS.clone_into(&mut task.status);
                 task.worker = Some(WorkerPointer {
                     session: worker.clone(),
                     status: STATUS_IN_PROGRESS.to_owned(),
                 });
             }
             if let Some(record) = record {
-                task.title = record.title.clone();
-                task.status = record.status.clone();
-                task.steps = record.steps.clone();
-                task.criteria = record.criteria.clone();
-                task.evidence = record.evidence.clone();
-                task.blockers = record.blockers.clone();
-                task.created_in = Some(record.created_in.clone());
+                record.title.clone_into(&mut task.title);
+                record.status.clone_into(&mut task.status);
+                record.steps.clone_into(&mut task.steps);
+                record.criteria.clone_into(&mut task.criteria);
+                record.evidence.clone_into(&mut task.evidence);
+                record.blockers.clone_into(&mut task.blockers);
+                let created_in = record.created_in.clone();
+                task.created_in = Some(created_in);
             }
         }
         TaskEvent::Started => {
             if task.status == STATUS_PENDING || task.status == STATUS_BLOCKED {
-                task.status = STATUS_IN_PROGRESS.to_owned();
+                STATUS_IN_PROGRESS.clone_into(&mut task.status);
                 advance_step(task);
             }
         }
@@ -110,10 +113,10 @@ fn apply_event(task: &mut Task, event: &TaskEvent) {
                 reason: reason.clone(),
                 needs: needs.clone(),
             });
-            task.status = STATUS_BLOCKED.to_owned();
+            STATUS_BLOCKED.clone_into(&mut task.status);
         }
         TaskEvent::Finished { force, reason } => {
-            for c in task.criteria.iter_mut() {
+            for c in &mut task.criteria {
                 if c.status == CriterionStatus::Pending || c.status == CriterionStatus::Failed {
                     c.status = CriterionStatus::Skipped;
                 }
@@ -126,13 +129,13 @@ fn apply_event(task: &mut Task, event: &TaskEvent) {
                     rationale: Some(reason.clone()),
                 });
             }
-            task.status = STATUS_DONE.to_owned();
+            STATUS_DONE.clone_into(&mut task.status);
         }
         TaskEvent::Cancelled { reason } => {
             if let Some(reason) = reason {
                 task.notes.push(reason.clone());
             }
-            task.status = STATUS_CANCELLED.to_owned();
+            STATUS_CANCELLED.clone_into(&mut task.status);
         }
         TaskEvent::HandedOff { output } => {
             task.notes
@@ -147,7 +150,7 @@ fn apply_event(task: &mut Task, event: &TaskEvent) {
         // The creator's pointer tracks the worker's task status.
         TaskEvent::Pointer { status } => {
             if let Some(w) = task.worker.as_mut() {
-                w.status = status.clone();
+                status.clone_into(&mut w.status);
             }
         }
         TaskEvent::Note { text } => {
@@ -185,6 +188,7 @@ fn advance_step(task: &mut Task) {
 /// The active tasks of a session (the ones a context assembly carries the
 /// resume contract for): in-progress, not the creator's pointer copy of an
 /// assigned task (the creator tracks it, the worker works it).
+#[must_use]
 pub fn active_tasks(tasks: &[Task]) -> Vec<&Task> {
     tasks
         .iter()

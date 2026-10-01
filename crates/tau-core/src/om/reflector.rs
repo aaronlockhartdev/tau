@@ -22,6 +22,7 @@ pub struct ParsedReflectorOutput {
 /// list-item/full-content fallback when untagged), line sanitization, and
 /// group reconciliation against the current log. `degenerate` signals the
 /// caller to discard the result entirely.
+#[must_use]
 pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedReflectorOutput {
     if detect_degenerate_repetition(raw_output) {
         return ParsedReflectorOutput {
@@ -48,7 +49,7 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
                 if (n == "suggested-response" || n == "suggested_response")
                     && suggested_response.is_empty() =>
             {
-                suggested_response = section.content.to_owned();
+                suggested_response.clone_from(&section.content);
             }
             _ => {}
         }
@@ -87,8 +88,9 @@ fn is_reflector_list_item(line: &str) -> bool {
     }
     if let Some(dot) = t.find('.') {
         return dot > 0
-            && t[..dot].bytes().all(|b| b.is_ascii_digit())
-            && t[dot + 1..].starts_with(' ');
+            && t.get(..dot)
+                .is_some_and(|p| p.bytes().all(|b| b.is_ascii_digit()))
+            && t.get(dot + 1..).is_some_and(|p| p.starts_with(' '));
     }
     false
 }
@@ -181,7 +183,7 @@ User messages are extremely important.${
 /// Compression guidance per level (verbatim from `reflector-agent.ts`
 /// `COMPRESSION_GUIDANCE` 1-4). Level 0 is the empty string.
 pub const COMPRESSION_GUIDANCE: [&str; 4] = [
-    r#"
+    r"
 ## COMPRESSION REQUIRED
 
 Your previous reflection was the same size or larger than the original observations.
@@ -196,8 +198,8 @@ Please re-process with slightly more compression:
 - Preserve the concrete resolved outcome captured by ✅ markers so the assistant knows what exactly is done
 
 Aim for a 8/10 detail level.
-"#,
-    r#"
+",
+    r"
 ## AGGRESSIVE COMPRESSION REQUIRED
 
 Your previous reflection was still too large after compression guidance.
@@ -214,8 +216,8 @@ Please re-process with much more aggressive compression:
 - Remove redundant information and merge overlapping observations
 
 Aim for a 6/10 detail level.
-"#,
-    r#"
+",
+    r"
 ## CRITICAL COMPRESSION REQUIRED
 
 Your previous reflections have failed to compress sufficiently after multiple attempts.
@@ -232,7 +234,7 @@ Please re-process with maximum compression:
 - Preserve: names, dates, decisions, errors, user preferences, and architectural choices
 
 Aim for a 4/10 detail level.
-"#,
+",
     r#"
 ## EXTREME COMPRESSION REQUIRED
 
@@ -257,6 +259,7 @@ Aim for a 2/10 detail level. Fewer, more generic observations are better than ma
 /// does with no extractors: the Observer's extraction instructions, output
 /// format (twice), guidelines, both enabled continuation sentences, no custom
 /// instruction.
+#[must_use]
 pub fn reflector_system_prompt() -> String {
     REFLECTOR_PROMPT_TEMPLATE
         .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
@@ -273,6 +276,7 @@ pub fn reflector_system_prompt() -> String {
 /// The user prompt for a reflection pass (mastra `buildReflectorPrompt`,
 /// no manual prompt, no extractors): the observations with group tags
 /// stripped, then the compression guidance for the level (0 = none).
+#[must_use]
 pub fn build_reflector_prompt(observations: &str, compression_level: u8) -> String {
     let reflection_view = strip_observation_groups(observations);
     let mut prompt = format!(
@@ -280,7 +284,7 @@ pub fn build_reflector_prompt(observations: &str, compression_level: u8) -> Stri
     );
     if (1..=4).contains(&compression_level) {
         prompt.push_str("\n\n");
-        prompt.push_str(COMPRESSION_GUIDANCE[(compression_level - 1) as usize]);
+        prompt.push_str(COMPRESSION_GUIDANCE[usize::from(compression_level - 1)]);
     }
     prompt
 }
@@ -289,6 +293,7 @@ pub fn build_reflector_prompt(observations: &str, compression_level: u8) -> Stri
 /// is presented in a marker with a keep-verbatim instruction. The structural
 /// split (the prompt body is the managed suffix only) is the real guard; the
 /// marker is the prompt-level one.
+#[must_use]
 pub fn build_reflector_prompt_frozen(
     prefix: &str,
     observations: &str,

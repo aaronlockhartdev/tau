@@ -1,6 +1,7 @@
 use super::impls::image_media_type;
 use super::*;
 use base64::Engine;
+use std::fmt::Write as _;
 
 /// The text of a tool output: these tests assert on text, and an image
 /// block on these paths is a bug.
@@ -119,7 +120,10 @@ async fn bash_timeout_kills_the_child_not_just_the_wait() {
 #[tokio::test]
 async fn edit_output_is_bounded_to_the_changed_region() {
     let dir = tempfile::tempdir().unwrap();
-    let content: String = (0..50).map(|i| format!("line{i}\n")).collect();
+    let mut content = String::new();
+    for i in 0..50 {
+        let _ = writeln!(content, "line{i}");
+    }
     write(
         dir.path(),
         &json!({"path": "big.txt", "content": content.as_str()}),
@@ -219,7 +223,7 @@ async fn an_oversized_image_is_refused_loudly() {
     match read(
         dir.path(),
         &json!({"path": "big.png"}),
-        Some(png.len() as u64),
+        Some(u64::try_from(png.len()).expect("fixture size, well under u64::MAX")),
     )
     .await
     {

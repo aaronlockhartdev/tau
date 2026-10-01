@@ -11,7 +11,7 @@ use super::{
 impl Core {
     /// The workspace's skill registry (ticket #28): the per-workspace
     /// cache; a workspace with no session opened yet is discovered on
-    /// demand (skill_list at workspace open). The watcher refreshes the
+    /// demand (`skill_list` at workspace open). The watcher refreshes the
     /// slot between opens (ticket #31), so a stale list never outlives a
     /// change.
     pub(crate) fn skills_of(&self, ws: &Workspace) -> Vec<SkillInfo> {
@@ -52,7 +52,7 @@ impl Core {
         skills
     }
 
-    /// A leading `/skill:<name> [args]` expands at the message_send
+    /// A leading `/skill:<name> [args]` expands at the `message_send`
     /// boundary, before the entry is recorded (ticket #28): the text
     /// becomes the expansion template (body + skill directory + the args
     /// line), and the skill's identity rides back for the payload marker.
@@ -83,7 +83,7 @@ impl Core {
         })?;
         let dir = Path::new(&skill.location)
             .parent()
-            .map(|p| p.to_path_buf())
+            .map(std::path::Path::to_path_buf)
             .unwrap_or_default();
         let args = if args.is_empty() { None } else { Some(args) };
         let text = crate::skills::expand(&skill.name, &crate::skills::body(&raw), &dir, args);
@@ -99,7 +99,7 @@ impl Core {
         crate::session::list_workspace(Path::new(&workspace.cwd))
             .into_iter()
             .map(|mut m| {
-                m.workspace = workspace.id.clone();
+                workspace.id.clone_into(&mut m.workspace);
                 m
             })
             .collect()
@@ -124,9 +124,9 @@ impl Core {
         &self,
         child: &str,
         workspace: &str,
-        parent: &Option<String>,
+        parent: Option<&str>,
     ) -> String {
-        let Some(parent) = parent.as_deref() else {
+        let Some(parent) = parent else {
             return format!(
                 "session {child} is a sub-agent — archive its parent session to archive it"
             );
@@ -146,7 +146,7 @@ impl Core {
             let title = store
                 .open()
                 .ok()
-                .and_then(|_| store.title().map(str::to_string));
+                .and_then(|()| store.title().map(str::to_string));
             return format!(
                 "session {child} is a sub-agent — the parent session {parent} ({}) is not open — reopen it and archive it, which archives this sub-agent with it",
                 title.as_deref().unwrap_or(parent)

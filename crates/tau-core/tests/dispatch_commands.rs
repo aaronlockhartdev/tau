@@ -4,6 +4,7 @@
 //! and only protocol types on the wire.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -60,9 +61,10 @@ fn done_body() -> String {
 fn plain_body(deltas: usize) -> String {
     let mut s = String::new();
     for i in 0..deltas {
-        s.push_str(&format!(
+        let _ = write!(
+            s,
             "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"tick {i} \"}}\n\n"
-        ));
+        );
     }
     s.push_str("data: [DONE]\n\n");
     s
@@ -76,7 +78,7 @@ struct Rig {
     parent: String,
 }
 
-async fn rig(body: String, slow_ms: u64) -> Rig {
+fn rig(body: String, slow_ms: u64) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(dead_providers())
         .with_child_factory(Arc::new(CannedChild { body, slow_ms }))
@@ -157,7 +159,7 @@ async fn wait_state(rig: &Rig, handle: &str, want: &str) {
 
 #[tokio::test]
 async fn subagent_types_lists_the_builtin_general() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let out = rig.core.dispatch(Command::SubagentTypes).unwrap();
     match out {
         CommandOutput::Agents { agents } => {
@@ -173,7 +175,7 @@ async fn subagent_types_lists_the_builtin_general() {
 
 #[tokio::test]
 async fn subagent_list_is_empty_before_any_spawn() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let out = rig
         .core
         .dispatch(Command::SubagentList {
@@ -188,7 +190,7 @@ async fn subagent_list_is_empty_before_any_spawn() {
 
 #[tokio::test]
 async fn subagent_list_refuses_a_child_session() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let info = spawn(&rig);
     let err = rig
         .core
@@ -204,7 +206,7 @@ async fn subagent_list_refuses_a_child_session() {
 
 #[tokio::test]
 async fn subagent_state_of_an_unknown_handle_is_not_found() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::SubagentState {
@@ -216,7 +218,7 @@ async fn subagent_state_of_an_unknown_handle_is_not_found() {
 
 #[tokio::test]
 async fn a_spawned_child_reaches_done_and_lists_itself() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let info = spawn(&rig);
     assert_eq!(info.handle, format!("{}-1", rig.parent));
     wait_state(&rig, &info.handle, "done").await;
@@ -238,7 +240,7 @@ async fn a_spawned_child_reaches_done_and_lists_itself() {
 
 #[tokio::test]
 async fn subagent_message_to_an_unknown_handle_is_refused() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::SubagentMessage {
@@ -256,7 +258,7 @@ async fn subagent_message_to_an_unknown_handle_is_refused() {
 
 #[tokio::test]
 async fn subagent_message_steers_a_running_child() {
-    let rig = rig(plain_body(8), 100).await;
+    let rig = rig(plain_body(8), 100);
     let info = spawn(&rig);
     wait_state(&rig, &info.handle, "running").await;
     let out = rig
@@ -277,7 +279,7 @@ async fn subagent_message_steers_a_running_child() {
 
 #[tokio::test]
 async fn subagent_stop_of_an_unknown_handle_is_refused() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::SubagentStop {
@@ -295,7 +297,7 @@ async fn subagent_stop_of_an_unknown_handle_is_refused() {
 
 #[tokio::test]
 async fn subagent_stop_of_a_running_child_is_terminal() {
-    let rig = rig(plain_body(8), 100).await;
+    let rig = rig(plain_body(8), 100);
     let info = spawn(&rig);
     wait_state(&rig, &info.handle, "running").await;
     let out = rig
@@ -312,7 +314,7 @@ async fn subagent_stop_of_a_running_child_is_terminal() {
 
 #[tokio::test]
 async fn a_send_to_a_child_session_routes_through_the_supervisor() {
-    let rig = rig(plain_body(8), 100).await;
+    let rig = rig(plain_body(8), 100);
     let info = spawn(&rig);
     wait_state(&rig, &info.handle, "running").await;
     rig.core
@@ -331,7 +333,7 @@ async fn a_send_to_a_child_session_routes_through_the_supervisor() {
 async fn a_force_send_to_a_running_child_stops_it_first() {
     // 200ms per delta: the force send lands mid-stream, while the child is
     // running.
-    let rig = rig(plain_body(8), 200).await;
+    let rig = rig(plain_body(8), 200);
     let info = spawn(&rig);
     wait_state(&rig, &info.handle, "running").await;
     rig.core
@@ -367,7 +369,7 @@ async fn a_force_send_to_a_running_child_stops_it_first() {
 
 #[tokio::test]
 async fn a_stop_of_a_child_session_goes_through_the_supervisor() {
-    let rig = rig(plain_body(8), 100).await;
+    let rig = rig(plain_body(8), 100);
     let info = spawn(&rig);
     wait_state(&rig, &info.handle, "running").await;
     rig.core
@@ -398,7 +400,7 @@ fn task_in(rig: &Rig, session: &str) -> tau_protocol::payload::Task {
 
 #[tokio::test]
 async fn task_create_via_dispatch_lands_in_the_snapshot() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -412,7 +414,7 @@ async fn task_create_via_dispatch_lands_in_the_snapshot() {
 
 #[tokio::test]
 async fn task_update_of_an_unknown_task_is_rejected() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::TaskUpdate {
@@ -429,7 +431,7 @@ async fn task_update_of_an_unknown_task_is_rejected() {
 
 #[tokio::test]
 async fn task_update_records_the_note() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -449,7 +451,7 @@ async fn task_update_records_the_note() {
 
 #[tokio::test]
 async fn task_assign_to_an_unknown_worker_is_not_found() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -469,7 +471,7 @@ async fn task_assign_to_an_unknown_worker_is_not_found() {
 
 #[tokio::test]
 async fn task_assign_to_a_child_sets_the_worker_pointer() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -491,7 +493,7 @@ async fn task_assign_to_a_child_sets_the_worker_pointer() {
 
 #[tokio::test]
 async fn task_evidence_of_an_unknown_task_is_rejected() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::TaskEvidence {
@@ -510,7 +512,7 @@ async fn task_evidence_of_an_unknown_task_is_rejected() {
 
 #[tokio::test]
 async fn task_evidence_on_a_pending_task_is_rejected() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -538,7 +540,7 @@ async fn task_evidence_on_a_pending_task_is_rejected() {
 
 #[tokio::test]
 async fn task_cancel_of_an_unknown_task_is_rejected() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::TaskCancel {
@@ -554,7 +556,7 @@ async fn task_cancel_of_an_unknown_task_is_rejected() {
 
 #[tokio::test]
 async fn task_cancel_via_dispatch_terminates_the_task() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -573,12 +575,12 @@ async fn task_cancel_via_dispatch_terminates_the_task() {
 
 #[tokio::test]
 async fn provider_list_is_served_sorted_by_name() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     match rig.core.dispatch(Command::ProviderList).unwrap() {
         CommandOutput::Providers { providers } => {
             let names: Vec<&str> = providers.iter().map(|p| p.name.as_str()).collect();
             let mut sorted = names.clone();
-            sorted.sort();
+            sorted.sort_unstable();
             assert_eq!(names, sorted, "the list is name-sorted");
         }
         other => panic!("expected providers: {other:?}"),
@@ -587,7 +589,7 @@ async fn provider_list_is_served_sorted_by_name() {
 
 #[tokio::test]
 async fn provider_mutations_are_unsupported_in_v0() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::ProviderAdd {
@@ -605,7 +607,7 @@ async fn provider_mutations_are_unsupported_in_v0() {
 
 #[tokio::test]
 async fn file_read_pages_lines_and_file_list_names_them() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     std::fs::write(
         rig.cwd.path().join("notes.txt"),
         ["one", "two", "three"].join("\n") + "\n",
@@ -650,7 +652,7 @@ async fn file_read_pages_lines_and_file_list_names_them() {
 
 #[tokio::test]
 async fn file_read_of_a_missing_file_is_an_error() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let err = rig
         .core
         .dispatch(Command::FileRead {
@@ -669,7 +671,7 @@ async fn file_read_of_a_missing_file_is_an_error() {
 #[tokio::test]
 async fn a_stop_of_a_plain_session_is_accepted() {
     // The non-child MessageStop arm: fire-and-forget flag setting.
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let out = rig
         .core
         .dispatch(Command::MessageStop {
@@ -684,7 +686,7 @@ async fn a_stop_of_a_plain_session_is_accepted() {
 
 #[tokio::test]
 async fn a_fork_spawn_copies_the_parent_file() {
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     // Give the parent an entry to fork: a task record in its file.
     rig.core
         .dispatch(Command::TaskCreate {
@@ -785,7 +787,7 @@ async fn entries_of_a_closed_session_are_served_from_disk() {
     // The workspace stays open (entries_from_disk resolves the owning
     // workspace from the open set); the session is closed, so the read
     // falls back to the file.
-    let rig = rig(done_body(), 0).await;
+    let rig = rig(done_body(), 0);
     let session = rig.parent.clone();
     // Give the session a real entry: a header-only file has no entries.
     rig.core
@@ -815,7 +817,7 @@ async fn entries_of_a_closed_session_are_served_from_disk() {
                 rig.cwd
                     .path()
                     .join(".tau/sessions")
-                    .join(format!("{}.jsonl", session)),
+                    .join(format!("{session}.jsonl")),
             )
             .unwrap_or_default();
             assert!(!entries.is_empty(), "file: {dump}");

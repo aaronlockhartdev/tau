@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::{
     Arc, FunctionCall, Future, Pin, Provider, ProviderError, Requests, ResponseRequest, TurnEvent,
     TurnResult, TurnSink, decode_stream, fold_event, stream_turn,
@@ -16,6 +18,7 @@ pub trait TurnProvider: Send + Sync {
 pub type TurnProviderRef = Arc<dyn TurnProvider>;
 
 /// The production seam: the live responses endpoint (spec §6).
+#[must_use]
 pub fn production(
     client: &reqwest::Client,
     provider: &Provider,
@@ -88,6 +91,7 @@ impl TurnProvider for CannedProvider {
 }
 
 /// A canned provider replaying the full decoded stream.
+#[must_use]
 pub fn canned(body: &str) -> TurnProviderRef {
     let (events, calls) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(CannedProvider {
@@ -99,6 +103,7 @@ pub fn canned(body: &str) -> TurnProviderRef {
 
 /// A canned provider whose stream is cut after `n` events — the shape a
 /// force-kill produces (partial, `completed: false`).
+#[must_use]
 pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
     let (events, calls) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(CannedProvider {
@@ -140,6 +145,7 @@ impl TurnProvider for SlowCannedProvider {
 
 /// A canned provider replaying its stream with a delay between events: a
 /// force sent mid-stream cuts it (the loop's kill flag is the terminator).
+#[must_use]
 pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
     let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(SlowCannedProvider { events, delay_ms })
@@ -156,9 +162,10 @@ pub const CANNED_SCHEME: &str = "canned://";
 fn script_text() -> String {
     let mut body = String::new();
     for i in 0..40 {
-        body.push_str(&format!(
+        let _ = write!(
+            body,
             "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"word {i} \"}}\n\n"
-        ));
+        );
     }
     body.push_str(
         "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"total_tokens\":140}}}\n\ndata: [DONE]\n\n",
@@ -169,14 +176,16 @@ fn script_text() -> String {
 fn script_reasoning() -> String {
     let mut body = String::new();
     for i in 0..20 {
-        body.push_str(&format!(
+        let _ = write!(
+            body,
             "data: {{\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thought {i} \"}}\n\n"
-        ));
+        );
     }
     for i in 0..20 {
-        body.push_str(&format!(
+        let _ = write!(
+            body,
             "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"word {i} \"}}\n\n"
-        ));
+        );
     }
     body.push_str(
         "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":40,\"total_tokens\":140}}}\n\ndata: [DONE]\n\n",
@@ -187,6 +196,7 @@ fn script_reasoning() -> String {
 /// Resolve a `canned://` provider entry to its scripted replay at the 25 ms
 /// cadence. Debug builds only: release returns `None` and the caller must
 /// refuse the entry (a `canned://` URL is not a reachable endpoint).
+#[must_use]
 pub fn canned_dev(provider: &Provider) -> Option<TurnProviderRef> {
     #[cfg(debug_assertions)]
     {

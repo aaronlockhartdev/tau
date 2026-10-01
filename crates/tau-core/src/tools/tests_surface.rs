@@ -56,6 +56,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
     )
     .unwrap();
 
+    let bridge: Arc<dyn crate::subagent::SubagentBridge> = Arc::new(TestBridge::default());
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.to_path_buf(),
@@ -74,7 +75,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
-        bridge: Arc::new(TestBridge::default()) as Arc<dyn crate::subagent::SubagentBridge>,
+        bridge,
         driver: Arc::new(TestDriver),
     });
 

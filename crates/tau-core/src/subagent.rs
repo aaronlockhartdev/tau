@@ -47,6 +47,7 @@ pub enum WaitingOn {
 }
 
 impl WaitingOn {
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Parent => "parent",
@@ -65,6 +66,7 @@ pub enum StoppedBy {
 }
 
 impl StoppedBy {
+    #[must_use]
     pub const fn as_str(&self) -> &'static str {
         match self {
             Self::User => "user",
@@ -86,6 +88,7 @@ pub enum ChildState {
 }
 
 impl ChildState {
+    #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
             Self::Running => "running",
@@ -253,12 +256,14 @@ pub struct ChildLink {
 }
 
 impl ChildLink {
+    #[must_use]
     pub fn handle(&self) -> &str {
         &self.handle
     }
 
     /// The parent's session id: the supervisor's own — the handle is
     /// opaque (R3), never parsed for its parent.
+    #[must_use]
     pub fn parent_session(&self) -> &str {
         self.supervisor.parent_session()
     }
@@ -267,6 +272,7 @@ impl ChildLink {
     /// a structured output and ends the child; a note parks it. The
     /// declared `waiting_on` (default: parent — it just messaged the
     /// parent) is the nudge fork's "valid wait declaration".
+    #[must_use]
     pub fn notify(&self, args: &Value) -> String {
         self.supervisor.notify(&self.handle, args)
     }
@@ -287,6 +293,7 @@ impl ChildLink {
 
     /// Whether the child is still `Running` (the loop's quiescence check,
     /// ADR-0001: the core auto-terminates a child's loop on done).
+    #[must_use]
     pub fn is_running(&self) -> bool {
         self.supervisor.child_running(&self.handle)
     }
@@ -295,6 +302,7 @@ impl ChildLink {
     /// pane is a projection of the creator's record): folded from the
     /// parent's file, filtered to worker == this child. Empty when the
     /// parent's file is unreadable.
+    #[must_use]
     pub fn task_view(&self, cwd: &Path) -> Vec<Task> {
         let Some(worker) = self.supervisor.child_session_id(&self.handle) else {
             return Vec::new();
@@ -315,6 +323,7 @@ impl ChildLink {
     /// The parent's full task list, folded from its file (the single
     /// source of truth); `None` when the file can't be read — a failed
     /// read must not emit an authoritative empty list.
+    #[must_use]
     pub fn parent_tasks(&self, cwd: &Path) -> Option<Vec<Task>> {
         let mut store = SessionStore::for_workspace(cwd, self.supervisor.parent_session());
         store.open().ok()?;
@@ -408,6 +417,7 @@ pub struct SupervisorParams {
 /// A completed spawn: everything the dispatch needs to register the child
 /// as an ordinary live session (a child is an ordinary session — ADR-0006)
 /// plus the drive's join handle.
+#[allow(clippy::missing_fields_in_debug)] // identity-only debug; agent and provider are not Debug
 impl std::fmt::Debug for Spawned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Spawned")
@@ -433,6 +443,7 @@ pub struct Spawned {
 }
 
 impl Supervisor {
+    #[must_use]
     pub fn new(p: SupervisorParams) -> Arc<Self> {
         Arc::new(Self {
             parent_session: p.parent_session,
@@ -487,8 +498,7 @@ impl Supervisor {
             .lock()
             .unwrap()
             .get(handle)
-            .map(|c| matches!(c.state(), ChildState::Running))
-            .unwrap_or(false)
+            .is_some_and(|c| matches!(c.state(), ChildState::Running))
     }
 
     /// A child's concurrency slot: every child with a live drive holds
@@ -513,11 +523,12 @@ impl Supervisor {
 
     fn check_cap(&self, extra: bool) -> Result<(), String> {
         match self.caps.max_concurrent {
-            #[allow(
-                clippy::cast_possible_truncation,
-                reason = "live-child counts are far below u32::MAX"
-            )]
-            Some(max) if self.live_children().len() as u32 + extra as u32 > max => {
+            Some(max)
+                if u32::try_from(self.live_children().len())
+                    .expect("live-child counts are far below u32::MAX")
+                    + u32::from(extra)
+                    > max =>
+            {
                 Err(format!("subagent_spawn: concurrency cap ({max}) reached"))
             }
             _ => Ok(()),
@@ -558,7 +569,7 @@ impl Supervisor {
             .map(|c| c.session_id.clone())
     }
 
-    /// Every child's session id (the child-targeted TaskChanged routing).
+    /// Every child's session id (the child-targeted `TaskChanged` routing).
     pub fn child_sessions(&self) -> Vec<String> {
         self.children
             .lock()
@@ -666,8 +677,7 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
                 Some(info) => {
                     let name = sup
                         .resolve(name)
-                        .map(|c| c.name.clone())
-                        .unwrap_or_else(|| info.child.clone());
+                        .map_or_else(|| info.child.clone(), |c| c.name.clone());
                     format!(
                         "{name}: {}{} — session {}",
                         info.state.kind(),
@@ -692,7 +702,7 @@ fn title_on_disk(cwd: &Path, title: &str) -> bool {
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return false;
     };
-    rd.filter_map(|e| e.ok())
+    rd.filter_map(std::result::Result::ok)
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
         .any(|e| {
             let id = e

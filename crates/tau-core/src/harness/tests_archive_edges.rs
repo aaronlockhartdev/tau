@@ -6,6 +6,7 @@ use crate::harness::testkit::*;
 /// refusal fires before any quiescing, so the child stays running
 /// (a stop is terminal — the old order left it stopped, review N4).
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one end-to-end refusal flow; splitting is refactoring
 async fn a_running_child_refusal_leaves_the_child_running() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(SlowChildFactory {
@@ -52,9 +53,10 @@ async fn a_running_child_refusal_leaves_the_child_running() {
         if state == "running" {
             break;
         }
-        if tokio::time::Instant::now() > deadline {
-            panic!("the child never started running (last: {state})");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the child never started running (last: {state})"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     let err = core
@@ -114,9 +116,10 @@ async fn a_running_child_refusal_leaves_the_child_running() {
         if state != "running" {
             break;
         }
-        if tokio::time::Instant::now() > deadline {
-            panic!("the child never left running (last: {state})");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the child never left running (last: {state})"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
     drop(core);
@@ -269,7 +272,7 @@ async fn a_send_to_an_archived_session_is_refused() {
 /// forced deterministically: the second child's archive target already
 /// exists (a junk file that lists nowhere — no session header).
 #[tokio::test]
-
+#[allow(clippy::too_many_lines)] // one end-to-end convergence flow; splitting is refactoring
 async fn a_half_archived_session_converges_on_the_next_archive() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
@@ -316,8 +319,7 @@ async fn a_half_archived_session_converges_on_the_next_archive() {
             .lock()
             .unwrap()
             .get(id)
-            .map(|l| l.meta.lock().unwrap().archived)
-            .unwrap_or(false)
+            .is_some_and(|l| l.meta.lock().unwrap().archived)
     };
     assert!(
         core.sessions.lock().unwrap().contains_key(&parent.id),
@@ -337,14 +339,14 @@ async fn a_half_archived_session_converges_on_the_next_archive() {
     assert!(
         !root
             .join(".tau/sessions")
-            .join(format!("{}.jsonl", first))
+            .join(format!("{first}.jsonl"))
             .exists(),
         "the first child's file moved"
     );
     assert!(flag(&first), "the archived child stays archived");
     assert!(
         root.join(".tau/sessions")
-            .join(format!("{}.jsonl", second))
+            .join(format!("{second}.jsonl"))
             .exists(),
         "the failed child's file stays"
     );
@@ -371,7 +373,7 @@ async fn a_half_archived_session_converges_on_the_next_archive() {
     for id in [&parent.id, &first, &second] {
         assert!(
             root.join(".tau/sessions")
-                .join(format!("{}.jsonl", id))
+                .join(format!("{id}.jsonl"))
                 .exists(),
             "the file of {id} is back"
         );
@@ -438,9 +440,10 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
         if state == "running" {
             break;
         }
-        if tokio::time::Instant::now() > deadline {
-            panic!("the child never started running (last: {state})");
-        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the child never started running (last: {state})"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
     // Close the child's session directly.

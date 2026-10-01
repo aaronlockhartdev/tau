@@ -133,13 +133,13 @@ struct Inner {
     queue: VecDeque<Queued>,
     om: Option<crate::om_integration::OmState>,
     om_model: String,
-    /// The OM-run observer (the app emits the protocol's om_status event
+    /// The OM-run observer (the app emits the protocol's `om_status` event
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
     om_status_hook: Option<OmStatusHook>,
     /// Wire-only entry upserts (ADR-0008): a re-emitted entry before its
     /// file line lands (the streaming assistant, the tool's call phase);
-    /// the harness shapes it into the protocol's EntryUpsert.
+    /// the harness shapes it into the protocol's `EntryUpsert`.
     entry_upsert_hook: Option<EntryEventHook>,
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
@@ -201,6 +201,7 @@ pub struct AgentSession {
 }
 
 impl AgentSession {
+    #[must_use]
     pub fn new(p: SessionParams) -> Self {
         Self {
             inner: Mutex::new(Inner {
@@ -284,7 +285,7 @@ impl AgentSession {
     /// where a follow-up would splice it into a later, unrelated turn.
     /// An idle parent degrades to the next turn (the wake starts one).
     pub fn send_notified_steer(&self, text: impl Into<String>, source: String) {
-        self.queue_notified(text, Lane::Steering, source)
+        self.queue_notified(text, Lane::Steering, source);
     }
 
     fn queue_notified(&self, text: impl Into<String>, lane: Lane, source: String) {
@@ -440,14 +441,11 @@ impl AgentSession {
         if let Some(r) = tools::surface::task_child_refusal(is_child, name) {
             return r;
         }
-        match parent {
-            Some(parent) => {
-                parent.with_task_store(|store| crate::task::tool_call(store, name, args))
-            }
-            None => {
-                let mut inner = self.inner.lock().unwrap();
-                crate::task::tool_call(&mut inner.store, name, args)
-            }
+        if let Some(parent) = parent {
+            parent.with_task_store(|store| crate::task::tool_call(store, name, args))
+        } else {
+            let mut inner = self.inner.lock().unwrap();
+            crate::task::tool_call(&mut inner.store, name, args)
         }
     }
 
@@ -476,7 +474,7 @@ impl AgentSession {
         self.inner.lock().unwrap().om = om;
     }
 
-    /// The OM-run observer (the app's om_status emitter); `None` clears it.
+    /// The OM-run observer (the app's `om_status` emitter); `None` clears it.
     pub(crate) fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
         self.inner.lock().unwrap().om_status_hook = hook;
     }

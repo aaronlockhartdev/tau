@@ -72,7 +72,7 @@ async fn a_rename_of_a_running_session_is_refused() {
 }
 
 /// Same guard for a branch move: refused while the session is running
-/// (set_leaf would rewrite the header mid-turn and desync the writer's
+/// (`set_leaf` would rewrite the header mid-turn and desync the writer's
 /// in-memory leaf), and it lands on the settled session.
 #[tokio::test]
 async fn a_branch_of_a_running_session_is_refused() {

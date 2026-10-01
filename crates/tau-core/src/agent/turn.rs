@@ -15,11 +15,12 @@ impl AgentSession {
             let Some(starter) = self.inner.lock().unwrap().queue.pop_front() else {
                 return Ok(());
             };
-            self.append_user(starter).await?;
+            self.append_user(starter)?;
             self.run_turn().await?;
         }
     }
 
+    #[allow(clippy::too_many_lines)] // one turn loop; splitting is refactoring
     async fn run_turn(&self) -> Result<(), AgentError> {
         let mut rounds = 0usize;
         // A force send or stop that targeted this turn is captured before the
@@ -67,7 +68,7 @@ impl AgentSession {
                 hook();
             }
             for msg in delivered {
-                self.append_user(msg).await?;
+                self.append_user(msg)?;
             }
 
             // The context (spec §4): with OM enabled, the system prompt
@@ -108,20 +109,17 @@ impl AgentSession {
                 // flip must stick (a clone's flip would be dropped, and the
                 // om_turn_end write-back would re-set `changed`, so the hint
                 // would re-inject on every assembly).
-                match inner.om.as_mut() {
-                    Some(om) => {
-                        let instructions = om.assemble_context(&base, contract.as_deref());
-                        let raw = om.raw_window_from(&entries, leaf_id.as_deref());
-                        (instructions, input_items(&raw))
+                if let Some(om) = inner.om.as_mut() {
+                    let instructions = om.assemble_context(&base, contract.as_deref());
+                    let raw = om.raw_window_from(&entries, leaf_id.as_deref());
+                    (instructions, input_items(&raw))
+                } else {
+                    let mut instructions = base;
+                    if let Some(contract) = &contract {
+                        instructions.push_str("\n\n# Task (resume contract)\n");
+                        instructions.push_str(contract);
                     }
-                    None => {
-                        let mut instructions = base;
-                        if let Some(contract) = &contract {
-                            instructions.push_str("\n\n# Task (resume contract)\n");
-                            instructions.push_str(contract);
-                        }
-                        (instructions, input_items(&entries))
-                    }
+                    (instructions, input_items(&entries))
                 }
             };
             let turn = self.turn_config();
@@ -130,7 +128,7 @@ impl AgentSession {
             // estimated before `input` moves into the request.
             let prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
             let mut request =
-                ResponseRequest::new(self.model().to_owned(), Some(system_prompt.as_str()), input)
+                ResponseRequest::new(self.model().clone(), Some(system_prompt.as_str()), input)
                     .with_tools(tools);
             if let Some(n) = turn.max_output_tokens {
                 request = request.with_max_output_tokens(crate::provider::clamp_max_output(
@@ -343,7 +341,8 @@ impl AgentSession {
         Ok(())
     }
 
-    async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
+    #[allow(clippy::too_many_lines)] // one append pass; splitting is refactoring
+    fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
         // A steering report was already appended at queue time (so the GUI
         // showed it immediately); don't append it a second time here.
         if msg.in_file {

@@ -120,36 +120,43 @@ impl ResponseRequest {
         }
     }
 
+    #[must_use]
     pub fn with_tools(mut self, tools: Vec<ToolSpec>) -> Self {
         self.tools = tools;
         self
     }
 
+    #[must_use]
     pub const fn with_max_output_tokens(mut self, n: u64) -> Self {
         self.max_output_tokens = Some(n);
         self
     }
 
+    #[must_use]
     pub const fn with_temperature(mut self, t: f32) -> Self {
         self.temperature = Some(t);
         self
     }
 
+    #[must_use]
     pub const fn with_top_p(mut self, p: f32) -> Self {
         self.top_p = Some(p);
         self
     }
 
+    #[must_use]
     pub const fn with_frequency_penalty(mut self, p: f32) -> Self {
         self.frequency_penalty = Some(p);
         self
     }
 
+    #[must_use]
     pub const fn with_presence_penalty(mut self, p: f32) -> Self {
         self.presence_penalty = Some(p);
         self
     }
 
+    #[must_use]
     pub const fn with_reasoning(mut self, effort: ReasoningEffort) -> Self {
         self.reasoning = Some(ReasoningParam {
             effort,
@@ -160,6 +167,7 @@ impl ResponseRequest {
 
     /// `thinking.summary` (spec §12, #35): the summary streams as its own
     /// delta dialect alongside the text.
+    #[must_use]
     pub const fn with_reasoning_summary(mut self) -> Self {
         if let Some(param) = &mut self.reasoning {
             param.summary = Some(ReasoningSummary::Auto);
@@ -169,6 +177,7 @@ impl ResponseRequest {
 
     /// `cache.retention` (spec §12, #35): the key is the session's stable
     /// cache identity; `none` emits nothing.
+    #[must_use]
     pub fn with_prompt_cache(mut self, key: String, retention: CacheRetention) -> Self {
         self.prompt_cache_key = Some(key);
         if let Some(retention) = cache_retention_wire(retention) {

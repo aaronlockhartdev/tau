@@ -53,7 +53,7 @@ impl Core {
     fn dispatch_workspace(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
         match cmd {
             Command::WorkspaceOpen { cwd } => Ok(CommandOutput::Workspace {
-                workspace: self.open_workspace(&cwd)?,
+                workspace: self.open_workspace(&cwd),
             }),
             Command::WorkspaceList => Ok(CommandOutput::Workspaces {
                 workspaces: self.workspaces.lock().unwrap().values().cloned().collect(),

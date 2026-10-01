@@ -35,7 +35,7 @@ impl SessionStore {
                 .map(|v| v.into_iter().map(|e| (e, 0)).collect());
         }
         let mut out = Vec::new();
-        for (i, slot) in self.entries.iter().enumerate() {
+        for (i, slot) in (0..self.entries.len()).zip(&self.entries) {
             if slot.is_none() {
                 continue;
             }
@@ -43,7 +43,10 @@ impl SessionStore {
                 break;
             }
             if i >= start {
-                out.push((slot.as_ref().unwrap().clone(), self.entry_len[i] as u64));
+                out.push((
+                    slot.as_ref().unwrap().clone(),
+                    u64::try_from(self.entry_len[i]).expect("entry offset, well under u64::MAX"),
+                ));
             }
         }
         Ok(out)
@@ -57,7 +60,7 @@ impl SessionStore {
         }
         let mut out = Vec::new();
         let mut past = false;
-        for slot in self.entries.iter() {
+        for slot in &self.entries {
             let Some(entry) = slot else {
                 continue;
             };

@@ -15,11 +15,13 @@ pub struct ObservationGroup {
 
 /// Deterministic 16-hex group id (mastra uses `randomBytes(8)`; this module
 /// is pure, so the id is a content hash — stable across reruns).
+#[must_use]
 pub fn generate_group_id(source: &str) -> String {
     format!("{:016x}", xxhash_rust::xxh3::xxh3_64(source.as_bytes()))
 }
 
 /// Wrap an observation in its group tag (mastra `wrapInObservationGroup`).
+#[must_use]
 pub fn wrap_in_observation_group(
     observations: &str,
     range: &str,
@@ -39,15 +41,25 @@ pub fn parse_observation_groups(observations: &str) -> Vec<ObservationGroup> {
     let open_tag = "<observation-group ";
     let mut rest = observations;
     while let Some(start) = rest.find(open_tag) {
-        let after_tag = &rest[start + open_tag.len()..];
+        let after_tag = rest
+            .get(start + open_tag.len()..)
+            .expect("offset from find() is a char boundary");
         let Some(attr_end) = after_tag.find('>') else {
             break;
         };
-        let attrs = &after_tag[..attr_end];
-        let Some(close) = rest[start..].find("</observation-group>") else {
+        let attrs = after_tag
+            .get(..attr_end)
+            .expect("offset from find() is a char boundary");
+        let Some(close) = rest
+            .get(start..)
+            .expect("offset from find() is a char boundary")
+            .find("</observation-group>")
+        else {
             break;
         };
-        let content = &rest[start + open_tag.len() + attr_end + 1..start + close];
+        let content = rest
+            .get(start + open_tag.len() + attr_end + 1..start + close)
+            .expect("offsets from find() are char boundaries");
         let mut id: Option<&str> = None;
         let mut range: Option<&str> = None;
         let mut kind: Option<&str> = None;
@@ -71,31 +83,44 @@ pub fn parse_observation_groups(observations: &str) -> Vec<ObservationGroup> {
                 content: content.trim().to_owned(),
             });
         }
-        rest = &rest[start + close + "</observation-group>".len()..];
+        rest = rest
+            .get(start + close + "</observation-group>".len()..)
+            .expect("offsets from find() are char boundaries");
     }
     groups
 }
 
 /// Remove the group tags, keeping the content (mastra `stripObservationGroups`).
+#[must_use]
 pub fn strip_observation_groups(observations: &str) -> String {
     let mut out = observations.to_owned();
     let open_tag = "<observation-group ";
     while let Some(start) = out.find(open_tag) {
-        let after_tag = &out[start + open_tag.len()..];
+        let after_tag = out
+            .get(start + open_tag.len()..)
+            .expect("offset from find() is a char boundary");
         let Some(attr_end) = after_tag.find('>') else {
             break;
         };
-        let Some(close) = out[start..].find("</observation-group>") else {
+        let Some(close) = out
+            .get(start..)
+            .expect("offset from find() is a char boundary")
+            .find("</observation-group>")
+        else {
             break;
         };
-        let content = out[start + open_tag.len() + attr_end + 1..start + close]
+        let content = out
+            .get(start + open_tag.len() + attr_end + 1..start + close)
+            .expect("offsets from find() are char boundaries")
             .trim()
             .to_owned();
         out = format!(
             "{}{}{}",
-            &out[..start],
+            out.get(..start)
+                .expect("offset from find() is a char boundary"),
             content,
-            &out[start + close + "</observation-group>".len()..]
+            out.get(start + close + "</observation-group>".len()..)
+                .expect("offsets from find() are char boundaries")
         );
     }
     out.replace("\n\n\n", "\n\n").trim().to_owned()
@@ -128,8 +153,9 @@ pub fn combine_group_ranges(groups: &[ObservationGroup]) -> String {
 }
 
 /// Render a grouped log for the Reflector: each group becomes a
-/// `## Group \`id\`` section with its `_range:` line (mastra
+/// `## Group` section with its range line (mastra
 /// `renderObservationGroupsForReflection`).
+#[must_use]
 pub fn render_groups_for_reflection(observations: &str) -> Option<String> {
     let groups = parse_observation_groups(observations);
     if groups.is_empty() {
@@ -139,14 +165,23 @@ pub fn render_groups_for_reflection(observations: &str) -> Option<String> {
     let mut rest = observations;
     let open_tag = "<observation-group ";
     while let Some(start) = rest.find(open_tag) {
-        let after_tag = &rest[start + open_tag.len()..];
+        let after_tag = rest
+            .get(start + open_tag.len()..)
+            .expect("offset from find() is a char boundary");
         let Some(attr_end) = after_tag.find('>') else {
             break;
         };
-        let Some(close) = rest[start..].find("</observation-group>") else {
+        let Some(close) = rest
+            .get(start..)
+            .expect("offset from find() is a char boundary")
+            .find("</observation-group>")
+        else {
             break;
         };
-        let content = rest[start + open_tag.len() + attr_end + 1..start + close].trim();
+        let content = rest
+            .get(start + open_tag.len() + attr_end + 1..start + close)
+            .expect("offsets from find() are char boundaries")
+            .trim();
         let group = groups.iter().find(|g| g.content == content);
         let rendered = match group {
             Some(g) => format!(
@@ -155,9 +190,14 @@ pub fn render_groups_for_reflection(observations: &str) -> Option<String> {
             ),
             None => content.to_owned(),
         };
-        result.push_str(&rest[..start]);
+        result.push_str(
+            rest.get(..start)
+                .expect("offset from find() is a char boundary"),
+        );
         result.push_str(&rendered);
-        rest = &rest[start + close + "</observation-group>".len()..];
+        rest = rest
+            .get(start + close + "</observation-group>".len()..)
+            .expect("offsets from find() are char boundaries");
     }
     result.push_str(rest);
     Some(result.replace("\n\n\n", "\n\n").trim().to_owned())
@@ -167,6 +207,7 @@ pub fn render_groups_for_reflection(observations: &str) -> Option<String> {
 /// `## Group` section keeps the canonical id from its heading, merges the
 /// ranges of the source groups whose lines it shares (index fallback), and
 /// is marked `kind="reflection"` (mastra `deriveObservationGroupProvenance`).
+#[must_use]
 pub fn derive_group_provenance(
     content: &str,
     groups: &[ObservationGroup],
@@ -193,10 +234,10 @@ pub fn derive_group_provenance(
                 })
                 .cloned()
                 .collect();
-            let resolved = if !matching.is_empty() {
-                matching
-            } else {
+            let resolved = if matching.is_empty() {
                 vec![groups[index.min(groups.len() - 1)].clone()]
+            } else {
+                matching
             };
             let id = match heading.split('`').nth(1).map(str::trim) {
                 Some(s) if !s.is_empty() => s.to_owned(),
@@ -213,7 +254,7 @@ pub fn derive_group_provenance(
 }
 
 /// The reflection section shape the Reflector is steered toward: `## Group`
-/// headings with an optional `_range: \`...\`_` metadata line (mastra
+/// headings with an optional range metadata line (mastra
 /// `parseReflectionObservationGroupSections`).
 fn reflection_sections(content: &str) -> Vec<(String, String)> {
     let normalized = content.trim();
@@ -245,6 +286,7 @@ fn reflection_sections(content: &str) -> Vec<(String, String)> {
 /// Commit a Reflector's output as the new log: re-wrap its sections as
 /// `kind="reflection"` groups over the merged source ranges (mastra
 /// `reconcileObservationGroupsFromReflection`).
+#[must_use]
 pub fn reconcile_groups_from_reflection(
     content: &str,
     source_observations: &str,

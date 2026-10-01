@@ -100,7 +100,7 @@ fn raw_window_prunes_to_the_floor_and_keeps_tool_results_attached() {
     // The window is bounded at the floor and, after the prune left a
     // tool entry at its head, the leading tool run is cut so no result
     // is orphaned from its call.
-    assert_eq!(window.len(), 1, "{:?}", window);
+    assert_eq!(window.len(), 1, "{window:?}");
     assert_eq!(window[0].kind, "user");
     assert_eq!(window[0].payload["text"], "c".repeat(900));
     assert!(state.pending_tokens(&window) <= 230);

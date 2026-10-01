@@ -198,7 +198,7 @@ fn unknown_keys_are_rejected() {
     let err = load_from("", "[om]\nbogus = 1\n").unwrap_err();
     match err {
         LoadError::Parse(path, _) => assert!(path.ends_with("config.toml")),
-        other => panic!("expected a parse error, got {other:?}"),
+        other @ LoadError::Io(_) => panic!("expected a parse error, got {other:?}"),
     }
 }
 

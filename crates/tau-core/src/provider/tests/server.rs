@@ -4,6 +4,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use tokio::io::AsyncWriteExt;
 pub(super) fn ok_body(frames: &[&str]) -> String {
     let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
     for frame in frames {
@@ -21,13 +22,14 @@ pub(super) async fn mock_server(bodies: Vec<String>) -> (String, Arc<AtomicU32>)
     let count2 = count.clone();
     tokio::spawn(async move {
         loop {
-            let (mut sock, _) = match listener.accept().await {
-                Ok(x) => x,
-                Err(_) => break,
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
             };
             count2.fetch_add(1, Ordering::SeqCst);
-            let body = bodies[(count2.load(Ordering::SeqCst) - 1) as usize % bodies.len()].clone();
-            use tokio::io::AsyncWriteExt;
+            let body = bodies[usize::try_from(count2.load(Ordering::SeqCst) - 1)
+                .expect("connection count")
+                % bodies.len()]
+            .clone();
             let _ = sock.write_all(body.as_bytes()).await;
         }
     });
@@ -199,9 +201,8 @@ async fn timeout_is_retried_and_surfaced() {
     let count2 = count.clone();
     tokio::spawn(async move {
         loop {
-            let (sock, _) = match listener.accept().await {
-                Ok(x) => x,
-                Err(_) => break,
+            let Ok((sock, _)) = listener.accept().await else {
+                break;
             };
             count2.fetch_add(1, Ordering::SeqCst);
             tokio::spawn(async move {
@@ -244,12 +245,11 @@ async fn timeout_is_retried_and_surfaced() {
 }
 
 /// Live round-trip against a local OpenAI-compatible server; skipped unless
-/// TAU_TEST_ENDPOINT is set (CI has no model server).
+/// `TAU_TEST_ENDPOINT` is set (CI has no model server).
 #[tokio::test]
 async fn models_roundtrip() {
-    let base = match std::env::var("TAU_TEST_ENDPOINT") {
-        Ok(base) => base,
-        Err(_) => return,
+    let Ok(base) = std::env::var("TAU_TEST_ENDPOINT") else {
+        return;
     };
     let client = test_client();
     let provider = Provider {
@@ -264,12 +264,11 @@ async fn models_roundtrip() {
 }
 
 /// Multi-message conversation against the local rapid-mlx endpoint
-/// (ticket #17 acceptance); skipped unless TAU_TEST_ENDPOINT is set.
+/// (ticket #17 acceptance); skipped unless `TAU_TEST_ENDPOINT` is set.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multi_message_conversation_streams() {
-    let base = match std::env::var("TAU_TEST_ENDPOINT") {
-        Ok(base) => base,
-        Err(_) => return,
+    let Ok(base) = std::env::var("TAU_TEST_ENDPOINT") else {
+        return;
     };
     let client = test_client();
     let provider = Provider::with_model(base, "qwen3.5-9b-4bit");
@@ -331,7 +330,6 @@ async fn a_healthy_long_stream_outlives_the_connect_deadline() {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let (mut sock, _) = listener.accept().await.unwrap();
-        use tokio::io::AsyncWriteExt;
         let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
         body.push_str(&sse(
             r#"{"type":"response.output_text.delta","delta":"one "}"#,
@@ -378,7 +376,6 @@ async fn a_dead_stream_is_cut_by_the_idle_timeout() {
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let (mut sock, _) = listener.accept().await.unwrap();
-        use tokio::io::AsyncWriteExt;
         let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
         body.push_str(&sse(
             r#"{"type":"response.output_text.delta","delta":"only"}"#,
@@ -439,9 +436,8 @@ async fn a_stop_during_prefill_aborts_the_in_flight_request() {
     let count2 = count.clone();
     tokio::spawn(async move {
         loop {
-            let (mut sock, _) = match listener.accept().await {
-                Ok(x) => x,
-                Err(_) => break,
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
             };
             count2.fetch_add(1, Ordering::SeqCst);
             tokio::spawn(async move {
@@ -499,9 +495,8 @@ async fn a_stop_before_headers_aborts_the_in_flight_request() {
     let count2 = count.clone();
     tokio::spawn(async move {
         loop {
-            let (sock, _) = match listener.accept().await {
-                Ok(x) => x,
-                Err(_) => break,
+            let Ok((sock, _)) = listener.accept().await else {
+                break;
             };
             count2.fetch_add(1, Ordering::SeqCst);
             tokio::spawn(async move {

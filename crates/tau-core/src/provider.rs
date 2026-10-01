@@ -112,6 +112,7 @@ impl Default for SseParser {
     }
 }
 impl SseParser {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             buf: Vec::new(),
@@ -130,7 +131,7 @@ impl SseParser {
             // 0x0A never occurs inside a multi-byte UTF-8 sequence, so
             // cutting at a newline is UTF-8-safe; a partial code point at the
             // chunk edge simply stays buffered for the next feed.
-            let line = std::str::from_utf8(&self.buf[..pos + 1])
+            let line = std::str::from_utf8(&self.buf[..=pos])
                 .map_err(|e| ProviderError::MalformedStream(e.to_string()))?
                 .trim_end_matches(['\r', '\n']);
             if line.is_empty() {

@@ -151,10 +151,6 @@ fn crc_catches_a_flipped_byte() {
     reason = "crc32 test vectors: the loop index is bounded to 0..4096, and the reference keeps the top 8 bits by design"
 )]
 fn crc32_table_matches_the_old_bitwise_values() {
-    // The classic CRC-32/IEEE check value.
-    assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
-    assert_eq!(crc32(b""), 0);
-    // Deterministic pseudo-random payload: table == bitwise, byte for byte.
     fn crc32_bitwise(data: &[u8]) -> u32 {
         let mut crc = 0xFFFF_FFFFu32;
         for &b in data {
@@ -165,12 +161,17 @@ fn crc32_table_matches_the_old_bitwise_values() {
         }
         !crc
     }
+    // The classic CRC-32/IEEE check value.
+    assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    assert_eq!(crc32(b""), 0);
+    // Deterministic pseudo-random payload: table == bitwise, byte for byte.
     let mut data = Vec::new();
     let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
     for i in 0..4096 {
         x = x
             .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(i as u64);
+            .wrapping_add(u64::try_from(i).expect("loop bound 0..4096"));
+        #[allow(clippy::as_conversions)] // the test's point is the truncation to a byte
         data.push((x >> 33) as u8);
     }
     assert_eq!(crc32(&data), crc32_bitwise(&data));
@@ -189,7 +190,8 @@ fn cached_paged_reads_match_the_file_reads() {
     assert_eq!(page[0].0, entries[1]);
     assert_eq!(
         page[0].1,
-        serde_json::to_vec(&entries[1]).unwrap().len() as u64
+        u64::try_from(serde_json::to_vec(&entries[1]).unwrap().len())
+            .expect("entry size, well under u64::MAX")
     );
     // A since-read: everything after the first entry, as the file path serves it.
     assert_eq!(
@@ -216,7 +218,7 @@ fn a_torn_last_line_is_skipped_not_repaired_on_open() {
     let tmp = tempfile::tempdir().unwrap();
     let (s, entries) = seeded(tmp.path());
     let mut raw = fs::read_to_string(s.path()).unwrap();
-    raw.push_str(&format!("{{\"id\":\"{:08}\",\"parentId\":null", 99)); // no newline: a kill mid-append
+    let _ = write!(raw, "{{\"id\":\"{:08}\",\"parentId\":null", 99); // no newline: a kill mid-append
     let before = raw.clone();
     fs::write(s.path(), raw).unwrap();
     let mut reopened = store(tmp.path(), "s1");
@@ -249,10 +251,11 @@ fn an_append_settles_a_torn_tail() {
     let (mut s, entries) = seeded(tmp.path());
     // A kill mid-append: a torn partial line, unterminated.
     let mut raw = fs::read_to_string(s.path()).unwrap();
-    raw.push_str(&format!(
+    let _ = write!(
+        raw,
         "{{\"id\":\"{:08}\",\"parentId\":\"{}\"",
         99, entries[2].id
-    ));
+    );
     fs::write(s.path(), raw).unwrap();
     let e4 = s
         .append(

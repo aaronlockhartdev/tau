@@ -179,6 +179,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
     );
 
     // The supervisor the child's link routes to (a direct build).
+    let bridge: Arc<dyn crate::subagent::SubagentBridge> = Arc::new(TestBridge::default());
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -197,7 +198,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
-        bridge: Arc::new(TestBridge::default()) as Arc<dyn crate::subagent::SubagentBridge>,
+        bridge,
         driver: Arc::new(TestDriver),
     });
 

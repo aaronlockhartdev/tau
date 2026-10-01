@@ -23,6 +23,7 @@ impl OmState {
         Ok(unobserved.iter().filter(|e| is_raw(e)).cloned().collect())
     }
 
+    #[must_use]
     pub fn pending_tokens(&self, entries: &[Entry]) -> u32 {
         entries
             .iter()
@@ -79,6 +80,7 @@ impl OmState {
         Ok(true)
     }
 
+    #[must_use]
     pub fn activation_reached(&self, pending_tokens: u32) -> bool {
         om::should_observe(pending_tokens, self.record.observation_tokens, &self.config)
     }
@@ -194,7 +196,7 @@ impl OmState {
                         .map_err(OmError::Provider)?
                 }
             };
-            self.record.om_model = model.to_owned();
+            model.clone_into(&mut self.record.om_model);
             with_store(&mut |store| self.commit(store, &mut action, &result))?;
         }
         Ok(())
@@ -247,9 +249,11 @@ impl OmState {
         // mislabel the card's thinking and show a stale input.
         if let TurnEndAction::Observe { transcript } | TurnEndAction::Buffer { transcript } = action
         {
-            self.record.om_thinking = result.reasoning.clone();
-            self.record.om_input = transcript.clone();
-            self.record.om_suggested_response = parsed.suggested_response.clone();
+            result.reasoning.clone_into(&mut self.record.om_thinking);
+            transcript.clone_into(&mut self.record.om_input);
+            parsed
+                .suggested_response
+                .clone_into(&mut self.record.om_suggested_response);
         }
         match action {
             TurnEndAction::Observe { .. } => {
@@ -386,6 +390,7 @@ impl OmState {
     /// The Reflector prompt for a level (spec §4): the frozen variant
     /// (ADR-0004) when a frozen prefix is present — the prefix never
     /// enters the prompt body and stays byte-verbatim.
+    #[must_use]
     pub fn reflector_prompt(&self, level: u8) -> String {
         let source = self.record.reflect_source();
         if self.record.frozen_prefix.is_empty() {
@@ -439,6 +444,7 @@ impl OmState {
     /// access): the active-branch entries after the cursor, pruned to
     /// the retention floor from the head, never cutting a tool result
     /// from its call (spec §4 cut rule).
+    #[must_use]
     pub fn raw_window_from(&self, entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
         let branch = branch_entries(entries, leaf_id);
         let unobserved = match self.record.cursor.as_ref() {
@@ -449,16 +455,16 @@ impl OmState {
             None => &branch[..],
         };
         let mut raw: Vec<Entry> = unobserved.iter().filter(|e| is_raw(e)).cloned().collect();
-        let floor = self.config.retention_floor() as u64;
+        let floor = u64::from(self.config.retention_floor());
         let total: u64 = raw
             .iter()
-            .map(|e| om::token_count(&entry_text(e)) as u64)
+            .map(|e| u64::from(om::token_count(&entry_text(e))))
             .sum();
         if total > floor {
             let mut keep_from = 0;
             let mut running = total;
             for (i, entry) in raw.iter().enumerate() {
-                running = running.saturating_sub(om::token_count(&entry_text(entry)) as u64);
+                running = running.saturating_sub(u64::from(om::token_count(&entry_text(entry))));
                 keep_from = i + 1;
                 if running <= floor {
                     break;

@@ -72,7 +72,12 @@ async fn a_deleted_skill_leaves_an_empty_registry() {
     let workspace = open_ws(&core, tmp.path()).await;
     let collected = collect_events(&core);
     std::fs::remove_file(tmp.path().join(".agents/skills/gone/SKILL.md")).unwrap();
-    let skills = wait_for_skill_list_changed(&collected, &workspace.id, |s| s.is_empty()).await;
+    let skills = wait_for_skill_list_changed(
+        &collected,
+        &workspace.id,
+        <[tau_protocol::SkillInfo]>::is_empty,
+    )
+    .await;
     assert!(skills.is_empty());
 }
 

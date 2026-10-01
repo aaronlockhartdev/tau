@@ -9,6 +9,7 @@ use crate::subagent::ChildLink;
 /// The post-turn reconciliation (spec §8 idempotent updates): the session
 /// file is the record; the events it implies are derived here, after
 /// `process()` drained the queue.
+#[allow(clippy::too_many_lines)] // one reconciliation pass over the turn's record; splitting is refactoring
 pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
     if let Err(e) = store.open() {
@@ -234,7 +235,7 @@ impl Core {
         });
     }
 
-    /// The session's task list, folded from its file, as a task_changed
+    /// The session's task list, folded from its file, as a `task_changed`
     /// event (spec §8): the payload is a projection of the file, never a
     /// second source of truth; the store replaces on receive, so the GUI
     /// converges on the file's state without polling. A child session is
@@ -298,7 +299,7 @@ impl Core {
             });
         }
     }
-    /// Child-targeted TaskChanged for each of this session's children that
+    /// Child-targeted `TaskChanged` for each of this session's children that
     /// owns a task: the child's pane is a projection of this session's
     /// list, filtered to worker == the child.
     fn emit_child_projections(

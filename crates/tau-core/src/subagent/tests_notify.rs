@@ -6,7 +6,7 @@ use crate::subagent::testkit::*;
 use std::time::Duration;
 
 /// The output/done rules: output without done is rejected, done
-/// without an object output is rejected, a bad waiting_on is
+/// without an object output is rejected, a bad `waiting_on` is
 /// rejected.
 #[tokio::test]
 async fn notify_rejects_invalid_shapes() {
@@ -45,11 +45,12 @@ async fn notify_rejects_invalid_shapes() {
 
 /// The acceptance flow (ticket #24): the parent creates a task and
 /// assigns it to a compacted child; the child works it — evidence,
-/// then a gated finish — and ends via parent_notify. The record never
+/// then a gated finish — and ends via `parent_notify`. The record never
 /// leaves the parent's session (the single source of truth): the
 /// child's file stays task-free, the parent's record is done with the
 /// child's evidence.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one end-to-end task-gate flow; splitting is refactoring
 async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
@@ -91,6 +92,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -104,7 +106,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         caps: SubAgents::default(),
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
-        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
@@ -172,7 +174,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
     );
 }
 
-/// A child is a leaf (spec §5.3): task_create/assign/cancel are not in
+/// A child is a leaf (spec §5.3): `task_create/assign/cancel` are not in
 /// its tool set, and a model that calls one anyway gets the guard's
 /// refusal — no phantom record lands in its session.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -204,6 +206,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -217,7 +220,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
         caps: SubAgents::default(),
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
-        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
@@ -272,6 +275,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
 /// the resume branch: the worker set precedes the resuming message,
 /// and the child's evidence lands on the parent's record.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one end-to-end resume flow; splitting is refactoring
 async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
@@ -323,6 +327,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -336,7 +341,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         caps: SubAgents::default(),
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
-        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
@@ -408,6 +413,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
 /// child's file stays task-free, and the parent's record carries the
 /// child's work, applied under the parent's own lock.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one end-to-end task-routing flow; splitting is refactoring
 async fn a_child_task_tools_route_to_the_parents_store() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
@@ -451,6 +457,7 @@ async fn a_child_task_tools_route_to_the_parents_store() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
     });
+    let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
         parent_session: "parent".into(),
         cwd: dir.path().to_path_buf(),
@@ -464,7 +471,7 @@ async fn a_child_task_tools_route_to_the_parents_store() {
         caps: SubAgents::default(),
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
-        bridge: Arc::clone(&bridge) as Arc<dyn SubagentBridge>,
+        bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
     });
     let parent = Arc::new(AgentSession::new(SessionParams {

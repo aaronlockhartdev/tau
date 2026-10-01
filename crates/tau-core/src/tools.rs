@@ -23,6 +23,7 @@ pub struct ToolCall {
 pub use tau_protocol::payload::ToolOutput;
 
 /// The model-facing definitions of the four core tools.
+#[must_use]
 pub fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -112,6 +113,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
 
 /// The parent-side sub-agent tools (spec §5.3): present on non-child
 /// sessions only — the depth cap (a child cannot spawn) is structural.
+#[must_use]
 pub fn subagent_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -167,8 +169,9 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
 
 /// The child-side tool (spec §5.3): the only channel back to the parent.
 /// done:true requires a structured output and ends the child; a note keeps
-/// it parked. waiting_on declares what a parking child waits for (the nudge
+/// it parked. `waiting_on` declares what a parking child waits for (the nudge
 /// fork: done / a valid declaration / failed).
+#[must_use]
 pub fn parent_notify_spec() -> ToolSpec {
     ToolSpec {
         kind: ToolKind::Function,
@@ -190,6 +193,7 @@ pub fn parent_notify_spec() -> ToolSpec {
 /// The seven task tools (spec §5.4): free text + ids in; the core enforces
 /// the state machines, the model never sees the enums. Available in every
 /// session — a parent can complete small tasks itself (ADR-0001).
+#[must_use]
 pub fn task_tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -293,6 +297,7 @@ pub fn task_tool_specs() -> Vec<ToolSpec> {
 
 /// A non-child session's tool set: the core tools + the sub-agent tools +
 /// the task tools.
+#[must_use]
 pub fn agent_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.extend(subagent_tool_specs());
@@ -302,6 +307,7 @@ pub fn agent_tool_specs() -> Vec<ToolSpec> {
 
 /// The worker side of the task tools: a child works the record its parent
 /// assigned — it starts, evidences, blocks, and finishes it (spec §5.3).
+#[must_use]
 pub fn worker_task_tool_specs() -> Vec<ToolSpec> {
     const WORKER: &[&str] = &["task_start", "task_evidence", "task_block", "task_finish"];
     task_tool_specs()
@@ -310,11 +316,12 @@ pub fn worker_task_tool_specs() -> Vec<ToolSpec> {
         .collect()
 }
 
-/// A child session's tool set: the core tools + parent_notify + the
+/// A child session's tool set: the core tools + `parent_notify` + the
 /// worker-side task tools — no sub-agent tools (a child cannot spawn,
 /// ADR-0001 depth cap), and no create/assign/cancel: a child is a leaf, so
 /// a task it created itself would be invisible to the parent and would die
 /// with it (spec §5.3).
+#[must_use]
 pub fn child_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.push(parent_notify_spec());

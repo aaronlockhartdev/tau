@@ -78,7 +78,7 @@ fn fork_copies_observations_and_cursor_without_a_prefix() {
     let fork = fork_record(&demoted);
     assert_eq!(fork.active_observations, "frozenlive");
     assert!(!fork.prefix_demoted);
-    assert!(fork.live_observations() == "frozenlive");
+    assert_eq!(fork.live_observations(), "frozenlive");
 }
 
 #[test]

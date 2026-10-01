@@ -270,16 +270,13 @@ pub(crate) fn usage_of(value: &Value) -> Option<Usage> {
         input_tokens: u.input_tokens,
         output_tokens: u.output_tokens,
         total_tokens: u.total_tokens,
-        cached_prompt_tokens: u
-            .prompt_tokens_details
-            .map(|d| d.cached_tokens)
-            .unwrap_or(0),
+        cached_prompt_tokens: u.prompt_tokens_details.map_or(0, |d| d.cached_tokens),
     })
 }
 
 /// The quiet entry a model change appends: `model: <old> → <new>` (the
 /// first change of a session that had no model records `model: <new>`).
-pub(crate) fn model_note(old: &Option<String>, new: &str) -> String {
+pub(crate) fn model_note(old: Option<&str>, new: &str) -> String {
     match old {
         Some(o) => format!("model: {o} → {new}"),
         None => format!("model: {new}"),

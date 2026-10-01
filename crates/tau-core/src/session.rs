@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fmt;
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -94,6 +95,7 @@ pub struct Entry {
     pub crc: Option<String>,
 }
 
+#[allow(clippy::ref_option)] // serde `serialize_with` requires `&T` where T is the field type (`Option<String>`)
 fn serialize_crc<S: serde::Serializer>(crc: &Option<String>, s: S) -> Result<S::Ok, S::Error> {
     s.serialize_str(&crc.clone().unwrap_or_default())
 }
@@ -110,10 +112,8 @@ const fn crc_table() -> [u32; 256] {
     let mut table = [0u32; 256];
     let mut i = 0;
     while i < 256 {
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "the loop bounds i to < 256"
-        )]
+        #[allow(clippy::as_conversions, clippy::cast_possible_truncation)]
+        // `try_from` is not const-stable; the loop bounds i to < 256
         let mut c = i as u32;
         let mut n = 0;
         while n < 8 {
@@ -135,7 +135,8 @@ const CRC_TABLE: [u32; 256] = crc_table();
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFF_FFFFu32;
     for &b in data {
-        crc = CRC_TABLE[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
+        crc = CRC_TABLE[usize::try_from((crc ^ u32::from(b)) & 0xFF).expect("masked to 8 bits")]
+            ^ (crc >> 8);
     }
     !crc
 }
@@ -257,6 +258,7 @@ impl From<serde_json::Error> for Error {
 
 impl SessionStore {
     /// Workspace-scoped store: `{project root}/.tau/` (spec §3 placement).
+    #[must_use]
     pub fn for_workspace(project_root: &Path, id: &str) -> Self {
         Self::new(project_root.join(".tau"), id)
     }
@@ -290,44 +292,48 @@ impl SessionStore {
     }
     /// A fixed timestamp for every write (the test seam that makes the
     /// shared fixture byte-deterministic, roadmap G handoff 1).
+    #[must_use]
     pub const fn with_fixed_time(mut self, ms: u64) -> Self {
         self.fixed_time = Some(ms);
         self
     }
 
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
 
     /// The header's created timestamp (epoch ms).
+    #[must_use]
     pub const fn created(&self) -> u64 {
         self.created
     }
 
     /// The header's title (a readable session name; absent on old files).
+    #[must_use]
     pub fn title(&self) -> Option<&str> {
         self.title.as_deref()
     }
 
+    #[must_use]
     pub fn parent(&self) -> Option<&str> {
         self.parent.as_deref()
     }
 
+    #[must_use]
     pub fn path(&self) -> PathBuf {
         self.root
             .join("sessions")
             .join(format!("{}.jsonl", self.id))
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "epoch milliseconds fit u64 with ~584 million years to spare"
-    )]
     fn now_ms() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
+            .map_or(0, |d| {
+                u64::try_from(d.as_millis())
+                    .expect("epoch milliseconds fit u64 with ~584 million years to spare")
+            })
     }
     pub(crate) fn now(&self) -> u64 {
         self.fixed_time.unwrap_or_else(Self::now_ms)
@@ -386,7 +392,7 @@ impl SessionStore {
         let mut line = serde_json::to_string(&header)?;
         line.push('\n');
         fs::write(self.path(), &line)?;
-        self.file_len = line.len() as u64;
+        self.file_len = u64::try_from(line.len()).expect("file length, well under u64::MAX");
         Ok(())
     }
 
@@ -400,7 +406,7 @@ impl SessionStore {
         let mut lines: Vec<&str> = raw.lines().collect();
         if !raw.ends_with('\n')
             && lines.last().is_some_and(|l| {
-                !l.parse::<Entry>().is_ok() && !serde_json::from_str::<Header>(l).is_ok()
+                l.parse::<Entry>().is_err() && serde_json::from_str::<Header>(l).is_err()
             })
         {
             lines.pop();
@@ -414,7 +420,7 @@ impl SessionStore {
     /// at the next append); any other bad line is corruption.
     pub fn open(&mut self) -> Result<(), Error> {
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
-        self.file_len = raw.len() as u64;
+        self.file_len = u64::try_from(raw.len()).expect("file length, well under u64::MAX");
         let lines = Self::entry_lines(&raw);
         let Some(header_line) = lines.first() else {
             return Err(Error::Other("session file has no header".into()));
@@ -540,14 +546,23 @@ impl SessionStore {
             return Ok(());
         }
         let raw = fs::read_to_string(self.path())?;
-        let idx = raw.rfind('\n').map(|i| i + 1).unwrap_or(0);
-        if raw[idx..].parse::<Entry>().is_ok() {
+        let idx = raw.rfind('\n').map_or(0, |i| i + 1);
+        if raw
+            .get(idx..)
+            .expect("offset from rfind() is a char boundary")
+            .parse::<Entry>()
+            .is_ok()
+        {
             // A complete line missing its newline: terminate it.
             let mut tail = OpenOptions::new().append(true).open(self.path())?;
             tail.write_all(b"\n")?;
         } else {
             // A torn line: truncate it; the append below starts clean.
-            fs::write(self.path(), &raw[..idx])?;
+            fs::write(
+                self.path(),
+                raw.get(..idx)
+                    .expect("offset from rfind() is a char boundary"),
+            )?;
         }
         Ok(())
     }
@@ -559,7 +574,9 @@ impl SessionStore {
             return Ok(());
         }
         let bytes = entry.payload.to_string().into_bytes();
-        if (bytes.len() as u64) <= DEFAULT_BLOB_THRESHOLD {
+        if u64::try_from(bytes.len()).expect("payload size, well under u64::MAX")
+            <= DEFAULT_BLOB_THRESHOLD
+        {
             return Ok(());
         }
         let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
@@ -569,7 +586,7 @@ impl SessionStore {
         entry.payload = Value::Null;
         entry.blob = Some(BlobRef {
             id: entry.id.clone(),
-            size: bytes.len() as u64,
+            size: u64::try_from(bytes.len()).expect("payload size, well under u64::MAX"),
             hash,
         });
         Ok(())
@@ -631,8 +648,7 @@ impl SessionStore {
     fn rewrite_tmp(&self) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_nanos());
         self.path().with_file_name(format!(
             "{}.tmp-{nanos:016x}",
             self.path()
@@ -664,7 +680,7 @@ impl SessionStore {
         Ok(())
     }
 
-    /// Set the session's readable name; like set_leaf this rewrites only
+    /// Set the session's readable name; like `set_leaf` this rewrites only
     /// the header line, atomically via temp-file rename.
     pub fn set_title(&mut self, title: &str) -> Result<(), Error> {
         self.ensure_open()?;
@@ -716,7 +732,7 @@ impl SessionStore {
             return Err(Error::Other("empty session file".into()));
         };
         let mut header: Header = serde_json::from_str(first)?;
-        header.id = id.to_owned();
+        id.clone_into(&mut header.id);
         let new_header = serde_json::to_string(&header)?;
         lines[0] = &new_header;
         let mut target = Self::new(source.root.clone(), id);
@@ -734,9 +750,14 @@ impl SessionStore {
     /// under the workspace's .tau/sessions/), and the session list sorts on
     /// the created timestamp, not the id. The birthday bound on 2^48 is
     /// negligible at machine-scale session counts.
+    #[must_use]
     pub fn new_session_id() -> String {
         let bytes: [u8; 6] = rand::rng().random();
-        bytes.iter().map(|b| format!("{b:02x}")).collect()
+        let mut out = String::new();
+        for &b in &bytes {
+            let _ = write!(out, "{b:02x}");
+        }
+        out
     }
 
     /// Paged read by 0-based entry index (the header is not an entry).
@@ -807,6 +828,8 @@ impl SessionStore {
 /// cheap. A file whose header is missing, malformed, or names a
 /// different id is skipped. The `workspace` field stays empty: the
 /// caller (the harness) stamps the id it owns.
+#[must_use]
+#[allow(clippy::case_sensitive_file_extension_comparisons)] // tau writes `.jsonl`/`.jsonl.zst` lowercase; case-insensitive matching would change which files list
 pub fn list_workspace(project_root: &Path) -> Vec<SessionMeta> {
     let mut out = Vec::new();
     for (dir, archived) in [
@@ -814,7 +837,7 @@ pub fn list_workspace(project_root: &Path) -> Vec<SessionMeta> {
         (project_root.join(".tau").join("archive"), true),
     ] {
         let Ok(names) = fs::read_dir(&dir).map(|d| {
-            d.filter_map(|e| e.ok())
+            d.filter_map(std::result::Result::ok)
                 .map(|e| e.file_name().to_string_lossy().into_owned())
                 .filter(|n| n.ends_with(".jsonl") || n.ends_with(".jsonl.zst"))
                 .collect::<Vec<_>>()
@@ -825,7 +848,7 @@ pub fn list_workspace(project_root: &Path) -> Vec<SessionMeta> {
             let Some(id) = name
                 .strip_suffix(".jsonl.zst")
                 .or_else(|| name.strip_suffix(".jsonl"))
-                .map(|s| s.to_owned())
+                .map(std::borrow::ToOwned::to_owned)
             else {
                 continue;
             };

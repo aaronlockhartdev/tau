@@ -6,6 +6,7 @@ use crate::harness::testkit::*;
 /// metadata carries the flag, `session_list` lists it flagged, and a
 /// running session refuses (the archive is off the live write path).
 #[tokio::test]
+#[allow(clippy::too_many_lines)] // one end-to-end archive flow; splitting is refactoring
 async fn a_session_archives_and_lists_with_the_flag() {
     let core = CoreBuilder::custom(providers()).build();
     let cwd = tempfile::tempdir().unwrap();
@@ -117,7 +118,7 @@ async fn a_session_archives_and_lists_with_the_flag() {
     }
 }
 
-/// One scripted turn: parent_notify done with a structured output.
+/// One scripted turn: `parent_notify` done with a structured output.
 #[tokio::test]
 async fn a_child_session_refuses_a_direct_archive() {
     let core = CoreBuilder::custom(providers())

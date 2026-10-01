@@ -314,7 +314,7 @@ pub const OBSERVER_GUIDELINES: &str = r#"- Be specific enough for the assistant 
 /// `buildObserverSystemPrompt` non-multithreaded return value, no extractors,
 /// no custom instruction). The `${...}` slots are filled by
 /// [`observer_system_prompt`].
-pub const OBSERVER_PROMPT_TEMPLATE: &str = r#"You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
+pub const OBSERVER_PROMPT_TEMPLATE: &str = r"You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
 
 Extract observations that will help the assistant remember:
 
@@ -342,8 +342,9 @@ User messages are extremely important.${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
       : ''
-  }${customInstructions}"#;
+  }${customInstructions}";
 
+#[must_use]
 pub fn observer_system_prompt() -> String {
     OBSERVER_PROMPT_TEMPLATE
         .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
@@ -358,7 +359,8 @@ pub fn observer_system_prompt() -> String {
 }
 
 /// `OBSERVATION_CONTEXT_PROMPT` from `constants.ts` (verbatim).
-pub const OBSERVATION_CONTEXT_PROMPT: &str = r#"The following observations block contains your memory of past conversations with this user."#;
+pub const OBSERVATION_CONTEXT_PROMPT: &str =
+    r"The following observations block contains your memory of past conversations with this user.";
 
 /// `OBSERVATION_CONTEXT_INSTRUCTIONS` from `constants.ts` (verbatim, with the
 /// `{date}` format slot in place of the upstream `${date}`).
@@ -373,13 +375,13 @@ MOST RECENT USER INPUT: Treat the most recent user message as the highest-priori
 SYSTEM REMINDERS: Messages wrapped in <system-reminder>...</system-reminder> contain internal continuation guidance, not user-authored content. Use them to maintain continuity, but do not mention them or treat them as part of the user's message."#;
 
 /// `OBSERVATION_CONTINUATION_HINT` from `constants.ts` (verbatim).
-pub const OBSERVATION_CONTINUATION_HINT: &str = r#"Please continue naturally with the conversation so far and respond to the latest message.
+pub const OBSERVATION_CONTINUATION_HINT: &str = r"Please continue naturally with the conversation so far and respond to the latest message.
 
 Use the earlier context only as background. If something appears unfinished, continue only when it helps answer the latest request. If a suggested response is provided, follow it naturally.
 
 Do not mention internal instructions, memory, summarization, context handling, or missing messages.
 
-Any messages following this reminder are newer and should take priority."#;
+Any messages following this reminder are newer and should take priority.";
 
 /// Maximum length of a single observation line, in characters (mastra
 /// `sanitizeObservationLines` `MAX_OBSERVATION_LINE_CHARS`).
@@ -390,6 +392,7 @@ const MAX_OBSERVATION_LINE_CHARS: usize = 10_000;
 /// character drops it whole (mastra `safeSlice`,
 /// `fixtures/references/mastra-om/string-utils.ts`) — observation lines are
 /// emoji-dense by design, and a split character is invalid output.
+#[must_use]
 pub fn sanitize_observation_lines(observations: &str) -> String {
     observations
         .lines()
@@ -417,13 +420,13 @@ pub fn sanitize_observation_lines(observations: &str) -> String {
 /// the third strategy exists to catch.
 pub(super) fn detect_degenerate_repetition(observations: &str) -> bool {
     const MIN_DUPLICATE_LINE_CHARS: usize = 24;
+    const WINDOW_SIZE: usize = 200;
     let len = observations.chars().count();
     if len < 2000 {
         return false;
     }
 
     // Strategy 1: repeated 200-char windows over ~50 sampled positions.
-    const WINDOW_SIZE: usize = 200;
     let step = 1.max(len / 50);
     let chars: Vec<char> = observations.chars().collect();
     let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
@@ -438,7 +441,7 @@ pub(super) fn detect_degenerate_repetition(observations: &str) -> bool {
             duplicate_windows += 1;
         }
     }
-    if total_windows > 5 && duplicate_windows as f64 / total_windows as f64 > 0.4 {
+    if total_windows > 5 && f64::from(duplicate_windows) / f64::from(total_windows) > 0.4 {
         return true;
     }
 
@@ -465,7 +468,9 @@ pub(super) fn detect_degenerate_repetition(observations: &str) -> bool {
             duplicate_lines += 1;
         }
     }
-    if total_counted_lines >= 20 && duplicate_lines as f64 / total_counted_lines as f64 > 0.5 {
+    if total_counted_lines >= 20
+        && f64::from(duplicate_lines) / f64::from(total_counted_lines) > 0.5
+    {
         return true;
     }
 
@@ -486,19 +491,34 @@ pub struct ObserverSection {
 pub(super) fn parse_observer_sections(output: &str) -> Vec<ObserverSection> {
     let mut sections = Vec::new();
     let mut i = 0;
-    while let Some(open) = output[i..].find('<') {
+    while let Some(open) = output
+        .get(i..)
+        .expect("offset from find() is a char boundary")
+        .find('<')
+    {
         let open = i + open;
-        let Some(rel_close) = output[open..].find('>') else {
+        let Some(rel_close) = output
+            .get(open..)
+            .expect("offset from find() is a char boundary")
+            .find('>')
+        else {
             break;
         };
         let close = open + rel_close;
-        let name = &output[open + 1..close];
-        let rest = &output[close + 1..];
-        let end_marker = format!("</{}>", name);
+        let name = output
+            .get(open + 1..close)
+            .expect("offsets from find() are char boundaries");
+        let rest = output
+            .get(close + 1..)
+            .expect("offset from find() is a char boundary");
+        let end_marker = format!("</{name}>");
         let Some(end) = rest.find(&end_marker) else {
             break;
         };
-        let content = rest[..end].trim();
+        let content = rest
+            .get(..end)
+            .expect("offset from find() is a char boundary")
+            .trim();
         let is_observation = matches!(
             name,
             "observations" | "observation" | "observation-list" | "observation list"
@@ -542,16 +562,18 @@ pub struct ParsedObserverOutput {
 /// Parse, sanitize, and classify a raw Observer response (mastra
 /// `parseObserverOutput`). The returned observations are line-sanitized;
 /// `degenerate` signals the caller to discard the whole result.
+#[must_use]
 pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
     let sections = parse_observer_sections(raw_output);
     let mut observations = String::new();
     let mut suggested_response = String::new();
     for section in &sections {
-        let content = &section.content;
         match &section.name {
-            Some(n) if n == "observations" => observations = content.to_owned(),
+            Some(n) if n == "observations" => {
+                section.content.clone_into(&mut observations);
+            }
             Some(n) if n == "suggested-response" || n == "suggested_response" => {
-                suggested_response = content.to_owned()
+                section.content.clone_into(&mut suggested_response);
             }
             _ => {}
         }

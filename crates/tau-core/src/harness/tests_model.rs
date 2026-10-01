@@ -2,7 +2,7 @@ use super::*;
 
 use crate::harness::testkit::*;
 
-/// SessionNew's explicit title takes the rename's cap (the GUI always
+/// `SessionNew`'s explicit title takes the rename's cap (the GUI always
 /// passes null, but the protocol is open): over the cap is refused
 /// before the session file is created, at the cap it is accepted.
 #[tokio::test]

@@ -5,6 +5,7 @@ impl SessionStore {
         self.root.join("blobs").join(id)
     }
 
+    #[must_use]
     pub fn archive_path(&self) -> PathBuf {
         self.root
             .join("archive")
@@ -84,14 +85,17 @@ impl SessionStore {
         let file = fs::File::open(self.archive_path()).map_err(|e| Error::Other(e.to_string()))?;
         let mut buf = Vec::with_capacity(CAP);
         zstd::Decoder::new(file)?
-            .take(CAP as u64)
+            .take(u64::try_from(CAP).expect("4 KiB cap"))
             .read_to_end(&mut buf)?;
         let text = std::str::from_utf8(&buf).map_err(|e| Error::Other(e.to_string()))?;
         match text.find('\n') {
             // The header is the first line: a complete line inside the cap
             // is a short header, even when the window is full (a big
             // archive whose body was never decoded).
-            Some(pos) => Ok(text[..pos].to_owned()),
+            Some(pos) => Ok(text
+                .get(..pos)
+                .expect("offset from find() is a char boundary")
+                .to_owned()),
             None if buf.len() == CAP => Err(Error::Other(format!(
                 "archive {} header exceeds the {CAP}-byte read",
                 self.id
