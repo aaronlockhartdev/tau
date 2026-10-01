@@ -1,7 +1,8 @@
 use super::{
-    BufferedChunk, Cursor, Entry, OmError, OmState, SessionStore, branch_entries, entry_text,
-    is_raw, now_ms, om, transcript,
+    BufferedChunk, Cursor, Entry, IDLE_ACTIVATION_SECS, NoopSink, OmError, OmState, SessionStore,
+    branch_entries, entry_text, idle_gap_secs, is_raw, now_ms, om, transcript,
 };
+use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 
 impl OmState {
     /// The unobserved raw on the active branch: the entries after the
@@ -105,10 +106,103 @@ pub enum TurnEndAction {
 }
 
 impl OmState {
-    /// The turn-end decision (pure — the agent loop reads the unobserved
-    /// entries and updates the pending count under the session lock, then
-    /// calls this outside it): reflect at the observation threshold,
-    /// observe at activation, buffer at the increment (spec §4).
+    /// The turn-end policy sequence (R4): the unobserved read and pending
+    /// count, the buffered-chunk activation (token threshold or the fixed
+    /// idle timeout), the plan, and the observe/reflect/buffer/commit loop
+    /// until `Done`. The state owns the sequence; `with_store` is the
+    /// caller's re-lock — each sync store phase runs under the session
+    /// lock and releases it before the LLM round-trips (a std guard cannot
+    /// cross an await in a spawned future), so the pass never holds the
+    /// lock across a provider call.
+    pub async fn settle_turn<W>(
+        &mut self,
+        with_store: &mut W,
+        provider: &TurnProviderRef,
+        model: &str,
+        hook: Option<&crate::agent::OmStatusHook>,
+    ) -> Result<(), OmError>
+    where
+        W: FnMut(&mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>) -> Result<(), OmError>,
+    {
+        let mut unobserved: Option<Vec<Entry>> = None;
+        with_store(&mut |store| {
+            unobserved = Some(self.unobserved(store)?);
+            Ok(())
+        })?;
+        let unobserved = unobserved.expect("the phase ran");
+        self.record.pending_tokens = self.pending_tokens(&unobserved);
+        // Activation (no LLM call): the token threshold, or the fixed idle
+        // timeout with pending chunks (spec §4).
+        let mut idle = 0u64;
+        with_store(&mut |store| {
+            let all = store.entries_range(0, usize::MAX)?;
+            let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
+            idle = idle_gap_secs(&all, leaf.as_deref());
+            Ok(())
+        })?;
+        if !self.buffered.is_empty()
+            && (self.activation_reached(self.record.pending_tokens) || idle >= IDLE_ACTIVATION_SECS)
+        {
+            with_store(&mut |store| self.promote(store).map(|_| ()))?;
+        }
+        let mut action = self.plan(&unobserved);
+        loop {
+            // The activity the status bar's gauge shows while this run is in
+            // flight; `Done` closes the run (the hook is the app's om_status
+            // emitter, absent in tests and on children).
+            if let Some(hook) = hook {
+                let kind = match &action {
+                    TurnEndAction::Done => "idle",
+                    TurnEndAction::Observe { .. } | TurnEndAction::Buffer { .. } => "observing",
+                    TurnEndAction::Reflect { .. } => "reflecting",
+                };
+                hook(kind);
+            }
+            let result = match &action {
+                TurnEndAction::Done => break,
+                TurnEndAction::Observe { transcript } | TurnEndAction::Buffer { transcript } => {
+                    let system = om::observer_system_prompt();
+                    let request = ResponseRequest::new(
+                        model.to_owned(),
+                        Some(system.as_str()),
+                        vec![InputEntry::Message(InputMessage {
+                            role: "user".into(),
+                            content: transcript.clone(),
+                        })],
+                    );
+                    let mut sink = NoopSink;
+                    provider
+                        .call(&request, &mut sink)
+                        .await
+                        .map_err(OmError::Provider)?
+                }
+                TurnEndAction::Reflect { level } => {
+                    let prompt = self.reflector_prompt(*level);
+                    let system = om::reflector_system_prompt();
+                    let request = ResponseRequest::new(
+                        model.to_owned(),
+                        Some(system.as_str()),
+                        vec![InputEntry::Message(InputMessage {
+                            role: "user".into(),
+                            content: prompt,
+                        })],
+                    );
+                    let mut sink = NoopSink;
+                    provider
+                        .call(&request, &mut sink)
+                        .await
+                        .map_err(OmError::Provider)?
+                }
+            };
+            self.record.om_model = model.to_owned();
+            with_store(&mut |store| self.commit(store, &mut action, &result))?;
+        }
+        Ok(())
+    }
+
+    /// The turn-end decision (pure over the record — `settle_turn` feeds it
+    /// the unobserved entries it just read): reflect at the observation
+    /// threshold, observe at activation, buffer at the increment (spec §4).
     pub fn plan(&mut self, unobserved: &[Entry]) -> TurnEndAction {
         if om::should_reflect(self.record.observation_tokens, &self.config) {
             return TurnEndAction::Reflect { level: 0 };

@@ -145,7 +145,10 @@ impl Entry {
         serde_json::to_string(self).expect("Entry is always serializable")
     }
 
-    fn compute_crc(&self) -> String {
+    /// The line's CRC (everything but the crc field). `pub(crate)` so the
+    /// 80 GB cyclic-chain regression test can build a corrupt file with
+    /// valid CRCs.
+    pub(crate) fn compute_crc(&self) -> String {
         let mut without = self.clone();
         without.crc = None;
         format!("{:08x}", crc32(without.canonical_line().as_bytes()))

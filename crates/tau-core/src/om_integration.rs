@@ -174,16 +174,19 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
         ..Default::default()
     }
 }
-/// An OM failure: session storage or the model call.
+/// An OM failure: session storage or the model call (the turn-end pass
+/// owns the round-trip, R4).
 #[derive(Debug)]
 pub enum OmError {
     Session(crate::session::Error),
+    Provider(crate::provider::ProviderError),
 }
 
 impl std::fmt::Display for OmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Session(e) => write!(f, "session: {e}"),
+            Self::Provider(e) => write!(f, "provider: {e}"),
         }
     }
 }

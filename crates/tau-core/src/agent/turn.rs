@@ -2,7 +2,8 @@ use super::{
     AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
     FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage, KIND_ASSISTANT,
     KIND_SYSTEM, KIND_TOOL, KIND_USER, Lane, MAX_ROUNDS, Ordering, Queued, ResponseRequest,
-    ToolBatchPolicy, TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name, tools,
+    SessionStore, ToolBatchPolicy, TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name,
+    tools,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -302,117 +303,44 @@ impl AgentSession {
         Ok(())
     }
 
-    /// The turn-end OM pass (ticket #22): the state runs on a clone and
-    /// every store op takes the session lock briefly; the LLM round-trips
-    /// run between the lock scopes, so a force or steering send is never
-    /// blocked on an OM call.
+    /// The turn-end OM pass (ticket #22, R4): one call — `settle_turn`
+    /// owns the whole sequence (the unobserved read, activation, the plan,
+    /// the observe/reflect round-trips, the commit). The state runs on a
+    /// clone and is written back at the end; the store is handed to it
+    /// phase by phase through the re-lock, so the session lock is never
+    /// held across a provider call (a std guard cannot cross an await in a
+    /// spawned future).
     async fn om_turn_end(&self) -> Result<(), AgentError> {
-        let (mut state, hook) = {
+        // The OM model (global config, spec §4); empty = the session's
+        // model. Resolved with the state clone, before the pass.
+        let (state, model, hook) = {
             let inner = self.inner.lock().unwrap();
-            (inner.om.clone(), inner.om_status_hook.clone())
+            (
+                inner.om.clone(),
+                if inner.om_model.is_empty() {
+                    inner.model.clone()
+                } else {
+                    inner.om_model.clone()
+                },
+                inner.om_status_hook.clone(),
+            )
         };
-        let Some(state) = &mut state else {
+        let Some(mut state) = state else {
             return Ok(());
         };
-        let mut action = {
-            let mut inner = self.inner.lock().unwrap();
-            let unobserved = state.unobserved(&mut inner.store).map_err(AgentError::Om)?;
-            state.record.pending_tokens = state.pending_tokens(&unobserved);
-            // Activation (no LLM call): the token threshold, or the fixed
-            // idle timeout with pending chunks (spec §4).
-            let idle = {
-                let all = inner
-                    .store
-                    .entries_range(0, usize::MAX)
-                    .map_err(|e| AgentError::Om(e.into()))?;
-                let leaf = inner
-                    .store
-                    .leaf()
-                    .map_err(|e| AgentError::Om(e.into()))?
-                    .map(|e| e.id);
-                crate::om_integration::idle_gap_secs(&all, leaf.as_deref())
+        // The re-lock: each sync store phase takes the session lock and
+        // releases it before the next provider call.
+        let mut with_store =
+            |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), crate::om_integration::OmError>| {
+                let mut guard = self.inner.lock().unwrap();
+                f(&mut guard.store)
             };
-            if !state.buffered.is_empty()
-                && (state.activation_reached(state.record.pending_tokens)
-                    || idle >= crate::om_integration::IDLE_ACTIVATION_SECS)
-            {
-                state.promote(&mut inner.store).map_err(AgentError::Om)?;
-            }
-            state.plan(&unobserved)
-        };
-        loop {
-            // The activity the status bar's gauge shows while this run is in
-            // flight; `Done` closes the run (the hook is the app's om_status
-            // emitter, absent in tests and on children).
-            if let Some(hook) = &hook {
-                let kind = match &action {
-                    crate::om_integration::TurnEndAction::Done => "idle",
-                    crate::om_integration::TurnEndAction::Observe { .. }
-                    | crate::om_integration::TurnEndAction::Buffer { .. } => "observing",
-                    crate::om_integration::TurnEndAction::Reflect { .. } => "reflecting",
-                };
-                hook(kind);
-            }
-            let result = match &action {
-                crate::om_integration::TurnEndAction::Done => break,
-                crate::om_integration::TurnEndAction::Observe { transcript }
-                | crate::om_integration::TurnEndAction::Buffer { transcript } => {
-                    let system = crate::om::observer_system_prompt();
-                    let request = ResponseRequest::new(
-                        self.om_model(),
-                        Some(system.as_str()),
-                        vec![InputEntry::Message(InputMessage {
-                            role: "user".into(),
-                            content: transcript.clone(),
-                        })],
-                    );
-                    let mut sink = crate::om_integration::NoopSink;
-                    self.provider
-                        .call(&request, &mut sink)
-                        .await
-                        .map_err(AgentError::Provider)?
-                }
-                crate::om_integration::TurnEndAction::Reflect { level } => {
-                    let prompt = state.reflector_prompt(*level);
-                    let system = crate::om::reflector_system_prompt();
-                    let request = ResponseRequest::new(
-                        self.om_model(),
-                        Some(system.as_str()),
-                        vec![InputEntry::Message(InputMessage {
-                            role: "user".into(),
-                            content: prompt,
-                        })],
-                    );
-                    let mut sink = crate::om_integration::NoopSink;
-                    self.provider
-                        .call(&request, &mut sink)
-                        .await
-                        .map_err(AgentError::Provider)?
-                }
-            };
-            {
-                state.record.om_model = self.om_model();
-                let mut inner = self.inner.lock().unwrap();
-                state
-                    .commit(&mut inner.store, &mut action, &result)
-                    .map_err(AgentError::Om)?;
-            }
-        }
-        {
-            let mut inner = self.inner.lock().unwrap();
-            inner.om = Some(state.clone());
-        }
+        state
+            .settle_turn(&mut with_store, &self.provider, &model, hook.as_ref())
+            .await
+            .map_err(AgentError::Om)?;
+        self.inner.lock().unwrap().om = Some(state);
         Ok(())
-    }
-
-    /// The OM model (global config, spec §4); empty = the session's model.
-    fn om_model(&self) -> String {
-        let inner = self.inner.lock().unwrap();
-        if inner.om_model.is_empty() {
-            inner.model.clone()
-        } else {
-            inner.om_model.clone()
-        }
     }
 
     async fn append_user(&self, msg: Queued) -> Result<(), AgentError> {

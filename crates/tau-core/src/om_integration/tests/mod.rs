@@ -36,4 +36,5 @@ pub(crate) fn turn_result(text: &str) -> crate::provider::TurnResult {
 mod plan;
 mod promote;
 mod record;
+mod settle;
 mod window;

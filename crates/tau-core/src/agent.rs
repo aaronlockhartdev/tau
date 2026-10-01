@@ -116,7 +116,7 @@ const fn lane_name(lane: Lane) -> &'static str {
 /// The OM run's status callback: the activity kind as a string
 /// ("observing" / "reflecting" / "idle") — the app shapes it into the
 /// protocol event.
-type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
+pub(crate) type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Fired when the lane queue changes mid-turn (a steering/force message is
 /// consumed): the app re-emits the queue snapshot so the GUI's queue pane
