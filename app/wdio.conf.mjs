@@ -315,7 +315,7 @@ function onComplete() {
 }
 
 export const config = {
-specs: legs.flatMap((leg) => LEG_SPECS[leg].map((f) => path.join(APP, 'tests', 'e2e', f))),
+  specs: legs.flatMap((leg) => LEG_SPECS[leg].map((f) => path.join(APP, 'tests', 'e2e', f))),
 
   maxInstances: 1,
 

@@ -20,7 +20,7 @@ const styleFiles = ['svelte/**/*.{ts,svelte}', 'vite.config.ts', 'vitest.config.
 export default [
   {
     ignores: [
-      '.svelte-check/**',
+      '**/.svelte-check/**',
       'node_modules/**',
       'dist/**',
       'svelte/dist/**',

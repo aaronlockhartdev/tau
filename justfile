@@ -177,7 +177,8 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
             fi
             # The WebKitGTK webview wants an X display (spec §13): headless
             # Linux runs under xvfb, as the launch smoke already does.
-            if [ "$(uname)" = "Linux" ] && [ -z "$DISPLAY" ]; then
+            # ${DISPLAY:-}: the script runs under set -u and headless CI has no DISPLAY.
+            if [ "$(uname)" = "Linux" ] && [ -z "${DISPLAY:-}" ]; then
               out=$(cd app && xvfb-run -a npm run test:frontend 2>&1)
             else
               out=$(cd app && npm run test:frontend 2>&1)

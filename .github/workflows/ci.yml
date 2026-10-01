@@ -82,7 +82,7 @@ jobs:
           tool: nextest@0.9.146
 
       - name: Coverage (no floor)
-        run: cargo llvm-cov nextest --workspace --lcov --html --output-dir coverage
+        run: cargo llvm-cov nextest --workspace --html --output-dir coverage
 
       - uses: actions/upload-artifact@v7.0.1
         with:
@@ -109,9 +109,12 @@ jobs:
       - name: Fuzz smoke (300 s per target)
         run: |
           cd fuzz
-          cargo +nightly fuzz build
+          # Explicit gnu target: cargo-fuzz's Linux default is musl, whose
+          # static libc is incompatible with ASan ("sanitizer is incompatible
+          # with statically linked libc").
+          cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
           for t in parse_command parse_event parse_output parse_sse parse_session roundtrip_command; do
-            cargo +nightly fuzz run "$t" -- -max_total_time=300
+            cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu -- -max_total_time=300
           done
 
       - name: Upload crash artifacts
@@ -212,23 +215,6 @@ jobs:
           path: target/release/bundle/dmg/*.dmg
           if-no-files-found: warn
 
-      - name: Rust tests before E2E (official CI guide)
-        run: cargo test -p tau-core
-
-      - name: Build debug binary + install frontend deps
-        # The E2E plugins are behind the `e2e` cargo feature (sweep finding X1).
-        run: |
-          cargo build -p tau-app --features e2e
-          (cd app && npm ci)
-
-      - name: E2E (real-app replay, WebdriverIO)
-        # The GUI's test (roadmap G/G2): the debug binary on the real dogfood
-        # session pair, driven over the embedded WebDriver server. The runner
-        # runs the replay leg (docs/research/tauri-ci.md §4) — the 10k stress
-        # leg (perf bar) is local via `just acceptance e2e`.
-        run: |
-          cd app && TAU_E2E_MODE=replay npm run test:frontend
-
       - name: Upload E2E failure artifacts
         if: failure()
         uses: actions/upload-artifact@v7.0.1
@@ -268,22 +254,6 @@ jobs:
         # run (the justfile wraps the headless e2e leg in xvfb); e2e stays
         # on the replay leg (the 10k stress leg is a local perf bar).
         run: TAU_E2E_MODE=replay just acceptance
-
-      - name: Rust tests before E2E (official CI guide)
-        run: cargo test -p tau-core
-
-      - name: Build debug binary + install frontend deps
-        # The E2E plugins are behind the `e2e` cargo feature (sweep finding X1).
-        run: |
-          cargo build -p tau-app --features e2e
-          (cd app && npm ci)
-
-      - name: E2E (real-app replay, WebdriverIO, xvfb)
-        # The GUI's test (roadmap G/G2); xvfb gives the WebKitGTK webview
-        # its display (official CI guide). The runner runs the replay leg
-        # (docs/research/tauri-ci.md §4) — the 10k stress leg is local.
-        run: |
-          cd app && TAU_E2E_MODE=replay xvfb-run -a npm run test:frontend
 
       - name: Upload E2E failure artifacts
         if: failure()
