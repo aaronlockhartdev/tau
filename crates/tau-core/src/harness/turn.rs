@@ -11,7 +11,14 @@ use crate::subagent::ChildLink;
 /// `process()` drained the queue.
 #[allow(clippy::too_many_lines)] // one reconciliation pass over the turn's record; splitting is refactoring
 pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
-    let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().unwrap().id);
+    let mut store = SessionStore::for_workspace(
+        &live.cwd,
+        &live
+            .meta
+            .lock()
+            .expect("session meta: no panic while the lock is held")
+            .id,
+    );
     if let Err(e) = store.open() {
         // The send is already accepted (the GUI shows it as the turn):
         // a failed open must surface, or every send to a corrupted
@@ -20,7 +27,10 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         // delivers it, and the queue's projection shows it — nothing is
         // re-queued anywhere.
         let (workspace, id) = {
-            let meta = live.meta.lock().unwrap();
+            let meta = live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held");
             (meta.workspace.clone(), meta.id.clone())
         };
         core.emit(Event::System {
@@ -39,9 +49,17 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // The archive sets the meta flag before its file moves (ADR-0005):
     // a turn that started in that window dies here, at its first write —
     // no headerless file, no partial turn in the archive.
-    if live.meta.lock().unwrap().archived {
+    if live
+        .meta
+        .lock()
+        .expect("session meta: no panic while the lock is held")
+        .archived
+    {
         let (workspace, id) = {
-            let meta = live.meta.lock().unwrap();
+            let meta = live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held");
             (meta.workspace.clone(), meta.id.clone())
         };
         core.emit(Event::System {
@@ -57,14 +75,22 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         return;
     }
     let start = store.leaf().ok().flatten().map(|e| e.id);
-    let calls_before = live.provider.calls.lock().unwrap().len();
+    let calls_before = live
+        .provider
+        .calls
+        .lock()
+        .expect("provider call ids: no panic while the lock is held")
+        .len();
 
     if let Err(e) = live.agent.process().await {
         // One locked scope: two meta locks in one expression would be a
         // same-thread re-entrant deadlock (the first guard lives until the
         // statement ends).
         let (workspace, id) = {
-            let meta = live.meta.lock().unwrap();
+            let meta = live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held");
             (meta.workspace.clone(), meta.id.clone())
         };
         core.emit(Event::System {
@@ -81,8 +107,18 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         None => store.entries_range(0, usize::MAX).unwrap_or_default(),
     };
 
-    let workspace = live.meta.lock().unwrap().workspace.clone();
-    let session = live.meta.lock().unwrap().id.clone();
+    let workspace = live
+        .meta
+        .lock()
+        .expect("session meta: no panic while the lock is held")
+        .workspace
+        .clone();
+    let session = live
+        .meta
+        .lock()
+        .expect("session meta: no panic while the lock is held")
+        .id
+        .clone();
     let mut assistant_index = 0usize;
     let mut queue_changed = false;
     let mut task_touched = false;
@@ -100,7 +136,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     .provider
                     .calls
                     .lock()
-                    .unwrap()
+                    .expect("provider call ids: no panic while the lock is held")
                     .get(calls_before + assistant_index)
                     .cloned();
                 assistant_index += 1;
@@ -111,7 +147,11 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     .unwrap_or(false);
                 let usage = entry.payload.get("usage").and_then(usage_of);
                 let completed = {
-                    let map = live.provider.completed.lock().unwrap();
+                    let map = live
+                        .provider
+                        .completed
+                        .lock()
+                        .expect("completed-call map: no panic while the lock is held");
                     call_id
                         .as_ref()
                         .and_then(|id| map.get(id))
@@ -132,7 +172,10 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     });
                 }
                 if let Some(u) = usage {
-                    live.meta.lock().unwrap().usage = Some(u);
+                    live.meta
+                        .lock()
+                        .expect("session meta: no panic while the lock is held")
+                        .usage = Some(u);
                 }
             }
             crate::agent::KIND_TOOL => {
@@ -165,7 +208,11 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // A call cut before it produced an entry (an empty partial, N10) still
     // gets its interrupted end — the GUI's live bubble must close.
     {
-        let calls = live.provider.calls.lock().unwrap();
+        let calls = live
+            .provider
+            .calls
+            .lock()
+            .expect("provider call ids: no panic while the lock is held");
         let new_calls = calls.len() - calls_before;
         for i in assistant_index..new_calls {
             core.emit(Event::StreamEnd {
@@ -182,7 +229,10 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     if let Ok(leaf) = store.leaf()
         && let Some(leaf) = leaf
     {
-        live.meta.lock().unwrap().leaf = Some(leaf.id);
+        live.meta
+            .lock()
+            .expect("session meta: no panic while the lock is held")
+            .leaf = Some(leaf.id);
     }
     if queue_changed {
         core.emit_queue(&live);
@@ -221,7 +271,10 @@ impl Core {
         // a projection of the agent's lane queue (the single source of
         // truth), not a second ledger.
         let (workspace, session, items) = {
-            let meta = live.meta.lock().unwrap();
+            let meta = live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held");
             (
                 meta.workspace.clone(),
                 meta.id.clone(),
@@ -243,7 +296,10 @@ impl Core {
     /// file carries no task entries.
     pub(crate) fn emit_task_changed(&self, live: &LiveSession, session: &str) {
         let (workspace, cwd) = {
-            let meta = live.meta.lock().unwrap();
+            let meta = live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held");
             (meta.workspace.clone(), live.cwd.clone())
         };
         if let Some(link) = live.agent.child_link() {

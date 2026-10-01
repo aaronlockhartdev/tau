@@ -211,11 +211,17 @@ pub struct Child {
 
 impl Child {
     fn state(&self) -> ChildState {
-        self.state.lock().unwrap().clone()
+        self.state
+            .lock()
+            .expect("child state: no panic while the lock is held")
+            .clone()
     }
 
     fn set_state(&self, state: &ChildState) -> Result<(), String> {
-        *self.state.lock().unwrap() = state.clone();
+        *self
+            .state
+            .lock()
+            .expect("child state: no panic while the lock is held") = state.clone();
         // The record carries the discriminant plus the non-output variant
         // fields only: done's output lives in the notify record (the
         // report), not twice.
@@ -244,7 +250,10 @@ impl Child {
     }
 
     fn set_last_message(&self, text: &str) {
-        *self.last_message.lock().unwrap() = Some(text.to_owned());
+        *self
+            .last_message
+            .lock()
+            .expect("child last message: no panic while the lock is held") = Some(text.to_owned());
     }
 }
 
@@ -488,7 +497,10 @@ impl Supervisor {
     /// The parent's loop (attached once by the caller after the parent's
     /// `AgentSession` exists).
     pub fn attach_parent(&self, agent: Arc<AgentSession>) {
-        *self.parent.lock().unwrap() = Some(agent);
+        *self
+            .parent
+            .lock()
+            .expect("supervisor parent: no panic while the lock is held") = Some(agent);
     }
 
     /// Whether a child is still `Running` (the child-side loop's exit
@@ -496,7 +508,7 @@ impl Supervisor {
     pub fn child_running(&self, handle: &str) -> bool {
         self.children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .get(handle)
             .is_some_and(|c| matches!(c.state(), ChildState::Running))
     }
@@ -507,7 +519,7 @@ impl Supervisor {
     fn live_children(&self) -> Vec<Arc<Child>> {
         self.children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .values()
             .filter(|c| {
                 !matches!(
@@ -540,7 +552,10 @@ impl Supervisor {
     /// the session id, then the internal handle (the GUI's protocol
     /// commands pass it).
     fn resolve(&self, name_or_id: &str) -> Option<Arc<Child>> {
-        let children = self.children.lock().unwrap();
+        let children = self
+            .children
+            .lock()
+            .expect("children map: no panic while the lock is held");
         children
             .values()
             .find(|c| c.name == name_or_id)
@@ -554,7 +569,7 @@ impl Supervisor {
     pub fn child_agent(&self, handle: &str) -> Option<Arc<AgentSession>> {
         self.children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .get(handle)
             .map(|c| c.agent.clone())
     }
@@ -564,7 +579,7 @@ impl Supervisor {
     pub fn child_session_id(&self, handle: &str) -> Option<String> {
         self.children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .get(handle)
             .map(|c| c.session_id.clone())
     }
@@ -573,7 +588,7 @@ impl Supervisor {
     pub fn child_sessions(&self) -> Vec<String> {
         self.children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .values()
             .map(|c| c.session_id.clone())
             .collect()

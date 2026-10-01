@@ -23,7 +23,7 @@ impl Supervisor {
         let child = self
             .children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .values()
             .find(|c| c.session_id == worker_session)
             .cloned()
@@ -33,7 +33,7 @@ impl Supervisor {
         let parent = self
             .parent
             .lock()
-            .unwrap()
+            .expect("supervisor parent: no panic while the lock is held")
             .clone()
             .ok_or("task_assign: no parent attached".to_owned())?;
         parent
@@ -118,7 +118,13 @@ impl Supervisor {
             return "parent_notify: output requires done:true".into();
         }
 
-        let Some(child) = self.children.lock().unwrap().get(handle).cloned() else {
+        let Some(child) = self
+            .children
+            .lock()
+            .expect("children map: no panic while the lock is held")
+            .get(handle)
+            .cloned()
+        else {
             return format!("parent_notify: unknown child {handle}");
         };
         // A repeated `done` is a no-op (ADR-0001 quiescence): the child has
@@ -214,7 +220,12 @@ impl Supervisor {
     /// - already blocked (the child called `task_block`) → stays blocked
     #[allow(clippy::too_many_lines)] // one task-resolution gate; splitting is refactoring
     fn resolve_assigned_task(&self, child: &Child, output: Option<&Value>) {
-        let Some(parent) = self.parent.lock().unwrap().clone() else {
+        let Some(parent) = self
+            .parent
+            .lock()
+            .expect("supervisor parent: no panic while the lock is held")
+            .clone()
+        else {
             return;
         };
         let _ = parent.with_task_store(|store| {

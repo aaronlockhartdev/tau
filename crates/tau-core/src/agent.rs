@@ -233,7 +233,10 @@ impl AgentSession {
     /// in-flight stream and jumps to the head of the queue; everything else
     /// keeps its position.
     pub fn send(&self, text: impl Into<String>, lane: Lane) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
         // A new send clears a previous stop (ticket #23): a stop means
         // "interrupt current work", not "never work again".
         self.stop.store(false, Ordering::SeqCst);
@@ -262,7 +265,10 @@ impl AgentSession {
         name: &str,
         location: &str,
     ) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
         self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
             text: text.into(),
@@ -289,7 +295,10 @@ impl AgentSession {
     }
 
     fn queue_notified(&self, text: impl Into<String>, lane: Lane, source: String) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
         self.stop.store(false, Ordering::SeqCst);
         let text = text.into();
         let steering = matches!(lane, Lane::Steering);
@@ -341,7 +350,12 @@ impl AgentSession {
     /// Whether a queued message is waiting (a parked sub-agent with a
     /// queued message is resumed by it, ADR-0001).
     pub fn has_pending(&self) -> bool {
-        !self.inner.lock().unwrap().queue.is_empty()
+        !self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .queue
+            .is_empty()
     }
 
     /// The queued message at the head of the lane queue — for a
@@ -351,7 +365,7 @@ impl AgentSession {
     pub(crate) fn first_pending(&self) -> Option<(String, Lane)> {
         self.inner
             .lock()
-            .unwrap()
+            .expect("agent inner: no panic while the lock is held")
             .queue
             .front()
             .map(|q| (q.text.clone(), q.lane))
@@ -361,7 +375,10 @@ impl AgentSession {
     /// projection of the loop's queue (the single source of truth), taken
     /// at emit time — the GUI keeps no second ledger of its own.
     pub(crate) fn queued_items(&self) -> Vec<tau_protocol::snapshot::QueuedItem> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
         inner
             .queue
             .iter()
@@ -375,13 +392,21 @@ impl AgentSession {
 
     /// The child-side link (a child session's `parent_notify` routing).
     pub(crate) fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
-        self.inner.lock().unwrap().child.clone()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .child
+            .clone()
     }
 
     /// This session's supervisor (None for a child session — children
     /// cannot spawn, so the supervisor is parent-side only).
     pub(crate) fn subagents(&self) -> Option<Arc<crate::subagent::Supervisor>> {
-        self.inner.lock().unwrap().subagents.clone()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .subagents
+            .clone()
     }
 
     /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
@@ -390,7 +415,10 @@ impl AgentSession {
     pub(crate) fn recall_scoped(&self, args: &Value) -> String {
         if args.get("scope").and_then(Value::as_str) == Some("parent") {
             let (link, cwd) = {
-                let inner = self.inner.lock().unwrap();
+                let inner = self
+                    .inner
+                    .lock()
+                    .expect("agent inner: no panic while the lock is held");
                 (inner.child.clone(), inner.cwd.clone())
             };
             match link {
@@ -409,7 +437,10 @@ impl AgentSession {
                 None => "recall: scope \"parent\" needs a parent link (compacted child)".into(),
             }
         } else {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
             let record = inner
                 .om
                 .as_ref()
@@ -422,7 +453,10 @@ impl AgentSession {
     /// The parent's task-routing target (child sessions only): set at
     /// spawn from the supervisor's attached parent.
     pub(crate) fn set_parent_task_store(&self, parent: Option<Weak<AgentSession>>) {
-        self.inner.lock().unwrap().parent_task_store = parent;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .parent_task_store = parent;
     }
 
     /// The task tools (spec §5.3/§5.4). A child session's worker tools
@@ -432,7 +466,10 @@ impl AgentSession {
     /// is taken: no child-lock → parent-lock nesting (the deadlock guard).
     fn task_tool_dispatch(&self, name: &str, args: &Value) -> String {
         let (is_child, parent) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
             (
                 inner.child.is_some(),
                 inner.parent_task_store.as_ref().and_then(Weak::upgrade),
@@ -444,21 +481,31 @@ impl AgentSession {
         if let Some(parent) = parent {
             parent.with_task_store(|store| crate::task::tool_call(store, name, args))
         } else {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
             crate::task::tool_call(&mut inner.store, name, args)
         }
     }
 
     /// The session store's header timestamp (epoch ms).
     pub(crate) fn store_created(&self) -> u64 {
-        self.inner.lock().unwrap().store.created()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .store
+            .created()
     }
 
     /// Run one operation against this session's own store — the
     /// single-writer surface for other components (the sub-agent task
     /// gate, the app's task commands; review B3).
     pub(crate) fn with_task_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
         f(&mut inner.store)
     }
 
@@ -471,40 +518,62 @@ impl AgentSession {
     #[cfg(test)]
     /// Test-only OM state injection (the sub-agent module's tests).
     pub(crate) fn set_om(&self, om: Option<crate::om_integration::OmState>) {
-        self.inner.lock().unwrap().om = om;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .om = om;
     }
 
     /// The OM-run observer (the app's `om_status` emitter); `None` clears it.
     pub(crate) fn set_om_status_hook(&self, hook: Option<OmStatusHook>) {
-        self.inner.lock().unwrap().om_status_hook = hook;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .om_status_hook = hook;
     }
 
     pub(crate) fn set_queue_event_hook(&self, hook: Option<QueueEventHook>) {
-        self.inner.lock().unwrap().queue_event_hook = hook;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .queue_event_hook = hook;
     }
 
     /// The live entry sink, set on this session's store (the append choke
     /// point); `None` clears it.
     pub(crate) fn set_entry_event_hook(&self, hook: Option<EntryEventHook>) {
-        self.inner.lock().unwrap().store.set_entry_event_hook(hook);
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .store
+            .set_entry_event_hook(hook);
     }
 
     /// The wire-only upsert sink (ADR-0008); `None` clears it.
     pub(crate) fn set_entry_upsert_hook(&self, hook: Option<EntryEventHook>) {
-        self.inner.lock().unwrap().entry_upsert_hook = hook;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .entry_upsert_hook = hook;
     }
 
     /// The session's model for the next turn's calls (the `session_set_model`
     /// command's live half; provider resolution happens at the call).
     pub(crate) fn set_model(&self, model: String) {
-        self.inner.lock().unwrap().model = model;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .model = model;
     }
 
     /// The turn's provider options (spec §12, #35): re-derived when the
     /// session's model changes, so clamping and reasoning levels track the
     /// active model.
     pub(crate) fn set_turn_config(&self, turn: TurnConfig) {
-        self.inner.lock().unwrap().turn = turn;
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .turn = turn;
     }
 
     /// Append a record entry against the active leaf (the sub-agent
@@ -514,21 +583,37 @@ impl AgentSession {
     }
 
     pub(crate) fn model(&self) -> String {
-        self.inner.lock().unwrap().model.clone()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .model
+            .clone()
     }
 
     pub(crate) fn tools(&self) -> Vec<ToolSpec> {
-        self.inner.lock().unwrap().tools.clone()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .tools
+            .clone()
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn system_prompt(&self) -> String {
-        self.inner.lock().unwrap().system_prompt.clone()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .system_prompt
+            .clone()
     }
 
     /// The session's OM state (ticket #22); `None` = OM disabled.
     pub(crate) fn om_state(&self) -> Option<crate::om_integration::OmState> {
-        self.inner.lock().unwrap().om.clone()
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .om
+            .clone()
     }
 }
 mod turn;

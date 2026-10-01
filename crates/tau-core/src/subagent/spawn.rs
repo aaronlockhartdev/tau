@@ -43,7 +43,7 @@ impl Supervisor {
         let parent_agent = self
             .parent
             .lock()
-            .unwrap()
+            .expect("supervisor parent: no panic while the lock is held")
             .clone()
             .ok_or_else(|| "supervisor has no parent attached".to_owned())?;
         let parent_record = parent_agent
@@ -95,7 +95,11 @@ impl Supervisor {
         // parent is the single source of truth, the child's pane a
         // projection of it.
         if let Some(task) = task
-            && let Some(parent) = self.parent.lock().unwrap().clone()
+            && let Some(parent) = self
+                .parent
+                .lock()
+                .expect("supervisor parent: no panic while the lock is held")
+                .clone()
         {
             let _ = parent.with_task_store(|cstore| crate::task::assign(cstore, task, &session_id));
         }
@@ -191,7 +195,7 @@ impl Supervisor {
         });
         self.children
             .lock()
-            .unwrap()
+            .expect("children map: no panic while the lock is held")
             .insert(handle.clone(), child.clone());
         self.bridge.spawned(&SpawnNotice {
             parent: self.parent_session.clone(),

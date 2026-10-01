@@ -36,15 +36,15 @@ impl SessionStore {
         }
         let mut out = Vec::new();
         for (i, slot) in (0..self.entries.len()).zip(&self.entries) {
-            if slot.is_none() {
+            let Some(entry) = slot else {
                 continue;
-            }
+            };
             if i >= end {
                 break;
             }
             if i >= start {
                 out.push((
-                    slot.as_ref().unwrap().clone(),
+                    entry.clone(),
                     u64::try_from(self.entry_len[i]).expect("entry offset, well under u64::MAX"),
                 ));
             }

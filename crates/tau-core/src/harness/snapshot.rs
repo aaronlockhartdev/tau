@@ -8,7 +8,13 @@ use super::{
 
 impl Core {
     pub(crate) fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
-        let workspace = self.workspace(&live.meta.lock().unwrap().workspace)?;
+        let workspace = self.workspace(
+            &live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held")
+                .workspace,
+        )?;
         // The live session's own store serves the snapshot from its
         // in-memory log (verified at open; only it appends to the file):
         // no file re-open per snapshot — one open serves it all.
@@ -32,7 +38,11 @@ impl Core {
             .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
-        let meta = live.meta.lock().unwrap().clone();
+        let meta = live
+            .meta
+            .lock()
+            .expect("session meta: no panic while the lock is held")
+            .clone();
         // A child's task pane is a projection of the parent's store (the
         // shared task model): the link owns the projection (R3) — the
         // snapshot no longer re-opens the parent's store.
@@ -120,7 +130,7 @@ impl Core {
         let (workspace, meta) = self
             .workspaces
             .lock()
-            .unwrap()
+            .expect("workspaces map: no panic while the lock is held")
             .values()
             .find_map(|w| {
                 Self::session_access(w)
@@ -179,7 +189,7 @@ impl Core {
         let cwd = self
             .workspaces
             .lock()
-            .unwrap()
+            .expect("workspaces map: no panic while the lock is held")
             .values()
             .find(|w| {
                 Self::session_access(w)

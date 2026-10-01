@@ -25,10 +25,18 @@ impl Core {
         for root in &roots {
             watcher.add(root);
         }
-        self.home_watcher.lock().unwrap().replace(watcher);
+        self.home_watcher
+            .lock()
+            .expect("home watcher slot: no panic while the lock is held")
+            .replace(watcher);
         let core = Arc::clone(self);
         spawn_watcher_consumer(&core, rx, move |core, _batch| {
-            for ws in core.workspaces.lock().unwrap().values() {
+            for ws in core
+                .workspaces
+                .lock()
+                .expect("workspaces map: no panic while the lock is held")
+                .values()
+            {
                 core.refresh_skills(ws);
             }
         });
@@ -43,7 +51,10 @@ impl Core {
         if !Path::new(&workspace.cwd).is_dir() {
             return;
         }
-        let mut map = self.project_watchers.lock().unwrap();
+        let mut map = self
+            .project_watchers
+            .lock()
+            .expect("project watchers: no panic while the lock is held");
         if map.contains_key(&workspace.id) {
             return;
         }
@@ -75,7 +86,10 @@ impl Core {
         if !cwd.is_dir() {
             return;
         }
-        let mut map = self.tree_watchers.lock().unwrap();
+        let mut map = self
+            .tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held");
         if map.contains_key(&workspace.id) {
             return;
         }
@@ -89,7 +103,13 @@ impl Core {
         let id = workspace.id.clone();
         let cwd = workspace.cwd.clone();
         spawn_watcher_consumer(&core, rx, move |core, batch| {
-            let Some(ws) = core.workspaces.lock().unwrap().get(&id).cloned() else {
+            let Some(ws) = core
+                .workspaces
+                .lock()
+                .expect("workspaces map: no panic while the lock is held")
+                .get(&id)
+                .cloned()
+            else {
                 return;
             };
             let changed = tree_changed_dirs(&cwd, &batch);
@@ -142,9 +162,18 @@ pub(crate) fn spawn_watcher_consumer(
 /// joining).
 impl Drop for Core {
     fn drop(&mut self) {
-        self.home_watcher.lock().unwrap().take();
-        self.project_watchers.lock().unwrap().clear();
-        self.tree_watchers.lock().unwrap().clear();
+        self.home_watcher
+            .lock()
+            .expect("home watcher slot: no panic while the lock is held")
+            .take();
+        self.project_watchers
+            .lock()
+            .expect("project watchers: no panic while the lock is held")
+            .clear();
+        self.tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held")
+            .clear();
     }
 }
 

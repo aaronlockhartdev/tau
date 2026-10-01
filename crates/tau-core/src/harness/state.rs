@@ -203,7 +203,7 @@ impl CoreBuilder {
         });
         core.self_weak
             .lock()
-            .unwrap()
+            .expect("core self-reference: no panic while the lock is held")
             .replace(Arc::downgrade(&core));
         self.apply_startup(&core);
         core
@@ -219,7 +219,10 @@ impl CoreBuilder {
         for (name, p) in self.providers {
             config.providers.insert(name, p);
         }
-        core.configs.lock().unwrap().insert(String::new(), config);
+        core.configs
+            .lock()
+            .expect("configs map: no panic while the lock is held")
+            .insert(String::new(), config);
         // The workspaces a previous run left open: re-register the ones
         // whose folder still exists (sessions are read from disk on
         // demand); a closed workspace (B7) stays closed across the restart.
@@ -232,7 +235,7 @@ impl CoreBuilder {
                 };
                 core.workspaces
                     .lock()
-                    .unwrap()
+                    .expect("workspaces map: no panic while the lock is held")
                     .entry(w.id.clone())
                     .or_insert(w);
             }
@@ -376,7 +379,7 @@ impl Core {
     pub fn events(&self) -> mpsc::Receiver<Event> {
         self.events_rx
             .lock()
-            .unwrap()
+            .expect("event receiver: no panic while the lock is held")
             .take()
             .expect("the event pump takes the receiver exactly once")
     }
@@ -390,7 +393,7 @@ impl Core {
     pub(crate) fn self_arc(&self) -> Option<Arc<Core>> {
         self.self_weak
             .lock()
-            .unwrap()
+            .expect("core self-reference: no panic while the lock is held")
             .as_ref()
             .and_then(Weak::upgrade)
     }
@@ -398,7 +401,7 @@ impl Core {
     pub(crate) fn system_config(&self) -> Config {
         self.configs
             .lock()
-            .unwrap()
+            .expect("configs map: no panic while the lock is held")
             .get("")
             .cloned()
             .unwrap_or_default()
@@ -416,7 +419,7 @@ impl Core {
         let workspace = Workspace { id, name, cwd };
         self.workspaces
             .lock()
-            .unwrap()
+            .expect("workspaces map: no panic while the lock is held")
             .entry(workspace.id.clone())
             .or_insert_with(|| workspace.clone());
         self.emit(Event::System {
@@ -436,7 +439,7 @@ impl Core {
     pub(crate) fn workspace(&self, id: &str) -> Result<Workspace, ProtocolError> {
         self.workspaces
             .lock()
-            .unwrap()
+            .expect("workspaces map: no panic while the lock is held")
             .get(id)
             .cloned()
             .ok_or_else(|| ProtocolError::NotFound {
@@ -505,15 +508,29 @@ impl Core {
     pub(crate) fn close_workspace(&self, id: &str) -> Result<(), ProtocolError> {
         let w = self.workspace(id)?;
         self.set_workspace_open(&w, false);
-        self.workspaces.lock().unwrap().remove(id);
-        self.project_watchers.lock().unwrap().remove(id);
-        self.tree_watchers.lock().unwrap().remove(id);
+        self.workspaces
+            .lock()
+            .expect("workspaces map: no panic while the lock is held")
+            .remove(id);
+        self.project_watchers
+            .lock()
+            .expect("project watchers: no panic while the lock is held")
+            .remove(id);
+        self.tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held")
+            .remove(id);
         Ok(())
     }
 
     pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {
         // The project layer wins where present; v0 has no dynamic providers.
-        if let Some(c) = self.configs.lock().unwrap().get(&workspace.id) {
+        if let Some(c) = self
+            .configs
+            .lock()
+            .expect("configs map: no panic while the lock is held")
+            .get(&workspace.id)
+        {
             return c.clone();
         }
         let mut c = self.system_config();
@@ -538,7 +555,7 @@ impl Core {
         }
         self.configs
             .lock()
-            .unwrap()
+            .expect("configs map: no panic while the lock is held")
             .insert(workspace.id.clone(), c.clone());
         c
     }
@@ -555,7 +572,7 @@ impl Core {
     pub(crate) fn live(&self, session: &str) -> Result<Arc<LiveSession>, ProtocolError> {
         self.sessions
             .lock()
-            .unwrap()
+            .expect("sessions map: no panic while the lock is held")
             .get(session)
             .cloned()
             .ok_or_else(|| ProtocolError::NotFound {
@@ -568,13 +585,17 @@ impl Core {
     pub(crate) fn register_child_handle(&self, handle: &str, parent: &str) {
         self.child_handles
             .lock()
-            .unwrap()
+            .expect("child handle registry: no panic while the lock is held")
             .insert(handle.to_owned(), parent.to_owned());
     }
 
     /// The parent that minted a child handle (the spawn registry, R3).
     pub(crate) fn child_parent(&self, handle: &str) -> Option<String> {
-        self.child_handles.lock().unwrap().get(handle).cloned()
+        self.child_handles
+            .lock()
+            .expect("child handle registry: no panic while the lock is held")
+            .get(handle)
+            .cloned()
     }
 
     /// The write refusal for an archived session (ADR-0005): its live
@@ -584,7 +605,10 @@ impl Core {
     pub(crate) fn live_unarchived(&self, session: &str) -> Result<Arc<LiveSession>, ProtocolError> {
         let live = self.live(session)?;
         let (archived, has_parent) = {
-            let meta = live.meta.lock().unwrap();
+            let meta = live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held");
             (meta.archived, meta.parent.is_some())
         };
         if archived {

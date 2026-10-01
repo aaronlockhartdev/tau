@@ -3,7 +3,12 @@ use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, om_integr
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).
     pub fn handles(&self) -> Vec<String> {
-        self.children.lock().unwrap().keys().cloned().collect()
+        self.children
+            .lock()
+            .expect("children map: no panic while the lock is held")
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// A child's structured inspection (the `subagent_state` tool and the
@@ -43,7 +48,11 @@ impl Supervisor {
             context_mode: child.context_mode,
             state,
             waiting_on,
-            last_message: child.last_message.lock().unwrap().clone(),
+            last_message: child
+                .last_message
+                .lock()
+                .expect("child last message: no panic while the lock is held")
+                .clone(),
             usage,
             task,
             resume_contract,

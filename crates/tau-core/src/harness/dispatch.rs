@@ -56,7 +56,13 @@ impl Core {
                 workspace: self.open_workspace(&cwd),
             }),
             Command::WorkspaceList => Ok(CommandOutput::Workspaces {
-                workspaces: self.workspaces.lock().unwrap().values().cloned().collect(),
+                workspaces: self
+                    .workspaces
+                    .lock()
+                    .expect("workspaces map: no panic while the lock is held")
+                    .values()
+                    .cloned()
+                    .collect(),
             }),
             Command::WorkspaceClose { workspace } => {
                 self.close_workspace(&workspace)?;

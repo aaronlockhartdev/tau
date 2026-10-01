@@ -272,7 +272,11 @@ fn root_session(
             core: Arc::downgrade(core),
         }),
     });
-    bridge.sup.lock().unwrap().replace(Arc::downgrade(&sup));
+    bridge
+        .sup
+        .lock()
+        .expect("supervisor bridge: no panic while the lock is held")
+        .replace(Arc::downgrade(&sup));
     let sid = store.id().to_owned();
     let agent = Arc::new(AgentSession::new(SessionParams {
         store,

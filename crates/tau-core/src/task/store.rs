@@ -45,7 +45,7 @@ pub fn assign(creator: &mut SessionStore, id: &str, worker_session: &str) -> Sto
             record: None,
         },
     )?;
-    find(creator, id).map(|t| t.unwrap())
+    find(creator, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 pub fn start(store: &mut SessionStore, id: &str) -> StoreResult<Task> {
@@ -56,7 +56,7 @@ pub fn start(store: &mut SessionStore, id: &str) -> StoreResult<Task> {
         return Err(format!("task {id}: cannot start from {}", task.status));
     }
     append_event(store, id, &TaskEvent::Started)?;
-    find(store, id).map(|t| t.unwrap())
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 pub fn add_evidence(store: &mut SessionStore, id: &str, evidence: Evidence) -> StoreResult<Task> {
@@ -76,7 +76,7 @@ pub fn add_evidence(store: &mut SessionStore, id: &str, evidence: Evidence) -> S
         ));
     }
     append_event(store, id, &TaskEvent::Evidence { evidence })?;
-    find(store, id).map(|t| t.unwrap())
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 pub fn block(
@@ -102,7 +102,7 @@ pub fn block(
             needs,
         },
     )?;
-    find(store, id).map(|t| t.unwrap())
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 /// The done-resolution gate (spec §5.3): `done` only if every criterion is
@@ -146,7 +146,7 @@ pub fn finish(
         return Err(format!("task {id}: force finish requires a reason"));
     }
     append_event(store, id, &TaskEvent::Finished { force, reason })?;
-    find(store, id).map(|t| t.unwrap())
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 /// A child that cannot finish hands the task off (spec §5.3): it stays
@@ -168,7 +168,7 @@ pub fn handoff(store: &mut SessionStore, id: &str, output: &Value) -> StoreResul
             output: output.clone(),
         },
     )?;
-    find(store, id).map(|t| t.unwrap())
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> StoreResult<Task> {
@@ -179,7 +179,7 @@ pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> Sto
         return Err(format!("task {id}: done tasks do not cancel"));
     }
     append_event(store, id, &TaskEvent::Cancelled { reason })?;
-    find(store, id).map(|t| t.unwrap())
+    find(store, id)?.ok_or_else(|| format!("task {id}: not found in this session"))
 }
 
 pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {

@@ -26,7 +26,10 @@ impl Core {
         // Detach from the live map while the children are stopped:
         // a stop's parent-wake must not start a turn on the file
         // being archived (the wake looks the parent up by id).
-        self.sessions.lock().unwrap().remove(session);
+        self.sessions
+            .lock()
+            .expect("sessions map: no panic while the lock is held")
+            .remove(session);
         // A wake that looked the parent up before the detach holds
         // the shared session and will CAS the turn and spawn a turn
         // (its map read predates the removal): re-check after the
@@ -52,7 +55,7 @@ impl Core {
                 if sup.child_running(&handle) {
                     self.sessions
                         .lock()
-                        .unwrap()
+                        .expect("sessions map: no panic while the lock is held")
                         .insert(session.to_owned(), live.clone());
                     let child = sup
                         .state_info(&handle)
@@ -71,12 +74,16 @@ impl Core {
         // in it; abort, as the parent's own wake check does, so no
         // file moves mid-write.
         for child in children {
-            if let Some(cl) = self.sessions.lock().unwrap().get(child)
+            if let Some(cl) = self
+                .sessions
+                .lock()
+                .expect("sessions map: no panic while the lock is held")
+                .get(child)
                 && cl.turn.load(Ordering::SeqCst)
             {
                 self.sessions
                     .lock()
-                    .unwrap()
+                    .expect("sessions map: no panic while the lock is held")
                     .insert(session.to_owned(), live.clone());
                 return Err(ProtocolError::Other {
                     message: format!(
@@ -94,9 +101,17 @@ impl Core {
             // the parent's: a child's turn that starts in the
             // window dies at its first append. A failed move
             // reverts it — a refused archive mutates nothing.
-            let live_child = self.sessions.lock().unwrap().get(child).cloned();
+            let live_child = self
+                .sessions
+                .lock()
+                .expect("sessions map: no panic while the lock is held")
+                .get(child)
+                .cloned();
             if let Some(cl) = &live_child {
-                cl.meta.lock().unwrap().archived = true;
+                cl.meta
+                    .lock()
+                    .expect("session meta: no panic while the lock is held")
+                    .archived = true;
             }
             // I/O failure: the parent's in-memory session (queue,
             // supervisor) comes back into the live map; children
@@ -104,11 +119,14 @@ impl Core {
             // archive/restore converges on the file state.
             if let Err(e) = cstore.archive() {
                 if let Some(cl) = &live_child {
-                    cl.meta.lock().unwrap().archived = false;
+                    cl.meta
+                        .lock()
+                        .expect("session meta: no panic while the lock is held")
+                        .archived = false;
                 }
                 self.sessions
                     .lock()
-                    .unwrap()
+                    .expect("sessions map: no panic while the lock is held")
                     .insert(session.to_owned(), live.clone());
                 return Err(ProtocolError::Other {
                     message: e.to_string(),
@@ -126,14 +144,24 @@ impl Core {
         // starts in the remaining window reads it at its first
         // append (run_turn) and dies clean: no headerless file, no
         // partial turn in the archive.
-        let was_archived = live.meta.lock().unwrap().archived;
-        live.meta.lock().unwrap().archived = true;
+        let was_archived = live
+            .meta
+            .lock()
+            .expect("session meta: no panic while the lock is held")
+            .archived;
+        live.meta
+            .lock()
+            .expect("session meta: no panic while the lock is held")
+            .archived = true;
         let mut store = SessionStore::for_workspace(&live.cwd, session);
         if let Err(e) = store.open().and_then(|()| store.archive()) {
-            live.meta.lock().unwrap().archived = was_archived;
+            live.meta
+                .lock()
+                .expect("session meta: no panic while the lock is held")
+                .archived = was_archived;
             self.sessions
                 .lock()
-                .unwrap()
+                .expect("sessions map: no panic while the lock is held")
                 .insert(session.to_owned(), live.clone());
             return Err(ProtocolError::Other {
                 message: e.to_string(),
@@ -141,10 +169,14 @@ impl Core {
         }
         self.sessions
             .lock()
-            .unwrap()
+            .expect("sessions map: no panic while the lock is held")
             .insert(session.to_owned(), live.clone());
         Ok(CommandOutput::Session {
-            session: live.meta.lock().unwrap().clone(),
+            session: live
+                .meta
+                .lock()
+                .expect("session meta: no panic while the lock is held")
+                .clone(),
         })
     }
 
@@ -157,7 +189,10 @@ impl Core {
         // The GUI archives from an open workspace's tree: find the
         // workspace whose live directory holds the file.
         let workspace = {
-            let wss = self.workspaces.lock().unwrap();
+            let wss = self
+                .workspaces
+                .lock()
+                .expect("workspaces map: no panic while the lock is held");
             wss.values()
                 .find(|w| {
                     SessionStore::for_workspace(Path::new(&w.cwd), session)
@@ -198,8 +233,16 @@ impl Core {
             // path: a child still in the live map (opened on its own,
             // parent closed) has its next write refused at the first
             // append instead of recreating the file headerless.
-            if let Some(cl) = self.sessions.lock().unwrap().get(id) {
-                cl.meta.lock().unwrap().archived = true;
+            if let Some(cl) = self
+                .sessions
+                .lock()
+                .expect("sessions map: no panic while the lock is held")
+                .get(id)
+            {
+                cl.meta
+                    .lock()
+                    .expect("session meta: no panic while the lock is held")
+                    .archived = true;
             }
             cstore.archive().map_err(|e| ProtocolError::Other {
                 message: e.to_string(),
@@ -234,7 +277,10 @@ impl Core {
         // The GUI deletes from an open workspace's tree: find the workspace
         // whose dir holds the file, live or archived.
         let workspace = {
-            let wss = self.workspaces.lock().unwrap();
+            let wss = self
+                .workspaces
+                .lock()
+                .expect("workspaces map: no panic while the lock is held");
             wss.values()
                 .find(|w| {
                     let s = SessionStore::for_workspace(Path::new(&w.cwd), session);
@@ -254,7 +300,10 @@ impl Core {
         for id in &to_delete {
             // A child may still be open on its own: drop it from the live map
             // so a late write can't resurrect the file.
-            self.sessions.lock().unwrap().remove(id);
+            self.sessions
+                .lock()
+                .expect("sessions map: no panic while the lock is held")
+                .remove(id);
             delete_session_files(&cwd, id);
         }
         Ok(CommandOutput::None)
