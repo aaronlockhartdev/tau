@@ -17,6 +17,7 @@ impl Core {
     /// must mutate nothing): detach, stop and quiesce the children, then
     /// move the files — aborting and re-attaching if a turn starts in any
     /// of the windows.
+    #[allow(clippy::too_many_lines)] // one archive pass; splitting is refactoring
     pub(super) fn archive_live(
         &self,
         live: &Arc<LiveSession>,

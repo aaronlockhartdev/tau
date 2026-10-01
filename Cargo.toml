@@ -36,10 +36,9 @@ string_slice = "deny"
 # The panic fence (AGENTS.md Best practices → Rust): production code must
 # not panic on foreseeable failure — expect() with a stated invariant, or a
 # Result path, not unwrap()/panic!(). Test code and the test-harness crates
-# (tau-test, tau-mock-llm) are exempted per-crate below. The two "warn"s
-# flip to "deny" once the production conversions land.
-unwrap_used = "warn"
-panic = "warn"
+# (tau-test, tau-mock-llm) are exempted per-crate below.
+unwrap_used = "deny"
+panic = "deny"
 # Zero-tolerance everywhere: dbg! is a debugging artifact, never shipped.
 # (the clippy lint is named `dbg_macro`)
 dbg_macro = "deny"
