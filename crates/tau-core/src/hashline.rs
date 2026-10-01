@@ -390,7 +390,6 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod properties;
 
 #[cfg(test)]
