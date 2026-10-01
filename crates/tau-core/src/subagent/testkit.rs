@@ -206,7 +206,9 @@ pub(crate) fn harness_full(
     let mut store = SessionStore::for_workspace(dir, "parent");
     store.create().unwrap();
     let parent_provider = Arc::new(ScriptedProvider::new(parent_bodies));
-    let parent = AgentSession::launch(
+    // The attach is the constructor's; the supervisor keeps the parent
+    // alive (its `parent` is a strong `Arc`, the v0 cycle).
+    AgentSession::launch(
         store,
         SessionRole::Root {
             core: None,

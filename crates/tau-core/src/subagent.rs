@@ -649,7 +649,7 @@ mod notify;
 mod spawn;
 
 #[cfg(test)]
-mod testkit;
+pub(crate) mod testkit;
 #[cfg(test)]
 mod tests_acceptance;
 #[cfg(test)]

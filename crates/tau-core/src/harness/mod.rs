@@ -78,7 +78,10 @@ mod tests_archive_disk;
 #[cfg(test)]
 mod tests_archive_edges;
 #[cfg(test)]
+#[cfg(test)]
 mod tests_dispatch;
+#[cfg(test)]
+mod tests_launch;
 #[cfg(test)]
 mod tests_model;
 #[cfg(test)]
