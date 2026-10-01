@@ -87,6 +87,7 @@ pub struct WireRequest {
 
 /// Built-in answer for a request no scenario claims: short, terminated,
 /// deterministic — a spec can never hang the stream.
+#[must_use]
 pub fn fallback() -> Scenario {
     Scenario {
         pattern: String::new(),
@@ -121,7 +122,7 @@ impl ScenarioSet {
     pub fn load_dir(dir: &Path) -> Result<Self, String> {
         let mut paths: Vec<_> = std::fs::read_dir(dir)
             .map_err(|e| format!("scenarios dir {}: {e}", dir.display()))?
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
             .map(|e| e.path())
             .filter(|p| p.extension().is_some_and(|x| x == "json"))
             .collect();
@@ -186,6 +187,7 @@ impl ScenarioSet {
 /// The `data:` payloads of one turn, in wire order: `response.created`,
 /// the text split into deltas, one complete `response.output_item.done`
 /// per function call, `response.completed` with usage, `[DONE]`.
+#[must_use]
 pub fn render_frames(turn: &Turn, usage: &Usage, seq: usize) -> Vec<String> {
     let id = format!("mock-resp-{seq}");
     let mut frames = vec![

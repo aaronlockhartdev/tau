@@ -47,6 +47,15 @@ fn user_request(text: &str) -> ResponseRequest {
 
 #[tokio::test]
 async fn a_text_turn_streams_and_decodes_through_the_real_client() {
+    // A recording sink: the stream-delta path the GUI's coalescing rides.
+    struct Record(Vec<TurnEvent>);
+    impl TurnSink for Record {
+        fn event(&mut self, event: TurnEvent) -> bool {
+            self.0.push(event);
+            true
+        }
+    }
+
     let mut set = ScenarioSet::default();
     set.scenarios.push(Scenario::new(
         "hello-mock",
@@ -62,14 +71,6 @@ async fn a_text_turn_streams_and_decodes_through_the_real_client() {
     ));
     let addr = start(set).await;
 
-    // A recording sink: the stream-delta path the GUI's coalescing rides.
-    struct Record(Vec<TurnEvent>);
-    impl TurnSink for Record {
-        fn event(&mut self, event: TurnEvent) -> bool {
-            self.0.push(event);
-            true
-        }
-    }
     let mut sink = Record(Vec::new());
     let result = provider::stream_turn(
         &reqwest::Client::new(),
