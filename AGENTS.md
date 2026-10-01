@@ -44,6 +44,7 @@ Rules, not suggestions. Enforced in CI where mechanical, in review where not.
 - Getters are bare names (`id()`); no `get_` prefix.
 - Every error type implements `std::error::Error` + `Display`; `Display` messages lowercase, concise, no trailing punctuation; `Result<T, ()>` is not an error design.
 - Types on a public surface (protocol payloads/events, `tau-core` public API) eagerly implement the common std traits that apply (`Debug`, `Clone`, `PartialEq`/`Eq`, `Hash`, `Default`).
+- No bare `unwrap()` in production code — `expect("<the invariant that makes it succeed>")` instead; `clippy::unwrap_used` is denied outside test code and the test-harness crates.
 
 **Tauri**
 - `app.security.csp` must be a restrictive policy; `csp: null` is a violation.
