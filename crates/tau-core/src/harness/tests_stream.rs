@@ -151,17 +151,23 @@ async fn a_task_assigned_to_a_child_is_emitted_for_the_child_session() {
     }
 }
 
-/// live test), registered with the core the way `SessionNew` does.
+/// A live dogfood run, registered with the core the way `SessionNew` does:
+/// opt in with TAU_ENDPOINT (optionally TAU_MODEL) — the TAU_LIVE gate was
+/// retired in phase 1 §4.
 #[tokio::test]
 async fn live_run_streams_the_event_pipe() {
-    if std::env::var("TAU_LIVE").is_err() {
-        eprintln!("live run skipped (TAU_LIVE not set)");
-        return;
-    }
+    let endpoint = match std::env::var("TAU_ENDPOINT") {
+        Ok(e) => e,
+        Err(_) => {
+            eprintln!("live run skipped (TAU_ENDPOINT not set)");
+            return;
+        }
+    };
+    let model = std::env::var("TAU_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
     let mut hosted = providers();
     hosted.insert(
         "dev".to_owned(),
-        crate::config::Provider::with_model("https://llms.aaronlockhart.dev/v1", "qwen3.8-27b"),
+        crate::config::Provider::with_model(&endpoint, &model),
     );
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(hosted).build();

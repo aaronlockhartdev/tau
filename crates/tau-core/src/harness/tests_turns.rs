@@ -309,9 +309,8 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
     );
 }
 
-/// The one live run (acceptance): a short session against the hosted
-/// vLLM whose stream reaches the event pipe. Gated on TAU_LIVE and
-/// skipped cleanly when the endpoint is unreachable (CI-safe).
+/// A canned SSE stream forwarded through the real event pipe —
+/// deterministic, no network, runs in CI.
 #[tokio::test]
 async fn a_live_om_run_emits_om_status_events() {
     let tmp = tempfile::tempdir().unwrap();

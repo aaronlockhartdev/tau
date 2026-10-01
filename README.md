@@ -39,10 +39,10 @@ For the development loop — and for tauri-pilot debugging, whose socket is wire
 
 ```sh
 just build
-TAU_LIVE=1 just acceptance
+just acceptance
 ```
 
-`just acceptance` proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per suite (a suite filter argument runs a subset): the built app launches (macOS and Linux), a live multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs live on a long session, branching + manual archive round-trips offline, and the real app on the 10k-entry shared fixture (two deterministic 25 ms streams, 25 ms coalescing) passes. The live suites are env-gated (`TAU_LIVE=1`, defaults to the dev endpoint; every live generation capped at 300 output tokens) and print SKIP when the endpoint is unavailable — a skip is not a failure.
+`just acceptance` proves the spec §1 in-scope list and prints PASS/FAIL/SKIP per suite (a suite filter argument runs a subset): the built app launches (macOS and Linux), a multi-turn session uses all four core tools with a verified golden-file edit, a model-spawned sub-agent works its task and wakes the parent, OM compaction runs on a long session, branching + manual archive round-trips offline, and the real app on the 10k-entry shared fixture (two deterministic 25 ms streams, 25 ms coalescing) passes. The `live-*` suites run by default against the deterministic mock LLM (`crates/tau-mock-llm`, hash-pinned scenarios in `dogfood/e2e-mocks/`), so a red is a code problem, not a network/model problem — that is what makes the whole set a CI gate. Pointing a suite at a real endpoint is a local dogfood opt-in: `TAU_ENDPOINT`/`TAU_MODEL` (the `TAU_LIVE` gate was retired).
 
 The performance bar is the `e2e` suite, driven with WebdriverIO — the official Tauri E2E stack, `@wdio/tauri-service` + the embedded `tauri-plugin-wdio-webdriver` provider (roadmap G2; tauri-pilot stays the agent's direct-interaction route, AGENTS.md). It has two legs: **replay** (the real dogfood session pair — the parent→child sessions the app recorded, replayed against their real content; this is what CI runs) and **stress** (the debug app on the shared 10k-entry fixture — the same `target/test-fixture/session.jsonl` the Rust tests use — two deterministic 25 ms streams coalesced at 25 ms, the §8 bar, local):
 
