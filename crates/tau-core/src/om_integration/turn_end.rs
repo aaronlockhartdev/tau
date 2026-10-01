@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    BufferedChunk, Cursor, Entry, OmError, OmState, SessionStore, branch_entries, entry_text,
+    is_raw, now_ms, om, transcript,
+};
 
 impl OmState {
     /// The unobserved raw on the active branch: the entries after the

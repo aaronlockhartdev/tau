@@ -140,6 +140,11 @@ pub fn line_hashes(content: &str) -> Result<Vec<String>, TooManyLines> {
     let mut hint = 0usize;
     let mut out = Vec::with_capacity(lines.len());
     for line in &lines {
+        // 62^3 hash space: a u32 holds it, so the narrowing is safe.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "HASH_SPACE is 62^3, below u32::MAX"
+        )]
         let base = ((xxhash_rust::xxh32::xxh32(canon(line).as_bytes(), 0) >> 14)
             % HASH_SPACE as u32) as usize;
         let idx = if !used[base] {
@@ -247,6 +252,11 @@ fn stable_hashes(
         let Some(candidates) = by_canon.get_mut(&canon(&old[i])) else {
             continue;
         };
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            reason = "the clamp bounds the result to [0, new.len()]"
+        )]
         let target = if i > span_end {
             (i as i64 + shift).clamp(0, new.len() as i64) as usize
         } else {
@@ -277,6 +287,11 @@ fn stable_hashes(
         if new_hashes[i].is_some() {
             continue;
         }
+        // 62^3 hash space: a u32 holds it, so the narrowing is safe.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "HASH_SPACE is 62^3, below u32::MAX"
+        )]
         let base = ((xxhash_rust::xxh32::xxh32(canon(&new[i]).as_bytes(), 0) >> 14)
             % HASH_SPACE as u32) as usize;
         let idx = if !used[base] {

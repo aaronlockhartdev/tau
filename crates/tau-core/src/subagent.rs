@@ -47,7 +47,7 @@ pub enum WaitingOn {
 }
 
 impl WaitingOn {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Parent => "parent",
             Self::User => "user",
@@ -65,7 +65,7 @@ pub enum StoppedBy {
 }
 
 impl StoppedBy {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::User => "user",
             Self::Parent => "parent",
@@ -86,7 +86,7 @@ pub enum ChildState {
 }
 
 impl ChildState {
-    pub fn kind(&self) -> &'static str {
+    pub const fn kind(&self) -> &'static str {
         match self {
             Self::Running => "running",
             Self::Idle { .. } => "idle",
@@ -211,12 +211,12 @@ impl Child {
         self.state.lock().unwrap().clone()
     }
 
-    fn set_state(&self, state: ChildState) -> Result<(), String> {
+    fn set_state(&self, state: &ChildState) -> Result<(), String> {
         *self.state.lock().unwrap() = state.clone();
         // The record carries the discriminant plus the non-output variant
         // fields only: done's output lives in the notify record (the
         // report), not twice.
-        let payload = match &state {
+        let payload = match state {
             ChildState::Running => json!({ "event": "state", "state": "running" }),
             ChildState::Idle { waiting_on } => json!({
                 "event": "state",
@@ -435,6 +435,10 @@ impl Supervisor {
 
     fn check_cap(&self, extra: bool) -> Result<(), String> {
         match self.caps.max_concurrent {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "live-child counts are far below u32::MAX"
+            )]
             Some(max) if self.live_children().len() as u32 + extra as u32 > max => {
                 Err(format!("subagent_spawn: concurrency cap ({max}) reached"))
             }

@@ -1,7 +1,14 @@
 //! Session lifecycle: skill discovery at the session boundary, the live registration path (create / re-open), and the live-vs-disk lookups.
 
 use super::thinking::thinking_adjusted_max_output;
-use super::*;
+use super::{
+    AgentSession, Arc, AtomicBool, AtomicU64, ChildProviderFactory, Config, Core, Event,
+    ForwardingChildFactory, ForwardingProvider, HashMap, LiveSession, MAX_TITLE_LEN, Mutex,
+    OmStatusKind, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionParams, SessionStore,
+    SessionSubagentBridge, SkillInfo, SubagentBridge, Supervisor, SupervisorParams,
+    TurnChildDriver, TurnConfig, ViewEntry, Workspace, context, last_model_note, session_inner,
+    session_name, skill_info, tools, unique_name,
+};
 
 impl Core {
     /// The workspace's skill registry (ticket #28): the per-workspace
@@ -90,7 +97,7 @@ impl Core {
     /// the record, so every arm that needs disk truth goes through here
     /// (the session crate owns the header format; this call stamps the
     /// workspace id the harness owns).
-    pub(crate) fn session_access(&self, workspace: &Workspace) -> Vec<SessionMeta> {
+    pub(crate) fn session_access(workspace: &Workspace) -> Vec<SessionMeta> {
         crate::session::list_workspace(Path::new(&workspace.cwd))
             .into_iter()
             .map(|mut m| {
@@ -102,9 +109,8 @@ impl Core {
 
     /// A name free of collisions among the workspace's sessions (the file is
     /// the record, so the check is against the disk titles).
-    pub(crate) fn fresh_session_name(&self, workspace: &Workspace) -> String {
-        let titles = self
-            .session_access(workspace)
+    pub(crate) fn fresh_session_name(workspace: &Workspace) -> String {
+        let titles = Self::session_access(workspace)
             .iter()
             .filter_map(|m| m.title.clone())
             .collect::<Vec<_>>();
@@ -210,7 +216,7 @@ impl Core {
         // the header, so it survives restarts; an explicit title wins.
         let title = match title {
             Some(t) if !t.trim().is_empty() => t,
-            _ => self.fresh_session_name(workspace),
+            _ => Self::fresh_session_name(workspace),
         };
         store.set_title(&title).map_err(|e| ProtocolError::Other {
             message: e.to_string(),

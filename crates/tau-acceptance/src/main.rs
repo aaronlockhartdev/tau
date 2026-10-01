@@ -468,6 +468,11 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     // parseReflectorOutput); a live 27B model can return degenerate
     // reflector output that the (tested) escalation path drops, so the
     // second entry is reported, not required.
+    // Observation-log entry count: far below u32::MAX.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "observation-log entry count, well under u32::MAX"
+    )]
     Ok(Some(om_entries.len() as u32))
 }
 

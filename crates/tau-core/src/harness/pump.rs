@@ -3,7 +3,7 @@
 //! alignment the old 25 ms coalescer provided is the turn loop's job now
 //! (ADR-0008), so nothing batches here.
 
-use super::*;
+use super::{Arc, Core, Event};
 
 pub async fn pump(core: Arc<Core>, mut sink: impl FnMut(&[Event])) {
     let mut rx = core.events();

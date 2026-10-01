@@ -1,6 +1,9 @@
 //! The watcher consumers: the home/project/tree watchers, the batch-to-stale-dirs mapping, the dir listing, and the teardown.
 
-use super::*;
+use super::{
+    Arc, Batch, Core, Event, FileEntry, Path, TREE_EXCLUDES, WATCH_DEBOUNCE, Watcher, Workspace,
+    mpsc,
+};
 
 impl Core {
     /// The home-level roots are identical for every workspace (design #30):
@@ -24,7 +27,7 @@ impl Core {
         }
         self.home_watcher.lock().unwrap().replace(watcher);
         let core = Arc::clone(self);
-        spawn_watcher_consumer(core, rx, move |_core, _batch| {
+        spawn_watcher_consumer(&core, rx, move |_core, _batch| {
             let core = _core;
             for ws in core.workspaces.lock().unwrap().values() {
                 core.refresh_skills(ws);
@@ -55,7 +58,7 @@ impl Core {
             return;
         };
         let id = workspace.id.clone();
-        spawn_watcher_consumer(core, rx, move |_core, _batch| {
+        spawn_watcher_consumer(&core, rx, move |_core, _batch| {
             let core = _core;
             if let Ok(ws) = core.workspace(&id) {
                 core.refresh_skills(&ws);
@@ -87,7 +90,7 @@ impl Core {
         };
         let id = workspace.id.clone();
         let cwd = workspace.cwd.clone();
-        spawn_watcher_consumer(core, rx, move |core, batch| {
+        spawn_watcher_consumer(&core, rx, move |core, batch| {
             let Some(ws) = core.workspaces.lock().unwrap().get(&id).cloned() else {
                 return;
             };
@@ -113,11 +116,11 @@ impl Core {
 /// cares about which paths changed treats it as every watched root being
 /// affected.
 pub(crate) fn spawn_watcher_consumer(
-    core: Arc<Core>,
+    core: &Arc<Core>,
     mut rx: mpsc::UnboundedReceiver<Batch>,
     handler: impl Fn(Arc<Core>, Batch) + Send + 'static,
 ) {
-    let weak = Arc::downgrade(&core);
+    let weak = Arc::downgrade(core);
     std::thread::Builder::new()
         .name("tau-watcher".into())
         .spawn(move || {

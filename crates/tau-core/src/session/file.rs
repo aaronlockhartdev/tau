@@ -1,4 +1,4 @@
-use super::*;
+use super::{BlobRef, Error, Path, PathBuf, SessionStore, ZSTD_LEVEL, fs};
 
 impl SessionStore {
     pub(super) fn blob_path(&self, id: &str) -> PathBuf {
@@ -107,6 +107,7 @@ impl SessionStore {
 mod tests {
     use super::*;
     use crate::session::tests::{seeded, store};
+    use crate::session::{FILE_VERSION, Header, Value};
 
     #[test]
     fn oversized_payload_becomes_a_sidecar_blob() {

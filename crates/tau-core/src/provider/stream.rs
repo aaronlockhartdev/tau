@@ -1,10 +1,13 @@
-use super::*;
+use super::{
+    Duration, Frame, FunctionCall, OutputItem, Provider, ProviderError, Requests, ResponseRequest,
+    SseParser, TurnEvent, TurnResult, TurnSink, Usage, endpoint_url, fold_event, resolve_key,
+};
 
-fn emit(sink: &mut dyn TurnSink, result: &mut TurnResult, event: TurnEvent) -> bool {
+fn emit(sink: &mut dyn TurnSink, result: &mut TurnResult, event: &TurnEvent) -> bool {
     if !sink.event(event.clone()) {
         return false;
     }
-    fold_event(&event, result);
+    fold_event(event, result);
     true
 }
 
@@ -21,7 +24,7 @@ pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payl
         Frame::Completed { response } => {
             result.completed = true;
             match response.and_then(|r| r.usage) {
-                Some(usage) => emit(sink, result, TurnEvent::Completed(usage)),
+                Some(usage) => emit(sink, result, &TurnEvent::Completed(usage)),
                 None => true,
             }
         }
@@ -31,18 +34,18 @@ pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payl
             reasoning_details,
         } => {
             if let Some(text) = delta
-                && !emit(sink, result, TurnEvent::Text(text))
+                && !emit(sink, result, &TurnEvent::Text(text))
             {
                 return false;
             }
             if let Some(text) = reasoning_text
-                && !emit(sink, result, TurnEvent::Reasoning(text))
+                && !emit(sink, result, &TurnEvent::Reasoning(text))
             {
                 return false;
             }
             for block in reasoning_details.into_iter().flatten() {
                 if let Some(text) = block.text
-                    && !emit(sink, result, TurnEvent::Reasoning(text))
+                    && !emit(sink, result, &TurnEvent::Reasoning(text))
                 {
                     return false;
                 }
@@ -51,7 +54,7 @@ pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payl
         }
         Frame::ReasoningDelta { delta } | Frame::ReasoningTextDelta { delta } => {
             if let Some(text) = delta {
-                emit(sink, result, TurnEvent::Reasoning(text))
+                emit(sink, result, &TurnEvent::Reasoning(text))
             } else {
                 true
             }

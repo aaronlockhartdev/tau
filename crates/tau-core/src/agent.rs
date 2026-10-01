@@ -105,7 +105,7 @@ struct Queued {
     in_file: bool,
 }
 
-fn lane_name(lane: Lane) -> &'static str {
+const fn lane_name(lane: Lane) -> &'static str {
     match lane {
         Lane::Force => "force",
         Lane::Steering => "steering",

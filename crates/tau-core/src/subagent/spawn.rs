@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildLink, ChildState, ContextMode,
+    KIND_SUBAGENT, Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionParams, SessionStore,
+    SpawnNotice, Spawned, StateNotice, Supervisor, json, om_integration, title_on_disk, tools,
+};
 
 impl Supervisor {
     /// Spawn a child (spec §5.1): async — this only sets things up; the
@@ -247,7 +251,7 @@ impl Supervisor {
                 ChildState::Running => {}
                 ChildState::Idle { .. } => {
                     if child.agent.has_pending() {
-                        if child.set_state(ChildState::Running).is_err() {
+                        if child.set_state(&ChildState::Running).is_err() {
                             sup.mark_failed(&child, "state entry failed".into());
                             break;
                         }

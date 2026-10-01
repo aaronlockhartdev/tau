@@ -112,7 +112,7 @@ impl Default for SseParser {
     }
 }
 impl SseParser {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             buf: Vec::new(),
             data: Vec::new(),

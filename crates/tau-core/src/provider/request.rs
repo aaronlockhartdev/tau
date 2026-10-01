@@ -60,7 +60,7 @@ struct PromptCacheOptions {
 }
 
 /// `cache.retention` → the wire's `retention` values (#35).
-fn cache_retention_wire(retention: CacheRetention) -> Option<&'static str> {
+const fn cache_retention_wire(retention: CacheRetention) -> Option<&'static str> {
     match retention {
         CacheRetention::Short => Some("24h"),
         CacheRetention::Long => Some("7d"),
@@ -125,32 +125,32 @@ impl ResponseRequest {
         self
     }
 
-    pub fn with_max_output_tokens(mut self, n: u64) -> Self {
+    pub const fn with_max_output_tokens(mut self, n: u64) -> Self {
         self.max_output_tokens = Some(n);
         self
     }
 
-    pub fn with_temperature(mut self, t: f32) -> Self {
+    pub const fn with_temperature(mut self, t: f32) -> Self {
         self.temperature = Some(t);
         self
     }
 
-    pub fn with_top_p(mut self, p: f32) -> Self {
+    pub const fn with_top_p(mut self, p: f32) -> Self {
         self.top_p = Some(p);
         self
     }
 
-    pub fn with_frequency_penalty(mut self, p: f32) -> Self {
+    pub const fn with_frequency_penalty(mut self, p: f32) -> Self {
         self.frequency_penalty = Some(p);
         self
     }
 
-    pub fn with_presence_penalty(mut self, p: f32) -> Self {
+    pub const fn with_presence_penalty(mut self, p: f32) -> Self {
         self.presence_penalty = Some(p);
         self
     }
 
-    pub fn with_reasoning(mut self, effort: ReasoningEffort) -> Self {
+    pub const fn with_reasoning(mut self, effort: ReasoningEffort) -> Self {
         self.reasoning = Some(ReasoningParam {
             effort,
             summary: None,
@@ -160,7 +160,7 @@ impl ResponseRequest {
 
     /// `thinking.summary` (spec §12, #35): the summary streams as its own
     /// delta dialect alongside the text.
-    pub fn with_reasoning_summary(mut self) -> Self {
+    pub const fn with_reasoning_summary(mut self) -> Self {
         if let Some(param) = &mut self.reasoning {
             param.summary = Some(ReasoningSummary::Auto);
         }

@@ -1,6 +1,10 @@
 //! Snapshot + paged-read projections: the metadata skeleton, the page read, and the closed-session (file) path.
 
-use super::*;
+use super::{
+    Core, CoreUsage, Entry, EntryMeta, EntryStatus, LiveSession, LiveState, OmSnapshot, Ordering,
+    Path, ProtocolError, SessionMeta, SessionStore, Snapshot, TurnState, Usage, Value, ViewEntry,
+    info_to_protocol,
+};
 
 impl Core {
     pub(crate) fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
@@ -95,7 +99,6 @@ impl Core {
     }
 
     pub(crate) fn entries(
-        &self,
         live: &LiveSession,
         since: Option<String>,
         range: Option<tau_protocol::snapshot::EntryRange>,
@@ -137,7 +140,7 @@ impl Core {
             .unwrap()
             .values()
             .find_map(|w| {
-                self.session_access(w)
+                Self::session_access(w)
                     .into_iter()
                     .find(|m| m.id == id && !m.archived)
                     .map(|m| (w.clone(), m))
@@ -196,7 +199,7 @@ impl Core {
             .unwrap()
             .values()
             .find(|w| {
-                self.session_access(w)
+                Self::session_access(w)
                     .iter()
                     .any(|m| m.id == id && !m.archived)
             })

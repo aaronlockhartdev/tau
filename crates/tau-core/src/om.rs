@@ -60,12 +60,22 @@ impl OmConfig {
 
     /// The ~6k-token buffering increment at the default thresholds
     /// (`resolveBufferTokens`: ratios of the message threshold).
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "ratio clamped to [0,1]: the product stays in [0, observe_threshold], far below u32::MAX"
+    )]
     pub fn buffer_increment(&self) -> u32 {
         let ratio = self.buffer_activation.clamp(0.0, 1.0);
         (self.observe_threshold as f64 * (1.0 - ratio)).round() as u32
     }
 
     /// Raw tokens kept after activation (`resolveRetentionFloor`).
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "soft-token config values: ratio clamped to [0,1], activation guarded >= 1000.0 — non-negative, far below u32::MAX"
+    )]
     pub fn retention_floor(&self) -> u32 {
         let threshold = self.observe_threshold as u64;
         if self.buffer_activation >= 1000.0 {
@@ -86,7 +96,7 @@ pub fn should_observe(pending_tokens: u32, observed_tokens: u32, config: &OmConf
 
 /// Reflector trigger: observation tokens reached the threshold
 /// (`getStatus` `shouldReflect`).
-pub fn should_reflect(observation_tokens: u32, config: &OmConfig) -> bool {
+pub const fn should_reflect(observation_tokens: u32, config: &OmConfig) -> bool {
     observation_tokens >= config.reflect_threshold
 }
 
@@ -106,6 +116,10 @@ pub struct ChunkTokens(pub u32);
 /// `pending - retention_floor`, biased over (remaining context lands at or
 /// below the floor), with a 95%-of-floor overshoot guard and a
 /// `min(1000, floor)` minimum remainder.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "observation-log-sized token counts, well under u32::MAX"
+)]
 pub fn projected_message_removal(
     chunks: &[ChunkTokens],
     config: &OmConfig,
@@ -237,6 +251,10 @@ impl fmt::Display for Cursor {
 
 /// Soft token estimate for thresholding (spec §4: "a single estimator is
 /// sufficient since thresholds are soft"). ~4 chars/token, no dependencies.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "soft estimator over message-sized text, well under u32::MAX"
+)]
 pub fn token_count(text: &str) -> u32 {
     (text.chars().count() / 4) as u32
 }

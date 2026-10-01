@@ -24,3 +24,21 @@ insta = { version = "1", features = ["json"] }
 sha2 = "0.10"
 notify = "8.2"
 notify-debouncer-full = "0.7"
+
+[workspace.lints.clippy]
+# Pedantic cherry-picks (phase 2 section 0): a short named list rather than
+# the whole pedantic group; deliberate exceptions get a scoped `#[allow]`
+# with a one-line reason. docs/research/refactor-rust.md §2.
+# Dropped for >50 findings (wave rule): as_conversions (84), string_slice (58).
+# string_to_string is removed upstream (implicit_clone covers it).
+bool_to_int_with_if = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cloned_instead_of_copied = "deny"
+missing_const_for_fn = "deny"
+needless_pass_by_value = "deny"
+redundant_else = "deny"
+trivially_copy_pass_by_ref = "deny"
+unnecessary_debug_formatting = "deny"
+unused_self = "deny"
+wildcard_imports = "deny"

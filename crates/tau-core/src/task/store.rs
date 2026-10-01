@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    Criterion, CriterionStatus, Evidence, STATUS_BLOCKED, STATUS_CANCELLED, STATUS_DONE,
+    STATUS_IN_PROGRESS, STATUS_PENDING, SessionStore, Step, StoreResult, Task, TaskEvent, Value,
+    append_event, find,
+};
 
 pub fn create(
     store: &mut SessionStore,
@@ -10,7 +14,7 @@ pub fn create(
     append_event(
         store,
         id,
-        TaskEvent::Created {
+        &TaskEvent::Created {
             title: title.to_owned(),
             steps,
             criteria,
@@ -36,7 +40,7 @@ pub fn assign(creator: &mut SessionStore, id: &str, worker_session: &str) -> Sto
     append_event(
         creator,
         id,
-        TaskEvent::Assigned {
+        &TaskEvent::Assigned {
             worker: Some(worker_session.to_owned()),
             record: None,
         },
@@ -51,7 +55,7 @@ pub fn start(store: &mut SessionStore, id: &str) -> StoreResult<Task> {
     if task.status != STATUS_PENDING && task.status != STATUS_BLOCKED {
         return Err(format!("task {id}: cannot start from {}", task.status));
     }
-    append_event(store, id, TaskEvent::Started)?;
+    append_event(store, id, &TaskEvent::Started)?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -71,7 +75,7 @@ pub fn add_evidence(store: &mut SessionStore, id: &str, evidence: Evidence) -> S
             evidence.criterion
         ));
     }
-    append_event(store, id, TaskEvent::Evidence { evidence })?;
+    append_event(store, id, &TaskEvent::Evidence { evidence })?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -93,7 +97,7 @@ pub fn block(
     append_event(
         store,
         id,
-        TaskEvent::Blocked {
+        &TaskEvent::Blocked {
             reason: reason.to_owned(),
             needs,
         },
@@ -141,7 +145,7 @@ pub fn finish(
     if force && reason.is_none() {
         return Err(format!("task {id}: force finish requires a reason"));
     }
-    append_event(store, id, TaskEvent::Finished { force, reason })?;
+    append_event(store, id, &TaskEvent::Finished { force, reason })?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -160,7 +164,7 @@ pub fn handoff(store: &mut SessionStore, id: &str, output: &Value) -> StoreResul
     append_event(
         store,
         id,
-        TaskEvent::HandedOff {
+        &TaskEvent::HandedOff {
             output: output.clone(),
         },
     )?;
@@ -174,7 +178,7 @@ pub fn cancel(store: &mut SessionStore, id: &str, reason: Option<String>) -> Sto
     if task.status == STATUS_DONE {
         return Err(format!("task {id}: done tasks do not cancel"));
     }
-    append_event(store, id, TaskEvent::Cancelled { reason })?;
+    append_event(store, id, &TaskEvent::Cancelled { reason })?;
     find(store, id).map(|t| t.unwrap())
 }
 
@@ -183,7 +187,7 @@ pub fn note(store: &mut SessionStore, id: &str, text: &str) -> StoreResult<()> {
     append_event(
         store,
         id,
-        TaskEvent::Note {
+        &TaskEvent::Note {
             text: text.to_owned(),
         },
     )

@@ -1,4 +1,4 @@
-use super::*;
+use super::{ContextMode, Deserialize, Serialize, SkillInfo, Usage, snapshot};
 use crate::payload::{ResumeContract, Task};
 use crate::snapshot::ViewEntry;
 use serde_json::Value;
@@ -190,6 +190,7 @@ pub enum SystemEventKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{MessageLane, payload};
     use serde_json::json;
 
     /// Every event variant round-trips; the multiplexed-channel envelope

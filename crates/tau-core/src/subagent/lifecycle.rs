@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Child, ChildState, Lane, Ordering, StateNotice, StoppedBy, Supervisor, WakeKind,
+    WakeNotice,
+};
 
 impl Supervisor {
     /// `subagent_message` (and the GUI's send to a child): running → the
@@ -41,7 +44,7 @@ impl Supervisor {
                     self.check_cap(true)?;
                 }
                 let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
-                child.set_state(ChildState::Running)?;
+                child.set_state(&ChildState::Running)?;
                 child.wake.notify_one();
                 self.bridge.state(&StateNotice {
                     parent: self.parent_session.clone(),
@@ -102,7 +105,7 @@ impl Supervisor {
     fn finish_stop(&self, child: &Arc<Child>, by: StoppedBy) -> Result<String, String> {
         let name = child.name.clone();
         let note = format!("stopped by {}", by.as_str());
-        child.set_state(ChildState::Stopped { by })?;
+        child.set_state(&ChildState::Stopped { by })?;
         // The drive ends at its loop head (running: after the interrupted
         // entry lands; parked: it wakes from its sleep and exits).
         child.wake.notify_one();

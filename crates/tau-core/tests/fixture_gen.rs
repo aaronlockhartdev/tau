@@ -9,6 +9,11 @@
 //! worked through 200 entries (a user goal, a plan, a 197-call tool loop,
 //! a summary) on the real entry kinds and payload shapes, so the GUI
 //! renders it like an ordinary transcript.
+//!
+#![allow(
+    clippy::cast_possible_truncation,
+    reason = "deterministic fixture: loop indices are bounded by the fixed 50x200 shape"
+)]
 
 use sha2::{Digest, Sha256};
 use std::path::Path;

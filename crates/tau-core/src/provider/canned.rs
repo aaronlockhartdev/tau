@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, FunctionCall, Future, Pin, Provider, ProviderError, Requests, ResponseRequest, TurnEvent,
+    TurnResult, TurnSink, decode_stream, fold_event, stream_turn,
+};
 
 /// The loop's provider seam (spec §6): a turn is a request in, a result out,
 /// with every stream delta forwarded to the sink on the way — the live path

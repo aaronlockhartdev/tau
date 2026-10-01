@@ -1,6 +1,10 @@
 //! Core state: the owned registry (workspaces, live sessions), the builder, the workspace index, and the small shared helpers.
 
-use super::*;
+use super::{
+    AgentSession, Arc, AtomicBool, AtomicU64, BTreeMap, ChildProviderFactory, Config, Duration,
+    Event, ForwardingProvider, HashMap, Lane, MessageLane, Mutex, Ordering, Path, PathBuf,
+    ProtocolError, SessionMeta, SkillInfo, SystemEventKind, Watcher, Weak, Workspace, config, mpsc,
+};
 
 /// The watcher's debounce window (design #30): a save burst (a temp-write
 /// followed by an atomic rename) ends well inside it; downstream work (a
@@ -273,7 +277,7 @@ struct WorkspaceIndexEntry {
     #[serde(default = "open_default")]
     open: bool,
 }
-fn open_default() -> bool {
+const fn open_default() -> bool {
     true
 }
 /// The routing pair an overflow notification rides on: the dropped
@@ -577,7 +581,7 @@ impl Core {
     }
 }
 
-pub(crate) fn lane_to_lane(lane: MessageLane) -> Lane {
+pub(crate) const fn lane_to_lane(lane: MessageLane) -> Lane {
     match lane {
         MessageLane::Force => Lane::Force,
         MessageLane::Steering => Lane::Steering,
@@ -587,7 +591,7 @@ pub(crate) fn lane_to_lane(lane: MessageLane) -> Lane {
 
 /// The inverse of `lane_to_lane` (re-queueing a core-lane message into
 /// the GUI's queue, where the protocol's lane is the currency).
-pub(crate) fn lane_to_message_lane(lane: Lane) -> MessageLane {
+pub(crate) const fn lane_to_message_lane(lane: Lane) -> MessageLane {
     match lane {
         Lane::Force => MessageLane::Force,
         Lane::Steering => MessageLane::Steering,

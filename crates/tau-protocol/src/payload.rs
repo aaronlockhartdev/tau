@@ -27,7 +27,7 @@ pub enum StepStatus {
 }
 
 impl StepStatus {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             StepStatus::Pending => "pending",
             StepStatus::Active => "active",
@@ -54,7 +54,7 @@ pub enum CriterionStatus {
 }
 
 impl CriterionStatus {
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             CriterionStatus::Pending => "pending",
             CriterionStatus::Satisfied => "satisfied",

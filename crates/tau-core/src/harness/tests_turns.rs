@@ -65,7 +65,7 @@ async fn closing_a_session_stops_its_in_flight_turn() {
         .collect();
     // The stream was cut, not completed: the last stream event for the
     // session is an interrupted end, with no live activity after it.
-    let Some(Event::StreamEnd { interrupted, .. }) = session_events.last().cloned() else {
+    let Some(Event::StreamEnd { interrupted, .. }) = session_events.last().copied() else {
         panic!("the closed session's stream never closed: {session_events:?}");
     };
     assert!(interrupted, "the close did not cut the stream");

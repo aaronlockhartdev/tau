@@ -110,6 +110,10 @@ const fn crc_table() -> [u32; 256] {
     let mut table = [0u32; 256];
     let mut i = 0;
     while i < 256 {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the loop bounds i to < 256"
+        )]
         let mut c = i as u32;
         let mut n = 0;
         while n < 8 {
@@ -283,7 +287,7 @@ impl SessionStore {
     }
     /// A fixed timestamp for every write (the test seam that makes the
     /// shared fixture byte-deterministic, roadmap G handoff 1).
-    pub fn with_fixed_time(mut self, ms: u64) -> Self {
+    pub const fn with_fixed_time(mut self, ms: u64) -> Self {
         self.fixed_time = Some(ms);
         self
     }
@@ -293,7 +297,7 @@ impl SessionStore {
     }
 
     /// The header's created timestamp (epoch ms).
-    pub fn created(&self) -> u64 {
+    pub const fn created(&self) -> u64 {
         self.created
     }
 
@@ -312,6 +316,10 @@ impl SessionStore {
             .join(format!("{}.jsonl", self.id))
     }
 
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "epoch milliseconds fit u64 with ~584 million years to spare"
+    )]
     fn now_ms() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

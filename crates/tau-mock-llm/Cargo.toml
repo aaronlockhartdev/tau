@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 # `net` beyond the workspace feature set: the server is a raw TcpListener
 # (the provider/tests/server.rs pattern), no HTTP framework.

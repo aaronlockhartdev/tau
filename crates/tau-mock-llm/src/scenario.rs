@@ -148,11 +148,11 @@ impl ScenarioSet {
         })
     }
 
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.scenarios.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.scenarios.is_empty()
     }
 

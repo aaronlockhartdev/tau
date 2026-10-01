@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Child, ChildState, KIND_SUBAGENT, Lane, StateNotice, Supervisor, Value, WaitingOn,
+    WakeKind, WakeNotice, json,
+};
 
 impl Supervisor {
     /// Assign one of this session's tasks to a child (spec §5.3): the
@@ -56,7 +59,7 @@ impl Supervisor {
     pub(super) fn mark_failed(&self, child: &Arc<Child>, reason: String) {
         // The state entry itself can fail (storage down): nothing further
         // to do — the in-memory state already says failed.
-        if let Err(e) = child.set_state(ChildState::Failed {
+        if let Err(e) = child.set_state(&ChildState::Failed {
             reason: reason.clone(),
         }) {
             eprintln!("subagent state entry failed: {e}");
@@ -145,7 +148,7 @@ impl Supervisor {
             self.resolve_assigned_task(&child, &output);
             // Quiescence, not death (ADR-0001): the loop ends, the
             // concurrency slot frees, and the parent is woken always.
-            if let Err(e) = child.set_state(ChildState::Done {
+            if let Err(e) = child.set_state(&ChildState::Done {
                 output: output.clone(),
             }) {
                 return e;
@@ -173,7 +176,7 @@ impl Supervisor {
             // A note parks the child. The declared (or default) wait
             // target decides the wake (ADR-0001 wake rules).
             let waiting_on = waiting_on.unwrap_or(WaitingOn::Parent);
-            if let Err(e) = child.set_state(ChildState::Idle { waiting_on }) {
+            if let Err(e) = child.set_state(&ChildState::Idle { waiting_on }) {
                 return e;
             }
             self.bridge.state(&StateNotice {

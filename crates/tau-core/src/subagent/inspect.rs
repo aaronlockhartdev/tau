@@ -1,4 +1,4 @@
-use super::*;
+use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, om_integration};
 
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).

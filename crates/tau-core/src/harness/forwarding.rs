@@ -1,6 +1,13 @@
 //! The streaming seam: the forwarding provider that mirrors stream events onto the protocol channel, the protocol mapping, the session provider factory, and the sub-agent factory/driver/bridge.
 
-use super::*;
+use super::{
+    AgentSession, Arc, AtomicBool, AtomicU64, BoxedDrive, ChildDriver, ChildProviderFactory,
+    ContextMode, Core, Duration, Event, HashMap, LiveSession, Mutex, Ordering, PipeCounters,
+    ProviderTurn, ResponseRequest, SessionMeta, SessionStore, SkillInfo, SpawnNotice, StateNotice,
+    SubagentBridge, SubagentEventKind, SubagentInfo, Supervisor, TurnEvent, TurnProvider,
+    TurnProviderRef, TurnSink, Usage, WakeKind, WakeNotice, Weak, json, mpsc, pipe_send, provider,
+    run_turn,
+};
 use std::future::Future;
 use std::pin::Pin;
 /// A `TurnProvider` wrapper that mirrors stream events onto the protocol
@@ -139,7 +146,7 @@ impl ForwardSink<'_> {
 
 /// The context modes are structurally identical (both three-lowercase);
 /// the mapping is the ADR-0002 crate boundary.
-pub(crate) fn mode_to_protocol(m: crate::subagent::ContextMode) -> ContextMode {
+pub(crate) const fn mode_to_protocol(m: crate::subagent::ContextMode) -> ContextMode {
     match m {
         crate::subagent::ContextMode::Fresh => ContextMode::Fresh,
         crate::subagent::ContextMode::Compacted => ContextMode::Compacted,

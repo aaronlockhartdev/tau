@@ -1,7 +1,11 @@
 //! The session-lifecycle arms: list / new / rename / model / open / close /
 //! delete / archive / restore / branch / snapshot / paged reads.
 
-use super::*;
+use super::{
+    Arc, Command, CommandOutput, Core, Event, MAX_TITLE_LEN, Ordering, Path, PathBuf,
+    ProtocolError, SessionMeta, SessionStore, StoppedBy, delete_session_files, derive_turn, json,
+    last_model_note, model_note, running_turn_refusal,
+};
 
 impl Core {
     pub(crate) fn dispatch_session(
@@ -22,7 +26,7 @@ impl Core {
                 // The file is the record: sessions closed since boot (or
                 // from a previous run) still list, `archive/` included
                 // (flagged); the live copy wins.
-                for m in self.session_access(&workspace) {
+                for m in Self::session_access(&workspace) {
                     if !sessions.iter().any(|s| s.id == m.id) {
                         sessions.push(m);
                     }
@@ -71,7 +75,7 @@ impl Core {
                             .unwrap()
                             .values()
                             .find(|w| {
-                                self.session_access(w)
+                                Self::session_access(w)
                                     .iter()
                                     .any(|m| m.id == session && !m.archived)
                             })
@@ -151,7 +155,7 @@ impl Core {
                             .unwrap()
                             .values()
                             .find(|w| {
-                                self.session_access(w)
+                                Self::session_access(w)
                                     .iter()
                                     .any(|m| m.id == session && !m.archived)
                             })
@@ -357,8 +361,7 @@ impl Core {
                         children.insert(id.clone());
                     }
                 }
-                for m in self
-                    .session_access(&workspace)
+                for m in Self::session_access(&workspace)
                     .into_iter()
                     .filter(|m| m.parent.as_deref() == Some(session.as_str()))
                 {
@@ -377,7 +380,7 @@ impl Core {
                         });
                     }
                 }
-                self.archive_live(live, &session, &children)
+                self.archive_live(&live, &session, &children)
             }
             Command::SessionRestore { workspace, session } => {
                 let workspace = self.workspace(&workspace)?;
@@ -399,8 +402,7 @@ impl Core {
                 // The session's sub-agent children, archived with it, restore
                 // with it (their files are stable — off the live path, no
                 // turn can write them).
-                for m in self
-                    .session_access(&workspace)
+                for m in Self::session_access(&workspace)
                     .into_iter()
                     .filter(|m| m.archived && m.parent.as_deref() == Some(session.as_str()))
                 {
@@ -488,7 +490,7 @@ impl Core {
                 range,
             } => {
                 let entries = match self.live(&session) {
-                    Ok(live) => self.entries(&live, since, range)?,
+                    Ok(live) => Self::entries(&live, since, range)?,
                     Err(_) => self.entries_from_disk(&session, since, range)?,
                 };
                 Ok(CommandOutput::Entries { entries })

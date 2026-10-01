@@ -2,7 +2,10 @@
 //! core's state — the entry point the transports call (spec §8, ADR-0006).
 //! The arms are grouped per domain in their own files; the entry routes.
 
-use super::*;
+use super::{
+    Arc, BufRead, Command, CommandOutput, Core, FileText, Path, PathBuf, ProtocolError,
+    ProviderInfo, list_dir,
+};
 
 impl Core {
     pub fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {

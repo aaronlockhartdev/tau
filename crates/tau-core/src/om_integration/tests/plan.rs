@@ -103,6 +103,10 @@ fn plan_reflects_at_the_observation_threshold_and_commit_rewrites_the_suffix() {
         OmRecord {
             frozen_prefix: prefix.clone(),
             active_observations: suffix,
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "the default reflect threshold is a token count"
+            )]
             observation_tokens: crate::config::Om::default().reflect_threshold as u32,
             ..Default::default()
         },

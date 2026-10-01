@@ -6,7 +6,10 @@
 
 use std::collections::BTreeSet;
 
-use super::*;
+use super::{
+    Arc, CommandOutput, Core, LiveSession, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
+    SessionStore, StoppedBy, delete_session_files,
+};
 
 impl Core {
     /// The live child-quiesce half of a top-level archive (ADR-0005),
@@ -16,7 +19,7 @@ impl Core {
     /// of the windows.
     pub(super) fn archive_live(
         &self,
-        live: Arc<LiveSession>,
+        live: &Arc<LiveSession>,
         session: &str,
         children: &BTreeSet<String>,
     ) -> Result<CommandOutput, ProtocolError> {
@@ -29,7 +32,7 @@ impl Core {
         // (its map read predates the removal): re-check after the
         // removal and abort if a turn started in the window — the
         // file must not move mid-write.
-        self.archive_turn_recheck(session, &live)?;
+        self.archive_turn_recheck(session, live)?;
         // This session's children: a running one is stopped and its
         // drive quiesced before any file moves (its wake would
         // write the parent file mid-archive), and a parked one's
@@ -118,7 +121,7 @@ impl Core {
         // the session's Arc before the detach to CAS a turn here —
         // and append_line opens with create(true), so a deleted
         // live file would be recreated headerless (unopenable).
-        self.archive_turn_recheck(session, &live)?;
+        self.archive_turn_recheck(session, live)?;
         // The commit: from here the archive only moves files, so
         // the flag goes in before the parent's move — a turn that
         // starts in the remaining window reads it at its first
@@ -186,8 +189,7 @@ impl Core {
         // The children that archive with it: the workspace's disk scan is
         // the whole truth here (there is no supervisor in memory). One
         // already archived stays archived.
-        let children: Vec<String> = self
-            .session_access(&workspace)
+        let children: Vec<String> = Self::session_access(&workspace)
             .into_iter()
             .filter(|m| !m.archived && m.parent.as_deref() == Some(session))
             .map(|m| m.id)
@@ -252,7 +254,7 @@ impl Core {
         // The workspace's disk scan is the whole truth here (no supervisor in
         // memory): BFS the parent links to collect the target and all
         // descendants.
-        let all = self.session_access(&workspace);
+        let all = Self::session_access(&workspace);
         let to_delete = descendants(&all, session);
         for id in &to_delete {
             // A child may still be open on its own: drop it from the live map

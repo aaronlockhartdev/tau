@@ -207,7 +207,7 @@ fn find(store: &SessionStore, id: &str) -> StoreResult<Option<Task>> {
     Ok(load(store)?.into_iter().find(|t| t.id == id))
 }
 
-fn append_event(store: &mut SessionStore, id: &str, event: TaskEvent) -> StoreResult<()> {
+fn append_event(store: &mut SessionStore, id: &str, event: &TaskEvent) -> StoreResult<()> {
     let payload = event.to_value(id);
     // Task events append to the active branch like all entries (spec
     // §5.3): a null parent would fork the conversation onto a phantom

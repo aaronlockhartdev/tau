@@ -40,6 +40,10 @@ fn run(n: u64) {
     let since_ms = t.elapsed().as_millis();
 
     let t = Instant::now();
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the fixture size is a small entry count"
+    )]
     let page = reader
         .entries_range((n / 2) as usize, (n / 2 + 100) as usize)
         .unwrap();

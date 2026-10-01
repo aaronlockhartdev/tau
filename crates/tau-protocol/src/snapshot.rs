@@ -71,6 +71,10 @@ pub enum EntryStatus {
     Interrupted,
 }
 
+#[allow(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if hands the field by reference"
+)]
 fn is_ok_status(s: &EntryStatus) -> bool {
     *s == EntryStatus::Ok
 }

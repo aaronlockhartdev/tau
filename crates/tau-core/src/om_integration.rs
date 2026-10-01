@@ -55,6 +55,10 @@ impl OmState {
     /// Fold the config's absolute `buffer_increment` into the module's
     /// `buffer_activation` ratio (1 − increment/threshold; the two forms
     /// agree at the defaults: 6k over 30k = 0.8).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "config thresholds are token counts, well under u32::MAX"
+    )]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
         let observe = om.observe_threshold.max(1) as f64;
         let activation = (1.0 - om.buffer_increment as f64 / observe).clamp(0.0, 1.0);

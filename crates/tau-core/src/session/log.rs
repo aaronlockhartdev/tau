@@ -5,7 +5,7 @@
 //! file-backed reads' exactly (empty lines keep their slots). A
 //! not-yet-opened store falls back to the file-backed read.
 
-use super::*;
+use super::{Entry, Error, SessionStore, fs};
 
 impl SessionStore {
     /// Re-open when the file has grown past the length the in-memory log

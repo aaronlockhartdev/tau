@@ -1,3 +1,4 @@
+use super::impls::image_media_type;
 use super::*;
 use base64::Engine;
 

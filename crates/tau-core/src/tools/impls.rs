@@ -1,4 +1,4 @@
-use super::*;
+use super::{Path, PathBuf, ToolOutput, hashline};
 use base64::Engine;
 
 fn resolve(cwd: &Path, path: &str) -> PathBuf {
@@ -59,11 +59,19 @@ pub(super) async fn read(
         Ok(rows) => rows,
         Err(e) => return e.to_string().into(),
     };
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "tool arguments; the pager takes no more rows than exist"
+    )]
     let offset = args
         .get("offset")
         .and_then(|v| v.as_u64())
         .unwrap_or(1)
         .max(1) as usize;
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "tool arguments; the pager takes no more rows than exist"
+    )]
     let limit = args
         .get("limit")
         .and_then(|v| v.as_u64())

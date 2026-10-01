@@ -145,6 +145,11 @@ fn crc_catches_a_flipped_byte() {
 /// loop (the spec §3 verification values never change): the classic
 /// check vector plus a direct equivalence against the old algorithm.
 #[test]
+#[allow(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    reason = "crc32 test vectors: the loop index is bounded to 0..4096, and the reference keeps the top 8 bits by design"
+)]
 fn crc32_table_matches_the_old_bitwise_values() {
     // The classic CRC-32/IEEE check value.
     assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
