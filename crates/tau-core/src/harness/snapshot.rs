@@ -138,8 +138,8 @@ impl Core {
                     .find(|m| m.id == id && !m.archived)
                     .map(|m| (w.clone(), m))
             })
-            .ok_or_else(|| ProtocolError::Other {
-                message: "unknown session".into(),
+            .ok_or_else(|| ProtocolError::NotFound {
+                what: format!("session {id} is not open"),
             })?;
         let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), id);
         store.open().map_err(|e| ProtocolError::Other {
@@ -197,8 +197,8 @@ impl Core {
                     .any(|m| m.id == id && !m.archived)
             })
             .map(|w| w.cwd.clone())
-            .ok_or_else(|| ProtocolError::Other {
-                message: "unknown session".into(),
+            .ok_or_else(|| ProtocolError::NotFound {
+                what: format!("session {id} is not open"),
             })?;
         let mut store = SessionStore::for_workspace(Path::new(&cwd), id);
         store.open().map_err(|e| ProtocolError::Other {

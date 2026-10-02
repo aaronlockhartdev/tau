@@ -847,7 +847,24 @@ async fn entries_of_a_closed_session_are_served_from_disk() {
         })
         .unwrap_err();
     assert!(
-        matches!(err, tau_protocol::ProtocolError::Other { .. }),
-        "{err:?}"
+        matches!(err, tau_protocol::ProtocolError::NotFound { .. }),
+        "an unowned session is a NotFound, not an Other: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn session_snapshot_of_an_unowned_session_is_not_found() {
+    // A session no open workspace owns is the canonical unknown-entity
+    // shape, not an Other (ticket #38).
+    let rig = rig(done_body(), 0);
+    let err = rig
+        .core
+        .dispatch(Command::SessionSnapshot {
+            session: "no-such-session".into(),
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, tau_protocol::ProtocolError::NotFound { .. }),
+        "an unowned session is a NotFound, not an Other: {err:?}"
     );
 }
