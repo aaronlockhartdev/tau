@@ -150,6 +150,13 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
     // is the deadline (a one-shot read races the snapshot apply).
     const s = await readStore(sid);
     await browser.execute((id) => window.__tau.switchSession(id), s.childIds[0]);
+    // The spawn record is the child's first entry, but the open pins the
+    // tail — on a short viewport (the CI webview is 464 px) the head is
+    // outside the render window; scroll it into view before asserting.
+    await browser.execute(() => {
+      const sc = document.querySelector('.scroll');
+      if (sc) sc.scrollTop = 0;
+    });
     const d = await waitUntil(readDom, (d) => d.hasSpawnCard, 30000, 'the spawn card in the child transcript');
     check('the DOM shows the spawn card in the child transcript', d.hasSpawnCard, 'spawn label present');
   });

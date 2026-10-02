@@ -83,10 +83,13 @@ const domState = () => {
     hasScroll: !!sc,
     clientH: vh,
     scrollH: sc ? sc.scrollHeight : 0,
-    // The spawn record's card header. Transcript passes the parent label
-    // even in the child's own view (it renders the 'parent · X' row), so
-    // the spawn card reads 'spawn' there too (subagentShell).
-    hasSpawnCard: [...document.querySelectorAll('.card2 .hd')].some((h) => h.textContent.trim() === 'spawn'),
+    // The spawn record's card header: 'spawn' once the parent's title is
+    // in the store, 'sub-agent' while it is not yet (label-resolution
+    // timing); both are the spawn record in the child's own view.
+    hasSpawnCard: [...document.querySelectorAll('.card2 .hd')].some((h) => {
+      const t = h.textContent.trim();
+      return t === 'spawn' || t === 'sub-agent';
+    }),
     trackH: document.querySelector('.track') ? document.querySelector('.track').offsetHeight : 0,
     domCards: cards.length,
     visible: cards.filter((c) => {
@@ -94,7 +97,17 @@ const domState = () => {
       return r.bottom > 0 && r.top < vh;
     }).length,
     toolChips: [...document.querySelectorAll('.tool .chip .nm')].map((e) => e.textContent.trim()),
-    lastText: last ? last.textContent : ''
+    lastText: last ? last.textContent : '',
+    // Diagnostics: every card header's text, and the current session's
+    // parent's title (the spawn label's source) — a CI failure shows
+    // which label the header read and whether the parent was listed.
+    hdTexts: [...document.querySelectorAll('.card2 .hd')].map((h) => h.textContent.trim()),
+    parentTitle: (() => {
+      const s = window.__tau?.store?.();
+      const cur = s?.sessions?.[s?.current];
+      const p = cur?.meta?.parent;
+      return p ? s.sessions[p]?.meta?.title ?? null : null;
+    })()
   };
 };
 
