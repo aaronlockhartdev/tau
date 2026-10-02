@@ -127,14 +127,28 @@ pub(crate) struct ScriptOut {
 
 /// Run `sh <script>` with `cwd`, capturing the exit code and combined output
 /// (a non-zero exit is a value here, not an error — `check.sh` and the gates
-/// read it). `pub(crate)` so the gates share the one script runner.
-pub(crate) async fn run_script_status(script: &Path, cwd: &Path) -> Result<ScriptOut, EvalError> {
-    let out = tokio::process::Command::new("sh")
+/// read it). A child past `timeout` is killed (code `-2`; a signal death is
+/// `-1`), so a hanging script can never stall a suite. `pub(crate)` so the
+/// gates share the one script runner.
+pub(crate) async fn run_script_status(
+    script: &Path,
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<ScriptOut, EvalError> {
+    let child_out = tokio::process::Command::new("sh")
         .arg(script)
         .current_dir(cwd)
-        .output()
-        .await
-        .map_err(EvalError::io)?;
+        .output();
+    let out = match tokio::time::timeout(timeout, child_out).await {
+        Ok(res) => res.map_err(EvalError::io)?,
+        // Elapsed: dropping the in-flight future kills the child.
+        Err(_) => {
+            return Ok(ScriptOut {
+                code: -2,
+                output: format!("script timed out after {}s", timeout.as_secs()),
+            });
+        }
+    };
     let output = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -147,9 +161,14 @@ pub(crate) async fn run_script_status(script: &Path, cwd: &Path) -> Result<Scrip
 }
 
 /// Run a script that must succeed (setup / oracle); a non-zero exit is an
+/// Run a script that must succeed (setup / oracle); a non-zero exit is an
 /// error carrying the script's own output.
-pub(crate) async fn run_script(script: &Path, cwd: &Path) -> Result<(), EvalError> {
-    let out = run_script_status(script, cwd).await?;
+pub(crate) async fn run_script(
+    script: &Path,
+    cwd: &Path,
+    timeout: Duration,
+) -> Result<(), EvalError> {
+    let out = run_script_status(script, cwd, timeout).await?;
     if out.code != 0 {
         return Err(EvalError::Script {
             script: script.display().to_string(),
@@ -172,7 +191,7 @@ pub async fn run_trial(
     let cwd = ws.path();
 
     if let Some(setup) = task.setup() {
-        run_script(&setup, cwd).await?;
+        run_script(&setup, cwd, Duration::from_secs(task.timeout_secs())).await?;
     }
 
     let id = SessionStore::new_session_id();
@@ -201,16 +220,23 @@ pub async fn run_trial(
     .map_err(|e| EvalError::Launch(format!("{e:?}")))?;
 
     agent.send(task.instruction.trim_end(), Lane::Steering);
-    let timed_out = tokio::time::timeout(Duration::from_secs(task.timeout_secs()), agent.process())
-        .await
-        .is_err();
+    // Distinguish a timeout from a genuine `AgentError`: both end the drive,
+    // but only the first earns the "timed out" diagnosis.
+    let (timed_out, drive_note) =
+        match tokio::time::timeout(Duration::from_secs(task.timeout_secs()), agent.process()).await
+        {
+            Ok(Ok(())) => (false, None),
+            Ok(Err(e)) => (false, Some(e.to_string())),
+            Err(_) => (true, None),
+        };
     drop(agent);
 
     // The session file is the trajectory; reading it back verifies every
     // line's CRC (the session-integrity invariant).
     let (turns, tool_calls, tokens) = read_session(cwd, &id)?;
 
-    let check = run_script_status(&task.check(), cwd).await?;
+    let check =
+        run_script_status(&task.check(), cwd, Duration::from_secs(task.timeout_secs())).await?;
     let passed = check.code == 0;
     let status = if timed_out {
         Status::Error
@@ -222,7 +248,7 @@ pub async fn run_trial(
     let note = match status {
         Status::Pass => String::new(),
         Status::Fail => check.output,
-        Status::Error => "agent turn timed out".to_owned(),
+        Status::Error => drive_note.unwrap_or_else(|| "agent turn timed out".to_owned()),
     };
 
     // Per-trial artifacts: the trajectory plus the record.
@@ -366,5 +392,32 @@ impl Checkpoint {
             .insert(outcome.task.clone(), outcome.status.as_str().to_owned());
         let json = serde_json::to_vec(self).expect("a checkpoint is always serializable");
         let _ = std::fs::write(path, json);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn script_exit_code_is_captured() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("s.sh");
+        std::fs::write(&script, "exit 3\n").unwrap();
+        let out = run_script_status(&script, dir.path(), Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(out.code, 3);
+    }
+
+    #[tokio::test]
+    async fn script_timeout_reports_sentinel_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("s.sh");
+        std::fs::write(&script, "sleep 10\n").unwrap();
+        let out = run_script_status(&script, dir.path(), Duration::from_millis(200))
+            .await
+            .unwrap();
+        assert_eq!(out.code, -2);
     }
 }

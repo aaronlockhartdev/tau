@@ -15,7 +15,12 @@ const CONCURRENCY: usize = 4;
 #[tokio::main]
 async fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let tier = parse_tier(args.first().map_or("smoke", |s| s.as_str()));
+    let tier_arg = args.first().map_or("smoke", |s| s.as_str());
+    let Some(tier) = parse_tier(tier_arg) else {
+        return fail(&format!(
+            "unknown tier {tier_arg:?} (expected \"smoke\" or \"full\")"
+        ));
+    };
     // Absolute task/scenario roots: the runner executes the task scripts with
     // the temp-dir workspace as cwd, so a relative root would not resolve.
     let cwd = match std::env::current_dir() {
@@ -60,10 +65,11 @@ async fn main() -> ExitCode {
     }
 }
 
-fn parse_tier(s: &str) -> Tier {
+fn parse_tier(s: &str) -> Option<Tier> {
     match s {
-        "full" => Tier::Full,
-        _ => Tier::Smoke,
+        "smoke" => Some(Tier::Smoke),
+        "full" => Some(Tier::Full),
+        _ => None,
     }
 }
 
@@ -72,10 +78,11 @@ fn fail(msg: &str) -> ExitCode {
     ExitCode::FAILURE
 }
 
-/// A compact, sortable run stamp (epoch seconds).
+/// A compact, sortable run stamp (epoch seconds.nanos — the nanos keep two
+/// runs started in the same second apart).
 fn stamp() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs().to_string())
+        .map(|d| format!("{}{:09}", d.as_secs(), d.subsec_nanos()))
         .unwrap_or_default()
 }

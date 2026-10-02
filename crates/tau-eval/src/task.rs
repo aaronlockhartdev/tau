@@ -119,3 +119,18 @@ pub fn load(dir: &Path) -> Result<Vec<Task>, EvalError> {
     out.sort_by(|a, b| a.id().cmp(b.id()));
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_manifest_is_a_task_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_dir = dir.path().join("broken");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("task.toml"), "id = [unterminated\n").unwrap();
+        let err = load(dir.path()).unwrap_err();
+        assert!(matches!(err, EvalError::Task(_)));
+    }
+}

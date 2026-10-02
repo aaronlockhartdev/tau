@@ -3,6 +3,8 @@
 //! (setup only, no agent) makes it fail. Run over a temp dir with no agent
 //! and no mock — pure script orchestration.
 
+use std::time::Duration;
+
 use crate::EvalError;
 use crate::runner::{run_script, run_script_status};
 use crate::task::Task;
@@ -12,10 +14,15 @@ use crate::task::Task;
 async fn seeded(task: &Task, oracle: bool) -> Result<tempfile::TempDir, EvalError> {
     let ws = tempfile::tempdir().map_err(EvalError::io)?;
     if let Some(setup) = task.setup() {
-        run_script(&setup, ws.path()).await?;
+        run_script(&setup, ws.path(), Duration::from_secs(task.timeout_secs())).await?;
     }
     if oracle {
-        run_script(&task.oracle(), ws.path()).await?;
+        run_script(
+            &task.oracle(),
+            ws.path(),
+            Duration::from_secs(task.timeout_secs()),
+        )
+        .await?;
     }
     Ok(ws)
 }
@@ -23,13 +30,23 @@ async fn seeded(task: &Task, oracle: bool) -> Result<tempfile::TempDir, EvalErro
 /// The oracle gate: `setup.sh` + `oracle/solve.sh` must make `check.sh` pass.
 pub async fn oracle_passes(task: &Task) -> Result<bool, EvalError> {
     let ws = seeded(task, true).await?;
-    let check = run_script_status(&task.check(), ws.path()).await?;
+    let check = run_script_status(
+        &task.check(),
+        ws.path(),
+        Duration::from_secs(task.timeout_secs()),
+    )
+    .await?;
     Ok(check.code == 0)
 }
 
 /// The nop gate: `setup.sh` alone (no agent) must make `check.sh` fail.
 pub async fn nop_fails(task: &Task) -> Result<bool, EvalError> {
     let ws = seeded(task, false).await?;
-    let check = run_script_status(&task.check(), ws.path()).await?;
+    let check = run_script_status(
+        &task.check(),
+        ws.path(),
+        Duration::from_secs(task.timeout_secs()),
+    )
+    .await?;
     Ok(check.code != 0)
 }
