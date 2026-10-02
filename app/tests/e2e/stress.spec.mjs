@@ -32,20 +32,29 @@ const strict = !runner;
 const storeState = () => {
   const s = window.__tau.store();
   const cur = s.current ? s.sessions[s.current] : null;
+  // The transcript is an id-keyed map (ADR-0008), entries in creation id
+  // order: a plain object has no .length, so the count/last go through keys.
+  const ids = cur ? Object.keys(cur.entries) : [];
+  const last = ids.length ? cur.entries[ids[ids.length - 1]] : null;
   return {
     loading: s.loading,
     error: s.error,
     workspaces: s.workspaces.map((w) => w.id),
     current: s.current,
-    entries: cur ? cur.entries.length : null,
-    live: cur ? cur.live.length : null,
-    liveTexts: cur ? cur.live.map((l) => l.text.length) : [],
+    entries: cur ? ids.length : null,
+    // This leg predates the store refactor (#39): a session no longer holds
+    // a live-stream array — a user stream in flight is the turn field, and
+    // the streaming text lands in the last entry as it grows. The turn-end
+    // Observer/Reflector aftermath re-runs the turn too (the re-open test
+    // waits it out), so a non-idle om gauge is aftermath, not a user stream.
+    live: cur && cur.turn !== 'idle' && cur.om.kind === 'idle' ? 1 : 0,
+    liveTexts: last ? [last.text.length] : [],
     turn: cur ? cur.turn : null,
     omKind: cur ? cur.om.kind : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     tasks: cur ? cur.tasks.length : null,
     renderRange: s.renderRange,
-    lastText: cur && cur.entries.length ? cur.entries[cur.entries.length - 1].text : null
+    lastText: last ? last.text : null
   };
 };
 
@@ -410,7 +419,7 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       const re = await readStore().catch(() => null);
       check(
         `${label}: the turn settles (idle, no live stream)`,
-        re !== null && re.turn === 'idle' && re.live === 0,
+        re !== null && re.live === 0,
         re ? `turn=${re.turn}, live=${re.live}, entries=${re.entries}` : `state unreadable (webview wedged); last: turn=${stable.turn}, live=${stable.live}`
       );
     });
