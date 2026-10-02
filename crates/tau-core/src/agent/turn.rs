@@ -5,6 +5,7 @@ use super::{
     SessionStore, ToolBatchPolicy, TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name,
     tools,
 };
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
@@ -576,8 +577,29 @@ async fn stop_flags(kill: &AtomicBool, stop: &AtomicBool) {
 /// The session's entries (file order) mapped to responses-API input items:
 /// user messages, assistant text + calls, and tool results (spec §5.4).
 fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
+    // Two-phase tool recording writes a call-phase entry (empty output)
+    // before its result-phase entry, so the last tool entry per call_id in
+    // file order is the result. Emit exactly that one — a per-call_id
+    // last-wins dedupe (ticket #37) — so a tool that returns "" still pairs
+    // its function_call with an output and the Responses API never 400s on
+    // a missing output.
+    let last_tool = entries
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| {
+            let cid = e.payload.get("call_id").and_then(Value::as_str)?;
+            e.payload
+                .get("output")
+                .and_then(CallOutput::from_payload)
+                .is_some()
+                .then(|| (cid.to_owned(), i))
+        })
+        .fold(HashMap::new(), |mut m, (cid, i)| {
+            m.insert(cid, i);
+            m
+        });
     let mut out = Vec::new();
-    for entry in entries {
+    for (i, entry) in entries.iter().enumerate() {
         match entry.kind.as_str() {
             KIND_USER => {
                 if let Some(text) = entry.payload.get("text").and_then(Value::as_str) {
@@ -644,10 +666,10 @@ fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
                 ) else {
                     continue;
                 };
-                // The call-phase entry (recorded before dispatch, empty
-                // output) is not an input item: its pair's result entry
-                // carries the output for the same call_id.
-                if matches!(&output, CallOutput::Text(t) if t.is_empty()) {
+                // Only the last recorded phase per call_id is an input item
+                // (the result); an earlier phase for the same call_id is the
+                // call, not a second result.
+                if last_tool.get(call_id) != Some(&i) {
                     continue;
                 }
                 out.push(InputEntry::CallOutput(FunctionCallOutputInput {
@@ -660,4 +682,61 @@ fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
+        Entry {
+            id: id.to_owned(),
+            parent: None,
+            timestamp: 0,
+            kind: KIND_TOOL.to_owned(),
+            payload: tau_protocol::payload::ToolPayload {
+                call_id: call_id.to_owned(),
+                name: "bash".to_owned(),
+                args: Value::Null,
+                output: tau_protocol::payload::ToolOutput::Text(output.to_owned()),
+            }
+            .to_value(),
+            blob: None,
+            first_kept_entry_id: None,
+            crc: None,
+        }
+    }
+
+    #[test]
+    fn empty_tool_result_is_emitted_as_call_output() {
+        // A tool that returns "" still pairs its call: the result phase is
+        // emitted even though its text is empty (ticket #37). The old
+        // skip-empties rule dropped it and 400'd the next request.
+        let entries = vec![tool_entry("e1", "call-1", "")];
+        let items = input_items(&entries);
+        assert!(
+            matches!(&items[..], [InputEntry::CallOutput(o)] if o.call_id == "call-1"),
+            "expected one call output for the empty result, got {items:?}"
+        );
+    }
+
+    #[test]
+    fn dedupe_keeps_only_the_last_phase_per_call_id() {
+        // Two entries share a call_id (the call phase and its result): the
+        // dedupe keeps only the last (the result), not both (ticket #37).
+        let entries = vec![
+            tool_entry("e1", "call-1", ""),
+            tool_entry("e2", "call-1", "done"),
+        ];
+        let items = input_items(&entries);
+        assert!(
+            matches!(
+                &items[..],
+                [InputEntry::CallOutput(o)]
+                    if o.call_id == "call-1"
+                        && matches!(&o.output, CallOutput::Text(t) if t == "done")
+            ),
+            "expected exactly the result phase, got {items:?}"
+        );
+    }
 }
