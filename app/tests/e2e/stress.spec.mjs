@@ -155,7 +155,8 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       // check failed.
       try {
         await dumpEvlog(browser, this.currentTest?.title);
-      } catch {
+      } catch (e) {
+        console.log(`diag: evlog dump failed: ${e?.message ?? e}`);
         // the app may be gone; the screenshot below carries the diagnosis
       }
       await browser.saveScreenshot(path.join(artifacts, `failure-${String(failures).padStart(2, '0')}.png`)).catch(() => {});

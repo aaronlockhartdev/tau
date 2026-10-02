@@ -13,6 +13,7 @@ import {
   ensureWorkspace,
   newSessionViaUI,
   readStore,
+  resetMockScripts,
   selectModel,
   uiSend,
   waitSettle
@@ -30,12 +31,18 @@ const MARKER = 'e2e-multi-turn';
 
 describe('mock E2E: session creation + a scripted 3-turn sequence', () => {
   let failures = 0;
+
+  before(async () => {
+    await resetMockScripts();
+  });
+
   afterEach(async function () {
     if (this.currentTest?.err) {
       failures++;
       try {
         await dumpEvlog(browser, this.currentTest?.title);
-      } catch {
+      } catch (e) {
+        console.log(`diag: evlog dump failed: ${e?.message ?? e}`);
         // the app may be gone; the screenshot below carries the diagnosis
       }
       await browser

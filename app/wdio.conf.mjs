@@ -274,6 +274,9 @@ async function onPrepareInner() {
   // the worker re-imports this config and would reject it.
   if (mode) process.env.TAU_E2E_MODE = mode;
   process.env.TAU_E2E_WS_MOCK = workspaces.mock ?? '';
+  // The mock LLM server's base URL: the specs' beforeAll resets the
+  // scenario turn counters through it (a wdio retry replays from the top).
+  process.env.TAU_E2E_MOCK_URL = `http://127.0.0.1:${MOCK_PORT}`;
   process.env.TAU_E2E_WS_STRESS = workspaces.stress ?? '';
   process.env.TAU_E2E_TMP = tmp;
   process.env.TAU_E2E_FIXTURE_SESSION = FIXTURE_SESSION;

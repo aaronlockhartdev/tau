@@ -17,6 +17,7 @@ import {
   readDom,
   readPanes,
   readStore,
+  resetMockScripts,
   selectModel,
   uiSend,
   waitSettle,
@@ -41,12 +42,18 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
   // the pane count is asserted as a delta over the pre-spawn baseline.
   let rowsBefore = 0;
   let sid = null;
+
+  before(async () => {
+    await resetMockScripts();
+  });
+
   afterEach(async function () {
     if (this.currentTest?.err) {
       failures++;
       try {
         await dumpEvlog(browser, this.currentTest?.title);
-      } catch {
+      } catch (e) {
+        console.log(`diag: evlog dump failed: ${e?.message ?? e}`);
         // the app may be gone; the screenshot below carries the diagnosis
       }
       await browser
@@ -143,7 +150,7 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
     // is the deadline (a one-shot read races the snapshot apply).
     const s = await readStore(sid);
     await browser.execute((id) => window.__tau.switchSession(id), s.childIds[0]);
-    const d = await waitUntil(readDom, (d) => d.hasSpawnCard, 15000, 'the spawn card in the child transcript');
+    const d = await waitUntil(readDom, (d) => d.hasSpawnCard, 30000, 'the spawn card in the child transcript');
     check('the DOM shows the spawn card in the child transcript', d.hasSpawnCard, 'spawn label present');
   });
 

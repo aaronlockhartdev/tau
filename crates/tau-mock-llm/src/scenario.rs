@@ -72,6 +72,12 @@ impl Scenario {
         let i = n.min(self.turns.len() - 1);
         (i, &self.turns[i])
     }
+
+    /// Replay the script from the top (a wdio spec retry must not hit the
+    /// clamped final turn).
+    pub fn reset(&self) {
+        self.counter.store(0, Ordering::SeqCst);
+    }
 }
 
 /// The request fields selection reads: the system instructions and the
@@ -128,8 +134,8 @@ impl ScenarioSet {
             .collect();
         paths.sort();
         let mut scenarios = Vec::new();
-        for path in paths {
-            let raw = std::fs::read_to_string(&path)
+        for path in &paths {
+            let raw = std::fs::read_to_string(path)
                 .map_err(|e| format!("read {}: {e}", path.display()))?;
             let mut scenario: Scenario =
                 serde_json::from_str(&raw).map_err(|e| format!("parse {}: {e}", path.display()))?;
@@ -155,6 +161,15 @@ impl ScenarioSet {
 
     pub const fn is_empty(&self) -> bool {
         self.scenarios.is_empty()
+    }
+
+    /// Zero every scenario's turn counter (a wdio spec retry re-runs
+    /// against the same server process); returns the number reset.
+    pub fn reset(&self) -> usize {
+        for s in &self.scenarios {
+            s.reset();
+        }
+        self.scenarios.len()
     }
 
     /// The scenario a request belongs to: the `instructions` text first
@@ -334,5 +349,29 @@ mod tests {
         assert_eq!(s.next_turn().1.text.as_deref(), Some("one"));
         assert_eq!(s.next_turn().1.text.as_deref(), Some("two"));
         assert_eq!(s.next_turn().1.text.as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn reset_replays_the_script_from_the_top() {
+        let s = Scenario {
+            pattern: "x".into(),
+            turns: vec![
+                Turn {
+                    text: Some("one".into()),
+                    calls: vec![],
+                },
+                Turn {
+                    text: Some("two".into()),
+                    calls: vec![],
+                },
+            ],
+            usage: Usage::default(),
+            counter: AtomicUsize::new(0),
+        };
+        assert_eq!(s.next_turn().1.text.as_deref(), Some("one"));
+        assert_eq!(s.next_turn().1.text.as_deref(), Some("two"));
+        assert_eq!(s.next_turn().1.text.as_deref(), Some("two"));
+        s.reset();
+        assert_eq!(s.next_turn().1.text.as_deref(), Some("one"));
     }
 }

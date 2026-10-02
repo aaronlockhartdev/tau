@@ -38,6 +38,15 @@ async fn handle(mut sock: TcpStream, set: Arc<ScenarioSet>) {
         stream_response(&mut sock, &set, &body).await;
         return;
     }
+    if method == "POST" && path.ends_with("/__control/reset") {
+        // A wdio spec retry re-runs against this same server process,
+        // where per-scenario turn counters would clamp at the script's
+        // end; the specs' beforeAll resets them.
+        let n = set.reset();
+        let body = json!({ "reset": n }).to_string();
+        let _ = reply(&mut sock, 200, "application/json", &body).await;
+        return;
+    }
     let _ = reply(&mut sock, 404, "text/plain", "not found").await;
 }
 

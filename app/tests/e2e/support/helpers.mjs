@@ -119,6 +119,16 @@ export const readStore = (sid) => browser.execute(storeState, sid);
 export const readDom = () => browser.execute(domState);
 export const readPanes = () => browser.execute(panesState);
 
+// A wdio spec retry re-runs against the same mock server process, whose
+// per-scenario turn counters would clamp at the script's end; the specs'
+// beforeAll resets them so every attempt replays from the top.
+export const resetMockScripts = async () => {
+  const url = process.env.TAU_E2E_MOCK_URL;
+  if (!url) throw new Error('TAU_E2E_MOCK_URL unset — the wdio config did not run onPrepare');
+  const res = await fetch(`${url}/__control/reset`, { method: 'POST' });
+  if (!res.ok) throw new Error(`mock reset failed: HTTP ${res.status}`);
+};
+
 // Convergence: re-read until the predicate holds; resolves to the state
 // that held (the matcher result carries no value, so it travels via sink).
 export const waitUntil = (read, pred, deadline, label) => {
