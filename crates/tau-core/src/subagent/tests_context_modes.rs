@@ -10,13 +10,20 @@ use crate::subagent::testkit::*;
 async fn a_compacted_spawn_seeds_the_frozen_prefix() {
     let dir = tempfile::tempdir().unwrap();
     // The parent carries an OM record with observations.
-    let (sup, _) = harness(
+    let (sup, _, _parent) = harness(
         dir.path(),
         vec![sse("obs turn", &[])],
         vec![vec![sse("", &[])]],
         SubAgents::default(),
     );
-    let parent = sup.parent.lock().unwrap().clone().unwrap();
+    let parent = sup
+        .parent
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .upgrade()
+        .unwrap();
     parent.set_om(Some(OmState::from_config(
         &Om::default(),
         OmRecord {
@@ -70,13 +77,20 @@ async fn a_compacted_spawn_seeds_the_frozen_prefix() {
 #[tokio::test]
 async fn a_compacted_child_recalls_the_parent_session() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, _) = harness(
+    let (sup, _, _parent) = harness(
         dir.path(),
         vec![sse("obs turn", &[])],
         vec![vec![sse("", &[])]],
         SubAgents::default(),
     );
-    let parent = sup.parent.lock().unwrap().clone().unwrap();
+    let parent = sup
+        .parent
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .upgrade()
+        .unwrap();
     // The parent's raw history, plus an observation group covering it.
     parent
         .append_entry(
@@ -136,13 +150,20 @@ async fn a_compacted_child_recalls_the_parent_session() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_fork_copies_the_tree_and_inherits_the_record() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, _) = harness(
+    let (sup, _, _parent) = harness(
         dir.path(),
         vec![sse("working", &[])],
         vec![vec![sse("", &[])]],
         SubAgents::default(),
     );
-    let parent = sup.parent.lock().unwrap().clone().unwrap();
+    let parent = sup
+        .parent
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .upgrade()
+        .unwrap();
     // A user entry on the parent (the fork must copy it).
     parent
         .append_entry(

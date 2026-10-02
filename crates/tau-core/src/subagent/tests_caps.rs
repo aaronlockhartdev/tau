@@ -9,7 +9,7 @@ use crate::subagent::testkit::*;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_caps() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, _) = harness(
+    let (sup, _, _parent) = harness(
         dir.path(),
         vec![sse("x", &[])],
         vec![
@@ -147,7 +147,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent);
+    sup.attach_parent(&parent);
     let spawned = sup
         .spawn("reviewer", "look", None, None, "c0")
         .expect("the discovered type spawns");
@@ -217,7 +217,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent);
+    sup.attach_parent(&parent);
     let spawned = sup
         .spawn("general", "look", None, None, "c0")
         .expect("general always spawns");
@@ -351,7 +351,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent);
+    sup.attach_parent(&parent);
 
     // Drive #1 is in flight; stop + resume then spawn drive #2, which
     // is in flight too — the window opens when the notify releases

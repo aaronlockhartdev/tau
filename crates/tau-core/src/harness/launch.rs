@@ -30,6 +30,14 @@ pub enum SessionRole {
         config: Option<Config>,
         provider: TurnProviderRef,
         supervisor: Option<Arc<Supervisor>>,
+        /// The parent's own system prompt when it differs from the
+        /// supervisor's (the acceptance driver's seam: the supervisor's
+        /// prompt is the child's); `None` = adopt the supervisor's.
+        system_prompt: Option<String>,
+        /// The config's first provider, resolved by the caller (`build_live`
+        /// resolves it for the live shell); the supervisor's child factory
+        /// and bridge take it — no second resolution (ticket #43).
+        first_provider: Option<(String, crate::config::Provider)>,
     },
     /// A sub-agent session: the child's link plus the parent's task store;
     /// no supervisor, no events. The values the child inherits (cwd, turn
@@ -54,6 +62,11 @@ pub enum SessionRole {
         cwd: PathBuf,
         turn: TurnConfig,
         tool_batch_on_force: ToolBatchPolicy,
+        /// The OM state; `None` = OM disabled (ticket #43: the acceptance
+        /// driver's live-om suite carries its own).
+        om: Option<OmState>,
+        /// The OM model; empty = the session's model.
+        om_model: String,
     },
 }
 
@@ -61,10 +74,10 @@ impl AgentSession {
     /// The in-crate construction path (R2): assembles the session for its
     /// role — provider, prompt, turn config, OM state, supervisor, child
     /// link, event hooks — so no call site spreads the parameters. Returns
-    /// the `Arc` because the root's queue hook holds a strong self
-    /// reference (the call sites all keep an `Arc` anyway).
+    /// the `Arc` because the call sites all keep an `Arc` (the root's
+    /// queue hook captures a `Weak` self-reference, not a strong one).
     pub fn launch(
-        mut store: SessionStore,
+        store: SessionStore,
         role: SessionRole,
     ) -> Result<Arc<AgentSession>, ProtocolError> {
         match role {
@@ -76,6 +89,8 @@ impl AgentSession {
                 cwd,
                 turn,
                 tool_batch_on_force,
+                om,
+                om_model,
             } => Ok(Arc::new(Self::new(SessionParams {
                 store,
                 system_prompt,
@@ -85,8 +100,8 @@ impl AgentSession {
                 provider,
                 tool_batch_on_force,
                 turn,
-                om: None,
-                om_model: String::new(),
+                om,
+                om_model,
                 subagents: None,
                 child: None,
             }))),
@@ -126,11 +141,12 @@ impl AgentSession {
                 config,
                 provider,
                 supervisor,
+                system_prompt,
+                first_provider,
             } => {
                 let Some(sup) = supervisor else {
-                    // Building the supervisor (the bridge cycle) needs the
-                    // core's seams; a pre-built one (the test seam) needs
-                    // none of them.
+                    // Building the supervisor (the bridge cycle) needs the core's
+                    // seams; a pre-built one (the test seam) needs none.
                     let (Some(core), Some(workspace), Some(config)) = (core, workspace, config)
                     else {
                         return Err(ProtocolError::Other {
@@ -139,53 +155,64 @@ impl AgentSession {
                                     .into(),
                         });
                     };
-                    return root_session(&core, &workspace, &config, store, provider);
+                    let Some(first) = first_provider else {
+                        return Err(ProtocolError::Other {
+                            message: "no providers configured; add a [providers.x] section".into(),
+                        });
+                    };
+                    return root_session(&core, &workspace, &config, &first, store, provider);
                 };
-                // A pre-built supervisor (the test seam): adopt the
-                // supervisor's values, wire no events.
-                let d = sup.inherited();
-                let record =
-                    OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
-                        message: e.to_string(),
-                    })?;
-                let agent = Arc::new(Self::new(SessionParams {
-                    store,
-                    system_prompt: d.system_prompt,
-                    model: d.model,
-                    tools: tools::surface::root_specs(),
-                    cwd: d.cwd,
-                    provider,
-                    tool_batch_on_force: d.tool_batch_on_force,
-                    turn: d.turn,
-                    om: Some(OmState::from_config(&d.om, record)),
-                    om_model: d.om_model,
-                    subagents: Some(sup.clone()),
-                    child: None,
-                }));
-                sup.attach_parent(agent.clone());
-                Ok(agent)
+                // A pre-built supervisor (the test seam): adopt its values,
+                // wire no events.
+                Self::root_with_supervisor(&sup, store, system_prompt, provider)
             }
         }
     }
+
+    /// A pre-built supervisor (the test seam): adopt the supervisor's values,
+    /// wire no events.
+    fn root_with_supervisor(
+        sup: &Arc<Supervisor>,
+        mut store: SessionStore,
+        system_prompt: Option<String>,
+        provider: TurnProviderRef,
+    ) -> Result<Arc<AgentSession>, ProtocolError> {
+        let d = sup.inherited();
+        let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+        let agent = Arc::new(Self::new(SessionParams {
+            store,
+            system_prompt: system_prompt.unwrap_or(d.system_prompt),
+            model: d.model,
+            tools: tools::surface::root_specs(),
+            cwd: d.cwd,
+            provider,
+            tool_batch_on_force: d.tool_batch_on_force,
+            turn: d.turn,
+            om: Some(OmState::from_config(&d.om, record)),
+            om_model: d.om_model,
+            subagents: Some(sup.clone()),
+            child: None,
+        }));
+        sup.attach_parent(&agent);
+        Ok(agent)
+    }
 }
 
-/// The root assembly: the provider/model resolution, the prompt, the
-/// bridge↔supervisor cycle, the session, and the four event hooks.
+/// The root assembly: the model resolution, the prompt, the
+/// bridge↔supervisor cycle, the session, and the four event hooks. The
+/// first provider arrives pre-resolved — the caller already resolved it
+/// (ticket #43).
 fn root_session(
     core: &Arc<Core>,
     workspace: &Workspace,
     config: &Config,
+    first: &(String, crate::config::Provider),
     mut store: SessionStore,
     provider: TurnProviderRef,
 ) -> Result<Arc<AgentSession>, ProtocolError> {
-    let (name, first) = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .ok_or_else(|| ProtocolError::Other {
-            message: "no providers configured; add a [providers.x] section".into(),
-        })?;
+    let (name, first) = first;
     // `generation.default_model` wins; an empty or unknown value falls
     // back to the provider's first model (BTreeMap order).
     let default = config.generation.default_model.clone();
@@ -207,7 +234,7 @@ fn root_session(
     let model = last_model_note(&mut store).unwrap_or(model);
     // The turn's provider options (spec §12, #35): resolved from the
     // merged config + this model's facts, once, at registration.
-    let turn = derive_turn(config, &first, &model, store.id());
+    let turn = derive_turn(config, first, &model, store.id());
     let cwd = PathBuf::from(&workspace.cwd);
 
     // The per-session OM record (ticket #22): reconstructed from the
@@ -293,7 +320,7 @@ fn root_session(
         child: None,
     }));
     wire_events(core, workspace, &sid, &agent);
-    sup.attach_parent(agent.clone());
+    sup.attach_parent(&agent);
     Ok(agent)
 }
 
@@ -328,8 +355,11 @@ fn wire_events(core: &Core, workspace: &Workspace, sid: &str, agent: &Arc<AgentS
         let q_tx = tx.clone();
         let q_ws = ws.clone();
         let q_sid = sid.clone();
-        let q_agent = agent.clone();
+        let q_agent = Arc::downgrade(agent);
         agent.set_queue_event_hook(Some(Arc::new(move || {
+            let q_agent = q_agent
+                .upgrade()
+                .expect("the queue hook is stored in the session it captures");
             let _ = q_tx.try_send(Event::Queue {
                 workspace: q_ws.clone(),
                 session: q_sid.clone(),

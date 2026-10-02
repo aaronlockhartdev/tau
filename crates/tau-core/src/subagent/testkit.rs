@@ -162,15 +162,18 @@ pub(crate) fn notify_call(
 }
 
 /// A parent session + supervisor wired to the test seams. The parent
-/// agent is scripted (its provider); the children use the factory.
+/// agent is scripted (its provider); the children use the factory. The
+/// parent's `Arc` comes back: the supervisor holds it only as a `Weak`
+/// (ticket #43), so the caller owns its lifetime.
 pub(crate) fn harness(
     dir: &std::path::Path,
     parent_bodies: Vec<String>,
     child_scripts: Vec<Vec<String>>,
     caps: SubAgents,
-) -> (Arc<Supervisor>, Arc<TestBridge>) {
-    let (sup, bridge, _) = harness_full(dir, parent_bodies, child_scripts, vec![], caps);
-    (sup, bridge)
+) -> (Arc<Supervisor>, Arc<TestBridge>, Arc<AgentSession>) {
+    let (sup, bridge, _factory, parent) =
+        harness_full(dir, parent_bodies, child_scripts, vec![], caps);
+    (sup, bridge, parent)
 }
 
 pub(crate) fn harness_full(
@@ -179,7 +182,12 @@ pub(crate) fn harness_full(
     child_scripts: Vec<Vec<String>>,
     delays: Vec<Duration>,
     caps: SubAgents,
-) -> (Arc<Supervisor>, Arc<TestBridge>, Arc<CannedFactory>) {
+) -> (
+    Arc<Supervisor>,
+    Arc<TestBridge>,
+    Arc<CannedFactory>,
+    Arc<AgentSession>,
+) {
     let bridge = Arc::new(TestBridge::default());
     let factory = Arc::new(CannedFactory {
         scripts: child_scripts,
@@ -209,9 +217,9 @@ pub(crate) fn harness_full(
     let mut store = SessionStore::for_workspace(dir, "parent");
     store.create().unwrap();
     let parent_provider = Arc::new(ScriptedProvider::new(parent_bodies));
-    // The attach is the constructor's; the supervisor keeps the parent
-    // alive (its `parent` is a strong `Arc`, the v0 cycle).
-    AgentSession::launch(
+    // The attach is the constructor's; the supervisor's `parent` is a
+    // `Weak` (ticket #43 broke the v0 parent↔supervisor cycle).
+    let parent = AgentSession::launch(
         store,
         SessionRole::Root {
             core: None,
@@ -219,10 +227,12 @@ pub(crate) fn harness_full(
             config: None,
             provider: parent_provider,
             supervisor: Some(Arc::clone(&sup)),
+            system_prompt: None,
+            first_provider: None,
         },
     )
     .unwrap();
-    (sup, bridge, factory)
+    (sup, bridge, factory, parent)
 }
 
 /// A scripted parent provider: one canned body per call.

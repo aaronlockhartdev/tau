@@ -73,7 +73,7 @@ async fn the_lifecycle_acceptance_flow() {
         ],
         vec![sse("", &[]), sse("", &[])],
     ];
-    let (sup, bridge) = harness(
+    let (sup, bridge, _parent) = harness(
         dir.path(),
         parent_bodies,
         child_scripts,
@@ -183,7 +183,14 @@ async fn the_lifecycle_acceptance_flow() {
 /// Drive the parent's loop: it calls the spawn tools in its script.
 async fn sup_spawn_from_parent(sup: &Arc<Supervisor>) {
     // The harness's parent agent: find it via the supervisor's parent.
-    let parent = sup.parent.lock().unwrap().clone().unwrap();
+    let parent = sup
+        .parent
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .upgrade()
+        .unwrap();
     parent.send("go", Lane::FollowUp);
     parent.process().await.unwrap();
 }

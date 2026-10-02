@@ -52,6 +52,8 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             cwd: dir.to_path_buf(),
             turn: TurnConfig::default(),
             tool_batch_on_force: ToolBatchPolicy::Complete,
+            om: None,
+            om_model: String::new(),
         },
     )
     .unwrap();
@@ -110,6 +112,8 @@ fn the_role_specs_table_is_exact() {
         config: None,
         provider: canned_provider(),
         supervisor: None,
+        system_prompt: None,
+        first_provider: None,
     };
     assert_eq!(
         names(surface::specs_for(&root, None)),
@@ -168,6 +172,8 @@ fn the_role_specs_table_is_exact() {
         cwd: dir.path().to_path_buf(),
         turn: TurnConfig::default(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
+        om: None,
+        om_model: String::new(),
     };
     assert_eq!(
         names(surface::specs_for(&bare, None)),

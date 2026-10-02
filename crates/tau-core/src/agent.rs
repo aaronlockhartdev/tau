@@ -162,7 +162,7 @@ struct Inner {
 /// the only cross-thread surface (a force from the GUI's thread).
 /// Everything an agent session needs to run, grouped so the constructor
 /// stays a single parameter as the ticket series grows the loop (spec §5).
-pub struct SessionParams {
+pub(crate) struct SessionParams {
     pub store: SessionStore,
     /// The fully assembled system prompt: the caller builds it (agent-type
     /// prompt + context files via `context::assemble`) — the loop takes the
@@ -202,7 +202,7 @@ pub struct AgentSession {
 
 impl AgentSession {
     #[must_use]
-    pub fn new(p: SessionParams) -> Self {
+    pub(crate) fn new(p: SessionParams) -> Self {
         Self {
             inner: Mutex::new(Inner {
                 store: p.store,

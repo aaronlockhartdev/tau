@@ -22,7 +22,7 @@ use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use tau_protocol::payload::{ResumeContract, Task};
 
 /// The session entry kind for sub-agent lifecycle records (spawn, state
@@ -365,8 +365,9 @@ pub struct Supervisor {
     /// The agent-type registry (spec §5.5).
     types: Vec<crate::agent_type::AgentType>,
     /// Set after the parent's own loop is constructed (the constructor
-    /// cannot close over its owner).
-    parent: Mutex<Option<Arc<AgentSession>>>,
+    /// cannot close over its owner). `Weak`: the supervisor is owned by the
+    /// parent session, so a strong capture would be a cycle (ticket #43).
+    parent: Mutex<Option<Weak<AgentSession>>>,
     /// The children map (review N8): a terminal child (done/stopped/failed)
     /// stays in it until the parent session closes — every non-running
     /// state is resumable, so the record must outlive its drive. Bounded
@@ -495,12 +496,13 @@ impl Supervisor {
     }
 
     /// The parent's loop (attached once by the caller after the parent's
-    /// `AgentSession` exists).
-    pub fn attach_parent(&self, agent: Arc<AgentSession>) {
+    /// `AgentSession` exists); stored as a `Weak` (ticket #43).
+    pub fn attach_parent(&self, agent: &Arc<AgentSession>) {
         *self
             .parent
             .lock()
-            .expect("supervisor parent: no panic while the lock is held") = Some(agent);
+            .expect("supervisor parent: no panic while the lock is held") =
+            Some(Arc::downgrade(agent));
     }
 
     /// Whether a child is still `Running` (the child-side loop's exit

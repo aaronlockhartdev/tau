@@ -11,7 +11,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn notify_rejects_invalid_shapes() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, _) = harness(
+    let (sup, _, _parent) = harness(
         dir.path(),
         vec![sse("x", &[])],
         vec![vec![sse("", &[])]],
@@ -123,7 +123,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent.clone());
+    sup.attach_parent(&parent);
     let spawned = sup
         .spawn(
             "general",
@@ -237,7 +237,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent.clone());
+    sup.attach_parent(&parent);
     let spawned = sup
         .spawn("general", "go", None, None, "c0")
         .expect("the spawn");
@@ -358,7 +358,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent.clone());
+    sup.attach_parent(&parent);
     // A spawn without a task, then the assign: the child parks after
     // its first turn and rests until the assign moves it — the only
     // ordering that can't race.
@@ -488,7 +488,7 @@ async fn a_child_task_tools_route_to_the_parents_store() {
         subagents: None,
         child: None,
     }));
-    sup.attach_parent(parent.clone());
+    sup.attach_parent(&parent);
     let spawned = sup
         .spawn(
             "general",
@@ -552,7 +552,7 @@ async fn state_records_carry_the_discriminant_and_variant_fields() {
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
     );
-    let (sup, bridge, _) = harness_full(
+    let (sup, bridge, _factory, _parent) = harness_full(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![vec![
@@ -675,7 +675,7 @@ async fn the_subagent_tools_address_a_child_by_name() {
         ),
         sse("", &[]),
     ]];
-    let (sup, _) = harness(
+    let (sup, _, _parent) = harness(
         dir.path(),
         vec![sse("spawning", &[])],
         child_scripts,

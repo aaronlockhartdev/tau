@@ -49,7 +49,7 @@ async fn the_wake_rule_matrix() {
             sse("", &[]),
         ],
     ];
-    let (sup, bridge) = harness(
+    let (sup, bridge, _parent) = harness(
         dir.path(),
         vec![sse("spawning", &[])],
         child_scripts,
@@ -92,7 +92,7 @@ async fn the_wake_rule_matrix() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_done_child_quiesces_with_exactly_one_call() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, bridge, factory) = harness_full(
+    let (sup, bridge, factory, _parent) = harness_full(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![vec![sse(
@@ -163,7 +163,7 @@ async fn a_done_child_quiesces_with_exactly_one_call() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_done_child_stays_done_after_its_wake() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, bridge) = harness(
+    let (sup, bridge, _parent) = harness(
         dir.path(),
         vec![
             sse("parent keeps working", &[]),

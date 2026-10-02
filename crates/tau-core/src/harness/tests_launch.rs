@@ -31,14 +31,23 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
     let collected = collect_events(&core);
 
+    let config = core.system_config();
+    let first = config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, p)| (name.clone(), p.clone()))
+        .expect("the test config carries the dev provider");
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
             core: Some(core.clone()),
             workspace: Some(ws.clone()),
-            config: Some(core.system_config()),
+            config: Some(config),
             provider: canned_provider(),
             supervisor: None,
+            system_prompt: None,
+            first_provider: Some(first),
         },
     )
     .unwrap();
@@ -90,6 +99,8 @@ async fn launch_root_without_providers_is_a_config_error() {
             config: Some(Config::default()),
             provider: canned_provider(),
             supervisor: None,
+            system_prompt: None,
+            first_provider: None,
         },
     )
     .err()
@@ -120,14 +131,23 @@ async fn launch_root_with_a_modelless_provider_names_it() {
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
 
+    let config = core.system_config();
+    let first = config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, p)| (name.clone(), p.clone()))
+        .expect("the test config carries the dev provider");
     let err = AgentSession::launch(
         store,
         SessionRole::Root {
             core: Some(core.clone()),
             workspace: Some(ws),
-            config: Some(core.system_config()),
+            config: Some(config),
             provider: canned_provider(),
             supervisor: None,
+            system_prompt: None,
+            first_provider: Some(first),
         },
     )
     .err()
@@ -161,6 +181,8 @@ fn launch_child_routes_task_tools_through_the_parent() {
             cwd: dir.path().to_path_buf(),
             turn: crate::agent::TurnConfig::default(),
             tool_batch_on_force: ToolBatchPolicy::Complete,
+            om: None,
+            om_model: String::new(),
         },
     )
     .unwrap();
@@ -231,4 +253,87 @@ fn launch_child_routes_task_tools_through_the_parent() {
     let started = child.task_tool_call("task_start", &serde_json::json!({ "task": "task-1" }));
     assert!(started.contains("task-1"), "{started}");
     assert!(started.contains("child ping"), "{started}");
+}
+
+#[tokio::test]
+async fn launch_root_session_is_freed_when_dropped() {
+    // The ticket #43 lifetime fix: the queue hook and the supervisor's
+    // parent capture are `Weak`, so the last external `Arc` frees the
+    // session (a strong self-capture would keep it alive).
+    let core = CoreBuilder::custom(providers()).build();
+    let dir = tempfile::tempdir().unwrap();
+    let ws = open_ws(&core, dir.path()).await;
+    let store = fresh_store(dir.path(), &SessionStore::new_session_id());
+    let config = core.system_config();
+    let first = config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, p)| (name.clone(), p.clone()))
+        .expect("the test config carries the dev provider");
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: Some(core.clone()),
+            workspace: Some(ws.clone()),
+            config: Some(config),
+            provider: canned_provider(),
+            supervisor: None,
+            system_prompt: None,
+            first_provider: Some(first),
+        },
+    )
+    .unwrap();
+    assert!(
+        Arc::try_unwrap(agent).is_ok(),
+        "the session must be droppable"
+    );
+}
+
+#[test]
+fn launch_seam_session_is_freed_when_dropped() {
+    // The seam flavour of the same fix: the pre-built supervisor holds
+    // its parent as a `Weak` (ticket #43), so the driver's `Arc` is the
+    // only strong reference.
+    let dir = tempfile::tempdir().unwrap();
+    let store = fresh_store(dir.path(), "parent");
+    let bridge: Arc<dyn crate::subagent::SubagentBridge> = Arc::new(TestBridge::default());
+    let sup = Supervisor::new(SupervisorParams {
+        parent_session: "parent".into(),
+        cwd: dir.path().to_path_buf(),
+        provider: Arc::new(CannedFactory {
+            scripts: vec![],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+        }),
+        model: "test-model".into(),
+        system_prompt: "be terse".into(),
+        om: Om::default(),
+        om_model: String::new(),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: crate::agent::TurnConfig::default(),
+        caps: SubAgents::default(),
+        types: vec![builtin_general()],
+        depth: 0,
+        bridge,
+        driver: Arc::new(TestDriver),
+    });
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider: canned_provider(),
+            supervisor: Some(sup.clone()),
+            system_prompt: None,
+            first_provider: None,
+        },
+    )
+    .unwrap();
+    assert!(
+        Arc::try_unwrap(agent).is_ok(),
+        "the session must be droppable"
+    );
 }

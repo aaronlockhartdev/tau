@@ -16,9 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::{Value, json};
-use tau_core::agent::{AgentSession, Lane, SessionParams, TurnConfig};
+use tau_core::agent::{AgentSession, Lane, TurnConfig};
 use tau_core::agent_type::builtin_general;
 use tau_core::config::{Om, Provider, Requests, SubAgents, ToolBatchPolicy};
+use tau_core::harness::SessionRole;
 use tau_core::om::OmRecord;
 use tau_core::om_integration::OmState;
 use tau_core::provider;
@@ -106,20 +107,21 @@ async fn live_tools(ctx: &Ctx) -> Result<(), String> {
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
     let (id, store) = new_session(ws.path());
     let (_, prov) = production(ctx);
-    let agent = AgentSession::new(SessionParams {
+    let agent = AgentSession::launch(
         store,
-        system_prompt: TOOLS_PROMPT.into(),
-        model: ctx.model.clone(),
-        tools: tools::tool_specs(),
-        cwd: ws.path().into(),
-        provider: prov,
-        tool_batch_on_force: ToolBatchPolicy::default(),
-        turn: capped(),
-        om: None,
-        om_model: String::new(),
-        subagents: None,
-        child: None,
-    });
+        SessionRole::Bare {
+            provider: prov,
+            system_prompt: TOOLS_PROMPT.into(),
+            model: ctx.model.clone(),
+            tools: tools::tool_specs(),
+            cwd: ws.path().into(),
+            turn: capped(),
+            tool_batch_on_force: ToolBatchPolicy::default(),
+            om: None,
+            om_model: String::new(),
+        },
+    )
+    .map_err(|e| format!("launch failed: {e:?}"))?;
     agent.send(
         "Do exactly this: 1) read notes.txt, 2) edit the line containing 'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write the file out.txt with the single line 'done'. Then reply 'finished'.",
         Lane::Steering,
@@ -229,25 +231,25 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         bridge: bridge.clone(),
         driver: Arc::new(AcceptanceDriver),
     });
-    let sup2 = sup.clone();
-    let agent = Arc::new(AgentSession::new(SessionParams {
+    let agent = AgentSession::launch(
         store,
-        system_prompt: SUBAGENT_PROMPT.into(),
-        model: ctx.model.clone(),
-        tools: tools::agent_tool_specs(),
-        cwd: ws.path().into(),
-        provider: prov,
-        tool_batch_on_force: ToolBatchPolicy::default(),
-        turn: capped(),
-        om: None,
-        om_model: String::new(),
-        subagents: Some(sup),
-        child: None,
-    }));
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider: prov,
+            supervisor: Some(sup),
+            // The parent's own prompt, explicitly: the supervisor's is the
+            // child's (the mock scenario matches on it), so the seam takes
+            // the parent's rather than adopting it.
+            system_prompt: Some(SUBAGENT_PROMPT.into()),
+            first_provider: None,
+        },
+    )
+    .map_err(|e| format!("launch failed: {e:?}"))?;
     {
         *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
     }
-    sup2.attach_parent(agent.clone());
 
     agent
         .send(
@@ -421,20 +423,21 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
         OmRecord::default(),
     );
     let (_, prov) = production(ctx);
-    let agent = AgentSession::new(SessionParams {
+    let agent = AgentSession::launch(
         store,
-        system_prompt: TOOLS_PROMPT.into(),
-        model: ctx.model.clone(),
-        tools: tools::tool_specs(),
-        cwd: ws.path().into(),
-        provider: prov,
-        tool_batch_on_force: ToolBatchPolicy::default(),
-        turn: capped(),
-        om: Some(om),
-        om_model: String::new(),
-        subagents: None,
-        child: None,
-    });
+        SessionRole::Bare {
+            provider: prov,
+            system_prompt: TOOLS_PROMPT.into(),
+            model: ctx.model.clone(),
+            tools: tools::tool_specs(),
+            cwd: ws.path().into(),
+            turn: capped(),
+            tool_batch_on_force: ToolBatchPolicy::default(),
+            om: Some(om),
+            om_model: String::new(),
+        },
+    )
+    .map_err(|e| format!("launch failed: {e:?}"))?;
     agent.send(
         "Summarize the expedition notes above in two sentences. Do not use any tools.",
         Lane::FollowUp,

@@ -21,6 +21,8 @@ pub(crate) fn make_agent(dir: &std::path::Path, provider: TurnProviderRef) -> Ar
             cwd: dir.to_path_buf(),
             turn: TurnConfig::default(),
             tool_batch_on_force: ToolBatchPolicy::Complete,
+            om: None,
+            om_model: String::new(),
         },
     )
     .unwrap()

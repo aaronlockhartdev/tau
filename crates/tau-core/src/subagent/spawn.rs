@@ -1,7 +1,7 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildState, ContextMode, KIND_SUBAGENT,
     Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned,
-    StateNotice, Supervisor, json, om_integration, title_on_disk, tools,
+    StateNotice, Supervisor, Weak, json, om_integration, title_on_disk, tools,
 };
 use crate::harness::SessionRole;
 
@@ -44,7 +44,8 @@ impl Supervisor {
             .parent
             .lock()
             .expect("supervisor parent: no panic while the lock is held")
-            .clone()
+            .as_ref()
+            .and_then(Weak::upgrade)
             .ok_or_else(|| "supervisor has no parent attached".to_owned())?;
         let parent_record = parent_agent
             .om_state()
@@ -99,7 +100,8 @@ impl Supervisor {
                 .parent
                 .lock()
                 .expect("supervisor parent: no panic while the lock is held")
-                .clone()
+                .as_ref()
+                .and_then(Weak::upgrade)
         {
             let _ = parent.with_task_store(|cstore| crate::task::assign(cstore, task, &session_id));
         }

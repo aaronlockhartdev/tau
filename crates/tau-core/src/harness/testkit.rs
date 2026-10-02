@@ -48,6 +48,8 @@ pub(crate) fn manual_session(
             cwd: cwd.clone(),
             turn,
             tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+            om: None,
+            om_model: String::new(),
         },
     )
     .unwrap();

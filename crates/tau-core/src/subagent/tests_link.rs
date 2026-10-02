@@ -57,6 +57,8 @@ fn sup_with_parent(
             config: None,
             provider: parent_provider,
             supervisor: Some(sup.clone()),
+            system_prompt: None,
+            first_provider: None,
         },
     )
     .unwrap();

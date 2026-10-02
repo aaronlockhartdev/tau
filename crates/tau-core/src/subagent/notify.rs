@@ -1,6 +1,6 @@
 use super::{
     Arc, Child, ChildState, KIND_SUBAGENT, Lane, StateNotice, Supervisor, Value, WaitingOn,
-    WakeKind, WakeNotice, json,
+    WakeKind, WakeNotice, Weak, json,
 };
 
 impl Supervisor {
@@ -34,7 +34,8 @@ impl Supervisor {
             .parent
             .lock()
             .expect("supervisor parent: no panic while the lock is held")
-            .clone()
+            .as_ref()
+            .and_then(Weak::upgrade)
             .ok_or("task_assign: no parent attached".to_owned())?;
         parent
             .with_task_store(|cstore| crate::task::assign(cstore, task_id, worker_session))
@@ -224,7 +225,8 @@ impl Supervisor {
             .parent
             .lock()
             .expect("supervisor parent: no panic while the lock is held")
-            .clone()
+            .as_ref()
+            .and_then(Weak::upgrade)
         else {
             return;
         };

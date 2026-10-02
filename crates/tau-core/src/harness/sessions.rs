@@ -267,7 +267,7 @@ impl Core {
     ) -> Result<SessionMeta, ProtocolError> {
         let parent = store.parent().map(str::to_string);
         let config = self.workspace_config(workspace);
-        let (_, provider) = config
+        let (name, first) = config
             .providers
             .iter()
             .next()
@@ -277,10 +277,10 @@ impl Core {
             })?;
         let self_arc = self.self_arc().expect("session_new on a built core");
         // The live shell's provider (the stream-forwarding seam); the
-        // constructor re-derives the same first provider for the
-        // supervisor's child factory.
+        // constructor takes the same resolved first provider for the
+        // supervisor's child factory (one resolution, ticket #43).
         let provider = Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &provider, &config.requests),
+            inner: session_inner(&self.client, &first, &config.requests),
             tx: self.events_tx.clone(),
             pipe: self.pipe.clone(),
             workspace: workspace.id.clone(),
@@ -298,6 +298,8 @@ impl Core {
                 config: Some(config),
                 provider: provider.clone(),
                 supervisor: None,
+                system_prompt: None,
+                first_provider: Some((name, first)),
             },
         )?;
         let meta = SessionMeta {

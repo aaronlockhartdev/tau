@@ -15,7 +15,7 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
     );
-    let (sup, bridge, _) = harness_full(
+    let (sup, bridge, _factory, _parent) = harness_full(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![vec![
@@ -93,7 +93,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
     );
-    let (sup, bridge, _) = harness_full(
+    let (sup, bridge, _factory, _parent) = harness_full(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![
@@ -172,7 +172,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_non_running_child_refuses_a_second_stop() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, bridge) = harness(
+    let (sup, bridge, _parent) = harness(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![
