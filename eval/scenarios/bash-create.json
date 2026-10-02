@@ -1,0 +1,8 @@
+{
+  "match": "creates a file `stamp.txt`",
+  "turns": [
+    { "calls": [ { "name": "bash", "arguments": { "command": "echo stamped > stamp.txt" } } ] },
+    { "text": "done" }
+  ],
+  "usage": { "input_tokens": 190, "output_tokens": 52, "total_tokens": 242 }
+}

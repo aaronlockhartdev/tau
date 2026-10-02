@@ -1,0 +1,11 @@
+{
+  "match": "Work through these steps",
+  "turns": [
+    { "calls": [ { "name": "read", "arguments": { "path": "list.txt" } } ] },
+    { "calls": [ { "name": "edit", "arguments": { "path": "list.txt", "from": "n4z", "to": "n4z", "content": "TWO" } } ] },
+    { "calls": [ { "name": "bash", "arguments": { "command": "wc -l < list.txt > count.txt" } } ] },
+    { "calls": [ { "name": "write", "arguments": { "path": "result.txt", "content": "complete\n" } } ] },
+    { "text": "done" }
+  ],
+  "usage": { "input_tokens": 300, "output_tokens": 120, "total_tokens": 420 }
+}

@@ -1,0 +1,8 @@
+{
+  "match": "named `out.txt`",
+  "turns": [
+    { "calls": [ { "name": "write", "arguments": { "path": "out.txt", "content": "hello\n" } } ] },
+    { "text": "done" }
+  ],
+  "usage": { "input_tokens": 210, "output_tokens": 60, "total_tokens": 270 }
+}

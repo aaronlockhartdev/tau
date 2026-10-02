@@ -1,0 +1,1 @@
+Work through these steps in order: read `list.txt`; edit the line that says `two` so it says `TWO`; run the bash command `wc -l < list.txt > count.txt`; then write `result.txt` with the single line `complete`.
