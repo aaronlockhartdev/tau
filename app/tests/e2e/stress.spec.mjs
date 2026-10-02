@@ -5,8 +5,8 @@
 // over — same fixture, same assertions — with the hand-rolled
 // pollState/withRetry polling replaced by framework-level auto-wait
 // (expect-webdriverio's expect with an auto-wait matcher; the pilot's fixed
-// 10 s eval budget is gone). Local only: a starved CI webview cannot meet
-// the 10k budgets, so CI runs the replay leg (replay.spec.mjs) instead.
+// 10 s eval budget is gone). Runs in CI and locally (#50 retired the
+// replay leg; the CI gate is now this leg plus the mock leg).
 import { setTimeout as sleep } from 'node:timers/promises';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +15,7 @@ import { expect } from 'expect-webdriverio';
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
-const ws = process.env.TAU_E2E_WS_STRESS ?? process.env.TAU_E2E_WS;
+const ws = process.env.TAU_E2E_WS_STRESS;
 // The stress leg is always the full fixture with two streams (the config
 // only runs this spec in stress/all mode): 10k transcript entries plus
 // 50 compaction records, one per goal (#49).
@@ -23,7 +23,7 @@ const entries = 10050;
 const streams = 2;
 const fixtureSession = process.env.TAU_E2E_FIXTURE_SESSION ?? 'session';
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
-if (!ws) throw new Error('TAU_E2E_WS unset — the wdio config did not run onPrepare');
+if (!ws) throw new Error('TAU_E2E_WS_STRESS unset — the wdio config did not run onPrepare');
 const CANNED_TEXT = 'word 0 word 1';
 // The perf bar (spec §8): strict pass/fail locally;
 // informational on a runner (a starved CI webview is not a real display).

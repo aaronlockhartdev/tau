@@ -1,19 +1,15 @@
 // WebdriverIO config for the real-app E2E (roadmap G/G2): the DEBUG Tauri
 // binary against a test workspace, driven over the embedded WebDriver
 // server (tauri-plugin-wdio-webdriver). Replaces the retired tauri-pilot
-// harness. Three legs (replay/stress per the user's 2026-09-24 decision —
-// the functional leg replays a REAL recorded session, not a synthetic one;
-// mock per phase 1 §4, 2026-09-30):
-//   replay — the real session pair (fixtures/sessions/*.jsonl, the
-//     parent→child pair the app recorded while building todo.py): hydration,
-//     the parent→child tree, a fresh canned:// turn, archive cascade, and
-//     re-open convergence asserted against the session's real content.
-//   stress — the generated 10k-entry fixture (windowing, boot pin under
-//     load, the 500 ms perf bar): local only, a starved CI webview can't
-//     meet its budgets.
+// harness. Two legs (the replay leg retired in #50 — its dogfood pair's
+// coverage moved to the mock leg's subagent scenario and the
+// compaction-bearing stress fixture):
+//   stress — the generated 10k-entry fixture with 50 compaction records
+//     (windowing, boot pin under load, the 500 ms perf bar): the scale
+//     leg, run in CI and locally.
 //   mock — the deterministic tau-mock-llm scenarios (hash-pinned): streamed
-//     text, tool-call rendering, and multi-turn sequencing against the fake
-//     LLM.
+//     text, tool-call rendering, multi-turn sequencing, and a scripted
+//     subagent spawn against the fake LLM.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -29,15 +25,6 @@ const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
 // and the zstd sidecar now ships beside it (target/test-fixture/blobs/).
 const FIXTURE_SHA256 = 'dda3598e349430f59913771c763b25f1c29035273e5583d2027d4f48695a4b68';
 const FIXTURE_SESSION = 'session';
-// The real session pair the replay leg runs against (recorded by the app
-// itself during the 2026-09-24 dogfood; committed, hash-pinned like the
-const SESSIONS_DIR = path.join(ROOT, 'fixtures', 'sessions');
-// Session files are named by session id (the app's own convention —
-// list_workspace skips a file whose header id does not match its name).
-const PARENT_SESSION = '9b94bcc9eade.jsonl';
-const CHILD_SESSION = 'f12bed0d762f.jsonl';
-const PARENT_SESSION_SHA256 = 'b0a573f53d85505557d110c20b29d9bacb8f2d546b27b65d8f60ff1623b2feb2';
-const CHILD_SESSION_SHA256 = '22a5fa26baedae78cb70ef2ad79dbfd7f3549e55e1ca82af945b37356d69c541';
 // The deterministic mock LLM (phase 1 §4): hash-pinned scenario files
 // served by the tau-mock-llm binary; the mock leg's workspace points its
 // `mock` provider at it and the specs switch their sessions to mock-model.
@@ -45,31 +32,32 @@ const MOCK_PORT = 8123;
 const MOCK_SCENARIOS = {
   'e2e-text-turn.json': '5c1643e3bf0086324282fc0f605d12f7b8b7fabdec9e0556309ca13df7ebb9a9',
   'e2e-tool-turn.json': '6aca5c25e849fbb2419c525251fd6987554c6ca8248e7dcd4f5627b8683b8479',
-  'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115'
+  'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115',
+  'e2e-subagent-parent.json': '1dc5416f1365a89014116ee7d51fdf44472a792b690494ac391e1c7aa337eefd'
 };
-const PARENT_ID = '9b94bcc9eade';
-const CHILD_ID = 'f12bed0d762f';
 const VITE_URL = 'http://127.0.0.1:5173/';
 const OUTPUT_DIR = path.join(ROOT, 'target', 'e2e');
 
-// Mode split: replay = the real session pair (CI + local); stress = the
-// 10k generated fixture, local only (docs/research/tauri-ci.md §4: a
-// starved CI webview cannot meet the stress budgets); mock = the
-// deterministic tau-mock-llm scenarios (CI + local); no TAU_E2E_MODE =
-// the local default (all three), CI runs replay + mock.
-const ALL_LEGS = ['replay', 'stress', 'mock'];
-const CI_LEGS = ['replay', 'mock'];
+// No TAU_E2E_MODE = both legs, locally and in CI (#50: CI now runs the
+// full set — the stress leg's budgets are met on the CI runners the way
+// the mock leg's are, so the old replay-only CI split is gone).
+const ALL_LEGS = ['stress', 'mock'];
 const mode = process.env.TAU_E2E_MODE;
 if (mode && !ALL_LEGS.includes(mode))
   throw new Error(`TAU_E2E_MODE must be one of ${ALL_LEGS.join('|')} (got ${mode})`);
-const legs = mode ? [mode] : (process.env.CI ? CI_LEGS : ALL_LEGS);
+const legs = mode ? [mode] : ALL_LEGS;
 
 // One spec file per leg, except mock: one spec per scripted feature
-// (text streaming, tool-call rendering, multi-turn sequencing).
+// (text streaming, tool-call rendering, multi-turn sequencing, subagent
+// spawn).
 const LEG_SPECS = {
-  replay: ['replay.spec.mjs'],
   stress: ['stress.spec.mjs'],
-  mock: ['mock-text.spec.mjs', 'mock-tool.spec.mjs', 'mock-multi.spec.mjs']
+  mock: [
+    'mock-text.spec.mjs',
+    'mock-tool.spec.mjs',
+    'mock-multi.spec.mjs',
+    'mock-subagent.spec.mjs'
+  ]
 };
 // The isolated HOME keeps the run from touching the real ~/.config/tau; an
 // empty system dir is what makes the boot check (no workspace auto-opens)
@@ -95,15 +83,6 @@ function buildFixture() {
   if (sha !== FIXTURE_SHA256) throw new Error(`fixture hash drifted: ${sha} != ${FIXTURE_SHA256}`);
 }
 
-function checkDogfood() {
-  for (const [file, pinned] of [
-    [PARENT_SESSION, PARENT_SESSION_SHA256],
-    [CHILD_SESSION, CHILD_SESSION_SHA256]
-  ]) {
-    const sha = createHash('sha256').update(fs.readFileSync(path.join(SESSIONS_DIR, file))).digest('hex');
-    if (sha !== pinned) throw new Error(`session fixture drifted: ${file}`);
-  }
-}
 
 function checkMockScenarios() {
   for (const [file, pinned] of Object.entries(MOCK_SCENARIOS)) {
@@ -119,11 +98,10 @@ function checkMockScenarios() {
 // (ticket #48): the core pins a session to the *first* provider of the
 // merged config (BTreeMap order) at registration and session_set_model
 // only swaps the model id, and the mock leg's project config must never
-// cohabit a workspace whose sessions the canned legs drive — a shared
+// cohabit a workspace whose sessions the canned leg drives — a shared
 // dir let the mock leg's config write clobber the shared project layer
-// and pin the replay/stress sessions to the mock provider. Replay/stress
-// specs read TAU_E2E_WS / TAU_E2E_WS_STRESS; the mock specs read
-// TAU_E2E_WS_MOCK.
+// and pin the stress session to the mock provider. The stress spec reads
+// TAU_E2E_WS_STRESS; the mock specs read TAU_E2E_WS_MOCK.
 const CANNED_CONFIG = ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', ''].join('\n');
 function makeWorkspaces() {
   const dirs = {};
@@ -151,18 +129,15 @@ function makeWorkspaces() {
   // in the loop) clobbered the shared project layer with the mock
   // provider, pinning every shared-ws session to mock.
   for (const leg of legs) {
-    const ws = path.join(tmp, leg === 'mock' ? 'ws-mock' : leg === 'stress' ? 'ws-stress' : 'ws-replay');
+    const ws = path.join(tmp, `ws-${leg}`);
     fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
-    if (leg === 'replay') {
-      fs.copyFileSync(path.join(SESSIONS_DIR, PARENT_SESSION), path.join(ws, '.tau', 'sessions', PARENT_SESSION));
-      fs.copyFileSync(path.join(SESSIONS_DIR, CHILD_SESSION), path.join(ws, '.tau', 'sessions', CHILD_SESSION));
-      fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
-    } else if (leg === 'stress') {
+    if (leg === 'stress') {
       fs.copyFileSync(FIXTURE, path.join(ws, '.tau', 'sessions', `${FIXTURE_SESSION}.jsonl`));
       // The oversized compaction record's zstd sidecar sits under the
       // store root (.tau/blobs/), beside the session file (#49).
       const blobs = path.join(ROOT, 'target', 'test-fixture', 'blobs');
       if (fs.existsSync(blobs)) fs.cpSync(blobs, path.join(ws, '.tau', 'blobs'), { recursive: true });
+      fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
     } else {
       // The mock provider is the sole entry: a fresh session defaults to
       // mock-model, and the twin model entries let a spec switch models
@@ -272,8 +247,7 @@ async function onPrepare() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   for (const leg of legs) {
     if (leg === 'stress') buildFixture();
-    else if (leg === 'mock') checkMockScenarios();
-    else checkDogfood();
+    else checkMockScenarios();
   }
   const workspaces = makeWorkspaces();
   // The spec runs in a separate worker process — the shared context travels
@@ -282,12 +256,10 @@ async function onPrepare() {
   // Assigning undefined to process.env writes the string "undefined" —
   // the worker re-imports this config and would reject it.
   if (mode) process.env.TAU_E2E_MODE = mode;
-  process.env.TAU_E2E_WS = workspaces.replay ?? workspaces.stress ?? workspaces.mock;
   process.env.TAU_E2E_WS_MOCK = workspaces.mock ?? '';
   process.env.TAU_E2E_WS_STRESS = workspaces.stress ?? '';
   process.env.TAU_E2E_TMP = tmp;
-  process.env.TAU_E2E_PARENT = PARENT_ID;
-  process.env.TAU_E2E_CHILD = CHILD_ID;
+  process.env.TAU_E2E_FIXTURE_SESSION = FIXTURE_SESSION;
   process.env.TAU_E2E_FIXTURE_SESSION = FIXTURE_SESSION;
   process.env.TAU_E2E_ARTIFACTS = OUTPUT_DIR;
   // The debug build loads the devUrl on every platform (Linux included —
