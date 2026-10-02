@@ -109,7 +109,16 @@ describe('mock E2E: tool calls the app executes and renders', () => {
   });
 
   it('the transcript renders the tool chips; expanding read shows its output', async () => {
-    const d = await readDom();
+    // The store settled in the previous check, but the virtualized
+    // transcript can still be catching up: poll the DOM against a
+    // deadline instead of one immediate read (the same #48-exposed race
+    // as the mock-text leg's DOM check).
+    const d = await waitUntil(
+      readDom,
+      (d) => d.toolChips.join(',') === 'write,read',
+      10000,
+      'the DOM to show the write and read chips'
+    );
     check('the DOM shows a write and a read chip', d.toolChips.join(',') === 'write,read', JSON.stringify(d.toolChips));
     await browser.execute(() => {
       const tools = [...document.querySelectorAll('.tool')];

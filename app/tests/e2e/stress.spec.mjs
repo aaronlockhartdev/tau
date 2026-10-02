@@ -15,7 +15,7 @@ import { expect } from 'expect-webdriverio';
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
-const ws = process.env.TAU_E2E_WS;
+const ws = process.env.TAU_E2E_WS_STRESS ?? process.env.TAU_E2E_WS;
 // The stress leg is always the full 10k fixture with two streams (the config
 // only runs this spec in stress/all mode).
 const entries = 10000;
@@ -210,9 +210,8 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       ws.split(/[\\/]/).filter(Boolean).pop(),
       ws
     );
-    // The MRU auto-open may have landed on a co-located session (in all
-    // mode the dogfood pair shares the workspace); the stress leg is the
-    // fixture, so switch to it explicitly.
+    // The MRU auto-open may land on any session the workspace carries;
+    // the stress leg is the fixture, so switch to it explicitly.
     browser
       .execute(
         async (sid) => {

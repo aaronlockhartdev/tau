@@ -116,10 +116,12 @@
     const start = Math.max(0, ref.findItemIndex(offset));
     const end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
     const fetches = scrollFetches(win, c, { start, end }, turnOf(c));
-    if (fetches.length > 0) {
-      store.renderRange = `${start}–${end} of ${n}`;
-      for (const f of fetches) void fetchWindow(c, f.start, f.count);
-    }
+    // The status bar labels the visible window on every recompute — not
+    // only when a fetch fires: in a warm app (all-mode) the open-tail page
+    // can already cover the boot pin, so a fetch-less recompute is the
+    // norm and the label must not go stale (ticket #48).
+    store.renderRange = `${start}–${end} of ${n}`;
+    for (const f of fetches) void fetchWindow(c, f.start, f.count);
   }
 
   // A session opens pinned at its tail, so the first page is the tail.

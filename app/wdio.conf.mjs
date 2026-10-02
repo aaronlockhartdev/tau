@@ -116,12 +116,15 @@ function checkMockScenarios() {
 // The minimal test workspace: the session file(s) under .tau/sessions/ and
 // the canned:// text provider in the *project* config (.tau/config.toml) —
 // the production layering merge a session reads through (spec §12); the
-// isolated HOME's system layer stays empty. One workspace PER LEG, because
-// the core pins a session to the *first* provider of the merged config
-// (BTreeMap order) at registration and session_set_model only swaps the
-// model id: replay needs canned first, mock needs mock as the sole
-// provider. Replay/stress specs read TAU_E2E_WS (the first leg's
-// workspace, as before); the mock specs read TAU_E2E_WS_MOCK.
+// isolated HOME's system layer stays empty. One workspace PER LEG, always
+// (ticket #48): the core pins a session to the *first* provider of the
+// merged config (BTreeMap order) at registration and session_set_model
+// only swaps the model id, and the mock leg's project config must never
+// cohabit a workspace whose sessions the canned legs drive — a shared
+// dir let the mock leg's config write clobber the shared project layer
+// and pin the replay/stress sessions to the mock provider. Replay/stress
+// specs read TAU_E2E_WS / TAU_E2E_WS_STRESS; the mock specs read
+// TAU_E2E_WS_MOCK.
 const CANNED_CONFIG = ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', ''].join('\n');
 function makeWorkspaces() {
   const dirs = {};
@@ -144,14 +147,12 @@ function makeWorkspaces() {
       ].join('\n')
     );
   }
-  // 'all' keeps the original single shared workspace for replay + stress
-  // (the stress spec's all-mode branch reads the session pair from it);
-  // single-leg runs get their own dir.
-  const shared = legs.includes('replay') && legs.includes('stress');
+  // One dir per leg, in every mode (#48): 'all' used to share one dir
+  // between replay + stress + mock, and the mock leg's config write (last
+  // in the loop) clobbered the shared project layer with the mock
+  // provider, pinning every shared-ws session to mock.
   for (const leg of legs) {
-    const ws = shared
-      ? path.join(tmp, 'ws')
-      : path.join(tmp, leg === 'mock' ? 'ws-mock' : leg === 'stress' ? 'ws-stress' : 'ws');
+    const ws = path.join(tmp, leg === 'mock' ? 'ws-mock' : leg === 'stress' ? 'ws-stress' : 'ws-replay');
     fs.mkdirSync(path.join(ws, '.tau', 'sessions'), { recursive: true });
     if (leg === 'replay') {
       fs.copyFileSync(path.join(SESSIONS_DIR, PARENT_SESSION), path.join(ws, '.tau', 'sessions', PARENT_SESSION));
@@ -281,6 +282,7 @@ async function onPrepare() {
   if (mode) process.env.TAU_E2E_MODE = mode;
   process.env.TAU_E2E_WS = workspaces.replay ?? workspaces.stress ?? workspaces.mock;
   process.env.TAU_E2E_WS_MOCK = workspaces.mock ?? '';
+  process.env.TAU_E2E_WS_STRESS = workspaces.stress ?? '';
   process.env.TAU_E2E_TMP = tmp;
   process.env.TAU_E2E_PARENT = PARENT_ID;
   process.env.TAU_E2E_CHILD = CHILD_ID;

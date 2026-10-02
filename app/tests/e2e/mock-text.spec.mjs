@@ -15,7 +15,8 @@ import {
   readStore,
   selectModel,
   uiSend,
-  waitSettle
+  waitSettle,
+  waitUntil
 } from './support/helpers.mjs';
 
 // The shared context travels from the config's onPrepare over the worker's
@@ -84,7 +85,17 @@ describe('mock E2E: a streamed text turn (deterministic mock LLM)', () => {
   });
 
   it('the transcript renders the streamed text in the DOM', async () => {
-    const d = await readDom();
+    // The store settled in the previous check, but the virtualized
+    // transcript can still be catching up: poll the DOM against a
+    // deadline instead of one immediate read. #48's per-leg isolation
+    // exposed the race — in all-mode the mock turn now succeeds, so the
+    // render lag is no longer masked by the pinning failure.
+    const d = await waitUntil(
+      readDom,
+      (d) => (d.lastText ?? '').includes(TEXT),
+      10000,
+      'the DOM transcript to show the streamed text'
+    );
     check(
       'the DOM transcript shows the streamed text',
       (d.lastText ?? '').includes(TEXT),

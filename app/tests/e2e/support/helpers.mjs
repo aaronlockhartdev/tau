@@ -42,6 +42,8 @@ const storeState = () => {
     loading: s.loading,
     error: s.error,
     workspaces: s.workspaces.map((w) => w.id),
+    wsCwd: Object.fromEntries(s.workspaces.map((w) => [w.id, w.cwd])),
+    currentWs: cur ? cur.meta.workspace ?? null : null,
     current: s.current,
     model: cur ? cur.meta.model ?? null : null,
     entries: entries.length,
@@ -55,8 +57,8 @@ const storeState = () => {
         path: typeof e.args?.path === 'string' ? e.args.path : null,
         outputSnippet: (e.output ?? '').slice(0, 120)
       })),
-    live: cur ? cur.live.queue.length : null,
-    liveTexts: cur ? cur.live.queue.map((l) => l.text.length) : [],
+    live: cur?.live ? cur.live.queue.length : 0,
+    liveTexts: cur?.live ? cur.live.queue.map((l) => l.text.length) : [],
     turn: cur ? cur.turn ?? null : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     renderRange: s.renderRange,
@@ -138,11 +140,11 @@ export async function bootCheck() {
   check('boot: the app module graph ran (window.__tau attached)', v === 1);
 }
 
-// The mock leg's workspace: opened by the first spec; later specs find it
-// already open (the registry persists under the isolated HOME).
+// The leg's workspace, made active: in all-mode the app sits on the
+// previous leg's workspace, and "some workspace is listed" is not "this
+// leg's workspace is current" (#48). A cwd re-open is a cheap refresh,
+// and it ends with the current session in this workspace.
 export async function ensureWorkspace(ws) {
-  const s = await readStore();
-  if (s.workspaces.length > 0) return;
   const name = ws.split(/[\\/]/).filter(Boolean).pop();
   await browser.execute(
     async (name, cwd) => {
@@ -151,23 +153,33 @@ export async function ensureWorkspace(ws) {
     name,
     ws
   );
-  const opened = await waitUntil(readStore, (s) => s.workspaces.length > 0, 30000, 'workspace open');
-  check(`workspace open: ${name} is registered`, opened.workspaces.length > 0, JSON.stringify(opened.workspaces));
+  const opened = await waitUntil(
+    readStore,
+    (s) => s.currentWs !== null && s.wsCwd[s.currentWs] === ws,
+    30000,
+    `the app is in workspace ${name}`
+  );
+  check(`workspace open: ${name} is active`, opened.wsCwd[opened.currentWs] === ws, JSON.stringify(opened.workspaces));
 }
 
 // Session creation through the UI: the LeftPane .new button (newSession is
 // not on the dev seam). Returns the new session's id.
 export async function newSessionViaUI() {
+  // An all-mode app may already have a current session (the MRU auto-open
+  // from the previous leg), so "current became non-null" is the wrong
+  // success signal: the precise invariant is that .new CHANGED the current
+  // session (#48 — the mock leg once drove the stress leg's 10k session).
+  const before = (await readStore()).current;
   await browser.execute(async () => {
     await document.querySelector('aside.left .new').click();
   });
   const s = await waitUntil(
     readStore,
-    (s) => s.current !== null,
+    (s) => s.current !== null && s.current !== before,
     30000,
     'the new session is current'
   );
-  check('session: the .new button created a session', s.current !== null, `current=${s.current}`);
+  check('session: the .new button created a session', s.current !== null && s.current !== before, `current=${s.current} (was ${before})`);
   return s.current;
 }
 
