@@ -97,6 +97,10 @@
   // mid-turn union the turn-end effect re-reads). Plain maps — the policy's
   // own state, not reactive.
   const win = makeWindowingState();
+  // The session object each one-shot was burned on: a re-open replaces the
+  // object (fresh meta-only snapshot), and the replacement loses the
+  // previous object's page — the identity change is the re-open signal.
+  const openedObj = new Map<string, unknown>();
 
   // The current session's turn state (the policy's hysteresis / union input).
   function turnOf(c: string): TurnState {
@@ -130,13 +134,24 @@
   // the one-shot unburned — a stub's open would otherwise burn it and the
   // real tail page would never issue. The one-shot then blocks re-issue on
   // later re-fires (turn change, stream delta, tab round-trip); when no
-  // session is live it drops, so a closed session's reopen issues again.
+  // session is live it drops, and a re-open (the session object replaced)
+  // drops it too, so the fresh state re-issues the tail page (#49).
   $effect(() => {
     const c = cur;
-    if (!c || !store.sessions[c]) {
+    const s = c ? store.sessions[c] : null;
+    if (!c || !s) {
       win.openedFor = null;
       return;
     }
+    // A re-open replaces the session object while the one-shot is burned:
+    // the previous object's in-flight or applied page is lost with it, so
+    // drop the one-shot (and the hysteresis record) and let openFetches
+    // re-issue the tail page into the fresh state (#49).
+    if (win.openedFor === c && openedObj.get(c) !== s) {
+      win.openedFor = null;
+      win.lastFetched.delete(c);
+    }
+    openedObj.set(c, s);
     const n = all.length;
     if (n === 0) return;
     for (const f of openFetches(win, c, n, turnOf(c))) void fetchWindow(c, f.start, f.count);

@@ -116,6 +116,21 @@ describe('Transcript', () => {
     expect(fetchWindow).toHaveBeenCalledTimes(1);
     expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
   });
+  it('re-issues the tail when a re-open replaces the live session object', async () => {
+    // A re-open of the open session (switchSession on the same id) replaces
+    // the session object with a fresh meta-only snapshot: the one-shot must
+    // not survive the replacement, or the fresh state's tail page never
+    // issues and the window stays unhydrated (#49).
+    seed(30);
+    await mount();
+    fetchWindow.mockClear();
+    const s = seedState(meta('c1'));
+    s.entries = entries(30);
+    resetMockStore({ current: 'c1', sessions: { c1: s } });
+    await tick();
+    expect(fetchWindow).toHaveBeenCalledTimes(1);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
+  });
   it('fetches a page when the visible range drifts beyond the hysteresis margin', async () => {
     seed(30);
     await mount();

@@ -70,9 +70,9 @@ const domState = () => {
     scrollH: sc ? sc.scrollHeight : 0,
     trackH: document.querySelector('.track') ? document.querySelector('.track').offsetHeight : 0,
     domCards: cards.length,
-    // The compaction records render as observation cards (CardShell's
-    // .obs class); the boot pin's tail window holds the last goal's (#49).
-    obsCards: document.querySelectorAll('.card2.obs').length,
+    // The compaction records render as observation cards: the 'obs' class
+    // is the card header's (CardShell renders header.cls on .hd) (#49).
+    obsCards: document.querySelectorAll('.hd.obs').length,
     visible: cards.filter((c) => {
       const r = c.getBoundingClientRect();
       return r.bottom > 0 && r.top < vh;
@@ -291,10 +291,25 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
     check(`transcript: the DOM is windowed over the ${entries} entries`, dom.domCards > 0 && dom.domCards <= 60, `${dom.domCards} cards in the DOM`);
     check('transcript: the track spans the whole session (no 2× height inflation)', dom.trackH > entries * 10 && dom.scrollH <= dom.trackH * 1.2, `trackH=${dom.trackH}, scrollH=${dom.scrollH}`);
     check('transcript: the tail entry is rendered at the boot pin', (dom.lastText ?? '').trim().startsWith('Done:'), (dom.lastText ?? '').slice(0, 80));
+    // The boot pin leaves the viewport at the very tail, and the
+    // virtualizer only materializes viewport + overscan — the last goal's
+    // compaction record sits just above the fold. Scroll up two viewports
+    // so the record is in range, then assert it renders as an observation
+    // card (#49).
+    await browser.execute(() => {
+      const sc = document.querySelector('.scroll');
+      if (sc) sc.scrollTop = Math.max(0, sc.scrollHeight - sc.clientHeight * 2);
+    });
+    const obs = await waitUntil(
+      readDom,
+      (d) => d.obsCards >= 1,
+      30000,
+      'the observation card after scrolling to it'
+    ).catch(() => null);
     check(
-      'transcript: the last goal\u2019s compaction record renders as an observation card at the boot pin',
-      dom.obsCards >= 1,
-      `obsCards=${dom.obsCards}`
+      'transcript: the last goal\u2019s compaction record renders as an observation card when scrolled into view',
+      (obs?.obsCards ?? 0) >= 1,
+      `obsCards=${obs?.obsCards ?? 0}`
     );
   });
 

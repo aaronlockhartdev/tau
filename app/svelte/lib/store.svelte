@@ -519,7 +519,6 @@
           since: null,
           range: { start, count }
         });
-        // Re-resolve the session at landing: a tab round-trip re-opens the
         // session into a fresh state while this read is in flight (and the
         // re-open's identical window request is deduped onto it), so
         // merging into the object captured at issue time would land the
