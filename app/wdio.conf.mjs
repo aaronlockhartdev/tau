@@ -24,11 +24,10 @@ import { setTimeout as sleep } from 'node:timers/promises';
 const APP = import.meta.dirname;
 const ROOT = path.join(APP, '..');
 const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
-// Re-pinned 2026-09-30: the id series is 1-based (the store mints after
-// loading the file), which rewrote every id line in the fixture. The
-// generator is byte-deterministic (fixed clock, static content, no temp
-// paths) — verified two runs, identical sha256.
-const FIXTURE_SHA256 = 'fe6751612f042561d0d2343dc792e58456567ea93c386f2dac136aa407450a19';
+// Re-pinned 2026-10-02 (#49): the fixture gained 50 compaction records
+// (one per goal), one of them oversized — the session file's hash moved,
+// and the zstd sidecar now ships beside it (target/test-fixture/blobs/).
+const FIXTURE_SHA256 = 'dda3598e349430f59913771c763b25f1c29035273e5583d2027d4f48695a4b68';
 const FIXTURE_SESSION = 'session';
 // The real session pair the replay leg runs against (recorded by the app
 // itself during the 2026-09-24 dogfood; committed, hash-pinned like the
@@ -160,7 +159,10 @@ function makeWorkspaces() {
       fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
     } else if (leg === 'stress') {
       fs.copyFileSync(FIXTURE, path.join(ws, '.tau', 'sessions', `${FIXTURE_SESSION}.jsonl`));
-      fs.writeFileSync(path.join(ws, '.tau', 'config.toml'), CANNED_CONFIG);
+      // The oversized compaction record's zstd sidecar sits under the
+      // store root (.tau/blobs/), beside the session file (#49).
+      const blobs = path.join(ROOT, 'target', 'test-fixture', 'blobs');
+      if (fs.existsSync(blobs)) fs.cpSync(blobs, path.join(ws, '.tau', 'blobs'), { recursive: true });
     } else {
       // The mock provider is the sole entry: a fresh session defaults to
       // mock-model, and the twin model entries let a spec switch models

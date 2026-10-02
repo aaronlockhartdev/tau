@@ -44,4 +44,5 @@ Researched 2026-09-24, in response to eight consecutive red E2E CI runs where ea
 
 The lean/stress split stands (roadmap G2, 2026-09-24): **CI** runs the **replay** leg — the real dogfood session pair (small, deterministic, fast — hydration, a canned:// turn, re-open convergence on a real recorded session); **local** `just acceptance e2e` runs replay plus the **stress** leg (10k fixture, two streams, performance bar) where the §8 bar is meaningful. Residual WebKit flakiness in CI stays an environment property, mitigated by artifacts and scoping — never claimed away by the driver.
 
+(Superseded for the e2e leg split by #50, 2026-10-02: the replay leg is retired and CI runs the full set — stress + mock. The mock-first split and the tauri-pilot/WebDriverIO division above stand.)
 Sources: tauri.app v2 docs (Tests / WebDriver / WebDriver-CI), the tauri-docs `ci.md` workflow, stratum #183, megadesk #5, planar-nexus #1895, mpiton's tauri-pilot rationale.

@@ -9,7 +9,10 @@
 //! The content is a realistic long-running session: 50 dev goals, each
 //! worked through 200 entries (a user goal, a plan, a 197-call tool loop,
 //! a summary) on the real entry kinds and payload shapes, so the GUI
-//! renders it like an ordinary transcript.
+//! renders it like an ordinary transcript. Each goal also ends in a
+//! compaction record (`om` entry, the shape `OmState::save` writes):
+//! a long session compacts many times, and goal 25's record exceeds the
+//! blob threshold, so hydration exercises the zstd sidecar (#49).
 //!
 #![allow(
     clippy::cast_possible_truncation,
@@ -17,6 +20,7 @@
 )]
 
 use sha2::{Digest, Sha256};
+use std::fmt::Write as _;
 use std::path::Path;
 use tau_core::session::SessionStore;
 
@@ -87,6 +91,68 @@ const OUTPUTS: &[&str] = &[
     "src/agent.rs:33:pub const KIND_TOOL: &str = \"tool\";",
     "M  src/harness/turn.rs",
 ];
+
+// Observation lines for the compaction records: static (determinism is
+// contractual, ADR-0009). The GUI's 'om' decoder shows the newest one —
+// past the last message boundary (entries.ts).
+const OM_OBS: &[&str] = &[
+    "the SSE parser flake reproduces only under a 50 ms timer avg",
+    "the session store paging test needs the cursor API before it can assert",
+    "the provider client retry is bounded at 3 attempts in the current code",
+    "the harness dispatch split leaves turn.rs at 385 lines",
+    "the left-pane tree loads every row eagerly on workspace open",
+    "the file watcher holds a handle per watched dir; the leak is the unwatch path",
+    "the hashline format property tests cover round-trip but not the CRC edge",
+    "the transcript virtualizer estimates 40 px per entry before measurement",
+    "the doubled track height appears only when the boot pin scrolls twice",
+    "the archived session summary line is the first assistant text, truncated",
+    "the card collapse state is per-entry and not persisted across re-open",
+    "the atomic rewrite settles the tail before the next append is visible",
+    "the status bar usage group reads the session meta, not the stream",
+    "the config merge keeps the system layer's provider order in a BTreeMap",
+    "the pilot socket name must fit the 104-byte SUN_PATH on macOS",
+];
+const OM_THINKING: &[&str] = &[
+    "the loop is converging; the last two rounds changed nothing new",
+    "the failure moved from the parser to the test harness; re-scoping",
+    "the measurement rounds flush in batches; waiting for the compositor",
+    "the edit applied cleanly; verifying with a re-run before the summary",
+];
+const OM_SUGGESTED: &[&str] = &[
+    "re-run the failing suite with the timer probe enabled",
+    "split the dispatch module before adding the next command",
+    "add the cursor API to the store and port the paging test",
+    "watch the next turn's first frame for the height inflation",
+];
+
+// One compaction record per goal: the payload `OmState::save` writes
+// (om_integration.rs) — active_observations with a message boundary so
+// the GUI's 'om' decoder shows the newest observation. Goal 25 carries a
+// long observation log past the blob threshold, so its payload goes to a
+// zstd sidecar and hydration must resolve it (#49).
+fn om_payload(goal: u64) -> serde_json::Value {
+    const BOUNDARY: &str = "--- message boundary (2025-06-15T15:33:20.000Z) ---";
+    let rounds = if goal == 25 { 2_000 } else { 2 };
+    let mut older = String::new();
+    for i in 0..rounds {
+        writeln!(
+            &mut older,
+            "- {}",
+            OM_OBS[usize::try_from(i).expect("loop bound") % OM_OBS.len()]
+        )
+        .expect("writing to a String cannot fail");
+    }
+    let newest = OM_OBS[usize::try_from(goal).expect("loop index 0..50") % OM_OBS.len()];
+    serde_json::json!({
+        "active_observations": format!(
+            "<observation-group>\n{older}\n\n{BOUNDARY}\n\n<observation-group>\n- {newest}\n</observation-group>"
+        ),
+        "om_thinking": OM_THINKING[usize::try_from(goal).expect("loop index 0..50") % OM_THINKING.len()],
+        "om_input": format!("goal {goal}: work the loop to completion"),
+        "om_suggested_response": OM_SUGGESTED[usize::try_from(goal).expect("loop index 0..50") % OM_SUGGESTED.len()],
+        "om_model": "gpt-5.2"
+    })
+}
 
 #[test]
 #[allow(clippy::too_many_lines)] // one fixture-generation pass; splitting is refactoring
@@ -159,6 +225,12 @@ fn the_shared_fixture_is_written_and_hashed() {
             prev = Some(e.id);
             n += 1;
         }
+        // Compaction after the long tool loop, before the summary: the
+        // record is the newest `om` entry, so re-opens read it back through
+        // the blob sidecar when it is big enough (#49).
+        let e = store.append("om", om_payload(g), prev.as_deref()).unwrap();
+        prev = Some(e.id);
+        n += 1;
         let e = store
             .append(
                 "assistant",
@@ -174,7 +246,15 @@ fn the_shared_fixture_is_written_and_hashed() {
         prev = Some(e.id);
         n += 1;
     }
-    assert_eq!(n, 10_000);
+    assert_eq!(n, 10_050);
+    // Goal 25's record is the sidecar case: it must clear the blob
+    // threshold, or the fixture silently stops exercising it.
+    assert!(
+        u64::try_from(om_payload(25).to_string().len())
+            .expect("payload length, well under u64::MAX")
+            > tau_core::session::DEFAULT_BLOB_THRESHOLD,
+        "goal 25's compaction record must exceed the blob threshold"
+    );
 
     let root = std::env::var("CARGO_TARGET_DIR").ok().map_or_else(
         || {
@@ -189,7 +269,18 @@ fn the_shared_fixture_is_written_and_hashed() {
     std::fs::create_dir_all(&dir).unwrap();
     let bytes = std::fs::read(store.path()).unwrap();
     std::fs::write(dir.join("session.jsonl"), &bytes).unwrap();
-
+    // The oversized compaction record's zstd sidecar (ADR-0005) is a
+    // separate file under the store root: ship it with the fixture, or
+    // the E2E hydration cannot resolve the blob (#49).
+    let blobs = tmp.path().join(".tau").join("blobs");
+    if blobs.is_dir() {
+        let out = dir.join("blobs");
+        std::fs::create_dir_all(&out).unwrap();
+        for entry in std::fs::read_dir(&blobs).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), out.join(entry.file_name())).unwrap();
+        }
+    }
     let digest = Sha256::digest(&bytes);
     println!(
         "shared fixture: {} (sha256 {digest:x})",

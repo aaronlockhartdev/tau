@@ -49,6 +49,9 @@ const storeState = () => {
     entries: entries.length,
     entryKinds: entries.map((e) => e.kind),
     toolNames: entries.filter((e) => e.kind === 'tool').map((e) => e.name),
+    subagentHandles: entries
+      .filter((e) => e.kind === 'subagent')
+      .map((e) => e.payload?.handle ?? null),
     taskTitles: cur ? Object.values(cur.tasks ?? {}).map((t) => `${t.id}:${t.status}`) : [],
     toolDetails: entries
       .filter((e) => e.kind === 'tool')
@@ -75,6 +78,8 @@ const domState = () => {
     hasScroll: !!sc,
     clientH: vh,
     scrollH: sc ? sc.scrollHeight : 0,
+    // The subagent spawn card's header label (subagentShell, parent view).
+    hasSpawnCard: [...document.querySelectorAll('.card2 .hd')].some((h) => h.textContent.trim() === 'spawn'),
     trackH: document.querySelector('.track') ? document.querySelector('.track').offsetHeight : 0,
     domCards: cards.length,
     visible: cards.filter((c) => {

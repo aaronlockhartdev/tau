@@ -16,9 +16,10 @@ import { expect } from 'expect-webdriverio';
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
 const ws = process.env.TAU_E2E_WS_STRESS ?? process.env.TAU_E2E_WS;
-// The stress leg is always the full 10k fixture with two streams (the config
-// only runs this spec in stress/all mode).
-const entries = 10000;
+// The stress leg is always the full fixture with two streams (the config
+// only runs this spec in stress/all mode): 10k transcript entries plus
+// 50 compaction records, one per goal (#49).
+const entries = 10050;
 const streams = 2;
 const fixtureSession = process.env.TAU_E2E_FIXTURE_SESSION ?? 'session';
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
@@ -69,6 +70,9 @@ const domState = () => {
     scrollH: sc ? sc.scrollHeight : 0,
     trackH: document.querySelector('.track') ? document.querySelector('.track').offsetHeight : 0,
     domCards: cards.length,
+    // The compaction records render as observation cards (CardShell's
+    // .obs class); the boot pin's tail window holds the last goal's (#49).
+    obsCards: document.querySelectorAll('.card2.obs').length,
     visible: cards.filter((c) => {
       const r = c.getBoundingClientRect();
       return r.bottom > 0 && r.top < vh;
@@ -287,6 +291,11 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
     check(`transcript: the DOM is windowed over the ${entries} entries`, dom.domCards > 0 && dom.domCards <= 60, `${dom.domCards} cards in the DOM`);
     check('transcript: the track spans the whole session (no 2× height inflation)', dom.trackH > entries * 10 && dom.scrollH <= dom.trackH * 1.2, `trackH=${dom.trackH}, scrollH=${dom.scrollH}`);
     check('transcript: the tail entry is rendered at the boot pin', (dom.lastText ?? '').trim().startsWith('Done:'), (dom.lastText ?? '').slice(0, 80));
+    check(
+      'transcript: the last goal\u2019s compaction record renders as an observation card at the boot pin',
+      dom.obsCards >= 1,
+      `obsCards=${dom.obsCards}`
+    );
   });
 
   it(`the status bar reports the ${entries} render range`, async () => {
@@ -505,6 +514,13 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
         `${label}: re-opening from the file`
       );
       check(`${label}: re-opening from the file converges to the disk entries (${diskEntries})`, re.entries === diskEntries && re.turn === 'idle', `entries=${re.entries}, turn=${re.turn}`);
+      // The boot snapshot and the disk re-open must agree on the count:
+      // the fixture's entries plus the streams this leg committed (#49).
+      check(
+        `${label}: the re-open count is the fixture plus the committed streams (${entries} + ${2 * (i + 1)})`,
+        re.entries === entries + 2 * (i + 1),
+        `entries=${re.entries}`
+      );
     });
   }
 
