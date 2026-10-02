@@ -1,4 +1,10 @@
-use super::{BlobRef, Error, Path, PathBuf, SessionStore, ZSTD_LEVEL, fs};
+use std::fs::{self, OpenOptions};
+use std::io::{self, Read, Seek, Write};
+use std::path::{Path, PathBuf};
+
+use serde_json::Value;
+
+use super::{BlobRef, DEFAULT_BLOB_THRESHOLD, Entry, Error, Header, SessionStore, ZSTD_LEVEL};
 
 impl SessionStore {
     pub(super) fn blob_path(&self, id: &str) -> PathBuf {
@@ -80,7 +86,6 @@ impl SessionStore {
     /// (overflow is an error — a header is a single JSON line, well under
     /// the cap).
     pub fn archive_header_line(&self) -> Result<String, Error> {
-        use std::io::Read as _;
         const CAP: usize = 4096;
         let file = fs::File::open(self.archive_path()).map_err(|e| Error::Other(e.to_string()))?;
         let mut buf = Vec::with_capacity(CAP);
@@ -105,6 +110,292 @@ impl SessionStore {
                 self.id
             ))),
         }
+    }
+
+    /// Split the raw file into lines, dropping a torn tail: a final line
+    /// without its terminating newline that parses as neither an entry
+    /// nor the header is a kill-interrupted write — not an entry, and the
+    /// next append settles it. A complete final line missing only its
+    /// terminator is kept (as is an unterminated header). The read path
+    /// never rewrites the file; it only tolerates the torn tail in memory.
+    pub(super) fn entry_lines(raw: &str) -> Vec<&str> {
+        let mut lines: Vec<&str> = raw.lines().collect();
+        if !raw.ends_with('\n')
+            && lines.last().is_some_and(|l| {
+                l.parse::<Entry>().is_err() && serde_json::from_str::<Header>(l).is_err()
+            })
+        {
+            lines.pop();
+        }
+        lines
+    }
+
+    fn append_line(&mut self, mut entry: Entry, parent: Option<&str>) -> Result<Entry, Error> {
+        self.ensure_open()?;
+        // A loaded store whose file is gone (deleted, or archived out
+        // from under it) is in an inconsistent state: refuse the append
+        // — never resurrect a file headerless (unopenable, invisible to
+        // the list, orphaned on disk; ADR-0005).
+        if !self.path().exists() {
+            return Err(Error::Other(format!(
+                "session {} file is gone — the append was refused",
+                self.id
+            )));
+        }
+        if let Some(p) = parent
+            && !self.ids.contains(p)
+        {
+            return Err(Error::Other(format!("unknown parent {p}")));
+        }
+        entry.parent = parent.map(str::to_owned);
+        self.extract_blob_if_needed(&mut entry)?;
+        entry.crc = Some(entry.compute_crc());
+
+        // The writer — never the reader — settles a tail left unterminated
+        // by a kill mid-append, so no mangled line lands mid-file.
+        self.settle_tail()?;
+
+        let mut file = OpenOptions::new()
+            // create(false): a file deleted after open is a refusal (the
+            // check above), never a silent resurrection.
+            .create(false)
+            .append(true)
+            .open(self.path())?;
+        let mut line = entry.canonical_line();
+        let line_len = line.len();
+        line.push('\n');
+        file.write_all(line.as_bytes())?;
+        // The writer's own growth: keep the bookkeeping `refresh_if_grown`
+        // relies on (a settle may also have touched the tail).
+        if let Ok(m) = fs::metadata(self.path()) {
+            self.file_len = m.len();
+        }
+
+        self.ids.insert(entry.id.clone());
+        self.entries.push(Some(entry.clone()));
+        self.entry_len.push(line_len);
+        // The id was reserved up front (mint_id): advance the counter past
+        // it, never double-advance.
+        self.next = self.next.max(entry.id.parse::<u64>().unwrap_or(0) + 1);
+        self.loaded = true;
+        Ok(entry)
+    }
+
+    /// The writer-side tail settlement (the read path never rewrites, so
+    /// it cannot race the writer): a kill mid-append leaves the file's
+    /// last line unterminated — a complete line missing its newline, or a
+    /// torn partial. The next append settles it: the complete line is
+    /// terminated, the torn one truncated, and the new line starts clean.
+    fn settle_tail(&self) -> Result<(), Error> {
+        let mut file = fs::File::open(self.path())?;
+        let len = file.metadata()?.len();
+        if len == 0 {
+            return Ok(());
+        }
+        file.seek(io::SeekFrom::End(-1))?;
+        let mut last = [0u8; 1];
+        file.read_exact(&mut last)?;
+        if last[0] == b'\n' {
+            return Ok(());
+        }
+        let raw = fs::read_to_string(self.path())?;
+        let idx = raw.rfind('\n').map_or(0, |i| i + 1);
+        if raw
+            .get(idx..)
+            .expect("offset from rfind() is a char boundary")
+            .parse::<Entry>()
+            .is_ok()
+        {
+            // A complete line missing its newline: terminate it.
+            let mut tail = OpenOptions::new().append(true).open(self.path())?;
+            tail.write_all(b"\n")?;
+        } else {
+            // A torn line: truncate it; the append below starts clean.
+            fs::write(
+                self.path(),
+                raw.get(..idx)
+                    .expect("offset from rfind() is a char boundary"),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Move an oversized inline payload out to a zstd sidecar blob
+    /// (ADR-0005 hardening 2).
+    fn extract_blob_if_needed(&self, entry: &mut Entry) -> Result<(), Error> {
+        if entry.blob.is_some() || entry.payload.is_null() {
+            return Ok(());
+        }
+        let bytes = entry.payload.to_string().into_bytes();
+        if u64::try_from(bytes.len()).expect("payload size, well under u64::MAX")
+            <= DEFAULT_BLOB_THRESHOLD
+        {
+            return Ok(());
+        }
+        let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
+        let compressed = zstd::encode_all(&bytes[..], ZSTD_LEVEL)?;
+        fs::create_dir_all(self.root.join("blobs"))?;
+        fs::write(self.blob_path(&entry.id), compressed)?;
+        entry.payload = Value::Null;
+        entry.blob = Some(BlobRef {
+            id: entry.id.clone(),
+            size: u64::try_from(bytes.len()).expect("payload size, well under u64::MAX"),
+            hash,
+        });
+        Ok(())
+    }
+
+    /// Append an entry; payloads above the blob threshold go to a sidecar
+    /// blob automatically.
+    pub fn append(
+        &mut self,
+        kind: &str,
+        payload: Value,
+        parent: Option<&str>,
+    ) -> Result<Entry, Error> {
+        let id = self.mint_id();
+        self.append_entry(&id, kind, payload, parent)
+    }
+
+    /// Append under a pre-minted id (ADR-0008): a re-emitted item (a
+    /// streaming assistant snapshot, a tool's call→result) keeps the id it
+    /// was first issued, so the wire's upsert and the file's line are one
+    /// object.
+    pub fn append_entry(
+        &mut self,
+        id: &str,
+        kind: &str,
+        payload: Value,
+        parent: Option<&str>,
+    ) -> Result<Entry, Error> {
+        let entry = self.append_line(self.new_entry(id, kind, payload, None), parent)?;
+        if let Some(hook) = &self.entry_event_hook {
+            hook(&entry);
+        }
+        Ok(entry)
+    }
+
+    /// The active leaf: the persisted branch choice if any, else the last
+    /// entry line in the file; `None` = a fresh session with no entries (not
+    /// an error — the first entry starts a root branch).
+    pub fn leaf(&mut self) -> Result<Option<Entry>, Error> {
+        self.ensure_open()?;
+        if let Some(l) = &self.leaf {
+            return self.entry(l).map(Some);
+        }
+        let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
+        // Line 1 is the header; the leaf is the last entry line after it
+        // (a torn tail is not an entry — `entry_lines` drops it).
+        let lines: Vec<&str> = Self::entry_lines(&raw);
+        let Some(line) = lines.iter().skip(1).rev().find(|l| !l.is_empty()) else {
+            return Ok(None);
+        };
+        let entry: Entry = line.parse::<Entry>()?;
+        entry.verify(lines.len())?;
+        Ok(Some(entry))
+    }
+
+    /// A unique temp path for an atomic rewrite (note 3): a shared fixed
+    /// name lets two concurrently dispatched commands interleave on one
+    /// file; the nanosecond clock keeps the names apart.
+    fn rewrite_tmp(&self) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        self.path().with_file_name(format!(
+            "{}.tmp-{nanos:016x}",
+            self.path()
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        ))
+    }
+
+    /// Persist an explicit branch choice (the GUI switches the active
+    /// branch); only the header line's content changes, written atomically
+    /// via temp-file rename.
+    pub fn set_leaf(&mut self, leaf_id: &str) -> Result<(), Error> {
+        self.ensure_open()?;
+        if !self.ids.contains(leaf_id) {
+            return Err(Error::Other(format!("unknown leaf {leaf_id}")));
+        }
+        let raw = fs::read_to_string(self.path())?;
+        let mut lines: Vec<&str> = raw.split('\n').collect();
+        let mut header: Header = serde_json::from_str(lines[0])?;
+        header.leaf = Some(leaf_id.to_owned());
+        let new_header = serde_json::to_string(&header)?;
+        lines[0] = &new_header;
+        let joined = lines.join("\n");
+        let tmp = self.rewrite_tmp();
+        fs::write(&tmp, &joined)?;
+        fs::rename(&tmp, self.path())?;
+        self.leaf = Some(leaf_id.to_owned());
+        Ok(())
+    }
+
+    /// Set the session's readable name; like `set_leaf` this rewrites only
+    /// the header line, atomically via temp-file rename.
+    pub fn set_title(&mut self, title: &str) -> Result<(), Error> {
+        self.ensure_open()?;
+        let raw = fs::read_to_string(self.path())?;
+        let mut lines: Vec<&str> = raw.split('\n').collect();
+        let mut header: Header = serde_json::from_str(lines[0])?;
+        header.title = Some(title.to_owned());
+        let new_header = serde_json::to_string(&header)?;
+        lines[0] = &new_header;
+        let joined = lines.join("\n");
+        let tmp = self.rewrite_tmp();
+        fs::write(&tmp, &joined)?;
+        fs::rename(&tmp, self.path())?;
+        self.title = Some(title.to_owned());
+        Ok(())
+    }
+
+    /// The creator session (a sub-agent's parent, ADR-0001); written into
+    /// the header so the link survives restarts.
+    pub fn set_parent(&mut self, parent: &str) -> Result<(), Error> {
+        self.ensure_open()?;
+        let raw = fs::read_to_string(self.path())?;
+        let mut lines: Vec<&str> = raw.split('\n').collect();
+        let mut header: Header = serde_json::from_str(lines[0])?;
+        header.parent = Some(parent.to_owned());
+        let new_header = serde_json::to_string(&header)?;
+        lines[0] = &new_header;
+        let joined = lines.join("\n");
+        let tmp = self.rewrite_tmp();
+        fs::write(&tmp, &joined)?;
+        fs::rename(&tmp, self.path())?;
+        self.parent = Some(parent.to_owned());
+        Ok(())
+    }
+
+    /// A fork (spec §5.1): the source's entire entry tree copied into a new
+    /// session file — identical entry ids and parent links (the per-line CRCs
+    /// stay valid on the copied lines), a fresh header, and the source's
+    /// active leaf inherited.
+    pub fn fork_from(source: &Self, id: &str) -> Result<Self, Error> {
+        if id == source.id {
+            return Err(Error::Other(format!(
+                "fork target {id} is the source session"
+            )));
+        }
+        let raw = fs::read_to_string(source.path())?;
+        let mut lines: Vec<&str> = raw.lines().collect();
+        let Some(first) = lines.first() else {
+            return Err(Error::Other("empty session file".into()));
+        };
+        let mut header: Header = serde_json::from_str(first)?;
+        id.clone_into(&mut header.id);
+        let new_header = serde_json::to_string(&header)?;
+        lines[0] = &new_header;
+        let mut target = Self::new(source.root.clone(), id);
+        if target.path().exists() {
+            return Err(Error::Other(format!("fork target {id} already exists")));
+        }
+        fs::create_dir_all(target.root.join("sessions"))?;
+        fs::write(target.path(), format!("{}\n", lines.join("\n")))?;
+        target.open()?;
+        Ok(target)
     }
 }
 #[cfg(test)]

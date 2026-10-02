@@ -1,4 +1,7 @@
+use super::entry::crc32;
 use super::*;
+
+use std::fmt::Write as _;
 
 pub(super) fn store(dir: &Path, id: &str) -> SessionStore {
     SessionStore::for_workspace(dir, id)
