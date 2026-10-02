@@ -198,7 +198,7 @@ fn unknown_keys_are_rejected() {
     let err = load_from("", "[om]\nbogus = 1\n").unwrap_err();
     match err {
         LoadError::Parse(path, _) => assert!(path.ends_with("config.toml")),
-        other @ LoadError::Io(_) => panic!("expected a parse error, got {other:?}"),
+        other => panic!("expected a parse error, got {other:?}"),
     }
 }
 
@@ -223,4 +223,52 @@ fn unknown_keys_in_the_new_tables_are_rejected() {
 fn unknown_level_names_are_rejected() {
     assert!(load_from("", "[thinking]\nlevel = \"ultra\"\n").is_err());
     assert!(load_from("", "[cache]\nretention = \"eternal\"\n").is_err());
+}
+
+#[test]
+fn om_thresholds_within_u32_load() {
+    // The default layout sits far under u32::MAX; a value exactly at the
+    // limit is still in-domain and must load (ticket #46).
+    let toml = format!(
+        "[om]\nom_model = \"om\"\nobserve_threshold = {max}\n",
+        max = u32::MAX
+    );
+    let config = load_from(&toml, "").unwrap();
+    assert_eq!(config.om.observe_threshold, u64::from(u32::MAX));
+    assert_eq!(config.om.reflect_threshold, 40_000);
+    assert_eq!(config.om.buffer_increment, 6_000);
+}
+
+#[test]
+fn om_threshold_above_u32_max_is_rejected() {
+    // Each of the three u64 thresholds is checked; the error names the
+    // offending field and the limit (ticket #46).
+    for (field, toml) in [
+        (
+            "om.observe_threshold",
+            "[om]\nobserve_threshold = 5000000000\n",
+        ),
+        (
+            "om.reflect_threshold",
+            "[om]\nreflect_threshold = 5000000000\n",
+        ),
+        (
+            "om.buffer_increment",
+            "[om]\nbuffer_increment = 5000000000\n",
+        ),
+    ] {
+        let err = load_from(toml, "").unwrap_err();
+        match err {
+            LoadError::OmThreshold {
+                field: got,
+                value,
+                limit,
+            } => {
+                assert_eq!(got, field);
+                assert_eq!(value, 5_000_000_000);
+                assert_eq!(limit, u32::MAX);
+            }
+            other => panic!("expected an om threshold error for {field}, got {other:?}"),
+        }
+    }
 }

@@ -61,19 +61,20 @@ impl OmState {
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
         let observe = f64::from(
             u32::try_from(om.observe_threshold.max(1))
-                .expect("token threshold, well under u32::MAX"),
+                .expect("om thresholds are validated to fit a u32 at config load"),
         );
         let activation = (1.0
             - f64::from(
-                u32::try_from(om.buffer_increment).expect("token increment, well under u32::MAX"),
+                u32::try_from(om.buffer_increment)
+                    .expect("om thresholds are validated to fit a u32 at config load"),
             ) / observe)
             .clamp(0.0, 1.0);
         Self {
             config: OmConfig {
                 observe_threshold: u32::try_from(om.observe_threshold)
-                    .expect("token threshold, well under u32::MAX"),
+                    .expect("om thresholds are validated to fit a u32 at config load"),
                 reflect_threshold: u32::try_from(om.reflect_threshold)
-                    .expect("token threshold, well under u32::MAX"),
+                    .expect("om thresholds are validated to fit a u32 at config load"),
                 buffer_activation: activation,
                 share_token_budget: false,
             },

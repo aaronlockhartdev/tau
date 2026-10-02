@@ -177,6 +177,29 @@ pub struct Om {
     pub buffer_increment: u64,
 }
 
+impl Om {
+    // The u64 fields are TOML-friendly, but the OM kernel counts tokens in
+    // u32: enforce the domain at the parse boundary (ticket #46) so an
+    // oversized threshold is a config error, not a launch panic.
+    fn validate(&self) -> Result<(), LoadError> {
+        let limit = u32::MAX;
+        for (field, value) in [
+            ("om.observe_threshold", self.observe_threshold),
+            ("om.reflect_threshold", self.reflect_threshold),
+            ("om.buffer_increment", self.buffer_increment),
+        ] {
+            if value > u64::from(limit) {
+                return Err(LoadError::OmThreshold {
+                    field,
+                    value,
+                    limit,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Default for Om {
     fn default() -> Self {
         Self {
@@ -311,6 +334,7 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
     let mut config = Config::default();
     system.merge_into(&mut config);
     project.merge_into(&mut config);
+    config.om.validate()?;
     Ok(config)
 }
 
@@ -318,6 +342,12 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
 pub enum LoadError {
     Io(std::io::Error),
     Parse(std::path::PathBuf, toml::de::Error),
+    /// An `[om]` threshold above `u32::MAX` (ticket #46).
+    OmThreshold {
+        field: &'static str,
+        value: u64,
+        limit: u32,
+    },
 }
 
 impl fmt::Display for LoadError {
@@ -325,6 +355,13 @@ impl fmt::Display for LoadError {
         match self {
             Self::Io(e) => write!(f, "reading config: {e}"),
             Self::Parse(path, e) => write!(f, "parsing {}: {e}", path.display()),
+            Self::OmThreshold {
+                field,
+                value,
+                limit,
+            } => {
+                write!(f, "{field} = {value} exceeds the u32 token limit ({limit})")
+            }
         }
     }
 }
