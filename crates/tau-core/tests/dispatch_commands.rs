@@ -853,13 +853,15 @@ async fn entries_of_a_closed_session_are_served_from_disk() {
 }
 
 #[tokio::test]
-async fn session_snapshot_of_an_unowned_session_is_not_found() {
+async fn session_open_of_an_unowned_session_is_not_found() {
     // A session no open workspace owns is the canonical unknown-entity
-    // shape, not an Other (ticket #38).
+    // shape, not an Other (ticket #38). SessionOpen is the entry that
+    // reaches the disk-snapshot site: a live session answers from memory,
+    // so only the unowned fall-through is exercised here.
     let rig = rig(done_body(), 0);
     let err = rig
         .core
-        .dispatch(Command::SessionSnapshot {
+        .dispatch(Command::SessionOpen {
             session: "no-such-session".into(),
         })
         .unwrap_err();
