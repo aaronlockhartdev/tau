@@ -100,6 +100,22 @@ describe('Transcript', () => {
     expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
   });
 
+  it('a stub open does not burn the one-shot: the tail issues when hydration lands', async () => {
+    // The open lands while the session is still a stub (the session_open
+    // snapshot is in flight): no tail page, and the one-shot stays unburned.
+    seed(0);
+    await mount();
+    fetchWindow.mockClear();
+    expect(fetchWindow).not.toHaveBeenCalled();
+    // The snapshot lands: the session map is replaced with the hydrated
+    // entries, and the open-tail page issues against the real total.
+    const s = seedState(meta('c1'));
+    s.entries = entries(30);
+    resetMockStore({ current: 'c1', sessions: { c1: s } });
+    await tick();
+    expect(fetchWindow).toHaveBeenCalledTimes(1);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 10, 20);
+  });
   it('fetches a page when the visible range drifts beyond the hysteresis margin', async () => {
     seed(30);
     await mount();

@@ -4,7 +4,7 @@
   // pattern (virtua's Svelte Chat example). Paged hydration (spec §8) is
   // driven from virtua's visible range via findItemIndex over the scroll
   // offset.
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
   import { store, fetchWindow, currentSession } from '../lib/store.svelte';
@@ -122,18 +122,21 @@
     }
   }
 
-  // A session opens pinned at its tail, so the first page is the tail. The
-  // policy one-shots it per session: `all` is read untracked, and a turn
-  // change re-fires the effect (it reads the turn for the mid-turn union)
-  // without re-issuing the page. When no session is live the one-shot drops,
-  // so a closed session's reopen issues its tail again.
+  // A session opens pinned at its tail, so the first page is the tail.
+  // `all` is read tracked so the effect re-runs when hydration lands: while
+  // the session is still a stub (no entries) it issues nothing and leaves
+  // the one-shot unburned — a stub's open would otherwise burn it and the
+  // real tail page would never issue. The one-shot then blocks re-issue on
+  // later re-fires (turn change, stream delta, tab round-trip); when no
+  // session is live it drops, so a closed session's reopen issues again.
   $effect(() => {
     const c = cur;
     if (!c || !store.sessions[c]) {
       win.openedFor = null;
       return;
     }
-    const n = untrack(() => all.length);
+    const n = all.length;
+    if (n === 0) return;
     for (const f of openFetches(win, c, n, turnOf(c))) void fetchWindow(c, f.start, f.count);
   });
 
