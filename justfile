@@ -50,15 +50,33 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     pass=0
     fail=0
     skip=0
+    start_ts=$(date +%s)
 
+    # Color only on a terminal; piped/CI output stays plain.
+    if [ -t 1 ]; then
+      B=$(printf '\033[1m'); G=$(printf '\033[32m'); R=$(printf '\033[31m')
+      Y=$(printf '\033[33m'); D=$(printf '\033[2m'); N=$(printf '\033[0m')
+    else
+      B=""; G=""; R=""; Y=""; D=""; N=""
+    fi
     report() {
       # $1 = suite, $2 = status (PASS|FAIL|SKIP), $3 = detail
       case "$2" in
-        PASS) pass=$((pass + 1)) ;;
-        FAIL) fail=$((fail + 1)) ;;
-        SKIP) skip=$((skip + 1)) ;;
+        PASS) pass=$((pass + 1)); c=$G ;;
+        FAIL) fail=$((fail + 1)); c=$R ;;
+        SKIP) skip=$((skip + 1)); c=$Y ;;
       esac
-      printf '%-28s %s  %s\n' "$1" "$2" "$3"
+      printf '%s%-14s%s  %s%s%s  %s\n' "$B" "$1" "$N" "$c" "$2" "$N" "$3"
+    }
+
+    detail() {
+      # $1 = label, $2 = output. A failure's own words must be visible
+      # without hunting for a log file.
+      if [ -n "$2" ]; then
+        printf '%s-- %s output --%s\n' "$D" "$1" "$N"
+        printf '%s%s%s\n' "$D" "$2" "$N"
+      fi
+      return 0
     }
 
     start_mock() {
@@ -88,7 +106,11 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
         # One mock for the whole run: a second start would fail the port
         # rebind and every later suite would report a mock failure.
         if [ -z "$mock_pid" ]; then
-          start_mock || { report "$suite" FAIL "the mock LLM failed to start (see /tmp/tau-mock-llm.log)"; return 1; }
+          start_mock || {
+            report "$suite" FAIL "the mock LLM failed to start"
+            detail "mock-llm" "$(cat /tmp/tau-mock-llm.log 2>/dev/null)"
+            return 1
+          }
         fi
         TAU_ENDPOINT="http://127.0.0.1:$MOCK_PORT/v1"
       fi
@@ -99,6 +121,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
         report "$suite" PASS "$(echo "$out" | tail -1)"
       else
         report "$suite" FAIL "$(echo "$out" | tail -1)"
+        detail "$suite" "$out"
       fi
       return $status
     }
@@ -124,8 +147,8 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
       fi
     }
 
-    echo "tau v0 acceptance — $(date -u '+%Y-%m-%d %H:%M UTC')"
-    echo "endpoint: ${TAU_ENDPOINT:-mock:127.0.0.1:$MOCK_PORT}  model: $TAU_MODEL"
+    printf '%s%s%s\n' "$B" "tau v0 acceptance" "$N"
+    echo "  $(date -u '+%Y-%m-%d %H:%M UTC')  endpoint: ${TAU_ENDPOINT:-mock:127.0.0.1:$MOCK_PORT}  model: $TAU_MODEL"
     echo ""
 
     for suite in {{suites}}; do
@@ -161,6 +184,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
             report core PASS "$(echo "$out" | tail -1)"
           else
             report core FAIL "$(echo "$out" | tail -1)"
+            detail core "$out"
           fi
           ;;
         e2e)
@@ -186,9 +210,10 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
             status=$?
             if [ $status -eq 0 ]; then
               n=$(echo "$out" | grep -c 'PASS  ')
-              report e2e PASS "$n E2E checks passed (WebdriverIO, mode ${TAU_E2E_MODE:-all}: the mock-LLM leg (scripted turns, tool calls, subagent spawn) + the realistic large stress session (10k entries, 50 compaction rounds)"
+              report e2e PASS "$n E2E checks passed (mode ${TAU_E2E_MODE:-all})"
             else
               report e2e FAIL "$(echo "$out" | grep -m1 'FAIL  ' || echo 'the real-app E2E failed')"
+              detail e2e "$out"
             fi
           else
             report e2e SKIP "node is not available"
@@ -199,8 +224,14 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
           ;;
       esac
     done
-    [ -n "$mock_pid" ] && kill "$mock_pid" 2>/dev/null
+    # Reap the killed mock so the shell does not print its job notification.
+    if [ -n "$mock_pid" ]; then
+      kill "$mock_pid" 2>/dev/null
+      wait "$mock_pid" 2>/dev/null
+    fi
 
+    total=$(( $(date +%s) - start_ts ))
     echo ""
-    echo "summary: $pass passed, $fail failed, $skip skipped"
+    printf '%ssummary:%s %s%d passed%s, %d failed, %d skipped  %s(%dm %02ds)%s\n' \
+      "$B" "$N" "$G" "$pass" "$N" "$fail" "$skip" "$D" "$((total / 60))" "$((total % 60))" "$N"
     [ "$fail" -eq 0 ]

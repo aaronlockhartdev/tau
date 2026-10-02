@@ -259,7 +259,7 @@ async function onPrepareInner() {
   // the registry-persistence check start from a known-empty registry.
   fs.rmSync(E2E_HOME, { recursive: true, force: true });
   fs.mkdirSync(path.join(E2E_HOME, '.config', 'tau'), { recursive: true });
-  console.log(`e2e: mode=${mode}, temp workspace under ${tmp}`);
+  console.log(`e2e: mode=${mode ?? 'all'}, temp workspace under ${tmp}`);
   fs.rmSync(OUTPUT_DIR, { recursive: true, force: true });
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   for (const leg of legs) {

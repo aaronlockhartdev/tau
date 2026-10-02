@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { browser } from '@wdio/globals';
 import { expect } from 'expect-webdriverio';
+import { dumpEvlog } from './support/helpers.mjs';
 
 // The shared context travels from the config's onPrepare over the worker's
 // inherited environment.
@@ -153,8 +154,7 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       // dev seam in main.ts) shows which stream was in flight when the
       // check failed.
       try {
-        const log = await browser.execute(() => (window.__evlog ?? []).slice(-60));
-        console.log(`diag: evlog @ ${this.currentTest?.title}: ${JSON.stringify(log)}`);
+        await dumpEvlog(browser, this.currentTest?.title);
       } catch {
         // the app may be gone; the screenshot below carries the diagnosis
       }

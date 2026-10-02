@@ -133,6 +133,14 @@ export const check = (name, pass, detail) => {
   expect(pass).toBe(true);
 };
 
+// The app's event log, one event per line - the failure diagnostic the
+// specs' afterEach hooks dump when a test goes red.
+export const dumpEvlog = async (browser, title) => {
+  const log = await browser.execute(() => (window.__evlog ?? []).slice(-60));
+  console.log(`diag: evlog @ ${title} (last ${log.length} events):`);
+  for (const e of log) console.log(`  ${JSON.stringify(e)}`);
+};
+
 // Boot bar shared by every mock spec: the webview answered and the app
 // module graph ran (window.__tau attached).
 export async function bootCheck() {

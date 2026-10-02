@@ -12,6 +12,7 @@ import { expect } from 'expect-webdriverio';
 import {
   bootCheck,
   check,
+  dumpEvlog,
   ensureWorkspace,
   newSessionViaUI,
   readDom,
@@ -39,8 +40,7 @@ describe('mock E2E: tool calls the app executes and renders', () => {
     if (this.currentTest?.err) {
       failures++;
       try {
-        const log = await browser.execute(() => (window.__evlog ?? []).slice(-60));
-        console.log(`diag: evlog @ ${this.currentTest?.title}: ${JSON.stringify(log)}`);
+        await dumpEvlog(browser, this.currentTest?.title);
       } catch {
         // the app may be gone; the screenshot below carries the diagnosis
       }
