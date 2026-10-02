@@ -32,9 +32,13 @@ expect.extend({
   }
 });
 
-const storeState = () => {
+const storeState = (sid) => {
   const s = window.__tau.store();
-  const cur = s.current ? s.sessions[s.current] : null;
+  // An explicit sid reads that session: the app may move `current` behind
+  // the spec's back (a spawn opens the child), and the assertion is about
+  // the session the spec created, whatever current has become.
+  const key = sid ?? s.current;
+  const cur = key ? s.sessions[key] : null;
   // entries is a Record keyed by entry id (sessions.ts) — materialize the
   // list (insertion order = file order) for the readers below.
   const entries = cur ? Object.values(cur.entries) : [];
@@ -46,12 +50,14 @@ const storeState = () => {
     currentWs: cur ? cur.meta.workspace ?? null : null,
     current: s.current,
     model: cur ? cur.meta.model ?? null : null,
+    title: cur ? cur.meta.title ?? null : null,
     entries: entries.length,
     entryKinds: entries.map((e) => e.kind),
     toolNames: entries.filter((e) => e.kind === 'tool').map((e) => e.name),
-    subagentHandles: entries
-      .filter((e) => e.kind === 'subagent')
-      .map((e) => e.payload?.handle ?? null),
+    childIds: Object.values(s.sessions)
+      .filter((x) => x.meta?.parent === key)
+      .map((x) => x.meta.id),
+    spawnParent: entries.find((e) => e.kind === 'subagent')?.payload?.parent ?? null,
     taskTitles: cur ? Object.values(cur.tasks ?? {}).map((t) => `${t.id}:${t.status}`) : [],
     toolDetails: entries
       .filter((e) => e.kind === 'tool')
@@ -78,7 +84,9 @@ const domState = () => {
     hasScroll: !!sc,
     clientH: vh,
     scrollH: sc ? sc.scrollHeight : 0,
-    // The subagent spawn card's header label (subagentShell, parent view).
+    // The spawn record's card header. Transcript passes the parent label
+    // even in the child's own view (it renders the 'parent · X' row), so
+    // the spawn card reads 'spawn' there too (subagentShell).
     hasSpawnCard: [...document.querySelectorAll('.card2 .hd')].some((h) => h.textContent.trim() === 'spawn'),
     trackH: document.querySelector('.track') ? document.querySelector('.track').offsetHeight : 0,
     domCards: cards.length,
@@ -108,7 +116,7 @@ const panesState = () => {
   };
 };
 
-export const readStore = () => browser.execute(storeState);
+export const readStore = (sid) => browser.execute(storeState, sid);
 export const readDom = () => browser.execute(domState);
 export const readPanes = () => browser.execute(panesState);
 

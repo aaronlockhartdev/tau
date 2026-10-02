@@ -98,6 +98,9 @@ async fn stream_response(sock: &mut TcpStream, set: &ScenarioSet, body: &[u8]) {
     let req: WireRequest = serde_json::from_slice(body).unwrap_or_default();
     let scenario = set.select(&req);
     let (seq, turn) = scenario.next_turn();
+    // One line per request: the e2e log carries the routing, so a spec
+    // failure shows which scenario answered and with which turn.
+    eprintln!("[route] {} turn {}", scenario.pattern, seq);
     let frames = render_frames(turn, &scenario.usage, seq);
     let _ = reply_headers(sock).await;
     for frame in frames {

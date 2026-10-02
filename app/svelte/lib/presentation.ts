@@ -215,8 +215,10 @@ function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
   if (p && p.event === 'state') {
     return { kind: 'stline', icon: 'i-bot', label: subagentStateLabel(p) };
   }
-  // The spawn/notify label is the parent's view of a child; in the child's
-  // own session the card reads 'sub-agent'.
+  // The spawn/notify label is the parent's view of a child; the child's
+  // own transcript resolves the parent label too (it renders the
+  // 'parent · X' row), so the card reads 'spawn' in both views —
+  // 'sub-agent' only appears without a parent label.
   const label = parentLabel
     ? p && p.event === 'spawn'
       ? 'spawn'

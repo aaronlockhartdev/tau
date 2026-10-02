@@ -2,8 +2,9 @@
 // the parent session creates a task, spawns a child, and the child runs
 // its scripted turns against the mock. The GUI-side contract (what the
 // retired replay leg's dogfood pair covered): the child session appears
-// in the left-pane tree and the parent transcript carries the spawn
-// entry, in send order (#50).
+// in the left-pane tree linked to the parent, the parent transcript
+// carries the subagent_spawn tool entry, and the child's transcript opens
+// with the rendered spawn record (#50).
 import path from 'node:path';
 import { browser } from '@wdio/globals';
 import { expect } from 'expect-webdriverio';
@@ -17,7 +18,8 @@ import {
   readStore,
   selectModel,
   uiSend,
-  waitSettle
+  waitSettle,
+  waitUntil
 } from './support/helpers.mjs';
 
 // The shared context travels from the config's onPrepare over the worker's
@@ -33,6 +35,10 @@ const MARKER = 'e2e-subagent-turn';
 
 describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
   let failures = 0;
+  // ws-mock is shared by all four mock specs (#48 per-leg workspaces), so
+  // the pane count is asserted as a delta over the pre-spawn baseline.
+  let rowsBefore = 0;
+  let sid = null;
   afterEach(async function () {
     if (this.currentTest?.err) {
       failures++;
@@ -54,8 +60,9 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
 
   it('a fresh session is created through the LeftPane .new button', async () => {
     await ensureWorkspace(ws);
-    const sid = await newSessionViaUI();
+    sid = await newSessionViaUI();
     expect(sid).toBeTruthy();
+    rowsBefore = (await readPanes()).leftRows.length;
   });
 
   it('the model menu switches the session to mock/mock-model-2', async () => {
@@ -66,37 +73,63 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
 
   it('the send walks the scripted spawn: task, subagent_spawn, text', async () => {
     // One Composer send runs the whole scripted turn (task_create,
-    // subagent_spawn, then the text reply); the settle bar is the
-    // deadline, not a one-shot read.
+    // subagent_spawn, then the text reply); the poll is the deadline, not
+    // a one-shot read.
     await uiSend(`${MARKER} round 1`);
-    await waitSettle(60000);
-    const s = await readStore();
-    const i = s.entryKinds.indexOf('subagent');
-    const u = s.entryKinds.indexOf('user');
-    check(
-      'the parent transcript carries the subagent entry after the user entry (send order)',
-      u >= 0 && i > u,
-      JSON.stringify(s.entryKinds)
+    const s = await waitUntil(
+      () => readStore(sid),
+      (st) => st.toolNames.includes('subagent_spawn'),
+      60000,
+      'the subagent_spawn tool entry in the parent transcript'
     );
-    // The spawn entry's handle is `{parent session id}-1` (spawn.rs): the
-    // parent's view of its first child.
+    const u = s.entryKinds.indexOf('user');
+    const t = s.entryKinds.indexOf('tool');
     check(
-      'the spawn entry carries the deterministic child handle',
-      s.subagentHandles[0] === `${s.current}-1`,
-      JSON.stringify(s.subagentHandles)
+      'the parent transcript carries the subagent_spawn tool entry after the user entry (send order)',
+      u >= 0 && t > u,
+      JSON.stringify(s.entryKinds)
     );
   });
 
-  it('the spawn card renders in the parent transcript', async () => {
-    // Poll the DOM: the card lands when the snapshot applies, and a
-    // one-shot read raced that in the pre-#48 shape.
-    const d = await waitUntil(
-      readDom,
-      (d) => d.hasSpawnCard,
-      15000,
-      'the spawn card in the parent transcript'
+  it('the child session links to the parent and opens with the spawn record', async () => {
+    // The spawn record is the child's durable provenance (ADR-0001): the
+    // parent's transcript carries the subagent_spawn TOOL entry, the
+    // child's file opens with the spawn record naming the parent.
+    const s = await waitUntil(
+      () => readStore(sid),
+      (st) => st.childIds.length === 1,
+      30000,
+      'the child session in the session list'
     );
-    check('the DOM shows the spawn card in the parent transcript', d.hasSpawnCard, 'spawn label present');
+    check(
+      'the session list carries exactly one child of the parent',
+      s.childIds.length === 1,
+      JSON.stringify(s.childIds)
+    );
+    // The child's entries hydrate when its session is opened, so open it
+    // through the real switchSession path and poll for the first page.
+    await browser.execute((id) => window.__tau.switchSession(id), s.childIds[0]);
+    const c = await waitUntil(
+      () => readStore(s.childIds[0]),
+      (st) => st.entryKinds.length > 0,
+      15000,
+      'the child transcript to hydrate'
+    );
+    check(
+      'the child transcript opens with the spawn record',
+      c.entryKinds[0] === 'subagent',
+      JSON.stringify(c.entryKinds)
+    );
+    check('the spawn record names the parent session', c.spawnParent === sid, `spawnParent=${c.spawnParent}`);
+  });
+
+  it('the spawn card renders in the child transcript', async () => {
+    // The GUI renders the child's own view of its spawn record; the poll
+    // is the deadline (a one-shot read races the snapshot apply).
+    const s = await readStore(sid);
+    await browser.execute((id) => window.__tau.switchSession(id), s.childIds[0]);
+    const d = await waitUntil(readDom, (d) => d.hasSpawnCard, 15000, 'the spawn card in the child transcript');
+    check('the DOM shows the spawn card in the child transcript', d.hasSpawnCard, 'spawn label present');
   });
 
   it('the child session appears in the left-pane tree', async () => {
@@ -106,7 +139,7 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
     const p = await readPanes();
     check(
       'the left pane lists the parent plus the spawned child',
-      p.leftRows.length === 2,
+      p.leftRows.length === rowsBefore + 1,
       p.leftRows.join(' | ')
     );
   });
