@@ -79,9 +79,14 @@ function sh(cmd, args, opts = {}) {
 }
 
 function buildFixture() {
-  if (!fs.existsSync(FIXTURE)) sh('cargo', ['test', '-p', 'tau-core', '--test', 'fixture_gen']);
-  const sha = createHash('sha256').update(fs.readFileSync(FIXTURE)).digest('hex');
-  if (sha !== FIXTURE_SHA256) throw new Error(`fixture hash drifted: ${sha} != ${FIXTURE_SHA256}`);
+  // A stale target/ artifact (an older generator) is the common local
+  // case: regenerate when the hash, not just the absence, says so, then
+  // re-check — a mismatch after regeneration is a source/pin desync.
+  const sha = () => createHash('sha256').update(fs.readFileSync(FIXTURE)).digest('hex');
+  if (!fs.existsSync(FIXTURE) || sha() !== FIXTURE_SHA256)
+    sh('cargo', ['test', '-p', 'tau-core', '--test', 'fixture_gen']);
+  if (sha() !== FIXTURE_SHA256)
+    throw new Error(`fixture hash drifted after regeneration: ${sha()} != ${FIXTURE_SHA256}`);
 }
 
 
@@ -239,6 +244,17 @@ function teardown() {
 process.on('exit', teardown);
 
 async function onPrepare() {
+  try {
+    await onPrepareInner();
+  } catch (err) {
+    // An unlogged hook rejection surfaces as "all specs fail with env
+    // unset" and loses the real reason — it must reach the log.
+    console.error(`e2e: onPrepare failed: ${err.stack ?? err}`);
+    throw err;
+  }
+}
+
+async function onPrepareInner() {
   // Reset the isolated home so the boot check (no workspace auto-opens) and
   // the registry-persistence check start from a known-empty registry.
   fs.rmSync(E2E_HOME, { recursive: true, force: true });
