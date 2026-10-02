@@ -28,9 +28,10 @@ const ws = process.env.TAU_E2E_WS_MOCK;
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
 if (!ws) throw new Error('mock context unset — the wdio config did not run onPrepare');
 
-// The parent scenario's marker (fixtures/e2e-mocks/e2e-subagent-parent.json);
-// the child session is claimed by the shared acceptance-subagent-child
-// scenario through its fixed system prompt, so no marker reaches it.
+// The parent scenario's marker (fixtures/e2e-mocks/e2e-subagent-parent.json).
+// The child's first user message is the spawn brief (spawn.rs), which
+// carries the e2e-subagent-child marker, so the child's turns route to
+// fixtures/e2e-mocks/e2e-subagent-child.json.
 const MARKER = 'e2e-subagent-turn';
 
 describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
@@ -121,6 +122,20 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
       JSON.stringify(c.entryKinds)
     );
     check('the spawn record names the parent session', c.spawnParent === sid, `spawnParent=${c.spawnParent}`);
+    // The child runs its scripted turns (parent_notify, then the closing
+    // text) against the mock; the tool entry is the proof the routing
+    // reached the child scenario, not the server's fallback.
+    const ct = await waitUntil(
+      () => readStore(s.childIds[0]),
+      (st) => st.entryKinds.includes('tool'),
+      30000,
+      "the child's scripted parent_notify tool entry"
+    );
+    check(
+      'the child transcript carries the scripted parent_notify tool entry',
+      ct.toolNames.includes('parent_notify'),
+      JSON.stringify(ct.toolNames)
+    );
   });
 
   it('the spawn card renders in the child transcript', async () => {

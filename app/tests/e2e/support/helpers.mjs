@@ -50,7 +50,6 @@ const storeState = (sid) => {
     currentWs: cur ? cur.meta.workspace ?? null : null,
     current: s.current,
     model: cur ? cur.meta.model ?? null : null,
-    title: cur ? cur.meta.title ?? null : null,
     entries: entries.length,
     entryKinds: entries.map((e) => e.kind),
     toolNames: entries.filter((e) => e.kind === 'tool').map((e) => e.name),

@@ -23,7 +23,7 @@ const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
 // Re-pinned 2026-10-02 (#49): the fixture gained 50 compaction records
 // (one per goal), one of them oversized — the session file's hash moved,
 // and the zstd sidecar now ships beside it (target/test-fixture/blobs/).
-const FIXTURE_SHA256 = 'dda3598e349430f59913771c763b25f1c29035273e5583d2027d4f48695a4b68';
+const FIXTURE_SHA256 = '09796263a8795b40a8663537f387283cad8fb9cf883fb0eeec8b4f354a1e9b74';
 const FIXTURE_SESSION = 'session';
 // The deterministic mock LLM (phase 1 §4): hash-pinned scenario files
 // served by the tau-mock-llm binary; the mock leg's workspace points its
@@ -33,7 +33,8 @@ const MOCK_SCENARIOS = {
   'e2e-text-turn.json': '5c1643e3bf0086324282fc0f605d12f7b8b7fabdec9e0556309ca13df7ebb9a9',
   'e2e-tool-turn.json': '6aca5c25e849fbb2419c525251fd6987554c6ca8248e7dcd4f5627b8683b8479',
   'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115',
-  'e2e-subagent-parent.json': '1dc5416f1365a89014116ee7d51fdf44472a792b690494ac391e1c7aa337eefd'
+  'e2e-subagent-parent.json': '9f1a0758f6a50aab5e2915cec8040e884d9157bbcb215c78364e44adde69612e',
+  'e2e-subagent-child.json': '2f139ff0766deecc40b6d13b9182e91ff0f3ad7fd6a848bc3aa443670b49571e'
 };
 const VITE_URL = 'http://127.0.0.1:5173/';
 const OUTPUT_DIR = path.join(ROOT, 'target', 'e2e');
@@ -125,7 +126,7 @@ function makeWorkspaces() {
     );
   }
   // One dir per leg, in every mode (#48): 'all' used to share one dir
-  // between replay + stress + mock, and the mock leg's config write (last
+  // between stress + mock, and the mock leg's config write (last
   // in the loop) clobbered the shared project layer with the mock
   // provider, pinning every shared-ws session to mock.
   for (const leg of legs) {
@@ -259,7 +260,6 @@ async function onPrepare() {
   process.env.TAU_E2E_WS_MOCK = workspaces.mock ?? '';
   process.env.TAU_E2E_WS_STRESS = workspaces.stress ?? '';
   process.env.TAU_E2E_TMP = tmp;
-  process.env.TAU_E2E_FIXTURE_SESSION = FIXTURE_SESSION;
   process.env.TAU_E2E_FIXTURE_SESSION = FIXTURE_SESSION;
   process.env.TAU_E2E_ARTIFACTS = OUTPUT_DIR;
   // The debug build loads the devUrl on every platform (Linux included —

@@ -190,12 +190,6 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
   });
 
   it('boot: the empty state renders with no workspace open', async () => {
-    // A fresh-app precondition: in all mode the replay leg already booted
-    // and opened the workspace, so the empty state is gone by design.
-    if (process.env.TAU_E2E_MODE === 'all') {
-      console.log('SKIP  boot: the replay leg already verified the empty state');
-      return;
-    }
     const boot = await waitUntil(
       readStore,
       (s) => s.loading === false && s.error === null && s.current === null,

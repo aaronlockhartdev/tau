@@ -133,7 +133,7 @@
   // the session is still a stub (no entries) it issues nothing and leaves
   // the one-shot unburned — a stub's open would otherwise burn it and the
   // real tail page would never issue. The one-shot then blocks re-issue on
-  // later re-fires (turn change, stream delta, tab round-trip); when no
+  // later re-fires (turn change, stream delta); when no
   // session is live it drops, and a re-open (the session object replaced)
   // drops it too, so the fresh state re-issues the tail page (#49).
   $effect(() => {

@@ -14,7 +14,7 @@
             "type": "general",
             "context_mode": "fresh",
             "task": "task-1",
-            "brief": "Satisfy the task's criterion by adding passing evidence, finish the task, then call parent_notify with done true and output {\"status\": \"ok\"}."
+            "brief": "Satisfy the task's criterion by adding passing evidence, finish the task, then call parent_notify with done true and output {\"status\": \"ok\"}. e2e-subagent-child"
           }
         }
       ]

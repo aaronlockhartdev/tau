@@ -519,7 +519,7 @@
           since: null,
           range: { start, count }
         });
-        // session into a fresh state while this read is in flight (and the
+        // A re-open can replace the session with a fresh state while this read is in flight (and the
         // re-open's identical window request is deduped onto it), so
         // merging into the object captured at issue time would land the
         // page in the discarded state and leave the re-opened transcript's

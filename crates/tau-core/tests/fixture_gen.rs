@@ -11,8 +11,9 @@
 //! a summary) on the real entry kinds and payload shapes, so the GUI
 //! renders it like an ordinary transcript. Each goal also ends in a
 //! compaction record (`om` entry, the shape `OmState::save` writes):
-//! a long session compacts many times, and goal 25's record exceeds the
-//! blob threshold, so hydration exercises the zstd sidecar (#49).
+//! a long session compacts many times, and the final goal's record
+//! exceeds the blob threshold, at the session's tail, so boot hydration
+//! exercises the zstd sidecar (#49).
 //!
 #![allow(
     clippy::cast_possible_truncation,
@@ -127,12 +128,13 @@ const OM_SUGGESTED: &[&str] = &[
 
 // One compaction record per goal: the payload `OmState::save` writes
 // (om_integration.rs) — active_observations with a message boundary so
-// the GUI's 'om' decoder shows the newest observation. Goal 25 carries a
-// long observation log past the blob threshold, so its payload goes to a
-// zstd sidecar and hydration must resolve it (#49).
+// the GUI's 'om' decoder shows the newest observation. The final goal
+// carries a long observation log past the blob threshold, so its payload
+// goes to a zstd sidecar at the session's tail — the boot pin's window
+// resolves it on hydration (#49).
 fn om_payload(goal: u64) -> serde_json::Value {
     const BOUNDARY: &str = "--- message boundary (2025-06-15T15:33:20.000Z) ---";
-    let rounds = if goal == 25 { 2_000 } else { 2 };
+    let rounds = if goal == 49 { 2_000 } else { 2 };
     let mut older = String::new();
     for i in 0..rounds {
         writeln!(
@@ -247,13 +249,13 @@ fn the_shared_fixture_is_written_and_hashed() {
         n += 1;
     }
     assert_eq!(n, 10_050);
-    // Goal 25's record is the sidecar case: it must clear the blob
+    // The final goal's record is the sidecar case: it must clear the blob
     // threshold, or the fixture silently stops exercising it.
     assert!(
-        u64::try_from(om_payload(25).to_string().len())
+        u64::try_from(om_payload(49).to_string().len())
             .expect("payload length, well under u64::MAX")
             > tau_core::session::DEFAULT_BLOB_THRESHOLD,
-        "goal 25's compaction record must exceed the blob threshold"
+        "the final goal's compaction record must exceed the blob threshold"
     );
 
     let root = std::env::var("CARGO_TARGET_DIR").ok().map_or_else(
@@ -275,6 +277,9 @@ fn the_shared_fixture_is_written_and_hashed() {
     let blobs = tmp.path().join(".tau").join("blobs");
     if blobs.is_dir() {
         let out = dir.join("blobs");
+        // Regenerate the sidecar set from scratch — a stale one from an
+        // older run must not ride into the shipped fixture.
+        let _ = std::fs::remove_dir_all(&out);
         std::fs::create_dir_all(&out).unwrap();
         for entry in std::fs::read_dir(&blobs).unwrap() {
             let entry = entry.unwrap();
