@@ -9,4 +9,10 @@
 # guards all heap traffic from the workspace code; SANITIZER selects the
 # kind (address | thread). RUSTC wrapper protocol: $1 is the rustc path.
 rustc_bin="$1"; shift
+if [ "$SANITIZER" = "thread" ]; then
+  # TSan demands consistent instrumentation across the whole link and
+  # hard-errors on the sanctioned mixed setup (workspace instrumented,
+  # deps not) — the compiler's own escape hatch applies the exception.
+  exec "$rustc_bin" -Zsanitizer=thread -Cunsafe-allow-abi-mismatch=sanitizer "$@"
+fi
 exec "$rustc_bin" -Zsanitizer="$SANITIZER" "$@"

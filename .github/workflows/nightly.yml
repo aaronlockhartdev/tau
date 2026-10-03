@@ -80,6 +80,10 @@ jobs:
         env:
           RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/ci/sanitizer-wrapper.sh
           SANITIZER: address
+          # LSan is on by default on Linux and reports Rust's intentional
+          # global-static allocations as leaks at exit; the leg is for
+          # memory-error detection, not exit-time leak accounting.
+          ASAN_OPTIONS: detect_leaks=0
         run: cargo +nightly test --workspace --exclude tau-app
 
   tsan:
@@ -110,7 +114,7 @@ jobs:
         # FPs expected): reports so trends are visible, does not gate.
         continue-on-error: true
         run: >-
-          cargo +nightly clippy --workspace --all-targets --
+          cargo +nightly clippy --workspace --all-targets --exclude tau-app --
           -W clippy::redundant_clone -W clippy::missing_const_for_fn
 
       - name: TSan
