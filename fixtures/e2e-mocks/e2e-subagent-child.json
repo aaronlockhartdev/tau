@@ -4,16 +4,29 @@
     {
       "calls": [
         {
+          "name": "task_evidence",
+          "arguments": {
+            "task": "task-1",
+            "criterion": "the child reports ok",
+            "summary": "child reports ok",
+            "passed": true
+          }
+        }
+      ]
+    },
+    {
+      "calls": [
+        {
           "name": "parent_notify",
           "arguments": {
             "text": "task-1 criterion satisfied: evidence in place",
             "done": true,
-            "output": "{\"status\": \"ok\"}"
+            "output": { "status": "ok" }
           }
         }
       ]
     },
     { "text": "Task complete; parent notified. (e2e child turn done)" }
   ],
-  "usage": { "input_tokens": 120, "output_tokens": 44, "total_tokens": 164 }
+  "usage": { "input_tokens": 180, "output_tokens": 70, "total_tokens": 250 }
 }

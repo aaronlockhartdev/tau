@@ -10,6 +10,7 @@ import { browser } from '@wdio/globals';
 import { expect } from 'expect-webdriverio';
 import {
   bootCheck,
+  durableChildren,
   check,
   ensureWorkspace,
   dumpEvlog,
@@ -42,6 +43,7 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
   // the pane count is asserted as a delta over the pre-spawn baseline.
   let rowsBefore = 0;
   let sid = null;
+  let childId = null;
 
   before(async () => {
     await resetMockScripts();
@@ -83,6 +85,16 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
     // One Composer send runs the whole scripted turn (task_create,
     // subagent_spawn, then the text reply); the poll is the deadline, not
     // a one-shot read.
+    // Pin focus to the session this spec created before sending: the mock
+    // specs share one app instance, and a focus race would run the scripted
+    // turn in a stranger's session (then nothing below sees the child).
+    await browser.execute((id) => window.__tau.switchSession(id), sid);
+    await waitUntil(
+      () => readStore(sid),
+      (st) => st.current === sid,
+      10000,
+      'focus on the session this spec created'
+    );
     await uiSend(`${MARKER} round 1`);
     const s = await waitUntil(
       () => readStore(sid),
@@ -103,22 +115,26 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
     // The spawn record is the child's durable provenance (ADR-0001): the
     // parent's transcript carries the subagent_spawn TOOL entry, the
     // child's file opens with the spawn record naming the parent.
-    const s = await waitUntil(
-      () => readStore(sid),
-      (st) => st.childIds.length === 1,
-      30000,
-      'the child session in the session list'
+    // Discover the child from the durable ground truth — the session
+    // file header the core writes at spawn — not the in-memory mirror,
+    // whose spawn event can lag (or be lost) behind the file write.
+    const kids = await waitUntil(
+      () => durableChildren(ws, sid),
+      (ids) => ids.length >= 1,
+      15000,
+      'the child session header linking to the parent'
     );
+    childId = kids[0];
     check(
-      'the session list carries exactly one child of the parent',
-      s.childIds.length === 1,
-      JSON.stringify(s.childIds)
+      'the parent has a child (durable header link)',
+      childId != null,
+      JSON.stringify({ childIds: kids })
     );
     // The child's entries hydrate when its session is opened, so open it
     // through the real switchSession path and poll for the first page.
-    await browser.execute((id) => window.__tau.switchSession(id), s.childIds[0]);
+    await browser.execute((id) => window.__tau.switchSession(id), childId);
     const c = await waitUntil(
-      () => readStore(s.childIds[0]),
+      () => readStore(childId),
       (st) => st.entryKinds.length > 0,
       15000,
       'the child transcript to hydrate'
@@ -129,12 +145,13 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
       JSON.stringify(c.entryKinds)
     );
     check('the spawn record names the parent session', c.spawnParent === sid, `spawnParent=${c.spawnParent}`);
-    // The child runs its scripted turns (parent_notify, then the closing
-    // text) against the mock; the tool entry is the proof the routing
+    // The child runs its scripted turns (task_evidence, parent_notify,
+    // then the closing text) against the mock; the tool entry is the proof
+    // the routing
     // reached the child scenario, not the server's fallback.
     const ct = await waitUntil(
-      () => readStore(s.childIds[0]),
-      (st) => st.entryKinds.includes('tool'),
+      () => readStore(childId),
+      (st) => st.toolNames.includes('parent_notify'),
       30000,
       "the child's scripted parent_notify tool entry"
     );
@@ -148,8 +165,9 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
   it('the spawn card renders in the child transcript', async () => {
     // The GUI renders the child's own view of its spawn record; the poll
     // is the deadline (a one-shot read races the snapshot apply).
-    const s = await readStore(sid);
-    await browser.execute((id) => window.__tau.switchSession(id), s.childIds[0]);
+    // childId comes from the durable discovery in the previous test;
+    // opening the child also self-heals the GUI's session list.
+    await browser.execute((id) => window.__tau.switchSession(id), childId);
     // The spawn record is the child's first entry, but the open pins the
     // tail — on a short viewport (the CI webview is 464 px) the head is
     // outside the render window; scroll it into view before asserting.

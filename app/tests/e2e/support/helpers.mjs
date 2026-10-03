@@ -4,6 +4,8 @@
 // mock specs use (session creation goes through the LeftPane .new button —
 // newSession is a module export, not on the seam — and messages go through
 // the Composer so the real interaction path is what gets tested).
+import path from 'node:path';
+import fs from 'node:fs';
 import { browser } from '@wdio/globals';
 import { expect } from 'expect-webdriverio';
 
@@ -57,7 +59,6 @@ const storeState = (sid) => {
       .filter((x) => x.meta?.parent === key)
       .map((x) => x.meta.id),
     spawnParent: entries.find((e) => e.kind === 'subagent')?.payload?.parent ?? null,
-    taskTitles: cur ? Object.values(cur.tasks ?? {}).map((t) => `${t.id}:${t.status}`) : [],
     toolDetails: entries
       .filter((e) => e.kind === 'tool')
       .map((e) => ({
@@ -131,6 +132,25 @@ const panesState = () => {
 export const readStore = (sid) => browser.execute(storeState, sid);
 export const readDom = () => browser.execute(domState);
 export const readPanes = () => browser.execute(panesState);
+
+// Durable child discovery (node side): the session file's header row is
+// the core's ground truth, written at spawn — it does not depend on the
+// GUI event stream having delivered the spawn to the in-memory mirror.
+export const durableChildren = (ws, sid) => {
+  const dir = path.join(ws, '.tau', 'sessions');
+  const ids = [];
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.endsWith('.jsonl')) continue;
+    const head = fs.readFileSync(path.join(dir, name), 'utf8').split('\n')[0];
+    try {
+      const h = JSON.parse(head);
+      if (h.parent === sid) ids.push(h.id);
+    } catch {
+      // mid-write header — the next poll sees it whole
+    }
+  }
+  return ids;
+};
 
 // A wdio spec retry re-runs against the same mock server process, whose
 // per-scenario turn counters would clamp at the script's end; the specs'
