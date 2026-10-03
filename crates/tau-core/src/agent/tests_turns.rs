@@ -388,65 +388,6 @@ async fn force_mid_stream_kills_the_stream_and_preempts_contemporaneous_steering
     assert!(!entries[4].payload["interrupted"].as_bool().unwrap());
 }
 
-/// Live acceptance (ticket #19): a four-tool session against the hosted
-/// vLLM endpoint; skipped unless `TAU_TEST_ENDPOINT` is set.
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_tool_calling_session() {
-    let Ok(base) = std::env::var("TAU_TEST_ENDPOINT") else {
-        return;
-    };
-    let model = std::env::var("TAU_TEST_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
-    let provider = crate::provider::production(
-        &crate::provider::tests::test_client(),
-        &crate::config::Provider::with_model(base, model.clone()),
-        &crate::config::Requests::default(),
-    );
-    let agent = AgentSession::new(SessionParams {
-        store: session_in(dir.path()),
-        system_prompt:
-            "You have the tools read, write, edit, and bash. Use them as                  instructed; edit takes the 3-char anchors from read output."
-                .into(),
-        model,
-        tools: tools::tool_specs(),
-        cwd: dir.path().to_path_buf(),
-        provider,
-        tool_batch_on_force: ToolBatchPolicy::Complete,
-        turn: TurnConfig {
-            max_output_tokens: Some(200),
-            reasoning: Some(crate::provider::ReasoningEffort::Low),
-            ..TurnConfig::default()
-        },
-        om: None,
-        om_model: String::new(),
-        subagents: None,
-        child: None,
-    });
-    agent.send(
-        "Do exactly this: 1) read notes.txt, 2) edit the line containing              'line2' so it becomes 'LINE2', 3) bash: cat notes.txt, 4) write              the file out.txt with the single line 'done'. Then reply              'finished'.",
-        Lane::FollowUp,
-    );
-    agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
-    let called: Vec<&str> = entries
-        .iter()
-        .filter(|e| e.kind == KIND_TOOL)
-        .map(|e| e.payload["name"].as_str().unwrap())
-        .collect();
-    for want in ["read", "edit", "bash", "write"] {
-        assert!(called.contains(&want), "missing {want}: {called:?}");
-    }
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("notes.txt")).unwrap(),
-        "line1\nLINE2\nline3\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("out.txt")).unwrap(),
-        "done"
-    );
-}
-
 #[tokio::test]
 async fn append_propagates_storage_errors_not_a_new_root() {
     let dir = tempfile::tempdir().unwrap();

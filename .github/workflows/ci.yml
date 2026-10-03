@@ -215,10 +215,11 @@ jobs:
         run: just build
 
       - name: Acceptance (full set — deterministic mock LLM)
-        # launch + live-tools + live-subagent + live-om + core + e2e in one
-        # run: the live-* suites run against the mock (phase 1 §4), so the
-        # whole set is a CI gate; e2e runs the full leg set (stress + mock —
-        # #50 retired the replay leg and moved the scale leg into CI).
+        # launch + accept-tools + accept-subagent + accept-om + core + e2e in
+        # one run: the accept-* suites run against the deterministic mock
+        # only (ADR-0010), so the whole set is a CI gate; e2e runs the full
+        # leg set (stress + mock — #50 retired the replay leg and moved the
+        # scale leg into CI).
         run: just acceptance
 
       - name: Upload dmg (distribution artifact)
@@ -263,9 +264,10 @@ jobs:
         run: just build
 
       - name: Acceptance (full set — deterministic mock LLM)
-        # launch + live-tools + live-subagent + live-om + core + e2e in one
-        # run (the justfile wraps the headless e2e leg in xvfb); e2e runs
-        # the full leg set (stress + mock — #50 retired the replay leg).
+        # launch + accept-tools + accept-subagent + accept-om + core + e2e in
+        # one run (the justfile wraps the headless e2e leg in xvfb); the
+        # accept-* suites are mock-only (ADR-0010); e2e runs the full leg
+        # set (stress + mock — #50 retired the replay leg).
         run: just acceptance
 
       - name: Upload E2E failure artifacts

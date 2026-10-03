@@ -34,17 +34,16 @@ test:
     (cd app && npm run test)
 
 # Spec §1 in-scope suites; `just acceptance <suite…>` filters (default: all).
-# The live-* suites run against the deterministic mock LLM by default (red =
-# a code problem, phase 1 §4); TAU_ENDPOINT / TAU_MODEL opt in a live
-# endpoint for dogfood.
-acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
+# The accept-* suites run against the deterministic mock LLM only (ADR-0010):
+# red = a code problem, never a network/model problem; real-model runs live
+# in the eval rig's live leg, not here.
+acceptance *suites = 'launch accept-tools accept-subagent accept-om core e2e':
     #!/bin/sh
     set -u
     cd "{{justfile_directory()}}"
 
-    TAU_ENDPOINT="${TAU_ENDPOINT:-}"
-    TAU_MODEL="${TAU_MODEL:-qwen3.8-27b}"
     MOCK_PORT="${MOCK_PORT:-8123}"
+    TAU_ENDPOINT="http://127.0.0.1:$MOCK_PORT/v1"
     mock_pid=""
 
     pass=0
@@ -99,22 +98,19 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     }
 
     run_driver() {
-      # $1 = suite, $2... = driver args. No TAU_ENDPOINT = the deterministic
-      # mock (started here); a live endpoint is a local opt-in.
+      # $1 = suite, $2... = driver args. The suites are mock-only (ADR-0010);
+      # TAU_ENDPOINT is the mock's address.
       suite="$1"; shift
-      if [ -z "$TAU_ENDPOINT" ]; then
-        # One mock for the whole run: a second start would fail the port
-        # rebind and every later suite would report a mock failure.
-        if [ -z "$mock_pid" ]; then
-          start_mock || {
-            report "$suite" FAIL "the mock LLM failed to start"
-            detail "mock-llm" "$(cat /tmp/tau-mock-llm.log 2>/dev/null)"
-            return 1
-          }
-        fi
-        TAU_ENDPOINT="http://127.0.0.1:$MOCK_PORT/v1"
+      # One mock for the whole run: a second start would fail the port
+      # rebind and every later suite would report a mock failure.
+      if [ -z "$mock_pid" ]; then
+        start_mock || {
+          report "$suite" FAIL "the mock LLM failed to start"
+          detail "mock-llm" "$(cat /tmp/tau-mock-llm.log 2>/dev/null)"
+          return 1
+        }
       fi
-      out=$(TAU_ENDPOINT="$TAU_ENDPOINT" TAU_MODEL="$TAU_MODEL" \
+      out=$(TAU_ENDPOINT="$TAU_ENDPOINT" \
         ./target/release/tau-test "$suite" "$@" 2>&1)
       status=$?
       if [ $status -eq 0 ]; then
@@ -148,7 +144,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
     }
 
     printf '%s%s%s\n' "$B" "tau v0 acceptance" "$N"
-    echo "  $(date -u '+%Y-%m-%d %H:%M UTC')  endpoint: ${TAU_ENDPOINT:-mock:127.0.0.1:$MOCK_PORT}  model: $TAU_MODEL"
+    echo "  $(date -u '+%Y-%m-%d %H:%M UTC')  endpoint: mock:127.0.0.1:$MOCK_PORT  model: mock-model"
     echo ""
 
     for suite in {{suites}}; do
@@ -175,7 +171,7 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
             report launch FAIL "just build failed (see /tmp/tau-test-build.log)"
           fi
           ;;
-        live-tools|live-subagent|live-om)
+        accept-tools|accept-subagent|accept-om)
           run_driver "$suite"
           ;;
         core)
