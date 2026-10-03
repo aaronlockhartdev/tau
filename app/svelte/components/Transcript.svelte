@@ -20,6 +20,12 @@
   // Sub-pixel tolerance at fractional devicePixelRatio (the Chat story's).
   const STICK_TOLERANCE = -1.5;
   const BUFFER = 600;
+  // Explicit initial size for unmeasured items: opts out of virtua's
+  // auto-estimation, which corrupts the total when measurements land
+  // while the item set is still growing (a mid-turn open inflates the
+  // total to the viewport height; the head then sits outside the render
+  // window with no overflow to scroll back to it).
+  const ITEM_SIZE = 40;
 
   const cur = $derived(store.current);
   const curSession = $derived(currentSession());
@@ -106,7 +112,6 @@
   // object (fresh meta-only snapshot), and the replacement loses the
   // previous object's page — the identity change is the re-open signal.
   const openedObj = new Map<string, unknown>();
-
   // The current session's turn state (the policy's hysteresis / union input).
   function turnOf(c: string): TurnState {
     return store.sessions[c]?.turn ?? 'idle';
@@ -198,45 +203,50 @@
   }
 </script>
 
-<div class="scroll" bind:this={el} class:empty={all.length === 0}>
-  {#if all.length === 0}
-    <div class="ph">
-      <div>no entries yet</div>
-      <div class="sub">send a message below to start the session</div>
-    </div>
-  {:else}
-    <div class="track">
-      {#key cur}
-      <Virtualizer
-        bind:this={ref as any}
-        scrollRef={el ?? undefined}
-        data={all}
-        getKey={(d: Row) => d.id}
-        bufferSize={BUFFER}
-        onscroll={onVirtuaScroll}
-      >
-        {#snippet children(e: Row, idx: number)}
-          {#if e.kind === 'waiting'}
-            <div class="waiting">
-              <span class="dots"><i></i><i></i><i></i></span>
-            </div>
-          {:else}
-            {@const hk = cur ? `${cur}:${e.id}` : e.id}
-            <EntryCard
-              entry={e}
-              heightKey={hk}
-              sourceLabel={sourceLabelFor(e)}
-              parentLabel={parentLabel}
-              turn={turnLabel(idx)}
-              batch={e.kind === 'tool' ? batchOf.get(e.id) : undefined}
-            />
-          {/if}
-        {/snippet}
-      </Virtualizer>
-      {/key}
-    </div>
-  {/if}
-</div>
+{#key cur}
+  <!-- The whole scroll container is keyed per session: a surviving
+       container carries the previous session's scrollTop, which a fresh
+       virtua picks up as its base offset and renders a window that
+       excludes the head entries. -->
+  <div class="scroll" bind:this={el} class:empty={all.length === 0}>
+    {#if all.length === 0}
+      <div class="ph">
+        <div>no entries yet</div>
+        <div class="sub">send a message below to start the session</div>
+      </div>
+    {:else}
+      <div class="track">
+        <Virtualizer
+          bind:this={ref as any}
+          scrollRef={el ?? undefined}
+          data={all}
+          getKey={(d: Row) => d.id}
+          bufferSize={BUFFER}
+          itemSize={ITEM_SIZE}
+          onscroll={onVirtuaScroll}
+        >
+          {#snippet children(e: Row, idx: number)}
+            {#if e.kind === 'waiting'}
+              <div class="waiting">
+                <span class="dots"><i></i><i></i><i></i></span>
+              </div>
+            {:else}
+              {@const hk = cur ? `${cur}:${e.id}` : e.id}
+              <EntryCard
+                entry={e}
+                heightKey={hk}
+                sourceLabel={sourceLabelFor(e)}
+                parentLabel={parentLabel}
+                turn={turnLabel(idx)}
+                batch={e.kind === 'tool' ? batchOf.get(e.id) : undefined}
+              />
+            {/if}
+          {/snippet}
+        </Virtualizer>
+      </div>
+    {/if}
+  </div>
+{/key}
 
 <style>
   .scroll {
