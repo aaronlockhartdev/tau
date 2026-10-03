@@ -81,14 +81,16 @@
   // Pin (the Chat pattern): when the rendered set changes and the stick flag
   // is set, end-align the last item. A scrollTo to the current position is a
   // browser no-op, so an already-at-bottom pin is a fixed point.
-  // End-align only while the content overflows the viewport: on WebKitGTK a
-  // tail pin on a fitting list leaves the head outside virtua's render range
-  // with no overflow to scroll back to it, so the first entries never render.
+  // A tail pin is only meaningful while the content overflows the viewport:
+  // a list that fits rests at the top with everything visible, and issuing
+  // the pin is what leaves virtua's base state stale (the head then drops
+  // out of the render window — seen on both WebKitGTK and macOS WebKit).
   $effect(() => {
     if (!ref) return;
     const n = all.length;
     if (n === 0) return;
-    if (shouldStickToBottom && el && el.scrollHeight > el.clientHeight) {
+    if (!shouldStickToBottom || !el) return;
+    if (el.scrollHeight > el.clientHeight) {
       ref.scrollToIndex(n - 1, { align: 'end' });
     }
   });
@@ -204,6 +206,7 @@
     </div>
   {:else}
     <div class="track">
+      {#key cur}
       <Virtualizer
         bind:this={ref as any}
         scrollRef={el ?? undefined}
@@ -230,6 +233,7 @@
           {/if}
         {/snippet}
       </Virtualizer>
+      {/key}
     </div>
   {/if}
 </div>
