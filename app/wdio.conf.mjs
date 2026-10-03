@@ -13,6 +13,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -205,6 +206,27 @@ function startVite() {
 // The deterministic mock LLM for the mock leg: the compiled binary over
 // the hash-pinned scenario dir (built here so a fresh checkout works).
 let mockProc = null;
+
+// The acceptance flow hands MOCK_PORT across phases; anything still
+// listening when the leg starts is a foreign mock (a shared acceptance mock
+// the justfile failed to stop, a leaked process from an earlier run). The
+// health poll below would "succeed" against it and the leg would run on
+// polluted scenario state — so assert the port is free and fail loudly.
+function assertPortFree(port) {
+  return new Promise((resolve, reject) => {
+    const probe = net.connect({ port, host: '127.0.0.1' });
+    probe.once('connect', () => {
+      probe.destroy();
+      reject(
+        new Error(
+          `e2e: port ${port} is already in use — a stale tau-mock-llm from an earlier step? kill it and re-run`
+        )
+      );
+    });
+    probe.once('error', () => resolve()); // refused = free
+  });
+}
+
 function startMock() {
   sh('cargo', ['build', '-p', 'tau-mock-llm']);
   mockProc = spawn(
@@ -293,6 +315,7 @@ async function onPrepareInner() {
     'vite dev server'
   );
   if (legs.includes('mock')) {
+    await assertPortFree(MOCK_PORT);
     startMock();
     await poll(
       () =>
