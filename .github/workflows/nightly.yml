@@ -62,7 +62,8 @@ jobs:
         run: cargo +nightly miri test -p tau-protocol --lib
 
   asan:
-    # ASan on the full workspace — nightly only: too slow for a PR gate.
+    # ASan across the workspace, minus the Tauri shell (needs system webkit
+    # to build) — nightly only: too slow for a PR gate.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -79,10 +80,11 @@ jobs:
         env:
           RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/ci/sanitizer-wrapper.sh
           SANITIZER: address
-        run: cargo +nightly test --workspace
+        run: cargo +nightly test --workspace --exclude tau-app
 
   tsan:
-    # TSan on the full workspace — nightly only: too slow for a PR gate.
+    # TSan across the workspace, minus the Tauri shell (needs system webkit
+    # to build) — nightly only: too slow for a PR gate.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -115,4 +117,4 @@ jobs:
         env:
           RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/ci/sanitizer-wrapper.sh
           SANITIZER: thread
-        run: cargo +nightly test --workspace
+        run: cargo +nightly test --workspace --exclude tau-app
