@@ -108,9 +108,9 @@ In v0: **transparency, not enforcement** (ADR-0007, user decision 2026-09-17) �
 _Avoid_: trust flow, permission system (v0 has neither)
 
 **Acceptance** (suite):
-The deterministic end-to-end proof of the spec §1 in-scope list: launch, the four core tools in a live multi-turn session, a model-spawned sub-agent, OM compaction, branching/archive, and the real app on a pinned session fixture. The `live-*` suites run against the mock LLM by default so a red is a code problem, never a network/model problem — which is what makes the whole set a CI gate (ADR-0009).
+The deterministic end-to-end proof of the spec §1 in-scope list: launch, the four core tools in a scripted multi-turn session, a model-spawned sub-agent, OM compaction, branching/archive, and the real app on a pinned session fixture. The `accept-*` suites run against the mock LLM only, so a red is a code problem, never a network/model problem — which is what makes the whole set a CI gate (ADR-0010).
 _Avoid_: E2E (that is the acceptance suite's app-driving leg, not the suite)
 
 **Mock LLM**:
-The deterministic stand-in for a provider in acceptance: `tau-mock-llm`, serving the Responses API dialect (ADR-0003) from hash-pinned scenario files in `fixtures/e2e-mocks/` — test data, not a fake product (ADR-0009).
+The deterministic stand-in for a provider in acceptance: `tau-mock-llm`, serving the Responses API dialect (ADR-0003) from hash-pinned scenario files in `fixtures/e2e-mocks/` — test data, not a fake product (ADR-0010).
 _Avoid_: fake provider, stub LLM

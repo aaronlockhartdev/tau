@@ -78,7 +78,7 @@ Rationale and sources: `docs/research/refactor-{rust,tauri,svelte}.md`.
 
 **Frontend.** Vitest + `@testing-library/svelte`; settle effects with `await tick()` / `vi.waitFor`, no fixed sleeps. Rationale: `docs/research/testing-frontend-e2e.md`.
 
-**Acceptance and E2E.** The `live-*` acceptance suites are mock-first — deterministic `tau-mock-llm` with hash-pinned scenarios in `fixtures/e2e-mocks/`, so a red is a code problem, never a network/model problem; a real endpoint is a local dogfood opt-in via `TAU_ENDPOINT`/`TAU_MODEL`. E2E drives the DEBUG binary (built with `--features e2e`) over its embedded WebDriver server; the leg set is **stress** (the generated 10k-entry fixture with 50 compaction records — windowing, boot pin, the §8 perf bar) and **mock** (the scripted scenarios, incl. a subagent spawn), and both run in CI and locally; `TAU_E2E_MODE` filters to a single leg.
+**Acceptance and E2E.** The `accept-*` acceptance suites are **mock-LLM-only** — deterministic `tau-mock-llm` with hash-pinned scenarios in `fixtures/e2e-mocks/`, so a red is a code problem, never a network/model problem; there is no real-endpoint opt-in (ADR-0010) — real-model measurement lives only in the eval rig's live leg, where `TAU_ENDPOINT`/`TAU_MODEL` are scoped. E2E drives the DEBUG binary (built with `--features e2e`) over its embedded WebDriver server; the leg set is **stress** (the generated 10k-entry fixture with 50 compaction records — windowing, boot pin, the §8 perf bar) and **mock** (the scripted scenarios, incl. a subagent spawn), and both run in CI and locally; `TAU_E2E_MODE` filters to a single leg.
 
 **Tests are code.** The comment discipline, rustfmt/`clippy -D warnings`, and file-size limits above apply to test files.
 

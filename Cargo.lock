@@ -4165,6 +4165,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tau-core",
+ "tau-mock-llm",
  "tempfile",
  "tokio",
 ]

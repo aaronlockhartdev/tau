@@ -1,15 +1,14 @@
 //! End-to-end acceptance driver (ticket #27).
 //!
-//! Suites: `live-tools` multi-turn with the four core tools (mock by
-//! default), `live-subagent` a sub-agent spawned by the scripted model plus
-//! its task pointer (mock by default), `live-om` OM compaction on a
-//! synthesized long session (mock observe/reflect), `core` branching +
-//! manual archive round-trip (offline).
-//! The live-* suites read `TAU_ENDPOINT` / `TAU_MODEL` (or `--endpoint` /
-//! `--model`); the justfile defaults them to the deterministic mock LLM
-//! (phase 1 §4), a live endpoint stays a local opt-in. They cap every
-//! generation at 300 output tokens; the script gates them, the driver does
-//! not.
+//! Suites: `accept-tools` multi-turn with the four core tools,
+//! `accept-subagent` a sub-agent spawned by the scripted model plus its
+//! task pointer, `accept-om` OM compaction on a synthesized long session
+//! (mock observe/reflect), `core` branching + manual archive round-trip
+//! (offline). All suites run against the deterministic mock LLM only
+//! (ADR-0010): `TAU_ENDPOINT` is the mock's address (the justfile sets it;
+//! a standalone run expects the mock on 127.0.0.1:8123) and the model is
+//! the mock's own id. They cap every generation at 300 output tokens; the
+//! script gates them, the driver does not.
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -30,6 +29,7 @@ use tau_core::subagent::{
 };
 use tau_core::task::KIND_TASK;
 use tau_core::tools;
+use tau_mock_llm::server::MODEL_ID;
 
 const CAP: u64 = 300;
 struct Ctx {
@@ -96,13 +96,13 @@ fn session_files(cwd: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-// The proven #19 live-test prompt (verified against the endpoint): small
+// The proven #19 acceptance prompt: small
 // models need the tool list spelled out in the system prompt to use them.
 const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use them as instructed; edit takes the 3-char anchors from read output.";
 
-/// live-subagent's parent gets the sub-agent + task tools named too.
+/// accept-subagent's parent gets the sub-agent + task tools named too.
 const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
-async fn live_tools(ctx: &Ctx) -> Result<(), String> {
+async fn accept_tools(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
     let (id, store) = new_session(ws.path());
@@ -135,20 +135,20 @@ async fn live_tools(ctx: &Ctx) -> Result<(), String> {
     for name in ["read", "write", "edit", "bash"] {
         if !calls.contains(&name) {
             return Err(format!(
-                "live-tools: the model never called {name} (saw {calls:?})"
+                "accept-tools: the model never called {name} (saw {calls:?})"
             ));
         }
     }
     let golden = std::fs::read_to_string(ws.path().join("out.txt")).map_err(|e| e.to_string())?;
     if golden.trim() != "done" {
         return Err(format!(
-            "live-tools: out.txt is {golden:?}, expected 'done'"
+            "accept-tools: out.txt is {golden:?}, expected 'done'"
         ));
     }
     let notes = std::fs::read_to_string(ws.path().join("notes.txt")).map_err(|e| e.to_string())?;
     if !notes.contains("LINE2") {
         return Err(
-            "live-tools: the hash-anchored edit did not land (notes.txt lacks LINE2)".into(),
+            "accept-tools: the hash-anchored edit did not land (notes.txt lacks LINE2)".into(),
         );
     }
     Ok(())
@@ -201,7 +201,7 @@ impl SubagentBridge for AcceptanceBridge {
 }
 
 #[allow(clippy::too_many_lines)] // the suite is one flat driver flow; splitting is refactoring
-async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
+async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     let (id, store) = new_session(ws.path());
     let (p, prov) = production(ctx);
@@ -269,8 +269,8 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         .cloned();
     loop {
         if std::time::Instant::now() > deadline {
-            dump_sessions(ws.path(), "/tmp/live-subagent-dump");
-            return Err("live-subagent: the child never reached a terminal state in 300 s (session dump at /tmp/live-subagent-dump)".into());
+            dump_sessions(ws.path(), "/tmp/accept-subagent-dump");
+            return Err("accept-subagent: the child never reached a terminal state in 300 s (session dump at /tmp/accept-subagent-dump)".into());
         }
         let terminal = child_file
             .as_ref()
@@ -300,7 +300,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
     let files = session_files(ws.path());
     if files.len() < 2 {
         return Err(format!(
-            "live-subagent: expected a child session file, found {files:?}"
+            "accept-subagent: expected a child session file, found {files:?}"
         ));
     }
     drop(agent);
@@ -315,7 +315,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
                 .map(std::string::ToString::to_string)
         })
         .find(|n| n.as_str() != id.as_str())
-        .ok_or("live-subagent: no child session file")?;
+        .ok_or("accept-subagent: no child session file")?;
     // The child's report landed on the parent's branch tagged with the
     // child's id (a done/failed wake or an idle notification — both are
     // lifecycle notifications, spec §5.2).
@@ -324,13 +324,13 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
             && e.payload.get("source").and_then(Value::as_str) == Some(child_id.as_str())
     });
     if !wake {
-        return Err("live-subagent: no wake entry from the child on the parent's branch".into());
+        return Err("accept-subagent: no wake entry from the child on the parent's branch".into());
     }
     // The child's session carries its own record trail (state entries).
     let child_store = SessionStore::for_workspace(ws.path(), &child_id);
     let centries = all_entries(&child_store);
     if !centries.iter().any(|e| e.kind == KIND_SUBAGENT) {
-        return Err("live-subagent: the child's session has no lifecycle state entries".into());
+        return Err("accept-subagent: the child's session has no lifecycle state entries".into());
     }
     let child_state = centries
         .iter()
@@ -354,13 +354,13 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
         });
         if !linked {
             return Err(
-                "live-subagent: the parent's Assigned event does not point at the child session"
+                "accept-subagent: the parent's Assigned event does not point at the child session"
                     .into(),
             );
         }
         if centries.iter().any(|e| e.kind == KIND_TASK) {
             return Err(
-                "live-subagent: the child's session carries task entries (the record must stay in the parent file)"
+                "accept-subagent: the child's session carries task entries (the record must stay in the parent file)"
                     .into(),
             );
         }
@@ -377,7 +377,7 @@ async fn live_subagent(ctx: &Ctx) -> Result<(), String> {
             });
             if !terminal {
                 return Err(format!(
-                    "live-subagent: the child ended {child_state} but the task pointer has no terminal state (dangling)"
+                    "accept-subagent: the child ended {child_state} but the task pointer has no terminal state (dangling)"
                 ));
             }
         }
@@ -397,7 +397,7 @@ fn prose(i: usize) -> String {
     s
 }
 
-async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
+async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let ws = temp_ws();
     let (id, mut store) = new_session(ws.path());
     // A synthesized long raw window (no model needed for the raw): ~48 KB of
@@ -459,19 +459,19 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
         .filter(|e| e.kind == tau_core::om_integration::KIND_OM)
         .collect();
     if om_entries.is_empty() {
-        // No om entry at all: the observe call did not land (endpoint flake).
+        // No om entry at all: the observe call did not land.
         return Ok(None);
     }
     let record = OmState::load_record(&mut store).map_err(|e| e.to_string())?;
     if record.cursor.is_none() {
-        return Err("live-om: the observation cursor did not advance".into());
+        return Err("accept-om: the observation cursor did not advance".into());
     }
     if record.live_observations().is_empty() {
-        return Err("live-om: the observation log is empty after a live observe".into());
+        return Err("accept-om: the observation log is empty after the observe".into());
     }
     // One entry = the observe; two = the reflector also fired. The reflect
     // SEMANTICS are unit-tested in tau-core (fidelity oracles,
-    // parseReflectorOutput); a live 27B model can return degenerate
+    // parseReflectorOutput); a scripted response can return degenerate
     // reflector output that the (tested) escalation path drops, so the
     // second entry is reported, not required.
     // Observation-log entry count: far below u32::MAX.
@@ -480,34 +480,33 @@ async fn live_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     )))
 }
 
-async fn live_om(ctx: &Ctx) -> Result<(), String> {
-    // The observe suite is live; a dropped observe call (endpoint flake) is
-    // retried once before the suite fails.
+async fn accept_om(ctx: &Ctx) -> Result<(), String> {
+    // A dropped observe call is retried once before the suite fails.
     for attempt in 1..=2u32 {
-        match live_om_once(ctx).await {
+        match accept_om_once(ctx).await {
             Ok(Some(entries)) => {
                 if entries >= 2 {
-                    println!("live-om: observe fired, the reflector followed (2 om entries)");
+                    println!("accept-om: observe fired, the reflector followed (2 om entries)");
                 } else {
                     println!(
-                        "live-om: observe fired; the reflect did not land this run (1 om entry — live model variance, the reflect semantics are unit-tested in tau-core)"
+                        "accept-om: observe fired; the reflect did not land this run (1 om entry — the reflect semantics are unit-tested in tau-core)"
                     );
                 }
                 return Ok(());
             }
             Ok(None) if attempt == 1 => {
-                eprintln!("live-om: observe did not land (attempt {attempt}), retrying");
+                eprintln!("accept-om: observe did not land (attempt {attempt}), retrying");
             }
             Ok(None) => {
                 return Err(
-                    "live-om: no om entry after the observe threshold was crossed (2 attempts)"
+                    "accept-om: no om entry after the observe threshold was crossed (2 attempts)"
                         .into(),
                 );
             }
             Err(e) => return Err(e),
         }
     }
-    Err("live-om: no om entry after the observe threshold was crossed (2 attempts)".into())
+    Err("accept-om: no om entry after the observe threshold was crossed (2 attempts)".into())
 }
 
 fn core_offline() -> Result<(), String> {
@@ -569,31 +568,21 @@ fn core_offline() -> Result<(), String> {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut suite = "";
-    // Empty default = the deterministic mock (the contract in this file's
-    // header); a live endpoint is an explicit opt-in.
-    let mut endpoint =
+    // The suites are mock-only (ADR-0010): TAU_ENDPOINT is the mock's
+    // address (the justfile sets it; standalone runs expect 127.0.0.1:8123).
+    let endpoint =
         std::env::var("TAU_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:8123/v1".into());
-    let mut model = std::env::var("TAU_MODEL").unwrap_or_else(|_| "qwen3.8-27b".into());
+    let model = MODEL_ID.to_owned();
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "live-tools" | "live-subagent" | "live-om" | "core" => suite = args[i].as_str(),
-            "--endpoint" => {
-                i += 1;
-                endpoint = args.get(i).cloned().unwrap_or_default();
-            }
-            "--model" => {
-                i += 1;
-                model = args.get(i).cloned().unwrap_or_default();
-            }
+            "accept-tools" | "accept-subagent" | "accept-om" | "core" => suite = args[i].as_str(),
             _ => {}
         }
         i += 1;
     }
     if suite.is_empty() {
-        eprintln!(
-            "usage: tau-test <live-tools|live-subagent|live-om|core> [--endpoint URL] [--model NAME]"
-        );
+        eprintln!("usage: tau-test <accept-tools|accept-subagent|accept-om|core>");
         std::process::exit(2);
     }
     let ctx = Ctx { endpoint, model };
@@ -603,9 +592,9 @@ fn main() {
         .expect("runtime");
     let start = std::time::Instant::now();
     let result = match suite {
-        "live-tools" => rt.block_on(live_tools(&ctx)),
-        "live-subagent" => rt.block_on(live_subagent(&ctx)),
-        "live-om" => rt.block_on(live_om(&ctx)),
+        "accept-tools" => rt.block_on(accept_tools(&ctx)),
+        "accept-subagent" => rt.block_on(accept_subagent(&ctx)),
+        "accept-om" => rt.block_on(accept_om(&ctx)),
         _ => rt.block_on(async { core_offline() }),
     };
     match result {

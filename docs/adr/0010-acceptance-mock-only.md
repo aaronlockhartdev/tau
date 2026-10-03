@@ -1,0 +1,9 @@
+# Acceptance is mock-LLM-only; real-model runs belong to the eval rig
+
+**Status**: accepted (2026-10-02) — supersedes ADR-0009's dogfood-opt-in clause; the mock-first CI gate itself stands.
+
+ADR-0009 made the acceptance gate deterministic by defaulting the suites to the mock and keeping a `TAU_ENDPOINT`/`TAU_MODEL` local dogfood opt-in. That opt-in is now retired: the acceptance suites are renamed `accept-*` (`accept-tools`, `accept-subagent`, `accept-om`) and run **only** against `tau-mock-llm`, naming the mock's own model id (`mock-model`) — a red is unambiguously a code problem, and there is no path from the acceptance/CI surface to a real model. **Decision**: real-model measurement moves entirely to the eval rig (`tau-eval`, ticket #57), whose live leg is the sole consumer of `TAU_ENDPOINT`/`TAU_MODEL`; the two dogfood tests in `tau-core` (`harness::tests_stream::live_run_streams_the_event_pipe`, `agent::tests_turns::live_tool_calling_session`) are deleted.
+
+**Considered**: keep the dogfood opt-in as a local convenience — rejected: it kept a non-deterministic red path one env var away from the gate, its two consumer tests were dead weight in CI, and the rig's live leg supersedes it with cost caps, per-task scoring, and artifact capture. Gate the opt-in behind a cargo feature — rejected: the readers were `#[cfg(test)]`-only, so a feature would be machinery for code that never ships.
+
+**Consequences**: the `live-*` suite names are gone (spec §13 erratum 2026-10-02); `TAU_ENDPOINT`/`TAU_MODEL` are scoped to the rig, and documentation must keep saying so; local dogfooding of a real endpoint is a manual act (point the rig's live leg at it), not a first-class seam.

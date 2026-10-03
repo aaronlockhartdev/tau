@@ -100,7 +100,7 @@ Picked the two most structurally relevant (a task-package reference and a pipeli
 
 ## 2. Proposal: the tau in-repo eval rig
 
-Grounded in these verified repo facts: `tau-core` is a standalone Rust library with no Tauri dependency (its deps are serde/serde_json/tokio/reqwest/toml/zstd/xxhash/notify + `tau-protocol`; `crates/tau-core/Cargo.toml`); `tau-mock-llm` is a deterministic Responses-API mock served from hash-pinned scenario files in `fixtures/e2e-mocks/` (`crates/tau-mock-llm/Cargo.toml`, `justfile`); the acceptance driver `tau-test` already drives `tau-core` **in-process** (`AgentSession` + `Provider::with_model(endpoint, model)` + `SessionStore`) with the mock as default and a live endpoint as opt-in via `TAU_ENDPOINT`/`TAU_MODEL` (`crates/tau-test/src/main.rs`); tests run under `nextest` (`justfile` `test` → `cargo nextest run --workspace`); config is TOML with section-level layering of system `~/.config/tau/config.toml` under project `.tau/config.toml` (`crates/tau-core/src/config.rs`); a workspace is `(id, name, cwd)` (`crates/tau-protocol/src/snapshot.rs`); sessions are JSONL under `{project}/.tau/sessions/` (`crates/tau-core/src/session.rs`, `subagent.rs`).
+Grounded in these verified repo facts: `tau-core` is a standalone Rust library with no Tauri dependency (its deps are serde/serde_json/tokio/reqwest/toml/zstd/xxhash/notify + `tau-protocol`; `crates/tau-core/Cargo.toml`); `tau-mock-llm` is a deterministic Responses-API mock served from hash-pinned scenario files in `fixtures/e2e-mocks/` (`crates/tau-mock-llm/Cargo.toml`, `justfile`); the acceptance driver `tau-test` already drives `tau-core` **in-process** (`AgentSession` + `Provider::with_model(endpoint, model)` + `SessionStore`) against the deterministic mock (`crates/tau-test/src/main.rs`); tests run under `nextest` (`justfile` `test` → `cargo nextest run --workspace`); config is TOML with section-level layering of system `~/.config/tau/config.toml` under project `.tau/config.toml` (`crates/tau-core/src/config.rs`); a workspace is `(id, name, cwd)` (`crates/tau-protocol/src/snapshot.rs`); sessions are JSONL under `{project}/.tau/sessions/` (`crates/tau-core/src/session.rs`, `subagent.rs`).
 
 ### 2.1 Task format
 
@@ -150,7 +150,7 @@ A new `tau-eval` crate (a Rust bin, plus a `#[cfg(test)]` surface for the determ
 
 This leg is the tau analogue of the existing mock-first acceptance suites: "a red is a code problem, never a network/model problem." It runs inside `nextest` (a `tau-eval` test target), so it is **free, fast, and gates PR merges** in the existing `just test` / CI test job with no new infrastructure. This is the high-value first piece because it turns "did my harness change break the protocol/session/dispatch" from a manual dogfood into an automated, CI-blocking assertion.
 
-**Leg 2 — live (nightly / local opt-in, cost-capped).** Point the same runner at a real model via `TAU_ENDPOINT`/`TAU_MODEL` (the existing opt-in seam, `crates/tau-test/src/main.rs`) and score a TB-style task set by `check.sh` pass rate. This is the DeepSWE/Aider/SWE-bench "benchmark" leg: measures real capability, is non-deterministic, and is therefore **not PR-gated** — it runs nightly in CI and on local opt-in, with a cost cap (§2.6). Its output is the pass-rate + metric table that the ablation matrix consumes.
+**Leg 2 — live (on-demand, cost-capped).** Point the same runner at a real model via `TAU_ENDPOINT`/`TAU_MODEL` (the rig's own env read; the acceptance seam was retired 2026-10-02, ADR-0010) and score a TB-style task set by `check.sh` pass rate. This is the DeepSWE/Aider/SWE-bench "benchmark" leg: measures real capability, is non-deterministic, and is therefore **not PR-gated** — it runs as a specifically invocable experiment, with a cost cap (§2.6). Its output is the pass-rate + metric table that the ablation matrix consumes.
 
 The two legs share the *entire* runner; only the provider endpoint and the assertion set differ. That shared plumbing is what makes the rig cheap to build once.
 
@@ -189,8 +189,8 @@ This is the operational form of the standing discipline "every harness feature i
 
 **Deterministic leg (PR).** Runs in the existing `nextest` job via a `tau-eval` test target — no new CI surface, no API keys, no cost. A red invariant blocks the merge. This is the only leg that touches PRs.
 
-**Live leg (nightly + local).** A separate nightly CI job (and a `just eval-live` local target) that:
-- reads `TAU_ENDPOINT`/`TAU_MODEL` from CI secrets / local env (the existing opt-in pattern),
+**Live leg (on-demand, cost-capped).** A specifically invocable experiment (`just eval-live`) that:
+- reads `TAU_ENDPOINT`/`TAU_MODEL` from CI secrets / local env (the rig's own env read; the acceptance seam was retired 2026-10-02, ADR-0010),
 - runs a bounded task subset (`--slice`/`--filter`-style selection, mini-swe-agent — https://mini-swe-agent.com/latest/usage/swebench/) against 1–2 models,
 - is **cost-capped** three ways: a hard `budget_usd` for the run (runner stops scheduling new trials and reports partial results when hit), a per-trial `[agent] timeout_sec` and token cap (Harbor's per-component timeouts — https://raw.githubusercontent.com/harbor-framework/terminal-bench/main/CONTRIBUTING.md), and a max-trials bound. The cap makes a runaway loop (the TB worst case of ~2h / ~100M tokens on one task — https://arxiv.org/html/2601.11868v1 §4.1) a bounded, reported event instead of an open-ended charge.
 - posts the per-cell metric table as a CI artifact/comment. Nightly, not per-PR, because it is non-deterministic and paid — the same reason no external system gates merges on a live benchmark.
@@ -237,4 +237,4 @@ Fetched this session:
 - OpenHands: https://github.com/OpenHands/benchmarks
 - Trajectory datasets (checked for the §1.7 split): https://huggingface.co/datasets/yoonholee/terminalbench-trajectories · https://huggingface.co/datasets/harborframework/terminal-bench-2.0
 
-tau repo (verified in-tree): `Cargo.toml` (workspace members, AGPL-3.0) · `crates/tau-core/Cargo.toml` (no Tauri dep) · `crates/tau-mock-llm/Cargo.toml` · `fixtures/e2e-mocks/` · `justfile` (`test` → nextest; mock-LLM acceptance) · `crates/tau-core/src/config.rs` (TOML layering) · `crates/tau-protocol/src/snapshot.rs` (`Workspace{id,name,cwd}`) · `crates/tau-core/src/session.rs` + `subagent.rs` (`.tau/sessions/` JSONL) · `crates/tau-test/src/main.rs` (in-process drive, `TAU_ENDPOINT`/`TAU_MODEL`).
+tau repo (verified in-tree): `Cargo.toml` (workspace members, AGPL-3.0) · `crates/tau-core/Cargo.toml` (no Tauri dep) · `crates/tau-mock-llm/Cargo.toml` · `fixtures/e2e-mocks/` · `justfile` (`test` → nextest; mock-LLM acceptance) · `crates/tau-core/src/config.rs` (TOML layering) · `crates/tau-protocol/src/snapshot.rs` (`Workspace{id,name,cwd}`) · `crates/tau-core/src/session.rs` + `subagent.rs` (`.tau/sessions/` JSONL) · `crates/tau-test/src/main.rs` (in-process drive, mock-only).
