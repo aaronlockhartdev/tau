@@ -216,9 +216,15 @@
       </div>
     {:else}
       <div class="track">
+        <!-- Always mount the head entries: a 0 px size cache (a
+             ResizeObserver update dropped under load) makes the render
+             range start past them, and an unmounted item can never be
+             re-measured — the head would stay missing for the rest of
+             the session (the e2e spawn-card failure). -->
         <Virtualizer
           bind:this={ref as any}
           scrollRef={el ?? undefined}
+          keepMounted={[0, 1]}
           data={all}
           getKey={(d: Row) => d.id}
           bufferSize={BUFFER}
