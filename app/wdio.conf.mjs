@@ -12,6 +12,7 @@
 //     subagent spawn against the fake LLM.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { browser } from '@wdio/globals';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -35,7 +36,7 @@ const MOCK_SCENARIOS = {
   'e2e-tool-turn.json': '6aca5c25e849fbb2419c525251fd6987554c6ca8248e7dcd4f5627b8683b8479',
   'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115',
   'e2e-subagent-parent.json': '9f1a0758f6a50aab5e2915cec8040e884d9157bbcb215c78364e44adde69612e',
-  'e2e-subagent-child.json': '2f139ff0766deecc40b6d13b9182e91ff0f3ad7fd6a848bc3aa443670b49571e'
+  'e2e-subagent-child.json': '15a27a7b228e3d610ab23709998753df8006cdea1f5a3c35ec1225f33c2fd9a4'
 };
 const VITE_URL = 'http://127.0.0.1:5173/';
 const OUTPUT_DIR = path.join(ROOT, 'target', 'e2e');
@@ -332,6 +333,27 @@ function onComplete() {
   teardown();
 }
 
+// Failure screenshot: the pixel ground truth the DOM dump cannot give
+// (is the head genuinely absent, a blank spacer, or a selector miss?).
+// Lands in OUTPUT_DIR, which the CI jobs already upload on failure.
+// afterTest is the v9 failure hook — onTestFail no longer exists in the
+// config schema and was silently ignored.
+async function afterTest(test, _context, { passed }) {
+  if (passed) return;
+  try {
+    const dir = path.join(OUTPUT_DIR, 'screenshots');
+    fs.mkdirSync(dir, { recursive: true });
+    const full = (test.fullTitle?.() ?? test.title ?? 'untitled')
+      .replace(/[^\w-]+/g, '-')
+      .slice(0, 80);
+    const file = path.join(dir, `${Date.now()}-${full}.png`);
+    await browser.saveScreenshot(file);
+    console.log(`e2e: failure screenshot → ${file}`);
+  } catch (err) {
+    console.error(`e2e: failure screenshot capture failed: ${err.message}`);
+  }
+}
+
 export const config = {
   specs: legs.flatMap((leg) => LEG_SPECS[leg].map((f) => path.join(APP, 'tests', 'e2e', f))),
 
@@ -398,5 +420,6 @@ export const config = {
   reporters: ['spec'],
 
   onPrepare,
+  afterTest,
   onComplete
 };
