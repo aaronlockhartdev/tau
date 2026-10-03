@@ -188,6 +188,21 @@ acceptance *suites = 'launch live-tools live-subagent live-om core e2e':
           fi
           ;;
         e2e)
+          # The e2e leg owns its own mock: stop the shared acceptance mock so
+          # the leg's mock can bind $MOCK_PORT fresh. A shared mock has its
+          # scenario turn counters consumed by the earlier suites, and the
+          # leg's health poll cannot tell a fresh mock from this stranger —
+          # scripted specs then answer from polluted state.
+          if [ -n "$mock_pid" ]; then
+            kill "$mock_pid" 2>/dev/null
+            wait "$mock_pid" 2>/dev/null
+            mock_pid=""
+            i=0
+            while [ $i -lt 50 ] && nc -z 127.0.0.1 "$MOCK_PORT" 2>/dev/null; do
+              i=$((i + 1))
+              sleep 0.1
+            done
+          fi
           if command -v node >/dev/null 2>&1; then
             # Self-sufficient on a clean checkout (sweep finding X4): the
             # E2E driver needs the debug binary WITH the e2e feature (the
