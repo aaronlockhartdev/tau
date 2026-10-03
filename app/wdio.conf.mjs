@@ -12,6 +12,7 @@
 //     subagent spawn against the fake LLM.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { browser } from '@wdio/globals';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -346,7 +347,7 @@ async function afterTest(test, _context, { passed }) {
       .replace(/[^\w-]+/g, '-')
       .slice(0, 80);
     const file = path.join(dir, `${Date.now()}-${full}.png`);
-    await test.browser.saveScreenshot(file);
+    await browser.saveScreenshot(file);
     console.log(`e2e: failure screenshot → ${file}`);
   } catch (err) {
     console.error(`e2e: failure screenshot capture failed: ${err.message}`);
