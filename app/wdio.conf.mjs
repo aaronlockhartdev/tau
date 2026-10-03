@@ -332,6 +332,24 @@ function onComplete() {
   teardown();
 }
 
+// Failure screenshot: the pixel ground truth the DOM dump cannot give
+// (is the head genuinely absent, a blank spacer, or a selector miss?).
+// Lands in OUTPUT_DIR, which the CI jobs already upload on failure.
+async function onTestFail(test) {
+  try {
+    const dir = path.join(OUTPUT_DIR, 'screenshots');
+    fs.mkdirSync(dir, { recursive: true });
+    const full = (test.fullTitle?.() ?? test.title ?? 'untitled')
+      .replace(/[^\w-]+/g, '-')
+      .slice(0, 80);
+    const file = path.join(dir, `${Date.now()}-${full}.png`);
+    await test.browser.saveScreenshot(file);
+    console.log(`e2e: failure screenshot → ${file}`);
+  } catch (err) {
+    console.error(`e2e: failure screenshot capture failed: ${err.message}`);
+  }
+}
+
 export const config = {
   specs: legs.flatMap((leg) => LEG_SPECS[leg].map((f) => path.join(APP, 'tests', 'e2e', f))),
 
@@ -398,5 +416,6 @@ export const config = {
   reporters: ['spec'],
 
   onPrepare,
+  onTestFail,
   onComplete
 };
