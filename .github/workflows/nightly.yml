@@ -88,7 +88,10 @@ jobs:
 
   tsan:
     # TSan across the workspace, minus the Tauri shell (needs system webkit
-    # to build) — nightly only: too slow for a PR gate.
+    # to build) — nightly only. Report-only: with workspace-only
+    # instrumentation (the proc-macro constraint) std's Mutex is invisible
+    # to TSan, so state guarded by a std lock reads as a race; gate again
+    # once a proc-macro-safe full-instrumentation path exists.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
@@ -118,6 +121,7 @@ jobs:
           -W clippy::redundant_clone -W clippy::missing_const_for_fn
 
       - name: TSan
+        continue-on-error: true
         env:
           RUSTC_WORKSPACE_WRAPPER: ${{ github.workspace }}/ci/sanitizer-wrapper.sh
           SANITIZER: thread
