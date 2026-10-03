@@ -74,7 +74,7 @@ Rationale and sources: `docs/research/refactor-{rust,tauri,svelte}.md`.
 
 **Positive and negative.** Every behavior gets a positive and a negative test. Negatives assert the `Result` (specific `Err` via `matches!`); `#[should_panic]` only where the path genuinely panics.
 
-**Rust.** `#[tokio::test]` for async — the `multi_thread` flavor only when the test needs it. One tool per job: `nextest` (all Rust test runs), `cargo-llvm-cov` (coverage: report-only CI artifact, ≥80% is a review-time aim, no floor), `cargo-fuzz` (`fuzz/`; ~300 s smoke per target on PR, 1 h + corpus `cmin` nightly), `insta` (snapshot goldens; CI fails on new/changed — keep that), `proptest` (properties), `cargo-deny` (supply chain), Miri on the pure crates (nightly only). Selection rationale with primary sources: `docs/research/testing-rust.md`.
+**Rust.** `#[tokio::test]` for async — the `multi_thread` flavor only when the test needs it. One tool per job: `nextest` (all Rust test runs), `cargo-llvm-cov` (coverage: report-only CI artifact, ≥80% is a review-time aim, no floor), `cargo-fuzz` (`fuzz/`; ~60 s smoke per target on PR, 1 h + corpus `cmin` nightly), `insta` (snapshot goldens; CI fails on new/changed — keep that), `proptest` (properties), `cargo-deny` (supply chain), Miri on the pure crates (nightly only). Selection rationale with primary sources: `docs/research/testing-rust.md`.
 
 **Frontend.** Vitest + `@testing-library/svelte`; settle effects with `await tick()` / `vi.waitFor`, no fixed sleeps. Rationale: `docs/research/testing-frontend-e2e.md`.
 

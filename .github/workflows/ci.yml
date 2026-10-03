@@ -119,7 +119,7 @@ jobs:
         with:
           tool: cargo-fuzz@0.13.2
 
-      - name: Fuzz smoke (300 s per target)
+      - name: Fuzz smoke (60 s per target)
         run: |
           cd fuzz
           # Explicit gnu target: cargo-fuzz's Linux default is musl, whose
@@ -127,7 +127,7 @@ jobs:
           # with statically linked libc").
           cargo +nightly fuzz build --target x86_64-unknown-linux-gnu
           for t in parse_command parse_event parse_output parse_sse parse_session roundtrip_command; do
-            cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu -- -max_total_time=300
+            cargo +nightly fuzz run "$t" --target x86_64-unknown-linux-gnu -- -max_total_time=60
           done
 
       - name: Upload crash artifacts
