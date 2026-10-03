@@ -335,7 +335,10 @@ function onComplete() {
 // Failure screenshot: the pixel ground truth the DOM dump cannot give
 // (is the head genuinely absent, a blank spacer, or a selector miss?).
 // Lands in OUTPUT_DIR, which the CI jobs already upload on failure.
-async function onTestFail(test) {
+// afterTest is the v9 failure hook — onTestFail no longer exists in the
+// config schema and was silently ignored.
+async function afterTest(test, _context, { passed }) {
+  if (passed) return;
   try {
     const dir = path.join(OUTPUT_DIR, 'screenshots');
     fs.mkdirSync(dir, { recursive: true });
@@ -416,6 +419,6 @@ export const config = {
   reporters: ['spec'],
 
   onPrepare,
-  onTestFail,
+  afterTest,
   onComplete
 };
