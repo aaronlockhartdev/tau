@@ -33,6 +33,15 @@ test:
     cargo nextest run --workspace
     (cd app && npm run test)
 
+# The eval rig's deterministic leg (ticket #57): run a tier against the
+# in-process mock LLM. Smoke by default (also PR-gated via the nextest job);
+# `just eval full` is an on-demand experiment (the full tier is a later slice).
+eval tier = 'smoke':
+    #!/bin/sh
+    set -eu
+    cd "{{justfile_directory()}}"
+    cargo run -p tau-eval {{tier}}
+
 # Spec §1 in-scope suites; `just acceptance <suite…>` filters (default: all).
 # The accept-* suites run against the deterministic mock LLM only (ADR-0010):
 # red = a code problem, never a network/model problem; real-model runs live
