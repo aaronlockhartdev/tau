@@ -289,9 +289,11 @@ async fn run_in_container(
         "/tmp/trial",
     ];
     if task.tb_native {
-        // /logs/verifier only: /tests must NOT pre-exist, or `docker cp`
-        // nests the copy inside it.
+        // /logs/verifier, and /tmp/task (the parent a file `docker cp`
+        // needs): /tests must NOT pre-exist, or `docker cp` nests the
+        // copy inside it.
         mkdir.push("/logs/verifier");
+        mkdir.push("/tmp/task");
     }
     docker(&mkdir).await?;
     docker(&[
