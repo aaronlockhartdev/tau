@@ -616,6 +616,20 @@ output).
   channel; `HARBOR_ACP_REQUESTED_MODEL` (if `--model` given) must be
   satisfiable via the model configOption.
 
+**Full config surface Harbor injects** (verified in `acp.py` `run()` +
+`acp_runner.py`): the launcher file (which `export`s the registry entry's
+`env` map), plus seven runner-side vars the agent process *inherits* via
+`child_env = dict(os.environ)`: `HARBOR_ACP_MCP_SERVERS_JSON`,
+`HARBOR_ACP_PERMISSION_MODE`, `HARBOR_ACP_AUTH_POLICY`,
+`HARBOR_ACP_AUTHENTICATE_METHOD_ID` (explicit policy only),
+`HARBOR_ACP_REQUESTED_MODEL`, `HARBOR_ACP_AGENT_ID`,
+`HARBOR_ACP_AGENT_VERSION`. None carry endpoint/key configuration — the
+runner consumes them and translates them into protocol calls (requested
+model → `set_config_option`; permission mode → auto-allow behavior). **The
+agent must deliberately ignore all `HARBOR_ACP_*` vars**: the runner has
+already applied them, and double-applying (e.g. the agent also enforcing a
+permission mode) would be a bug.
+
 **Consequence:** a Terminal-Bench-style task (prompt → tool calls → final
 message → stop reason) works end-to-end with exactly the minimal v0 method
 set + model configOption + env overrides — no `authenticate`, no
