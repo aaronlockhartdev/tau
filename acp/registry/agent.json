@@ -1,0 +1,29 @@
+{
+  "id": "tau",
+  "name": "Tau",
+  "version": "$VERSION",
+  "description": "Tauri-based coding agent; ACP headless mode. Point it at an OpenAI-compatible endpoint with the TAU_BASE_URL, TAU_API_KEY and TAU_MODEL environment variables; the model is selectable per session. v0 accepts text prompts only.",
+  "repository": "https://github.com/aaronlockhartdev/tau",
+  "authors": ["Aaron Lockhart"],
+  "license": "AGPL-3.0",
+  "license_url": "https://github.com/aaronlockhartdev/tau/blob/main/LICENSE",
+  "distribution": {
+    "binary": {
+      "linux-x86_64": {
+        "archive": "https://github.com/aaronlockhartdev/tau/releases/download/$TAG/tau-acp-linux-x86_64.tar.gz",
+        "sha256": "$SHA_LINUX_X86_64",
+        "cmd": "./tau-acp"
+      },
+      "linux-aarch64": {
+        "archive": "https://github.com/aaronlockhartdev/tau/releases/download/$TAG/tau-acp-linux-aarch64.tar.gz",
+        "sha256": "$SHA_LINUX_AARCH64",
+        "cmd": "./tau-acp"
+      },
+      "darwin-aarch64": {
+        "archive": "https://github.com/aaronlockhartdev/tau/releases/download/$TAG/tau-acp-darwin-aarch64.tar.gz",
+        "sha256": "$SHA_DARWIN_AARCH64",
+        "cmd": "./tau-acp"
+      }
+    }
+  }
+}
