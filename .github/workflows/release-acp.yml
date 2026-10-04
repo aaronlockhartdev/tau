@@ -16,6 +16,7 @@ on:
 jobs:
   linux-x86_64:
     runs-on: ubuntu-24.04
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
       - name: Build static musl binary in a native rust container
@@ -48,6 +49,7 @@ jobs:
 
   linux-aarch64:
     runs-on: ubuntu-24.04
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
       # musl.cc cross toolchain instead of QEMU: a static musl binary needs
@@ -85,6 +87,7 @@ jobs:
 
   darwin-aarch64:
     runs-on: macos-15
+    permissions: { contents: read }
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
