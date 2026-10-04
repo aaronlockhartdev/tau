@@ -1,3 +1,0 @@
-id = "write-file"
-tier = "smoke"
-timeout_secs = 60

@@ -4141,11 +4141,10 @@ dependencies = [
 name = "tau-eval"
 version = "0.1.0"
 dependencies = [
- "reqwest",
  "serde",
  "serde_json",
  "tau-core",
- "tau-mock-llm",
+ "tau-protocol",
  "tempfile",
  "tokio",
  "toml 1.1.6+spec-1.1.0",

@@ -33,15 +33,19 @@ test:
     cargo nextest run --workspace
     (cd app && npm run test)
 
-# The eval rig's deterministic leg (ticket #57): run a tier against the
-# in-process mock LLM. Smoke by default (also PR-gated via the nextest job);
-# `just eval full` is an on-demand experiment (the full tier is a later slice).
-eval tier = 'smoke':
+# The eval rig (tickets #57/#65): the user's real model over the
+# Terminal-Bench 2.0 set, every trial inside the task's own container image.
+# Explicitly invocable, never in CI (non-deterministic and paid). reps =
+# repetitions per task (the pass-rate denominator); budget 0 = no cap. A
+# canary run is `just eval 1 0 <task-substr>`.
+eval reps = '3' budget = '0' filter = '':
     #!/bin/sh
     set -eu
     cd "{{justfile_directory()}}"
-    cargo run -p tau-eval {{tier}}
-
+    args=""
+    if [ "{{budget}}" != "0" ]; then args="--budget {{budget}}"; fi
+    if [ -n "{{filter}}" ]; then args="$args --filter {{filter}}"; fi
+    cargo run -p tau-eval live --reps {{reps}} $args
 # Spec §1 in-scope suites; `just acceptance <suite…>` filters (default: all).
 # The accept-* suites run against the deterministic mock LLM only (ADR-0010):
 # red = a code problem, never a network/model problem; real-model runs live

@@ -10,9 +10,8 @@ workspace = true
 
 [dependencies]
 tau-core = { path = "../tau-core" }
-tau-mock-llm = { path = "../tau-mock-llm" }
+tau-protocol = { path = "../tau-protocol" }
 tokio = { workspace = true }
-reqwest = { workspace = true }
 tempfile = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

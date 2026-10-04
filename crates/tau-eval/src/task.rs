@@ -8,39 +8,16 @@ use std::path::{Path, PathBuf};
 
 use crate::EvalError;
 
-/// The task's tier: `smoke` rides the PR-gated nextest job, `full` is
-/// on-demand only (ticket #57).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Tier {
-    Smoke,
-    Full,
-}
-
-impl Tier {
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Tier::Smoke => "smoke",
-            Tier::Full => "full",
-        }
-    }
-}
-
-impl std::fmt::Display for Tier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// One task's `task.toml`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskFile {
     pub id: String,
-    pub tier: Tier,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    /// The container environment: the image the trial runs in.
+    #[serde(default)]
+    pub docker: Option<String>,
 }
 
 fn default_timeout() -> u64 {
@@ -53,6 +30,9 @@ pub struct Task {
     pub file: TaskFile,
     pub dir: PathBuf,
     pub instruction: String,
+    /// TB-native: the check is the Terminal-Bench protocol (tests at /tests,
+    /// verdict at /logs/verifier/reward.txt) rather than a task check.sh.
+    pub tb_native: bool,
 }
 
 impl Task {
@@ -62,13 +42,15 @@ impl Task {
     }
 
     #[must_use]
-    pub fn tier(&self) -> Tier {
-        self.file.tier
-    }
-
-    #[must_use]
     pub fn timeout_secs(&self) -> u64 {
         self.file.timeout_secs
+    }
+
+    /// The docker image of a container-only environment; `None` = the task
+    /// runs straight in the workspace.
+    #[must_use]
+    pub fn docker(&self) -> Option<&str> {
+        self.file.docker.as_deref()
     }
 
     /// The workspace seed script; absent for trivial tasks.
@@ -91,30 +73,69 @@ impl Task {
     }
 }
 
-/// Load every task under `dir` (one subdirectory each, sorted by id).
-/// A subdirectory without a `task.toml` is not a task and is skipped.
+/// Load one task from `dir` (which must contain a `task.toml`).
+pub fn load_one(dir: &Path) -> Result<Task, EvalError> {
+    let manifest = dir.join("task.toml");
+    let raw = std::fs::read_to_string(&manifest).map_err(EvalError::io)?;
+    let file: TaskFile = toml::from_str(&raw)
+        .map_err(|e| EvalError::Task(format!("{}: {e}", manifest.display())))?;
+    let instruction = std::fs::read_to_string(dir.join("instruction.md"))
+        .map_err(|e| EvalError::Task(format!("{}: instruction.md: {e}", dir.display())))?;
+    Ok(Task {
+        file,
+        dir: dir.to_path_buf(),
+        instruction,
+        tb_native: false,
+    })
+}
+
+/// Build a task from a Terminal-Bench-native directory: the upstream
+/// `instruction.md` and the TB check protocol in place of a task `check.sh`
+/// (`docker_image` is what the upstream manifest names; `None` in-container,
+/// where the image is already the ground truth).
+pub fn from_tb(
+    dir: &Path,
+    id: &str,
+    timeout_secs: u64,
+    docker_image: Option<String>,
+) -> Result<Task, EvalError> {
+    let instruction = std::fs::read_to_string(dir.join("instruction.md"))
+        .map_err(|e| EvalError::Task(format!("{}: instruction.md: {e}", dir.display())))?;
+    Ok(Task {
+        file: TaskFile {
+            id: id.to_owned(),
+            timeout_secs,
+            docker: docker_image,
+        },
+        dir: dir.to_path_buf(),
+        instruction,
+        tb_native: true,
+    })
+}
+/// Load every task under `dir`: a subdirectory with a `task.toml` is a
+/// task; a subdirectory without one is a *set* whose subdirectories are
+/// scanned (the `tb/` import namespace). A set marked `QUARANTINE.md` is
+/// excluded. Sorted by id.
 pub fn load(dir: &Path) -> Result<Vec<Task>, EvalError> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir).map_err(EvalError::io)? {
-        let entry = entry.map_err(EvalError::io)?;
-        let path = entry.path();
+        let path = entry.map_err(EvalError::io)?.path();
         if !path.is_dir() {
             continue;
         }
-        let manifest = path.join("task.toml");
-        if !manifest.is_file() {
+        if path.join("task.toml").is_file() {
+            out.push(load_one(&path)?);
             continue;
         }
-        let raw = std::fs::read_to_string(&manifest).map_err(EvalError::io)?;
-        let file: TaskFile = toml::from_str(&raw)
-            .map_err(|e| EvalError::Task(format!("{}: {e}", manifest.display())))?;
-        let instruction = std::fs::read_to_string(path.join("instruction.md"))
-            .map_err(|e| EvalError::Task(format!("{}: instruction.md: {e}", path.display())))?;
-        out.push(Task {
-            file,
-            dir: path,
-            instruction,
-        });
+        if path.join("QUARANTINE.md").is_file() {
+            continue;
+        }
+        for sub in std::fs::read_dir(&path).map_err(EvalError::io)? {
+            let sub = sub.map_err(EvalError::io)?.path();
+            if sub.is_dir() && sub.join("task.toml").is_file() {
+                out.push(load_one(&sub)?);
+            }
+        }
     }
     out.sort_by(|a, b| a.id().cmp(b.id()));
     Ok(out)

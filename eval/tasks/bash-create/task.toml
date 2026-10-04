@@ -1,3 +1,0 @@
-id = "bash-create"
-tier = "smoke"
-timeout_secs = 60
