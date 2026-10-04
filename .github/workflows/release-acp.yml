@@ -65,7 +65,11 @@ jobs:
             -e CARGO_TARGET_DIR=/build \
             rust:1.98-bookworm \
             bash -c "apt-get update -qq && apt-get install -y -qq musl-tools curl && \
-              curl -sL https://musl.cc/aarch64-linux-musl-cross.tgz | tar xz -C /opt && \
+              for i in 1 2 3; do \
+                curl -sL --fail https://musl.cc/aarch64-linux-musl-cross.tgz | tar xz -C /opt && break; \
+                sleep 10; \
+              done; \
+              [ -x /opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ] && \
               rustup target add aarch64-unknown-linux-musl && \
               CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc \
               cargo build --target aarch64-unknown-linux-musl --release --bin tau-acp"
