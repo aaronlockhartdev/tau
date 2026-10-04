@@ -15,100 +15,117 @@ use std::time::{Duration, Instant};
 use tau_core::config::{self, Cost};
 use tau_core::harness::{Core, CoreBuilder};
 use tau_protocol::{Command, CommandOutput, Event, MessageLane, SystemEventKind};
-use tokio::sync::{Mutex, Semaphore, mpsc};
+use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 
 use crate::EvalError;
 
 /// A trial's live log: one compact line per model action to stderr, so a
 /// running trial is visible. In-container, that stderr is the channel the
 /// docker path streams back to the host.
+///
+/// Fed by the session journal (append-only JSONL), not the event stream:
+/// the event pipe is a bounded GUI channel that drops high-frequency entry
+/// upserts under streaming load, while the journal is lossless.
 struct TrialLog {
     prefix: String,
-    /// tool call ids already announced (one entry id spans call → result).
-    announced: HashSet<String>,
-    /// call id → tool name, so the result line can name the tool.
-    names: HashMap<String, String>,
-    /// entry id → latest streamed text, flushed at the call's `StreamEnd`.
-    text: BTreeMap<String, String>,
+    /// tool entry id → (name, result line emitted)
+    tools: HashMap<String, (String, bool)>,
+    /// assistant entry ids in first-seen order, with their latest text
+    text_order: Vec<String>,
+    texts: HashMap<String, String>,
 }
 
 impl TrialLog {
     fn new(task_id: &str) -> Self {
         Self {
             prefix: format!("[{task_id}] "),
-            announced: HashSet::new(),
-            names: HashMap::new(),
-            text: BTreeMap::new(),
+            tools: HashMap::new(),
+            text_order: Vec::new(),
+            texts: HashMap::new(),
         }
     }
 
-    /// One line per interesting event of `session`.
-    fn note(&mut self, session: &str, ev: &Event) {
-        match ev {
-            Event::EntryUpsert {
-                workspace: _,
-                session: s,
-                entry,
-            } if s == session => match entry.kind.as_str() {
-                "tool" => {
-                    for c in entry
-                        .payload
-                        .get("calls")
-                        .and_then(serde_json::Value::as_array)
-                        .into_iter()
-                        .flatten()
-                    {
-                        let id = c
-                            .get("id")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("");
-                        if self.announced.insert(id.to_owned()) {
-                            let name = c
-                                .get("name")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("?");
-                            self.names.insert(id.to_owned(), name.to_owned());
-                            let args = c
-                                .get("arguments")
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("");
-                            eprintln!("{}⚑ {name} {}", self.prefix, brief(args, 80));
-                        }
-                    }
-                    if let (Some(out), Some(name)) = (
-                        entry
-                            .payload
-                            .get("output")
-                            .and_then(serde_json::Value::as_str),
-                        self.names.get(&entry.id),
-                    ) {
-                        eprintln!("{}✓ {name} {}", self.prefix, brief(out, 80));
-                    }
+    /// React to one fresh journal line (header and unknown kinds ignored).
+    fn line(&mut self, v: &serde_json::Value) {
+        let kind = v
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let id = v
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let payload = v.get("payload");
+        match kind {
+            "tool" => {
+                let name = payload
+                    .and_then(|p| p.get("name"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("?");
+                if !self.tools.contains_key(id) {
+                    let args = payload
+                        .and_then(|p| p.get("args"))
+                        .map(|a| a.as_str().map_or_else(|| a.to_string(), String::from))
+                        .unwrap_or_default();
+                    eprintln!("{}⚑ {name} {}", self.prefix, brief(&args, 80));
+                    self.tools.insert(id.to_owned(), (name.to_owned(), false));
                 }
-                "assistant" => {
-                    if let Some(t) = entry
-                        .payload
-                        .get("text")
-                        .and_then(serde_json::Value::as_str)
-                    {
-                        self.text.insert(entry.id.clone(), t.to_owned());
-                    }
+                if let (Some(out), Some((name, done))) = (
+                    payload
+                        .and_then(|p| p.get("output"))
+                        .and_then(serde_json::Value::as_str),
+                    self.tools.get_mut(id),
+                ) && !*done
+                {
+                    eprintln!("{}✓ {name} {}", self.prefix, brief(out, 80));
+                    *done = true;
                 }
-                _ => {}
-            },
-            // The assistant entry finalizes with its call: flush the text.
-            Event::StreamEnd {
-                session: s,
-                call_id,
-                ..
-            } if s == session => {
-                if let Some(t) = self.text.remove(call_id) {
-                    eprintln!("{}💬 {}", self.prefix, brief(&t, 160));
+            }
+            "assistant" => {
+                if let Some(t) = payload
+                    .and_then(|p| p.get("text"))
+                    .and_then(serde_json::Value::as_str)
+                {
+                    if !self.texts.contains_key(id) {
+                        self.text_order.push(id.to_owned());
+                    }
+                    self.texts.insert(id.to_owned(), t.to_owned());
                 }
             }
             _ => {}
         }
     }
+
+    /// At turn end: each assistant entry's final text.
+    fn finish(&self) {
+        for id in &self.text_order {
+            if let Some(t) = self.texts.get(id) {
+                eprintln!("{}💬 {}", self.prefix, brief(t, 160));
+            }
+        }
+    }
+}
+
+/// Tail the trial's session journal, announcing model actions as they land.
+async fn tail_journal(path: PathBuf, mut log: TrialLog, mut stop: oneshot::Receiver<()>) {
+    let mut done = 0usize;
+    loop {
+        tokio::select! {
+            _ = &mut stop => break,
+            () = tokio::time::sleep(Duration::from_secs(2)) => {}
+        }
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let complete = raw.bytes().filter(|&b| b == b'\n').count();
+        for line in raw.lines().skip(done).take(complete.saturating_sub(done)) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                log.line(&v);
+            }
+            done += 1;
+        }
+    }
+    log.finish();
 }
 
 /// Whitespace-collapsed, char-safe truncation for log lines.
@@ -336,15 +353,24 @@ impl Live {
             })
             .map_err(|e| EvalError::Live(format!("{e:?}")))?;
 
-        let mut log = TrialLog::new(task.id());
+        // The live log tails the session journal (lossless); the event
+        // stream only settles the turn.
+        let log = TrialLog::new(task.id());
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let journal = cwd
+            .join(".tau")
+            .join("sessions")
+            .join(format!("{session}.jsonl"));
+        let tail = tokio::spawn(tail_journal(journal, log, stop_rx));
         let timed_out = settle(
             &mut events,
             &session,
             cwd,
             Duration::from_secs(task.timeout_secs()),
-            &mut log,
         )
         .await;
+        let _ = stop_tx.send(());
+        let _ = tail.await;
         if timed_out {
             // The bounded runaway: cut the stream so the turn ends.
             let _ = self.core.dispatch(Command::MessageStop {
@@ -420,7 +446,6 @@ async fn settle(
     session: &str,
     cwd: &Path,
     timeout: Duration,
-    log: &mut TrialLog,
 ) -> bool {
     let deadline = Instant::now() + timeout;
     let mut saw_end = false;
@@ -435,7 +460,6 @@ async fn settle(
         else {
             break false;
         };
-        log.note(session, &ev);
         match &ev {
             Event::StreamEnd { session: s, .. } if s == session => saw_end = true,
             Event::Queue {
