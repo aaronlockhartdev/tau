@@ -19,6 +19,24 @@ use tokio::sync::{Mutex, Semaphore, mpsc, oneshot};
 
 use crate::EvalError;
 
+/// Phase 1 (agent turn) result; the JSON the inner prints in `--phase agent`.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct TurnData {
+    pub timed_out: bool,
+    pub note: String,
+    pub tokens: runner::Tokens,
+    pub turns: u32,
+    pub tool_calls: Vec<String>,
+}
+
+/// Phase 2 (verifier) result; the JSON the inner prints in `--phase check`.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct CheckData {
+    pub passed: bool,
+    pub timed_out: bool,
+    pub output: String,
+}
+
 /// A trial's live log: one compact line per model action to stderr, so a
 /// running trial is visible. In-container, that stderr is the channel the
 /// docker path streams back to the host.
@@ -157,7 +175,7 @@ bash /tests/test.sh || exit 1
 [ ! -f /logs/verifier/reward.txt ] || [ "$(cat /logs/verifier/reward.txt)" = "1" ]
 "#;
 
-use crate::runner::{self, Outcome, Status, run_script_status, trial_dir};
+use crate::runner::{self, Outcome, run_script_status, trial_dir};
 use crate::task::Task;
 /// The user's system config dir (the production shape `CoreBuilder::default_system` uses).
 fn user_system_dir() -> Result<PathBuf, EvalError> {
@@ -313,17 +331,16 @@ impl Live {
         rx
     }
 
-    /// Run one trial through the app's own dispatch path over `cwd` (the
-    /// container path's `/app`).
-    pub async fn run_trial(
+    /// Phase 1 of a container trial: run the agent's turn. The verifier
+    /// runs later (phase 2), after the host stages the task's tests — the
+    /// agent never sees the oracle or the hold-out tests.
+    pub async fn run_turn(
         &self,
         task: &Task,
         rep: u32,
         artifacts_dir: &Path,
         cwd: &Path,
-    ) -> Result<Outcome, EvalError> {
-        let start = Instant::now();
-
+    ) -> Result<TurnData, EvalError> {
         let open = self
             .core
             .dispatch(Command::WorkspaceOpen {
@@ -383,52 +400,51 @@ impl Live {
         }
 
         let (turns, tool_calls, tokens) = runner::read_session(cwd, &session)?;
-
-        let check = if task.tb_native {
-            // The TB protocol: tests at /tests, verdict at /logs/verifier.
-            let script = artifacts_dir.join("check-tb.sh");
-            std::fs::write(&script, TB_CHECK).map_err(EvalError::io)?;
-            run_script_status(&script, cwd, Duration::from_secs(task.timeout_secs())).await?
-        } else {
-            run_script_status(&task.check(), cwd, Duration::from_secs(task.timeout_secs())).await?
-        };
-        let passed = check.code == 0;
-        let status = if timed_out {
-            Status::Error
-        } else if passed {
-            Status::Pass
-        } else {
-            Status::Fail
-        };
-        let note = match status {
-            Status::Pass => String::new(),
-            Status::Fail => check.output,
-            Status::Error => "agent turn timed out".to_owned(),
-        };
-
-        let outcome = Outcome {
-            task: task.id().to_owned(),
-            rep,
-            status,
-            score: passed,
-            wall_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
-            tokens,
-            cost_usd: self.cost_of(&tokens),
-            turns,
-            tool_calls,
-            note,
-        };
-
         let trial = trial_dir(artifacts_dir, task.id(), rep);
         std::fs::create_dir_all(&trial).map_err(EvalError::io)?;
         runner::copy_session(cwd, &session, &trial.join("session.jsonl")).map_err(EvalError::io)?;
-        crate::report::write_results(&trial, &outcome).map_err(EvalError::io)?;
-        Ok(outcome)
+        Ok(TurnData {
+            timed_out,
+            note: if timed_out {
+                "agent turn timed out".to_owned()
+            } else {
+                String::new()
+            },
+            tokens,
+            turns,
+            tool_calls,
+        })
+    }
+
+    /// Phase 2 of a container trial: run the verifier. The TB protocol's
+    /// tests must only be staged after the turn, so this runs in a second
+    /// exec.
+    pub async fn run_check(
+        &self,
+        task: &Task,
+        artifacts_dir: &Path,
+        cwd: &Path,
+    ) -> Result<CheckData, EvalError> {
+        let script = if task.tb_native {
+            // The TB protocol: tests at /tests, verdict at /logs/verifier.
+            let path = artifacts_dir.join("check-tb.sh");
+            std::fs::write(&path, TB_CHECK).map_err(EvalError::io)?;
+            path
+        } else {
+            task.check().clone()
+        };
+        let check =
+            run_script_status(&script, cwd, Duration::from_secs(task.timeout_secs())).await?;
+        Ok(CheckData {
+            passed: check.code == 0,
+            timed_out: check.code == -2,
+            output: check.output,
+        })
     }
 
     /// The trial's cost from the config's per-1M prices; 0.0 when the model
     /// is unpriced (tokens still carry the efficiency signal).
-    fn cost_of(&self, tokens: &runner::Tokens) -> f64 {
+    pub(crate) fn cost_of(&self, tokens: &runner::Tokens) -> f64 {
         let Some(c) = self.costs.get(&self.model) else {
             return 0.0;
         };

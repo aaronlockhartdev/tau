@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Instant;
 
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
@@ -64,6 +65,17 @@ async fn docker(args: &[&str]) -> Result<String, EvalError> {
         )));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// Trial containers are disposable (unique nanosecond name per trial);
+/// sweep what an interrupted run left behind.
+pub async fn sweep_stale() {
+    let Ok(ids) = docker(&["ps", "-aq", "--filter", "name=taueval-"]).await else {
+        return;
+    };
+    for id in ids.lines() {
+        let _ = docker(&["rm", "-f", id]).await;
+    }
 }
 
 /// The rust build image for `arch`: the local `rust:1.98-bookworm` when
@@ -258,7 +270,9 @@ async fn run_in_container(
     live: &Live,
     task: &Task,
     binary: &Path,
+    rep: u32,
 ) -> Result<TrialResult, EvalError> {
+    let start = Instant::now();
     // Layout inside the container: the config under a private HOME, the task
     // at /tmp/task (created by `docker cp` — a pre-existing dir would nest
     // the copy), the trial artifacts at /tmp/trial, the workspace at /app
@@ -296,16 +310,21 @@ async fn run_in_container(
         &format!("{name}:/tmp/tau-home/.config/tau"),
     ])
     .await?;
-    docker(&[
-        "cp",
-        task.dir
-            .to_str()
-            .ok_or_else(|| EvalError::Live("task dir is not valid UTF-8".into()))?,
-        &format!("{name}:/tmp/task"),
-    ])
-    .await?;
     if task.tb_native {
-        stage_tb_tests(name, task).await?;
+        // Instruction and manifest only: the upstream task dir also holds
+        // the oracle (solution/) and the hold-out tests, which the agent
+        // must never see. The tests are staged after the turn, just before
+        // the verifier.
+        stage_tb_task(name, task).await?;
+    } else {
+        docker(&[
+            "cp",
+            task.dir
+                .to_str()
+                .ok_or_else(|| EvalError::Live("task dir is not valid UTF-8".into()))?,
+            &format!("{name}:/tmp/task"),
+        ])
+        .await?;
     }
     // Minimal images often ship no CA store; the bundled Mozilla roots let
     // rustls reach the LLM endpoint.
@@ -319,7 +338,57 @@ async fn run_in_container(
     ])
     .await?;
 
-    let mut exec_args: Vec<&str> = vec![
+    // Phase 1: the agent's turn.
+    let (out, code) = run_phase(name, task, "agent").await?;
+    let turn: crate::live::TurnData = parse_result(&out, code, "agent phase")?;
+    // The tests land only now: the turn is over, the verifier is next.
+    if task.tb_native {
+        stage_tb_tests(name, task).await?;
+    }
+    // Phase 2: the verifier.
+    let (out, code) = run_phase(name, task, "check").await?;
+    let check: crate::live::CheckData = parse_result(&out, code, "check phase")?;
+    let (status, note) = if turn.timed_out {
+        (Status::Error, turn.note)
+    } else if check.passed {
+        (Status::Pass, String::new())
+    } else {
+        (Status::Fail, check.output)
+    };
+    Ok(TrialResult {
+        task: task.id().to_owned(),
+        rep,
+        status,
+        score: check.passed,
+        wall_ms: u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+        tokens: turn.tokens,
+        cost_usd: live.cost_of(&turn.tokens),
+        turns: turn.turns,
+        tool_calls: turn.tool_calls,
+        note,
+    })
+}
+
+/// Stage a TB task's instruction and manifest (never the oracle or tests).
+async fn stage_tb_task(name: &str, task: &Task) -> Result<(), EvalError> {
+    for file in ["task.toml", "instruction.md"] {
+        docker(&[
+            "cp",
+            task.dir
+                .join(file)
+                .to_str()
+                .ok_or_else(|| EvalError::Live("task dir is not valid UTF-8".into()))?,
+            &format!("{name}:/tmp/task/{file}"),
+        ])
+        .await?;
+    }
+    Ok(())
+}
+
+/// One `inner` phase exec in the trial container: the trial's live log
+/// (stderr) streams to the host, stdout comes back for result parsing.
+async fn run_phase(name: &str, task: &Task, phase: &str) -> Result<(String, i32), EvalError> {
+    let mut args: Vec<&str> = vec![
         "exec",
         "-w",
         "/app",
@@ -336,25 +405,29 @@ async fn run_in_container(
         "/app",
     ];
     if task.tb_native {
-        exec_args.push("--tb");
-        exec_args.push("--id");
-        exec_args.push(task.id());
+        args.push("--tb");
+        args.push("--id");
+        args.push(task.id());
     }
-    // The inner prefixes each line with the task id itself.
-    let (stdout_bytes, code) = exec_streaming(&exec_args, "").await?;
-    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
-    // The result JSON is the last non-empty stdout line (the app logs to
-    // stderr, so stdout is the channel). A failed trial is a *result* —
-    // exit 1 with the JSON on stdout — so the JSON is parsed before the
-    // exit status is treated as an error.
-    match stdout.lines().rev().find(|l| !l.trim().is_empty()) {
-        Some(json) => serde_json::from_str(json)
-            .map_err(|e| EvalError::Live(format!("in-container result: {e}: {json}"))),
-        None if code != 0 => Err(EvalError::Live(format!("in-container trial exited {code}"))),
-        None => Err(EvalError::Live(
-            "in-container trial printed no result".into(),
-        )),
-    }
+    args.extend(["--phase", phase]);
+    let (out, code) = exec_streaming(&args, "").await?;
+    Ok((String::from_utf8_lossy(&out).into_owned(), code))
+}
+
+/// The result JSON is the last non-empty stdout line (the app logs to
+/// stderr, so stdout is the channel); a non-zero exit without one is an
+/// infrastructure failure.
+fn parse_result<T: serde::de::DeserializeOwned>(
+    stdout: &str,
+    code: i32,
+    what: &str,
+) -> Result<T, EvalError> {
+    stdout
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .and_then(|json| serde_json::from_str::<T>(json).ok())
+        .ok_or_else(|| EvalError::Live(format!("{what} exited {code} with no result json")))
 }
 
 /// Run one container trial: create the container from the task's image,
@@ -379,9 +452,13 @@ pub async fn run_trial(
     let name = format!("taueval-{nanos}-{}-{rep}", task.id());
     // Per-container artifact staging (trials run concurrently).
     let staging = format!("host-trial-tmp-{name}");
+    // --shm-size: browser-based verifiers (selenium/chromium) crash-loop
+    // on docker's 64 MB default /dev/shm.
     docker(&[
         "create",
         "--entrypoint=",
+        "--shm-size",
+        "1g",
         "--name",
         &name,
         "--network",
@@ -392,10 +469,12 @@ pub async fn run_trial(
     ])
     .await?;
 
-    let result = run_in_container(&name, live, task, &binary).await;
+    let result = run_in_container(&name, live, task, &binary, rep).await;
 
     // Always tear the container down, success or failure.
-    let _ = docker(&["rm", "-f", &name]).await;
+    if let Err(e) = docker(&["rm", "-f", &name]).await {
+        eprintln!("tau-eval: warning: teardown failed for {name}: {e}");
+    }
 
     let trial = result?;
     let outcome = Outcome {

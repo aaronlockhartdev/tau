@@ -94,6 +94,8 @@ async fn main() -> ExitCode {
         live.model(),
         trials.len()
     );
+    // An interrupted run leaves its trial containers behind; sweep them.
+    tau_eval::docker::sweep_stale().await;
     match tau_eval::live::run_suite(live, &trials, &artifacts_dir, CONCURRENCY, budget).await {
         Ok((outcomes, skipped)) => finish(&outcomes, &artifacts_dir, skipped),
         Err(e) => fail(&format!("run: {e}")),
@@ -109,6 +111,7 @@ async fn inner(args: Option<&[String]>) -> ExitCode {
     let mut tb = false;
     let mut task_id: Option<&str> = None;
     let mut timeout: u64 = 900;
+    let mut phase: &str = "agent";
     let mut it = args.unwrap_or_default().iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -117,6 +120,7 @@ async fn inner(args: Option<&[String]>) -> ExitCode {
             "--tb" => tb = true,
             "--id" => task_id = it.next().map(String::as_str),
             "--timeout" => timeout = it.next().and_then(|s| s.parse().ok()).unwrap_or(900),
+            "--phase" => phase = it.next().map_or("agent", String::as_str),
             other => return fail(&format!("inner: unknown argument {other:?}")),
         }
     }
@@ -148,23 +152,37 @@ async fn inner(args: Option<&[String]>) -> ExitCode {
         Ok(l) => l,
         Err(e) => return fail(&format!("{e}")),
     };
-    let outcome = match live
-        .run_trial(&task, 0, Path::new("/tmp/trial"), Path::new(workspace))
+    if phase == "agent" {
+        let turn = match live
+            .run_turn(&task, 0, Path::new("/tmp/trial"), Path::new(workspace))
+            .await
+        {
+            Ok(t) => t,
+            Err(e) => return fail(&format!("trial: {e}")),
+        };
+        let json = match serde_json::to_string(&turn) {
+            Ok(j) => j,
+            Err(e) => return fail(&format!("result json: {e}")),
+        };
+        println!("{json}");
+        return ExitCode::SUCCESS;
+    }
+    if phase != "check" {
+        return fail(&format!("inner: unknown phase {phase:?}"));
+    }
+    let check = match live
+        .run_check(&task, Path::new("/tmp/trial"), Path::new(workspace))
         .await
     {
-        Ok(o) => o,
+        Ok(c) => c,
         Err(e) => return fail(&format!("trial: {e}")),
     };
-    let json = match serde_json::to_string(&tau_eval::docker::TrialResult::from(&outcome)) {
+    let json = match serde_json::to_string(&check) {
         Ok(j) => j,
         Err(e) => return fail(&format!("result json: {e}")),
     };
     println!("{json}");
-    if outcome.status == tau_eval::runner::Status::Pass {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    ExitCode::SUCCESS
 }
 /// Print the summary, persist it, and map the outcomes to an exit code.
 fn finish(outcomes: &[runner::Outcome], artifacts_dir: &PathBuf, skipped: usize) -> ExitCode {
