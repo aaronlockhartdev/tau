@@ -108,8 +108,10 @@ async fn build_image(arch: &str) -> Result<String, EvalError> {
 /// containers emulate — slower, but correct).
 async fn ensure_binary(arch: &str) -> Result<PathBuf, EvalError> {
     let triple = match arch {
-        "amd64" => "x86_64-unknown-linux-gnu",
-        "arm64" => "aarch64-unknown-linux-gnu",
+        // Static musl: the trial images span glibc vintages (and some ship
+        // none at all), so the in-container binary carries no glibc floor.
+        "amd64" => "x86_64-unknown-linux-musl",
+        "arm64" => "aarch64-unknown-linux-musl",
         other => {
             return Err(EvalError::Live(format!(
                 "container arch {other} has no cross-built tau-eval"
@@ -135,7 +137,9 @@ async fn ensure_binary(arch: &str) -> Result<PathBuf, EvalError> {
         "tau-eval: first use — building the in-container binary for {triple} (this takes a few minutes)"
     );
     let image = build_image(arch).await?;
-    let build_cmd = format!("cargo build --target {triple} --release -p tau-eval");
+    let build_cmd = format!(
+        "apt-get update -qq && apt-get install -y -qq musl-tools && rustup target add {triple} && cargo build --target {triple} --release -p tau-eval"
+    );
     // The build runs in the image variant of the target arch: the amd64 rust
     // image (under QEMU on arm64 hosts) ships the x86_64 toolchain, so no
     // in-container toolchain download is ever needed.
