@@ -1,0 +1,22 @@
+# Builds the in-container tau-eval binary on a native x86_64 Linux machine.
+# Arm64 hosts (Apple Silicon) cannot cross-compile it (no C cross-compiler
+# for the zstd/aws-lc deps) and QEMU-emulated builds segfault, so the
+# binary is built here and downloaded into
+# target/x86_64-unknown-linux-gnu/release/tau-eval (workflow_dispatch is
+# manual; the rig's first-use check finds the file and skips building).
+name: build-eval-linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p tau-eval
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tau-eval-x86_64-linux
+          path: target/release/tau-eval
