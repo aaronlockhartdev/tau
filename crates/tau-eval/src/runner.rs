@@ -4,7 +4,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 
 use serde::{Deserialize, Serialize};
 use tau_core::session::SessionStore;
@@ -87,29 +89,91 @@ pub(crate) async fn run_script_status(
     cwd: &Path,
     timeout: Duration,
 ) -> Result<ScriptOut, EvalError> {
-    let child_out = tokio::process::Command::new("sh")
+    let mut child = tokio::process::Command::new("sh")
         .arg(script)
         .current_dir(cwd)
-        .output();
-    let out = match tokio::time::timeout(timeout, child_out).await {
-        Ok(res) => res.map_err(EvalError::io)?,
-        // Elapsed: dropping the in-flight future kills the child.
-        Err(_) => {
-            return Ok(ScriptOut {
-                code: -2,
-                output: format!("script timed out after {}s", timeout.as_secs()),
-            });
-        }
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(EvalError::io)?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| EvalError::Live("stdout pipe missing".into()))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| EvalError::Live("stderr pipe missing".into()))?;
+    // The reader outlives the timeout, so on Elapsed we can still collect
+    // what the script printed before it was killed.
+    let reader = tokio::spawn(async move {
+        let mut so = Vec::new();
+        let mut se = Vec::new();
+        let (rso, rse) = tokio::join!(stdout.read_to_end(&mut so), stderr.read_to_end(&mut se),);
+        (so, se, rso, rse)
+    });
+    let res = tokio::time::timeout(timeout, child.wait()).await;
+    let status = if let Ok(res) = res {
+        res.map_err(EvalError::io)?
+    } else {
+        let _ = child.kill().await;
+        let (so, se) = drain_reader(reader).await?;
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&so),
+            String::from_utf8_lossy(&se)
+        );
+        let partial = tail(&combined, 64_000);
+        return Ok(ScriptOut {
+            code: -2,
+            output: format!(
+                "script timed out after {}s\n--- partial output (tail) ---\n{partial}",
+                timeout.as_secs()
+            ),
+        });
     };
+    let (so, se) = drain_reader(reader).await?;
     let output = format!(
         "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
+        String::from_utf8_lossy(&so),
+        String::from_utf8_lossy(&se)
     );
     Ok(ScriptOut {
-        code: out.status.code().unwrap_or(-1),
+        code: status.code().unwrap_or(-1),
         output,
     })
+}
+
+/// The in-flight script output reader: captured (stdout, stderr) bytes
+/// plus each pipe's read result.
+type ScriptReader = tokio::task::JoinHandle<(
+    Vec<u8>,
+    Vec<u8>,
+    Result<usize, std::io::Error>,
+    Result<usize, std::io::Error>,
+)>;
+
+/// Unwrap the reader task's result: a join failure or a pipe read failure
+/// is an `EvalError`; success is the captured (stdout, stderr) bytes.
+async fn drain_reader(reader: ScriptReader) -> Result<(Vec<u8>, Vec<u8>), EvalError> {
+    let (so, se, rso, rse) = reader
+        .await
+        .map_err(|e| EvalError::Live(format!("script reader task: {e}")))?;
+    rso.map_err(EvalError::io)?;
+    rse.map_err(EvalError::io)?;
+    Ok((so, se))
+}
+
+/// The tail of a string, char-boundary safe: the diagnostic value of a
+/// timed-out script's output is where it stopped.
+fn tail(s: &str, max_chars: usize) -> &str {
+    let n = s.chars().count();
+    if n <= max_chars {
+        return s;
+    }
+    let skip = n - max_chars;
+    let i = s.char_indices().nth(skip).map_or(s.len(), |(i, _)| i);
+    s.get(i..).unwrap_or(s)
 }
 
 /// Run a script that must succeed (setup / oracle); a non-zero exit is an
@@ -245,10 +309,13 @@ mod tests {
     async fn script_timeout_reports_sentinel_code() {
         let dir = tempfile::tempdir().unwrap();
         let script = dir.path().join("s.sh");
-        std::fs::write(&script, "sleep 10\n").unwrap();
+        std::fs::write(&script, "echo MARKER-PRINTED; sleep 10\n").unwrap();
         let out = run_script_status(&script, dir.path(), Duration::from_millis(200))
             .await
             .unwrap();
         assert_eq!(out.code, -2);
+        // the bytes the script printed before the kill are retained
+        assert!(out.output.contains("MARKER-PRINTED"));
+        assert!(out.output.contains("partial output"));
     }
 }
