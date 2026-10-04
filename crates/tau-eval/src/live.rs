@@ -425,6 +425,7 @@ impl Live {
         artifacts_dir: &Path,
         cwd: &Path,
     ) -> Result<CheckData, EvalError> {
+        eprintln!("[{}] ── turn complete, verifying ──", task.id());
         let script = if task.tb_native {
             // The TB protocol: tests at /tests, verdict at /logs/verifier.
             let path = artifacts_dir.join("check-tb.sh");
