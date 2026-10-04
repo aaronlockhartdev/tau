@@ -8,11 +8,11 @@
 
 use std::sync::Arc;
 
-use tau_core::harness::Core;
-use tau_protocol::{Event, SystemEventKind};
-
 use crate::sessions::{self, Outcome, Registry};
 use crate::transport::{self, Out};
+use serde_json::json;
+use tau_core::harness::Core;
+use tau_protocol::{Event, SystemEventKind};
 
 pub async fn run(core: Arc<Core>, out: Out, registry: Arc<Registry>) {
     let mut rx = core.events();
@@ -40,19 +40,40 @@ fn handle(event: &Event, out: &Out, registry: &Registry) {
         Event::StreamEnd {
             session,
             interrupted,
+            usage,
             ..
         } => {
-            // Finalizes the oldest in-flight assistant entry; a StreamEnd
-            // alone never settles (the empty Queue is the settle signal).
-            let mut guard = registry
-                .lock()
-                .expect("session registry: no panic while the lock is held");
-            if let Some(s) = guard.get_mut(session) {
-                s.mapper.on_stream_end();
-                s.saw_stream_end = true;
-                if *interrupted {
-                    s.saw_interrupted = true;
-                }
+            let usage_update = {
+                let mut guard = registry
+                    .lock()
+                    .expect("session registry: no panic while the lock is held");
+                guard.get_mut(session).and_then(|s| {
+                    // Finalizes the oldest in-flight assistant entry; a
+                    // StreamEnd alone never settles (the empty Queue is the
+                    // settle signal).
+                    s.mapper.on_stream_end();
+                    s.saw_stream_end = true;
+                    if *interrupted {
+                        s.saw_interrupted = true;
+                    }
+                    // N5: per-call usage rides the finalize, only when the
+                    // session's model declares a context window — the
+                    // schema's `size` is required and must not be guessed.
+                    // Built under the lock, sent after (the writer lock is
+                    // separate).
+                    usage.and_then(|u| {
+                        s.context_window.map(|size| {
+                            json!({
+                                "sessionUpdate": "usage_update",
+                                "used": u.input_tokens + u.output_tokens,
+                                "size": size,
+                            })
+                        })
+                    })
+                })
+            };
+            if let Some(update) = usage_update {
+                out.send(&transport::session_update(session, &update));
             }
         }
         Event::Queue { session, items, .. } => {

@@ -177,9 +177,11 @@ async fn session_new(server: &Server, rpc: &Rpc) {
     // would be a contract violation).
     let (models, default) = server.config.model_options_for(cwd).await;
     let mut result = json!({ "sessionId": session.id });
+    let mut context_window = None;
     if !models.is_empty() {
         let current = default.expect("a non-empty model list has a default");
         result["configOptions"] = json!([model_option(&models, &current)]);
+        context_window = server.config.context_window_for(cwd, &current).await;
     }
     server
         .registry
@@ -196,6 +198,7 @@ async fn session_new(server: &Server, rpc: &Rpc) {
                 saw_stream_end: false,
                 saw_interrupted: false,
                 cancel_requested: false,
+                context_window,
             },
         );
     server.out.send(&transport::result(id, &result));
@@ -446,6 +449,18 @@ async fn set_config_option(server: &Server, rpc: &Rpc) {
             // The v1 schema marks `configOptions` required on this response:
             // the updated model select, `currentValue` on the model just set.
             let (models, _default) = server.config.model_options_for(&cwd).await;
+            // The window follows the selection (N5): the next turn's
+            // `usage_update` sizes against the new model.
+            let context_window = server.config.context_window_for(&cwd, value).await;
+            {
+                let mut reg = server
+                    .registry
+                    .lock()
+                    .expect("session registry: no panic while the lock is held");
+                if let Some(state) = reg.get_mut(session_id) {
+                    state.context_window = context_window;
+                }
+            }
             server.out.send(&transport::result(
                 id,
                 &json!({ "configOptions": [model_option(&models, value)] }),

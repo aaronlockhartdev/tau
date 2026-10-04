@@ -227,6 +227,79 @@ async fn prompt_streams_chunks_and_ends_the_turn() {
         })
         .collect();
     assert!(!text.is_empty(), "the chunks carry the assistant text");
+    // No config layer declares a context window for the env provider's
+    // model, so no `usage_update` is owed (N5: `size` must not be guessed).
+    assert!(
+        updates
+            .iter()
+            .all(|u| u["params"]["update"]["sessionUpdate"] != "usage_update"),
+        "no usage_update without a declared window: {updates:?}"
+    );
+    assert_eq!(resp["result"]["stopReason"], "end_turn");
+}
+
+/// A declared context window reaches the client as a per-call
+/// `usage_update` (N5): the system config declares one for the session's
+/// model, so the turn's `StreamEnd` usage rides alongside the finalize.
+#[tokio::test]
+async fn prompt_usage_update_when_the_window_is_known() {
+    let home = tempfile::tempdir().expect("temp home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the mock LLM");
+    let addr = listener.local_addr().expect("bound addr");
+    tokio::spawn(tau_mock_llm::server::serve(
+        listener,
+        Arc::new(tau_mock_llm::scenario::ScenarioSet::default()),
+    ));
+    let base_url = format!("http://{addr}/v1");
+
+    // The system config declares the session's model with a window; the
+    // provider name sorts first, so its model is the effective default.
+    let config_dir = home.path().join(".config").join("tau");
+    std::fs::create_dir_all(&config_dir).expect("makes the config dir");
+    std::fs::write(
+        config_dir.join("config.toml"),
+        format!(
+            "[providers.aa-mock]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.aa-mock.models.windowed-model]\ncontext_window = 4096\n"
+        ),
+    )
+    .expect("writes the system config");
+
+    let mut client = Client::spawn(home.path(), &base_url, "mock-model");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+    assert_eq!(
+        new["result"]["configOptions"][0]["currentValue"], "windowed-model",
+        "the windowed model is the effective default"
+    );
+
+    let (resp, updates) = client
+        .request_with_updates(
+            2,
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{ "type": "text", "text": "hello" }],
+            }),
+        )
+        .await;
+
+    let usage: Vec<&Value> = updates
+        .iter()
+        .filter(|u| u["params"]["update"]["sessionUpdate"] == "usage_update")
+        .collect();
+    assert_eq!(
+        usage.len(),
+        1,
+        "one usage_update per provider call: {updates:?}"
+    );
+    // The mock fallback's usage: 120 input + 48 output.
+    assert_eq!(usage[0]["params"]["update"]["used"], 168);
+    assert_eq!(usage[0]["params"]["update"]["size"], 4096);
     assert_eq!(resp["result"]["stopReason"], "end_turn");
 }
 

@@ -105,27 +105,35 @@ impl AcpConfig {
                 .any(|p| p.key_env.is_empty() || std::env::var(&p.key_env).is_ok())
     }
 
+    /// The file layers as seen from a workspace, with the env and `_meta`
+    /// providers layered on — the merge the model selector and the window
+    /// lookup share.
+    async fn merged(&self, cwd: &str) -> Config {
+        let mut merged = self.file_layers(cwd);
+        if let Some(p) = self.env_provider() {
+            merged.providers.insert(ENV_PROVIDER.to_owned(), p);
+        }
+        if let Some(p) = self.meta.lock().await.clone() {
+            merged.providers.insert(META_PROVIDER.to_owned(), p);
+        }
+        merged
+    }
+
     /// The model selector's options for one workspace: every configured model
     /// id (file layers + env + `_meta`), and the effective default
     /// (`generation.default_model` winning, else the first provider's first
     /// model — the launch.rs rule).
     pub async fn model_options_for(&self, cwd: &str) -> (Vec<String>, Option<String>) {
-        let file = self.file_layers(cwd);
-        let mut merged = file.providers;
-        if let Some(p) = self.env_provider() {
-            merged.insert(ENV_PROVIDER.to_owned(), p);
-        }
-        if let Some(p) = self.meta.lock().await.clone() {
-            merged.insert(META_PROVIDER.to_owned(), p);
-        }
+        let merged = self.merged(cwd).await;
         let models = merged
+            .providers
             .values()
             .flat_map(|p| p.models.keys().cloned())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let default = merged.values().next().and_then(|first| {
-            let wanted = &file.generation.default_model;
+        let default = merged.providers.values().next().and_then(|first| {
+            let wanted = &merged.generation.default_model;
             if !wanted.is_empty() && first.models.contains_key(wanted) {
                 Some(wanted.clone())
             } else {
@@ -135,6 +143,18 @@ impl AcpConfig {
         (models, default)
     }
 
+    /// The model's declared context window, when any layer declares one: a
+    /// layer that offers the model without a window is skipped, not treated
+    /// as "no window" (N5 — the `usage_update` `size` must not be guessed).
+    #[must_use]
+    pub async fn context_window_for(&self, cwd: &str, model: &str) -> Option<u64> {
+        self.merged(cwd)
+            .await
+            .providers
+            .values()
+            .find_map(|p| p.models.get(model).and_then(|m| m.context_window))
+            .map(u64::from)
+    }
     /// `authenticate` `_meta` install: connection-scoped, never written to
     /// the user's config file.
     pub async fn install_meta(&self, provider: Provider) {
@@ -207,5 +227,33 @@ mod tests {
             })))
             .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn context_window_resolves_across_layers() {
+        let mut c = AcpConfig::test_empty();
+        // A layer that offers the model without a window...
+        let mut bare = Provider {
+            base_url: "http://a/v1".into(),
+            key_env: String::new(),
+            models: BTreeMap::new(),
+        };
+        bare.models.insert("m1".into(), ModelDef::default());
+        c.base.providers.insert("bare".into(), bare);
+        // ...and one that declares it: the declaration wins over the bare
+        // offering; an unknown model has no window.
+        let mut full = Provider {
+            base_url: "http://b/v1".into(),
+            key_env: String::new(),
+            models: BTreeMap::new(),
+        };
+        let def = ModelDef {
+            context_window: Some(4096),
+            ..Default::default()
+        };
+        full.models.insert("m1".into(), def);
+        c.base.providers.insert("full".into(), full);
+        assert_eq!(c.context_window_for("/p", "m1").await, Some(4096));
+        assert_eq!(c.context_window_for("/p", "nope").await, None);
     }
 }

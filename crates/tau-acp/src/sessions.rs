@@ -39,6 +39,11 @@ pub struct SessionState {
     /// prompt `cancelled` even if the abort surfaced as a `System` error
     /// (the spec MUSTs the response, N3).
     pub cancel_requested: bool,
+    /// The session model's declared context window, when any config layer
+    /// declares one: a `StreamEnd` with usage then rides a `usage_update`
+    /// (the schema's `size` must not be guessed; N5). Resolved at
+    /// `session/new`, refreshed by `set_config_option`.
+    pub context_window: Option<u64>,
 }
 
 pub type Registry = Mutex<HashMap<String, SessionState>>;
