@@ -2,6 +2,12 @@
 # serves and publishes a GitHub Release. The registry's hourly cron bumps
 # entry versions from these releases, so the asset names and the rendered
 # `agent.json` asset are a stable contract (see acp/registry/).
+#
+# v0 ships x86_64-linux + darwin-aarch64. linux-aarch64 is deferred: the
+# only cross path is a ~150 MB toolchain tarball on a flaky personal host
+# (musl.cc) — not a dependency this pipeline should have. Ticketed with the
+# proper options (dedicated arm runner, vetted cross image, self-hosted
+# builder) for when an aarch64-linux consumer actually shows up.
 name: release-acp
 
 on:
@@ -47,48 +53,6 @@ jobs:
             dist/tau-acp-linux-x86_64.tar.gz
             dist/tau-acp-linux-x86_64.tar.gz.sha256
 
-  linux-aarch64:
-    runs-on: ubuntu-24.04
-    permissions: { contents: read }
-    steps:
-      - uses: actions/checkout@v4
-      # musl.cc cross toolchain instead of QEMU: a static musl binary needs
-      # only a foreign linker, and emulated builds of this workspace segfault
-      # (the lesson build-eval-linux.yml was written around).
-      - name: Cross-build static musl binary
-        run: |
-          docker run --rm \
-            -v "$GITHUB_WORKSPACE:/src:ro" \
-            -v acp-linux-aarch64:/build \
-            -w /src \
-            -e RUSTUP_TOOLCHAIN=1.98.1 \
-            -e CARGO_TARGET_DIR=/build \
-            rust:1.98-bookworm \
-            bash -c "apt-get update -qq && apt-get install -y -qq musl-tools curl && \
-              for i in 1 2 3; do \
-                curl -sL --fail https://musl.cc/aarch64-linux-musl-cross.tgz | tar xz -C /opt && break; \
-                sleep 10; \
-              done; \
-              [ -x /opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc ] && \
-              rustup target add aarch64-unknown-linux-musl && \
-              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=/opt/aarch64-linux-musl-cross/bin/aarch64-linux-musl-gcc \
-              cargo build --target aarch64-unknown-linux-musl --release --bin tau-acp"
-      - name: Pack and checksum
-        run: |
-          mkdir -p dist
-          C=$(docker create -v acp-linux-aarch64:/build alpine sh)
-          docker cp "$C":/build/aarch64-unknown-linux-musl/release/tau-acp dist/tau-acp
-          docker rm "$C"
-          file dist/tau-acp
-          tar -czf dist/tau-acp-linux-aarch64.tar.gz -C dist tau-acp
-          sha256sum dist/tau-acp-linux-aarch64.tar.gz > dist/tau-acp-linux-aarch64.tar.gz.sha256
-      - uses: actions/upload-artifact@v4
-        with:
-          name: linux-aarch64
-          path: |
-            dist/tau-acp-linux-aarch64.tar.gz
-            dist/tau-acp-linux-aarch64.tar.gz.sha256
-
   darwin-aarch64:
     runs-on: macos-15
     permissions: { contents: read }
@@ -114,7 +78,7 @@ jobs:
             dist/tau-acp-darwin-aarch64.tar.gz.sha256
 
   release:
-    needs: [linux-x86_64, linux-aarch64, darwin-aarch64]
+    needs: [linux-x86_64, darwin-aarch64]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -134,17 +98,14 @@ jobs:
           fi
           VERSION="${TAG#v}"
           SHA_LINUX_X86_64=$(cut -d' ' -f1 artifacts/linux-x86_64/tau-acp-linux-x86_64.tar.gz.sha256)
-          SHA_LINUX_AARCH64=$(cut -d' ' -f1 artifacts/linux-aarch64/tau-acp-linux-aarch64.tar.gz.sha256)
           SHA_DARWIN_AARCH64=$(cut -d' ' -f1 artifacts/darwin-aarch64/tau-acp-darwin-aarch64.tar.gz.sha256)
           env TAG="$TAG" VERSION="$VERSION" \
             SHA_LINUX_X86_64="$SHA_LINUX_X86_64" \
-            SHA_LINUX_AARCH64="$SHA_LINUX_AARCH64" \
             SHA_DARWIN_AARCH64="$SHA_DARWIN_AARCH64" \
             envsubst < acp/registry/agent.json > agent.json
           gh release create "$TAG" \
             --title "tau-acp $VERSION" \
             --notes "ACP registry binary release; the rendered agent.json is included as an asset." \
             artifacts/linux-x86_64/tau-acp-linux-x86_64.tar.gz \
-            artifacts/linux-aarch64/tau-acp-linux-aarch64.tar.gz \
             artifacts/darwin-aarch64/tau-acp-darwin-aarch64.tar.gz \
             agent.json

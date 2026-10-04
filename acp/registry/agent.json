@@ -14,11 +14,6 @@
         "sha256": "$SHA_LINUX_X86_64",
         "cmd": "./tau-acp"
       },
-      "linux-aarch64": {
-        "archive": "https://github.com/aaronlockhartdev/tau/releases/download/$TAG/tau-acp-linux-aarch64.tar.gz",
-        "sha256": "$SHA_LINUX_AARCH64",
-        "cmd": "./tau-acp"
-      },
       "darwin-aarch64": {
         "archive": "https://github.com/aaronlockhartdev/tau/releases/download/$TAG/tau-acp-darwin-aarch64.tar.gz",
         "sha256": "$SHA_DARWIN_AARCH64",
