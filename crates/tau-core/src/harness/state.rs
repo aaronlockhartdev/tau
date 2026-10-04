@@ -84,6 +84,10 @@ pub struct Core {
     /// `system_dir` seam's sibling for tests).
     pub(crate) home: Option<PathBuf>,
     pub(crate) custom: bool,
+    /// Providers layered via `CoreBuilder::with_provider` (the ACP env
+    /// channel): re-applied in `workspace_config` after the project layer,
+    /// so a workspace's file config can never shadow them.
+    pub(crate) explicit_providers: BTreeMap<String, crate::config::Provider>,
     pub(crate) client: reqwest::Client,
     pub(crate) events_tx: mpsc::Sender<Event>,
     /// The event pipe's drop bookkeeping (never silent: a drop is counted
@@ -141,6 +145,15 @@ impl CoreBuilder {
         }
     }
 
+    /// Layer one explicit provider on top of the loaded config (issue #66:
+    /// the ACP env-override channel). Merged in `apply_startup` after the
+    /// file layers, so it wins over a same-named file entry.
+    #[must_use]
+    pub fn with_provider(mut self, name: String, provider: crate::config::Provider) -> Self {
+        self.providers.insert(name, provider);
+        self
+    }
+
     /// A test seam: child sessions get this factory's provider (scripted
     /// child turns).
     #[must_use]
@@ -182,6 +195,7 @@ impl CoreBuilder {
             system_dir: self.system_dir.clone(),
             home: self.home.clone(),
             custom: self.custom,
+            explicit_providers: self.providers.clone(),
             // Test builds use a no-pool client: a pooled keep-alive connection
             // keeps the tokio runtime alive after the test, hanging teardown.
             client: if self.custom {
@@ -549,8 +563,13 @@ impl Core {
                 }
             } else {
                 // Full file-level layering (spec §12): `loaded` is the
-                // system + project merge itself.
+                // system + project merge itself. The explicit layers (the
+                // ACP env channel) are re-applied over it: the merge was
+                // built from files alone and would shadow them.
                 c = loaded;
+                for (name, p) in &self.explicit_providers {
+                    c.providers.insert(name.clone(), p.clone());
+                }
             }
         }
         self.configs
