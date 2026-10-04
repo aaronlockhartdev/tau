@@ -7,8 +7,8 @@ pub mod auth;
 pub mod config;
 mod mapper;
 pub mod pump;
-pub mod sessions;
 pub mod server;
+pub mod sessions;
 pub mod transport;
 
 /// Run the ACP server over the process stdio. Returns when stdin closes.
@@ -17,8 +17,5 @@ pub fn run() {
         .enable_all()
         .build()
         .expect("the ACP runtime builds: a tokio builder failure has no failure mode to handle");
-    runtime.block_on(server::serve(
-        tokio::io::stdin(),
-        std::io::stdout(),
-    ));
+    runtime.block_on(server::serve(tokio::io::stdin(), std::io::stdout()));
 }
