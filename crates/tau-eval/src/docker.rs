@@ -5,7 +5,9 @@
 //! image's /app, then the host records the trial's outcome and artifacts.
 
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
+use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
 
 use crate::EvalError;
@@ -219,6 +221,37 @@ async fn stage_tb_tests(name: &str, task: &Task) -> Result<(), EvalError> {
     .await?;
     Ok(())
 }
+
+/// `docker exec` with stdout captured and stderr streamed live to the
+/// host's stderr (the trial's log channel), each line prefixed so
+/// concurrent trials interleave readably.
+async fn exec_streaming(args: &[&str], prefix: &str) -> Result<(Vec<u8>, i32), EvalError> {
+    let mut child = Command::new("docker")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| EvalError::Live(format!("docker exec: {e}")))?;
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| EvalError::Live("exec stderr pipe missing".into()))?;
+    let prefix = prefix.to_owned();
+    let stream_log = tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(stderr_pipe).lines();
+        while let Ok(Some(l)) = lines.next_line().await {
+            eprintln!("{prefix}{l}");
+        }
+    });
+    let out = child
+        .wait_with_output()
+        .await
+        .map_err(|e| EvalError::Live(format!("docker exec: {e}")))?;
+    let _ = stream_log.await;
+    let code = out.status.code().unwrap_or(-1);
+    Ok((out.stdout, code))
+}
+
 /// Copy the trial's inputs into the container and run `inner` in /app.
 async fn run_in_container(
     name: &str,
@@ -307,13 +340,8 @@ async fn run_in_container(
         exec_args.push("--id");
         exec_args.push(task.id());
     }
-    let exec = Command::new("docker")
-        .args(&exec_args)
-        .output()
-        .await
-        .map_err(|e| EvalError::Live(format!("docker exec: {e}")))?;
-    let stdout = String::from_utf8_lossy(&exec.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&exec.stderr).into_owned();
+    let (stdout_bytes, code) = exec_streaming(&exec_args, &format!("[{}] ", task.id())).await?;
+    let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     // The result JSON is the last non-empty stdout line (the app logs to
     // stderr, so stdout is the channel). A failed trial is a *result* —
     // exit 1 with the JSON on stdout — so the JSON is parsed before the
@@ -321,11 +349,7 @@ async fn run_in_container(
     match stdout.lines().rev().find(|l| !l.trim().is_empty()) {
         Some(json) => serde_json::from_str(json)
             .map_err(|e| EvalError::Live(format!("in-container result: {e}: {json}"))),
-        None if !exec.status.success() => Err(EvalError::Live(format!(
-            "in-container trial exited {}: {}",
-            exec.status.code().unwrap_or(-1),
-            stderr.trim()
-        ))),
+        None if code != 0 => Err(EvalError::Live(format!("in-container trial exited {code}"))),
         None => Err(EvalError::Live(
             "in-container trial printed no result".into(),
         )),

@@ -7,7 +7,7 @@
 //! signal: the post-turn `Queue` projection of the drained queue, after the
 //! first `StreamEnd` (the protocol has no dedicated turn-done event).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,6 +18,114 @@ use tau_protocol::{Command, CommandOutput, Event, MessageLane, SystemEventKind};
 use tokio::sync::{Mutex, Semaphore, mpsc};
 
 use crate::EvalError;
+
+/// A trial's live log: one compact line per model action to stderr, so a
+/// running trial is visible. In-container, that stderr is the channel the
+/// docker path streams back to the host.
+struct TrialLog {
+    prefix: String,
+    /// tool call ids already announced (one entry id spans call → result).
+    announced: HashSet<String>,
+    /// call id → tool name, so the result line can name the tool.
+    names: HashMap<String, String>,
+    /// entry id → latest streamed text, flushed at the call's `StreamEnd`.
+    text: BTreeMap<String, String>,
+}
+
+impl TrialLog {
+    fn new(task_id: &str) -> Self {
+        Self {
+            prefix: format!("[{task_id}] "),
+            announced: HashSet::new(),
+            names: HashMap::new(),
+            text: BTreeMap::new(),
+        }
+    }
+
+    /// One line per interesting event of `session`.
+    fn note(&mut self, session: &str, ev: &Event) {
+        match ev {
+            Event::EntryUpsert {
+                workspace: _,
+                session: s,
+                entry,
+            } if s == session => match entry.kind.as_str() {
+                "tool" => {
+                    for c in entry
+                        .payload
+                        .get("calls")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let id = c
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("");
+                        if self.announced.insert(id.to_owned()) {
+                            let name = c
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("?");
+                            self.names.insert(id.to_owned(), name.to_owned());
+                            let args = c
+                                .get("arguments")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or("");
+                            eprintln!("{}⚑ {name} {}", self.prefix, brief(args, 80));
+                        }
+                    }
+                    if let (Some(out), Some(name)) = (
+                        entry
+                            .payload
+                            .get("output")
+                            .and_then(serde_json::Value::as_str),
+                        self.names.get(&entry.id),
+                    ) {
+                        eprintln!("{}✓ {name} {}", self.prefix, brief(out, 80));
+                    }
+                }
+                "assistant" => {
+                    if let Some(t) = entry
+                        .payload
+                        .get("text")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        self.text.insert(entry.id.clone(), t.to_owned());
+                    }
+                }
+                _ => {}
+            },
+            // The assistant entry finalizes with its call: flush the text.
+            Event::StreamEnd {
+                session: s,
+                call_id,
+                ..
+            } if s == session => {
+                if let Some(t) = self.text.remove(call_id) {
+                    eprintln!("{}💬 {}", self.prefix, brief(&t, 160));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Whitespace-collapsed, char-safe truncation for log lines.
+fn brief(s: &str, max: usize) -> String {
+    let mut out = String::new();
+    for w in s.split_whitespace() {
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(w);
+        if out.chars().count() >= max {
+            out.push('…');
+            return out;
+        }
+    }
+    out
+}
 
 /// The TB-native check: upstream `test.sh` always exits 0 and writes its
 /// verdict to /logs/verifier/reward.txt, so the script fails on a test.sh
@@ -228,11 +336,13 @@ impl Live {
             })
             .map_err(|e| EvalError::Live(format!("{e:?}")))?;
 
+        let mut log = TrialLog::new(task.id());
         let timed_out = settle(
             &mut events,
             &session,
             cwd,
             Duration::from_secs(task.timeout_secs()),
+            &mut log,
         )
         .await;
         if timed_out {
@@ -310,6 +420,7 @@ async fn settle(
     session: &str,
     cwd: &Path,
     timeout: Duration,
+    log: &mut TrialLog,
 ) -> bool {
     let deadline = Instant::now() + timeout;
     let mut saw_end = false;
@@ -324,6 +435,7 @@ async fn settle(
         else {
             break false;
         };
+        log.note(session, &ev);
         match &ev {
             Event::StreamEnd { session: s, .. } if s == session => saw_end = true,
             Event::Queue {
