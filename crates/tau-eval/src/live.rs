@@ -536,6 +536,7 @@ pub async fn run_suite(
     tasks: &[(Task, u32)],
     artifacts_dir: &Path,
     concurrency: usize,
+    llm_concurrency: usize,
     budget_usd: Option<f64>,
 ) -> Result<(Vec<Outcome>, usize), EvalError> {
     std::fs::create_dir_all(artifacts_dir).map_err(EvalError::io)?;
@@ -549,6 +550,9 @@ pub async fn run_suite(
         .collect();
 
     let sem = Arc::new(Semaphore::new(concurrency.max(1)));
+    // The LLM cap gates only the agent's turn: the verifier never touches
+    // the model, so it runs at the full trial concurrency.
+    let llm_sem = (llm_concurrency > 0).then(|| Arc::new(Semaphore::new(llm_concurrency)));
     let spent = Arc::new(Mutex::new(0.0_f64));
     let mut skipped = 0usize;
     let mut handles = Vec::new();
@@ -573,8 +577,9 @@ pub async fn run_suite(
         let spent = Arc::clone(&spent);
         let checkpoint_path = checkpoint_path.clone();
         let artifacts_dir = artifacts_dir.to_path_buf();
+        let llm_sem = llm_sem.clone();
         handles.push(tokio::spawn(async move {
-            let trial = crate::docker::run_trial(&live, &task, rep, &artifacts_dir).await;
+            let trial = crate::docker::run_trial(&live, &task, rep, &artifacts_dir, &llm_sem).await;
             let outcome = match trial {
                 Ok(o) => o,
                 Err(e) => runner::error_outcome(&task, rep, &e),

@@ -6,7 +6,9 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::Semaphore;
 
 use tokio::io::AsyncBufReadExt;
 use tokio::process::Command;
@@ -271,6 +273,7 @@ async fn run_in_container(
     task: &Task,
     binary: &Path,
     rep: u32,
+    llm_sem: Option<Arc<Semaphore>>,
 ) -> Result<TrialResult, EvalError> {
     let start = Instant::now();
     // Layout inside the container: the config under a private HOME, the task
@@ -340,8 +343,23 @@ async fn run_in_container(
     ])
     .await?;
 
-    // Phase 1: the agent's turn.
-    let (out, code) = run_phase(name, task, "agent").await?;
+    // Phase 1: the agent's turn. The LLM cap covers only this block;
+    // the permit is released before the verifier, which never touches
+    // the model.
+    let (out, code) = {
+        let _llm_permit = match &llm_sem {
+            Some(sem) => {
+                let sem = sem.clone();
+                Some(
+                    sem.acquire_owned()
+                        .await
+                        .expect("the llm semaphore is never closed"),
+                )
+            }
+            None => None,
+        };
+        run_phase(name, task, "agent").await?
+    };
     let turn: crate::live::TurnData = parse_result(&out, code, "agent phase")?;
     // The tests land only now: the turn is over, the verifier is next.
     if task.tb_native {
@@ -440,6 +458,7 @@ pub async fn run_trial(
     task: &Task,
     rep: u32,
     artifacts_dir: &Path,
+    llm_sem: &Option<Arc<Semaphore>>,
 ) -> Result<Outcome, EvalError> {
     let image = task
         .docker()
@@ -471,7 +490,7 @@ pub async fn run_trial(
     ])
     .await?;
 
-    let result = run_in_container(&name, live, task, &binary, rep).await;
+    let result = run_in_container(&name, live, task, &binary, rep, llm_sem.clone()).await;
 
     // Always tear the container down, success or failure.
     if let Err(e) = docker(&["rm", "-f", &name]).await {
