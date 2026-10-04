@@ -19,6 +19,10 @@ mis = "mis"
 mak = "mak"
 # Test-data string in the protocol fuzz vectors.
 FO = "FO"
+# ACP registry agent name (research doc, prior-art section).
+sigit = "sigit"
+# Prefix of pi-acp's ndJsonStream transport identifier (research doc).
+nd = "nd"
 
 [default.extend-identifiers]
 # The npm virtual-scroller package (imports + component names).

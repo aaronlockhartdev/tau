@@ -178,6 +178,40 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
     assert_eq!(dev.models.keys().next(), Some(&"proj-model".to_owned()));
 }
 
+/// An explicit provider (`CoreBuilder::with_provider`, the ACP env channel)
+/// survives the workspace file layer: `workspace_config` re-applies the
+/// explicit entries over the system+project merge, so a same-named file
+/// entry cannot shadow them (issue #66).
+#[tokio::test]
+async fn an_explicit_provider_survives_the_workspace_file_layer() {
+    let sys = tempfile::tempdir().unwrap();
+    let ws = tempfile::tempdir().unwrap();
+    // The project file defines a same-named provider: without the
+    // re-application it would replace the explicit entry wholesale.
+    std::fs::create_dir_all(ws.path().join(".tau")).unwrap();
+    std::fs::write(
+        ws.path().join(".tau").join("config.toml"),
+        "[providers.dev]\nbase_url = \"http://file:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"file-model\"]\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .with_provider(
+            "dev".into(),
+            crate::config::Provider::with_model("http://explicit:9/v1", "explicit-model"),
+        )
+        .build();
+    let workspace = open_ws(&core, ws.path()).await;
+    let config = core.workspace_config(&workspace);
+    let dev = &config.providers["dev"];
+    assert_eq!(
+        dev.base_url, "http://explicit:9/v1",
+        "the explicit provider wins over the same-named file entry"
+    );
+    assert!(dev.models.contains_key("explicit-model"));
+}
+
 /// A project-layer provider reaches a session on the production (file-layered)
 /// path (spec §12): the merge branch used to drop the loaded merge, so only
 /// the system layer reached sessions and the real-app E2E sidestepped it by
