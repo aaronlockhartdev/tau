@@ -340,7 +340,8 @@ async fn run_in_container(
         exec_args.push("--id");
         exec_args.push(task.id());
     }
-    let (stdout_bytes, code) = exec_streaming(&exec_args, &format!("[{}] ", task.id())).await?;
+    // The inner prefixes each line with the task id itself.
+    let (stdout_bytes, code) = exec_streaming(&exec_args, "").await?;
     let stdout = String::from_utf8_lossy(&stdout_bytes).into_owned();
     // The result JSON is the last non-empty stdout line (the app logs to
     // stderr, so stdout is the channel). A failed trial is a *result* —

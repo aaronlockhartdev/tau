@@ -99,9 +99,13 @@ impl TrialLog {
     /// At turn end: each assistant entry's final text.
     fn finish(&self) {
         for id in &self.text_order {
-            if let Some(t) = self.texts.get(id) {
-                eprintln!("{}💬 {}", self.prefix, brief(t, 160));
+            let Some(t) = self.texts.get(id) else {
+                continue;
+            };
+            if t.trim().is_empty() {
+                continue;
             }
+            eprintln!("{}💬 {}", self.prefix, brief(t, 160));
         }
     }
 }
