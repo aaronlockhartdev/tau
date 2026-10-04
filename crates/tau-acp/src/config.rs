@@ -21,6 +21,9 @@ const META_PROVIDER: &str = "acp-meta";
 /// session's model resolution sees it.
 pub struct AcpConfig {
     base: Config,
+    /// The system config dir, kept so a workspace's project layer can be
+    /// loaded the same way the core does at workspace open (M4).
+    system_dir: std::path::PathBuf,
     /// `authenticate` `_meta` provider, set after load; the core is not
     /// built yet when it arrives (authenticate precedes session/new).
     meta: TokioMutex<Option<Provider>>,
@@ -39,6 +42,7 @@ impl AcpConfig {
             .unwrap_or_default();
         Self {
             base,
+            system_dir,
             meta: TokioMutex::new(None),
         }
     }
@@ -63,17 +67,17 @@ impl AcpConfig {
         })
     }
 
-    /// The effective provider set: file layers + env override + any
-    /// connection-scoped `_meta` provider.
-    async fn merged(&self) -> BTreeMap<String, Provider> {
-        let mut merged = self.base.providers.clone();
-        if let Some(p) = self.env_provider() {
-            merged.insert(ENV_PROVIDER.to_owned(), p);
+    /// The file layers as seen from a workspace: the system config plus the
+    /// project's `.tau/config.toml` — the same load the core performs at
+    /// workspace open (spec §12), so the model selector sees project-layer
+    /// providers and a project-level default model.
+    fn file_layers(&self, cwd: &str) -> Config {
+        let project = Path::new(cwd).join(".tau");
+        if project.exists() {
+            tau_core::config::load(&self.system_dir, &project).unwrap_or_else(|_| self.base.clone())
+        } else {
+            self.base.clone()
         }
-        if let Some(p) = self.meta.lock().await.clone() {
-            merged.insert(META_PROVIDER.to_owned(), p);
-        }
-        merged
     }
 
     /// Build the production-shape core with the layered providers.
@@ -88,24 +92,32 @@ impl AcpConfig {
         builder.build()
     }
 
-    /// Whether a key is resolvable right now (config provider whose
-    /// `key_env` is set, or the env override carrying one). Drives the
-    /// `authenticate` no-op.
+    /// Whether a key is resolvable right now (a keyless provider needs none;
+    /// otherwise the provider's `key_env` must be set in the environment,
+    /// or the env override carries one). Drives the `authenticate` no-op.
     pub fn credentials_resolvable(&self) -> bool {
-        if self.env_provider().is_some_and(|p| !p.key_env.is_empty()) {
-            return true;
-        }
-        self.base
-            .providers
-            .values()
-            .any(|p| !p.key_env.is_empty() && std::env::var(&p.key_env).is_ok())
+        self.env_provider()
+            .is_some_and(|p| p.key_env.is_empty() || std::env::var(&p.key_env).is_ok())
+            || self
+                .base
+                .providers
+                .values()
+                .any(|p| p.key_env.is_empty() || std::env::var(&p.key_env).is_ok())
     }
 
-    /// The model selector's options: every configured model id, and the
-    /// effective default (`generation.default_model` winning, else the
-    /// first provider's first model — the launch.rs rule).
-    pub async fn model_options(&self) -> (Vec<String>, Option<String>) {
-        let merged = self.merged().await;
+    /// The model selector's options for one workspace: every configured model
+    /// id (file layers + env + `_meta`), and the effective default
+    /// (`generation.default_model` winning, else the first provider's first
+    /// model — the launch.rs rule).
+    pub async fn model_options_for(&self, cwd: &str) -> (Vec<String>, Option<String>) {
+        let file = self.file_layers(cwd);
+        let mut merged = file.providers;
+        if let Some(p) = self.env_provider() {
+            merged.insert(ENV_PROVIDER.to_owned(), p);
+        }
+        if let Some(p) = self.meta.lock().await.clone() {
+            merged.insert(META_PROVIDER.to_owned(), p);
+        }
         let models = merged
             .values()
             .flat_map(|p| p.models.keys().cloned())
@@ -113,7 +125,7 @@ impl AcpConfig {
             .into_iter()
             .collect();
         let default = merged.values().next().and_then(|first| {
-            let wanted = &self.base.generation.default_model;
+            let wanted = &file.generation.default_model;
             if !wanted.is_empty() && first.models.contains_key(wanted) {
                 Some(wanted.clone())
             } else {
@@ -154,6 +166,7 @@ impl AcpConfig {
     pub fn test_empty() -> Self {
         Self {
             base: Config::default(),
+            system_dir: std::path::PathBuf::from("/nonexistent-tau-system"),
             meta: TokioMutex::new(None),
         }
     }

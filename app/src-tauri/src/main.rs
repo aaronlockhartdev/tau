@@ -123,6 +123,13 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 }
 
 fn main() {
+    // The headless ACP mode takes over before any Tauri init: the branch is
+    // first in `main` so no wry/tauri code path can touch stdout (ACP's
+    // transport is the process stdout itself; research doc §3.1).
+    if std::env::args().any(|a| a == "acp") {
+        tau_acp::run();
+        return;
+    }
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(CoreState(CoreBuilder::default_system().build()))

@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde_json::{Value, json};
 use tau_core::harness::Core;
@@ -29,29 +29,24 @@ pub struct Server {
     pub registry: std::sync::Arc<Registry>,
     /// The core is built lazily at first use: an `authenticate` `_meta`
     /// provider must land before the first session's model resolution.
-    core: std::sync::Arc<Mutex<Option<Arc<Core>>>>,
+    core: std::sync::Arc<tokio::sync::Mutex<Option<Arc<Core>>>>,
 }
 
 impl Server {
-    /// Build the core on first use and start the event pump with it.
+    /// Build the core on first use and start the event pump with it. The
+    /// lock is held across the build: a concurrent first use must queue,
+    /// not build a second core (a second `pump::run` would panic in
+    /// `Core::events()`, which hands out its receiver exactly once).
     pub async fn ensure_core(&self) -> Arc<Core> {
-        {
-            let slot = self
-                .core
-                .lock()
-                .expect("core slot: no panic while the lock is held");
-            if let Some(core) = &*slot {
-                return core.clone();
-            }
+        let mut slot = self.core.lock().await;
+        if let Some(core) = &*slot {
+            return core.clone();
         }
         let core = self.config.build_core().await;
         let pump_out = self.out.clone();
         let pump_registry = self.registry.clone();
         tokio::spawn(pump::run(core.clone(), pump_out, pump_registry));
-        *self
-            .core
-            .lock()
-            .expect("core slot: no panic while the lock is held") = Some(core.clone());
+        *slot = Some(core.clone());
         core
     }
 }
@@ -62,7 +57,7 @@ pub async fn serve(stdin: impl AsyncRead + Unpin, stdout: impl Write + Send + 's
         config: std::sync::Arc::new(AcpConfig::load()),
         out: Out::new(stdout),
         registry: std::sync::Arc::new(Registry::new(HashMap::new())),
-        core: std::sync::Arc::new(Mutex::new(None)),
+        core: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
     };
     let mut lines = tokio::io::BufReader::new(stdin).lines();
     while let Ok(Some(line)) = lines.next_line().await {
@@ -177,25 +172,14 @@ async fn session_new(server: &Server, rpc: &Rpc) {
         }
     };
     // The model selector (Harbor's `--model` path): every configured model
-    // id, the effective default current. Absent when no model is configured
-    // (an empty select would be a contract violation).
-    let (models, default) = server.config.model_options().await;
+    // id for this workspace (the project layer included, M4), the effective
+    // default current. Absent when no model is configured (an empty select
+    // would be a contract violation).
+    let (models, default) = server.config.model_options_for(cwd).await;
     let mut result = json!({ "sessionId": session.id });
     if !models.is_empty() {
-        let options = models
-            .iter()
-            .map(|m| json!({ "value": m, "name": m }))
-            .collect::<Vec<_>>();
-        result["configOptions"] = json!([
-            {
-                "id": "model",
-                "name": "Model",
-                "category": "model",
-                "type": "select",
-                "currentValue": default,
-                "options": options,
-            }
-        ]);
+        let current = default.expect("a non-empty model list has a default");
+        result["configOptions"] = json!([model_option(&models, &current)]);
     }
     server
         .registry
@@ -205,11 +189,13 @@ async fn session_new(server: &Server, rpc: &Rpc) {
             session.id.clone(),
             SessionState {
                 workspace: workspace.id,
+                cwd: cwd.to_owned(),
                 mapper: Mapper::default(),
                 in_flight: false,
                 pending: None,
                 saw_stream_end: false,
                 saw_interrupted: false,
+                cancel_requested: false,
             },
         );
     server.out.send(&transport::result(id, &result));
@@ -248,6 +234,23 @@ fn prompt_text(params: Option<&Value>) -> Result<String, String> {
         return Err("empty prompt".to_owned());
     }
     Ok(text)
+}
+
+/// The model-select `configOptions` entry (Harbor's `--model` path): every
+/// configured model id, `currentValue` on the effective selection.
+fn model_option(models: &[String], current: &str) -> Value {
+    let options = models
+        .iter()
+        .map(|m| json!({ "value": m, "name": m }))
+        .collect::<Vec<_>>();
+    json!({
+        "id": "model",
+        "name": "Model",
+        "category": "model",
+        "type": "select",
+        "currentValue": current,
+        "options": options,
+    })
 }
 
 async fn session_prompt(server: &Server, rpc: &Rpc) {
@@ -308,6 +311,7 @@ async fn session_prompt(server: &Server, rpc: &Rpc) {
         state.in_flight = true;
         state.saw_stream_end = false;
         state.saw_interrupted = false;
+        state.cancel_requested = false;
         state.pending = Some(tx);
     }
 
@@ -367,6 +371,17 @@ async fn session_cancel(server: &Server, rpc: &Rpc) {
     else {
         return;
     };
+    // The cancel flag lands before the stop: a settle the abort surfaces
+    // as a `System` error still answers `cancelled` (N3).
+    {
+        let mut reg = server
+            .registry
+            .lock()
+            .expect("session registry: no panic while the lock is held");
+        if let Some(state) = reg.get_mut(session_id) {
+            state.cancel_requested = true;
+        }
+    }
     let core = server.ensure_core().await;
     if let Err(e) = core.dispatch(Command::MessageStop {
         session: session_id.to_owned(),
@@ -405,12 +420,12 @@ async fn set_config_option(server: &Server, rpc: &Rpc) {
         ));
         return;
     };
-    {
+    let cwd = {
         let reg = server
             .registry
             .lock()
             .expect("session registry: no panic while the lock is held");
-        if !reg.contains_key(session_id) {
+        let Some(state) = reg.get(session_id) else {
             drop(reg);
             server.out.send(&transport::error(
                 id,
@@ -418,17 +433,74 @@ async fn set_config_option(server: &Server, rpc: &Rpc) {
                 &format!("unknown session {session_id:?}"),
             ));
             return;
-        }
-    }
+        };
+        state.cwd.clone()
+    };
     let core = server.ensure_core().await;
     let value = value.expect("checked above");
     match core.dispatch(Command::SessionSetModel {
         session: session_id.to_owned(),
         model: value.to_owned(),
     }) {
-        Ok(_) => server.out.send(&transport::result(id, &json!({}))),
+        Ok(_) => {
+            // The v1 schema marks `configOptions` required on this response:
+            // the updated model select, `currentValue` on the model just set.
+            let (models, _default) = server.config.model_options_for(&cwd).await;
+            server.out.send(&transport::result(
+                id,
+                &json!({ "configOptions": [model_option(&models, value)] }),
+            ));
+        }
         Err(e) => server
             .out
             .send(&transport::error(id, INTERNAL_ERROR, &protocol_message(&e))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_text_joins_text_blocks() {
+        let text = prompt_text(Some(&json!({
+            "prompt": [
+                { "type": "text", "text": "first" },
+                { "type": "text", "text": "second" }
+            ]
+        })))
+        .expect("text blocks are accepted");
+        assert_eq!(text, "first\nsecond");
+    }
+
+    #[test]
+    fn prompt_text_rejects_non_text_blocks() {
+        for block in [
+            json!({ "type": "image", "data": "x", "mimeType": "image/png" }),
+            json!({ "type": "audio", "data": "x", "mimeType": "audio/wav" }),
+            json!({ "type": "resource", "resource": { "uri": "file:///x" } }),
+        ] {
+            let err = prompt_text(Some(&json!({ "prompt": [block] })))
+                .expect_err("non-text blocks are rejected");
+            assert!(err.contains("unsupported prompt block type"), "{err}");
+        }
+    }
+
+    #[test]
+    fn prompt_text_rejects_missing_and_empty() {
+        assert!(prompt_text(None).is_err(), "no params");
+        assert!(prompt_text(Some(&json!({}))).is_err(), "no prompt array");
+        assert!(
+            prompt_text(Some(&json!({ "prompt": [] }))).is_err(),
+            "empty array"
+        );
+        assert!(
+            prompt_text(Some(&json!({ "prompt": [{ "type": "text", "text": "" }] }))).is_err(),
+            "empty text"
+        );
+        assert!(
+            prompt_text(Some(&json!({ "prompt": [{}] }))).is_err(),
+            "block missing type"
+        );
     }
 }

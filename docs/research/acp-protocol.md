@@ -225,7 +225,10 @@ conversation as `session/update` notifications, then respond `{}`.
 **`session/set_config_option`** (stable v1):
 `params: { "sessionId", "configId", "value"? }`. This is how clients select
 the model when the agent advertises a `model`-category select option in
-`session/new`'s `configOptions` (see §2.7).
+`session/new`'s `configOptions` (see §2.7). The response carries
+**`configOptions` (required in the v1 schema**, `SetSessionConfigOptionResponse
+`): the updated options — for a model select, the `model` select with
+`currentValue` on the model just set.
 
 ### 2.6 `session/update` — the full v1 variant set
 
@@ -815,11 +818,13 @@ local-inference coding agent, TUI + ACP mode.
    guarantee no Tauri/wry code path writes stdout before the branch
    (trivially true if the branch is first in `main`), and the thin binary
    must route all `eprintln!`/tracing to stderr.
-7. **`session/prompt` with non-text blocks.** v0 baseline requires accepting
-   `text` + `resource_link`; the mapping of `resource_link` into tau's
-   `MessageSend` (text-only) is undefined — v0: accept `text`, reject
-   others with `Invalid params` (don't advertise image/audio/embeddedContext
-   capabilities, which makes rejection spec-compliant).
+7. **Deliberate v0 deviation: `resource_link` is rejected.** The v1
+   baseline says agents MUST accept `text` and `resource_link` prompt
+   blocks; v0 rejects `resource_link` with `Invalid params` (its mapping
+   into tau's text-only `MessageSend` is undefined). Harbor sends text
+   only, and no image/audio/embeddedContext capabilities are advertised,
+   so the remaining rejections are spec-compliant. Note it in the registry
+   entry; resolve when a client starts sending resource links.
 8. **Concurrency beyond one prompt per session.** A second `session/prompt`
    while a turn is in flight lands in tau's FollowUp lane (queued) — the ACP
    server must decide: queue it (turn settles → second turn starts → respond)

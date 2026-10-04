@@ -32,6 +32,7 @@ tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "79f
 # builds): the WebdriverIO E2E stack (roadmap G2)
 tauri-plugin-wdio = { version = "1.4", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1.4", optional = true }
+tau-acp = { path = "../../crates/tau-acp" }
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
 tokio = { workspace = true }

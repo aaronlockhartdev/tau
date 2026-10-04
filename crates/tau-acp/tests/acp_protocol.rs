@@ -102,6 +102,16 @@ impl Client {
             }
         }
     }
+
+    /// Read until the response for a previously written request arrives.
+    async fn response(&mut self, id: i64) -> Value {
+        loop {
+            let msg = self.next().await;
+            if msg.get("id").and_then(Value::as_i64) == Some(id) {
+                return msg;
+            }
+        }
+    }
 }
 
 /// A listener that accepts every connection and holds it open without
@@ -315,4 +325,266 @@ async fn clear_errors_for_unknowns_and_bad_frames() {
         )
         .await;
     assert_eq!(resp["error"]["code"], -32602);
+}
+
+/// The project layer (the workspace's `.tau/config.toml`) reaches the model
+/// selector: its providers' models are offered in `session/new` alongside
+/// the env-override provider's (M4).
+#[tokio::test]
+async fn project_layer_models_appear_in_the_selector() {
+    let home = tempfile::tempdir().expect("temp home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the mock LLM");
+    let addr = listener.local_addr().expect("bound addr");
+    tokio::spawn(tau_mock_llm::server::serve(
+        listener,
+        Arc::new(tau_mock_llm::scenario::ScenarioSet::default()),
+    ));
+    let base_url = format!("http://{addr}/v1");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    std::fs::create_dir_all(cwd.path().join(".tau")).expect("makes .tau");
+    std::fs::write(
+        cwd.path().join(".tau").join("config.toml"),
+        format!(
+            "[providers.proj]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-a\"]\n[providers.proj.models.\"proj-b\"]\n"
+        ),
+    )
+    .expect("writes the project config");
+
+    let mut client = Client::spawn(home.path(), &base_url, "mock-model");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let values: Vec<&str> = new["result"]["configOptions"][0]["options"]
+        .as_array()
+        .expect("model options")
+        .iter()
+        .map(|o| o["value"].as_str().expect("a model id"))
+        .collect();
+    assert!(
+        values.contains(&"proj-a"),
+        "project-layer model offered: {values:?}"
+    );
+    assert!(
+        values.contains(&"proj-b"),
+        "project-layer model offered: {values:?}"
+    );
+    assert!(
+        values.contains(&"mock-model"),
+        "the env-override model is still offered: {values:?}"
+    );
+}
+
+/// `session/set_config_option` answers with the updated model select: the v1
+/// schema marks `configOptions` required on this response, and
+/// `currentValue` sits on the model just set (B1; Harbor's `--model` path).
+#[tokio::test]
+async fn set_config_option_responds_with_the_updated_select() {
+    let home = tempfile::tempdir().expect("temp home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the mock LLM");
+    let addr = listener.local_addr().expect("bound addr");
+    tokio::spawn(tau_mock_llm::server::serve(
+        listener,
+        Arc::new(tau_mock_llm::scenario::ScenarioSet::default()),
+    ));
+    let base_url = format!("http://{addr}/v1");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    std::fs::create_dir_all(cwd.path().join(".tau")).expect("makes .tau");
+    std::fs::write(
+        cwd.path().join(".tau").join("config.toml"),
+        format!(
+            "[providers.proj]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-a\"]\n[providers.proj.models.\"proj-b\"]\n"
+        ),
+    )
+    .expect("writes the project config");
+
+    let mut client = Client::spawn(home.path(), &base_url, "mock-model");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    let resp = client
+        .request(
+            2,
+            "session/set_config_option",
+            json!({ "sessionId": session_id, "configId": "model", "value": "proj-b" }),
+        )
+        .await;
+    let option = &resp["result"]["configOptions"][0];
+    assert_eq!(option["id"], "model");
+    assert_eq!(option["currentValue"], "proj-b");
+    let values: Vec<&str> = option["options"]
+        .as_array()
+        .expect("the full options list")
+        .iter()
+        .map(|o| o["value"].as_str().expect("a model id"))
+        .collect();
+    assert!(
+        values.contains(&"proj-b"),
+        "the new model is offered: {values:?}"
+    );
+}
+
+/// `session/cancel` mid-turn: the in-flight `session/prompt` is answered
+/// `stopReason: "cancelled"` — a response, never a JSON-RPC error (the spec
+/// is explicit; M5a).
+#[tokio::test]
+async fn cancel_mid_turn_answers_cancelled() {
+    let home = tempfile::tempdir().expect("temp home");
+    let endpoint = hanging_endpoint().await;
+    let mut client = Client::spawn(home.path(), &endpoint, "mock-model");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    // The turn hangs in the provider call; the cancel lands while it is in
+    // flight (200 ms is well past the dispatch on localhost).
+    client
+        .write(&json!({
+            "jsonrpc": "2.0", "id": 10, "method": "session/prompt",
+            "params": { "sessionId": session_id, "prompt": [{ "type": "text", "text": "a" }] },
+        }))
+        .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    client
+        .write(&json!({
+            "jsonrpc": "2.0", "method": "session/cancel",
+            "params": { "sessionId": session_id },
+        }))
+        .await;
+    let resp = client.response(10).await;
+    assert_eq!(
+        resp["result"]["stopReason"], "cancelled",
+        "the cancel answers the prompt, not an error: {resp}"
+    );
+}
+
+/// A non-text prompt block is an `Invalid params` error: image/audio/
+/// embeddedContext are not advertised, so rejection is spec-compliant (M5b).
+#[tokio::test]
+async fn non_text_prompt_blocks_are_rejected() {
+    let home = tempfile::tempdir().expect("temp home");
+    let endpoint = hanging_endpoint().await;
+    let mut client = Client::spawn(home.path(), &endpoint, "mock-model");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    let resp = client
+        .request(
+            2,
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{ "type": "image", "data": "aGk=", "mimeType": "image/png" }],
+            }),
+        )
+        .await;
+    assert_eq!(resp["error"]["code"], -32602);
+    assert!(
+        resp["error"]["message"]
+            .as_str()
+            .expect("an error message")
+            .contains("unsupported prompt block"),
+        "{resp}"
+    );
+}
+
+/// A full turn with a tool call, over the wire: the `tool_call` create and
+/// the `tool_call_update` result both arrive as `session/update`
+/// notifications before the prompt response (M5d).
+#[tokio::test]
+async fn prompt_tool_calls_stream_as_updates() {
+    let home = tempfile::tempdir().expect("temp home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the mock LLM");
+    let addr = listener.local_addr().expect("bound addr");
+    // One scripted scenario: a bash call, then the closing text. The second
+    // provider request re-matches the scenario (the user message persists in
+    // the input) and advances to the closing turn.
+    let mut set = tau_mock_llm::scenario::ScenarioSet::default();
+    set.scenarios.push(tau_mock_llm::scenario::Scenario::new(
+        "tool-task",
+        vec![
+            tau_mock_llm::scenario::Turn {
+                text: None,
+                calls: vec![tau_mock_llm::scenario::Call {
+                    name: "bash".into(),
+                    arguments: json!({ "command": "echo tool-output" }),
+                }],
+            },
+            tau_mock_llm::scenario::Turn {
+                text: Some("the tool ran".into()),
+                calls: vec![],
+            },
+        ],
+        tau_mock_llm::scenario::Usage::default(),
+    ));
+    tokio::spawn(tau_mock_llm::server::serve(listener, Arc::new(set)));
+
+    let mut client = Client::spawn(home.path(), &format!("http://{addr}/v1"), "mock-model");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    let (resp, updates) = client
+        .request_with_updates(
+            2,
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{ "type": "text", "text": "please run the tool-task" }],
+            }),
+        )
+        .await;
+
+    let creates: Vec<&Value> = updates
+        .iter()
+        .filter(|u| u["params"]["update"]["sessionUpdate"] == "tool_call")
+        .collect();
+    assert_eq!(creates.len(), 1, "one tool_call create, got: {updates:?}");
+    assert_eq!(creates[0]["params"]["update"]["name"], "bash");
+    assert_eq!(creates[0]["params"]["update"]["status"], "in_progress");
+    assert_eq!(
+        creates[0]["params"]["update"]["rawInput"]["command"],
+        "echo tool-output"
+    );
+
+    let updates_for_call: Vec<&Value> = updates
+        .iter()
+        .filter(|u| {
+            u["params"]["update"]["sessionUpdate"] == "tool_call_update"
+                && u["params"]["update"]["toolCallId"]
+                    == creates[0]["params"]["update"]["toolCallId"]
+        })
+        .collect();
+    assert_eq!(
+        updates_for_call.len(),
+        1,
+        "one tool_call_update for the call, got: {updates:?}"
+    );
+    assert_eq!(
+        updates_for_call[0]["params"]["update"]["status"],
+        "completed"
+    );
+    assert!(
+        updates_for_call[0]["params"]["update"]["rawOutput"]
+            .to_string()
+            .contains("tool-output"),
+        "the tool's output reaches the client: {}",
+        updates_for_call[0]["rawOutput"]
+    );
+
+    assert_eq!(resp["result"]["stopReason"], "end_turn");
 }

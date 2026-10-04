@@ -62,11 +62,20 @@ fn handle(event: &Event, out: &Out, registry: &Registry) {
                     .expect("session registry: no panic while the lock is held");
                 guard.get_mut(session).and_then(|s| {
                     if s.saw_stream_end && items.is_empty() {
-                        Some(if s.saw_interrupted {
+                        // A requested cancel wins over a clean settle: the
+                        // spec answers `cancelled` even when the abort
+                        // surfaced without the interrupted flag (N3).
+                        Some(if s.saw_interrupted || s.cancel_requested {
                             Outcome::Cancelled
                         } else {
                             Outcome::EndTurn
                         })
+                    } else if items.is_empty() && s.cancel_requested {
+                        // A cancel with an empty queue settles even without a
+                        // `StreamEnd`: a call aborted before its first event
+                        // leaves none behind (the core records calls at first
+                        // event), and the spec MUSTs the `cancelled` answer.
+                        Some(Outcome::Cancelled)
                     } else {
                         None
                     }
@@ -89,7 +98,18 @@ fn handle(event: &Event, out: &Out, registry: &Registry) {
             let mut guard = registry
                 .lock()
                 .expect("session registry: no panic while the lock is held");
-            sessions::settle(&mut guard, session, Outcome::Error(message.clone()));
+            let outcome = guard.get_mut(session).map(|s| {
+                // A cancel in flight turns the error into the spec-mandated
+                // `cancelled` response (N3).
+                if s.cancel_requested {
+                    Outcome::Cancelled
+                } else {
+                    Outcome::Error(message.clone())
+                }
+            });
+            if let Some(outcome) = outcome {
+                sessions::settle(&mut guard, session, outcome);
+            }
         }
         // Workspace-level and non-turn events (skills, file tree, subagent
         // children): no ACP v0 surface.
