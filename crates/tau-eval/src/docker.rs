@@ -238,7 +238,9 @@ async fn run_in_container(
         "/tmp/trial",
     ];
     if task.tb_native {
-        mkdir.extend(["/tests", "/logs/verifier"]);
+        // /logs/verifier only: /tests must NOT pre-exist, or `docker cp`
+        // nests the copy inside it.
+        mkdir.push("/logs/verifier");
     }
     docker(&mkdir).await?;
     docker(&[
@@ -298,6 +300,8 @@ async fn run_in_container(
     ];
     if task.tb_native {
         exec_args.push("--tb");
+        exec_args.push("--id");
+        exec_args.push(task.id());
     }
     let exec = Command::new("docker")
         .args(&exec_args)
@@ -306,22 +310,22 @@ async fn run_in_container(
         .map_err(|e| EvalError::Live(format!("docker exec: {e}")))?;
     let stdout = String::from_utf8_lossy(&exec.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&exec.stderr).into_owned();
-    if !exec.status.success() {
-        return Err(EvalError::Live(format!(
+    // The result JSON is the last non-empty stdout line (the app logs to
+    // stderr, so stdout is the channel). A failed trial is a *result* —
+    // exit 1 with the JSON on stdout — so the JSON is parsed before the
+    // exit status is treated as an error.
+    match stdout.lines().rev().find(|l| !l.trim().is_empty()) {
+        Some(json) => serde_json::from_str(json)
+            .map_err(|e| EvalError::Live(format!("in-container result: {e}: {json}"))),
+        None if !exec.status.success() => Err(EvalError::Live(format!(
             "in-container trial exited {}: {}",
             exec.status.code().unwrap_or(-1),
             stderr.trim()
-        )));
+        ))),
+        None => Err(EvalError::Live(
+            "in-container trial printed no result".into(),
+        )),
     }
-    // The result JSON is the last non-empty stdout line (the app logs to
-    // stderr, so stdout is the channel).
-    let json = stdout
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .ok_or_else(|| EvalError::Live("in-container trial printed no result".into()))?;
-    serde_json::from_str(json)
-        .map_err(|e| EvalError::Live(format!("in-container result: {e}: {json}")))
 }
 
 /// Run one container trial: create the container from the task's image,

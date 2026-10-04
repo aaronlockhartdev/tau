@@ -107,6 +107,7 @@ async fn inner(args: Option<&[String]>) -> ExitCode {
     let mut task_dir: Option<&str> = None;
     let mut workspace: Option<&str> = None;
     let mut tb = false;
+    let mut task_id: Option<&str> = None;
     let mut timeout: u64 = 900;
     let mut it = args.unwrap_or_default().iter();
     while let Some(a) = it.next() {
@@ -114,6 +115,7 @@ async fn inner(args: Option<&[String]>) -> ExitCode {
             "--task" => task_dir = it.next().map(String::as_str),
             "--workspace" => workspace = it.next().map(String::as_str),
             "--tb" => tb = true,
+            "--id" => task_id = it.next().map(String::as_str),
             "--timeout" => timeout = it.next().and_then(|s| s.parse().ok()).unwrap_or(900),
             other => return fail(&format!("inner: unknown argument {other:?}")),
         }
@@ -125,9 +127,13 @@ async fn inner(args: Option<&[String]>) -> ExitCode {
         return fail("inner: --workspace <path> is required");
     };
     let task = if tb {
-        let id = Path::new(task_dir)
-            .file_name()
-            .map_or(task_dir.to_owned(), |n| n.to_string_lossy().into_owned());
+        // The host knows the task's id (the in-container dir is /tmp/task).
+        let id = task_id.map_or(
+            Path::new(task_dir)
+                .file_name()
+                .map_or(task_dir.to_owned(), |n| n.to_string_lossy().into_owned()),
+            ToOwned::to_owned,
+        );
         match task::from_tb(Path::new(task_dir), &id, timeout, None) {
             Ok(t) => t,
             Err(e) => return fail(&format!("task: {e}")),

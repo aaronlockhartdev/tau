@@ -95,7 +95,11 @@ pub fn load(checkout: &Path, sel: &Selection) -> Result<Vec<task::Task>, EvalErr
         let timeout = if m.agent.timeout_sec > 0.0 {
             // Upstream budgets are whole seconds (e.g. 900.0); the guard
             // above makes the truncating cast safe.
-            #[allow(clippy::as_conversions, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            #[allow(
+                clippy::as_conversions,
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss
+            )]
             let secs = m.agent.timeout_sec as u64;
             secs
         } else {
