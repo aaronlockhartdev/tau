@@ -21,11 +21,11 @@ async fn main() -> ExitCode {
     }
     if args.first().is_none_or(|a| a != "live") {
         return fail(
-            "usage: tau-eval live [--reps N] [--budget USD] [--filter SUBSTR] [--agent-concurrency N]",
+            "usage: tau-eval live [--reps N] [--budget USD] [--filter SUBSTR] [--tasks a,b,c] [--agent-concurrency N]",
         );
     }
     let rest = &args[1..];
-    let (reps, budget, filter, llm_concurrency) = match parse_args(rest) {
+    let (reps, budget, filter, tasks, llm_concurrency) = match parse_args(rest) {
         Ok(a) => a,
         Err(e) => return fail(&e),
     };
@@ -70,7 +70,11 @@ async fn main() -> ExitCode {
     due.sort_by(|a, b| a.id().cmp(b.id()));
     let due: Vec<_> = due
         .into_iter()
-        .filter(|t| filter.as_deref().is_none_or(|f| t.id().contains(f)))
+        .filter(|t| match (tasks.as_ref(), filter.as_deref()) {
+            (Some(list), _) => list.iter().any(|n| n == t.id()),
+            (None, Some(f)) => t.id().contains(f),
+            (None, None) => true,
+        })
         .collect();
     if due.is_empty() {
         return fail("no tasks match the filter");
@@ -218,11 +222,15 @@ fn finish(outcomes: &[runner::Outcome], artifacts_dir: &PathBuf, skipped: usize)
     }
 }
 
-/// `tau-eval live [--reps N] [--budget USD] [--filter SUBSTR] [--agent-concurrency N]`.
-fn parse_args(rest: &[String]) -> Result<(u32, Option<f64>, Option<String>, usize), String> {
+/// The parsed `live` arguments: (reps, budget, filter, tasks, agent concurrency).
+type LiveArgs = (u32, Option<f64>, Option<String>, Option<Vec<String>>, usize);
+
+/// `tau-eval live [--reps N] [--budget USD] [--filter SUBSTR] [--tasks a,b,c] [--agent-concurrency N]`.
+fn parse_args(rest: &[String]) -> Result<LiveArgs, String> {
     let mut reps = 0u32;
     let mut budget = None;
     let mut filter = None;
+    let mut tasks = None;
     let mut llm_concurrency = 0usize;
     let mut i = 0;
     while i < rest.len() {
@@ -239,6 +247,12 @@ fn parse_args(rest: &[String]) -> Result<(u32, Option<f64>, Option<String>, usiz
                 i += 1;
                 filter = rest.get(i).map(ToOwned::to_owned);
             }
+            "--tasks" => {
+                i += 1;
+                tasks = rest
+                    .get(i)
+                    .map(|s| s.split(',').map(str::to_owned).collect());
+            }
             "--agent-concurrency" => {
                 i += 1;
                 llm_concurrency = rest.get(i).and_then(|s| s.parse().ok()).unwrap_or(0);
@@ -249,7 +263,7 @@ fn parse_args(rest: &[String]) -> Result<(u32, Option<f64>, Option<String>, usiz
         }
         i += 1;
     }
-    Ok((reps, budget, filter, llm_concurrency))
+    Ok((reps, budget, filter, tasks, llm_concurrency))
 }
 
 fn fail(msg: &str) -> ExitCode {
