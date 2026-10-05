@@ -47,9 +47,9 @@ pub struct SessionState {
     /// The run's task text (the client prompt that started it): the
     /// headless continuation prompts re-state it (research doc §12.5).
     pub task: Option<String>,
-    /// The last upserted assistant entry of the in-flight turn
-    /// `(text, call count)`: the settle reads it for the completion marker.
-    pub last_assistant: Option<(String, usize)>,
+    /// The last upserted assistant entry text of the in-flight turn: the
+    /// settle reads it for the completion marker.
+    pub last_assistant: Option<String>,
     /// The headless episode-loop state (ticket #73); a fresh run on each
     /// client prompt.
     pub headless: crate::headless::EpisodeState,

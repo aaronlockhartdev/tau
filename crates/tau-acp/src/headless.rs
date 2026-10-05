@@ -172,7 +172,7 @@ pub fn decide(state: &mut EpisodeState, params: &Params, task: &str, final_text:
                 state.confirmation_sent = true;
                 state.consecutive_empty = 0;
                 state.consecutive_identical = 0;
-                continue_episode(state, params, CONFIRMATION.to_owned())
+                continue_episode(state, params, CONFIRMATION.to_owned(), false)
             }
         }
         Marker::Malformed => {
@@ -183,36 +183,50 @@ JSON block:
 {\"task_complete\": true}
 ```"
             .to_owned();
-            continue_episode(state, params, nudge)
+            continue_episode(state, params, nudge, false)
         }
         Marker::Absent => {
             // A declaration that did not survive the confirmation round is
             // an early stop again: the model may re-declare later.
             state.confirmation_sent = false;
             let trimmed = final_text.trim();
-            let nudge = if trimmed.is_empty() {
-                format!("Your previous response was empty. Continue the task: {task}.")
+            let (nudge, empty) = if trimmed.is_empty() {
+                (
+                    format!("Your previous response was empty. Continue the task: {task}."),
+                    true,
+                )
             } else if trimmed.ends_with('?') {
-                format!(
-                    "There is no user to answer questions in this session. Resolve \
+                (
+                    format!(
+                        "There is no user to answer questions in this session. Resolve \
 your question yourself with your tools (search, read, run), pick the most \
 reasonable option, and continue the task: {task}."
+                    ),
+                    false,
                 )
             } else {
-                format!(
-                    "The task is not complete. Task: {task}. Continue from the \
+                (
+                    format!(
+                        "The task is not complete. Task: {task}. Continue from the \
 current state; do not re-introduce yourself and do not ask questions."
+                    ),
+                    false,
                 )
             };
-            continue_episode(state, params, nudge)
+            continue_episode(state, params, nudge, empty)
         }
     }
 }
 
 /// Budget check, then the episode advances and the nudge is queued
 /// (research doc §12.6: the caps settle the run instead of nudging forever).
-fn continue_episode(state: &mut EpisodeState, params: &Params, nudge: String) -> Decision {
-    if nudge.is_empty() || is_empty_nudge(&nudge) {
+fn continue_episode(
+    state: &mut EpisodeState,
+    params: &Params,
+    nudge: String,
+    empty: bool,
+) -> Decision {
+    if empty {
         state.consecutive_empty += 1;
         state.consecutive_identical = 0;
         if state.consecutive_empty >= params.max_consecutive_empty {
@@ -234,10 +248,6 @@ fn continue_episode(state: &mut EpisodeState, params: &Params, nudge: String) ->
     state.episode += 1;
     state.last_nudge = Some(nudge.clone());
     Decision::Continue(nudge)
-}
-
-fn is_empty_nudge(nudge: &str) -> bool {
-    nudge.starts_with("Your previous response was empty")
 }
 
 #[cfg(test)]

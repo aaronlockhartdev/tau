@@ -167,7 +167,7 @@ fn settle_headless(
                 .get_mut(session)
                 .map_or(crate::headless::Decision::Done(Outcome::EndTurn), |s| {
                     let (text, task) = match (&s.last_assistant, &s.task) {
-                        (Some((t, _)), Some(task)) => (t.clone(), task.clone()),
+                        (Some(t), Some(task)) => (t.clone(), task.clone()),
                         _ => (String::new(), String::new()),
                     };
                     crate::headless::decide(&mut s.headless, params, &task, &text)
@@ -185,22 +185,35 @@ fn settle_headless(
         crate::headless::Decision::Continue(nudge) => {
             // Episode N+1: the turn flags reset for the new turn; the
             // prompt response stays pending until a real end.
-            {
+            let cancelled = {
                 let mut guard = registry
                     .lock()
                     .expect("session registry: no panic while the lock is held");
+                // A cancel landing between the settle decision and this
+                // reset would be wiped: read it before the reset and honor
+                // it after.
+                let cancelled = guard.get(session).is_some_and(|s| s.cancel_requested);
                 if let Some(s) = guard.get_mut(session) {
                     s.saw_stream_end = false;
                     s.saw_interrupted = false;
                     s.cancel_requested = false;
                     s.last_assistant = None;
                 }
+                cancelled
+            };
+            if cancelled {
+                let mut guard = registry
+                    .lock()
+                    .expect("session registry: no panic while the lock is held");
+                sessions::settle(&mut guard, session, Outcome::Cancelled);
             }
-            if let Err(e) = core.dispatch(Command::MessageSend {
-                session: session.to_owned(),
-                text: nudge,
-                lane: MessageLane::FollowUp,
-            }) {
+            if !cancelled
+                && let Err(e) = core.dispatch(Command::MessageSend {
+                    session: session.to_owned(),
+                    text: nudge,
+                    lane: MessageLane::FollowUp,
+                })
+            {
                 // Refused before the turn started: settle now — never loop
                 // on a refused send.
                 let message = match &e {
@@ -236,10 +249,5 @@ fn track_last_assistant(
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")
         .to_owned();
-    let calls = entry
-        .payload
-        .get("calls")
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
-    s.last_assistant = Some((text, calls));
+    s.last_assistant = Some(text);
 }
