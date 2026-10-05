@@ -255,6 +255,7 @@ impl CallOutput {
                 Some(Self::Image(vec![InputImagePart {
                     kind: "input_image",
                     image_url: format!("data:{media_type};base64,{data}"),
+                    detail: "auto",
                 }]))
             }
             _ => None,
@@ -263,12 +264,14 @@ impl CallOutput {
 }
 
 /// An `input_image` content part (responses API): the base64 payload in a
-/// data URL.
+/// data URL; `detail` is always "auto" (vLLM's Responses model requires the
+/// field, `OpenAI`'s defaults it) (#79).
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InputImagePart {
     #[serde(rename = "type")]
     pub kind: &'static str,
     pub image_url: String,
+    pub detail: &'static str,
 }
 
 /// Soft prompt size in tokens (the shared ~4-chars/token estimator, spec

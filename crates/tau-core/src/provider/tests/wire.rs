@@ -48,6 +48,7 @@ fn function_call_output_carries_text_and_image_shapes() {
         output: CallOutput::Image(vec![InputImagePart {
             kind: "input_image",
             image_url: "data:image/png;base64,AAAA".into(),
+            detail: "auto",
         }]),
     })
     .unwrap();
@@ -56,6 +57,8 @@ fn function_call_output_carries_text_and_image_shapes() {
         image["output"][0]["image_url"],
         "data:image/png;base64,AAAA"
     );
+    // #79: the vLLM build rejects parts without `detail`.
+    assert_eq!(image["output"][0]["detail"], "auto");
 }
 
 /// #34: the payload's image block becomes the data-URL part; a string passes
@@ -72,6 +75,7 @@ fn call_output_from_payload_maps_the_stored_shapes() {
         Some(CallOutput::Image(vec![InputImagePart {
             kind: "input_image",
             image_url: "data:image/png;base64,AAAA".into(),
+            detail: "auto",
         }]))
     );
     assert_eq!(
