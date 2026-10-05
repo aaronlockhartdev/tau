@@ -20,6 +20,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -139,6 +140,7 @@ async fn an_archive_io_failure_keeps_the_session_live() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -222,6 +224,7 @@ async fn a_send_to_an_archived_session_is_refused() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -283,6 +286,7 @@ async fn a_half_archived_session_converges_on_the_next_archive() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -407,6 +411,7 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {

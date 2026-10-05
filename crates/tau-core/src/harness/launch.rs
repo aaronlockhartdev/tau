@@ -34,6 +34,9 @@ pub enum SessionRole {
         /// supervisor's (the acceptance driver's seam: the supervisor's
         /// prompt is the child's); `None` = adopt the supervisor's.
         system_prompt: Option<String>,
+        /// Replace the root session's base prompt line (the headless frame
+        /// seam, `session/new` `base_prompt`); `None` keeps the default.
+        base_prompt: Option<String>,
         /// The config's first provider, resolved by the caller (`build_live`
         /// resolves it for the live shell); the supervisor's child factory
         /// and bridge take it — no second resolution (ticket #43).
@@ -142,6 +145,7 @@ impl AgentSession {
                 provider,
                 supervisor,
                 system_prompt,
+                base_prompt,
                 first_provider,
             } => {
                 let Some(sup) = supervisor else {
@@ -160,11 +164,19 @@ impl AgentSession {
                             message: "no providers configured; add a [providers.x] section".into(),
                         });
                     };
-                    return root_session(&core, &workspace, &config, &first, store, provider);
+                    return root_session(
+                        &core,
+                        &workspace,
+                        &config,
+                        &first,
+                        store,
+                        provider,
+                        base_prompt.as_deref(),
+                    );
                 };
                 // A pre-built supervisor (the test seam): adopt its values,
                 // wire no events.
-                Self::root_with_supervisor(&sup, store, system_prompt, provider)
+                Self::root_with_supervisor(&sup, store, system_prompt, provider, None)
             }
         }
     }
@@ -176,6 +188,7 @@ impl AgentSession {
         mut store: SessionStore,
         system_prompt: Option<String>,
         provider: TurnProviderRef,
+        _base_prompt: Option<String>,
     ) -> Result<Arc<AgentSession>, ProtocolError> {
         let d = sup.inherited();
         let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
@@ -211,6 +224,7 @@ fn root_session(
     first: &(String, crate::config::Provider),
     mut store: SessionStore,
     provider: TurnProviderRef,
+    base_prompt: Option<&str>,
 ) -> Result<Arc<AgentSession>, ProtocolError> {
     let (name, first) = first;
     // `generation.default_model` wins; an empty or unknown value falls
@@ -246,7 +260,10 @@ fn root_session(
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
     let layers = context::discover(&cwd, &core.system_dir_of());
-    let mut system_prompt = context::assemble("You are Tau, a coding agent.", &layers);
+    let mut system_prompt = context::assemble(
+        base_prompt.unwrap_or("You are Tau, a coding agent."),
+        &layers,
+    );
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen
     // — the catalog is frozen at that moment (a running session's prompt

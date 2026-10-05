@@ -161,6 +161,10 @@ async fn session_new(server: &Server, rpc: &Rpc) {
     let session = match core.dispatch(Command::SessionNew {
         workspace: workspace.id.clone(),
         title: None,
+        // The ACP surface is the headless surface (ticket #73): the frame
+        // replaces the interactive product's base prompt; the context files
+        // and skills catalog still append after it.
+        base_prompt: Some(crate::headless::FRAME.to_owned()),
     }) {
         Ok(CommandOutput::Session { session }) => session,
         Ok(_) => unreachable!("dispatch routes the arm"),
@@ -199,6 +203,9 @@ async fn session_new(server: &Server, rpc: &Rpc) {
                 saw_interrupted: false,
                 cancel_requested: false,
                 context_window,
+                task: None,
+                last_assistant: None,
+                headless: crate::headless::EpisodeState::default(),
             },
         );
     server.out.send(&transport::result(id, &result));
@@ -312,6 +319,8 @@ async fn session_prompt(server: &Server, rpc: &Rpc) {
             return;
         }
         state.in_flight = true;
+        // A new client prompt starts a fresh headless run (ticket #73).
+        begin_headless_run(state, &text);
         state.saw_stream_end = false;
         state.saw_interrupted = false;
         state.cancel_requested = false;
@@ -325,14 +334,7 @@ async fn session_prompt(server: &Server, rpc: &Rpc) {
     }) {
         // Refused before the turn started: release the lock and answer
         // now, not at a settle that will never come.
-        let mut reg = server
-            .registry
-            .lock()
-            .expect("session registry: no panic while the lock is held");
-        if let Some(state) = reg.get_mut(session_id) {
-            state.in_flight = false;
-            state.pending = None;
-        }
+        release_turn_lock(server, session_id);
         server
             .out
             .send(&transport::error(id, INTERNAL_ERROR, &protocol_message(&e)));
@@ -362,6 +364,31 @@ async fn session_prompt(server: &Server, rpc: &Rpc) {
             state.in_flight = false;
         }
     });
+}
+
+/// A new client prompt starts a fresh headless run: the task anchor is
+/// this prompt, the episode state restarts, and the last-assistant
+/// tracker resets (ticket #73).
+fn begin_headless_run(state: &mut crate::sessions::SessionState, text: &str) {
+    state.task = Some(text.to_owned());
+    state.headless = crate::headless::EpisodeState {
+        episode: 1,
+        ..Default::default()
+    };
+    state.last_assistant = None;
+}
+
+/// Release the turn lock after a dispatch refusal: a refused send never
+/// settles, so the lock is released here instead of at the settle.
+fn release_turn_lock(server: &Server, session_id: &str) {
+    let mut reg = server
+        .registry
+        .lock()
+        .expect("session registry: no panic while the lock is held");
+    if let Some(state) = reg.get_mut(session_id) {
+        state.in_flight = false;
+        state.pending = None;
+    }
 }
 
 async fn session_cancel(server: &Server, rpc: &Rpc) {

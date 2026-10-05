@@ -19,6 +19,7 @@ async fn task_commands_emit_a_task_changed_event() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -76,6 +77,7 @@ async fn a_task_assigned_to_a_child_is_emitted_for_the_child_session() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -187,6 +189,7 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {

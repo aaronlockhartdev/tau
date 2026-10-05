@@ -110,7 +110,12 @@ describe('newSession / renameSession', () => {
     defaultIPC();
     await newSession(WS.id, 'my title');
     const calls = mockInvoke.mock.calls.map((c) => (c[1] as { command: Command }).command);
-    expect(calls).toContainEqual({ type: 'session_new', workspace: WS.id, title: 'my title' });
+    expect(calls).toContainEqual({
+      type: 'session_new',
+      workspace: WS.id,
+      title: 'my title',
+      base_prompt: null,
+    });
   });
 
   it('a failed newSession surfaces the banner and returns null', async () => {

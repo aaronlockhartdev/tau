@@ -15,6 +15,7 @@ async fn a_session_archives_and_lists_with_the_flag() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -130,6 +131,7 @@ async fn a_child_session_refuses_a_direct_archive() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -176,6 +178,7 @@ async fn a_parent_archive_archives_its_children() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -251,6 +254,7 @@ async fn a_parent_archive_archives_a_closed_child() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -309,6 +313,7 @@ async fn a_restore_round_trips_a_parent_and_its_children() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {

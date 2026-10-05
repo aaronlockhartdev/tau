@@ -44,6 +44,15 @@ pub struct SessionState {
     /// (the schema's `size` must not be guessed; N5). Resolved at
     /// `session/new`, refreshed by `set_config_option`.
     pub context_window: Option<u64>,
+    /// The run's task text (the client prompt that started it): the
+    /// headless continuation prompts re-state it (research doc §12.5).
+    pub task: Option<String>,
+    /// The last upserted assistant entry text of the in-flight turn: the
+    /// settle reads it for the completion marker.
+    pub last_assistant: Option<String>,
+    /// The headless episode-loop state (ticket #73); a fresh run on each
+    /// client prompt.
+    pub headless: crate::headless::EpisodeState,
 }
 
 pub type Registry = Mutex<HashMap<String, SessionState>>;

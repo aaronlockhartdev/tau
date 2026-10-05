@@ -314,7 +314,8 @@
       : ((await command({
         type: 'session_new',
         workspace: real.id,
-        title: null
+        title: null,
+        base_prompt: null
       })) as { kind: 'session'; session: SessionMeta }).session.id;
     await switchSession(sid);
   }

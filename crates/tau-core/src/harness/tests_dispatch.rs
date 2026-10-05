@@ -100,6 +100,7 @@ async fn a_new_session_registers_its_workspace_and_streams_events() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap_err();
     assert!(matches!(err, ProtocolError::Other { .. }));
@@ -127,6 +128,7 @@ async fn entries_without_a_cursor_or_range_is_rejected() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -244,6 +246,7 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -275,6 +278,7 @@ async fn a_production_send_makes_exactly_one_provider_call() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -414,6 +418,7 @@ async fn session_list_merges_live_and_disk_sessions() {
         .dispatch(Command::SessionNew {
             workspace: w.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {

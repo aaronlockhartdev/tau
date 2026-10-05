@@ -153,6 +153,7 @@ async fn build_live_puts_the_catalog_after_the_context_files() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
