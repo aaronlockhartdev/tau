@@ -295,10 +295,12 @@ async fn empty_stops_settle_at_the_budget() {
     assert_eq!(empty_nudges, 2, "two empty nudges, then settle: {nudges:?}");
 }
 
-/// A provider stream cut mid-flight (no `[DONE]`) used to settle the prompt
-/// as `cancelled` and end the run (ticket #78). A provider interruption is
-/// not a user cancel: the episode loop answers it like an early stop, and
-/// the prompt ends `end_turn`.
+/// A provider stream cut mid-flight (no `[DONE]`) must never settle the
+/// prompt as `cancelled`: a provider interruption is not a user cancel, so
+/// the episode loop answers it like an early stop and the prompt ends
+/// `end_turn`. The live #78 deaths were a harness-late `session/cancel`,
+/// which this test does not send — that invariant is pinned by the
+/// `queue_settle` unit tests.
 ///
 /// The in-test provider drops the first call's connection after a partial
 /// text and completes every later call with the marker.
@@ -375,8 +377,7 @@ async fn cut_provider(listener: tokio::net::TcpListener) {
         }
         let _ = stream
             .write_all(
-                format!("HTTP/1.1 200 OK\ncontent-type: text/event-stream\n\n{body}")
-                    .as_bytes(),
+                format!("HTTP/1.1 200 OK\ncontent-type: text/event-stream\n\n{body}").as_bytes(),
             )
             .await;
         drop(stream); // the cut: the connection ends without `[DONE]`
