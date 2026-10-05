@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 // Generous on purpose: under a full-suite nextest run the child's first
@@ -293,4 +293,92 @@ async fn empty_stops_settle_at_the_budget() {
         .filter(|n| n.starts_with("Your previous response was empty"))
         .count();
     assert_eq!(empty_nudges, 2, "two empty nudges, then settle: {nudges:?}");
+}
+
+/// A provider stream cut mid-flight (no `[DONE]`) used to settle the prompt
+/// as `cancelled` and end the run (ticket #78). A provider interruption is
+/// not a user cancel: the episode loop answers it like an early stop, and
+/// the prompt ends `end_turn`.
+///
+/// The in-test provider drops the first call's connection after a partial
+/// text and completes every later call with the marker.
+#[tokio::test]
+async fn provider_cut_stream_continues_the_run() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the cut provider");
+    let addr = listener.local_addr().expect("bound addr");
+    tokio::spawn(cut_provider(listener));
+
+    let home = tempfile::tempdir().expect("temp home");
+    let mut client = Client::spawn(home.path(), &format!("http://{addr}/v1"), "mock-model");
+
+    let new = client
+        .request(1, "session/new", json!({ "cwd": home.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    let (resp, updates) = client
+        .request_with_updates(
+            2,
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{ "type": "text", "text": "cut-task: finish the work" }],
+            }),
+        )
+        .await;
+
+    assert!(
+        !user_chunks(&updates).is_empty(),
+        "the cut turn must be answered with a continuation prompt"
+    );
+    assert_eq!(resp["result"]["stopReason"], "end_turn");
+}
+
+/// First request: a partial text, then the connection drops (no `[DONE]`,
+/// no `response.completed`). Later requests: a full completion with the
+/// marker, so the run finishes in the confirmation round.
+async fn cut_provider(listener: tokio::net::TcpListener) {
+    let mut calls = 0u32;
+    loop {
+        let (mut stream, _) = listener.accept().await.expect("accepts");
+        calls += 1;
+        let mut head = [0u8; 8192];
+        let _ = stream.read(&mut head).await;
+        let frames: Vec<String> = if calls == 1 {
+            vec![
+                json!({ "type": "response.created", "response": { "id": "cut-1" } }).to_string(),
+                json!({ "type": "response.output_text.delta", "delta": "Working on it." })
+                    .to_string(),
+            ]
+        } else {
+            vec![
+                json!({ "type": "response.created", "response": { "id": "ok" } }).to_string(),
+                json!({ "type": "response.output_text.delta", "delta": MARKER }).to_string(),
+                json!({
+                    "type": "response.completed",
+                    "response": { "id": "ok", "usage": {
+                        "input_tokens": 120,
+                        "output_tokens": 48,
+                        "total_tokens": 168,
+                    } },
+                })
+                .to_string(),
+                "[DONE]".to_string(),
+            ]
+        };
+        let mut body = String::new();
+        for f in &frames {
+            use std::fmt::Write as _;
+            let _ = write!(body, "data: {f}\n\n");
+        }
+        let _ = stream
+            .write_all(
+                format!("HTTP/1.1 200 OK\ncontent-type: text/event-stream\n\n{body}")
+                    .as_bytes(),
+            )
+            .await;
+        drop(stream); // the cut: the connection ends without `[DONE]`
+    }
 }

@@ -63,6 +63,10 @@ fn handle(
                     // settle signal).
                     s.mapper.on_stream_end();
                     s.saw_stream_end = true;
+                    // A cancel may rewrite this turn's outcome only if it
+                    // predates the stream end; one landing in the post-turn
+                    // window (settle pending) must not (ticket #78).
+                    s.cancel_active = s.cancel_requested;
                     if *interrupted {
                         s.saw_interrupted = true;
                     }
@@ -91,26 +95,9 @@ fn handle(
                 let mut guard = registry
                     .lock()
                     .expect("session registry: no panic while the lock is held");
-                guard.get_mut(session).and_then(|s| {
-                    if s.saw_stream_end && items.is_empty() {
-                        // A requested cancel wins over a clean settle: the
-                        // spec answers `cancelled` even when the abort
-                        // surfaced without the interrupted flag (N3).
-                        Some(if s.saw_interrupted || s.cancel_requested {
-                            Outcome::Cancelled
-                        } else {
-                            Outcome::EndTurn
-                        })
-                    } else if items.is_empty() && s.cancel_requested {
-                        // A cancel with an empty queue settles even without a
-                        // `StreamEnd`: a call aborted before its first event
-                        // leaves none behind (the core records calls at first
-                        // event), and the spec MUSTs the `cancelled` answer.
-                        Some(Outcome::Cancelled)
-                    } else {
-                        None
-                    }
-                })
+                guard
+                    .get_mut(session)
+                    .and_then(|s| queue_settle(s, items.is_empty()))
             };
             if let Some(outcome) = outcome {
                 settle_headless(core, out, registry, params, session, outcome);
@@ -145,10 +132,35 @@ fn handle(
     }
 }
 
+/// The `Queue` settle rule (extracted for the ticket #78 tests): after the
+/// first `StreamEnd`, an empty queue settles the turn; a cancel that
+/// predates the stream end — or an interrupted stream — answers `cancelled`
+/// (N3). A cancel that lands after the stream end (the post-turn window)
+/// must not rewrite a completed turn's outcome.
+fn queue_settle(s: &crate::sessions::SessionState, queue_empty: bool) -> Option<Outcome> {
+    if s.saw_stream_end && queue_empty {
+        Some(if s.saw_interrupted || s.cancel_active {
+            Outcome::Cancelled
+        } else {
+            Outcome::EndTurn
+        })
+    } else if queue_empty && s.cancel_requested {
+        // A cancel with an empty queue settles even without a `StreamEnd`:
+        // a call aborted before its first event leaves none behind (the
+        // core records calls at first event), and the spec MUSTs the
+        // `cancelled` answer.
+        Some(Outcome::Cancelled)
+    } else {
+        None
+    }
+}
+
 /// The headless settle (ticket #73): an `EndTurn` without a completion
 /// declaration is not terminal — the episode loop answers it with a
-/// task-anchored continuation prompt. Cancellation and errors are terminal
-/// in every mode.
+/// task-anchored continuation prompt. A client cancel that predates the
+/// turn's stream end, and errors, are terminal; a cancel landing in the
+/// post-turn window answers the completed outcome, not `cancelled`
+/// (ticket #78).
 fn settle_headless(
     core: &Arc<Core>,
     out: &Out,
@@ -197,6 +209,7 @@ fn settle_headless(
                     s.saw_stream_end = false;
                     s.saw_interrupted = false;
                     s.cancel_requested = false;
+                    s.cancel_active = false;
                     s.last_assistant = None;
                 }
                 cancelled
@@ -250,4 +263,68 @@ fn track_last_assistant(
         .unwrap_or("")
         .to_owned();
     s.last_assistant = Some(text);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn settled_turn() -> crate::sessions::SessionState {
+        crate::sessions::SessionState {
+            workspace: "w".into(),
+            cwd: "/w".into(),
+            mapper: crate::mapper::Mapper::default(),
+            in_flight: true,
+            pending: None,
+            saw_stream_end: true,
+            saw_interrupted: false,
+            cancel_requested: false,
+            cancel_active: false,
+            context_window: None,
+            task: Some("task".into()),
+            last_assistant: None,
+            headless: crate::headless::EpisodeState::default(),
+        }
+    }
+
+    // Ticket #78: a cancel that lands after the stream ended (the post-turn
+    // window) must not rewrite a completed turn's outcome.
+    #[test]
+    fn a_late_cancel_keeps_the_completed_outcome() {
+        let mut s = settled_turn();
+        s.cancel_requested = true; // arrived after the StreamEnd snapshot
+        assert_eq!(queue_settle(&s, true), Some(Outcome::EndTurn));
+    }
+
+    // A cancel that predates the stream end still answers `cancelled` (N3).
+    #[test]
+    fn an_early_cancel_still_answers_cancelled() {
+        let mut s = settled_turn();
+        s.cancel_requested = true;
+        s.cancel_active = true; // the StreamEnd snapshot saw it
+        assert_eq!(queue_settle(&s, true), Some(Outcome::Cancelled));
+    }
+
+    #[test]
+    fn a_clean_settle_is_an_end_turn() {
+        assert_eq!(queue_settle(&settled_turn(), true), Some(Outcome::EndTurn));
+    }
+
+    // A cancel with no `StreamEnd` at all (aborted before the first event)
+    // settles `cancelled`.
+    #[test]
+    fn a_cancel_without_stream_end_answers_cancelled() {
+        let mut s = settled_turn();
+        s.saw_stream_end = false;
+        s.cancel_requested = true;
+        assert_eq!(queue_settle(&s, true), Some(Outcome::Cancelled));
+    }
+
+    // A non-empty queue never settles, cancel or not.
+    #[test]
+    fn a_non_empty_queue_never_settles() {
+        let mut s = settled_turn();
+        s.cancel_requested = true;
+        assert_eq!(queue_settle(&s, false), None);
+    }
 }
