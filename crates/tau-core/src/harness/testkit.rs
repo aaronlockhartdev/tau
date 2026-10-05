@@ -124,8 +124,13 @@ pub(crate) struct CannedChild {
 }
 impl TurnProvider for CannedChild {
     fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
-        let body = self.body.clone();
-        self.index.fetch_add(1, Ordering::SeqCst);
+        // A real model stops calling tools: once the script is exhausted the
+        // child ends its turn instead of repeating the body forever.
+        let body = if self.index.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.body.clone()
+        } else {
+            plain_body()
+        };
         let (events, calls) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
             let mut result = provider::TurnResult::default();

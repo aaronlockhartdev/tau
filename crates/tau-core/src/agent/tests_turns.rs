@@ -403,46 +403,17 @@ async fn append_propagates_storage_errors_not_a_new_root() {
 }
 
 #[tokio::test]
-async fn runaway_turn_stops_with_a_visible_note() {
-    let dir = tempfile::tempdir().unwrap();
-    // The same tool call, forever: the round cap is the only exit.
-    let body = sse(
-        "",
-        &[("bash".into(), "c1".into(), r#"{"command":"true"}"#.into())],
-    );
-    let provider = Arc::new(ScriptedProvider::new(vec![body]));
-    let agent = make_agent(dir.path(), provider);
-    agent.send("loop", Lane::FollowUp);
-    agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
-    let note = entries
-        .iter()
-        .find(|e| e.kind == KIND_SYSTEM)
-        .expect("a system note records why the turn stopped");
-    assert!(
-        note.payload["note"].as_str().unwrap().contains("32"),
-        "{note:?}"
-    );
-    assert_eq!(
-        entries.iter().filter(|e| e.kind == KIND_TOOL).count(),
-        MAX_ROUNDS
-    );
-}
-
-#[tokio::test]
 async fn kill_policy_completes_the_inflight_tool_batch() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("x.txt"), "x\n").unwrap();
     // The killed stream had a completed function_call before the cut:
     // with the Complete policy the tool runs and the turn continues to
     // a final call where the forced message lands alongside the result.
-    let mut body = String::new();
-    body.push_str(
-        "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"c1\",\"type\":\"function_call\",\"name\":\"read\",\"call_id\":\"c1\",\"arguments\":\"{\\\"path\\\":\\\"x.txt\\\"}\"}}\n\n",
-    );
-    body.push_str("data: {\"type\":\"response.output_text.delta\",\"delta\":\"cut\"}\n\n");
-    let body = body;
-    let provider = canned_cut(&body, 1);
+    let cut = "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"c1\",\"type\":\"function_call\",\"name\":\"read\",\"call_id\":\"c1\",\"arguments\":\"{\\\"path\\\":\\\"x.txt\\\"}\"}}\n\n";
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        cut.to_string(),
+        sse("done", &[]),
+    ]));
     let agent = AgentSession::new(SessionParams {
         store: session_in(dir.path()),
         system_prompt: "be terse".into(),
@@ -462,9 +433,8 @@ async fn kill_policy_completes_the_inflight_tool_batch() {
     agent.process().await.unwrap();
     let entries = entries_of(&agent.inner.lock().unwrap().store);
     let kinds: Vec<&str> = entries.iter().map(|e| e.kind.as_str()).collect();
-    // killed assistant + tool result + (the next scripted call = the
-    // canned cut again, since the provider is single-shot) + the forced
-    // user entry is delivered at the head of that final call.
+    // killed assistant + tool result + the final call, whose prompt head
+    // carries the forced user entry alongside the tool result.
     assert!(kinds.contains(&KIND_TOOL), "{kinds:?}");
     let interrupted = entries
         .iter()

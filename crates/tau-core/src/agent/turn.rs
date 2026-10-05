@@ -1,9 +1,8 @@
 use super::{
     AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
     FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage, KIND_ASSISTANT,
-    KIND_SYSTEM, KIND_TOOL, KIND_USER, Lane, MAX_ROUNDS, Ordering, Queued, ResponseRequest,
-    SessionStore, ToolBatchPolicy, TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name,
-    tools,
+    KIND_TOOL, KIND_USER, Lane, Ordering, Queued, ResponseRequest, SessionStore, ToolBatchPolicy,
+    TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name, tools,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -29,7 +28,6 @@ impl AgentSession {
 
     #[allow(clippy::too_many_lines)] // one turn loop; splitting is refactoring
     async fn run_turn(&self) -> Result<(), AgentError> {
-        let mut rounds = 0usize;
         // A force send or stop that targeted this turn is captured before the
         // call loop clears the per-call kill flag; it marks every segment of
         // the turn interrupted, not just the one cut mid-flight.
@@ -38,21 +36,6 @@ impl AgentSession {
         // only; later calls in the turn are fresh.
         let mut first_call = true;
         loop {
-            rounds += 1;
-            if rounds > MAX_ROUNDS {
-                // A runaway turn dies visibly, not silently: the session
-                // records why it stopped.
-                self.append(
-                    KIND_SYSTEM,
-                    tau_protocol::payload::SystemPayload {
-                        note: format!(
-                            "Stopped after {MAX_ROUNDS} tool rounds without the model ending the turn"
-                        ),
-                    }
-                    .to_value(),
-                )?;
-                break;
-            }
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
             let (delivered, queue_hook) = {
