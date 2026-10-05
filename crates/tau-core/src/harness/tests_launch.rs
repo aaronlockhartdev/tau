@@ -47,6 +47,7 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
             provider: canned_provider(),
             supervisor: None,
             system_prompt: None,
+            base_prompt: None,
             first_provider: Some(first),
         },
     )
@@ -100,6 +101,7 @@ async fn launch_root_without_providers_is_a_config_error() {
             provider: canned_provider(),
             supervisor: None,
             system_prompt: None,
+            base_prompt: None,
             first_provider: None,
         },
     )
@@ -147,6 +149,7 @@ async fn launch_root_with_a_modelless_provider_names_it() {
             provider: canned_provider(),
             supervisor: None,
             system_prompt: None,
+            base_prompt: None,
             first_provider: Some(first),
         },
     )
@@ -280,6 +283,7 @@ async fn launch_root_session_is_freed_when_dropped() {
             provider: canned_provider(),
             supervisor: None,
             system_prompt: None,
+            base_prompt: None,
             first_provider: Some(first),
         },
     )
@@ -328,6 +332,7 @@ fn launch_seam_session_is_freed_when_dropped() {
             provider: canned_provider(),
             supervisor: Some(sup.clone()),
             system_prompt: None,
+            base_prompt: None,
             first_provider: None,
         },
     )

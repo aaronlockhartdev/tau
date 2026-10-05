@@ -248,10 +248,19 @@ async fn prompt_usage_update_when_the_window_is_known() {
         .await
         .expect("binds the mock LLM");
     let addr = listener.local_addr().expect("bound addr");
-    tokio::spawn(tau_mock_llm::server::serve(
-        listener,
-        Arc::new(tau_mock_llm::scenario::ScenarioSet::default()),
+    // The headless run ends on a completion declaration: the scripted
+    // scenario declares it (episode 1), the confirmation round re-matches
+    // the clamped final turn (episode 2) — two provider calls.
+    let mut set = tau_mock_llm::scenario::ScenarioSet::default();
+    set.scenarios.push(tau_mock_llm::scenario::Scenario::new(
+        "hello",
+        vec![tau_mock_llm::scenario::Turn {
+            text: Some("done\n```json\n{\"task_complete\": true}\n```".into()),
+            calls: vec![],
+        }],
+        tau_mock_llm::scenario::Usage::default(),
     ));
+    tokio::spawn(tau_mock_llm::server::serve(listener, Arc::new(set)));
     let base_url = format!("http://{addr}/v1");
 
     // The system config declares the session's model with a window; the
@@ -294,8 +303,8 @@ async fn prompt_usage_update_when_the_window_is_known() {
         .collect();
     assert_eq!(
         usage.len(),
-        1,
-        "one usage_update per provider call: {updates:?}"
+        2,
+        "one usage_update per provider call (declaration + confirmation): {updates:?}"
     );
     // The mock fallback's usage: 120 input + 48 output.
     assert_eq!(usage[0]["params"]["update"]["used"], 168);

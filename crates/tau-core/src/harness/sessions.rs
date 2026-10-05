@@ -205,6 +205,7 @@ impl Core {
         &self,
         workspace: &Workspace,
         title: Option<String>,
+        base_prompt: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
         // The same cap as a rename: the archive listing reads the header
         // line bounded, so an oversized title would drop the entry from
@@ -235,7 +236,7 @@ impl Core {
         store.set_title(&title).map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
-        self.build_live(workspace, store, Some(title), created)
+        self.build_live(workspace, store, Some(title), created, base_prompt)
     }
 
     /// Re-register an existing session file as live (a restart drops the
@@ -252,7 +253,7 @@ impl Core {
         })?;
         let title = store.title().map(str::to_string);
         let created = store.created();
-        self.build_live(workspace, store, title, created)
+        self.build_live(workspace, store, title, created, None)
     }
 
     /// The shared live-registration path (fresh create and re-open): the
@@ -264,6 +265,7 @@ impl Core {
         store: SessionStore,
         title: Option<String>,
         created: u64,
+        base_prompt: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
         let parent = store.parent().map(str::to_string);
         let config = self.workspace_config(workspace);
@@ -299,6 +301,7 @@ impl Core {
                 provider: provider.clone(),
                 supervisor: None,
                 system_prompt: None,
+                base_prompt,
                 first_provider: Some((name, first)),
             },
         )?;

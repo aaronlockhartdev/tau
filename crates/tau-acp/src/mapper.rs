@@ -34,9 +34,28 @@ impl Mapper {
         match entry.kind.as_str() {
             KIND_ASSISTANT => self.on_assistant(entry),
             KIND_TOOL => self.on_tool(entry),
-            // user/system/subagent/task entries: no ACP v0 surface.
+            // User entries surface (user_message_chunk): the headless
+            // episode loop's continuation prompts are user entries and the
+            // benchmark forensics (acp-events.jsonl) must see them.
+            "user" => Self::on_user(entry),
+            // system/subagent/task entries: no ACP v0 surface.
             _ => Vec::new(),
         }
+    }
+
+    fn on_user(entry: &ViewEntry) -> Vec<Value> {
+        let text = entry
+            .payload
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if text.is_empty() {
+            return Vec::new();
+        }
+        vec![json!({
+            "sessionUpdate": "user_message_chunk",
+            "content": { "type": "text", "text": text },
+        })]
     }
 
     /// Finalize the call just ended: its assistant entry's snapshot is the

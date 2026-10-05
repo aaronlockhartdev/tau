@@ -46,10 +46,14 @@ impl Core {
                 sessions.sort_by_key(|s| std::cmp::Reverse(s.created));
                 Ok(CommandOutput::Sessions { sessions })
             }
-            Command::SessionNew { workspace, title } => {
+            Command::SessionNew {
+                workspace,
+                title,
+                base_prompt,
+            } => {
                 let workspace = self.workspace(&workspace)?;
                 Ok(CommandOutput::Session {
-                    session: self.session_new(&workspace, title)?,
+                    session: self.session_new(&workspace, title, base_prompt)?,
                 })
             }
             Command::SessionRename { session, title } => {

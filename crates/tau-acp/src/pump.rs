@@ -6,28 +6,38 @@
 //! which settles the affected turn (the journal-resync repair is the
 //! post-v0 follow-up, research doc §5.1).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::sessions::{self, Outcome, Registry};
 use crate::transport::{self, Out};
 use serde_json::json;
 use tau_core::harness::Core;
-use tau_protocol::{Event, SystemEventKind};
+use tau_protocol::snapshot::ViewEntry;
+use tau_protocol::{Command, Event, MessageLane, SystemEventKind};
 
 pub async fn run(core: Arc<Core>, out: Out, registry: Arc<Registry>) {
+    let params = crate::headless::Params::from_env();
     let mut rx = core.events();
     while let Some(event) = rx.recv().await {
-        handle(&event, &out, &registry);
+        handle(&event, &core, &out, &registry, &params);
     }
 }
 
-fn handle(event: &Event, out: &Out, registry: &Registry) {
+fn handle(
+    event: &Event,
+    core: &Arc<Core>,
+    out: &Out,
+    registry: &Registry,
+    params: &crate::headless::Params,
+) {
     match event {
         Event::EntryUpsert { session, entry, .. } => {
             let updates = {
                 let mut guard = registry
                     .lock()
                     .expect("session registry: no panic while the lock is held");
+                track_last_assistant(&mut guard, session, entry);
                 guard
                     .get_mut(session)
                     .map(|s| s.mapper.on_entry(entry))
@@ -103,10 +113,7 @@ fn handle(event: &Event, out: &Out, registry: &Registry) {
                 })
             };
             if let Some(outcome) = outcome {
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
-                sessions::settle(&mut guard, session, outcome);
+                settle_headless(core, out, registry, params, session, outcome);
             }
         }
         // A session-scoped system error kills the turn: the prompt gets a
@@ -136,4 +143,103 @@ fn handle(event: &Event, out: &Out, registry: &Registry) {
         // children): no ACP v0 surface.
         _ => {}
     }
+}
+
+/// The headless settle (ticket #73): an `EndTurn` without a completion
+/// declaration is not terminal — the episode loop answers it with a
+/// task-anchored continuation prompt. Cancellation and errors are terminal
+/// in every mode.
+fn settle_headless(
+    core: &Arc<Core>,
+    out: &Out,
+    registry: &Registry,
+    params: &crate::headless::Params,
+    session: &str,
+    outcome: Outcome,
+) {
+    let _ = out; // the response rides the pending oneshot, not the pump
+    let decision = match &outcome {
+        Outcome::EndTurn => {
+            let mut guard = registry
+                .lock()
+                .expect("session registry: no panic while the lock is held");
+            guard
+                .get_mut(session)
+                .map_or(crate::headless::Decision::Done(Outcome::EndTurn), |s| {
+                    let (text, task) = match (&s.last_assistant, &s.task) {
+                        (Some((t, _)), Some(task)) => (t.clone(), task.clone()),
+                        _ => (String::new(), String::new()),
+                    };
+                    crate::headless::decide(&mut s.headless, params, &task, &text)
+                })
+        }
+        _ => crate::headless::Decision::Done(outcome),
+    };
+    match decision {
+        crate::headless::Decision::Done(outcome) => {
+            let mut guard = registry
+                .lock()
+                .expect("session registry: no panic while the lock is held");
+            sessions::settle(&mut guard, session, outcome);
+        }
+        crate::headless::Decision::Continue(nudge) => {
+            // Episode N+1: the turn flags reset for the new turn; the
+            // prompt response stays pending until a real end.
+            {
+                let mut guard = registry
+                    .lock()
+                    .expect("session registry: no panic while the lock is held");
+                if let Some(s) = guard.get_mut(session) {
+                    s.saw_stream_end = false;
+                    s.saw_interrupted = false;
+                    s.cancel_requested = false;
+                    s.last_assistant = None;
+                }
+            }
+            if let Err(e) = core.dispatch(Command::MessageSend {
+                session: session.to_owned(),
+                text: nudge,
+                lane: MessageLane::FollowUp,
+            }) {
+                // Refused before the turn started: settle now — never loop
+                // on a refused send.
+                let message = match &e {
+                    tau_protocol::ProtocolError::Unsupported { message }
+                    | tau_protocol::ProtocolError::Other { message } => message.clone(),
+                    tau_protocol::ProtocolError::NotFound { what } => what.clone(),
+                };
+                let mut guard = registry
+                    .lock()
+                    .expect("session registry: no panic while the lock is held");
+                sessions::settle(&mut guard, session, Outcome::Error(message));
+            }
+        }
+    }
+}
+
+/// The headless settle reads the turn's final assistant text for the
+/// completion marker: remember the last assistant upsert per session.
+fn track_last_assistant(
+    sessions: &mut HashMap<String, crate::sessions::SessionState>,
+    session: &str,
+    entry: &ViewEntry,
+) {
+    if entry.kind != "assistant" {
+        return;
+    }
+    let Some(s) = sessions.get_mut(session) else {
+        return;
+    };
+    let text = entry
+        .payload
+        .get("text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let calls = entry
+        .payload
+        .get("calls")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, Vec::len);
+    s.last_assistant = Some((text, calls));
 }

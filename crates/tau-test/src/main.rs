@@ -243,6 +243,7 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
             // child's (the mock scenario matches on it), so the seam takes
             // the parent's rather than adopting it.
             system_prompt: Some(SUBAGENT_PROMPT.into()),
+            base_prompt: None,
             first_provider: None,
         },
     )

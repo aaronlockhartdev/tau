@@ -182,6 +182,10 @@ pub enum Command {
     SessionNew {
         workspace: String,
         title: Option<String>,
+        /// Replace the base prompt line (the headless frame seam; `None`
+        /// keeps the default). Context files and the skills catalog still
+        /// append after it.
+        base_prompt: Option<String>,
     },
     /// Rename the session: the new title replaces the header's (the file
     /// keeps its id; the title is a display name).
@@ -398,6 +402,7 @@ mod tests {
             Command::SessionNew {
                 workspace: "w1".into(),
                 title: None,
+                base_prompt: None,
             },
             Command::SessionRename {
                 session: "s1".into(),

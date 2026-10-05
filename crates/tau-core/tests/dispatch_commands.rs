@@ -97,6 +97,7 @@ fn rig(body: String, slow_ms: u64) -> Rig {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -743,6 +744,7 @@ async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
         .dispatch(Command::SessionNew {
             workspace: ws.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {

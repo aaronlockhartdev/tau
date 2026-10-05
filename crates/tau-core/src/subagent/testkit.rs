@@ -228,6 +228,7 @@ pub(crate) fn harness_full(
             provider: parent_provider,
             supervisor: Some(Arc::clone(&sup)),
             system_prompt: None,
+            base_prompt: None,
             first_provider: None,
         },
     )

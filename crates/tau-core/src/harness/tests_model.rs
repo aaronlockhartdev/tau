@@ -14,6 +14,7 @@ async fn session_rename_caps_the_title_length() {
         .dispatch(Command::SessionNew {
             workspace: w.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -71,6 +72,7 @@ async fn a_child_refusal_names_the_reopen_route_for_a_closed_parent() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -116,6 +118,7 @@ async fn session_rename_syncs_the_live_meta() {
         .dispatch(Command::SessionNew {
             workspace: w.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -176,6 +179,7 @@ async fn session_set_model_updates_the_live_meta_and_records_the_change() {
         .dispatch(Command::SessionNew {
             workspace: w.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
@@ -274,6 +278,7 @@ async fn session_set_model_survives_close_and_reopen() {
         .dispatch(Command::SessionNew {
             workspace: w.id.clone(),
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {

@@ -113,6 +113,7 @@ fn the_role_specs_table_is_exact() {
         provider: canned_provider(),
         supervisor: None,
         system_prompt: None,
+        base_prompt: None,
         first_provider: None,
     };
     assert_eq!(
