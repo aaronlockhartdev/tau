@@ -9,7 +9,7 @@ use tokio::sync::oneshot;
 use crate::mapper::Mapper;
 
 /// Why an in-flight `session/prompt` gets its response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Outcome {
     EndTurn,
     Cancelled,
@@ -39,6 +39,11 @@ pub struct SessionState {
     /// prompt `cancelled` even if the abort surfaced as a `System` error
     /// (the spec MUSTs the response, N3).
     pub cancel_requested: bool,
+    /// Snapshot of `cancel_requested` at the turn's `StreamEnd`: only a cancel
+    /// that predates the stream end may answer `cancelled`. A cancel landing
+    /// in the post-turn window (stream ended, settle pending) must not rewrite
+    /// a completed turn's outcome (ticket #78).
+    pub cancel_active: bool,
     /// The session model's declared context window, when any config layer
     /// declares one: a `StreamEnd` with usage then rides a `usage_update`
     /// (the schema's `size` must not be guessed; N5). Resolved at

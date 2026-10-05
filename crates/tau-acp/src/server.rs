@@ -202,6 +202,7 @@ async fn session_new(server: &Server, rpc: &Rpc) {
                 saw_stream_end: false,
                 saw_interrupted: false,
                 cancel_requested: false,
+                cancel_active: false,
                 context_window,
                 task: None,
                 last_assistant: None,
@@ -324,6 +325,7 @@ async fn session_prompt(server: &Server, rpc: &Rpc) {
         state.saw_stream_end = false;
         state.saw_interrupted = false;
         state.cancel_requested = false;
+        state.cancel_active = false;
         state.pending = Some(tx);
     }
 
