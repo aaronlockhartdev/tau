@@ -364,7 +364,7 @@ export type Command =
   | { type: 'workspace_list' }
   | { type: 'workspace_close'; workspace: string }
   | { type: 'session_list'; workspace: string }
-  | { type: 'session_new'; workspace: string; title: string | null }
+  | { type: 'session_new'; workspace: string; title: string | null; base_prompt: string | null }
   | { type: 'session_rename'; session: string; title: string }
   | { type: 'session_set_model'; session: string; model: string }
   | { type: 'session_open'; session: string }

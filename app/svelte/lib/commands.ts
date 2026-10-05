@@ -51,7 +51,7 @@ export async function refetchSessionList(
 export async function newSession(ws: string, title: string | null = null): Promise<string | null> {
   let sid: string | null = null;
   const ok = await runSessionCommand(
-    { type: 'session_new', workspace: ws, title },
+    { type: 'session_new', workspace: ws, title, base_prompt: null },
     (out) => {
       if (out.kind !== 'session') throw new Error('unexpected session_new output');
       sid = out.session.id;

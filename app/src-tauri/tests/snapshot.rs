@@ -36,6 +36,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         .dispatch(Command::SessionNew {
             workspace: workspace.id,
             title: None,
+            base_prompt: None,
         })
         .unwrap()
     {
