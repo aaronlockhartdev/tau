@@ -33,9 +33,6 @@ pub const KIND_ASSISTANT: &str = "assistant";
 pub const KIND_TOOL: &str = "tool";
 pub const KIND_SYSTEM: &str = "system";
 
-/// Runaway guard: a model that never stops calling tools.
-const MAX_ROUNDS: usize = 32;
-
 /// A loop-level failure: session storage or the provider.
 #[derive(Debug)]
 pub enum AgentError {

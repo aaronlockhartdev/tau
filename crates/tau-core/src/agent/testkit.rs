@@ -93,7 +93,7 @@ impl crate::provider::TurnProvider for ScriptedProvider {
     ) -> crate::provider::ProviderTurn<'a> {
         let body = self
             .calls
-            .get(self.index.fetch_add(1, Ordering::SeqCst) % self.calls.len())
+            .get(self.index.fetch_add(1, Ordering::SeqCst))
             .cloned()
             .unwrap_or_else(|| sse("", &[]));
         let captured = serde_json::to_value(request).unwrap();
