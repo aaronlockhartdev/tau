@@ -405,14 +405,18 @@ impl AgentSession {
                 Ok(fresh) => {
                     let live = inner.om.clone().unwrap_or_else(|| state.clone());
                     state.merge_turn_end(&live, &fresh);
-                    // Persist only when the merge changed the record — a
+                    // Persist only when the merge changed the DURABLE chunk state — a
                     // racing cycle's commit (the join timed out) or a
-                    // sync-buffered chunk. The common case merges to
-                    // exactly the file's content; an unconditional save
-                    // would append a duplicate `om` entry every turn.
-                    if state.record == fresh {
+                    // sync-buffered chunk. Compare the chunk fields, not
+                    // the whole record: the pass refreshes
+                    // `pending_tokens` on every run, so a full equality
+                    // would re-save (append an `om` entry) on every turn
+                    // of any session with unobserved entries.
+                    let chunk_delta = state.record.buffered_chunks != fresh.buffered_chunks
+                        || state.record.last_buffered_at_tokens > fresh.last_buffered_at_tokens;
+                    if !chunk_delta {
                         // The common case: the merge is a no-op over the
-                        // file's content, so nothing is re-saved.
+                        // file's chunk state, so nothing is re-saved.
                     } else if let Err(e) = state.save(&mut inner.store) {
                         eprintln!("om: write-back merge save failed: {e}");
                     }

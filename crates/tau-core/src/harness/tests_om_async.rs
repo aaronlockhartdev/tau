@@ -447,3 +447,26 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
             .contains("observed the work")
     );
 }
+
+/// A turn whose pass plans `Done` appends no `om` entry: the write-back
+/// persists only a durable chunk-state delta. The pass refreshes
+/// `record.pending_tokens` on every run, so a full-record equality would
+/// re-save — appending an `om` entry — on every turn of any session with
+/// unobserved entries (the 10k-entry acceptance stress leg pins this).
+#[tokio::test]
+async fn a_done_turn_appends_no_om_entry() {
+    let om = crate::om_integration::OmState::from_config(
+        &om_config(1000, 10_000, 400, 200, 0, 0),
+        crate::om::OmRecord::default(),
+    );
+    let (p, served, _seen) =
+        scripted_om(vec![crate::agent::testkit::sse("done", &[])], "", false, 10);
+    let rig = rig(om, p);
+    rig.run_turn("go").await;
+    let events = rig.events();
+    Rig::settled_cleanly(&events);
+    assert_eq!(served.load(Ordering::SeqCst), 1);
+
+    let om_entries = rig.entries().iter().filter(|e| e.kind == "om").count();
+    assert_eq!(om_entries, 0, "a Done turn must not append an om entry");
+}
