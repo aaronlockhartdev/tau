@@ -94,15 +94,21 @@ impl TurnSink for ForwardSink<'_> {
         // The end arrives with the post-turn reconciliation, at turn
         // settlement (issue #82). The `completed` note is the
         // reconciliation's cut-vs-clean signal for entry-less calls.
-        if let TurnEvent::Completed(_) = &event {
+        // A stop cuts the stream at the next delta (the loop records the
+        // partial as interrupted, spec §7). Snapshot it before the
+        // completed note: a stop landing with the Completed frame means
+        // the call was cut, so an entry-less one must read interrupted,
+        // not completed, in the reconciliation.
+        let stopped = self.stop.load(Ordering::SeqCst);
+        if let TurnEvent::Completed(_) = &event
+            && !stopped
+        {
             self.completed
                 .lock()
                 .expect("completed-call map: no panic while the lock is held")
                 .insert(self.call_id.clone(), true);
         }
-        // A stop cuts the stream at the next delta (the loop records the
-        // partial as interrupted, spec §7).
-        if self.stop.load(Ordering::SeqCst) {
+        if stopped {
             return false;
         }
         self.inner.event(event)
