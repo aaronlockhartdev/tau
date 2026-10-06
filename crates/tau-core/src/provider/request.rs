@@ -189,8 +189,8 @@ impl ResponseRequest {
         self
     }
 
-    /// The caller's system-prompt instructions (the OM routing seam reads
-    /// this to tell observer round-trips apart from main-turn calls).
+    /// The caller's system-prompt instructions (test seam: the OM async
+    /// tests capture them to assert what the next main-turn call assembles).
     #[must_use]
     pub fn instructions(&self) -> Option<&str> {
         self.instructions.as_deref()

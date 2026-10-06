@@ -265,4 +265,14 @@ mod tests {
         assert_eq!(effective_interval(23_399, &cfg), 6_000);
         assert_eq!(effective_interval(23_400, &cfg), 3_000);
     }
+
+    #[test]
+    fn disabled_when_buffer_tokens_is_zero() {
+        // The kill switch (D1): buffer_tokens = 0 makes the effective
+        // interval 0, so no boundary ever crosses — the sync turn-end
+        // path owns everything.
+        let cfg = config(30_000, 0);
+        assert!(!boundary_crossed(60_000, &cfg, 0, 0));
+        assert!(!boundary_crossed(60_000, &cfg, 12_000, 30_000));
+    }
 }
