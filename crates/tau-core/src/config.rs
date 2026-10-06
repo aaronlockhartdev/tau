@@ -198,6 +198,7 @@ pub struct Om {
     pub buffer_increment: u64,
     /// Async buffer-interval token count (mastra `bufferTokens`); 0 disables
     /// the async boundary trigger entirely (mastra's own enable condition).
+    /// Consumed by the mid-loop boundary trigger that lands with #86 P2.
     pub buffer_tokens: u64,
     /// Per-trigger-point retry counts for the OM round-trips.
     pub retries: OmRetries,

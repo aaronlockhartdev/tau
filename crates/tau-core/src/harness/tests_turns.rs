@@ -543,17 +543,19 @@ async fn a_pipe_overflow_is_counted_and_surfaced() {
 /// Issue #82: the post-turn reconciliation must not emit an interrupted
 /// `StreamEnd` for a call that completed without producing an entry.
 ///
-/// The verified symptom: the OM observer call rides the session's
-/// forwarding provider (so it registers a call id) but its response never
-/// becomes a journal entry. Pre-fix, the empty-partial reconciliation arm
-/// treated every entry-less call as cut and emitted an interrupted
-/// `StreamEnd` that made the ACP settle rule answer `Cancelled` for
-/// completed runs. The fix
-/// distinguishes cut (no Completed frame) from completed-empty (Completed
-/// frame seen) via the `completed` map, and emits each call's end once,
-/// at turn settlement. This test pins both halves: a continuation send
-/// after the first `StreamEnd` starts its own turn, and no event stream in
-/// the run carries an interrupted end.
+/// The verified symptom (at #82): the OM observer call rode the
+/// session's forwarding provider (so it registered a call id) but its
+/// response never becomes a journal entry. Pre-fix, the empty-partial
+/// reconciliation arm treated every entry-less call as cut and emitted
+/// an interrupted `StreamEnd` that made the ACP settle rule answer
+/// `Cancelled` for completed runs. The fix distinguishes cut (no
+/// Completed frame) from completed-empty (Completed frame seen) via the
+/// `completed` map, and emits each call's end once, at turn settlement.
+/// (Since #86 P1 the OM call rides the inner provider and registers no
+/// call id; this test keeps pinning the reconciliation behavior for
+/// calls that do.) This test pins both halves: a continuation send after
+/// the first `StreamEnd` starts its own turn, and no event stream in the
+/// run carries an interrupted end.
 #[allow(clippy::too_many_lines)] // one end-to-end scenario; splitting is refactoring
 #[tokio::test]
 async fn a_send_after_the_final_stream_end_starts_a_new_turn() {

@@ -241,7 +241,7 @@ fn om_thresholds_within_u32_load() {
 
 #[test]
 fn om_threshold_above_u32_max_is_rejected() {
-    // Each of the three u64 thresholds is checked; the error names the
+    // Each of the four u64 thresholds is checked; the error names the
     // offending field and the limit (ticket #46).
     for (field, toml) in [
         (
@@ -256,6 +256,7 @@ fn om_threshold_above_u32_max_is_rejected() {
             "om.buffer_increment",
             "[om]\nbuffer_increment = 5000000000\n",
         ),
+        ("om.buffer_tokens", "[om]\nbuffer_tokens = 5000000000\n"),
     ] {
         let err = load_from(toml, "").unwrap_err();
         match err {

@@ -363,6 +363,11 @@ impl AgentSession {
             .await
         {
             eprintln!("om: turn-end pass failed: {e}");
+            // Close the status gauge: a failed pass never reaches the
+            // loop's `Done` arm, the only place it goes idle.
+            if let Some(hook) = &hook {
+                hook("idle");
+            }
         }
         self.inner
             .lock()
