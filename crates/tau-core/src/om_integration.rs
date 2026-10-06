@@ -77,6 +77,7 @@ impl OmState {
                     .expect("om thresholds are validated to fit a u32 at config load"),
                 buffer_activation: activation,
                 share_token_budget: false,
+                retries: om.retries.clone(),
             },
             record,
             buffered: Vec::new(),
@@ -377,6 +378,7 @@ pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
     }
     branch[i].timestamp.saturating_sub(branch[i - 1].timestamp) / 1000
 }
+mod retry;
 mod turn_end;
 pub use turn_end::*;
 

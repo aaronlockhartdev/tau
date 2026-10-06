@@ -329,6 +329,8 @@ async fn a_live_om_run_emits_om_status_events() {
         observe_threshold: 1,
         reflect_threshold: 40_000,
         buffer_increment: 1,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
     };
     let body = format!(
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}}}}\n\n",
@@ -591,6 +593,8 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
             observe_threshold: 100,
             reflect_threshold: 200,
             buffer_increment: 50,
+            buffer_tokens: 0,
+            retries: crate::config::OmRetries::default(),
         },
         crate::om::OmRecord::default(),
     );
@@ -642,8 +646,9 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     })
     .unwrap();
 
-    // Wait for the nudge turn to complete (3 StreamEnds total) so the
-    // full event stream is in hand.
+    // Wait for the nudge turn to complete (2 StreamEnds total — one per
+    // turn; the OM call no longer crosses the forwarding seam, ticket
+    // #86) so the full event stream is in hand.
     for _ in 0..2000 {
         let ends = collected
             .lock()
@@ -651,7 +656,7 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
             .iter()
             .filter(|e| matches!(e, Event::StreamEnd { .. }))
             .count();
-        if ends >= 3 {
+        if ends >= 2 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -678,5 +683,234 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
             }
         )),
         "an interrupted StreamEnd: the continuation was cut, not a new turn"
+    );
+}
+
+/// Serves its scripted body for the first `ok` calls, then fails every
+/// later call with `make_error` — the shape of a transient provider
+/// failure hitting the turn-end OM call (ticket #86 P1). `served` is
+/// shared with the test for attempt counting.
+struct FailingAfter {
+    inner: provider::TurnProviderRef,
+    ok: usize,
+    served: Arc<std::sync::atomic::AtomicUsize>,
+    make_error: fn() -> provider::ProviderError,
+}
+
+impl provider::TurnProvider for FailingAfter {
+    fn call<'a>(
+        &self,
+        request: &provider::ResponseRequest,
+        sink: &'a mut dyn provider::TurnSink,
+    ) -> provider::ProviderTurn<'a> {
+        let n = self
+            .served
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if n < self.ok {
+            return self.inner.call(request, sink);
+        }
+        let make_error = self.make_error;
+        Box::pin(async move { Err(make_error()) })
+    }
+}
+
+/// The turn-end OM pass fails transiently and exhausts its configured
+/// retry: the turn must still settle cleanly — no `AgentError`, and no
+/// interrupted `StreamEnd` anywhere in the event stream (the #82 class,
+/// which the inner-provider routing structurally excludes; ticket #86 P1).
+#[tokio::test]
+async fn a_failed_om_pass_does_not_kill_the_turn() {
+    // A text-only body long enough to cross the observe threshold in one
+    // turn (4000 chars >> 100 tokens under any counting heuristic).
+    let text = "x".repeat(4000);
+    let body = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = match core
+        .dispatch(Command::WorkspaceOpen {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Workspace { workspace: w } => w,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    // The reply (~1000 tokens) crosses the 100-token observe threshold,
+    // so the turn-end pass fires one observer round-trip: the wrapper's
+    // second call, which idle-times-out and exhausts its single retry.
+    let om = crate::om_integration::OmState::from_config(
+        &crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 100,
+            reflect_threshold: 200,
+            buffer_increment: 50,
+            buffer_tokens: 0,
+            retries: crate::config::OmRetries {
+                observe: 1,
+                buffer: 0,
+                reflect: 0,
+            },
+        },
+        crate::om::OmRecord::default(),
+    );
+    let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let failing: provider::TurnProviderRef = Arc::new(FailingAfter {
+        inner: provider::canned(&body),
+        ok: 1,
+        served: served.clone(),
+        make_error: || provider::ProviderError::IdleTimeout,
+    });
+    let live = manual_session_om(&core, &workspace, failing, TurnConfig::default(), Some(om));
+
+    let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+    let sink = Arc::clone(&collected);
+    let pump_core = Arc::clone(&core);
+    tokio::spawn(async move {
+        crate::harness::pump::pump(pump_core, move |batch| {
+            sink.lock().unwrap().extend(batch.iter().cloned());
+        })
+        .await;
+    });
+
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "do the thing".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+
+    // The turn settles (one `StreamEnd`; the OM call no longer crosses
+    // the forwarding seam, so it adds no end of its own).
+    for _ in 0..3000 {
+        let done = collected
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::StreamEnd { .. }));
+        if done {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let events = collected.lock().unwrap().clone();
+
+    // Three calls: the main turn call, then the two OM attempts
+    // (first failure + the single configured retry).
+    assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 3);
+    // The turn completed: its assistant entry is in the stream, and no
+    // event anywhere is an interrupted end.
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::EntryUpsert { entry, .. }
+            if entry.kind == "assistant")),
+        "the turn's assistant entry is missing: {events:?}"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::StreamEnd {
+                interrupted: true,
+                ..
+            }
+        )),
+        "a failed OM pass surfaced as an interrupted turn: {events:?}"
+    );
+}
+
+/// A non-transient OM failure (a 4xx) makes exactly one attempt — the
+/// configured 8 retries do not apply — and the turn settles the same
+/// way (ticket #86 P1).
+#[tokio::test]
+async fn a_non_transient_om_failure_makes_no_retry_attempts() {
+    let text = "x".repeat(4000);
+    let body = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = match core
+        .dispatch(Command::WorkspaceOpen {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Workspace { workspace: w } => w,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    let om = crate::om_integration::OmState::from_config(
+        &crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 100,
+            reflect_threshold: 200,
+            buffer_increment: 50,
+            buffer_tokens: 0,
+            retries: crate::config::OmRetries {
+                observe: 8,
+                buffer: 0,
+                reflect: 0,
+            },
+        },
+        crate::om::OmRecord::default(),
+    );
+    let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let failing: provider::TurnProviderRef = Arc::new(FailingAfter {
+        inner: provider::canned(&body),
+        ok: 1,
+        served: served.clone(),
+        make_error: || provider::ProviderError::Status {
+            status: 400,
+            body: String::new(),
+        },
+    });
+    let live = manual_session_om(&core, &workspace, failing, TurnConfig::default(), Some(om));
+
+    let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+    let sink = Arc::clone(&collected);
+    let pump_core = Arc::clone(&core);
+    tokio::spawn(async move {
+        crate::harness::pump::pump(pump_core, move |batch| {
+            sink.lock().unwrap().extend(batch.iter().cloned());
+        })
+        .await;
+    });
+
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "do the thing".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+
+    for _ in 0..3000 {
+        let done = collected
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::StreamEnd { .. }));
+        if done {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let events = collected.lock().unwrap().clone();
+
+    // Exactly one OM attempt: a 4xx is permanent, retries do not apply.
+    assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::StreamEnd {
+                interrupted: true,
+                ..
+            }
+        )),
+        "a failed OM pass surfaced as an interrupted turn: {events:?}"
     );
 }

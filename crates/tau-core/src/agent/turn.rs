@@ -344,10 +344,26 @@ impl AgentSession {
                     .expect("agent inner: no panic while the lock is held");
                 f(&mut guard.store)
             };
-        state
-            .settle_turn(&mut with_store, &self.provider, &model, hook.as_ref())
+        // The pass goes through the session's inner provider, not the
+        // forwarding seam (ticket #86): OM calls are not user-facing
+        // streams, and keeping them out of the forwarding call registry
+        // means a failed pass cannot surface as an interrupted `StreamEnd`
+        // in the post-turn reconciliation (the #82 class). A plain
+        // (non-forwarding) provider has no registry — use it as-is.
+        let om_provider = self
+            .provider
+            .forwarding_inner()
+            .unwrap_or_else(|| self.provider.clone());
+        // A failed pass (a provider error that survived its retries, a
+        // storage error) must not kill the turn (ticket #86): the entries
+        // stay unobserved and the next turn-end retries; the partial state
+        // is written back as-is.
+        if let Err(e) = state
+            .settle_turn(&mut with_store, &om_provider, &model, hook.as_ref())
             .await
-            .map_err(AgentError::Om)?;
+        {
+            eprintln!("om: turn-end pass failed: {e}");
+        }
         self.inner
             .lock()
             .expect("agent inner: no panic while the lock is held")

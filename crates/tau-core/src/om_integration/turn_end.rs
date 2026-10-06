@@ -1,5 +1,5 @@
 use super::{
-    BufferedChunk, Cursor, Entry, IDLE_ACTIVATION_SECS, NoopSink, OmError, OmState, SessionStore,
+    BufferedChunk, Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore,
     branch_entries, entry_text, idle_gap_secs, is_raw, now_ms, om, transcript,
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
@@ -172,11 +172,14 @@ impl OmState {
                             content: transcript.clone(),
                         })],
                     );
-                    let mut sink = NoopSink;
-                    provider
-                        .call(&request, &mut sink)
-                        .await
-                        .map_err(OmError::Provider)?
+                    // Per-trigger-point retry counts (ticket #86): observe
+                    // and buffer have separate knobs.
+                    let (label, retries) = if matches!(action, TurnEndAction::Observe { .. }) {
+                        ("observe", self.config.retries.observe)
+                    } else {
+                        ("buffer", self.config.retries.buffer)
+                    };
+                    super::retry::call_with_retry(provider, &request, label, retries).await?
                 }
                 TurnEndAction::Reflect { level } => {
                     let prompt = self.reflector_prompt(*level);
@@ -189,11 +192,13 @@ impl OmState {
                             content: prompt,
                         })],
                     );
-                    let mut sink = NoopSink;
-                    provider
-                        .call(&request, &mut sink)
-                        .await
-                        .map_err(OmError::Provider)?
+                    super::retry::call_with_retry(
+                        provider,
+                        &request,
+                        "reflect",
+                        self.config.retries.reflect,
+                    )
+                    .await?
                 }
             };
             model.clone_into(&mut self.record.om_model);

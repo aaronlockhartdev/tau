@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, Weak};
 use serde_json::{Value, json};
 use tau_core::agent::{AgentSession, Lane, TurnConfig};
 use tau_core::agent_type::builtin_general;
-use tau_core::config::{Om, Provider, Requests, SubAgents, ToolBatchPolicy};
+use tau_core::config::{Om, OmRetries, Provider, Requests, SubAgents, ToolBatchPolicy};
 use tau_core::harness::SessionRole;
 use tau_core::om::OmRecord;
 use tau_core::om_integration::OmState;
@@ -420,6 +420,8 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             // not that the model writes long observations
             reflect_threshold: 10,
             buffer_increment: 500,
+            buffer_tokens: 0,
+            retries: OmRetries::default(),
         },
         OmRecord::default(),
     );

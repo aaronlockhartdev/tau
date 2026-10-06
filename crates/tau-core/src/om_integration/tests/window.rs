@@ -94,6 +94,8 @@ fn raw_window_prunes_to_the_floor_and_keeps_tool_results_attached() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230, // = the retention floor at this threshold
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
     };
     let state = OmState::from_config(&cfg, OmRecord::default());
     let window = state.raw_window_from(&all, leaf.as_deref());
@@ -112,6 +114,8 @@ fn raw_window_prunes_to_the_floor_and_keeps_tool_results_attached() {
             observe_threshold: 30_000,
             reflect_threshold: 40_000,
             buffer_increment: 6_000,
+            buffer_tokens: 0,
+            retries: crate::config::OmRetries::default(),
         },
         OmRecord::default(),
     );
@@ -128,6 +132,8 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
     };
     let mut state = OmState::from_config(
         &cfg,
@@ -172,6 +178,8 @@ fn the_main_agent_view_has_no_boundary_markers() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
     };
     // A log with a boundary delimiter between two observation groups.
     let log = format!(
@@ -211,6 +219,8 @@ fn the_suggested_response_is_injected_once_then_cleared() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
     };
     let mut state = OmState::from_config(
         &cfg,

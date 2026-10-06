@@ -167,6 +167,27 @@ pub enum ToolBatchPolicy {
     Kill,
 }
 
+/// Per-trigger-point retry counts for the OM provider round-trips
+/// (ticket #86): retries after the first failure, before the cycle is
+/// abandoned. Mastra's `withRetry` default is 8 (`docs/research/om-async-parity.md` §6).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OmRetries {
+    pub observe: u32,
+    pub buffer: u32,
+    pub reflect: u32,
+}
+
+impl Default for OmRetries {
+    fn default() -> Self {
+        Self {
+            observe: 8,
+            buffer: 8,
+            reflect: 8,
+        }
+    }
+}
+
 /// Observational Memory settings; `om_model` is global, not per-provider (spec §4).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -175,6 +196,11 @@ pub struct Om {
     pub observe_threshold: u64,
     pub reflect_threshold: u64,
     pub buffer_increment: u64,
+    /// Async buffer-interval token count (mastra `bufferTokens`); 0 disables
+    /// the async boundary trigger entirely (mastra's own enable condition).
+    pub buffer_tokens: u64,
+    /// Per-trigger-point retry counts for the OM round-trips.
+    pub retries: OmRetries,
 }
 
 impl Om {
@@ -187,6 +213,7 @@ impl Om {
             ("om.observe_threshold", self.observe_threshold),
             ("om.reflect_threshold", self.reflect_threshold),
             ("om.buffer_increment", self.buffer_increment),
+            ("om.buffer_tokens", self.buffer_tokens),
         ] {
             if value > u64::from(limit) {
                 return Err(LoadError::OmThreshold {
@@ -207,6 +234,8 @@ impl Default for Om {
             observe_threshold: 30_000,
             reflect_threshold: 40_000,
             buffer_increment: 6_000,
+            buffer_tokens: 6_000,
+            retries: OmRetries::default(),
         }
     }
 }
