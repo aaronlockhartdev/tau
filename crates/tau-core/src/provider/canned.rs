@@ -57,14 +57,29 @@ struct CannedProvider {
     /// Cut the stream after this many events (the force-kill shape);
     /// `usize::MAX` = the full stream.
     cut_after: usize,
+    /// Calls served so far: the script exhausts after the first call — a
+    /// later call answers an empty completed stream so the turn ends
+    /// naturally, like a real model that stops calling tools (the same
+    /// exhaustion semantics as `ScriptedProvider`).
+    calls_served: std::sync::atomic::AtomicUsize,
 }
 
 impl TurnProvider for CannedProvider {
     fn call<'a>(&self, _request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+        let served = self
+            .calls_served
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let events = self.events.clone();
         let calls = self.calls.clone();
         let cut_after = self.cut_after;
         Box::pin(async move {
+            if served > 0 {
+                // Exhausted: an empty completed stream ends the turn.
+                return Ok(TurnResult {
+                    completed: true,
+                    ..TurnResult::default()
+                });
+            }
             let mut result = TurnResult::default();
             let mut accepted = 0usize;
             for event in &events {
@@ -98,6 +113,7 @@ pub fn canned(body: &str) -> TurnProviderRef {
         events,
         calls,
         cut_after: usize::MAX,
+        calls_served: std::sync::atomic::AtomicUsize::new(0),
     })
 }
 
@@ -110,6 +126,7 @@ pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
         events,
         calls,
         cut_after: n,
+        calls_served: std::sync::atomic::AtomicUsize::new(0),
     })
 }
 

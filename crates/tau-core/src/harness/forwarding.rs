@@ -25,8 +25,9 @@ pub(crate) struct ForwardingProvider {
     /// Call ids in start order; a turn diffs its assistant entries against
     /// this (the kth entry in a turn is the kth call).
     pub(crate) calls: Arc<Mutex<Vec<String>>>,
-    /// Calls whose `Completed` (usage) event was seen; the post-turn diff
-    /// emits `StreamEnd` for the rest.
+    /// Calls whose `Completed` frame was seen: the post-turn diff uses this
+    /// to tell a cut empty partial (interrupted end) from a completed empty
+    /// call (clean end).
     pub(crate) completed: Arc<Mutex<HashMap<String, bool>>>,
 }
 
@@ -88,26 +89,16 @@ impl TurnSink for ForwardSink<'_> {
         }
         // Text/reasoning deltas are the loop's sink's: they become the
         // growing entry's snapshots (ADR-0008), not channel events.
-        if let TurnEvent::Completed(u) = &event {
+        // No `StreamEnd` here: the Completed frame ends the call's stream,
+        // not the turn — the turn's om_turn_end pass still runs after it.
+        // The end arrives with the post-turn reconciliation, at turn
+        // settlement (issue #82). The `completed` note is the
+        // reconciliation's cut-vs-clean signal for entry-less calls.
+        if let TurnEvent::Completed(_) = &event {
             self.completed
                 .lock()
                 .expect("completed-call map: no panic while the lock is held")
                 .insert(self.call_id.clone(), true);
-            self.send(Event::StreamEnd {
-                workspace: self.workspace.clone(),
-                session: self.session.clone(),
-                call_id: self.call_id.clone(),
-                interrupted: false,
-                usage: Some(Usage {
-                    input_tokens: u.input_tokens,
-                    output_tokens: u.output_tokens,
-                    total_tokens: u.total_tokens,
-                    cached_prompt_tokens: u
-                        .prompt_tokens_details
-                        .as_ref()
-                        .map_or(0, |d| d.cached_tokens),
-                }),
-            });
         }
         // A stop cuts the stream at the next delta (the loop records the
         // partial as interrupted, spec §7).
