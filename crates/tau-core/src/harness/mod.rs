@@ -83,6 +83,8 @@ mod tests_launch;
 #[cfg(test)]
 mod tests_model;
 #[cfg(test)]
+mod tests_om_async;
+#[cfg(test)]
 mod tests_skills;
 #[cfg(test)]
 mod tests_snapshot;

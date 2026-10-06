@@ -1,6 +1,6 @@
 use super::{
     AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
-    FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage, KIND_ASSISTANT,
+    FunctionCallInput, FunctionCallOutputInput, Inner, InputEntry, InputMessage, KIND_ASSISTANT,
     KIND_TOOL, KIND_USER, Lane, Ordering, Queued, ResponseRequest, SessionStore, ToolBatchPolicy,
     TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name, tools,
 };
@@ -199,6 +199,7 @@ impl AgentSession {
                     && !result.calls.is_empty()
                 {
                     self.run_tools(&result.calls).await?;
+                    self.om_mid_loop();
                     continue;
                 }
                 break;
@@ -210,6 +211,7 @@ impl AgentSession {
                 break;
             }
             self.run_tools(&result.calls).await?;
+            self.om_mid_loop();
             if self
                 .inner
                 .lock()
@@ -334,6 +336,27 @@ impl AgentSession {
         let Some(mut state) = state else {
             return Ok(());
         };
+        // D13.1: join the in-flight buffer cycle BEFORE the pass — the
+        // pass's activation (promote) reads the buffer the cycle writes.
+        // 60s bound: a cycle outliving it is fine, the write-back merge
+        // below picks up its commit (D13.2) and the turn doesn't hang.
+        let handle = {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
+            inner.om_inflight.take()
+        };
+        if let Some(handle) = handle {
+            let timed_out = tokio::time::timeout(std::time::Duration::from_secs(60), handle)
+                .await
+                .is_err();
+            if timed_out {
+                eprintln!(
+                    "om: buffer cycle outlived the 60s join; the turn-end merge picks up its commit"
+                );
+            }
+        }
         // The re-lock: each sync store phase takes the session lock and
         // releases it before the next provider call.
         let mut with_store =
@@ -369,13 +392,130 @@ impl AgentSession {
                 hook("idle");
             }
         }
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .om = Some(state);
+        // D13.2: the write-back is a field-split merge, not a clobber — a
+        // cycle that committed during the pass's LLM round-trip (the
+        // join timed out) keeps its chunks; the pass's observation
+        // fields win.
+        {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
+            match crate::om_integration::OmState::load_record(&mut inner.store) {
+                Ok(fresh) => {
+                    let live = inner.om.clone().unwrap_or_else(|| state.clone());
+                    state.merge_turn_end(&live, &fresh);
+                    // Persist only when the merge changed the record — a
+                    // racing cycle's commit (the join timed out) or a
+                    // sync-buffered chunk. The common case merges to
+                    // exactly the file's content; an unconditional save
+                    // would append a duplicate `om` entry every turn.
+                    if state.record == fresh {
+                        // The common case: the merge is a no-op over the
+                        // file's content, so nothing is re-saved.
+                    } else if let Err(e) = state.save(&mut inner.store) {
+                        eprintln!("om: write-back merge save failed: {e}");
+                    }
+                    inner.om = Some(state);
+                }
+                Err(e) => {
+                    eprintln!("om: record load for the write-back merge failed: {e}");
+                    inner.om = Some(state);
+                }
+            }
+        }
         Ok(())
     }
 
+    /// The mid-episode interval-boundary trigger (ticket #86 P2, D3/D4):
+    /// runs after each tool round — the moment new unobserved tokens
+    /// exist. At the observe threshold it promotes buffered chunks
+    /// (activation, no LLM call); below it, it spawns the background
+    /// buffer cycle when an interval boundary was crossed. The spawn
+    /// happens INSIDE the lock section: the in-flight flag is set before
+    /// the task can re-acquire the lock (D14), so the cycle and the
+    /// trigger never race on it. With `buffer_tokens = 0` (kill switch)
+    /// this is a no-op and the pass keeps today's sync behavior.
+    fn om_mid_loop(&self) {
+        let mut guard = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        let Inner {
+            store,
+            om,
+            om_inflight,
+            om_buffer_boundary,
+            om_model,
+            model,
+            ..
+        } = &mut *guard;
+        let Some(om) = om.as_mut() else {
+            return;
+        };
+        if om.config.buffer_tokens == 0 {
+            return;
+        }
+        let Ok(unobserved) = om.unobserved(store) else {
+            // A store read failure degrades: keep the last known pending,
+            // no trigger this round (the turn-end pass retries the read).
+            return;
+        };
+        om.record.pending_tokens = om.pending_tokens(&unobserved);
+        let spawn_pending = if om.activation_reached(om.record.pending_tokens) {
+            // Activation: promote the buffered chunks into the log (no LLM
+            // call); the sync turn-end pass owns the at/above-threshold
+            // range from here (the mastra partition).
+            match om.promote(store) {
+                Ok(_) => None,
+                Err(e) => {
+                    eprintln!("om: mid-loop activation failed: {e}");
+                    None
+                }
+            }
+        } else if crate::om_integration::background::boundary_crossed(
+            u64::from(om.record.pending_tokens),
+            &om.config,
+            om.record.last_buffered_at_tokens,
+            *om_buffer_boundary,
+        ) {
+            Some(om.record.pending_tokens)
+        } else {
+            None
+        };
+        let Some(pending) = spawn_pending else {
+            return;
+        };
+        if om_inflight.is_some() {
+            // A cycle is already running: it owns the interval; the next
+            // crossing (one more interval of material) triggers again.
+            return;
+        }
+        // The in-process boundary advances at TRIGGER time (D6); the
+        // persisted one only at the cycle's successful commit.
+        *om_buffer_boundary = u64::from(pending);
+        let inner = std::sync::Arc::clone(&self.inner);
+        let config = om.config.clone();
+        let provider = self
+            .provider
+            .forwarding_inner()
+            .unwrap_or_else(|| self.provider.clone());
+        let model_owned = if om_model.is_empty() {
+            // The session model (same resolution as the turn-end pass).
+            model.clone()
+        } else {
+            om_model.clone()
+        };
+        *om_inflight = Some(tokio::spawn(
+            crate::om_integration::background::buffer_cycle(
+                inner,
+                config,
+                provider,
+                model_owned,
+                u64::from(pending),
+            ),
+        ));
+    }
     #[allow(clippy::too_many_lines)] // one append pass; splitting is refactoring
     fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
         // A steering report was already appended at queue time (so the GUI

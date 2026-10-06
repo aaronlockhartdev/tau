@@ -188,6 +188,20 @@ impl ResponseRequest {
         }
         self
     }
+
+    /// The caller's system-prompt instructions (the OM routing seam reads
+    /// this to tell observer round-trips apart from main-turn calls).
+    #[must_use]
+    pub fn instructions(&self) -> Option<&str> {
+        self.instructions.as_deref()
+    }
+
+    /// The request's input entries (test seam: the OM async tests capture
+    /// them to assert the assembled raw window).
+    #[must_use]
+    pub fn input(&self) -> &[InputEntry] {
+        &self.input
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

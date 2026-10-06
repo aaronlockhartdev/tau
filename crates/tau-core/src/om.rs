@@ -30,6 +30,9 @@ pub struct OmConfig {
     /// threshold expands into unused observation space up to the shared total
     /// budget (`fixtures/references/mastra-om/thresholds.ts` `calculateDynamicThreshold`).
     pub share_token_budget: bool,
+    /// Async buffer-interval token count (mastra `bufferTokens`); `0`
+    /// disables the mid-loop boundary trigger entirely (ticket #86 P2).
+    pub buffer_tokens: u32,
     /// Per-trigger-point retry counts for the OM round-trips (ticket #86).
     pub retries: crate::config::OmRetries,
 }
@@ -41,6 +44,7 @@ impl Default for OmConfig {
             reflect_threshold: 40_000,
             buffer_activation: 0.8,
             share_token_budget: false,
+            buffer_tokens: 0,
             retries: crate::config::OmRetries::default(),
         }
     }
@@ -198,7 +202,7 @@ pub fn projected_message_removal(
 /// entries). The cursor is path-scoped: an entry id plus its timestamp,
 /// evaluated on the active branch (Mastra's cursor is a linear timestamp;
 /// the entry id is tau's branch disambiguator).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OmRecord {
     /// Frozen prefix: the parent's observation log verbatim at a compacted
@@ -232,6 +236,15 @@ pub struct OmRecord {
     pub om_suggested_response: String,
     #[serde(default)]
     pub om_model: String,
+    /// Buffered Observer chunks (ticket #86 P2, mastra
+    /// `bufferedObservationChunks`): durable in the record so a restart
+    /// doesn't force a full re-observation; activation promotes them.
+    #[serde(default)]
+    pub buffered_chunks: Vec<crate::om_integration::BufferedChunk>,
+    /// The token boundary the last buffer cycle committed at (the persisted
+    /// half of the two-tier boundary, ticket #86 P2; research §3.2).
+    #[serde(default)]
+    pub last_buffered_at_tokens: u64,
 }
 
 impl OmRecord {

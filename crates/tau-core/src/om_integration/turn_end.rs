@@ -75,6 +75,11 @@ impl OmState {
         self.record.observation_tokens = om::token_count(&self.record.active_observations);
         self.record.pending_tokens = self.buffered.iter().skip(count).map(|c| c.tokens).sum();
         self.buffered.drain(0..count);
+        // The record is the durable chunk store (ticket #86 P2): promote
+        // drains it in lockstep, or the promoted chunks would be re-promoted
+        // (their text appended to the log a second time) on the next
+        // activation.
+        self.record.buffered_chunks.drain(0..count);
         self.changed = true;
         self.save(store)?;
         Ok(true)
@@ -210,6 +215,10 @@ impl OmState {
     /// The turn-end decision (pure over the record — `settle_turn` feeds it
     /// the unobserved entries it just read): reflect at the observation
     /// threshold, observe at activation, buffer at the increment (spec §4).
+    /// The sync Buffer arm is the kill-switch path only: with async
+    /// buffering enabled (`buffer_tokens > 0`) the mid-loop background
+    /// cycles own the sub-threshold range (ticket #86 P2, D2/T6), so the
+    /// turn-end pass never buffers.
     pub fn plan(&mut self, unobserved: &[Entry]) -> TurnEndAction {
         if om::should_reflect(self.record.observation_tokens, &self.config) {
             return TurnEndAction::Reflect { level: 0 };
@@ -219,7 +228,9 @@ impl OmState {
                 transcript: transcript(unobserved),
             };
         }
-        if self.record.pending_tokens >= self.config.buffer_increment() {
+        if self.config.buffer_tokens == 0
+            && self.record.pending_tokens >= self.config.buffer_increment()
+        {
             // The transcript covers only the not-yet-buffered tail of the
             // unobserved range (the buffer cursor keeps runs disjoint).
             let start = match &self.buffer_cursor {
@@ -364,12 +375,18 @@ impl OmState {
         let range = format!("{}:{}", first.id, last.id);
         let id = om::generate_group_id(observations);
         let wrapped = om::wrap_in_observation_group(observations, &range, &id, None);
-        self.buffered.push(BufferedChunk {
+        let chunk = BufferedChunk {
             range: (first.id.clone(), last.id.clone()),
             last_ts: last.timestamp,
             text: wrapped,
             tokens: om::token_count(observations),
-        });
+        };
+        // The record is the durable chunk store (ticket #86 P2): the sync
+        // path writes there too, so the turn-end write-back merge (which
+        // re-syncs the in-memory mirror from the record) cannot drop the
+        // chunk.
+        self.record.buffered_chunks.push(chunk.clone());
+        self.buffered.push(chunk);
         self.buffer_cursor = Some(last.id.clone());
         Ok(())
     }
@@ -378,7 +395,7 @@ impl OmState {
     /// cursor, or the whole branch when no run has happened (the buffer
     /// cursor never lags the observation cursor — promotion advances the
     /// latter to the buffered material's end).
-    fn unbuffered(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
+    pub(super) fn unbuffered(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
         let all = store.entries_range(0, usize::MAX)?;
         let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
         let branch = branch_entries(&all, leaf.as_deref());

@@ -119,8 +119,8 @@ pub(crate) type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 /// consumed): the app re-emits the queue snapshot so the GUI's queue pane
 /// doesn't stay stale until the turn boundary.
 pub(crate) type QueueEventHook = Arc<dyn Fn() + Send + Sync>;
-struct Inner {
-    store: SessionStore,
+pub(crate) struct Inner {
+    pub(crate) store: SessionStore,
     system_prompt: String,
     model: String,
     tools: Vec<ToolSpec>,
@@ -128,8 +128,17 @@ struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
-    om: Option<crate::om_integration::OmState>,
-    om_model: String,
+    pub(crate) om: Option<crate::om_integration::OmState>,
+    /// The in-flight background buffer cycle (ticket #86 P2): set under
+    /// the lock at spawn, so the task's first re-lock sees it; process
+    /// death drops the handle and clears it (no mastra-style static
+    /// registry to recover).
+    pub(crate) om_inflight: Option<tokio::task::JoinHandle<()>>,
+    /// In-process buffer boundary (the spawn-time tier of the two-tier
+    /// boundary, ticket #86 P2); lost on restart, where the record's
+    /// `last_buffered_at_tokens` takes over.
+    pub(crate) om_buffer_boundary: u64,
+    pub(crate) om_model: String,
     /// The OM-run observer (the app emits the protocol's `om_status` event
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
@@ -184,7 +193,7 @@ pub(crate) struct SessionParams {
 }
 
 pub struct AgentSession {
-    inner: Mutex<Inner>,
+    inner: Arc<Mutex<Inner>>,
     provider: TurnProviderRef,
     kill: Arc<AtomicBool>,
     /// Persistent stop (ticket #23): unlike the per-call kill flag (reset
@@ -201,7 +210,7 @@ impl AgentSession {
     #[must_use]
     pub(crate) fn new(p: SessionParams) -> Self {
         Self {
-            inner: Mutex::new(Inner {
+            inner: Arc::new(Mutex::new(Inner {
                 store: p.store,
                 system_prompt: p.system_prompt,
                 model: p.model,
@@ -211,6 +220,8 @@ impl AgentSession {
                 turn: p.turn,
                 queue: VecDeque::new(),
                 om: p.om,
+                om_inflight: None,
+                om_buffer_boundary: 0,
                 om_model: p.om_model,
                 om_status_hook: None,
                 entry_upsert_hook: None,
@@ -218,7 +229,7 @@ impl AgentSession {
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
-            }),
+            })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
@@ -346,6 +357,7 @@ impl AgentSession {
 
     /// Whether a queued message is waiting (a parked sub-agent with a
     /// queued message is resumed by it, ADR-0001).
+    #[must_use]
     pub fn has_pending(&self) -> bool {
         !self
             .inner
@@ -616,7 +628,7 @@ impl AgentSession {
 mod turn;
 
 #[cfg(test)]
-mod testkit;
+pub(crate) mod testkit;
 #[cfg(test)]
 mod tests_om;
 #[cfg(test)]

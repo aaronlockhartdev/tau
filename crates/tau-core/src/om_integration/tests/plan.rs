@@ -73,7 +73,13 @@ fn commit_persists_the_observation_card_display_fields() {
 fn plan_buffers_below_activation_and_commit_holds_the_chunk() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 25, 1000);
-    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    // Kill-switch config: the sync Buffer arm is the buffer_tokens == 0
+    // path (ticket #86 P2); with it on, the mid-loop cycles buffer.
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
     // 25k tokens: below the 30k threshold, past the 6k increment.
     state.record.pending_tokens = 25_000;
     let unobserved = state.unobserved(&mut store).unwrap();
@@ -89,6 +95,37 @@ fn plan_buffers_below_activation_and_commit_holds_the_chunk() {
     assert_eq!(state.buffered.len(), 1);
     assert!(state.record.active_observations.is_empty());
     assert!(state.record.cursor.is_none());
+}
+
+#[test]
+fn plan_buffer_arm_is_the_kill_switch_path_only() {
+    // T2: the sync Buffer arm fires only when async buffering is off
+    // (buffer_tokens == 0). With buffer_tokens > 0 the mid-loop
+    // background cycles own the sub-threshold range, so the turn-end
+    // pass does no sync buffering (D2, I5).
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 25, 1000);
+    // Async on (the production default): the 25k pending sits in the
+    // [increment, threshold) band the sync arm would have buffered.
+    let mut on = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    on.record.pending_tokens = 25_000;
+    let unobserved = on.unobserved(&mut store).unwrap();
+    match on.plan(&unobserved) {
+        TurnEndAction::Done => {}
+        other => panic!("async on: expected Done, got {other:?}"),
+    }
+    // Kill switch: the same pending yields the sync Buffer.
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut off = OmState::from_config(&om, OmRecord::default());
+    off.record.pending_tokens = 25_000;
+    let unobserved = off.unobserved(&mut store).unwrap();
+    match off.plan(&unobserved) {
+        TurnEndAction::Buffer { .. } => {}
+        other => panic!("kill switch: expected Buffer, got {other:?}"),
+    }
 }
 
 #[test]

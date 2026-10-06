@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 
 use crate::om::{self, Cursor, OmConfig, OmRecord};
 use crate::session::{Entry, SessionStore};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The session entry kind that carries the OM record (spec §4: the session
@@ -22,10 +23,11 @@ pub const KIND_SPAWN_SNAPSHOT: &str = "spawn-snapshot";
 pub const IDLE_ACTIVATION_SECS: u64 = 60;
 
 /// One buffered Observer chunk (spec §4 Phase 2): the observed text for a
-/// raw range, held in memory until activation promotes it to the log —
-/// promotion itself makes no LLM call. A restart loses the buffer; the
-/// threshold path then re-observes the range (rework, not data loss).
-#[derive(Debug, Clone)]
+/// raw range, held until activation promotes it to the log — promotion
+/// itself makes no LLM call. Durable in the record (ticket #86 P2): a
+/// restart keeps the buffer; an un-promoted range is re-observed only if
+/// its chunk was never committed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BufferedChunk {
     /// (first entry id, last entry id) of the observed raw range.
     pub range: (String, String),
@@ -69,6 +71,9 @@ impl OmState {
                     .expect("om thresholds are validated to fit a u32 at config load"),
             ) / observe)
             .clamp(0.0, 1.0);
+        // The record is the single source of truth for the chunks; the
+        // in-memory vec is its mirror (ticket #86 P2).
+        let buffered = record.buffered_chunks.clone();
         Self {
             config: OmConfig {
                 observe_threshold: u32::try_from(om.observe_threshold)
@@ -77,10 +82,12 @@ impl OmState {
                     .expect("om thresholds are validated to fit a u32 at config load"),
                 buffer_activation: activation,
                 share_token_budget: false,
+                buffer_tokens: u32::try_from(om.buffer_tokens)
+                    .expect("om thresholds are validated to fit a u32 at config load"),
                 retries: om.retries.clone(),
             },
             record,
-            buffered: Vec::new(),
+            buffered,
             buffer_cursor: None,
             changed: false,
         }
@@ -140,6 +147,46 @@ impl OmState {
             .append(KIND_OM, payload, parent.as_deref())
             .map(|_| ())
     }
+
+    /// The turn-end write-back merge (ticket #86 P2, D13.2): the pass's
+    /// state is the base and its observation fields win; the chunk fields
+    /// are unioned in from the live state and the freshest file record
+    /// (deduped by range), so a background cycle that committed during the
+    /// pass (the bounded join timed out) is not clobbered — and vice
+    /// versa. The boundary is the max; the buffer cursor rides the largest
+    /// boundary (a cycle sets its cursor and boundary together).
+    pub(crate) fn merge_turn_end(&mut self, live: &OmState, fresh: &OmRecord) {
+        let mut chunks = self.record.buffered_chunks.clone();
+        for src in [&live.record.buffered_chunks, &fresh.buffered_chunks] {
+            for c in src {
+                if !chunks.iter().any(|k| k.range == c.range) {
+                    chunks.push(c.clone());
+                }
+            }
+        }
+        let boundary = self
+            .record
+            .last_buffered_at_tokens
+            .max(live.record.last_buffered_at_tokens)
+            .max(fresh.last_buffered_at_tokens);
+        let mut cursor = self.buffer_cursor.clone();
+        if live.record.last_buffered_at_tokens > self.record.last_buffered_at_tokens {
+            cursor.clone_from(&live.buffer_cursor);
+        }
+        if fresh.last_buffered_at_tokens > self.record.last_buffered_at_tokens
+            && fresh.last_buffered_at_tokens >= live.record.last_buffered_at_tokens
+        {
+            cursor = fresh
+                .buffered_chunks
+                .last()
+                .map(|c| c.range.1.clone())
+                .or(cursor);
+        }
+        self.record.buffered_chunks = chunks;
+        self.record.last_buffered_at_tokens = boundary;
+        self.buffer_cursor = cursor;
+        self.buffered = self.record.buffered_chunks.clone();
+    }
 }
 
 /// The active branch, root to leaf: the leaf's parent chain walked over the
@@ -183,6 +230,10 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
         observation_tokens: parent.observation_tokens,
         pending_tokens: 0,
         prefix_demoted: false,
+        // The fork inherits the parent's un-promoted buffer, but starts its
+        // boundary fresh: the parent's absolute boundary would suppress the
+        // child's own interval crossings (ticket #86 P2).
+        buffered_chunks: parent.buffered_chunks.clone(),
         ..Default::default()
     }
 }
@@ -362,9 +413,11 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
 pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
     let branch = branch_entries(all, leaf_id);
     // Back over the current turn's model output (assistant + tool entries)
-    // to its user run, then to the run's first entry.
+    // to its user run, then to the run's first entry. `om` entries are
+    // skipped too: a background buffer cycle can commit one mid-episode,
+    // after the turn's last model output (ticket #86 P2).
     let mut i = branch.len();
-    while i > 0 && matches!(branch[i - 1].kind.as_str(), "assistant" | "tool") {
+    while i > 0 && matches!(branch[i - 1].kind.as_str(), "assistant" | "tool" | "om") {
         i -= 1;
     }
     if i == 0 {
@@ -381,6 +434,7 @@ pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
 mod retry;
 mod turn_end;
 pub use turn_end::*;
+pub(crate) mod background;
 
 #[cfg(test)]
 pub(crate) mod tests;
