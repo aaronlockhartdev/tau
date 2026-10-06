@@ -146,23 +146,13 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let usage = entry.payload.get("usage").and_then(usage_of);
-                let completed = {
-                    let map = live
-                        .provider
-                        .completed
-                        .lock()
-                        .expect("completed-call map: no panic while the lock is held");
-                    call_id
-                        .as_ref()
-                        .and_then(|id| map.get(id))
-                        .copied()
-                        .unwrap_or(false)
-                };
-                if let Some(call_id) = call_id
-                    && !completed
-                {
-                    // The stream was cut before its Completed frame: the
-                    // partial stands as an interrupted end (spec §6/§7).
+                // A call's end is emitted here, at turn settlement — after
+                // the turn's om_turn_end pass — so `StreamEnd` means the
+                // turn is over and the session accepts a new turn (issue
+                // #82). A stream cut before its Completed frame has the
+                // same shape: the partial stands as an interrupted end
+                // (spec §6/§7).
+                if let Some(call_id) = call_id {
                     core.emit(Event::StreamEnd {
                         workspace: workspace.clone(),
                         session: session.clone(),
@@ -205,21 +195,32 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         }
     }
 
-    // A call cut before it produced an entry (an empty partial, N10) still
-    // gets its interrupted end — the GUI's live bubble must close.
+    // A call that produced no entry gets its end here: a cut stream is an
+    // interrupted end, a completed empty call a clean one — the GUI's live
+    // bubble must close either way (N10).
     {
-        let calls = live
-            .provider
-            .calls
-            .lock()
-            .expect("provider call ids: no panic while the lock is held");
+        let (calls, completed) = {
+            let calls = live
+                .provider
+                .calls
+                .lock()
+                .expect("provider call ids: no panic while the lock is held");
+            let completed = live
+                .provider
+                .completed
+                .lock()
+                .expect("completed-call map: no panic while the lock is held");
+            (calls, completed)
+        };
         let new_calls = calls.len() - calls_before;
         for i in assistant_index..new_calls {
+            let call_id = calls[calls_before + i].clone();
+            let completed = completed.get(&call_id).copied().unwrap_or(false);
             core.emit(Event::StreamEnd {
                 workspace: workspace.clone(),
                 session: session.clone(),
-                call_id: calls[calls_before + i].clone(),
-                interrupted: true,
+                call_id,
+                interrupted: !completed,
                 usage: None,
             });
         }

@@ -22,6 +22,19 @@ pub(crate) fn manual_session(
     inner: TurnProviderRef,
     turn: TurnConfig,
 ) -> Arc<LiveSession> {
+    manual_session_om(core, workspace, inner, turn, None)
+}
+
+/// `manual_session` with the OM turn-end pass enabled (the issue #82
+/// regression seam): the turn settles — and its `StreamEnd` arrives — only
+/// after the observer round-trip.
+pub(crate) fn manual_session_om(
+    core: &Arc<Core>,
+    workspace: &Workspace,
+    inner: TurnProviderRef,
+    turn: TurnConfig,
+    om: Option<crate::om_integration::OmState>,
+) -> Arc<LiveSession> {
     let tmp = workspace.cwd.clone();
     let cwd = PathBuf::from(&tmp);
     let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
@@ -48,7 +61,7 @@ pub(crate) fn manual_session(
             cwd: cwd.clone(),
             turn,
             tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
-            om: None,
+            om,
             om_model: String::new(),
         },
     )

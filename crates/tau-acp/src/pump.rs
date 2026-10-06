@@ -58,9 +58,9 @@ fn handle(
                     .lock()
                     .expect("session registry: no panic while the lock is held");
                 guard.get_mut(session).and_then(|s| {
-                    // Finalizes the oldest in-flight assistant entry; a
-                    // StreamEnd alone never settles (the empty Queue is the
-                    // settle signal).
+                    // Finalizes every in-flight assistant entry (the end is
+                    // per-turn, #82); a StreamEnd alone never settles (the
+                    // empty Queue is the settle signal).
                     s.mapper.on_stream_end();
                     s.saw_stream_end = true;
                     // A cancel may rewrite this turn's outcome only if it

@@ -537,3 +537,146 @@ async fn a_pipe_overflow_is_counted_and_surfaced() {
     assert!(surfaced, "an overflow must emit a visible summary");
     drop(core);
 }
+
+/// Issue #82: the post-turn reconciliation must not emit an interrupted
+/// `StreamEnd` for a call that completed without producing an entry.
+///
+/// The verified symptom: the OM observer call rides the session's
+/// forwarding provider (so it registers a call id) but its response never
+/// becomes a journal entry. Pre-fix, the empty-partial reconciliation arm
+/// treated every entry-less call as cut and emitted an interrupted
+/// `StreamEnd` that made the ACP settle rule answer `Cancelled` for
+/// completed runs. The fix
+/// distinguishes cut (no Completed frame) from completed-empty (Completed
+/// frame seen) via the `completed` map, and emits each call's end once,
+/// at turn settlement. This test pins both halves: a continuation send
+/// after the first `StreamEnd` starts its own turn, and no event stream in
+/// the run carries an interrupted end.
+#[allow(clippy::too_many_lines)] // one end-to-end scenario; splitting is refactoring
+#[tokio::test]
+async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
+    use std::fmt::Write as _;
+    // A text-only body long enough to cross the observe threshold in one
+    // turn (4000 chars >> 100 tokens under any counting heuristic).
+    let text = "x".repeat(4000);
+    let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
+    let _ = write!(
+        body,
+        "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\n"
+    );
+    let _ = write!(
+        body,
+        "data: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
+    );
+
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = match core
+        .dispatch(Command::WorkspaceOpen {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Workspace { workspace: w } => w,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    // Observe fires on the first turn (the 4000-char reply is ~1000
+    // tokens at the chars/4 estimator); reflect stays below the
+    // observation count so the pass is one observer round-trip per
+    // settle — the window the fix closes. 60 ms between events keeps the
+    // window wide enough to land a send in it.
+    let om = crate::om_integration::OmState::from_config(
+        &crate::config::Om {
+            om_model: String::new(),
+            observe_threshold: 100,
+            reflect_threshold: 200,
+            buffer_increment: 50,
+        },
+        crate::om::OmRecord::default(),
+    );
+    let live = manual_session_om(
+        &core,
+        &workspace,
+        provider::canned_slow(&body, 60),
+        TurnConfig::default(),
+        Some(om),
+    );
+
+    // The collector stands in for the ACP pump: everything it sees is
+    // what the settle rule acts on.
+    let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
+    let sink = Arc::clone(&collected);
+    let pump_core = Arc::clone(&core);
+    tokio::spawn(async move {
+        crate::harness::pump::pump(pump_core, move |batch| {
+            sink.lock().unwrap().extend(batch.iter().cloned());
+        })
+        .await;
+    });
+
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "do the thing".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+
+    // The settle rule fires on the first `StreamEnd`: dispatch the
+    // continuation at that moment, exactly as the headless loop does.
+    for _ in 0..1000 {
+        let seen_end = collected
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|e| matches!(e, Event::StreamEnd { .. }));
+        if seen_end {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "continue".into(),
+        lane: MessageLane::FollowUp,
+    })
+    .unwrap();
+
+    // Wait for the nudge turn to complete (3 StreamEnds total) so the
+    // full event stream is in hand.
+    for _ in 0..2000 {
+        let ends = collected
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|e| matches!(e, Event::StreamEnd { .. }))
+            .count();
+        if ends >= 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let events = collected.lock().unwrap().clone();
+    let assistants = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EntryUpsert { entry, .. } if entry.kind == "assistant" => Some(entry.id.clone()),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert!(
+        assistants.len() >= 2,
+        "the continuation turn produced no assistant entry (force-absorbed)"
+    );
+    assert!(
+        !events.iter().any(|e| matches!(
+            e,
+            Event::StreamEnd {
+                interrupted: true,
+                ..
+            }
+        )),
+        "an interrupted StreamEnd: the continuation was cut, not a new turn"
+    );
+}

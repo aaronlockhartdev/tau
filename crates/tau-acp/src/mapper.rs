@@ -58,10 +58,10 @@ impl Mapper {
         })]
     }
 
-    /// Finalize the call just ended: its assistant entry's snapshot is the
-    /// last one, so the diff state resets with it.
+    /// Finalize every in-flight entry: the turn-settled `StreamEnd` (issue
+    /// #82) closes the whole turn — all of its calls — not just the last.
     pub fn on_stream_end(&mut self) {
-        if let Some(id) = self.in_flight.pop_front() {
+        while let Some(id) = self.in_flight.pop_front() {
             self.in_flight_set.remove(&id);
             self.finalized.insert(id.clone());
             self.text_sent.remove(&id);
@@ -240,18 +240,22 @@ mod tests {
     }
 
     #[test]
-    fn stream_end_finalizes_the_oldest_in_flight() {
+    fn stream_end_finalizes_every_in_flight() {
         let mut m = Mapper::default();
         m.on_entry(&entry("e1", "assistant", json!({ "text": "a" })));
+        // An in-flight entry's unchanged snapshot owes nothing.
+        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "a" })));
+        assert!(out.is_empty(), "unchanged in-flight snapshot owes nothing");
         m.on_entry(&entry("e2", "assistant", json!({ "text": "b" })));
+        // The turn-settled `StreamEnd` (issue #82) closes the whole turn:
+        // every in-flight entry finalizes at once.
         m.on_stream_end();
-        // e1 is final: a re-upsert of e1 starts a fresh message, not a
-        // continuation of the old diff state.
+        // A resumed (finalized) entry is the current call again: a fresh
+        // message with the full text, newest in the finalize queue.
         let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "ab" })));
         assert_eq!(out[0]["content"]["text"], "ab");
-        m.on_stream_end();
         let out = m.on_entry(&entry("e2", "assistant", json!({ "text": "b" })));
-        assert!(out.is_empty(), "e2's unchanged snapshot owes nothing");
+        assert_eq!(out[0]["content"]["text"], "b");
     }
 
     #[test]
