@@ -13,6 +13,12 @@ pub type ProviderTurn<'a> =
 
 pub trait TurnProvider: Send + Sync {
     fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a>;
+    /// The provider a forwarding seam wraps, if any: non-user-facing calls
+    /// (the OM round-trips) route through it, keeping them out of the
+    /// forwarding call registry (ticket #86). Plain providers return `None`.
+    fn forwarding_inner(&self) -> Option<TurnProviderRef> {
+        None
+    }
 }
 
 pub type TurnProviderRef = Arc<dyn TurnProvider>;

@@ -32,6 +32,9 @@ pub(crate) struct ForwardingProvider {
 }
 
 impl TurnProvider for ForwardingProvider {
+    fn forwarding_inner(&self) -> Option<TurnProviderRef> {
+        Some(self.inner.clone())
+    }
     fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let call_id = format!(
             "{}-{:08}",

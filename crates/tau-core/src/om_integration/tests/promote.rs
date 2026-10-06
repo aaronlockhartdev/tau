@@ -19,6 +19,9 @@ fn state_with_two_chunks(pending_tokens: u32) -> OmState {
             tokens: 3000,
         },
     ];
+    // The record is the durable chunk store (ticket #86 P2): the mirror
+    // and the record are kept in lockstep.
+    state.record.buffered_chunks = state.buffered.clone();
     state
 }
 
@@ -91,6 +94,9 @@ fn promote_stops_at_the_boundary_and_keeps_the_rest_buffered() {
             tokens: 5000,
         },
     ];
+    // The record is the durable chunk store (ticket #86 P2): the mirror
+    // and the record are kept in lockstep.
+    state.record.buffered_chunks = state.buffered.clone();
     assert!(state.promote(&mut store).unwrap());
 
     assert!(state.record.active_observations.contains("obs one"));
@@ -104,5 +110,27 @@ fn promote_stops_at_the_boundary_and_keeps_the_rest_buffered() {
     );
     assert_eq!(state.record.pending_tokens, 5000);
     assert_eq!(state.buffered.len(), 1);
+    assert_eq!(state.buffered.len(), 1);
     assert_eq!(state.buffered[0].text, "obs two");
+}
+
+#[test]
+fn promote_drains_the_durable_record_chunks() {
+    // The record is the durable chunk store (ticket #86 P2): promote must
+    // drain it in lockstep with the in-memory mirror, or a reloaded state
+    // re-promotes the same chunks and appends their text to the log twice.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 4, 50);
+    let mut state = state_with_two_chunks(10_000);
+    state.record.buffered_chunks = state.buffered.clone();
+
+    assert!(state.promote(&mut store).unwrap());
+    assert!(state.buffered.is_empty());
+    assert!(state.record.buffered_chunks.is_empty());
+
+    let reloaded = OmState::load_record(&mut store).unwrap();
+    assert!(
+        reloaded.buffered_chunks.is_empty(),
+        "promoted chunks must not survive in the durable record"
+    );
 }
