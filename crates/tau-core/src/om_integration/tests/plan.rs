@@ -34,7 +34,7 @@ fn plan_picks_observe_at_activation_and_commit_advances_the_cursor() {
 }
 
 #[test]
-fn commit_persists_the_observation_card_display_fields() {
+fn commit_persists_functional_fields_and_omits_raw_input() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 3, 100);
     let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
@@ -54,14 +54,10 @@ fn commit_persists_the_observation_card_display_fields() {
     let entries = store.entries_range(0, usize::MAX).unwrap();
     let om = entries.iter().find(|e| e.kind == KIND_OM).unwrap();
     let p = &om.payload;
-    assert_eq!(
-        p.get("om_thinking").and_then(|v| v.as_str()),
-        Some("deciding what is worth remembering")
-    );
-    assert_eq!(
-        p.get("om_input").and_then(|v| v.as_str()),
-        Some("the observed transcript")
-    );
+    // The raw observer input/reasoning must NOT be persisted (mastra parity);
+    // only the functional suggested-response and the model name are.
+    assert!(p.get("om_input").is_none());
+    assert!(p.get("om_thinking").is_none());
     assert_eq!(
         p.get("om_suggested_response").and_then(|v| v.as_str()),
         Some("Walk through it.")

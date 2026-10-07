@@ -113,12 +113,6 @@ const OM_OBS: &[&str] = &[
     "the config merge keeps the system layer's provider order in a BTreeMap",
     "the pilot socket name must fit the 104-byte SUN_PATH on macOS",
 ];
-const OM_THINKING: &[&str] = &[
-    "the loop is converging; the last two rounds changed nothing new",
-    "the failure moved from the parser to the test harness; re-scoping",
-    "the measurement rounds flush in batches; waiting for the compositor",
-    "the edit applied cleanly; verifying with a re-run before the summary",
-];
 const OM_SUGGESTED: &[&str] = &[
     "re-run the failing suite with the timer probe enabled",
     "split the dispatch module before adding the next command",
@@ -149,8 +143,6 @@ fn om_payload(goal: u64) -> serde_json::Value {
         "active_observations": format!(
             "<observation-group>\n{older}\n\n{BOUNDARY}\n\n<observation-group>\n- {newest}\n</observation-group>"
         ),
-        "om_thinking": OM_THINKING[usize::try_from(goal).expect("loop index 0..50") % OM_THINKING.len()],
-        "om_input": format!("goal {goal}: work the loop to completion"),
         "om_suggested_response": OM_SUGGESTED[usize::try_from(goal).expect("loop index 0..50") % OM_SUGGESTED.len()],
         "om_model": "gpt-5.2"
     })
