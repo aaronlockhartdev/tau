@@ -369,8 +369,7 @@ async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
     );
 }
 
-/// T5: three tool rounds (~580 tokens each, under the 600-token retention
-/// floor so the raw window survives the prune) with a 1000-token observe
+/// T5: three tool rounds (~580 tokens each) with a 1000-token observe
 /// threshold: after round 1 the background cycle buffers; at round 2 the
 /// pending (~1.2k) reaches the threshold and the mid-loop ACTIVATION
 /// promotes the chunk (no LLM call) — so the 4th provider call's
