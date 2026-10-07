@@ -198,6 +198,8 @@ async fn attempt_one_turn(
     request: &ResponseRequest,
     sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
+    #[cfg(feature = "log-llm-requests")]
+    super::log::log_request(request);
     // `.timeout` is a *total* deadline, which kills a healthy long stream
     // mid-body: the connect/headers phase is bounded by
     // `requests.timeout_secs`, the stream by the per-chunk idle deadline
