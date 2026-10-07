@@ -83,6 +83,22 @@ describe('openFetches (open-tail, one-shot, mid-turn union)', () => {
     expect(st.lastFetched.get('c')).toEqual({ start: 0, end: 5 });
   });
 
+  it('fetches the whole session on open when the head is in the hysteresis dead zone', () => {
+    const st = makeWindowingState();
+    // 23 entries: a tail-only page (3..23) leaves 0..3 unfetched, and 0 is
+    // within FETCH_MARGIN of the page start, so scrollFetches never fetches
+    // the head — it would render as preview stubs. The open page must reach 0.
+    expect(openFetches(st, 'c', 23, 'idle')).toEqual([{ session: 'c', start: 0, count: 23 }]);
+    expect(st.lastFetched.get('c')).toEqual({ start: 0, end: 23 });
+  });
+
+  it('still pages the tail once the session outgrows the dead zone', () => {
+    const st = makeWindowingState();
+    // 26 entries: the head (0) is more than FETCH_MARGIN below the tail page
+    // start (6), so a scroll fetches it — the tail-only open page stands.
+    expect(openFetches(st, 'c', 26, 'idle')).toEqual([{ session: 'c', start: 6, count: 20 }]);
+  });
+
   it('unions the tail range into the mid-turn set while a turn runs', () => {
     const st = makeWindowingState();
     openFetches(st, 'c', 30, 'running');

@@ -74,7 +74,11 @@ export function openFetches(
   total: number,
   turn: TurnState
 ): FetchRequest[] {
-  const count = Math.min(OPEN_TAIL, total);
+  // A session that fits in a tail page plus the render buffer is fetched in
+  // full on open: a tail-only page leaves the head inside the buffer but
+  // unhydrated, and scrollFetches' margin then treats it as covered, so the
+  // head would render as preview stubs.
+  const count = total <= OPEN_TAIL + FETCH_MARGIN ? total : OPEN_TAIL;
   const range: Range = { start: total - count, end: total };
   if (turn !== 'idle') union(st, session, range);
   if (st.openedFor === session) return [];
