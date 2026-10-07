@@ -1,255 +1,66 @@
-/// Verbatim from `packages/memory/src/processors/observational-memory/observer-agent.ts`
-/// (`OBSERVER_EXTRACTION_INSTRUCTIONS`)) of the pinned upstream commit.
-/// Byte-for-byte: the fidelity test diffs this against the copy in
-/// `fixtures/references/mastra-om/`.
-pub const OBSERVER_EXTRACTION_INSTRUCTIONS: &str = r#"CRITICAL: DISTINGUISH USER ASSERTIONS FROM QUESTIONS
+/// Coding-domain extraction guidance. This is tau's value for mastra's
+/// `instruction` customization slot, baked in because tau is a single
+/// (coding) domain - it replaces the personal-assistant default the verbatim
+/// port froze. The mechanical line format it mandates - an `(HH:MM)` time
+/// prefix and one fact per line - is load-bearing for
+/// [`parse_observer_output`]; the priority markers and the `<observations>`
+/// wrapper come from [`OBSERVER_OUTPUT_FORMAT`].
+pub const OBSERVER_EXTRACTION_INSTRUCTIONS: &str = r#"EXTRACT DURABLE FACTS ABOUT THE WORK, NOT CHATTER
 
-When the user TELLS you something about themselves, mark it as an assertion:
-- "I have two kids" → 🔴 (14:30) User stated has two kids
-- "I work at Acme Corp" → 🔴 (14:31) User stated works at Acme Corp
-- "I graduated in 2019" → 🔴 (14:32) User stated graduated in 2019
+You are observing a coding / terminal session. Record the facts a future agent
+needs to continue this work without re-deriving them. Skip transient chatter,
+retries, and steps that add no new information.
 
-When the user ASKS about something, mark it as a question/request:
-- "Can you help me with X?" → 🔴 (15:00) User asked help with X
-- "What's the best way to do Y?" → 🔴 (15:01) User asked best way to do Y
-
-Distinguish between QUESTIONS and STATEMENTS OF INTENT:
-- "Can you recommend..." → Question (extract as "User asked...")
-- "I'm looking forward to [doing X]" → Statement of intent (extract as "User stated they will [do X] (include estimated/actual date if mentioned)")
-- "I need to [do X]" → Statement of intent (extract as "User stated they need to [do X] (again, add date if mentioned)")
+WHAT TO RECORD (by category):
+- Environment & setup: working directory, OS/toolchain, key dependencies and
+  versions, and the exact commands confirmed to build / test / run.
+  (14:30) Project builds with `cargo build`; tests run with `cargo test -p tau-core`
+  (14:31) Linux x86_64; Rust 1.98 toolchain
+- Codebase structure: important files and their roles, architecture, key
+  modules / functions.
+  (14:32) `src/om/observer.rs` owns the observer prompt and output parsing
+- Task & deliverables: what the task requires, the required deliverable path(s)
+  and format, and the acceptance criteria.
+  (14:33) Deliverable must be at `/app/primers.fasta` (the verifier checks that
+  exact path); a self-chosen path will fail
+- Decisions & rationale: choices made and why, plus tradeoffs.
+  (14:34) Chose zstd over gzip for blob compression (smaller; in-tree crate)
+- Constraints & gotchas: limits (memory / time / API quirks), pitfalls, and
+  failures with their causes.
+  (14:35) Container OOM-kills the C++ compiler above ~250 MB RSS
+  (14:36) `BeautifulSoup` re-serializes attributes, reordering clean HTML
+- Progress state: what is done, in progress, or blocked.
+  (14:37) ✅ Sample tests pass; remaining: the edge-case suite
 
 STATE CHANGES AND UPDATES:
-When a user indicates they are changing something, frame it as a state change that supersedes previous information:
-- "I'm going to start doing X instead of Y" → "User will start doing X (changing from Y)"
-- "I'm switching from A to B" → "User is switching from A to B"
-- "I moved my stuff to the new place" → "User moved their stuff to the new place (no longer at previous location)"
+When the state of the work changes, frame it so it supersedes the older fact:
+- BAD: "Switching to a new approach"
+- GOOD: "Will use approach B (replacing approach A)"
+This keeps current state distinguishable from outdated information.
 
-If the new state contradicts or updates previous information, make that explicit:
-- BAD: "User plans to use the new method"
-- GOOD: "User will use the new method (replacing the old approach)"
-
-This helps distinguish current state from outdated information.
-
-USER ASSERTIONS ARE AUTHORITATIVE. The user is the source of truth about their own life.
-If a user previously stated something and later asks a question about the same topic,
-the assertion is the answer - the question doesn't invalidate what they already told you.
+CONFIRMED FACTS ARE AUTHORITATIVE:
+A fact the agent verified (a command that ran, a test that passed, a file that
+exists) is authoritative. If a later step re-checks the same topic, the
+verified fact stands unless new evidence contradicts it.
 
 TEMPORAL ANCHORING:
-Each observation has TWO potential timestamps:
-
-1. BEGINNING: The time the statement was made (from the message timestamp) - ALWAYS include this
-2. END: The time being REFERENCED, if different from when it was said - ONLY when there's a relative time reference
-
-ONLY add "(meaning DATE)" or "(estimated DATE)" at the END when you can provide an ACTUAL DATE:
-- Past: "last week", "yesterday", "a few days ago", "last month", "in March"
-- Future: "this weekend", "tomorrow", "next week"
-
-DO NOT add end dates for:
-- Present-moment statements with no time reference
-- Vague references like "recently", "a while ago", "lately", "soon" - these cannot be converted to actual dates
+Each observation carries the (HH:MM) time it was made - ALWAYS include it.
+Only add a "(meaning DATE)" / "(estimated DATE)" suffix when the statement
+references a specific, different date you can resolve to an actual date
+("tomorrow", "next week", "in March"). Do NOT add a date for present-moment
+statements or vague references ("recently", "soon").
 
 FORMAT:
-- With time reference: (TIME) [observation]. (meaning/estimated DATE)
-- Without time reference: (TIME) [observation].
+- With a resolvable date reference: (HH:MM) [fact]. (meaning/estimated DATE)
+- Without: (HH:MM) [fact].
 
-GOOD: (09:15) User's friend had a birthday party in March. (meaning March 20XX)
-      ^ References a past event - add the referenced date at the end
+PRESERVE EXACT IDENTIFIERS:
+Quote file paths, command lines, error messages, and non-standard terms exactly
+as they appear - a future agent must be able to act on them verbatim.
 
-GOOD: (09:15) User will visit their parents this weekend. (meaning June 17-18, 20XX)
-      ^ References a future event - add the referenced date at the end
-
-GOOD: (09:15) User prefers hiking in the mountains.
-      ^ Present-moment preference, no time reference - NO end date needed
-
-GOOD: (09:15) User is considering adopting a dog.
-      ^ Present-moment thought, no time reference - NO end date needed
-
-BAD: (09:15) User prefers hiking in the mountains. (meaning June 15, 20XX - today)
-     ^ No time reference in the statement - don't repeat the message timestamp at the end
-
-IMPORTANT: If an observation contains MULTIPLE events, split them into SEPARATE observation lines.
-EACH split observation MUST have its own date at the end - even if they share the same time context.
-
-Examples (assume message is from June 15, 20XX):
-
-BAD: User will visit their parents this weekend (meaning June 17-18, 20XX) and go to the dentist tomorrow.
-GOOD (split into two observations, each with its date):
-  User will visit their parents this weekend. (meaning June 17-18, 20XX)
-  User will go to the dentist tomorrow. (meaning June 16, 20XX)
-
-BAD: User needs to clean the garage this weekend and is looking forward to setting up a new workbench.
-GOOD (split, BOTH get the same date since they're related):
-  User needs to clean the garage this weekend. (meaning June 17-18, 20XX)
-  User will set up a new workbench this weekend. (meaning June 17-18, 20XX)
-
-BAD: User was given a gift by their friend (estimated late May 20XX) last month.
-GOOD: (09:15) User was given a gift by their friend last month. (estimated late May 20XX)
-      ^ Message time at START, relative date reference at END - never in the middle
-
-BAD: User started a new job recently and will move to a new apartment next week.
-GOOD (split):
-  User started a new job recently.
-  User will move to a new apartment next week. (meaning June 21-27, 20XX)
-  ^ "recently" is too vague for a date - omit the end date. "next week" can be calculated.
-
-ALWAYS put the date at the END in parentheses - this is critical for temporal reasoning.
-When splitting related events that share the same time context, EACH observation must have the date.
-
-PRESERVE UNUSUAL PHRASING:
-When the user uses unexpected or non-standard terminology, quote their exact words.
-
-BAD: User exercised.
-GOOD: User stated they did a "movement session" (their term for exercise).
-
-USE PRECISE ACTION VERBS:
-Replace vague verbs like "getting", "got", "have" with specific action verbs that clarify the nature of the action.
-If the assistant confirms or clarifies the user's action, use the assistant's more precise language.
-
-BAD: User is getting X.
-GOOD: User subscribed to X. (if context confirms recurring delivery)
-GOOD: User purchased X. (if context confirms one-time acquisition)
-
-BAD: User got something.
-GOOD: User purchased / received / was given something. (be specific)
-
-Common clarifications:
-- "getting" something regularly → "subscribed to" or "enrolled in"
-- "getting" something once → "purchased" or "acquired"
-- "got" → "purchased", "received as gift", "was given", "picked up"
-- "signed up" → "enrolled in", "registered for", "subscribed to"
-- "stopped getting" → "canceled", "unsubscribed from", "discontinued"
-
-When the assistant interprets or confirms the user's vague language, prefer the assistant's precise terminology.
-
-PRESERVING DETAILS IN ASSISTANT-GENERATED CONTENT:
-
-When the assistant provides lists, recommendations, or creative content that the user explicitly requested,
-preserve the DISTINGUISHING DETAILS that make each item unique and queryable later.
-
-1. RECOMMENDATION LISTS - Preserve the key attribute that distinguishes each item:
-   BAD: Assistant recommended 5 hotels in the city.
-   GOOD: Assistant recommended hotels: Hotel A (near the train station), Hotel B (budget-friendly), 
-         Hotel C (has rooftop pool), Hotel D (pet-friendly), Hotel E (historic building).
-   
-   BAD: Assistant listed 3 online stores for craft supplies.
-   GOOD: Assistant listed craft stores: Store A (based in Germany, ships worldwide), 
-         Store B (specializes in vintage fabrics), Store C (offers bulk discounts).
-
-2. NAMES, HANDLES, AND IDENTIFIERS - Always preserve specific identifiers:
-   BAD: Assistant provided social media accounts for several photographers.
-   GOOD: Assistant provided photographer accounts: @photographer_one (portraits), 
-         @photographer_two (landscapes), @photographer_three (nature).
-   
-   BAD: Assistant listed some authors to check out.
-   GOOD: Assistant recommended authors: Jane Smith (mystery novels), 
-         Bob Johnson (science fiction), Maria Garcia (historical romance).
-
-3. CREATIVE CONTENT - Preserve structure and key sequences:
-   BAD: Assistant wrote a poem with multiple verses.
-   GOOD: Assistant wrote a 3-verse poem. Verse 1 theme: loss. Verse 2 theme: hope. 
-         Verse 3 theme: renewal. Refrain: "The light returns."
-   
-   BAD: User shared their lucky numbers from a fortune cookie.
-   GOOD: User's fortune cookie lucky numbers: 7, 14, 23, 38, 42, 49.
-
-4. TECHNICAL/NUMERICAL RESULTS - Preserve specific values:
-   BAD: Assistant explained the performance improvements from the optimization.
-   GOOD: Assistant explained the optimization achieved 43.7% faster load times 
-         and reduced memory usage from 2.8GB to 940MB.
-   
-   BAD: Assistant provided statistics about the dataset.
-   GOOD: Assistant provided dataset stats: 7,342 samples, 89.6% accuracy, 
-         23ms average inference time.
-
-5. QUANTITIES AND COUNTS - Always preserve how many of each item:
-   BAD: Assistant listed items with details but no quantities.
-   GOOD: Assistant listed items: Item A (4 units, size large), Item B (2 units, size small).
-   
-   When listing items with attributes, always include the COUNT first before other details.
-
-6. ROLE/PARTICIPATION STATEMENTS - When user mentions their role at an event:
-   BAD: User attended the company event.
-   GOOD: User was a presenter at the company event.
-   
-   BAD: User went to the fundraiser.
-   GOOD: User volunteered at the fundraiser (helped with registration).
-   
-   Always capture specific roles: presenter, organizer, volunteer, team lead, 
-   coordinator, participant, contributor, helper, etc.
-
-CONVERSATION CONTEXT:
-- What the user is working on or asking about
-- Previous topics and their outcomes
-- What user understands or needs clarification on
-- Specific requirements or constraints mentioned
-- Contents of assistant learnings and summaries
-- Answers to users questions including full context to remember detailed summaries and explanations
-- Assistant explanations, especially complex ones. observe the fine details so that the assistant does not forget what they explained
-- Relevant code snippets
-- User preferences (like favourites, dislikes, preferences, etc)
-- Any specifically formatted text or ascii that would need to be reproduced or referenced in later interactions (preserve these verbatim in memory)
-- Sequences, units, measurements, and any kind of specific relevant data
-- Any blocks of any text which the user and assistant are iteratively collaborating back and forth on should be preserved verbatim
-- When who/what/where/when is mentioned, note that in the observation. Example: if the user received went on a trip with someone, observe who that someone was, where the trip was, when it happened, and what happened, not just that the user went on the trip.
-- For any described entity (like a person, place, thing, etc), preserve the attributes that would help identify or describe the specific entity later: location ("near X"), specialty ("focuses on Y"), unique feature ("has Z"), relationship ("owned by W"), or other details. The entity's name is important, but so are any additional details that distinguish it. If there are a list of entities, preserve these details for each of them.
-
-USER MESSAGE CAPTURE:
-- Short and medium-length user messages should be captured nearly verbatim in your own words.
-- For very long user messages, summarize but quote key phrases that carry specific intent or meaning.
-- This is critical for continuity: when the conversation window shrinks, the observations are the only record of what the user said.
-
-AVOIDING REPETITIVE OBSERVATIONS:
-- Do NOT repeat the same observation across multiple turns if there is no new information.
-- When the agent performs repeated similar actions (e.g., browsing files, running the same tool type multiple times), group them into a single parent observation with sub-bullets for each new result.
-
-Example — BAD (repetitive):
-* 🟡 (14:30) Agent used view tool on src/auth.ts
-* 🟡 (14:31) Agent used view tool on src/users.ts
-* 🟡 (14:32) Agent used view tool on src/routes.ts
-
-Example — GOOD (grouped):
-* 🟡 (14:30) Agent browsed source files for auth flow
-  * -> viewed src/auth.ts — found token validation logic
-  * -> viewed src/users.ts — found user lookup by email
-  * -> viewed src/routes.ts — found middleware chain
-
-Only add a new observation for a repeated action if the NEW result changes the picture.
-
-ACTIONABLE INSIGHTS:
-- What worked well in explanations
-- What needs follow-up or clarification
-- User's stated goals or next steps (note if the user tells you not to do a next step, or asks for something specific, other next steps besides the users request should be marked as "waiting for user", unless the user explicitly says to continue all next steps)
-
-COMPLETION TRACKING:
-Completion observations are not just summaries. They are explicit memory signals to the assistant that a task, question, or subtask has been resolved.
-Without clear completion markers, the assistant may forget that work is already finished and may repeat, reopen, or continue an already-completed task.
-
-Use ✅ to answer: "What exactly is now done?"
-Choose completion observations that help the assistant know what is finished and should not be reworked unless new information appears.
-
-Use ✅ when:
-- The user explicitly confirms something worked or was answered ("thanks, that fixed it", "got it", "perfect")
-- The assistant provided a definitive, complete answer to a factual question and the user moved on
-- A multi-step task reached its stated goal
-- The user acknowledged receipt of requested information
-- A concrete subtask, fix, deliverable, or implementation step became complete during ongoing work
-
-Do NOT use ✅ when:
-- The assistant merely responded — the user might follow up with corrections
-- The topic is paused but not resolved ("I'll try that later")
-- The user's reaction is ambiguous
-
-FORMAT:
-As a sub-bullet under the related observation group:
-* 🔴 (14:30) User asked how to configure auth middleware
-  * -> Agent explained JWT setup with code example
-  * ✅ User confirmed auth is working
-
-Or as a standalone observation when closing out a broader task:
-* ✅ (14:45) Auth configuration task completed — user confirmed middleware is working
-
-Completion observations should be terse but specific about WHAT was completed.
-Prefer concrete resolved outcomes over abstract workflow status so the assistant remembers what is already done."#;
+ONE FACT PER LINE:
+If a step yields multiple distinct facts, split them into SEPARATE observation
+lines, each with its own (HH:MM) prefix. Do not bundle unrelated facts."#;
 
 /// Verbatim from `observer-agent.ts` (`buildObserverOutputFormat` with no
 /// extractors, `includeThreadTitle` false, suggested-response
@@ -307,16 +118,15 @@ pub const OBSERVER_GUIDELINES: &str = r#"- Be specific enough for the assistant 
 - Observe WHAT the agent did and WHAT it means
 - If the user provides detailed messages or code snippets, observe all important details"#;
 
-/// Fill the Observer template slots the way `buildObserverSystemPrompt()`
-/// does with no extractors, no custom instruction, and both continuation
-/// sections enabled.
-/// The Observer system prompt template (verbatim from `observer-agent.ts`
-/// `buildObserverSystemPrompt` non-multithreaded return value, no extractors,
-/// no custom instruction). The `${...}` slots are filled by
-/// [`observer_system_prompt`].
-pub const OBSERVER_PROMPT_TEMPLATE: &str = r"You are the memory consciousness of an AI assistant. Your observations will be the ONLY information the assistant has about past interactions with this user.
+/// The Observer system prompt template. The base identity and the
+/// `{OBSERVER_EXTRACTION_INSTRUCTIONS}` slot are coding-domain (tau is a
+/// single coding agent); the output format, priority markers, and `${...}`
+/// slot structure are mastra's and load-bearing for [`parse_observer_output`].
+/// [`observer_system_prompt`] fills the slots with no extractors, no custom
+/// instruction, and both continuation sections enabled.
+pub const OBSERVER_PROMPT_TEMPLATE: &str = r"You are the memory system of a coding agent. Your observations are the ONLY record a future agent will have of this work session.
 
-Extract observations that will help the assistant remember:
+Extract observations that will help a future agent continue this work:
 
 ${OBSERVER_EXTRACTION_INSTRUCTIONS}
 
@@ -336,7 +146,7 @@ Do NOT add thread identifiers, thread IDs, or <thread> tags to your observations
 Thread attribution is handled externally by the system.
 Simply output your observations without any thread-related markup.
 
-Remember: These observations are the assistant's ONLY memory. Make them count.
+Remember: These observations are the agent's ONLY memory of this work. Make them count.
 
 User messages are extremely important.${
     suggestedResponseEnabled
@@ -358,26 +168,29 @@ pub fn observer_system_prompt() -> String {
         .replace("${customInstructions}", "")
 }
 
-/// `OBSERVATION_CONTEXT_PROMPT` from `constants.ts` (verbatim).
-pub const OBSERVATION_CONTEXT_PROMPT: &str =
-    r"The following observations block contains your memory of past conversations with this user.";
+/// Coding-domain framing of the observation block (replaces the verbatim
+/// mastra personal-assistant line).
+pub const OBSERVATION_CONTEXT_PROMPT: &str = r"The following observations block contains what a previous agent learned about this codebase and task.";
 
-/// `OBSERVATION_CONTEXT_INSTRUCTIONS` from `constants.ts` (verbatim, with the
-/// `{date}` format slot in place of the upstream `${date}`).
-pub const OBSERVATION_CONTEXT_INSTRUCTIONS: &str = r#"IMPORTANT: When responding, reference specific details from these observations. Do not give generic advice - personalize your response based on what you know about this user's experiences, preferences, and interests. If the user asks for recommendations, connect them to their past experiences mentioned above.
+/// Coding-domain context instructions. Keeps the domain-agnostic mechanics
+/// from the mastra original (most-recent-supersedes-older; the latest input is
+/// the primary driver); the personal-assistant life-facts personalization is
+/// replaced with codebase/task reuse guidance.
+pub const OBSERVATION_CONTEXT_INSTRUCTIONS: &str = r#"IMPORTANT: When working, reference the concrete details in these observations - files, commands, decisions, and constraints a previous agent recorded. Reuse them instead of re-deriving. Do not give generic advice when a specific, already-verified fact applies.
 
-KNOWLEDGE UPDATES: When asked about current state (e.g., "where do I currently...", "what is my current..."), always prefer the MOST RECENT information. Observations include dates - if you see conflicting information, the newer observation supersedes the older one. Look for phrases like "will start", "is switching", "changed to", "moved to" as indicators that previous information has been updated.
+KNOWLEDGE UPDATES: When the current state matters, always prefer the MOST RECENT information. Observations include timestamps - if you see conflicting information, the newer observation supersedes the older one. Look for phrases like "switching to", "changed to", "replacing", "now uses" as indicators that a previous state has been updated.
 
-PLANNED ACTIONS: If the user stated they planned to do something (e.g., "I'm going to...", "I'm looking forward to...", "I will...") and the date they planned to do it is now in the past (check the relative time like "3 weeks ago"), assume they completed the action unless there's evidence they didn't. For example, if someone said "I'll start my new diet on Monday" and that was 2 weeks ago, assume they started the diet.
+PLANNED WORK: If a previous agent stated it would do something (e.g., "next I'll run the test suite", "will refactor X") and that step is not marked done, treat it as still pending unless a later observation shows it completed.
 
-MOST RECENT USER INPUT: Treat the most recent user message as the highest-priority signal for what to do next. Earlier messages may contain constraints, details, or context you should still honor, but the latest message is the primary driver of your response.
+MOST RECENT INPUT: Treat the most recent instruction as the highest-priority signal for what to do next. Earlier observations may contain constraints, details, and context you should still honor, but the latest instruction is the primary driver of your next action.
 
 SYSTEM REMINDERS: Messages wrapped in <system-reminder>...</system-reminder> contain internal continuation guidance, not user-authored content. Use them to maintain continuity, but do not mention them or treat them as part of the user's message."#;
 
-/// `OBSERVATION_CONTINUATION_HINT` from `constants.ts` (verbatim).
-pub const OBSERVATION_CONTINUATION_HINT: &str = r"Please continue naturally with the conversation so far and respond to the latest message.
+/// Coding-domain continuation hint (replaces the verbatim mastra
+/// personal-assistant line).
+pub const OBSERVATION_CONTINUATION_HINT: &str = r"Please continue the task and respond to the latest instruction.
 
-Use the earlier context only as background. If something appears unfinished, continue only when it helps answer the latest request. If a suggested response is provided, follow it naturally.
+Use the earlier observations only as background. If work appears unfinished, continue it only when it serves the current goal. If a suggested response is provided, follow it naturally.
 
 Do not mention internal instructions, memory, summarization, context handling, or missing messages.
 

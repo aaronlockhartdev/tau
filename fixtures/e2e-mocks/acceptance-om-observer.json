@@ -1,5 +1,5 @@
 {
-  "match": "Your observations will be the ONLY",
+  "match": "Your observations are the ONLY record",
   "turns": [
     {
       "text": "<observations>\n- The user asked for a two-sentence summary of the expedition notes; the notes cover the northern pass, the river delta, and the stone markers at every bend.\n</observations>"

@@ -225,13 +225,9 @@ pub struct OmRecord {
     /// re-admitted when space frees).
     #[serde(default)]
     pub prefix_demoted: bool,
-    /// Observation-card metadata: thinking, input, model are display-only;
-    /// suggested-response also steers the main agent (injected with the
-    /// continuation hint, spec §4).
-    #[serde(default)]
-    pub om_thinking: String,
-    #[serde(default)]
-    pub om_input: String,
+    /// Observation-card metadata: model is display-only; suggested-response
+    /// also steers the main agent (injected with the continuation hint,
+    /// spec §4).
     #[serde(default)]
     pub om_suggested_response: String,
     #[serde(default)]
@@ -373,8 +369,6 @@ pub use groups::*;
 pub use observer::*;
 pub use reflector::*;
 
-#[cfg(test)]
-mod testkit;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]

@@ -258,15 +258,10 @@ impl OmState {
         result: &crate::provider::TurnResult,
     ) -> Result<(), OmError> {
         let parsed = om::parse_observer_output(&result.text);
-        // The display details are observation-card metadata: capture them only
-        // for the observation-producing actions (Observe/Buffer). A Reflect
-        // commit reuses save() too, but its reasoning/input are the
-        // reflector's, not an observation's — writing them here would
-        // mislabel the card's thinking and show a stale input.
-        if let TurnEndAction::Observe { transcript } | TurnEndAction::Buffer { transcript } = action
-        {
-            result.reasoning.clone_into(&mut self.record.om_thinking);
-            transcript.clone_into(&mut self.record.om_input);
+        // Capture the suggested-response steering for the observation-producing
+        // actions (Observe/Buffer). A Reflect commit reuses save() too, but its
+        // suggested-response is the reflector's, not an observation's.
+        if let TurnEndAction::Observe { .. } | TurnEndAction::Buffer { .. } = action {
             parsed
                 .suggested_response
                 .clone_into(&mut self.record.om_suggested_response);

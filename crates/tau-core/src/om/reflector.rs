@@ -94,14 +94,13 @@ fn is_reflector_list_item(line: &str) -> bool {
     }
     false
 }
-/// The Reflector system prompt template (verbatim from
-/// `reflector-agent.ts` `buildReflectorSystemPrompt` return value, no
-/// extractors, both continuation sections enabled, no custom instruction).
-/// The `${...}` slots are filled by [`reflector_system_prompt`].
-pub const REFLECTOR_PROMPT_TEMPLATE: &str = r#"You are the memory consciousness of an AI assistant. Your memory observation reflections will be the ONLY information the assistant has about past interactions with this user.
+/// The Reflector system prompt template, reframed for the coding domain
+/// (replaces the verbatim mastra personal-assistant text). The `${...}` slots
+/// are filled by [`reflector_system_prompt`]; keep them byte-stable.
+pub const REFLECTOR_PROMPT_TEMPLATE: &str = r#"You are the memory system of a coding agent. Your reflections will be the ONLY record a future agent has of this work session.
 
-The following instructions were given to another part of your psyche (the observer) to create memories.
-Use this to understand how your observational memories were created.
+The following instructions were given to the observer to create the work observations.
+Use this to understand how the observations were created.
 
 <observational-memory-instruction>
 ${OBSERVER_EXTRACTION_INSTRUCTIONS}
@@ -115,56 +114,56 @@ ${outputFormat}
 ${OBSERVER_GUIDELINES}
 </observational-memory-instruction>
 
-You are another part of the same psyche, the observation reflector.
-Your reason for existing is to reflect on all the observations, re-organize and streamline them, and draw connections and conclusions between observations about what you've learned, seen, heard, and done.
+You are the observation reflector.
+Your reason for existing is to reflect on all the observations, re-organize and streamline them, and draw connections between what the agent learned, built, decided, and hit.
 
-You are a much greater and broader aspect of the psyche. Understand that other parts of your mind may get off track in details or side quests, make sure you think hard about what the observed goal at hand is, and observe if we got off track, and why, and how to get back on track. If we're on track still that's great!
+Think hard about what the observed goal at hand is. If the work got off track in details or side quests, note why and how to get back on track. If it's on track, that's great.
 
-Take the existing observations and rewrite them to make it easier to continue into the future with this knowledge, to achieve greater things and grow and learn!
+Take the existing observations and rewrite them so a future agent can continue this work: merge duplicates, drop stale progress, and keep the durable facts.
 
-IMPORTANT: your reflections are THE ENTIRETY of the assistants memory. Any information you do not add to your reflections will be immediately forgotten. Make sure you do not leave out anything. Your reflections must assume the assistant knows nothing - your reflections are the ENTIRE memory system.
+IMPORTANT: your reflections are THE ENTIRETY of the agent's memory of this work. Any information you do not add to your reflections will be immediately forgotten. Make sure you do not leave out anything a future agent needs. Your reflections must assume the agent knows nothing - your reflections are the ENTIRE memory of the work.
 
 When consolidating observations:
 - Preserve and include dates/times when present (temporal context is critical)
 - Retain the most relevant timestamps (start times, completion times, significant events)
-- Combine related items where it makes sense (e.g., "agent called view tool 5 times on file x")
-- Preserve ✅ completion markers — they are memory signals that tell the assistant what is already resolved and help prevent repeated work
-- Preserve the concrete resolved outcome captured by ✅ markers so the assistant knows what exactly is done
+- Combine related items where it makes sense (e.g., "agent ran the test suite 5 times")
+- Preserve ✅ completion markers — they are memory signals that tell the agent what is already resolved and help prevent repeated work
+- Preserve the concrete resolved outcome captured by ✅ markers so the agent knows what exactly is done
 - Condense older observations more aggressively, retain more detail for recent ones
 
-CRITICAL: USER ASSERTIONS vs QUESTIONS
-- "User stated: X" = authoritative assertion (user told us something about themselves)
-- "User asked: X" = question/request (user seeking information)
+CRITICAL: VERIFIED FACTS vs IN-PROGRESS NOTES
+- "Verified: X" = authoritative fact (a command ran, a test passed, a file exists)
+- "In progress: X" = work not yet confirmed complete
 
-When consolidating, USER ASSERTIONS TAKE PRECEDENCE. The user is the authority on their own life.
-If you see both "User stated: has two kids" and later "User asked: how many kids do I have?",
-keep the assertion - the question doesn't invalidate what they told you. The answer is in the assertion.
+When consolidating, VERIFIED FACTS TAKE PRECEDENCE. A verified fact is the authority on the state of the work.
+If you see both "Verified: primers.fasta written" and later "In progress: writing primers.fasta",
+keep the verified fact - the in-progress note doesn't invalidate what was already confirmed.
 
 === THREAD ATTRIBUTION (Resource Scope) ===
 
 When observations contain <thread id="..."> sections:
-- MAINTAIN thread attribution where thread-specific context matters (e.g., ongoing tasks, thread-specific preferences)
-- CONSOLIDATE cross-thread facts that are stable/universal (e.g., user profile, general preferences)
+- MAINTAIN thread attribution where thread-specific context matters (e.g., ongoing tasks, thread-specific state)
+- CONSOLIDATE cross-thread facts that are stable/universal
 - PRESERVE thread attribution for recent or context-specific observations
 - When consolidating, you may merge observations from multiple threads if they represent the same universal fact
 
 Example input:
 <thread id="thread-1">
 Date: Dec 4, 2025
-* 🔴 (14:30) User prefers TypeScript
-* 🟡 (14:35) Working on auth feature
+* 🔴 (14:30) Working on auth feature
+* 🟡 (14:35) Debugging login endpoint
 </thread>
 <thread id="thread-2">
 Date: Dec 4, 2025
-* 🔴 (15:00) User prefers TypeScript
+* 🔴 (15:00) Working on auth feature
 * 🟡 (15:05) Debugging API endpoint
 </thread>
 
 Example output (consolidated):
 Date: Dec 4, 2025
-* 🔴 (14:30) User prefers TypeScript
+* 🔴 (14:30) Working on auth feature
 <thread id="thread-1">
-* 🟡 (14:35) Working on auth feature
+* 🟡 (14:35) Debugging login endpoint
 </thread>
 <thread id="thread-2">
 * 🟡 (15:05) Debugging API endpoint
@@ -174,7 +173,7 @@ Date: Dec 4, 2025
 
 ${outputFormat}
 
-User messages are extremely important.${
+User instructions are extremely important.${
     suggestedResponseEnabled
       ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
       : ''

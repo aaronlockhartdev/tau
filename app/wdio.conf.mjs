@@ -25,7 +25,9 @@ const FIXTURE = path.join(ROOT, 'target', 'test-fixture', 'session.jsonl');
 // Re-pinned 2026-10-02 (#49): the fixture gained 50 compaction records
 // (one per goal), one of them oversized — the session file's hash moved,
 // and the zstd sidecar now ships beside it (target/test-fixture/blobs/).
-const FIXTURE_SHA256 = '09796263a8795b40a8663537f387283cad8fb9cf883fb0eeec8b4f354a1e9b74';
+// Re-pinned 2026-10-07 (#90): the 50 om records dropped the raw
+// om_input/om_thinking fields, so the hash moved again.
+const FIXTURE_SHA256 = 'ce9089181267fe034b6b79b5a0f4bb5e9387c6af6f75d77d1b5a0582fc0d4f9f';
 const FIXTURE_SESSION = 'session';
 // The deterministic mock LLM (phase 1 §4): hash-pinned scenario files
 // served by the tau-mock-llm binary; the mock leg's workspace points its

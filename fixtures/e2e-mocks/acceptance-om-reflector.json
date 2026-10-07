@@ -1,5 +1,5 @@
 {
-  "match": "Your memory observation reflections will be the ONLY",
+  "match": "Your reflections will be the ONLY record",
   "turns": [
     {
       "text": "<observations>\n- Expedition notes summarized on request: northern pass, river delta, stone markers at every bend.\n- A short weather sentence was added after the summary.\n</observations>"
