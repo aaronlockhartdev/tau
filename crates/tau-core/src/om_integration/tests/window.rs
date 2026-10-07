@@ -63,13 +63,12 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
 }
 
 #[test]
-fn raw_window_prunes_to_the_floor_and_keeps_tool_results_attached() {
+fn raw_window_is_the_full_unobserved_tail() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), "s1");
     store.create().unwrap();
-    // user (225 tokens), tool call, tool result, user (225): 470 total
-    // over the 230-token floor, with the prune boundary landing on the
-    // tool run.
+    // user (225 tokens), tool call, tool result, user (225): 452 total,
+    // over the 230-token floor.
     let entries = vec![
         ("user", "a".repeat(900)),
         ("tool", "call".to_owned()),
@@ -99,30 +98,104 @@ fn raw_window_prunes_to_the_floor_and_keeps_tool_results_attached() {
     };
     let state = OmState::from_config(&cfg, OmRecord::default());
     let window = state.raw_window_from(&all, leaf.as_deref());
-    // The window is bounded at the floor and, after the prune left a
-    // tool entry at its head, the leading tool run is cut so no result
-    // is orphaned from its call.
+    // No floor prune: the window is the full unobserved tail, the head
+    // (the "task") included.
+    assert_eq!(window.len(), 4, "{window:?}");
+    assert_eq!(window[0].kind, "user");
+    assert_eq!(window[0].payload["text"], "a".repeat(900));
+    assert_eq!(window[3].payload["text"], "c".repeat(900));
+}
+#[test]
+fn raw_window_retains_unsummarized_head_past_the_floor() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+    // Two 225-token user entries: 450 total, over the 230-token floor.
+    let entries = vec![("user", "a".repeat(900)), ("user", "b".repeat(900))];
+    let mut parent: Option<String> = None;
+    for (kind, text) in entries {
+        let e = store
+            .append(
+                kind,
+                json!({ "text": text, "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id);
+    }
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1000,
+        reflect_threshold: 2000,
+        buffer_increment: 230, // = the retention floor at this threshold
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
+    };
+    let state = OmState::from_config(&cfg, OmRecord::default());
+    let window = state.raw_window_from(&all, leaf.as_deref());
+    // No floor prune: the unsummarized head (the "task") survives past
+    // the retention floor.
+    assert_eq!(window.len(), 2, "{window:?}");
+    assert_eq!(window[0].payload["text"], "a".repeat(900));
+}
+
+#[test]
+fn raw_window_cuts_a_leading_orphaned_tool_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+    // user, assistant, tool call, tool result, user: the cursor lands on
+    // the tool call, so its result would be orphaned at the window head.
+    let entries = [
+        ("user", "a".repeat(900)),
+        ("assistant", "b".repeat(900)),
+        ("tool", "call X".to_owned()),
+        ("tool", "r".repeat(900)),
+        ("user", "c".repeat(900)),
+    ];
+    let mut parent: Option<String> = None;
+    let mut call_id = String::new();
+    for (i, (kind, text)) in entries.iter().enumerate() {
+        let e = store
+            .append(
+                kind,
+                json!({ "text": text, "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        if i == 2 {
+            call_id = e.id.clone();
+        }
+        parent = Some(e.id);
+    }
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1000,
+        reflect_threshold: 2000,
+        buffer_increment: 230, // = the retention floor at this threshold
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
+    };
+    let state = OmState::from_config(
+        &cfg,
+        OmRecord {
+            cursor: Some(Cursor {
+                entry_id: call_id,
+                timestamp: 1,
+            }),
+            ..Default::default()
+        },
+    );
+    let window = state.raw_window_from(&all, leaf.as_deref());
+    // The leading tool run is cut (the result would be orphaned from its
+    // call); the final user entry is present.
     assert_eq!(window.len(), 1, "{window:?}");
     assert_eq!(window[0].kind, "user");
     assert_eq!(window[0].payload["text"], "c".repeat(900));
-    assert!(state.pending_tokens(&window) <= 230);
-    // Below the floor: nothing is pruned.
-    let small = store.entries_range(0, usize::MAX).unwrap();
-    let state2 = OmState::from_config(
-        &crate::config::Om {
-            om_model: String::new(),
-            observe_threshold: 30_000,
-            reflect_threshold: 40_000,
-            buffer_increment: 6_000,
-            buffer_tokens: 0,
-            retries: crate::config::OmRetries::default(),
-        },
-        OmRecord::default(),
-    );
-    assert_eq!(
-        state2.raw_window_from(&small, leaf.as_deref()).len(),
-        small.len()
-    );
 }
 
 #[test]

@@ -458,9 +458,10 @@ impl OmState {
     }
 
     /// The raw window over already-read entries (pure — no store
-    /// access): the active-branch entries after the cursor, pruned to
-    /// the retention floor from the head, never cutting a tool result
-    /// from its call (spec §4 cut rule).
+    /// access): the active-branch raw entries after the cursor (the
+    /// unobserved tail), bounded by the observe threshold via promotion,
+    /// not by a per-assembly floor prune. A leading tool run is cut so
+    /// no result is orphaned from its call (spec §4).
     #[must_use]
     pub fn raw_window_from(&self, entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
         let branch = branch_entries(entries, leaf_id);
@@ -472,30 +473,14 @@ impl OmState {
             None => &branch[..],
         };
         let mut raw: Vec<Entry> = unobserved.iter().filter(|e| is_raw(e)).cloned().collect();
-        let floor = u64::from(self.config.retention_floor());
-        let total: u64 = raw
-            .iter()
-            .map(|e| u64::from(om::token_count(&entry_text(e))))
-            .sum();
-        if total > floor {
-            let mut keep_from = 0;
-            let mut running = total;
-            for (i, entry) in raw.iter().enumerate() {
-                running = running.saturating_sub(u64::from(om::token_count(&entry_text(entry))));
-                keep_from = i + 1;
-                if running <= floor {
-                    break;
-                }
-            }
-            raw = raw.split_off(keep_from);
-            // A window starting at a tool result would orphan it from its
-            // call: advance past the leading result run.
-            while let Some(entry) = raw.first() {
-                if entry.kind == "tool" {
-                    raw.remove(0);
-                } else {
-                    break;
-                }
+        // A window starting at a tool result would orphan it from its call:
+        // advance past the leading tool run (spec §4 cut rule). No floor prune:
+        // unsummarized raw stays in the window until promotion advances the cursor.
+        while let Some(entry) = raw.first() {
+            if entry.kind == "tool" {
+                raw.remove(0);
+            } else {
+                break;
             }
         }
         raw
