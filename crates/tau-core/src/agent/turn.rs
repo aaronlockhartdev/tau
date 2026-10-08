@@ -357,7 +357,7 @@ impl AgentSession {
                 .await
                 .is_err();
             if timed_out {
-                eprintln!(
+                tracing::warn!(
                     "om: buffer cycle outlived the 60s join; the turn-end merge picks up its commit"
                 );
             }
@@ -390,7 +390,7 @@ impl AgentSession {
             .settle_turn(&mut with_store, &om_provider, &model, hook.as_ref())
             .await
         {
-            eprintln!("om: turn-end pass failed: {e}");
+            tracing::warn!("om: turn-end pass failed: {e}");
             // Close the status gauge: a failed pass never reaches the
             // loop's `Done` arm, the only place it goes idle.
             if let Some(hook) = &hook {
@@ -423,12 +423,12 @@ impl AgentSession {
                         // The common case: the merge is a no-op over the
                         // file's chunk state, so nothing is re-saved.
                     } else if let Err(e) = state.save(&mut inner.store) {
-                        eprintln!("om: write-back merge save failed: {e}");
+                        tracing::warn!("om: write-back merge save failed: {e}");
                     }
                     inner.om = Some(state);
                 }
                 Err(e) => {
-                    eprintln!("om: record load for the write-back merge failed: {e}");
+                    tracing::warn!("om: record load for the write-back merge failed: {e}");
                     inner.om = Some(state);
                 }
             }
@@ -478,7 +478,7 @@ impl AgentSession {
             match om.promote(store) {
                 Ok(_) => None,
                 Err(e) => {
-                    eprintln!("om: mid-loop activation failed: {e}");
+                    tracing::warn!("om: mid-loop activation failed: {e}");
                     None
                 }
             }

@@ -8,12 +8,23 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+# Production (default): compile tracing out (max_level_off, zero cost).
+# Diagnostic: `--no-default-features --features log-llm-requests` → trace level
+# + the RUST_LOG-driven subscriber (the wire log). The two are mutually
+# exclusive: tracing resolves the max_level to the most restrictive feature
+# enabled, so off and trace can't coexist. (#98)
+default = ["tracing/max_level_off"]
+log-llm-requests = ["tracing/max_level_trace", "dep:tracing-subscriber", "tau-core/log-llm-requests"]
+
 [dependencies]
 tau-core = { path = "../tau-core" }
 tau-protocol = { path = "../tau-protocol" }
 tokio = { workspace = true, features = ["io-std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { version = "0.1" }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
 tau-mock-llm = { path = "../tau-mock-llm" }

@@ -51,7 +51,9 @@ pub async fn call_with_retry(
                 let base = (1u32 << (n - 1).min(7)).min(120);
                 let jitter = rand::rng().random::<f64>();
                 let delay = Duration::from_secs_f64(f64::from(base) * (0.8 + 0.4 * jitter));
-                eprintln!("om {label}: transient failure ({e}); retry {n}/{retries} in {delay:?}");
+                tracing::debug!(
+                    "om {label}: transient failure ({e}); retry {n}/{retries} in {delay:?}"
+                );
                 tokio::time::sleep(delay).await;
             }
             Err(e) => return Err(e),

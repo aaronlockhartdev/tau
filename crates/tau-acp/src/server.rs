@@ -418,7 +418,7 @@ async fn session_cancel(server: &Server, rpc: &Rpc) {
     if let Err(e) = core.dispatch(Command::MessageStop {
         session: session_id.to_owned(),
     }) {
-        eprintln!("acp: cancel for {session_id}: {}", protocol_message(&e));
+        tracing::warn!("acp: cancel for {session_id}: {}", protocol_message(&e));
     }
     // The in-flight prompt (if any) answers `stopReason: "cancelled"` when
     // the interrupted turn settles.

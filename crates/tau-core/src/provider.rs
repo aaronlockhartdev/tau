@@ -311,10 +311,10 @@ pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
 }
 
 mod canned;
-#[cfg(feature = "log-llm-requests")]
-mod log;
 mod request;
 mod stream;
+#[cfg(feature = "log-llm-requests")]
+mod wire;
 pub use canned::*;
 pub use request::*;
 pub use stream::*;
