@@ -1,6 +1,20 @@
 use super::*;
 use serde_json::json;
 
+/// The joined content of the OM-derived `role: user` input items — the seam
+/// the one-shot continuation-hint assertions read (the hint rides as a
+/// synthetic user message, #97).
+fn om_user_content(items: &[crate::provider::InputEntry]) -> String {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            crate::provider::InputEntry::Message(m) if m.role == "user" => Some(m.content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn recall_browses_group_ranges_and_reports_missing_things() {
     let dir = tempfile::tempdir().unwrap();
@@ -217,16 +231,16 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     );
     state.changed = true;
     let first = state.assemble_context("base prompt", None);
-    assert!(first.starts_with("base prompt"));
-    assert!(first.contains("the log"));
-    assert!(first.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(first.instructions.starts_with("base prompt"));
+    assert!(first.instructions.contains("the log"));
+    assert!(om_user_content(&first.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
     // The one-shot flip: a second assembly carries no hint.
     let second = state.assemble_context("base prompt", None);
-    assert!(!second.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(!om_user_content(&second.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
     // The task-resume-contract slot (ticket #24 fills it).
     let with_task = state.assemble_context("base prompt", Some("do the thing"));
-    assert!(with_task.contains("# Task (resume contract)"));
-    assert!(with_task.contains("do the thing"));
+    assert!(with_task.instructions.contains("# Task (resume contract)"));
+    assert!(with_task.instructions.contains("do the thing"));
     // A demoted prefix drops out of the live context.
     let mut state3 = OmState::from_config(
         &cfg,
@@ -240,6 +254,7 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     assert!(
         !state3
             .assemble_context("base", None)
+            .instructions
             .contains("demoted prefix")
     );
 }
@@ -281,8 +296,11 @@ fn the_main_agent_view_has_no_boundary_markers() {
     let mut state = OmState::from_config(&cfg, record);
     state.changed = true;
     let ctx = state.assemble_context("base prompt", None);
-    assert!(!ctx.contains("--- message boundary ("), "{ctx}");
-    assert!(ctx.contains("first obs"), "{ctx}");
+    assert!(
+        !ctx.instructions.contains("--- message boundary ("),
+        "{ctx:?}"
+    );
+    assert!(ctx.instructions.contains("first obs"), "{ctx:?}");
 }
 
 #[test]
@@ -306,14 +324,20 @@ fn the_suggested_response_is_injected_once_then_cleared() {
     state.changed = true;
     let first = state.assemble_context("base prompt", None);
     // The steering signal is handed to the model alongside the hint...
-    assert!(first.contains(om::OBSERVATION_CONTINUATION_HINT));
-    assert!(first.contains("pause and answer the user"), "{first}");
+    let first_om = om_user_content(&first.om_input_items);
+    // The steering signal is handed to the model alongside the hint...
+    assert!(first_om.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(first_om.contains("pause and answer the user"), "{first_om}");
     // ...and consumed: a later log change re-fires the hint but must not
     // re-inject the now-stale signal.
     state.changed = true;
     let second = state.assemble_context("base prompt", None);
-    assert!(second.contains(om::OBSERVATION_CONTINUATION_HINT));
-    assert!(!second.contains("pause and answer the user"), "{second}");
+    let second_om = om_user_content(&second.om_input_items);
+    assert!(second_om.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(
+        !second_om.contains("pause and answer the user"),
+        "{second_om}"
+    );
     assert!(state.record.om_suggested_response.is_empty());
 }
 #[test]

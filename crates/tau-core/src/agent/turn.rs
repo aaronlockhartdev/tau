@@ -106,9 +106,14 @@ impl AgentSession {
                 // om_turn_end write-back would re-set `changed`, so the hint
                 // would re-inject on every assembly).
                 if let Some(om) = inner.om.as_mut() {
-                    let instructions = om.assemble_context(&base, contract.as_deref());
+                    let assembled = om.assemble_context(&base, contract.as_deref());
                     let raw = om.raw_window_from(&entries, leaf_id.as_deref());
-                    (instructions, input_items(&raw))
+                    let input = assembled
+                        .om_input_items
+                        .into_iter()
+                        .chain(input_items(&raw))
+                        .collect();
+                    (assembled.instructions, input)
                 } else {
                     let mut instructions = base;
                     if let Some(contract) = &contract {
