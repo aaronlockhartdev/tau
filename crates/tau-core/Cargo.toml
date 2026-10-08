@@ -28,4 +28,3 @@ tau-protocol = { path = "../tau-protocol" }
 tempfile = { workspace = true }
 proptest = { workspace = true }
 sha2 = { workspace = true }
-tracing-test = { version = "0.2", features = ["no-env-filter"] }

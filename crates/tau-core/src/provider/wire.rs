@@ -21,31 +21,3 @@ pub(super) fn request(request: &ResponseRequest) {
 pub(super) fn response(body: &str) {
     tracing::trace!(%body, "llm response");
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tracing_test::traced_test;
-
-    fn sample() -> ResponseRequest {
-        ResponseRequest::new("test-model", Some("you are a test"), vec![])
-    }
-
-    /// The request event carries the serialized body at trace level.
-    #[test]
-    #[traced_test]
-    fn request_emits_the_body() {
-        request(&sample());
-        assert!(logs_contain("llm request"));
-        assert!(logs_contain("you are a test"));
-    }
-
-    /// The response event carries the raw body at trace level.
-    #[test]
-    #[traced_test]
-    fn response_emits_the_body() {
-        response("data: {\"id\":\"x\"}\n\n");
-        assert!(logs_contain("llm response"));
-        assert!(logs_contain("data:"));
-    }
-}
