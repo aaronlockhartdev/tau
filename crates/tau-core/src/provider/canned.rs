@@ -173,6 +173,50 @@ pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
     let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(SlowCannedProvider { events, delay_ms })
 }
+
+/// A canned provider that hangs in prefill: it sleeps `delay_ms` before its
+/// first event, modelling a slow prefill. A stop in that window aborts the
+/// call before anything is emitted (issue #67's scenario).
+#[must_use]
+pub fn prefill_hang(body: &str, delay_ms: u64) -> TurnProviderRef {
+    let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
+    Arc::new(PrefillHangProvider { events, delay_ms })
+}
+
+/// The prefill-hang seam: the sleep precedes the first event, so a stop
+/// during it aborts the call before the sink sees anything.
+struct PrefillHangProvider {
+    events: Vec<TurnEvent>,
+    delay_ms: u64,
+}
+
+impl TurnProvider for PrefillHangProvider {
+    fn call<'a>(&self, _request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+        let events = self.events.clone();
+        let delay_ms = self.delay_ms;
+        Box::pin(async move {
+            // Prefill: a stop in this window tears the call down before any
+            // event — the select mirrors the real provider's prefill half.
+            tokio::select! {
+                () = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
+                () = sink.stop_signal() => return Ok(TurnResult::default()),
+            }
+            let mut result = TurnResult::default();
+            let mut accepted = 0usize;
+            for event in &events {
+                if !sink.event(event.clone()) {
+                    break;
+                }
+                fold_event(event, &mut result);
+                accepted += 1;
+            }
+            if accepted == events.len() {
+                result.completed = events.iter().any(|e| matches!(e, TurnEvent::Completed(_)));
+            }
+            Ok(result)
+        })
+    }
+}
 /// A provider entry with this base URL is a scripted stream, not an HTTP
 /// endpoint: the `canned()` test seam promoted to a provider entry so the
 /// GUI's real-app E2E can drive deterministic turns through the real core.

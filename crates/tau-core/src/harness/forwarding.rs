@@ -52,9 +52,21 @@ impl TurnProvider for ForwardingProvider {
             calls: self.calls.clone(),
             completed: self.completed.clone(),
             call_id,
-            started: false,
             inner: sink,
         };
+        // Record the call at start, not first event (#67): a call aborted
+        // before it emits anything is still a call, and must finalize like
+        // any other — a StreamStart now, a StreamEnd at turn settlement.
+        forward
+            .calls
+            .lock()
+            .expect("forwarded call ids: no panic while the lock is held")
+            .push(forward.call_id.clone());
+        forward.send(Event::StreamStart {
+            workspace: forward.workspace.clone(),
+            session: forward.session.clone(),
+            call_id: forward.call_id.clone(),
+        });
         let inner = self.inner.clone();
         let request = request.clone();
         Box::pin(async move { inner.call(&request, &mut forward).await })
@@ -72,24 +84,11 @@ pub(crate) struct ForwardSink<'a> {
     calls: Arc<Mutex<Vec<String>>>,
     completed: Arc<Mutex<HashMap<String, bool>>>,
     call_id: String,
-    started: bool,
     inner: &'a mut dyn TurnSink,
 }
 
 impl TurnSink for ForwardSink<'_> {
     fn event(&mut self, event: TurnEvent) -> bool {
-        if !self.started {
-            self.started = true;
-            self.calls
-                .lock()
-                .expect("forwarded call ids: no panic while the lock is held")
-                .push(self.call_id.clone());
-            self.send(Event::StreamStart {
-                workspace: self.workspace.clone(),
-                session: self.session.clone(),
-                call_id: self.call_id.clone(),
-            });
-        }
         // Text/reasoning deltas are the loop's sink's: they become the
         // growing entry's snapshots (ADR-0008), not channel events.
         // No `StreamEnd` here: the Completed frame ends the call's stream,
