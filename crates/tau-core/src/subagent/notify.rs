@@ -63,7 +63,7 @@ impl Supervisor {
         if let Err(e) = child.set_state(&ChildState::Failed {
             reason: reason.clone(),
         }) {
-            eprintln!("subagent state entry failed: {e}");
+            tracing::warn!("subagent state entry failed: {e}");
         }
         self.bridge.state(&StateNotice {
             parent: self.parent_session.clone(),

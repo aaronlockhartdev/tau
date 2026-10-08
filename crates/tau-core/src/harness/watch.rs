@@ -66,7 +66,7 @@ impl Watcher {
         if let Some(debouncer) = &mut self.debouncer
             && let Err(e) = debouncer.watch(root, RecursiveMode::Recursive)
         {
-            eprintln!("watch {}: {e}", root.display());
+            tracing::warn!("watch {}: {e}", root.display());
         }
     }
     /// Watch `root` with its excluded subtrees skipped (the files-pane
@@ -88,7 +88,7 @@ impl Watcher {
                 if let Some(debouncer) = &mut self.debouncer
                     && let Err(e) = debouncer.watch(&dir, RecursiveMode::NonRecursive)
                 {
-                    eprintln!("watch {}: {e}", dir.display());
+                    tracing::warn!("watch {}: {e}", dir.display());
                 }
                 let Ok(read) = std::fs::read_dir(&dir) else {
                     continue;
@@ -109,7 +109,7 @@ impl Watcher {
             if let Some(debouncer) = &mut self.debouncer
                 && let Err(e) = debouncer.watch(root, RecursiveMode::Recursive)
             {
-                eprintln!("watch {}: {e}", root.display());
+                tracing::warn!("watch {}: {e}", root.display());
             }
         }
     }

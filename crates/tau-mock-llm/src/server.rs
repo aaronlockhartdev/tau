@@ -109,7 +109,7 @@ async fn stream_response(sock: &mut TcpStream, set: &ScenarioSet, body: &[u8]) {
     let (seq, turn) = scenario.next_turn();
     // One line per request: the e2e log carries the routing, so a spec
     // failure shows which scenario answered and with which turn.
-    eprintln!("[route] {} turn {}", scenario.pattern, seq);
+    tracing::debug!("[route] {} turn {}", scenario.pattern, seq);
     let frames = render_frames(turn, &scenario.usage, seq);
     let _ = reply_headers(sock).await;
     for frame in frames {

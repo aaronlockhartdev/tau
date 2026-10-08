@@ -64,7 +64,7 @@ pub fn discover(
 
 fn insert(reg: &mut BTreeMap<String, (usize, Skill)>, scope: usize, s: Skill) {
     match reg.get(&s.name) {
-        Some((prev_scope, prev)) if *prev_scope >= scope => eprintln!(
+        Some((prev_scope, prev)) if *prev_scope >= scope => tracing::warn!(
             "skill {}: {} is shadowed by {} — skipped",
             s.name,
             s.location.display(),
@@ -72,7 +72,7 @@ fn insert(reg: &mut BTreeMap<String, (usize, Skill)>, scope: usize, s: Skill) {
         ),
         _ => {
             if let Some(prev) = reg.get(&s.name) {
-                eprintln!(
+                tracing::warn!(
                     "skill {}: {} shadows {} — replaced",
                     s.name,
                     s.location.display(),
@@ -149,11 +149,11 @@ fn skill_md_in(dir: &Path) -> Option<PathBuf> {
 /// description over the standard's 1024-char cap only warns.
 fn parse(raw: &str, location: &Path) -> Option<Skill> {
     let Some(fields) = frontmatter_fields(raw) else {
-        eprintln!("{}", skip_message(location, "unparseable frontmatter"));
+        tracing::warn!("{}", skip_message(location, "unparseable frontmatter"));
         return None;
     };
     let Some(name) = fields.get("name").cloned().filter(|n| !n.is_empty()) else {
-        eprintln!(
+        tracing::warn!(
             "{}",
             skip_message(location, "missing required field 'name'")
         );
@@ -161,17 +161,17 @@ fn parse(raw: &str, location: &Path) -> Option<Skill> {
     };
     let description = fields.get("description").cloned().unwrap_or_default();
     if description.is_empty() {
-        eprintln!(
+        tracing::warn!(
             "{}",
             skip_message(location, "missing required field 'description'")
         );
         return None;
     }
     if !valid_name(&name) {
-        eprintln!("{}", name_violation_message(location, &name));
+        tracing::warn!("{}", name_violation_message(location, &name));
     }
     if description.chars().count() > 1024 {
-        eprintln!("{}", description_violation_message(location));
+        tracing::warn!("{}", description_violation_message(location));
     }
     Some(Skill {
         name,

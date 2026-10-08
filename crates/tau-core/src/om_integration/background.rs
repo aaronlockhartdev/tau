@@ -90,7 +90,7 @@ pub(crate) async fn buffer_cycle(
         {
             Ok(r) => r,
             Err(e) => {
-                eprintln!("om: buffer cycle abandoned after retries: {e}");
+                tracing::warn!("om: buffer cycle abandoned after retries: {e}");
                 clear_inflight(&inner);
                 return;
             }
@@ -117,14 +117,14 @@ fn read_candidates(
     let mut g = match inner.lock() {
         Ok(g) => g,
         Err(e) => {
-            eprintln!("om: buffer cycle: session lock poisoned: {e}");
+            tracing::error!("om: buffer cycle: session lock poisoned: {e}");
             return None;
         }
     };
     let record = match OmState::load_record(&mut g.store) {
         Ok(record) => record,
         Err(e) => {
-            eprintln!("om: buffer cycle: record load failed: {e}");
+            tracing::warn!("om: buffer cycle: record load failed: {e}");
             g.om_inflight = None;
             return None;
         }
@@ -145,7 +145,7 @@ fn read_candidates(
     let candidates = match live.unbuffered(&mut g.store) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("om: buffer cycle: candidate read failed: {e}");
+            tracing::warn!("om: buffer cycle: candidate read failed: {e}");
             g.om_inflight = None;
             return None;
         }
@@ -176,7 +176,7 @@ fn commit_chunk(
     let mut latest = match OmState::load_record(&mut g.store) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("om: buffer cycle: record reload failed: {e}");
+            tracing::warn!("om: buffer cycle: record reload failed: {e}");
             g.om_inflight = None;
             return;
         }
@@ -197,7 +197,7 @@ fn commit_chunk(
             {
                 // The chunk is lost (rework at the next trigger, not data
                 // loss); the interval stays consumed.
-                eprintln!("om: buffer cycle: chunk commit failed");
+                tracing::warn!("om: buffer cycle: chunk commit failed");
             } else if let Some(slot) = g.om.as_mut() {
                 slot.record = latest;
                 slot.buffered = slot.record.buffered_chunks.clone();
