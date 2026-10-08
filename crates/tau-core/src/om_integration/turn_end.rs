@@ -4,6 +4,16 @@ use super::{
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 
+/// The assembled main-turn context: the stable `instructions` (system prompt)
+/// plus the OM-derived `input` items — the one-shot continuation hint today,
+/// per-chunk observation messages in the follow-up (#96). `om_input_items` is
+/// a `Vec` so #96 appends items without reshaping this seam.
+#[derive(Debug, Clone, Default)]
+pub struct AssembledContext {
+    pub instructions: String,
+    pub om_input_items: Vec<InputEntry>,
+}
+
 impl OmState {
     /// The unobserved raw on the active branch: the entries after the
     /// cursor. A missing cursor means the whole branch; a cursor not on
@@ -417,14 +427,21 @@ impl OmState {
         }
     }
 
-    /// The context's system-prompt part (spec §4): the base prompt, the
-    /// observation log (a demoted prefix drops out — it stays in the
-    /// session file, reachable via `recall`), the active task's resume
-    /// contract (ticket #24 fills the slot; the loop passes `None`
-    /// today), and the continuation hint after a log change. Pure over the
-    /// record (no store access), so the one-shot `changed` flip sticks
-    /// when the loop runs it on the persistent state under the lock.
-    pub fn assemble_context(&mut self, base: &str, task_contract: Option<&str>) -> String {
+    /// The assembled main-turn context (spec §4). `instructions` is the
+    /// stable system prompt: the base prompt, the observation log (a demoted
+    /// prefix drops out — it stays in the session file, reachable via
+    /// `recall`), and the active task's resume contract (ticket #24 fills the
+    /// slot; the loop passes `None` today). The one-shot continuation hint is
+    /// not in `instructions` — it rides as a `role: user` item in
+    /// `om_input_items` (#97), keeping the system-prompt prefix byte-stable
+    /// for the vLLM prefix cache. Pure over the record (no store access), so
+    /// the one-shot `changed` flip sticks when the loop runs it on the
+    /// persistent state under the lock.
+    pub fn assemble_context(
+        &mut self,
+        base: &str,
+        task_contract: Option<&str>,
+    ) -> AssembledContext {
         let mut instructions = base.to_owned();
         let observations = self.record.agent_observations();
         if !observations.is_empty() {
@@ -439,6 +456,11 @@ impl OmState {
             instructions.push_str("\n\n# Task (resume contract)\n");
             instructions.push_str(contract);
         }
+        // The one-shot continuation hint rides as a synthetic user message in
+        // the input, not the system prompt: the stable `instructions` prefix
+        // never churns, so the vLLM prefix cache survives the hint's appear and
+        // clear (mastra parity, #97).
+        let mut om_input_items = Vec::new();
         if self.changed && !observations.is_empty() {
             self.changed = false;
             // One-shot steering: hand the observer's suggested-response to the
@@ -446,15 +468,22 @@ impl OmState {
             // so a later reflect/promote can't re-inject a stale signal.
             let suggested = self.record.om_suggested_response.clone();
             self.record.om_suggested_response = String::new();
-            instructions.push_str("\n\n<system-reminder>");
-            instructions.push_str(om::OBSERVATION_CONTINUATION_HINT);
+            let mut content = String::from("<system-reminder>");
+            content.push_str(om::OBSERVATION_CONTINUATION_HINT);
             if !suggested.trim().is_empty() {
-                instructions.push_str("\n\nSuggested response: ");
-                instructions.push_str(&suggested);
+                content.push_str("\n\nSuggested response: ");
+                content.push_str(&suggested);
             }
-            instructions.push_str("</system-reminder>");
+            content.push_str("</system-reminder>");
+            om_input_items.push(InputEntry::Message(InputMessage {
+                role: "user".to_owned(),
+                content,
+            }));
         }
-        instructions
+        AssembledContext {
+            instructions,
+            om_input_items,
+        }
     }
 
     /// The raw window over already-read entries (pure — no store

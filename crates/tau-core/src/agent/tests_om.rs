@@ -94,8 +94,9 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     let seen = provider.seen.lock().unwrap();
     let hints = seen
         .iter()
-        .filter(|(ins, _)| {
-            ins.as_deref()
+        .filter(|(_, first_input)| {
+            first_input
+                .as_deref()
                 .is_some_and(|i| i.contains(crate::om::OBSERVATION_CONTINUATION_HINT))
         })
         .count();
