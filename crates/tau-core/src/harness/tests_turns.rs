@@ -77,6 +77,78 @@ async fn closing_a_session_stops_its_in_flight_turn() {
     );
 }
 
+/// Issue #67: a call stopped before it emits its first event (a stop on a
+/// prefill-hanging turn) is recorded at start, so the reconciliation emits
+/// an interrupted `StreamEnd` for it — the GUI's turn state can settle
+/// instead of wedging in "starting".
+#[tokio::test]
+async fn a_stop_before_the_first_event_still_ends_the_stream() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = match core
+        .dispatch(Command::WorkspaceOpen {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Workspace { workspace: w } => w,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    // A 60 s prefill: the stop lands long before the first event.
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::prefill_hang(&canned_body(), 60_000),
+        TurnConfig::default(),
+    );
+    let collected = collect_events(&core);
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "hang".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+
+    // The call has started (a `StreamStart` is emitted at call time) but no
+    // first event has landed: we are still in the 60 s prefill.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    core.dispatch(Command::MessageStop {
+        session: session_id.clone(),
+    })
+    .unwrap();
+
+    // The turn winds down; settlement emits the end for the aborted call.
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    let events = collected.lock().unwrap().clone();
+    let streams: Vec<&Event> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::StreamStart { session, .. }
+                    | Event::StreamEnd { session, .. }
+                    if *session == session_id
+            )
+        })
+        .collect();
+    assert!(
+        streams
+            .iter()
+            .any(|e| matches!(e, Event::StreamStart { .. })),
+        "no stream ever started: {streams:?}"
+    );
+    // The pre-#67 gap: a call aborted before its first event emitted no
+    // `StreamEnd`. The reconciliation now emits one, marked interrupted.
+    let Some(Event::StreamEnd { interrupted, .. }) = streams
+        .iter()
+        .rfind(|e| matches!(e, Event::StreamEnd { .. }))
+    else {
+        panic!("no StreamEnd for the aborted call: {streams:?}");
+    };
+    assert!(interrupted, "the aborted call's end was not interrupted");
+}
+
 /// A task command emits a `task_changed` event carrying the file's
 /// folded task list — the GUI's tasks tab is event-driven (spec §8),
 /// never polled; the payload is a projection of the file.
