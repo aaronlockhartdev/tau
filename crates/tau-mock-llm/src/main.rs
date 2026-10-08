@@ -13,7 +13,10 @@ async fn main() {
     // present. (#98)
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("tau_mock_llm=debug"));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .try_init();
     let mut args = std::env::args().skip(1);
     let mut port: u16 = 8123;
     let mut scenarios = PathBuf::from("fixtures/e2e-mocks");
