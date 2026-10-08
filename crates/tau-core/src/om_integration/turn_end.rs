@@ -427,16 +427,16 @@ impl OmState {
         }
     }
 
-    /// The assembled main-turn context (spec §4). `instructions` is the
-    /// stable system prompt: the base prompt, the observation log (a demoted
-    /// prefix drops out — it stays in the session file, reachable via
-    /// `recall`), and the active task's resume contract (ticket #24 fills the
-    /// slot; the loop passes `None` today). The one-shot continuation hint is
-    /// not in `instructions` — it rides as a `role: user` item in
-    /// `om_input_items` (#97), keeping the system-prompt prefix byte-stable
-    /// for the vLLM prefix cache. Pure over the record (no store access), so
-    /// the one-shot `changed` flip sticks when the loop runs it on the
-    /// persistent state under the lock.
+    /// The assembled main-turn context (spec §4). `instructions` is the stable
+    /// system prompt: the base prompt, the observation framing, and the active
+    /// task's resume contract (ticket #24 fills the slot; the loop passes `None`
+    /// today). The volatile observation content is NOT in `instructions` — each
+    /// observation group rides as its own `role: system` item in
+    /// `om_input_items` (#96), so the prompt stays byte-stable across appends and
+    /// reflector rewrites. The one-shot continuation hint is the trailing
+    /// `role: user` item (#97). Pure over the record (no store access), so the
+    /// one-shot `changed` flip sticks when the loop runs it on the persistent
+    /// state under the lock.
     pub fn assemble_context(
         &mut self,
         base: &str,
@@ -449,18 +449,24 @@ impl OmState {
             instructions.push_str(om::OBSERVATION_CONTEXT_PROMPT);
             instructions.push('\n');
             instructions.push_str(om::OBSERVATION_CONTEXT_INSTRUCTIONS);
-            instructions.push_str("\n\n");
-            instructions.push_str(&observations);
         }
         if let Some(contract) = task_contract {
             instructions.push_str("\n\n# Task (resume contract)\n");
             instructions.push_str(contract);
         }
-        // The one-shot continuation hint rides as a synthetic user message in
-        // the input, not the system prompt: the stable `instructions` prefix
-        // never churns, so the vLLM prefix cache survives the hint's appear and
-        // clear (mastra parity, #97).
+        // One `role: system` message per observation group (mastra parity,
+        // #96), pushed before the one-shot hint so its "messages following are
+        // newer" framing stays true.
         let mut om_input_items = Vec::new();
+        for group in om::parse_observation_groups(&observations) {
+            om_input_items.push(InputEntry::Message(InputMessage {
+                role: "system".to_owned(),
+                content: group.content,
+            }));
+        }
+        // The one-shot continuation hint is the trailing `role: user` item
+        // (#97): the stable `instructions` prefix never churns, so the vLLM
+        // prefix cache survives the hint's appear and clear.
         if self.changed && !observations.is_empty() {
             self.changed = false;
             // One-shot steering: hand the observer's suggested-response to the

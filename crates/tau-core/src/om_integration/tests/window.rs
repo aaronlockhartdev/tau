@@ -15,6 +15,21 @@ fn om_user_content(items: &[crate::provider::InputEntry]) -> String {
         .join("\n")
 }
 
+/// The joined content of the OM-derived `role: system` input items — the
+/// per-chunk observation messages (#96).
+fn om_system_content(items: &[crate::provider::InputEntry]) -> String {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            crate::provider::InputEntry::Message(m) if m.role == "system" => {
+                Some(m.content.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[test]
 fn recall_browses_group_ranges_and_reports_missing_things() {
     let dir = tempfile::tempdir().unwrap();
@@ -225,14 +240,24 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     let mut state = OmState::from_config(
         &cfg,
         OmRecord {
-            active_observations: "the log".into(),
+            active_observations: om::wrap_in_observation_group(
+                "the log",
+                "00000001:00000002",
+                "a1",
+                None,
+            ),
             ..Default::default()
         },
     );
     state.changed = true;
     let first = state.assemble_context("base prompt", None);
     assert!(first.instructions.starts_with("base prompt"));
-    assert!(first.instructions.contains("the log"));
+    // The observation content rides as `role: system` items, not in
+    // `instructions` (#96): the framing stays in the prompt, the volatile
+    // content moves to the input.
+    assert!(first.instructions.contains(om::OBSERVATION_CONTEXT_PROMPT));
+    assert!(!first.instructions.contains("the log"));
+    assert!(om_system_content(&first.om_input_items).contains("the log"));
     assert!(
         !first
             .instructions
@@ -305,7 +330,11 @@ fn the_main_agent_view_has_no_boundary_markers() {
         !ctx.instructions.contains("--- message boundary ("),
         "{ctx:?}"
     );
-    assert!(ctx.instructions.contains("first obs"), "{ctx:?}");
+    assert!(
+        om_system_content(&ctx.om_input_items).contains("first obs"),
+        "{ctx:?}"
+    );
+    assert!(!ctx.instructions.contains("first obs"), "{ctx:?}");
 }
 
 #[test]
