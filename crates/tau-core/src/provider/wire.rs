@@ -1,17 +1,18 @@
 //! The provider wire log (#98): the exact outgoing request body and the raw
-//! returned response body, emitted as `tracing` events. Replaces the bespoke
-//! file-append logger. Compiled in only for a diagnostic build
-//! (`log-llm-requests` → `tracing/max_level_trace`); a production build
-//! (`max_level_off`) compiles these out entirely. A diagnostic binary installs
-//! a `RUST_LOG`-driven subscriber to route the events to its output.
+//! returned response body, emitted as ordinary `tracing` `trace!` events.
+//! Replaces the bespoke file-append logger. No feature gates these — a
+//! production build (`tracing/max_level_off`) compiles them out entirely, and a
+//! diagnostic build (`max_level_trace`) plus a `RUST_LOG`-driven subscriber
+//! routes them to its output. The binary's `max_level` is the only control.
 
 use super::ResponseRequest;
 
 /// Emit the outgoing request body (serialized verbatim) as a trace event, so
 /// the exact wire bytes are recoverable from the log.
 pub(super) fn request(request: &ResponseRequest) {
-    let body = serde_json::to_string(request).unwrap_or_default();
-    tracing::trace!(%body, "llm request");
+    // Serialized as a `trace!` field (not a `let`) so a `max_level_off` build
+    // compiles the whole call — serialization included — out.
+    tracing::trace!(body = %serde_json::to_string(request).unwrap_or_default(), "llm request");
 }
 
 /// Emit the raw returned response body (the SSE bytes, verbatim) as a trace

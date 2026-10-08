@@ -198,7 +198,6 @@ async fn attempt_one_turn(
     request: &ResponseRequest,
     sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
-    #[cfg(feature = "log-llm-requests")]
     super::wire::request(request);
     // `.timeout` is a *total* deadline, which kills a healthy long stream
     // mid-body: the connect/headers phase is bounded by
@@ -237,7 +236,6 @@ async fn attempt_one_turn(
     // frame (some do, on tool-call responses) — otherwise `!completed` flags
     // every normal agentic segment as interrupted.
     let mut clean_end = false;
-    #[cfg(feature = "log-llm-requests")]
     let mut raw_response = String::new();
     'outer: while !parser.terminated {
         let chunk = match tokio::select! {
@@ -254,8 +252,9 @@ async fn attempt_one_turn(
             Ok(Ok(Some(chunk))) => {
                 // A received chunk restarts the idle deadline.
                 idle_deadline = tokio::time::Instant::now() + idle;
-                #[cfg(feature = "log-llm-requests")]
-                raw_response.push_str(&String::from_utf8_lossy(&chunk));
+                if tracing::level_enabled!(tracing::Level::TRACE) {
+                    raw_response.push_str(&String::from_utf8_lossy(&chunk));
+                }
                 chunk
             }
             // A bare EOF (no [DONE]) is byte-identical to a mid-body drop
@@ -302,7 +301,6 @@ async fn attempt_one_turn(
     if clean_end {
         result.completed = true;
     }
-    #[cfg(feature = "log-llm-requests")]
     super::wire::response(&raw_response);
     Ok(result)
 }
