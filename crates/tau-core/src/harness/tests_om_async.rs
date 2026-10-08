@@ -404,8 +404,9 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     // are unobserved at the end: 2.4k ≥ 1k).
     assert_eq!(served.load(Ordering::SeqCst), 6);
 
-    // The 4th main-turn call's system prompt carries the PROMOTED
-    // observation — the mid-loop activation ran before it assembled.
+    // The 4th main-turn call's input carries the PROMOTED observation (a
+    // `role: system` item, #96) — the mid-loop activation ran before it
+    // assembled.
     let all = seen.lock().unwrap().clone();
     let main_calls: Vec<_> = all
         .iter()
@@ -413,11 +414,7 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
         .collect();
     assert_eq!(main_calls.len(), 4, "four main-turn calls");
     assert!(
-        main_calls[3]
-            .0
-            .as_deref()
-            .expect("main calls carry instructions")
-            .contains("observed the work"),
+        main_calls[3].1.contains("observed the work"),
         "the 4th call's context lacks the promoted observation"
     );
 

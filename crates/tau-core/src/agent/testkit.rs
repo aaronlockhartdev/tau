@@ -68,7 +68,7 @@ pub(crate) fn sse_json(text: &str) -> String {
 }
 
 /// A canned provider scripted per call: each entry is (sse body, calls).
-/// `seen` captures (instructions, first input message content) per call.
+/// `seen` captures (instructions, all input message contents joined) per call.
 pub(crate) struct ScriptedProvider {
     calls: Vec<String>,
     index: std::sync::atomic::AtomicUsize,
@@ -104,10 +104,14 @@ impl crate::provider::TurnProvider for ScriptedProvider {
                 .map(str::to_owned),
             captured
                 .get("input")
-                .and_then(|i| i.get(0))
-                .and_then(|i| i.get("content"))
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|i| i.get("content").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }),
         ));
         let provider = canned(&body);
         provider.call(request, sink)
