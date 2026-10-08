@@ -233,6 +233,11 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     let first = state.assemble_context("base prompt", None);
     assert!(first.instructions.starts_with("base prompt"));
     assert!(first.instructions.contains("the log"));
+    assert!(
+        !first
+            .instructions
+            .contains(om::OBSERVATION_CONTINUATION_HINT)
+    );
     assert!(om_user_content(&first.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
     // The one-shot flip: a second assembly carries no hint.
     let second = state.assemble_context("base prompt", None);

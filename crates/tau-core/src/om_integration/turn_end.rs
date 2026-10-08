@@ -8,7 +8,7 @@ use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef
 /// plus the OM-derived `input` items — the one-shot continuation hint today,
 /// per-chunk observation messages in the follow-up (#96). `om_input_items` is
 /// a `Vec` so #96 appends items without reshaping this seam.
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct AssembledContext {
     pub instructions: String,
     pub om_input_items: Vec<InputEntry>,
@@ -427,13 +427,16 @@ impl OmState {
         }
     }
 
-    /// The context's system-prompt part (spec §4): the base prompt, the
-    /// observation log (a demoted prefix drops out — it stays in the
-    /// session file, reachable via `recall`), the active task's resume
-    /// contract (ticket #24 fills the slot; the loop passes `None`
-    /// today), and the continuation hint after a log change. Pure over the
-    /// record (no store access), so the one-shot `changed` flip sticks
-    /// when the loop runs it on the persistent state under the lock.
+    /// The assembled main-turn context (spec §4). `instructions` is the
+    /// stable system prompt: the base prompt, the observation log (a demoted
+    /// prefix drops out — it stays in the session file, reachable via
+    /// `recall`), and the active task's resume contract (ticket #24 fills the
+    /// slot; the loop passes `None` today). The one-shot continuation hint is
+    /// not in `instructions` — it rides as a `role: user` item in
+    /// `om_input_items` (#97), keeping the system-prompt prefix byte-stable
+    /// for the vLLM prefix cache. Pure over the record (no store access), so
+    /// the one-shot `changed` flip sticks when the loop runs it on the
+    /// persistent state under the lock.
     pub fn assemble_context(
         &mut self,
         base: &str,
