@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/tau-core", "crates/tau-protocol", "crates/tau-mock-llm", "crates/tau-acp", "crates/tau-eval", "crates/tau-test", "app/src-tauri"]
+members = ["crates/tau-core", "crates/tau-protocol", "crates/tau-mock-llm", "crates/tau-acp", "crates/tau-test", "app/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"

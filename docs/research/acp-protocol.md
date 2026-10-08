@@ -372,10 +372,10 @@ static-musl binary the registry `binary` distribution wants. Therefore:
 
 Registry entry shape (see §4.5) then uses `cmd: "./tau-acp"` with no args.
 
-### 3.2 Core driving (reuse the eval rig)
+### 3.2 Core driving
 
-`crates/tau-eval/src/live.rs` already builds and drives a production-shape
-core; `tau acp` reuses the same surface:
+`crates/tau-acp/` builds and drives a production-shape
+core; the ACP server reuses the same surface:
 
 ```rust
 let core = tau_core::harness::CoreBuilder::default_system().build(); // ~/.config/tau
@@ -912,7 +912,7 @@ local-inference coding agent, TUI + ACP mode.
 
 **tau (internal, /Users/aaron/git/tau).**
 - `app/src-tauri/src/main.rs` (flat `main()`, the seam)
-- `crates/tau-eval/src/live.rs` (production-shape core, `core.events()`
+- `crates/tau-acp/src/server.rs` (production-shape core, `core.events()`
   fan-out pump, dispatch drive, settle rule, journal tailing)
 - `crates/tau-core/src/harness/state.rs` (`Core`/`CoreBuilder`,
   `events_tx` 1024 bounded, `pipe_send` drop counting, `Core::events()`
