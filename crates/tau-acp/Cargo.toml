@@ -11,11 +11,11 @@ workspace = true
 [features]
 # Production (default): compile tracing out (max_level_off, zero cost).
 # Diagnostic: `--no-default-features --features log-llm-requests` → trace level
-# + the RUST_LOG-driven subscriber (the wire log). The two are mutually
-# exclusive: tracing resolves the max_level to the most restrictive feature
-# enabled, so off and trace can't coexist. (#98)
+# + the RUST_LOG-driven subscriber. This only selects the `max_level` — the wire
+# log is ordinary `trace!`, so no separate feature gates it. The two max_levels
+# are mutually exclusive: tracing resolves to the most restrictive enabled. (#98)
 default = ["tracing/max_level_off"]
-log-llm-requests = ["tracing/max_level_trace", "dep:tracing-subscriber", "tau-core/log-llm-requests"]
+log-llm-requests = ["tracing/max_level_trace", "dep:tracing-subscriber"]
 
 [dependencies]
 tau-core = { path = "../tau-core" }

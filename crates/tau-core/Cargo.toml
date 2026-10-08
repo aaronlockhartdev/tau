@@ -7,12 +7,6 @@ license.workspace = true
 [lints]
 workspace = true
 
-[features]
-# Gates the provider wire log (request + response as `tracing` events). The
-# `max_level` is set by the consuming binary (off by default, trace for a
-# diagnostic build), not here. Replaces the bespoke file-append logger. (#98)
-log-llm-requests = []
-
 [dependencies]
 serde = { workspace = true }
 base64 = { workspace = true }
@@ -34,4 +28,3 @@ tau-protocol = { path = "../tau-protocol" }
 tempfile = { workspace = true }
 proptest = { workspace = true }
 sha2 = { workspace = true }
-tracing-test = { version = "0.2", features = ["no-env-filter"] }
