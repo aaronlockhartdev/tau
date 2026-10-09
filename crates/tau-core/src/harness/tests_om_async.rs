@@ -466,3 +466,78 @@ async fn a_done_turn_appends_no_om_entry() {
     let om_entries = rig.entries().iter().filter(|e| e.kind == "om").count();
     assert_eq!(om_entries, 0, "a Done turn must not append an om entry");
 }
+
+/// #107: a turn-end pass that promotes (drains the buffered chunks) writes
+/// exactly one `om` record. Before the fix, the write-back merge re-introduced
+/// the drained chunks from the stale in-memory mirror (`inner.om`), so a second
+/// record saved with the same `active_observations` — the duplicate card.
+#[tokio::test]
+async fn a_promoting_turn_end_writes_one_record_not_two() {
+    let chunk = |id: &str| crate::om_integration::BufferedChunk {
+        range: (id.to_owned(), id.to_owned()),
+        last_ts: 1000,
+        text: format!(
+            "<observation-group id=\"g{id}\" range=\"{id}:{id}\">obs {id}</observation-group>"
+        ),
+        tokens: 600,
+    };
+    let record = crate::om::OmRecord {
+        buffered_chunks: vec![chunk("e1"), chunk("e2")],
+        ..Default::default()
+    };
+    let om = crate::om_integration::OmState::from_config(
+        // observe 1000 (the round crosses it at turn end); increment 900 (a low
+        // retention floor so the promotion removes both chunks); buffer 0
+        // (disables the mid-loop trigger, so the promote fires only at turn end).
+        &om_config(1000, 10_000, 900, 0, 0, 0),
+        record,
+    );
+    // One ~1150-token round crosses the observe threshold at turn end, so the
+    // turn-end activation promotes the two pre-buffered chunks.
+    let a = "A".repeat(4600);
+    let (p, _served, _seen) = scripted_om(
+        vec![
+            tool_round("c1", &a),
+            crate::agent::testkit::sse("done", &[]),
+        ],
+        "",
+        false,
+        10,
+    );
+    let rig = rig(om, p);
+    rig.run_turn("go").await;
+    Rig::settled_cleanly(&rig.events());
+
+    let om_entries = rig.entries().iter().filter(|e| e.kind == "om").count();
+    assert_eq!(
+        om_entries, 1,
+        "a promoting turn-end writes exactly one om record; the write-back merge \
+         must not re-introduce the drained chunks (got {om_entries})"
+    );
+}
+
+/// The write-back merge keeps a chunk that a background cycle durably committed
+/// (it is in the freshest file record): unioning over the durable record, not the
+/// in-memory mirror, must not clobber it.
+#[test]
+fn write_back_merge_preserves_a_durable_background_chunk() {
+    let config = om_config(1000, 10_000, 400, 200, 0, 0);
+    let fresh = crate::om::OmRecord {
+        buffered_chunks: vec![crate::om_integration::BufferedChunk {
+            range: ("e1".into(), "e2".into()),
+            last_ts: 1000,
+            text: "chunk".into(),
+            tokens: 100,
+        }],
+        ..Default::default()
+    };
+    // The pass's state has no chunks of its own.
+    let mut state =
+        crate::om_integration::OmState::from_config(&config, crate::om::OmRecord::default());
+    state.merge_turn_end(&fresh);
+    assert_eq!(
+        state.record.buffered_chunks.len(),
+        1,
+        "the durable background chunk must survive the merge"
+    );
+}

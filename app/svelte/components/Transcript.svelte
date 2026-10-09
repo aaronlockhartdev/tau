@@ -62,26 +62,10 @@
   // (ADR-0008). While a turn awaits first output a synthetic "waiting" item
   // ends the list, so the pin scrolls the ellipses into view (a
   // virtualized item, not a separate DOM node).
-  const all = $derived.by(() => {
-    const rows = [
-      ...Object.values(entries),
-      ...(awaiting ? [{ id: '__waiting__', kind: 'waiting' as const, text: '', reasoning: undefined, usage: undefined }] : [])
-    ];
-    // A double OM commit (two records a few ms apart) stores the same
-    // observation twice; drop the duplicate so the transcript shows one.
-    const out: typeof rows = [];
-    let prevOm: string | undefined = undefined;
-    for (const r of rows) {
-      if (r.kind === 'om') {
-        if (r.text === prevOm) continue;
-        prevOm = r.text;
-      } else {
-        prevOm = undefined;
-      }
-      out.push(r);
-    }
-    return out;
-  });
+  const all = $derived([
+    ...Object.values(entries),
+    ...(awaiting ? [{ id: '__waiting__', kind: 'waiting' as const, text: '', reasoning: undefined, usage: undefined }] : [])
+  ]);
   type Row = (typeof all)[number];
 
   // For each tool card in a run of 2+ consecutive tools, its index in the

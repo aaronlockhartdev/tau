@@ -150,32 +150,27 @@ impl OmState {
 
     /// The turn-end write-back merge (ticket #86 P2, D13.2): the pass's
     /// state is the base and its observation fields win; the chunk fields
-    /// are unioned in from the live state and the freshest file record
-    /// (deduped by range), so a background cycle that committed during the
-    /// pass (the bounded join timed out) is not clobbered — and vice
-    /// versa. The boundary is the max; the buffer cursor rides the largest
-    /// boundary (a cycle sets its cursor and boundary together).
-    pub(crate) fn merge_turn_end(&mut self, live: &OmState, fresh: &OmRecord) {
+    /// are unioned in from the freshest file record (deduped by range), so a
+    /// background cycle that committed during the pass (the bounded join timed
+    /// out) is not clobbered — and vice versa. The union is over the durable
+    /// record, not the in-memory mirror: a completed cycle is always durable
+    /// (`commit_chunk` writes the file and mirrors the state under the lock), so
+    /// the mirror adds nothing and would resurrect chunks a promotion just
+    /// drained (#107). The boundary is the max; the buffer cursor rides the
+    /// largest boundary (a cycle sets its cursor and boundary together).
+    pub(crate) fn merge_turn_end(&mut self, fresh: &OmRecord) {
         let mut chunks = self.record.buffered_chunks.clone();
-        for src in [&live.record.buffered_chunks, &fresh.buffered_chunks] {
-            for c in src {
-                if !chunks.iter().any(|k| k.range == c.range) {
-                    chunks.push(c.clone());
-                }
+        for c in &fresh.buffered_chunks {
+            if !chunks.iter().any(|k| k.range == c.range) {
+                chunks.push(c.clone());
             }
         }
         let boundary = self
             .record
             .last_buffered_at_tokens
-            .max(live.record.last_buffered_at_tokens)
             .max(fresh.last_buffered_at_tokens);
         let mut cursor = self.buffer_cursor.clone();
-        if live.record.last_buffered_at_tokens > self.record.last_buffered_at_tokens {
-            cursor.clone_from(&live.buffer_cursor);
-        }
-        if fresh.last_buffered_at_tokens > self.record.last_buffered_at_tokens
-            && fresh.last_buffered_at_tokens >= live.record.last_buffered_at_tokens
-        {
+        if fresh.last_buffered_at_tokens > self.record.last_buffered_at_tokens {
             cursor = fresh
                 .buffered_chunks
                 .last()
