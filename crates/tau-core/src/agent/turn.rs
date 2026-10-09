@@ -189,7 +189,10 @@ impl AgentSession {
                 reasoning: String::new(),
                 last: None,
             };
-            let result = self.provider.call(&request, &mut sink).await?;
+            let mut result = self.provider.call(&request, &mut sink).await?;
+            // ticket #70: repair malformed tool-call arguments at receipt, so
+            // the stored entry + echoed history are valid JSON.
+            repair_tool_call_arguments(&mut result);
             self.append_assistant(&entry_id, &result, turn_killed && first_call)?;
             first_call = false;
 
@@ -239,7 +242,13 @@ impl AgentSession {
 
     async fn run_tools(&self, calls: &[FunctionCall]) -> Result<(), AgentError> {
         for call in calls {
-            let args = serde_json::from_str::<Value>(&call.arguments).unwrap_or(Value::Null);
+            // ticket #70: keep the parse result so an unparseable call below
+            // becomes a clear error, not a silent null.
+            let parsed = serde_json::from_str::<Value>(&call.arguments);
+            let args = match &parsed {
+                Ok(v) => v.clone(),
+                Err(_) => Value::Null,
+            };
             let tc = tools::ToolCall {
                 id: call.id.clone(),
                 name: call.name.clone(),
@@ -297,7 +306,14 @@ impl AgentSession {
                     inner.turn.image_max_bytes,
                 )
             };
-            let output = tools::surface::dispatch(self, &cwd, image_max, sup, link, &tc).await;
+            // ticket #70: an unparseable call is a parse error, never a silent
+            // null-args dispatch — the model reads the error and self-corrects.
+            let output = match &parsed {
+                Ok(_) => tools::surface::dispatch(self, &cwd, image_max, sup, link, &tc).await,
+                Err(e) => tau_protocol::payload::ToolOutput::Text(format!(
+                    "error: arguments are not valid JSON: {e}"
+                )),
+            };
             self.append_id(
                 &entry_id,
                 KIND_TOOL,
@@ -723,6 +739,33 @@ async fn stop_flags(kill: &AtomicBool, stop: &AtomicBool) {
     }
 }
 
+/// ticket #70: repair malformed tool-call arguments at receipt. A call whose
+/// arguments fail a strict parse is run through `jsonrepair`; if that yields
+/// valid JSON, the repaired string replaces the raw one, so the stored entry
+/// and the echoed history are valid (and vLLM stops coercing the argument to
+/// `{}`). Valid arguments are never altered. Unrepairable arguments are left
+/// as-is — `run_tools` turns those into a parse-error result, never a silent
+/// null.
+fn repair_tool_call_arguments(result: &mut TurnResult) {
+    for call in &mut result.calls {
+        if serde_json::from_str::<Value>(&call.arguments).is_ok() {
+            continue;
+        }
+        match jsonrepair_rs::jsonrepair(&call.arguments) {
+            Ok(repaired) if serde_json::from_str::<Value>(&repaired).is_ok() => {
+                tracing::info!(
+                    tool = %call.name,
+                    raw_len = call.arguments.len(),
+                    repaired_len = repaired.len(),
+                    "repaired malformed tool-call arguments"
+                );
+                call.arguments = repaired;
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The session's entries (file order) mapped to responses-API input items:
 /// user messages, assistant text + calls, and tool results (spec §5.4).
 fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
@@ -853,6 +896,68 @@ mod tests {
             blob: None,
             first_kept_entry_id: None,
             crc: None,
+        }
+    }
+
+    fn turn_result_with_call(args: &str) -> TurnResult {
+        let mut r = TurnResult::default();
+        r.calls.push(FunctionCall {
+            id: "id-1".into(),
+            call_id: "call-1".into(),
+            name: "edit".into(),
+            arguments: args.into(),
+        });
+        r
+    }
+
+    #[test]
+    fn valid_tool_args_pass_through_unchanged() {
+        let mut r = turn_result_with_call(r#"{"file": "a.txt"}"#);
+        repair_tool_call_arguments(&mut r);
+        assert_eq!(r.calls[0].arguments, r#"{"file": "a.txt"}"#);
+    }
+
+    #[test]
+    fn single_quote_tool_args_repair_to_intended() {
+        let mut r = turn_result_with_call("{'file': 'a.txt'}");
+        repair_tool_call_arguments(&mut r);
+        let v: Value =
+            serde_json::from_str(&r.calls[0].arguments).expect("repaired args must be valid JSON");
+        assert_eq!(v, serde_json::json!({"file": "a.txt"}));
+    }
+
+    #[test]
+    fn trailing_comma_tool_args_repair_to_intended() {
+        let mut r = turn_result_with_call(r#"{"a": 1,}"#);
+        repair_tool_call_arguments(&mut r);
+        let v: Value =
+            serde_json::from_str(&r.calls[0].arguments).expect("repaired args must be valid JSON");
+        assert_eq!(v, serde_json::json!({"a": 1}));
+    }
+
+    #[test]
+    fn raw_newline_in_value_is_repaired() {
+        // The observed production breakage class: a raw control character
+        // (newline) inside a string value is invalid JSON.
+        let mut r = turn_result_with_call("{\"content\": \"line1\nline2\"}");
+        repair_tool_call_arguments(&mut r);
+        let v: Value =
+            serde_json::from_str(&r.calls[0].arguments).expect("repaired args must be valid JSON");
+        assert!(
+            v["content"].is_string(),
+            "content should stay a string: {v:?}"
+        );
+    }
+
+    #[test]
+    fn unrepairable_args_are_left_untouched() {
+        // If the repair cannot produce valid JSON, the raw string is kept
+        // verbatim (run_tools then emits the parse error) — never corrupted.
+        let raw = "definitely not json {[";
+        let mut r = turn_result_with_call(raw);
+        repair_tool_call_arguments(&mut r);
+        if serde_json::from_str::<Value>(&r.calls[0].arguments).is_err() {
+            assert_eq!(r.calls[0].arguments, raw);
         }
     }
 
