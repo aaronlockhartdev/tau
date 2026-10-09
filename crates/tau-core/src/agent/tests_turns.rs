@@ -442,3 +442,38 @@ async fn kill_policy_completes_the_inflight_tool_batch() {
         .unwrap();
     assert_eq!(interrupted.payload["calls"].as_array().unwrap().len(), 1);
 }
+
+/// ticket #70: a tool call whose arguments are not valid JSON and cannot be
+/// repaired yields a parse-error tool result — never a silent null-args
+/// dispatch that would surface as a confusing schema error.
+#[tokio::test]
+async fn unrepairable_tool_args_yield_a_parse_error_not_a_null() {
+    let dir = tempfile::tempdir().unwrap();
+    // A bash call whose arguments are not valid JSON (unrepairable).
+    let agent = make_agent(
+        dir.path(),
+        Arc::new(ScriptedProvider::new(vec![sse(
+            "",
+            &[("bash".into(), "call-1".into(), "not valid json {[".into())],
+        )])),
+    );
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+
+    // Read the tool-result entry back off the session file.
+    let store = SessionStore::for_workspace(dir.path(), "s1");
+    let entries = entries_of(&store);
+    let tool = entries
+        .iter()
+        .find(|e| e.kind == KIND_TOOL)
+        .expect("expected a tool result entry");
+    let output = tool
+        .payload
+        .get("output")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    assert!(
+        output.contains("not valid JSON"),
+        "the tool result should carry the parse error, got: {output:?}"
+    );
+}

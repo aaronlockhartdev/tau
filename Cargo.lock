@@ -2084,6 +2084,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "jsonrepair-rs"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69f68e68ccddaba9e4ff2d1f151ec1bb62e8475eb574c252ba86c844b8590aff"
+
+[[package]]
 name = "keyboard-types"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4169,6 +4175,7 @@ name = "tau-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "jsonrepair-rs",
  "names",
  "notify",
  "notify-debouncer-full",
