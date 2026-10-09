@@ -291,17 +291,14 @@ function taskShell(e: TaskEntry, text: string): Shell {
 }
 
 function observationShell(e: OmEntry, text: string): Shell {
-  const details: Section[] = [];
+  // Collapsible like the task card: the body (observation text + details)
+  // lives in the reveal, so a closed card is just its header.
+  const body: Section[] = [{ type: 'md', html: md(text.trim()), dim: true }];
   if (e.suggestedResponse)
-    details.push({ type: 'kv', rows: [{ k: 'suggested', lines: [e.suggestedResponse] }] });
+    body.push({ type: 'kv', rows: [{ k: 'suggested', lines: [e.suggestedResponse] }] });
   if (e.thinking)
-    details.push({
-      type: 'md',
-      html: md(e.thinking.trim()),
-      cls: 'thinkbody',
-      label: 'thinking'
-    });
-  if (e.input) details.push({ type: 'pre', text: e.input, label: 'input' });
+    body.push({ type: 'md', html: md(e.thinking.trim()), cls: 'thinkbody', label: 'thinking' });
+  if (e.input) body.push({ type: 'pre', text: e.input, label: 'input' });
   return card({
     header: {
       icon: 'i-book',
@@ -309,13 +306,14 @@ function observationShell(e: OmEntry, text: string): Shell {
       cls: 'obs',
       meta: e.model ?? null,
       open: 'obs',
-      singleClick: false,
-      caret: details.length > 0
+      singleClick: true,
+      caret: true
     },
     cls: 'obs',
     openKey: 'obs',
-    sections: [{ type: 'md', html: md(text.trim()), dim: true }],
-    reveal: details.length ? { sections: details, group: true } : null
+    collapseWhenClosed: true,
+    sections: [],
+    reveal: { sections: body, group: false }
   });
 }
 
