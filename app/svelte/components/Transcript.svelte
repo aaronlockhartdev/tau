@@ -127,16 +127,18 @@
     const c = cur;
     const n = all.length;
     if (!c || n === 0) return;
-    let start = Math.max(0, ref.findItemIndex(offset));
-    let end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
-    // A degenerate findItemIndex range (end <= start) leaves the visible items
-    // unmounted — seen scrolling to the head in the CI WebKitGTK webview, where
-    // the spawn card never appeared. Recover the range from the scroll fraction
-    // so the items still render.
-    if (end <= start) {
-      const scrollable = Math.max(1, ref.getScrollSize() - ref.getViewportSize());
-      start = Math.max(0, Math.floor((offset / scrollable) * n));
-      end = Math.min(n - 1, start + Math.max(1, Math.ceil(ref.getViewportSize() / 120)));
+    const start = Math.max(0, ref.findItemIndex(offset));
+    const end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
+    {
+      const h = ref;
+      const total = h.getScrollSize();
+      const vp = h.getViewportSize();
+      const span = Math.max(1, total - vp);
+      const sweep = [0, 0.25, 0.5, 0.75, 1]
+        .map((f) => `${Math.round(f * span)}=${h.findItemIndex(Math.round(f * span))}`)
+        .join(' ');
+      const head = document.querySelector('.card2 .hd')?.textContent?.trim() ?? 'none';
+      console.log(`[DEBUG-scroll] n=${n} off=${offset} total=${total} vp=${vp} raw=[${start},${end}] head=${head} ${sweep}`);
     }
     const fetches = scrollFetches(win, c, { start, end }, turnOf(c));
     // The status bar labels the visible window on every recompute — not
@@ -228,7 +230,6 @@
         <Virtualizer
           bind:this={ref as any}
           scrollRef={el ?? undefined}
-          keepMounted={[0, 1]}
           data={all}
           getKey={(d: Row) => d.id}
           bufferSize={BUFFER}
