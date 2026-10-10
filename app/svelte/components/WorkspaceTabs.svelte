@@ -90,7 +90,7 @@
   });
 </script>
 
-<div class="bar">
+<div class="bar" data-tauri-drag-region>
   <span class="logo">τ</span>
   <div class="tabs">
     {#each store.workspaces as w (w.id)}
@@ -130,8 +130,8 @@
     display: flex;
     align-items: center;
     gap: 4px;
-    height: 38px;
-    padding: 0 10px;
+    height: 44px;
+    padding: 0 10px 0 96px;
     background: var(--panel);
     border-bottom: 1px solid var(--line);
     user-select: none;
