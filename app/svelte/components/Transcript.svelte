@@ -254,6 +254,8 @@
     overflow-y: auto;
     /* The browser's native scroll anchoring fights the virtualizer. */
     overflow-anchor: none;
+    /* Suppress the elastic overscroll (rubber-band) that snaps back on release. */
+    overscroll-behavior: none;
     min-height: 0;
     position: relative;
   }
