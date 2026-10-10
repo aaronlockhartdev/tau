@@ -75,9 +75,10 @@ impl Core {
         });
     }
 
-    /// The workspace's tree watcher (the files pane, ticket #32): the second
-    /// consumer of the shared `Watcher` plumbing — a per-workspace watch on
-    /// the cwd with the design's exclusions. A batch maps to the stale dir
+    /// The workspace's tree watcher (the files pane, #32/#115): the second
+    /// consumer of the shared `Watcher` plumbing. It starts empty — no dir is
+    /// watched at open — and tracks the pane: a `file_list` (expand) watches the
+    /// dir, a `file_unlist` (collapse) drops it. A batch maps to the stale dir
     /// paths (workspace-relative) and emits `FileTreeChanged`: the client
     /// refetches the affected listed dirs, and any fetch is a fresh read, so
     /// a lost batch self-heals on the next expand.
@@ -93,8 +94,7 @@ impl Core {
         if map.contains_key(&workspace.id) {
             return;
         }
-        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
-        watcher.add_excluded(cwd, TREE_EXCLUDES);
+        let (watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
         map.insert(workspace.id.clone(), watcher);
         drop(map);
         let Some(core) = self.self_arc() else {
@@ -120,6 +120,31 @@ impl Core {
                 });
             }
         });
+    }
+
+    /// Register a dir on the workspace's tree watcher (visibility-driven,
+    /// #115): a `file_list` means the pane is showing the dir, so watch it.
+    /// No-op if the workspace has no tree watcher yet.
+    pub(crate) fn watch_tree_dir(&self, workspace: &Workspace, dir: &Path) {
+        let mut map = self
+            .tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held");
+        if let Some(watcher) = map.get_mut(&workspace.id) {
+            watcher.watch_path(dir);
+        }
+    }
+
+    /// Drop a dir from the workspace's tree watcher (visibility-driven,
+    /// #115): a `file_unlist` means the pane collapsed the dir.
+    pub(crate) fn unwatch_tree_dir(&self, workspace: &Workspace, dir: &Path) {
+        let mut map = self
+            .tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held");
+        if let Some(watcher) = map.get_mut(&workspace.id) {
+            watcher.unwatch_path(dir);
+        }
     }
 }
 

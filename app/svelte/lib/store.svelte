@@ -344,6 +344,18 @@
     }
   }
 
+  // Tell the core to stop watching a dir the pane just collapsed (#115): the
+  // tree watcher tracks exactly the expanded dirs, so a collapse drops the
+  // watch. Fire-and-forget — a failure (e.g. the workspace closing) is a
+  // no-op, not an error.
+  async function unlistDir(ws: string, path: string): Promise<void> {
+    try {
+      await command({ type: 'file_unlist', workspace: ws, path });
+    } catch {
+      // a collapse for a gone workspace is a no-op
+    }
+  }
+
   // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
   // fetch on first expand. A dir is listed only while expanded, so the
   // tree's memory tracks what is on screen.
@@ -351,6 +363,7 @@
     const t = toggleDir(store.files, ws, path);
     store.files = t.cache;
     if (t.fetch) void fetchDir(ws, t.fetch);
+    else void unlistDir(ws, path);
   }
 
   // 'failed to list — click to retry': a failed dir is already listed

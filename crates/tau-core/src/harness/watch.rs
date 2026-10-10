@@ -5,13 +5,15 @@
 //! non-blocking send; the consumer drains the receiver on its own thread,
 //! so the only non-tokio thread is notify's own. The first consumers are
 //! the skill roots (the harness); the files pane (ticket #32) is a second,
-//! on the same shape with exclusion-aware roots.
+//! on the same shape but visibility-driven — it watches only the dirs the
+//! pane has expanded (#115).
 //!
 //! Lifecycle: a watcher lives until dropped. `Debouncer::drop` only sets
 //! the stop flag, so teardown goes through `stop()`, which joins the
 //! thread (the design's accepted leak is the process-lifetime watcher,
 //! not the test's — the test's drop joins).
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -29,6 +31,7 @@ pub type Batch = Vec<PathBuf>;
 
 pub struct Watcher {
     debouncer: Option<Debouncer<RecommendedWatcher, RecommendedCache>>,
+    watched: HashSet<PathBuf>,
 }
 
 impl Watcher {
@@ -50,6 +53,7 @@ impl Watcher {
         (
             Self {
                 debouncer: Some(debouncer),
+                watched: HashSet::new(),
             },
             rx,
         )
@@ -69,48 +73,34 @@ impl Watcher {
             tracing::warn!("watch {}: {e}", root.display());
         }
     }
-    /// Watch `root` with its excluded subtrees skipped (the files-pane
-    /// consumer, ticket #32): the exclusion list is a hard requirement, not
-    /// an optimization — on Linux inotify a recursive watch is one descriptor
-    /// per directory (this repo: 4,471, 3,777 under `target/`), so the watch
-    /// set is walked by hand and every non-excluded dir is added
-    /// `NonRecursive`. On macOS `FSEvents` the stream has no per-dir
-    /// descriptors, so one recursive watch suffices and the consumer
-    /// post-filters events by prefix.
-    pub fn add_excluded(&mut self, root: &Path, exclusions: &[&str]) {
-        if !root.is_dir() {
+    /// Watch a single directory non-recursively (the files pane, #115): the
+    /// watcher tracks exactly the dirs the pane has expanded. Idempotent — a
+    /// re-list of an already-expanded dir is a no-op, so the `FSEvents` stream
+    /// is not rebuilt. A vanished dir is a no-op (nothing to watch).
+    pub fn watch_path(&mut self, path: &Path) {
+        if !path.is_dir() || self.watched.contains(path) {
             return;
         }
-        #[cfg(target_os = "linux")]
-        {
-            let mut stack = vec![root.to_path_buf()];
-            while let Some(dir) = stack.pop() {
-                if let Some(debouncer) = &mut self.debouncer
-                    && let Err(e) = debouncer.watch(&dir, RecursiveMode::NonRecursive)
-                {
-                    tracing::warn!("watch {}: {e}", dir.display());
-                }
-                let Ok(read) = std::fs::read_dir(&dir) else {
-                    continue;
-                };
-                for ent in read.flatten() {
-                    let path = ent.path();
-                    if path.is_dir()
-                        && !exclusions.contains(&ent.file_name().to_string_lossy().as_ref())
-                    {
-                        stack.push(path);
-                    }
-                }
-            }
+        let Some(debouncer) = &mut self.debouncer else {
+            return;
+        };
+        if let Err(e) = debouncer.watch(path, RecursiveMode::NonRecursive) {
+            tracing::warn!("watch {}: {e}", path.display());
+            return;
         }
-        #[cfg(not(target_os = "linux"))]
+        self.watched.insert(path.to_path_buf());
+    }
+
+    /// Stop watching a directory the pane collapsed (#115). Idempotent —
+    /// dropping a dir that isn't watched is a no-op.
+    pub fn unwatch_path(&mut self, path: &Path) {
+        if !self.watched.remove(path) {
+            return;
+        }
+        if let Some(debouncer) = &mut self.debouncer
+            && let Err(e) = debouncer.unwatch(path)
         {
-            let _ = exclusions;
-            if let Some(debouncer) = &mut self.debouncer
-                && let Err(e) = debouncer.watch(root, RecursiveMode::Recursive)
-            {
-                tracing::warn!("watch {}: {e}", root.display());
-            }
+            tracing::warn!("unwatch {}: {e}", path.display());
         }
     }
 }
@@ -130,4 +120,86 @@ fn batch_paths(events: &[DebouncedEvent]) -> Vec<PathBuf> {
         out.extend(event.paths.iter().cloned());
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use tokio::sync::mpsc;
+
+    /// A short debounce window so the test's event arrives promptly.
+    const TEST_DEBOUNCE: Duration = Duration::from_millis(50);
+
+    /// Wait up to 5 s for a batch carrying `path` (skipping the stream's
+    /// initial empty rescan batch and any unrelated batches).
+    async fn wait_for_path(rx: &mut mpsc::UnboundedReceiver<Batch>, path: &Path) -> Batch {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let Some(batch) = tokio::time::timeout(remaining, rx.recv())
+                .await
+                .ok()
+                .flatten()
+            else {
+                panic!("no batch carrying {path:?} within 5 s");
+            };
+            if batch.iter().any(|p| p == path) {
+                return batch;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_path_delivers_a_change_in_the_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().canonicalize().unwrap();
+        let (mut watcher, mut rx) = Watcher::new(TEST_DEBOUNCE);
+        watcher.watch_path(&dir);
+
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "hi").unwrap();
+        wait_for_path(&mut rx, &file).await;
+    }
+
+    #[tokio::test]
+    async fn unwatch_path_stops_delivery_for_that_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().canonicalize().unwrap();
+        let (mut watcher, mut rx) = Watcher::new(TEST_DEBOUNCE);
+        watcher.watch_path(&dir);
+
+        // Prime: confirm the dir is currently watched.
+        let a = dir.join("a.txt");
+        std::fs::write(&a, "hi").unwrap();
+        wait_for_path(&mut rx, &a).await;
+
+        watcher.unwatch_path(&dir);
+        let b = dir.join("b.txt");
+        std::fs::write(&b, "hi").unwrap();
+        // Quiet for 1 s: no batch may carry b.txt after the unwatch.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if let Some(batch) = tokio::time::timeout(remaining, rx.recv())
+                .await
+                .ok()
+                .flatten()
+                && batch.iter().any(|p| p == &b)
+            {
+                panic!("b.txt delivered after unwatch: {batch:?}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn rewatching_a_watched_dir_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().canonicalize().unwrap();
+        let (mut watcher, _rx) = Watcher::new(TEST_DEBOUNCE);
+        watcher.watch_path(&dir);
+        let first = watcher.watched.len();
+        watcher.watch_path(&dir);
+        assert_eq!(watcher.watched.len(), first, "no duplicate watch");
+    }
 }

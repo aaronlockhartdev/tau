@@ -247,6 +247,14 @@ async fn a_write_under_a_watched_dir_invalidates_and_refetches() {
     let core = CoreBuilder::custom(providers()).build();
     let workspace = open_ws(&core, &cwd).await;
     let collected = collect_events(&core);
+    // The pane lists the root on open, so the root is watched (visibility-
+    // driven, #115): nothing is watched until a dir is listed.
+    core.dispatch(Command::FileList {
+        workspace: workspace.id.clone(),
+        path: ".".into(),
+    })
+    .unwrap();
+
     let sub = cwd.join("src");
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::write(sub.join("new.rs"), "fn main() {}").unwrap();

@@ -396,7 +396,8 @@ export type Command =
   | { type: 'provider_set'; name: string; base_url: string; key_env: string; models: string[] }
   | { type: 'provider_delete'; name: string }
   | { type: 'file_read'; workspace: string; path: string; offset: number | null; limit: number | null }
-  | { type: 'file_list'; workspace: string; path: string };
+  | { type: 'file_list'; workspace: string; path: string }
+  | { type: 'file_unlist'; workspace: string; path: string };
 
 export type CommandOutput =
   | { kind: 'none' }
