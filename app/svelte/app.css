@@ -30,6 +30,12 @@ body {
   font: 14px/1.45 var(--sans);
 }
 
+/* Nothing in the app rubber-bands: the main-frame (whole-window) bounce and
+   every inner scroller, including the chat, are off. */
+* {
+  overscroll-behavior: none;
+}
+
 button {
   font: inherit;
   color: inherit;
