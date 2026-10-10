@@ -9,7 +9,7 @@ publish = false
 workspace = true
 
 [build-dependencies]
-tauri-build = { version = "2.6", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [features]
 # The E2E/dogfooding stack (roadmap G2): the pilot socket + the WebdriverIO
@@ -23,15 +23,15 @@ e2e = [
     "tauri/devtools",
 ]
 [dependencies]
-tauri = { version = "2.11", features = [] }
-tauri-plugin-dialog = "2"
+tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2.8"
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the agent's window into the UI
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "79f837ab965debf800282343811b5909a537284d", optional = true }
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the WebdriverIO E2E stack (roadmap G2)
-tauri-plugin-wdio = { version = "1.4", optional = true }
-tauri-plugin-wdio-webdriver = { version = "1.4", optional = true }
+tauri-plugin-wdio = { version = "1.5", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1.5", optional = true }
 tau-acp = { path = "../../crates/tau-acp" }
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
@@ -41,6 +41,6 @@ tokio = { workspace = true }
 [dev-dependencies]
 # the `test` feature gates `tauri::test::mock_app` (an unstable API —
 # keep the smoke suite to one test)
-tauri = { version = "2.11", features = ["test"] }
+tauri = { version = "2.12", features = ["test"] }
 tempfile = { workspace = true }
 serde_json = { workspace = true }
