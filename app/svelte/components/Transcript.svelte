@@ -127,17 +127,8 @@
     const c = cur;
     const n = all.length;
     if (!c || n === 0) return;
-    let start = Math.max(0, ref.findItemIndex(offset));
-    let end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
-    // A degenerate findItemIndex range (end <= start) leaves the visible items
-    // unmounted — seen scrolling to the head in the CI WebKitGTK webview, where
-    // the spawn card never appeared. Recover the range from the scroll fraction
-    // so the items still render.
-    if (end <= start) {
-      const scrollable = Math.max(1, ref.getScrollSize() - ref.getViewportSize());
-      start = Math.max(0, Math.floor((offset / scrollable) * n));
-      end = Math.min(n - 1, start + Math.max(1, Math.ceil(ref.getViewportSize() / 120)));
-    }
+    const start = Math.max(0, ref.findItemIndex(offset));
+    const end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
     const fetches = scrollFetches(win, c, { start, end }, turnOf(c));
     // The status bar labels the visible window on every recompute — not
     // only when a fetch fires: in a warm app (all-mode) the open-tail page
@@ -228,7 +219,6 @@
         <Virtualizer
           bind:this={ref as any}
           scrollRef={el ?? undefined}
-          keepMounted={[0, 1]}
           data={all}
           getKey={(d: Row) => d.id}
           bufferSize={BUFFER}
@@ -287,6 +277,16 @@
   .track {
     position: relative;
     width: 100%;
+  }
+  /* virtua measures the per-item wrapper (the absolute-positioned div it
+     creates per item), not the .wrap inside it. In the WebKitGTK webview the
+     wrapper's first pre-layout ResizeObserver read is 0px and virtua records
+     it (no >0 guard), so a 0-size item is never mounted. Flooring the observed
+     element at 1px stops the 0 at the source; the real height lands on the next
+     ResizeObserver tick. :global() — the wrapper is virtua's DOM, outside this
+     component's scope, so a scoped rule is stripped. */
+  :global(.track > div > div) {
+    min-height: 1px;
   }
   .waiting {
     padding: 0 16px 12px;
