@@ -127,8 +127,17 @@
     const c = cur;
     const n = all.length;
     if (!c || n === 0) return;
-    const start = Math.max(0, ref.findItemIndex(offset));
-    const end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
+    let start = Math.max(0, ref.findItemIndex(offset));
+    let end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
+    // findItemIndex collapses to 0 when the size cache is degenerate (a
+    // dropped ResizeObserver 0-px's the unmounted items); that would make the
+    // paged read fetch count 0 and leave the visible entries as 80-char
+    // preview stubs. Estimate the range from the scroll fraction instead.
+    if (end <= start) {
+      const scrollable = Math.max(1, ref.getScrollSize() - ref.getViewportSize());
+      start = Math.max(0, Math.floor((offset / scrollable) * n));
+      end = Math.min(n - 1, start + Math.max(1, Math.ceil(ref.getViewportSize() / 120)));
+    }
     const fetches = scrollFetches(win, c, { start, end }, turnOf(c));
     // The status bar labels the visible window on every recompute — not
     // only when a fetch fires: in a warm app (all-mode) the open-tail page

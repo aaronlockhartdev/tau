@@ -148,7 +148,7 @@ describe('present', () => {
     ]);
   });
 
-  it('an observation card carries the model meta and the grouped details', () => {
+  it('an observation card is collapsible with its body in the reveal', () => {
     const c = cardOf({
       id: 'e1',
       kind: 'om',
@@ -163,18 +163,25 @@ describe('present', () => {
     expect(c.header?.meta).toBe('om-1');
     expect(c.header?.caret).toBe(true);
     expect(c.header?.open).toBe('obs');
-    expect(c.reveal?.group).toBe(true);
+    expect(c.header?.singleClick).toBe(true);
+    expect(c.collapseWhenClosed).toBe(true);
+    expect(c.sections).toEqual([]);
+    expect(c.reveal?.group).toBe(false);
     expect(c.reveal?.sections).toEqual([
+      { type: 'md', html: md('the observation'), dim: true },
       { type: 'kv', rows: [{ k: 'suggested', lines: ['do X'] }] },
       { type: 'md', html: md('thought deeply'), cls: 'thinkbody', label: 'thinking' },
       { type: 'pre', text: 'some input', label: 'input' }
     ]);
   });
 
-  it('an observation without details has no caret and no reveal', () => {
+  it('an observation without details is still collapsible (body in the reveal)', () => {
     const c = cardOf({ id: 'e1', kind: 'om', text: 'plain' });
-    expect(c.header?.caret).toBe(false);
-    expect(c.reveal).toBeNull();
+    expect(c.header?.caret).toBe(true);
+    expect(c.collapseWhenClosed).toBe(true);
+    expect(c.sections).toEqual([]);
+    expect(c.reveal?.group).toBe(false);
+    expect(c.reveal?.sections).toEqual([{ type: 'md', html: md('plain'), dim: true }]);
   });
 
   it('a plain user entry is a bubble', () => {

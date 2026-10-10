@@ -424,8 +424,7 @@ impl AgentSession {
                 .expect("agent inner: no panic while the lock is held");
             match crate::om_integration::OmState::load_record(&mut inner.store) {
                 Ok(fresh) => {
-                    let live = inner.om.clone().unwrap_or_else(|| state.clone());
-                    state.merge_turn_end(&live, &fresh);
+                    state.merge_turn_end(&fresh);
                     // Persist only when the merge changed the DURABLE chunk state — a
                     // racing cycle's commit (the join timed out) or a
                     // sync-buffered chunk. Compare the chunk fields, not
