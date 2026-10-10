@@ -129,10 +129,10 @@
     if (!c || n === 0) return;
     let start = Math.max(0, ref.findItemIndex(offset));
     let end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
-    // findItemIndex collapses to 0 when the size cache is degenerate (a
-    // dropped ResizeObserver 0-px's the unmounted items); that would make the
-    // paged read fetch count 0 and leave the visible entries as 80-char
-    // preview stubs. Estimate the range from the scroll fraction instead.
+    // A degenerate findItemIndex range (end <= start) leaves the visible items
+    // unmounted — seen scrolling to the head in the CI WebKitGTK webview, where
+    // the spawn card never appeared. Recover the range from the scroll fraction
+    // so the items still render.
     if (end <= start) {
       const scrollable = Math.max(1, ref.getScrollSize() - ref.getViewportSize());
       start = Math.max(0, Math.floor((offset / scrollable) * n));
@@ -225,11 +225,6 @@
       </div>
     {:else}
       <div class="track">
-        <!-- Always mount the head entries: a 0 px size cache (a
-             ResizeObserver update dropped under load) makes the render
-             range start past them, and an unmounted item can never be
-             re-measured — the head would stay missing for the rest of
-             the session (the e2e spawn-card failure). -->
         <Virtualizer
           bind:this={ref as any}
           scrollRef={el ?? undefined}
@@ -269,6 +264,8 @@
     overflow-y: auto;
     /* The browser's native scroll anchoring fights the virtualizer. */
     overflow-anchor: none;
+    /* Suppress the elastic overscroll (rubber-band) that snaps back on release. */
+    overscroll-behavior: none;
     min-height: 0;
     position: relative;
   }

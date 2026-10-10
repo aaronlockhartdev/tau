@@ -138,7 +138,7 @@ describe('Transcript', () => {
     drives[0]!(0);
     await tick();
     expect(fetchWindow).toHaveBeenCalledTimes(1);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 1);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 2);
     expect(mockStore.renderRange).toBe('0–1 of 30');
     // A second scroll inside the margin must not re-fetch.
     drives[0]!(0);
@@ -153,7 +153,7 @@ describe('Transcript', () => {
     await tick();
     // the one-shot suppresses the open-tail re-issue; only the union re-read lands
     expect(fetchWindow).toHaveBeenCalledTimes(1);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 30);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 31);
   });
 
   it('unions a mid-turn scroll into the turn-end re-read', async () => {
@@ -169,8 +169,8 @@ describe('Transcript', () => {
     mockStore.sessions.c1!.turn = 'idle';
     await tick();
     expect(fetchWindow).toHaveBeenCalledTimes(2);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 1);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 30);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 2);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 31);
   });
 
   it('prunes its expansion state when the session is dropped', async () => {
