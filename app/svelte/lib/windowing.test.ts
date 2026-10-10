@@ -16,7 +16,7 @@ describe('scrollFetches (hysteresis + mid-turn union)', () => {
   it('fetches the visible range when no page has been fetched yet', () => {
     const st = makeWindowingState();
     expect(scrollFetches(st, 'c', { start: 0, end: 0 }, 'idle')).toEqual([
-      { session: 'c', start: 0, count: 0 }
+      { session: 'c', start: 0, count: 1 }
     ]);
     expect(st.lastFetched.get('c')).toEqual({ start: 0, end: 0 });
   });
@@ -26,7 +26,7 @@ describe('scrollFetches (hysteresis + mid-turn union)', () => {
     st.lastFetched.set('c', { start: 10, end: 30 });
     // start 0 is more than FETCH_MARGIN below last.start 10.
     expect(scrollFetches(st, 'c', { start: 0, end: 0 }, 'idle')).toEqual([
-      { session: 'c', start: 0, count: 0 }
+      { session: 'c', start: 0, count: 1 }
     ]);
   });
 
@@ -53,7 +53,7 @@ describe('scrollFetches (hysteresis + mid-turn union)', () => {
     st.lastFetched.set('c', { start: 10, end: 30 });
     expect(
       scrollFetches(st, 'c', { start: 10 - FETCH_MARGIN - 1, end: 30 }, 'idle')
-    ).toEqual([{ session: 'c', start: 10 - FETCH_MARGIN - 1, count: 30 - (10 - FETCH_MARGIN - 1) }]);
+    ).toEqual([{ session: 'c', start: 10 - FETCH_MARGIN - 1, count: 30 - (10 - FETCH_MARGIN - 1) + 1 }]);
   });
 
   it('unions the fetched range into the mid-turn set while a turn runs', () => {
@@ -145,7 +145,7 @@ describe('turnEndFetches (turn-end re-read)', () => {
   it('re-reads the mid-turn union when the turn goes idle', () => {
     const st = makeWindowingState();
     st.duringTurn.set('c', { start: 0, end: 30 });
-    expect(turnEndFetches(st, 'c', 'idle')).toEqual([{ session: 'c', start: 0, count: 30 }]);
+    expect(turnEndFetches(st, 'c', 'idle')).toEqual([{ session: 'c', start: 0, count: 31 }]);
     // the union is consumed by the re-read
     expect(st.duringTurn.get('c')).toBeUndefined();
   });

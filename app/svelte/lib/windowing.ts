@@ -60,7 +60,7 @@ export function scrollFetches(
   }
   st.lastFetched.set(session, { start: visible.start, end: visible.end });
   if (turn !== 'idle') union(st, session, visible);
-  return [{ session, start: visible.start, count: visible.end - visible.start }];
+  return [{ session, start: visible.start, count: visible.end - visible.start + 1 }];
 }
 
 // A session opens pinned at its tail: the first page is the tail. One-shot
@@ -99,5 +99,5 @@ export function turnEndFetches(
   const r = st.duringTurn.get(session);
   if (!r) return [];
   st.duringTurn.delete(session);
-  return [{ session, start: r.start, count: r.end - r.start }];
+  return [{ session, start: r.start, count: r.end - r.start + 1 }];
 }
