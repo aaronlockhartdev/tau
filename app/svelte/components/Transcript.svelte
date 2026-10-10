@@ -297,6 +297,14 @@
     position: relative;
     width: 100%;
   }
+  /* virtua observes its per-item wrapper (the absolute-positioned div it
+     creates per item), not the .wrap inside it. A 0-px pre-layout reading on
+     that wrapper sticks in the size cache, so the item is never mounted
+     (WebKitGTK). Floor the observed element so it can never measure 0; the
+     real height lands on the next ResizeObserver tick. */
+  .track > div > div {
+    min-height: 1px;
+  }
   .waiting {
     padding: 0 16px 12px;
   }
