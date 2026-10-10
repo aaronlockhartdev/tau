@@ -540,6 +540,10 @@ mod tests {
                 workspace: "w1".into(),
                 path: "src".into(),
             },
+            Command::FileUnlist {
+                workspace: "w1".into(),
+                path: "src".into(),
+            },
         ];
         for cmd in &commands {
             let json = serde_json::to_string(cmd).unwrap();

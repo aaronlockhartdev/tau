@@ -11,20 +11,6 @@ use super::{
 /// few directory reads, depth ≤ 4) is trivial, so there is nothing to
 /// gain from a longer window, and 500 ms reads as instant in the GUI.
 pub(crate) const WATCH_DEBOUNCE: Duration = Duration::from_millis(500);
-/// The files pane's excluded dir names (design #30): a hard requirement,
-/// not an optimization — on Linux inotify a recursive watch is one
-/// descriptor per directory (this repo: 4,471, 3,777 under `target/`).
-pub(crate) const TREE_EXCLUDES: &[&str] = &[
-    ".git",
-    "node_modules",
-    "target",
-    "dist",
-    "build",
-    "out",
-    ".venv",
-    "__pycache__",
-];
-
 /// A title's cap: the archive listing reads the header line bounded
 /// (4 KiB), so a title must stay far below that — an oversized title
 /// would overflow the read and the entry would silently drop from the
@@ -76,8 +62,8 @@ pub struct Core {
     /// stops on drop), so the map tracks the open workspaces.
     pub(crate) project_watchers: Mutex<HashMap<String, Watcher>>,
     /// The per-workspace tree watcher (the files pane, ticket #32): the
-    /// second consumer of the shared `Watcher` plumbing, watching the
-    /// workspace cwd with the design's exclusions.
+    /// second consumer of the shared `Watcher` plumbing, visibility-driven
+    /// (it watches the dirs the pane has expanded, #115).
     pub(crate) tree_watchers: Mutex<HashMap<String, Watcher>>,
     pub(crate) system_dir: Option<PathBuf>,
     /// The user's home dir (the home-level `.agents/skills/` root; the
