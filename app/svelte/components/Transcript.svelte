@@ -302,7 +302,7 @@
      that wrapper sticks in the size cache, so the item is never mounted
      (WebKitGTK). Floor the observed element so it can never measure 0; the
      real height lands on the next ResizeObserver tick. */
-  .track > div > div {
+  :global(.track > div > div) {
     min-height: 1px;
   }
   .waiting {
