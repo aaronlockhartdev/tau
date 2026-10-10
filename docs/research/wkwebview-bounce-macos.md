@@ -165,7 +165,7 @@ UIProcess only forwards the client's rubber-banding permission:
   (Same shape in `main` — `src/wkwebview/mod.rs:526-531`.) No `bounce`/`overscroll` attribute exists
   for macOS (repo-wide grep: only the iOS block and a `underPageBackgroundColor` overscroll-*color*
   mention).
-- **PR #558** ([tauri-apps/wry#558](https://github.com/tauri-apps/wry/pull/558), "fix: disalbe bounce
+- **PR #558** ([tauri-apps/wry#558](https://github.com/tauri-apps/wry/pull/558), "fix: disable bounce
   option for macos, closes #557") added a `bounce: bool` attribute and, when false, registered a
   **no-op `scrollWheel:` override on the WKWebView subclass** — i.e. it swallowed *all* scroll-wheel
   events. The author closed it unmerged (2022-04-25) stating "This PR's solution works in specific
