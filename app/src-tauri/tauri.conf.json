@@ -13,9 +13,12 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Tau",
+        "title": "",
         "width": 1200,
-        "height": 800
+        "height": 800,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 9, "y": 24 }
       }
     ],
     "security": {
