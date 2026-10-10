@@ -123,6 +123,10 @@
 
 <style>
   .wrap {
+    /* Floor the measured size: a 0-px ResizeObserver reading sticks in
+       virtua's per-item cache (0 is not the UNCACHED sentinel) and collapses
+       findItemIndex (#907); real content overrides the floor on layout. */
+    min-height: 1px;
     margin: 0 16px 8px;
   }
   /* A card in a parallel batch: a quiet connector line on the left ties the
