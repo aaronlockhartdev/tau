@@ -1,9 +1,6 @@
 //! The watcher consumers: the home/project/tree watchers, the batch-to-stale-dirs mapping, the dir listing, and the teardown.
 
-use super::{
-    Arc, Batch, Core, Event, FileEntry, Path, TREE_EXCLUDES, WATCH_DEBOUNCE, Watcher, Workspace,
-    mpsc,
-};
+use super::{Arc, Batch, Core, Event, FileEntry, Path, WATCH_DEBOUNCE, Watcher, Workspace, mpsc};
 
 impl Core {
     /// The home-level roots are identical for every workspace (design #30):
@@ -75,9 +72,10 @@ impl Core {
         });
     }
 
-    /// The workspace's tree watcher (the files pane, ticket #32): the second
-    /// consumer of the shared `Watcher` plumbing — a per-workspace watch on
-    /// the cwd with the design's exclusions. A batch maps to the stale dir
+    /// The workspace's tree watcher (the files pane, #32/#115): the second
+    /// consumer of the shared `Watcher` plumbing. It starts empty — no dir is
+    /// watched at open — and tracks the pane: a `file_list` (expand) watches the
+    /// dir, a `file_unlist` (collapse) drops it. A batch maps to the stale dir
     /// paths (workspace-relative) and emits `FileTreeChanged`: the client
     /// refetches the affected listed dirs, and any fetch is a fresh read, so
     /// a lost batch self-heals on the next expand.
@@ -93,8 +91,7 @@ impl Core {
         if map.contains_key(&workspace.id) {
             return;
         }
-        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
-        watcher.add_excluded(cwd, TREE_EXCLUDES);
+        let (watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
         map.insert(workspace.id.clone(), watcher);
         drop(map);
         let Some(core) = self.self_arc() else {
@@ -120,6 +117,31 @@ impl Core {
                 });
             }
         });
+    }
+
+    /// Register a dir on the workspace's tree watcher (visibility-driven,
+    /// #115): a `file_list` means the pane is showing the dir, so watch it.
+    /// No-op if the workspace has no tree watcher yet.
+    pub(crate) fn watch_tree_dir(&self, workspace: &Workspace, dir: &Path) {
+        let mut map = self
+            .tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held");
+        if let Some(watcher) = map.get_mut(&workspace.id) {
+            watcher.watch_path(dir);
+        }
+    }
+
+    /// Drop a dir from the workspace's tree watcher (visibility-driven,
+    /// #115): a `file_unlist` means the pane collapsed the dir.
+    pub(crate) fn unwatch_tree_dir(&self, workspace: &Workspace, dir: &Path) {
+        let mut map = self
+            .tree_watchers
+            .lock()
+            .expect("tree watchers: no panic while the lock is held");
+        if let Some(watcher) = map.get_mut(&workspace.id) {
+            watcher.unwatch_path(dir);
+        }
     }
 }
 
@@ -179,8 +201,8 @@ impl Drop for Core {
 
 /// One debounced batch's stale dir paths, workspace-relative (the files
 /// pane, ticket #32): each changed path contributes itself (if it is a
-/// dir) and its parent (the dir that now lists it), excluded subtrees
-/// dropped, the root reported as `.`. An empty batch is a rescan trigger
+/// dir) and its parent (the dir that now lists it), the root
+/// reported as `.`. An empty batch is a rescan trigger
 /// (the design's lost-events case): the root is stale. A path we cannot
 /// attribute to the workspace (the OS resolved a symlink the cwd string
 /// does not carry, e.g. macOS `/var` → `/private/var`) marks the whole
@@ -199,13 +221,6 @@ pub(crate) fn tree_changed_dirs(cwd: &str, batch: &Batch) -> Vec<String> {
             continue;
         };
         let components = rel.components();
-        // A change inside an excluded subtree is not the pane's business.
-        if components
-            .clone()
-            .any(|c| matches!(c.as_os_str().to_str().unwrap_or_default(), n if TREE_EXCLUDES.contains(&n)))
-        {
-            continue;
-        }
         let mut parts: Vec<String> = components
             .map(|c| c.as_os_str().to_string_lossy().into_owned())
             .collect();
@@ -229,8 +244,8 @@ pub(crate) fn tree_changed_dirs(cwd: &str, batch: &Batch) -> Vec<String> {
     out
 }
 
-/// One directory's listing (the files pane, ticket #32): the excluded names
-/// dropped, paths workspace-relative (the root is `.`), dirs first, then
+/// One directory's listing (the files pane, ticket #32): paths
+/// workspace-relative (the root is `.`), dirs first, then
 /// name — the pane's top-down reading order. A vanished dir lists empty: a
 /// refetch after a delete is how the tree forgets it.
 pub(crate) fn list_dir(cwd: &Path, dir: &Path) -> Vec<FileEntry> {
@@ -240,9 +255,6 @@ pub(crate) fn list_dir(cwd: &Path, dir: &Path) -> Vec<FileEntry> {
     };
     for ent in read.flatten() {
         let name = ent.file_name().to_string_lossy().into_owned();
-        if TREE_EXCLUDES.contains(&name.as_ref()) {
-            continue;
-        }
         let path = ent.path();
         let is_dir = path.is_dir();
         let size = if is_dir {

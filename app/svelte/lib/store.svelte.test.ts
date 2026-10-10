@@ -146,7 +146,8 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     provider_set: () => ({ kind: 'none' }),
     provider_delete: () => ({ kind: 'none' }),
     file_read: () => ({ kind: 'file', file: { text: '', truncated: false } }),
-    file_list: () => ({ kind: 'files', files: [] })
+    file_list: () => ({ kind: 'files', files: [] }),
+    file_unlist: () => ({ kind: 'none' })
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
 }

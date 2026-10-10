@@ -46,7 +46,8 @@ impl Core {
             | Command::ProviderSet { .. }
             | Command::ProviderDelete { .. }
             | Command::FileRead { .. }
-            | Command::FileList { .. } => self.dispatch_misc(cmd),
+            | Command::FileList { .. }
+            | Command::FileUnlist { .. } => self.dispatch_misc(cmd),
         }
     }
 
@@ -160,9 +161,22 @@ impl Core {
                 } else {
                     Path::new(&workspace.cwd).join(full)
                 };
+                self.watch_tree_dir(&workspace, &dir);
                 Ok(CommandOutput::Files {
                     files: list_dir(Path::new(&workspace.cwd), &dir),
                 })
+            }
+
+            Command::FileUnlist { workspace, path } => {
+                let workspace = self.workspace(&workspace)?;
+                let full = PathBuf::from(&path);
+                let dir = if full.is_absolute() {
+                    full
+                } else {
+                    Path::new(&workspace.cwd).join(full)
+                };
+                self.unwatch_tree_dir(&workspace, &dir);
+                Ok(CommandOutput::None)
             }
             _ => unreachable!("dispatch routes the arm"),
         }

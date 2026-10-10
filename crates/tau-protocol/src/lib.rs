@@ -354,6 +354,14 @@ pub enum Command {
         /// root (`.` for the root itself).
         path: String,
     },
+    /// Stop watching a directory of the workspace's tree (#115): the pane
+    /// sends this on collapse so the watcher drops a dir it no longer shows.
+    FileUnlist {
+        workspace: String,
+        /// The directory to stop watching: absolute, or relative to the
+        /// workspace root (`.` for the root itself).
+        path: String,
+    },
 }
 
 /// An event pushed from the core to clients (spec §8). Every event carries
@@ -529,6 +537,10 @@ mod tests {
                 limit: None,
             },
             Command::FileList {
+                workspace: "w1".into(),
+                path: "src".into(),
+            },
+            Command::FileUnlist {
                 workspace: "w1".into(),
                 path: "src".into(),
             },

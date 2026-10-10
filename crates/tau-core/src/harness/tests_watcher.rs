@@ -149,10 +149,10 @@ async fn none_seams_make_the_home_watcher_a_noop() {
 }
 
 /// The listing's shape (ticket #32): dirs first, then name; paths
-/// workspace-relative; the design's exclusions never appear.
+/// workspace-relative; every entry is listed (no exclusion list).
 #[test]
 
-fn file_list_lists_a_dir_with_exclusions_applied() {
+fn file_list_lists_all_entries_in_a_dir() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path();
     std::fs::create_dir_all(cwd.join("src/core")).unwrap();
@@ -173,13 +173,28 @@ fn file_list_lists_a_dir_with_exclusions_applied() {
     }
     let files = list_dir(cwd, cwd);
     let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
-    // Dirs first (src), then the file; no excluded names.
-    assert_eq!(names, vec!["src", "README.md"]);
-    let src = &files[0];
+    // Dirs first (sorted by name), then the file; no exclusion list.
+    assert_eq!(
+        names,
+        vec![
+            ".git",
+            ".venv",
+            "__pycache__",
+            "build",
+            "dist",
+            "node_modules",
+            "out",
+            "src",
+            "target",
+            "README.md"
+        ]
+    );
+    let src = files.iter().find(|f| f.name == "src").unwrap();
     assert!(src.dir);
     assert_eq!(src.path, "src");
-    assert_eq!(files[1].path, "README.md");
-    assert_eq!(files[1].size, 2);
+    let readme = files.iter().find(|f| f.name == "README.md").unwrap();
+    assert_eq!(readme.path, "README.md");
+    assert_eq!(readme.size, 2);
     // A nested listing carries full relative paths.
     let nested = list_dir(cwd, &cwd.join("src"));
     assert_eq!(
@@ -188,25 +203,8 @@ fn file_list_lists_a_dir_with_exclusions_applied() {
     );
 }
 
-/// The acceptance bar measured on this repo (ticket #32): listing the
-/// repo root yields zero `target/` entries — 3,777 of its 4,471 dirs
-/// sit under it, so the exclusion is what keeps the listing usable.
-#[test]
-
-fn the_repo_root_listing_carries_no_target_entries() {
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    let files = list_dir(&repo, &repo);
-    assert!(
-        !files.iter().any(|f| f.name == "target"),
-        "target leaked into the listing: {:?}",
-        files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>()
-    );
-    // The repo root is not empty.
-    assert!(!files.is_empty());
-}
-
 /// A batch's stale-dir mapping (ticket #32): a file change names its
-/// parent, a dir change names itself, excluded paths drop, an empty
+/// parent, a dir change names itself, an empty
 /// batch is the rescan root, an unattributable path marks the whole
 /// tree stale.
 #[test]
@@ -228,7 +226,9 @@ fn tree_changed_dirs_maps_paths_to_stale_dirs() {
             ".".to_string(),
             "src".to_string(),
             "src/a.rs".to_string(),
-            "src/core".to_string()
+            "src/core".to_string(),
+            "target".to_string(),
+            "target/release".to_string()
         ]
     );
 }
@@ -247,6 +247,14 @@ async fn a_write_under_a_watched_dir_invalidates_and_refetches() {
     let core = CoreBuilder::custom(providers()).build();
     let workspace = open_ws(&core, &cwd).await;
     let collected = collect_events(&core);
+    // The pane lists the root on open, so the root is watched (visibility-
+    // driven, #115): nothing is watched until a dir is listed.
+    core.dispatch(Command::FileList {
+        workspace: workspace.id.clone(),
+        path: ".".into(),
+    })
+    .unwrap();
+
     let sub = cwd.join("src");
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::write(sub.join("new.rs"), "fn main() {}").unwrap();
