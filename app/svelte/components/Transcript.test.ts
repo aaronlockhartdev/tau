@@ -138,8 +138,8 @@ describe('Transcript', () => {
     drives[0]!(0);
     await tick();
     expect(fetchWindow).toHaveBeenCalledTimes(1);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 1);
-    expect(mockStore.renderRange).toBe('0–0 of 30');
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 2);
+    expect(mockStore.renderRange).toBe('0–1 of 30');
     // A second scroll inside the margin must not re-fetch.
     drives[0]!(0);
     expect(fetchWindow).toHaveBeenCalledTimes(1);
@@ -169,7 +169,7 @@ describe('Transcript', () => {
     mockStore.sessions.c1!.turn = 'idle';
     await tick();
     expect(fetchWindow).toHaveBeenCalledTimes(2);
-    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 1);
+    expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 2);
     expect(fetchWindow).toHaveBeenCalledWith('c1', 0, 31);
   });
 
