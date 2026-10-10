@@ -117,6 +117,25 @@
     return store.sessions[c]?.turn ?? 'idle';
   }
 
+  // Diagnostic seam (throwaway, not for merge): the e2e calls this on a
+  // spawn-card failure to read virtua's raw size state inside the webview.
+  function scrollDiag(): unknown {
+    const r = ref;
+    if (!r) return { err: 'no-ref' };
+    const nn = all.length;
+    const total = r.getScrollSize();
+    const vp = r.getViewportSize();
+    const span = Math.max(1, total - vp);
+    const sweep = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+      const off = Math.round(f * span);
+      return `${off}=${r.findItemIndex(off)}`;
+    });
+    const sizes: number[] = [];
+    for (let i = 0; i < nn; i++) sizes.push(r.getItemOffset(i + 1) - r.getItemOffset(i));
+    return { n: nn, total, vp, scrollTop: el?.scrollTop, sweep, sizes, mounted: document.querySelectorAll('.wrap').length };
+  }
+  if ((window as any).__tau) (window as any).__tau.dumpScrollDiag = scrollDiag;
+
   function onVirtuaScroll(offset: number): void {
     if (!ref) return;
     // The blessed stick-to-bottom check: at the bottom within a sub-pixel
@@ -129,17 +148,6 @@
     if (!c || n === 0) return;
     const start = Math.max(0, ref.findItemIndex(offset));
     const end = Math.min(n - 1, ref.findItemIndex(offset + ref.getViewportSize()));
-    {
-      const h = ref;
-      const total = h.getScrollSize();
-      const vp = h.getViewportSize();
-      const span = Math.max(1, total - vp);
-      const sweep = [0, 0.25, 0.5, 0.75, 1]
-        .map((f) => `${Math.round(f * span)}=${h.findItemIndex(Math.round(f * span))}`)
-        .join(' ');
-      const head = document.querySelector('.card2 .hd')?.textContent?.trim() ?? 'none';
-      console.log(`[DEBUG-scroll] n=${n} off=${offset} total=${total} vp=${vp} raw=[${start},${end}] head=${head} ${sweep}`);
-    }
     const fetches = scrollFetches(win, c, { start, end }, turnOf(c));
     // The status bar labels the visible window on every recompute — not
     // only when a fetch fires: in a warm app (all-mode) the open-tail page

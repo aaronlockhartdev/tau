@@ -175,7 +175,17 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
       const sc = document.querySelector('.scroll');
       if (sc) sc.scrollTop = 0;
     });
-    const d = await waitUntil(readDom, (d) => d.hasSpawnCard, 30000, 'the spawn card in the child transcript');
+    let d;
+    try {
+      d = await waitUntil(readDom, (d) => d.hasSpawnCard, 30000, 'the spawn card in the child transcript');
+    } catch (e) {
+      // Diagnostic: read virtua's raw size state at the moment of failure.
+      const diag = await browser.execute(
+        () => (window.__tau && window.__tau.dumpScrollDiag) ? window.__tau.dumpScrollDiag() : null
+      );
+      console.log(`[DIAG-spawn] scrollDiag at failure: ${JSON.stringify(diag)}`);
+      throw e;
+    }
     check('the DOM shows the spawn card in the child transcript', d.hasSpawnCard, 'spawn label present');
   });
 
