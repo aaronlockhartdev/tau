@@ -20,8 +20,8 @@ updates:
     groups:
       minor-patch:
         update-types:
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "npm"
     directory: "/app"
@@ -30,8 +30,8 @@ updates:
     groups:
       minor-patch:
         update-types:
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -40,7 +40,7 @@ updates:
     groups:
       minor-patch:
         update-types:
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
+          - "minor"
+          - "patch"
     ignore:
       - dependency-name: "dtolnay/rust-toolchain"
