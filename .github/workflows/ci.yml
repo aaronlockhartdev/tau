@@ -29,7 +29,7 @@ jobs:
         # The workspace links the Tauri app crate, which needs webkit to compile on Linux.
         run: sudo apt-get update -y && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: nextest@0.9.146
 
@@ -53,7 +53,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2.9.2
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: cargo-deny@0.20.2
 
@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: crate-ci/typos@v1.50.3
+      - uses: crate-ci/typos@v1.51.1
 
   rust-coverage:
     # Report only — the 80% aim is a review-time standard, not a gate
@@ -86,11 +86,11 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update -y && sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: cargo-llvm-cov@0.9.1
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: nextest@0.9.146
 
@@ -115,7 +115,7 @@ jobs:
 
       - uses: swatinem/rust-cache@v2.9.2
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: cargo-fuzz@0.13.2
 
@@ -160,7 +160,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
@@ -201,13 +201,13 @@ jobs:
 
       - uses: swatinem/rust-cache@v2.9.2
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: just
 
@@ -250,13 +250,13 @@ jobs:
 
       - uses: swatinem/rust-cache@v2.9.2
 
-      - uses: actions/setup-node@v7.0.0
+      - uses: actions/setup-node@v7.1.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: app/package-lock.json
 
-      - uses: taiki-e/install-action@v2.87.20
+      - uses: taiki-e/install-action@v2.87.26
         with:
           tool: just
 
