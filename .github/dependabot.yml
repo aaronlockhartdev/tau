@@ -25,4 +25,4 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
-      - dependency: "dtolnay/rust-toolchain"
+      - dependency-name: "dtolnay/rust-toolchain"
