@@ -121,8 +121,7 @@ impl Mapper {
         let output_text = output.and_then(Value::as_str);
         // Image outputs (the `read` tool on a .png) have no text surface in
         // v0: the create carries the input, the result is rawOutput only.
-        let has_result =
-            output_text.is_some() || output.is_some_and(|o| !o.is_null() && !o.is_string());
+        let has_result = output.is_some_and(|o| !o.is_null());
         let mut out = Vec::new();
         if !self.tool_created.contains(&entry.id) {
             self.tool_created.insert(entry.id.clone());
