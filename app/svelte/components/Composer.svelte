@@ -246,7 +246,7 @@
         title={asStop ? 'stop the in-flight turn' : 'send'}
         onclick={asStop ? () => void stop() : submit}
       >
-        {asStop ? '■' : lane === 'force' ? '⚡' : '↑'}
+        {asStop ? '■' : running ? (lane === 'force' ? '⚡' : '↑') : '↑'}
       </button>
     </div>
   {/if}
