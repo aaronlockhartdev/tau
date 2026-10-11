@@ -46,7 +46,7 @@ jobs:
           file dist/tau-acp
           tar -czf dist/tau-acp-linux-x86_64.tar.gz -C dist tau-acp
           sha256sum dist/tau-acp-linux-x86_64.tar.gz > dist/tau-acp-linux-x86_64.tar.gz.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-x86_64
           path: |
@@ -70,7 +70,7 @@ jobs:
           file dist/tau-acp
           tar -czf dist/tau-acp-darwin-aarch64.tar.gz -C dist tau-acp
           shasum -a 256 dist/tau-acp-darwin-aarch64.tar.gz > dist/tau-acp-darwin-aarch64.tar.gz.sha256
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: darwin-aarch64
           path: |

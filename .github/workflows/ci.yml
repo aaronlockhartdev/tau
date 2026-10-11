@@ -97,7 +97,7 @@ jobs:
       - name: Coverage (no floor)
         run: cargo llvm-cov nextest --workspace --html --output-dir coverage
 
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v7
         with:
           name: rust-coverage
           path: coverage
@@ -132,7 +132,7 @@ jobs:
 
       - name: Upload crash artifacts
         if: failure()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-artifacts
           path: fuzz/artifacts
@@ -187,7 +187,7 @@ jobs:
         run: npx vitest run --coverage
 
       - name: Upload coverage
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: frontend-coverage
           path: app/coverage/
@@ -223,7 +223,7 @@ jobs:
         run: just acceptance
 
       - name: Upload dmg (distribution artifact)
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: tau-macos-dmg
           path: target/release/bundle/dmg/*.dmg
@@ -231,7 +231,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-macos
           path: target/e2e/**
@@ -272,7 +272,7 @@ jobs:
 
       - name: Upload E2E failure artifacts
         if: failure()
-        uses: actions/upload-artifact@v7.0.1
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-failure-linux
           path: target/e2e/**
