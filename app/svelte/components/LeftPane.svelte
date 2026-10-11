@@ -7,6 +7,7 @@
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
   import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, type PaneState } from '../lib/store.svelte';
+  import { onActivate } from '../lib/ui';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
   import FileNode from './FileNode.svelte';
@@ -91,12 +92,7 @@
             role="button"
             tabindex="0"
             onclick={() => retryDirFetch(ws, '.')}
-            onkeydown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                retryDirFetch(ws, '.');
-              }
-            }}
+            onkeydown={onActivate(() => retryDirFetch(ws, '.'))}
           >failed to list — click to retry</div>
         {:else}
           <div class="note">No files listed yet.</div>

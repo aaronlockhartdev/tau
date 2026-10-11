@@ -14,7 +14,7 @@ import {
   deleteSession,
   ensurePane,
   mockStore,
-  openSessionById,
+  switchSession,
   resetMockStore,
   restoreSession,
   renameSession,
@@ -126,7 +126,7 @@ describe('SessionNode', () => {
   it('a plain click opens the session and sets the anchor', async () => {
     await mount(seed());
     await userEvent.click(rowOf('s1'));
-    expect(openSessionById).toHaveBeenCalledWith('s1');
+    expect(switchSession).toHaveBeenCalledWith('s1');
     const q = mockStore.pane[WS]!;
     expect(q.selAnchor).toBe('s1');
     expect(q.selected).toEqual([]);
@@ -137,7 +137,7 @@ describe('SessionNode', () => {
     await user.keyboard('{Meta>}');
     await user.click(rowOf('s1'));
     await user.keyboard('{/Meta}');
-    expect(openSessionById).not.toHaveBeenCalled();
+    expect(switchSession).not.toHaveBeenCalled();
     expect(mockStore.pane[WS]!.selected).toEqual(['s1']);
   });
 
@@ -148,7 +148,7 @@ describe('SessionNode', () => {
     await user.click(rowOf('s1'));
     await user.keyboard('{/Shift}');
     expect(mockStore.pane[WS]!.selected).toEqual(['s1']);
-    expect(openSessionById).not.toHaveBeenCalled();
+    expect(switchSession).not.toHaveBeenCalled();
   });
 
   it('an archived row never opens', async () => {
@@ -156,7 +156,7 @@ describe('SessionNode', () => {
     s.archived = true;
     await mount(s);
     await userEvent.click(rowOf('s1'));
-    expect(openSessionById).not.toHaveBeenCalled();
+    expect(switchSession).not.toHaveBeenCalled();
   });
 
   it('the archive button archives the row', async () => {

@@ -7,6 +7,7 @@
   // so deletion is optimistic with resync.
 
   import { deleteQueueItem, currentSession } from '../lib/store.svelte';
+  import type { PendingMsg } from '../lib/sessions';
 
   const s = $derived(currentSession());
   const reports = $derived(s ? s.pending.filter((p) => p.source) : []);
@@ -16,33 +17,25 @@
 
 {#if s && s.pending.length > 0}
   <div class="queue">
-    {#if reports.length > 0}
-      <div class="qlabel">subagent reports</div>
-    {/if}
-    {#each reports as p (p.text)}
-      <div class="qrow qsub">
-        <span class="qsrc" title={p.source ?? ''}>sub-agent {(p.source ?? '').split('-').pop()}</span>
-        <span class="qtext">{p.text}</span>
-      </div>
-    {/each}
-    {#if steering.length > 0}
-      <div class="qlabel">next opportunity</div>
-    {/if}
-    {#each steering as p, idx (p.text + ':' + idx)}
-      <div class="qrow">
-        <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, null, idx)}>✕</button>
-      </div>
-    {/each}
-    {#if followUp.length > 0}
-      <div class="qlabel">after work completes</div>
-    {/if}
-    {#each followUp as p, idx (p.text + ':' + idx)}
-      <div class="qrow">
-        <span class="qtext">{p.text}</span>
-        <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, null, idx)}>✕</button>
-      </div>
-    {/each}
+    {#snippet queueSection(heading: string, items: PendingMsg[], sub: boolean)}
+      {#if items.length > 0}
+        <div class="qlabel">{heading}</div>
+      {/if}
+      {#each items as p, idx (p.text + ':' + idx)}
+        <div class="qrow" class:qsub={sub}>
+          {#if sub}
+            <span class="qsrc" title={p.source ?? ''}>sub-agent {(p.source ?? '').split('-').pop()}</span>
+          {/if}
+          <span class="qtext">{p.text}</span>
+          {#if !sub}
+            <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, null, idx)}>✕</button>
+          {/if}
+        </div>
+      {/each}
+    {/snippet}
+    {@render queueSection('subagent reports', reports, true)}
+    {@render queueSection('next opportunity', steering, false)}
+    {@render queueSection('after work completes', followUp, false)}
   </div>
 {/if}
 

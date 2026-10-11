@@ -8,6 +8,7 @@
   import { present, type ExpandSlot, type Shell } from '../lib/presentation';
   import type { Entry } from '../lib/protocol';
   import CardShell from './CardShell.svelte';
+  import { onActivate } from '../lib/ui';
 
   let {
     entry,
@@ -63,14 +64,6 @@
 
   const p = $derived(present(entry, { sourceLabel, parentLabel }));
 
-  function onKey(fn: () => void) {
-    return (e: KeyboardEvent) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        fn();
-      }
-    };
-  }
 </script>
 
 {#snippet shellView(shell: Shell)}
@@ -92,7 +85,7 @@
         e.preventDefault();
         setOpen('think');
       }}
-      onkeydown={onKey(() => setOpen('think'))}
+      onkeydown={onActivate(() => setOpen('think'))}
     >
       <svg class="ic" width="13" height="13"><use href="#i-spark"/></svg>
       <span>{shell.label}</span>
@@ -104,7 +97,7 @@
       <div class="thinkbody md">{@html shell.body}</div>
     {/if}
   {:else}
-    <CardShell shell={shell} open={open} setOpen={setOpen} onKey={onKey} />
+    <CardShell shell={shell} open={open} setOpen={setOpen} onKey={onActivate} />
   {/if}
 {/snippet}
 {#if p}

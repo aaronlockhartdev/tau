@@ -4,6 +4,7 @@
   // content and its behavior (open, toggle, rename) come from the caller;
   // the recursion stays with each tree.
   import type { Snippet } from 'svelte';
+  import { isActivateKey } from '../lib/ui';
 
   let {
     depth = 0,
@@ -36,7 +37,7 @@
   } = $props();
 
   function onKey(e: KeyboardEvent): void {
-    if (e.key === 'Enter' || e.key === ' ') {
+    if (isActivateKey(e.key)) {
       e.preventDefault();
       // The modifiers ride the keyboard event too; the row handler
       // only reads them.

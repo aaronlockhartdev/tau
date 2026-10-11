@@ -497,11 +497,6 @@
     s.meta.model = model;
   }
 
-  // A pane action (session tree row / sub-agent double-click): the child is
-  // an ordinary session — opening it switches the current view.
-  export async function openSessionById(sid: string): Promise<void> {
-    await switchSession(sid);
-  }
 
   // Paged read around the viewport (spec §8): the GUI decides the window,
   // the core serves the slice. Views keep the file's own id — the snapshot
