@@ -311,6 +311,22 @@ impl SessionStore {
         ))
     }
 
+    /// Rewrites only the header line, atomically via a temp-file rename.
+    fn update_header(&mut self, f: impl FnOnce(&mut Header)) -> Result<(), Error> {
+        self.ensure_open()?;
+        let raw = fs::read_to_string(self.path())?;
+        let mut lines: Vec<&str> = raw.split('\n').collect();
+        let mut header: Header = serde_json::from_str(lines[0])?;
+        f(&mut header);
+        let new_header = serde_json::to_string(&header)?;
+        lines[0] = &new_header;
+        let joined = lines.join("\n");
+        let tmp = self.rewrite_tmp();
+        fs::write(&tmp, &joined)?;
+        fs::rename(&tmp, self.path())?;
+        Ok(())
+    }
+
     /// Persist an explicit branch choice (the GUI switches the active
     /// branch); only the header line's content changes, written atomically
     /// via temp-file rename.
@@ -319,16 +335,7 @@ impl SessionStore {
         if !self.ids.contains(leaf_id) {
             return Err(Error::Other(format!("unknown leaf {leaf_id}")));
         }
-        let raw = fs::read_to_string(self.path())?;
-        let mut lines: Vec<&str> = raw.split('\n').collect();
-        let mut header: Header = serde_json::from_str(lines[0])?;
-        header.leaf = Some(leaf_id.to_owned());
-        let new_header = serde_json::to_string(&header)?;
-        lines[0] = &new_header;
-        let joined = lines.join("\n");
-        let tmp = self.rewrite_tmp();
-        fs::write(&tmp, &joined)?;
-        fs::rename(&tmp, self.path())?;
+        self.update_header(|h| h.leaf = Some(leaf_id.to_owned()))?;
         self.leaf = Some(leaf_id.to_owned());
         Ok(())
     }
@@ -336,17 +343,7 @@ impl SessionStore {
     /// Set the session's readable name; like `set_leaf` this rewrites only
     /// the header line, atomically via temp-file rename.
     pub fn set_title(&mut self, title: &str) -> Result<(), Error> {
-        self.ensure_open()?;
-        let raw = fs::read_to_string(self.path())?;
-        let mut lines: Vec<&str> = raw.split('\n').collect();
-        let mut header: Header = serde_json::from_str(lines[0])?;
-        header.title = Some(title.to_owned());
-        let new_header = serde_json::to_string(&header)?;
-        lines[0] = &new_header;
-        let joined = lines.join("\n");
-        let tmp = self.rewrite_tmp();
-        fs::write(&tmp, &joined)?;
-        fs::rename(&tmp, self.path())?;
+        self.update_header(|h| h.title = Some(title.to_owned()))?;
         self.title = Some(title.to_owned());
         Ok(())
     }
@@ -354,17 +351,7 @@ impl SessionStore {
     /// The creator session (a sub-agent's parent, ADR-0001); written into
     /// the header so the link survives restarts.
     pub fn set_parent(&mut self, parent: &str) -> Result<(), Error> {
-        self.ensure_open()?;
-        let raw = fs::read_to_string(self.path())?;
-        let mut lines: Vec<&str> = raw.split('\n').collect();
-        let mut header: Header = serde_json::from_str(lines[0])?;
-        header.parent = Some(parent.to_owned());
-        let new_header = serde_json::to_string(&header)?;
-        lines[0] = &new_header;
-        let joined = lines.join("\n");
-        let tmp = self.rewrite_tmp();
-        fs::write(&tmp, &joined)?;
-        fs::rename(&tmp, self.path())?;
+        self.update_header(|h| h.parent = Some(parent.to_owned()))?;
         self.parent = Some(parent.to_owned());
         Ok(())
     }

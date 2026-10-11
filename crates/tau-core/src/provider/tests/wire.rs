@@ -14,7 +14,7 @@ fn request_wire_shape_carries_tools_and_limits() {
         .collect(),
     )
     .with_tools(vec![ToolSpec {
-        kind: ToolKind::Function,
+        kind: "function".into(),
         name: "bash".into(),
         description: "run".into(),
         parameters: serde_json::json!({"type": "object"}),

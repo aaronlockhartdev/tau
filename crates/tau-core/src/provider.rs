@@ -252,16 +252,10 @@ enum OutputItem {
 #[serde(rename_all = "lowercase")]
 pub struct ToolSpec {
     #[serde(rename = "type")]
-    pub kind: ToolKind,
+    pub kind: String,
     pub name: String,
     pub description: String,
     pub parameters: Value,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ToolKind {
-    Function,
 }
 
 /// The assembled result of one turn.

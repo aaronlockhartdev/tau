@@ -1,6 +1,6 @@
 use super::{
     BufferedChunk, Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore,
-    branch_entries, entry_text, idle_gap_secs, is_raw, now_ms, om, transcript,
+    boundary_ts, branch_entries, entry_text, idle_gap_secs, is_raw, om, transcript,
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 
@@ -75,8 +75,11 @@ impl OmState {
             }
         }
         for chunk in &self.buffered[..count] {
-            self.record.active_observations =
-                om::append_observation(&self.record.active_observations, &now_ms(), &chunk.text);
+            self.record.active_observations = om::append_observation(
+                &self.record.active_observations,
+                &boundary_ts(),
+                &chunk.text,
+            );
             self.record.cursor = Some(Cursor {
                 entry_id: chunk.range.1.clone(),
                 timestamp: chunk.last_ts,
@@ -350,7 +353,7 @@ impl OmState {
         let id = om::generate_group_id(observations);
         let wrapped = om::wrap_in_observation_group(observations, &range, &id, None);
         self.record.active_observations =
-            om::append_observation(&self.record.active_observations, &now_ms(), &wrapped);
+            om::append_observation(&self.record.active_observations, &boundary_ts(), &wrapped);
         self.record.cursor = Some(Cursor {
             entry_id: last.id.clone(),
             timestamp: last.timestamp,

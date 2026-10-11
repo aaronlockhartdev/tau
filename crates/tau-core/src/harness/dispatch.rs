@@ -7,6 +7,15 @@ use super::{
     ProviderInfo, list_dir,
 };
 
+fn resolve_path(cwd: &str, path: &str) -> PathBuf {
+    let full = PathBuf::from(path);
+    if full.is_absolute() {
+        full
+    } else {
+        Path::new(cwd).join(full)
+    }
+}
+
 impl Core {
     pub fn dispatch(self: &Arc<Self>, cmd: Command) -> Result<CommandOutput, ProtocolError> {
         match &cmd {
@@ -109,12 +118,7 @@ impl Core {
                 limit,
             } => {
                 let workspace = self.workspace(&workspace)?;
-                let full = PathBuf::from(&path);
-                let path = if full.is_absolute() {
-                    full
-                } else {
-                    Path::new(&workspace.cwd).join(full)
-                };
+                let path = resolve_path(&workspace.cwd, &path);
                 // Line-streamed: an offset lands anywhere in the file, not
                 // just inside the first 1 MB (review N9); the read stops at
                 // the cap or end of file.
@@ -155,12 +159,7 @@ impl Core {
             }
             Command::FileList { workspace, path } => {
                 let workspace = self.workspace(&workspace)?;
-                let full = PathBuf::from(&path);
-                let dir = if full.is_absolute() {
-                    full
-                } else {
-                    Path::new(&workspace.cwd).join(full)
-                };
+                let dir = resolve_path(&workspace.cwd, &path);
                 self.watch_tree_dir(&workspace, &dir);
                 Ok(CommandOutput::Files {
                     files: list_dir(Path::new(&workspace.cwd), &dir),
@@ -169,12 +168,7 @@ impl Core {
 
             Command::FileUnlist { workspace, path } => {
                 let workspace = self.workspace(&workspace)?;
-                let full = PathBuf::from(&path);
-                let dir = if full.is_absolute() {
-                    full
-                } else {
-                    Path::new(&workspace.cwd).join(full)
-                };
+                let dir = resolve_path(&workspace.cwd, &path);
                 self.unwatch_tree_dir(&workspace, &dir);
                 Ok(CommandOutput::None)
             }
