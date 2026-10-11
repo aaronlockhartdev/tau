@@ -311,8 +311,7 @@ impl SessionStore {
         ))
     }
 
-    /// Shared body of the `set_*` header mutators: read the header line,
-    /// apply `f`, atomically rewrite just that line (temp-file rename).
+    /// Rewrites only the header line, atomically via a temp-file rename.
     fn update_header(&mut self, f: impl FnOnce(&mut Header)) -> Result<(), Error> {
         self.ensure_open()?;
         let raw = fs::read_to_string(self.path())?;

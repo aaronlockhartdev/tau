@@ -7,8 +7,6 @@ use super::{
     ProviderInfo, list_dir,
 };
 
-/// Resolve a command path against a workspace: absolute paths pass through,
-/// relative paths join onto the cwd.
 fn resolve_path(cwd: &str, path: &str) -> PathBuf {
     let full = PathBuf::from(path);
     if full.is_absolute() {
