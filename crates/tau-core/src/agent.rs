@@ -237,22 +237,21 @@ impl AgentSession {
         }
     }
 
-    /// Queue a user message on its lane (spec §7). A force kills the
-    /// in-flight stream and jumps to the head of the queue; everything else
-    /// keeps its position.
-    pub fn send(&self, text: impl Into<String>, lane: Lane) {
+    /// Queue `text` on `lane` (shared by `send`/`send_skill`): clears a
+    /// prior stop (ticket #23) — a stop means "interrupt current work", not
+    /// "never work again"; a Force lane also kills the stream and takes the
+    /// head of the queue.
+    fn enqueue(&self, text: impl Into<String>, lane: Lane, skill: Option<(String, String)>) {
         let mut inner = self
             .inner
             .lock()
             .expect("agent inner: no panic while the lock is held");
-        // A new send clears a previous stop (ticket #23): a stop means
-        // "interrupt current work", not "never work again".
         self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
             text: text.into(),
             lane,
             source: None,
-            skill: None,
+            skill,
             in_file: false,
         };
         if lane == Lane::Force {
@@ -261,6 +260,13 @@ impl AgentSession {
         } else {
             inner.queue.push_back(msg);
         }
+    }
+
+    /// Queue a user message on its lane (spec §7). A force kills the
+    /// in-flight stream and jumps to the head of the queue; everything else
+    /// keeps its position.
+    pub fn send(&self, text: impl Into<String>, lane: Lane) {
+        self.enqueue(text, lane, None);
     }
 
     /// A `/skill:` invocation expanded at the app's `message_send` boundary
@@ -273,24 +279,7 @@ impl AgentSession {
         name: &str,
         location: &str,
     ) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
-        self.stop.store(false, Ordering::SeqCst);
-        let msg = Queued {
-            text: text.into(),
-            lane,
-            source: None,
-            skill: Some((name.to_owned(), location.to_owned())),
-            in_file: false,
-        };
-        if lane == Lane::Force {
-            self.kill.store(true, Ordering::SeqCst);
-            inner.queue.push_front(msg);
-        } else {
-            inner.queue.push_back(msg);
-        }
+        self.enqueue(text, lane, Some((name.to_owned(), location.to_owned())));
     }
 
     /// A child that reports while

@@ -55,35 +55,31 @@ pub struct OmState {
     /// history vanishing (spec §4).
     pub changed: bool,
 }
+/// A config threshold as a u32: the config validates these fit a u32 at load,
+/// so a mismatch is a bug, not a recoverable error.
+fn threshold_u32(v: u64) -> u32 {
+    u32::try_from(v).expect("om thresholds are validated to fit a u32 at config load")
+}
+
 impl OmState {
     /// Fold the config's absolute `buffer_increment` into the module's
     /// `buffer_activation` ratio (1 − increment/threshold; the two forms
     /// agree at the defaults: 6k over 30k = 0.8).
     #[must_use]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
-        let observe = f64::from(
-            u32::try_from(om.observe_threshold.max(1))
-                .expect("om thresholds are validated to fit a u32 at config load"),
-        );
-        let activation = (1.0
-            - f64::from(
-                u32::try_from(om.buffer_increment)
-                    .expect("om thresholds are validated to fit a u32 at config load"),
-            ) / observe)
-            .clamp(0.0, 1.0);
+        let observe = f64::from(threshold_u32(om.observe_threshold.max(1)));
+        let activation =
+            (1.0 - f64::from(threshold_u32(om.buffer_increment)) / observe).clamp(0.0, 1.0);
         // The record is the single source of truth for the chunks; the
         // in-memory vec is its mirror (ticket #86 P2).
         let buffered = record.buffered_chunks.clone();
         Self {
             config: OmConfig {
-                observe_threshold: u32::try_from(om.observe_threshold)
-                    .expect("om thresholds are validated to fit a u32 at config load"),
-                reflect_threshold: u32::try_from(om.reflect_threshold)
-                    .expect("om thresholds are validated to fit a u32 at config load"),
+                observe_threshold: threshold_u32(om.observe_threshold),
+                reflect_threshold: threshold_u32(om.reflect_threshold),
                 buffer_activation: activation,
                 share_token_budget: false,
-                buffer_tokens: u32::try_from(om.buffer_tokens)
-                    .expect("om thresholds are validated to fit a u32 at config load"),
+                buffer_tokens: threshold_u32(om.buffer_tokens),
                 retries: om.retries.clone(),
             },
             record,
@@ -304,9 +300,9 @@ fn transcript(entries: &[Entry]) -> String {
     out
 }
 
-/// The boundary delimiter's timestamp: epoch millis (no chrono in the
-/// dependency surface; the delimiter needs monotonicity, not a calendar).
-fn now_ms() -> String {
+/// Epoch millis for the boundary delimiter (no chrono in the dependency
+/// surface; the delimiter needs monotonicity, not a calendar).
+fn boundary_ts() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis().to_string())

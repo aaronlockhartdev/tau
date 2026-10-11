@@ -2,12 +2,23 @@ use super::{
     AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
     FunctionCallInput, FunctionCallOutputInput, Inner, InputEntry, InputMessage, KIND_ASSISTANT,
     KIND_TOOL, KIND_USER, Lane, Ordering, Queued, ResponseRequest, SessionStore, ToolBatchPolicy,
-    TurnConfig, TurnEvent, TurnResult, TurnSink, Value, lane_name, tools,
+    TurnConfig, TurnEvent, TurnProviderRef, TurnResult, TurnSink, Value, lane_name, tools,
 };
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
+
+/// The OM model to use: the configured OM model, or the session's model when
+/// it is empty (spec §4).
+fn resolve_om_model(om_model: &str, model: &str) -> String {
+    if om_model.is_empty() {
+        model.to_owned()
+    } else {
+        om_model.to_owned()
+    }
+}
+
 impl AgentSession {
     /// Run turns until the queue is empty.
     pub async fn process(&self) -> Result<(), AgentError> {
@@ -245,10 +256,7 @@ impl AgentSession {
             // ticket #70: keep the parse result so an unparseable call below
             // becomes a clear error, not a silent null.
             let parsed = serde_json::from_str::<Value>(&call.arguments);
-            let args = match &parsed {
-                Ok(v) => v.clone(),
-                Err(_) => Value::Null,
-            };
+            let args = parsed.as_ref().map_or(Value::Null, Value::clone);
             let tc = tools::ToolCall {
                 id: call.id.clone(),
                 name: call.name.clone(),
@@ -329,6 +337,14 @@ impl AgentSession {
         Ok(())
     }
 
+    /// The OM provider: a forwarding provider's inner (the registry-backed
+    /// one the OM pass calls), or the provider itself when it has none.
+    fn om_provider(&self) -> TurnProviderRef {
+        self.provider
+            .forwarding_inner()
+            .unwrap_or_else(|| self.provider.clone())
+    }
+
     /// The turn-end OM pass (ticket #22, R4): one call — `settle_turn`
     /// owns the whole sequence (the unobserved read, activation, the plan,
     /// the observe/reflect round-trips, the commit). The state runs on a
@@ -346,11 +362,7 @@ impl AgentSession {
                 .expect("agent inner: no panic while the lock is held");
             (
                 inner.om.clone(),
-                if inner.om_model.is_empty() {
-                    inner.model.clone()
-                } else {
-                    inner.om_model.clone()
-                },
+                resolve_om_model(&inner.om_model, &inner.model),
                 inner.om_status_hook.clone(),
             )
         };
@@ -394,10 +406,7 @@ impl AgentSession {
         // means a failed pass cannot surface as an interrupted `StreamEnd`
         // in the post-turn reconciliation (the #82 class). A plain
         // (non-forwarding) provider has no registry — use it as-is.
-        let om_provider = self
-            .provider
-            .forwarding_inner()
-            .unwrap_or_else(|| self.provider.clone());
+        let om_provider = self.om_provider();
         // A failed pass (a provider error that survived its retries, a
         // storage error) must not kill the turn (ticket #86): the entries
         // stay unobserved and the next turn-end retries; the partial state
@@ -520,16 +529,8 @@ impl AgentSession {
         *om_buffer_boundary = u64::from(pending);
         let inner = std::sync::Arc::clone(&self.inner);
         let config = om.config.clone();
-        let provider = self
-            .provider
-            .forwarding_inner()
-            .unwrap_or_else(|| self.provider.clone());
-        let model_owned = if om_model.is_empty() {
-            // The session model (same resolution as the turn-end pass).
-            model.clone()
-        } else {
-            om_model.clone()
-        };
+        let provider = self.om_provider();
+        let model_owned = resolve_om_model(om_model, model);
         *om_inflight = Some(tokio::spawn(
             crate::om_integration::background::buffer_cycle(
                 inner,
@@ -785,10 +786,7 @@ fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
                 .is_some()
                 .then(|| (cid.to_owned(), i))
         })
-        .fold(HashMap::new(), |mut m, (cid, i)| {
-            m.insert(cid, i);
-            m
-        });
+        .collect::<HashMap<_, _>>();
     let mut out = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
         match entry.kind.as_str() {
