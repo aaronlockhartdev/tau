@@ -6,6 +6,9 @@
 # - npm: the frontend lives in app/ (no root package.json).
 # - github-actions: .github/workflows/ci.yml.
 #
+# Grouping: routine minor + patch bumps are folded into a single PR per
+# ecosystem; major updates stay individual (they warrant separate review).
+#
 # The Rust toolchain pin (dtolnay/rust-toolchain@1.98.1) is a deliberate
 # version choice, not a dependency to ride along — ignored on purpose.
 version: 2
@@ -14,15 +17,30 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      minor-patch:
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   - package-ecosystem: "npm"
     directory: "/app"
     schedule:
       interval: "weekly"
+    groups:
+      minor-patch:
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      minor-patch:
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
     ignore:
       - dependency-name: "dtolnay/rust-toolchain"
