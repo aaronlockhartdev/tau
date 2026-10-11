@@ -67,7 +67,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: crate-ci/typos@v1.50.3
+      - uses: crate-ci/typos@v1.51.1
 
   rust-coverage:
     # Report only — the 80% aim is a review-time standard, not a gate
