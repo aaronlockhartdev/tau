@@ -21,7 +21,7 @@ names = { version = "0.14", default-features = false }
 rand = "0.10"
 proptest = "1.11"
 insta = { version = "1", features = ["json"] }
-sha2 = "0.10"
+sha2 = "0.11"
 notify = "8.2"
 notify-debouncer-full = "0.7"
 
