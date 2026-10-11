@@ -16,7 +16,7 @@ jobs:
       matrix:
         os: [macos-15, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
@@ -47,7 +47,7 @@ jobs:
     # subsumes cargo-audit — research/testing-rust.md §5.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.98.1
 
@@ -65,7 +65,7 @@ jobs:
     # typos-cli 1.50.3). No inputs needed.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: crate-ci/typos@v1.50.3
 
@@ -74,7 +74,7 @@ jobs:
     # (agreed phase-1 direction); --fail-under-lines is the one-flag upgrade.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.98.1
         with:
@@ -107,7 +107,7 @@ jobs:
     # budget on PR; the long run + corpus trim live in nightly.yml.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -143,7 +143,7 @@ jobs:
     # the pinned test-fixture references are third-party code under their own license.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - name: File-size gate
         run: |
@@ -158,7 +158,7 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7.0.0
         with:
@@ -195,7 +195,7 @@ jobs:
   macos-acceptance:
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@1.98.1
 
@@ -240,7 +240,7 @@ jobs:
   linux-acceptance:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - name: Install webkit2gtk + xvfb
         # The Tauri app crate needs webkit to link; xvfb gives the webview an X display.

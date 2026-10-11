@@ -15,7 +15,7 @@ jobs:
     # (cargo-fuzz book CI pattern; the PR leg is fuzz-smoke in ci.yml).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -49,7 +49,7 @@ jobs:
     # (research/testing-rust.md §6: Miri can't run the network/FFI paths).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -66,7 +66,7 @@ jobs:
     # to build) — nightly only: too slow for a PR gate.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -94,7 +94,7 @@ jobs:
     # once a proc-macro-safe full-instrumentation path exists.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v7
 
       - uses: dtolnay/rust-toolchain@master
         with:
