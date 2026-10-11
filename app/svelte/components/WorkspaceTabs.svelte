@@ -17,13 +17,16 @@
   } from '../lib/store.svelte';
   import type { Workspace } from '../lib/protocol';
   import { tick } from 'svelte';
+  import { ctxClamp } from '../lib/ui';
 
   // The right-click menu: its position plus the selection it acts on.
   let ctx = $state<{ x: number; y: number; ids: string[] } | null>(null);
-  // The rendered position: the raw click point, clamped inside the
-  // viewport after the first render.
-  let ctxPos = $state({ x: 0, y: 0 });
-  let ctxMenu: HTMLDivElement | undefined = $state(undefined);
+  // The rendered position (clamped into the viewport after first render)
+  // plus the menu element the clamp measures.
+  const menu = $state<{ pos: { x: number; y: number }; el: HTMLDivElement | undefined }>({
+    pos: { x: 0, y: 0 },
+    el: undefined
+  });
 
   // Any click inside the strip is the tabs' own (tabSelect), so the
   // document click-away below must not race it — same for the menu.
@@ -43,7 +46,7 @@
       y: e.clientY,
       ids: store.tabSelected.includes(w.id) ? store.tabSelected : [w.id]
     };
-    ctxPos = { x: e.clientX, y: e.clientY };
+    menu.pos = { x: e.clientX, y: e.clientY };
   }
 
   const menuLabel = $derived(ctx && ctx.ids.length > 1 ? `archive (${ctx.ids.length})` : 'archive');
@@ -71,17 +74,10 @@
     };
     document.addEventListener('click', close);
     document.addEventListener('keydown', onKey);
-    // The menu is position:fixed at the raw clientX/clientY: a right-click
-    // near the bottom/right edge would render off-screen, so after it
-    // renders, measure it and shift it inside the window bounds.
     void tick().then(() => {
-      const el = ctxMenu;
+      const el = menu.el;
       if (!ctx || !el) return;
-      const r = el.getBoundingClientRect();
-      ctxPos = {
-        x: Math.max(0, Math.min(ctx.x, window.innerWidth - r.width - 4)),
-        y: Math.max(0, Math.min(ctx.y, window.innerHeight - r.height - 4))
-      };
+      menu.pos = ctxClamp(ctx, el);
     });
     return () => {
       document.removeEventListener('click', close);
@@ -118,7 +114,7 @@
 </div>
 
 {#if ctx}
-  <div class="ctxmenu" role="menu" bind:this={ctxMenu} style:left="{ctxPos.x}px" style:top="{ctxPos.y}px">
+  <div class="ctxmenu" role="menu" bind:this={menu.el} style:left="{menu.pos.x}px" style:top="{menu.pos.y}px">
     <button type="button" role="menuitem" onclick={() => applyMenuAction()}>
       {menuLabel}
     </button>
@@ -217,31 +213,6 @@
   }
   .focus.on {
     color: var(--acc);
-    background: color-mix(in srgb, var(--acc) 12%, transparent);
-  }
-  .ctxmenu {
-    position: fixed;
-    z-index: 20;
-    background: var(--panel2);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
-    padding: 3px;
-  }
-  .ctxmenu button {
-    display: block;
-    width: 100%;
-    padding: 6px 12px;
-    border: none;
-    border-radius: 4px;
-    background: none;
-    color: var(--tx);
-    font: 12px var(--mono);
-    text-align: left;
-    cursor: pointer;
-  }
-  .ctxmenu button:hover,
-  .ctxmenu button:focus-visible {
     background: color-mix(in srgb, var(--acc) 12%, transparent);
   }
 </style>

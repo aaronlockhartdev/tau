@@ -11,6 +11,7 @@ import type {
 } from './protocol';
 import { argsLines, md, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
+import { fmtK } from './format';
 
 // A structured key/value row: the field name on its own line with a colon,
 // the value on the lines below.
@@ -85,9 +86,6 @@ type SubagentEntry = Extract<Entry, { kind: 'subagent' }> | AnyEntry;
 type TaskEntry = Extract<Entry, { kind: 'task' }> | AnyEntry;
 type OmEntry = Extract<Entry, { kind: 'om' }> | AnyEntry;
 
-function fmtTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
-}
 
 // The user-facing tool output: for bash, the command is prepended to the
 // result, and the combined text is what gets truncated.
@@ -378,7 +376,7 @@ export function present(
           kind: 'think',
           label: 'thinking',
           meta: entry.usage
-            ? `${fmtTokens(entry.usage.input_tokens)} in · ${fmtTokens(entry.usage.output_tokens)} out`
+            ? `${fmtK(entry.usage.input_tokens)} in · ${fmtK(entry.usage.output_tokens)} out`
             : null,
           openKey: 'think',
           body: md(entry.reasoning.trim())

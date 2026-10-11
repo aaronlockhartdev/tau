@@ -3,6 +3,7 @@
   // name · the om gauge) and a right cost group (in · out · cache, and
   // tps only while streaming).
   import { store, currentSession } from '../lib/store.svelte';
+  import { fmtK } from '../lib/format';
 
   const s = $derived(currentSession());
   const running = $derived(s?.turn === 'running' || s?.turn === 'starting');
@@ -17,9 +18,6 @@
       ? Math.round((100 * s.usage.cached_prompt_tokens) / s.usage.input_tokens)
       : 0
   );
-  function fmt(n: number): string {
-    return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`;
-  }
 </script>
 
 <div class="bar">
@@ -33,16 +31,16 @@
     <span class="sep">·</span>
     <span class="k">om</span>
     {#if s && s.om.kind === 'idle'}
-      <span class="om">{fmt(s.om.observation_tokens)}/{fmt(s.om.reflector_threshold)}</span>
+      <span class="om">{fmtK(s.om.observation_tokens)}/{fmtK(s.om.reflector_threshold)}</span>
     {:else if s}
       <span class="om busy">{s.om.kind}<span class="pulse">…</span></span>
     {/if}
   </span>
   <span class="br">
     {#if s?.usage}
-      <span>{fmt(s.usage.input_tokens)} in</span>
+      <span>{fmtK(s.usage.input_tokens)} in</span>
       <span class="sep">·</span>
-      <span>{fmt(s.usage.output_tokens)} out</span>
+      <span>{fmtK(s.usage.output_tokens)} out</span>
       <span class="sep">·</span>
       <span>{cachePct}% cache</span>
     {:else}

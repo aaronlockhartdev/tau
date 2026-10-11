@@ -12,7 +12,7 @@ import type { SessionState } from '../lib/sessions';
 import RightPane from './RightPane.svelte';
 import {
   mockStore,
-  openSessionById,
+  switchSession,
   resetMockStore,
   seedState
 } from '../lib/testing/mock-store.svelte.ts';
@@ -223,7 +223,7 @@ describe('RightPane', () => {
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
     await user.dblClick(screen.getByRole('button', { name: /worker one/ }));
-    expect(openSessionById).toHaveBeenCalledWith('c1');
+    expect(switchSession).toHaveBeenCalledWith('c1');
   });
 
   it('switching tabs moves the pane tab and the on marker', async () => {

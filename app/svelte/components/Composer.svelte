@@ -29,6 +29,7 @@
 
   const cur = $derived(currentSession());
   const running = $derived(cur?.turn === 'running' || cur?.turn === 'starting');
+  const asStop = $derived(running && !text.trim());
 
   let inputEl = $state<HTMLTextAreaElement | null>(null);
 
@@ -240,12 +241,12 @@
       </div>
       <button
         class="send"
-        class:stop={running && !text.trim()}
+        class:stop={asStop}
         class:disabled={!text.trim() && !running}
-        title={running && !text.trim() ? 'stop the in-flight turn' : 'send'}
-        onclick={running && !text.trim() ? () => void stop() : submit}
+        title={asStop ? 'stop the in-flight turn' : 'send'}
+        onclick={asStop ? () => void stop() : submit}
       >
-        {running ? (text.trim() ? (lane === 'force' ? '⚡' : '↑') : '■') : '↑'}
+        {asStop ? '■' : running ? (lane === 'force' ? '⚡' : '↑') : '↑'}
       </button>
     </div>
   {/if}

@@ -8,7 +8,7 @@
     store,
     currentSession,
     pane,
-    openSessionById,
+    switchSession,
     renameSession,
     archiveSession,
     restoreSession,
@@ -18,6 +18,8 @@
   import { groupIsOpen } from '../lib/sessions';
   import { nextSelection } from '../lib/selection';
   import { tick } from 'svelte';
+  import { ctxClamp } from '../lib/ui';
+  import { fmtAgo } from '../lib/format';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
 
@@ -81,7 +83,7 @@
     q.selAnchor = id;
     if (e.metaKey || e.ctrlKey) return;
     if (session.archived) return;
-    void openSessionById(id);
+    void switchSession(id);
   }
 
   const isSelected = $derived((pane(ws)?.selected ?? []).includes(session.meta.id));
@@ -165,14 +167,16 @@
     ]);
   }
   let ctx = $state<{ x: number; y: number } | null>(null);
-  // The rendered position: the raw click point, clamped inside the
-  // viewport after the first render.
-  let ctxPos = $state({ x: 0, y: 0 });
-  let ctxMenu: HTMLDivElement | undefined = $state(undefined);
+  // The rendered position (clamped into the viewport after first render)
+  // plus the menu element the clamp measures.
+  const menu = $state<{ pos: { x: number; y: number }; el: HTMLDivElement | undefined }>({
+    pos: { x: 0, y: 0 },
+    el: undefined
+  });
   function onContext(e: MouseEvent): void {
     e.preventDefault();
     ctx = { x: e.clientX, y: e.clientY };
-    ctxPos = { x: e.clientX, y: e.clientY };
+    menu.pos = { x: e.clientX, y: e.clientY };
   }
   $effect(() => {
     if (!ctx) return;
@@ -182,17 +186,10 @@
     };
     document.addEventListener('click', close);
     document.addEventListener('keydown', onKey);
-    // The menu is position:fixed at the raw clientX/clientY: a right-click
-    // near the bottom/right edge would render off-screen, so after it
-    // renders, measure it and shift it inside the window bounds.
     void tick().then(() => {
-      const el = ctxMenu;
+      const el = menu.el;
       if (!ctx || !el) return;
-      const r = el.getBoundingClientRect();
-      ctxPos = {
-        x: Math.max(0, Math.min(ctx.x, window.innerWidth - r.width - 4)),
-        y: Math.max(0, Math.min(ctx.y, window.innerHeight - r.height - 4))
-      };
+      menu.pos = ctxClamp(ctx, el);
     });
     return () => {
       document.removeEventListener('click', close);
@@ -209,10 +206,6 @@
   function childInfo(c: SessionState) {
     return active?.subagents.find((x) => x.child === c.meta.id) ?? null;
   }
-  const fmtAgo = (ms: number) => {
-    const m = (Date.now() - ms) / 60000;
-    return m < 1 ? 'just now' : m < 60 ? `${Math.round(m)}m` : `${Math.round(m / 60)}h`;
-  };
 </script>
 
 {#snippet rowLabel()}
@@ -280,7 +273,7 @@
   label={rowLabel}
 />
 {#if ctx}
-  <div class="ctxmenu" role="menu" bind:this={ctxMenu} style:left="{ctxPos.x}px" style:top="{ctxPos.y}px">
+  <div class="ctxmenu" role="menu" bind:this={menu.el} style:left="{menu.pos.x}px" style:top="{menu.pos.y}px">
     {#each menuItems() as item (item.label)}
       <button type="button" role="menuitem" onclick={() => void applyMenuAction(item)}>
         {item.label}
@@ -337,31 +330,6 @@
   .arch-b:hover,
   .arch-b:focus-visible {
     opacity: 1;
-  }
-  .ctxmenu {
-    position: fixed;
-    z-index: 20;
-    background: var(--panel2);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
-    padding: 3px;
-  }
-  .ctxmenu button {
-    display: block;
-    width: 100%;
-    padding: 6px 12px;
-    border: none;
-    border-radius: 4px;
-    background: none;
-    color: var(--tx);
-    font: 12px var(--mono);
-    text-align: left;
-    cursor: pointer;
-  }
-  .ctxmenu button:hover,
-  .ctxmenu button:focus-visible {
-    background: color-mix(in srgb, var(--acc) 12%, transparent);
   }
   .badge {
     flex: none;

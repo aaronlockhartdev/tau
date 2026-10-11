@@ -8,7 +8,9 @@
   // detail sections. The sub-agents panel renders a tree (nesting
   // supported) — double-click opens the sub-agent's session, which is an
   // ordinary session (a tab opens for it).
-  import { store, pane, ensurePane, openSessionById, currentSession, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, switchSession, currentSession, type PaneState } from '../lib/store.svelte';
+  import { fmtAgo } from '../lib/format';
+  import { onActivate } from '../lib/ui';
   import type { Task, SubagentInfo } from '../lib/protocol';
 
   const cur = $derived(currentSession());
@@ -65,16 +67,6 @@
     const q = pane(ws);
     if (q) q.selSub = h;
   }
-  const onKey = (fn: () => void) => (e: KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      fn();
-    }
-  };
-  const fmtAgo = (ms: number) => {
-    const m = (Date.now() - ms) / 60000;
-    return m < 1 ? 'just now' : m < 60 ? `${Math.round(m)}m` : `${Math.round(m / 60)}h`;
-  };
 </script>
 
 <div class="pane">
@@ -95,7 +87,7 @@
             role="button"
             tabindex="0"
             onclick={() => toggleTask(t.id)}
-            onkeydown={onKey(() => toggleTask(t.id))}
+            onkeydown={onActivate(() => toggleTask(t.id))}
           >
             <div class="lh">
               <svg class="chev" class:open={p?.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
@@ -150,7 +142,7 @@
           {@render taskRow(t)}
         {/each}
         {#if histTasks.length > 0}
-          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
+          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onActivate(toggleHist)}>
             <svg class="chev"><use href="#i-chev"/></svg>history · {histTasks.length}
           </div>
           {#if p.historyOpen}
@@ -166,72 +158,40 @@
       {#if liveSubs.length === 0 && histSubs.length === 0}
         <div class="emptyc">No sub-agents — ask the agent to spawn one</div>
       {:else}
-        {#if liveSubs.length > 0}
-          <div class="ghead">live · {liveSubs.length}</div>
-        {/if}
-        {#each liveSubs as r (r.handle)}
+        {#snippet subRow(r: SubagentInfo, deep: boolean)}
           <div
             class="srow2"
+            class:d2={deep}
             class:sel={p.selSub === r.handle}
             role="button"
             tabindex="0"
             onclick={() => selectSub(r.handle)}
-            onkeydown={onKey(() => selectSub(r.handle))}
-            ondblclick={() => openSessionById(r.child)}
+            onkeydown={onActivate(() => selectSub(r.handle))}
+            ondblclick={() => void switchSession(r.child)}
           >
             <span class="badge {r.state}"><span class="dot"></span>{r.state}{r.waiting_on ? ` · ${r.waiting_on}` : ''}</span>
             <span class="ln">{titleOf(r)}</span>
             <span class="lm">{r.task?.id ?? ''}</span>
           </div>
+        {/snippet}
+        {#if liveSubs.length > 0}
+          <div class="ghead">live · {liveSubs.length}</div>
+        {/if}
+        {#each liveSubs as r (r.handle)}
+          {@render subRow(r, false)}
           {#each liveGrand[r.handle] ?? [] as g (g.handle)}
-            <div
-              class="srow2 d2"
-              class:sel={p.selSub === g.handle}
-              role="button"
-              tabindex="0"
-              onclick={() => selectSub(g.handle)}
-              onkeydown={onKey(() => selectSub(g.handle))}
-              ondblclick={() => openSessionById(g.child)}
-            >
-              <span class="badge {g.state}"><span class="dot"></span>{g.state}{g.waiting_on ? ` · ${g.waiting_on}` : ''}</span>
-              <span class="ln">{titleOf(g)}</span>
-              <span class="lm">{g.task?.id ?? ''}</span>
-            </div>
+            {@render subRow(g, true)}
           {/each}
         {/each}
         {#if histSubs.length > 0}
-          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onKey(toggleHist)}>
+          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onActivate(toggleHist)}>
             <svg class="chev"><use href="#i-chev"/></svg>history · {histSubs.length}
           </div>
           {#if p.historyOpen}
             {#each histSubs as r (r.handle)}
-              <div
-                class="srow2"
-                class:sel={p.selSub === r.handle}
-                role="button"
-                tabindex="0"
-                onclick={() => selectSub(r.handle)}
-                onkeydown={onKey(() => selectSub(r.handle))}
-                ondblclick={() => openSessionById(r.child)}
-              >
-                <span class="badge {r.state}"><span class="dot"></span>{r.state}{r.waiting_on ? ` · ${r.waiting_on}` : ''}</span>
-                <span class="ln">{titleOf(r)}</span>
-                <span class="lm">{r.task?.id ?? ''}</span>
-              </div>
+              {@render subRow(r, false)}
               {#each histGrand[r.handle] ?? [] as g (g.handle)}
-                <div
-                  class="srow2 d2"
-                  class:sel={p.selSub === g.handle}
-                  role="button"
-                  tabindex="0"
-                  onclick={() => selectSub(g.handle)}
-                  onkeydown={onKey(() => selectSub(g.handle))}
-                  ondblclick={() => openSessionById(g.child)}
-                >
-                  <span class="badge {g.state}"><span class="dot"></span>{g.state}{g.waiting_on ? ` · ${g.waiting_on}` : ''}</span>
-                  <span class="ln">{titleOf(g)}</span>
-                  <span class="lm">{g.task?.id ?? ''}</span>
-                </div>
+                {@render subRow(g, true)}
               {/each}
             {/each}
           {/if}
