@@ -6,7 +6,7 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, type PaneState } from '../lib/store.svelte';
   import { onActivate } from '../lib/ui';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
@@ -27,6 +27,8 @@
   // archives the children with the parent), so listing children here would
   // show them twice — once top-level, once under their parent.
   const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.mru - a.mru));
+  // The red-edge tint (P5): the shared attention fold, keyed by session.
+  const attSessions = $derived(new Set(attention().map((i) => i.session)));
 
   // The visible row order of the sessions tab (live list, then the
   // archive folder's open groups) — the flat sequence a shift range
@@ -108,7 +110,7 @@
             <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
             {#each top as s (s.meta.id)}
-              <SessionNode session={s} ws={ws} sessions={sessions} visibleIds={visibleIds} />
+              <SessionNode session={s} ws={ws} sessions={sessions} visibleIds={visibleIds} att={attSessions.has(s.meta.id)} />
             {/each}
           {/if}
         </div>
@@ -119,7 +121,7 @@
           </button>
           {#if p.archOpen}
             {#each archived as s (s.meta.id)}
-              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} visibleIds={visibleIds} />
+              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} visibleIds={visibleIds} att={attSessions.has(s.meta.id)} />
             {/each}
           {/if}
         </div>

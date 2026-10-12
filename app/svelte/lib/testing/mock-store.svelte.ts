@@ -11,6 +11,7 @@ import { vi } from 'vitest';
 import type { FilesCache } from '../files';
 import type { PaneState } from '../panes';
 import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../protocol';
+import { attentionOf, type AttentionItem } from '../attention';
 import { makeStub, type SessionState } from '../sessions';
 
 export function paneDefault(): PaneState {
@@ -49,6 +50,7 @@ export function freshDefaults() {
     gitStatus: {} as Record<string, GitStatus | null>,
     peek: null as { workspace: string; path: string } | null,
     peekDiff: null as string | null,
+    attentionOpen: false,
     pane: {} as Record<string, PaneState>,
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null
@@ -56,6 +58,9 @@ export function freshDefaults() {
 }
 
 const store = $state(freshDefaults());
+export function attention(): AttentionItem[] {
+  return attentionOf(store.sessions);
+}
 
 export const mockStore = store;
 

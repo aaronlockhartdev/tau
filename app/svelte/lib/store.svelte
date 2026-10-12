@@ -63,9 +63,11 @@
   import { errText } from './errors';
   export type { PaneState } from './panes';
   import { listen } from '@tauri-apps/api/event';
+  import { attentionOf, type AttentionItem } from './attention';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
     focus: false,
+    attentionOpen: false,
     // The follow filter (P2): the handle of the sub-agent the transcript is
     // focused on; non-followed entries render dimmed. Cleared by the chip.
     follow: null as string | null,
@@ -120,6 +122,14 @@
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null
   });
+
+  // The needs-you list (P5): a pure fold over the sessions, so any pane
+  // (bell, sheet, tree tint) reads one shared projection. A function —
+  // derived state may not be exported from a module.
+  export function attention(): AttentionItem[] {
+    return attentionOf(store.sessions);
+  }
+
 
   // Pure read — a $derived may call this; creation goes through ensurePane
   // (a mutation, only from effects/actions).

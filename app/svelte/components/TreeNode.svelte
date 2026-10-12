@@ -12,6 +12,7 @@
     selected = false,
     multi = false,
     dimmed = false,
+    att = false,
     label,
     onRow,
     onRowDbl,
@@ -29,6 +30,8 @@
     // dimmed — the row still takes selection clicks and the context
     // menu.
     dimmed?: boolean;
+    // A needs-you row (P5): red left edge so the tree points at it.
+    att?: boolean;
     label: Snippet;
     onRow?: (e: MouseEvent) => void;
     onRowDbl?: () => void;
@@ -53,6 +56,7 @@
     class:sel={selected}
     class:multi={multi}
     class:dimmed={dimmed}
+    class:att={att}
     role="button"
     tabindex={0}
     aria-expanded={expanded === null ? undefined : expanded}
@@ -94,6 +98,10 @@
   }
   .trow:hover {
     background: rgba(255, 255, 255, 0.04);
+  }
+  .trow.att {
+    border-left: 2px solid var(--red);
+    background: rgba(240, 85, 63, 0.06);
   }
   .trow.sel,
   .trow.multi {

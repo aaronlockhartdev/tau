@@ -28,7 +28,8 @@
     depth = 0,
     ws,
     sessions,
-    visibleIds
+    visibleIds,
+    att = false
   }: {
     session: SessionState;
     depth?: number;
@@ -37,6 +38,7 @@
     // The visible row order (the left pane owns the flat order a shift
     // range spans).
     visibleIds: string[];
+    att?: boolean;
   } = $props();
 
   const active = $derived(currentSession());
@@ -258,6 +260,7 @@
   expanded={kids.length > 0 ? groupOpen(session.meta.id) : null}
   selected={store.current === session.meta.id}
   multi={isSelected}
+  att={att}
   dimmed={session.archived}
   onRow={(e) => onRowClick(e)}
   onRowDbl={

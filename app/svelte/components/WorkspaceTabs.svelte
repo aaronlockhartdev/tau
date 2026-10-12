@@ -9,6 +9,7 @@
 
   import {
     store,
+    attention,
     currentSession,
     openWorkspace,
     closeWorkspace,
@@ -110,6 +111,17 @@
     onclick={() => (store.focus = !store.focus)}
   >
     ⤢
+  </button>
+  <button
+    class="bell"
+    class:on={store.attentionOpen}
+    title="Needs your attention"
+    onclick={() => (store.attentionOpen = !store.attentionOpen)}
+  >
+    🔔
+    {#if attention().length > 0}
+      <span class="count">{attention().length}</span>
+    {/if}
   </button>
 </div>
 
@@ -238,5 +250,36 @@
   .focus.on {
     color: var(--acc);
     background: color-mix(in srgb, var(--acc) 12%, transparent);
+  }
+  .bell {
+    position: relative;
+    align-self: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: none;
+    border: none;
+    color: var(--dim);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .bell:hover {
+    color: var(--tx);
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .bell.on {
+    color: var(--red);
+  }
+  .bell .count {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: var(--red);
+    color: #fff;
+    font: 700 9px/14px var(--mono);
+    text-align: center;
   }
 </style>
