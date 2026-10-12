@@ -124,53 +124,75 @@
 <style>
   .bar {
     display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 44px;
-    padding: 0 10px 0 96px;
-    background: var(--panel);
+    align-items: stretch;
+    gap: 1px;
+    height: 48px;
+    padding: 0 12px 0 96px;
+    background: var(--bg);
     border-bottom: 1px solid var(--line);
     user-select: none;
   }
   .logo {
-    font-size: 18px;
+    align-self: center;
+    font-size: 14px;
     font-weight: 700;
-    color: var(--acc);
-    padding: 0 8px 0 2px;
+    color: var(--tx);
+    padding: 0 10px 0 2px;
   }
   .tabs {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    align-items: stretch;
+    gap: 1px;
   }
   .tab {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 4px 6px 4px 10px;
-    border-radius: 8px;
-    font-size: 12px;
+    padding: 0 8px 0 10px;
+    border-radius: 8px 8px 0 0;
+    font-size: 12.5px;
+    font-weight: 500;
     color: var(--dim);
     border: 1px solid transparent;
+    border-bottom: none;
   }
   .tab:hover {
+    background: rgba(255, 255, 255, 0.05);
     color: var(--tx);
-    background: var(--panel2);
   }
-  .tab.active {
-    color: var(--tx);
-    background: color-mix(in srgb, var(--acc) 10%, transparent);
-    border-color: color-mix(in srgb, var(--acc) 28%, transparent);
-  }
+  /* The active tab merges into the pane below it: panel fill plus the two
+     radial-gradient notches where its top corners meet the bar. */
+  .tab.active,
   .tab.multi {
     color: var(--tx);
-    background: color-mix(in srgb, var(--acc) 10%, transparent);
-    border-color: color-mix(in srgb, var(--acc) 28%, transparent);
+    font-weight: 600;
+    background: var(--panel);
+  }
+  .tab.active::before,
+  .tab.active::after,
+  .tab.multi::before,
+  .tab.multi::after {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    width: 9px;
+    height: 9px;
+  }
+  .tab.active::before,
+  .tab.multi::before {
+    left: -9px;
+    background: radial-gradient(circle at 100% 100%, var(--panel) 6.5px, transparent 7px);
+  }
+  .tab.active::after,
+  .tab.multi::after {
+    right: -9px;
+    background: radial-gradient(circle at 0 100%, var(--panel) 6.5px, transparent 7px);
   }
   .tab .tabname {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
   }
   .tab .dot {
     width: 6px;
@@ -180,6 +202,7 @@
   }
   .tab.active .dot {
     background: var(--green);
+    animation: pulse 1.4s infinite;
   }
   .x {
     width: 16px;
@@ -189,7 +212,7 @@
     align-items: center;
     justify-content: center;
     padding: 0;
-    color: var(--dim);
+    color: var(--faint);
     font-size: 12px;
     line-height: 1;
   }
@@ -201,15 +224,16 @@
     flex: 1;
   }
   .focus {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
+    align-self: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
     color: var(--dim);
     font-size: 14px;
   }
   .focus:hover {
     color: var(--tx);
-    background: var(--panel2);
+    background: rgba(255, 255, 255, 0.07);
   }
   .focus.on {
     color: var(--acc);

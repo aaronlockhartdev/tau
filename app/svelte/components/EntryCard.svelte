@@ -116,7 +116,7 @@
 
 <style>
   .wrap {
-    margin: 0 16px 8px;
+    margin: 0 16px 10px;
   }
   /* A card in a parallel batch: a quiet connector line on the left ties the
      run together; the first card carries the count. */
@@ -137,26 +137,25 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font: 10px var(--mono);
-    letter-spacing: 0.08em;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--faint);
-    margin: 0 2px 8px;
+    margin: 10px 2px 6px;
   }
   .thd::after {
     content: '';
     flex: 1;
-    border-top: 1px solid var(--line);
-    opacity: 0.6;
   }
   .tuser {
     font-size: 13.5px;
   }
   .bubble {
-    display: inline-block;
-    background: var(--panel2);
-    border: 1px solid var(--line2);
-    border-radius: 10px;
-    padding: 8px 12px;
+    display: inline;
+    background: none;
+    border: none;
+    padding: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }

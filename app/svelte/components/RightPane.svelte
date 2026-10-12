@@ -211,29 +211,35 @@
   }
   .tabs {
     display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 12px 8px;
     border-bottom: 1px solid var(--line);
     flex: none;
   }
   .tab {
-    flex: 1;
-    text-align: center;
-    padding: 8px;
-    font: 11px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--faint);
+    border-radius: 6px;
+  }
+  .tab:hover {
     color: var(--dim);
   }
   .tab.on {
-    color: var(--acc);
-    box-shadow: inset 0 -2px 0 var(--acc);
+    color: var(--tx);
+    background: var(--raised);
   }
   .ghead {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 12px 4px;
-    font: 10px var(--mono);
-    letter-spacing: 0.08em;
+    padding: 10px 8px 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--faint);
   }
   .ghead[role='button'] {
@@ -267,12 +273,11 @@
     padding: 0 16px;
   }
   .lrow {
-    padding: 7px 14px;
+    padding: 6px 8px;
     cursor: pointer;
-    border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
   }
   .lrow:hover {
-    background: var(--panel2);
+    background: rgba(255, 255, 255, 0.04);
   }
   .lrow .lh {
     display: flex;
@@ -356,18 +361,20 @@
     color: var(--faint);
   }
   .srow2 {
-    padding: 7px 14px;
+    padding: 6px 8px;
     cursor: pointer;
-    border-bottom: 1px solid color-mix(in srgb, var(--line) 50%, transparent);
     display: flex;
     align-items: center;
     gap: 8px;
+    border-radius: 8px;
+    border: 1px solid transparent;
   }
   .srow2:hover {
-    background: var(--panel2);
+    background: rgba(255, 255, 255, 0.04);
   }
   .srow2.sel {
-    background: color-mix(in srgb, var(--acc) 12%, transparent);
+    background: var(--raised);
+    border-color: var(--line2);
   }
   .srow2 .ln {
     flex: 1;

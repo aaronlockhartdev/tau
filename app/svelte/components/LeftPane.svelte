@@ -138,21 +138,25 @@
   }
   .tabs {
     display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 12px 8px;
     border-bottom: 1px solid var(--line);
     flex: none;
   }
   .tab {
-    flex: 1;
-    text-align: center;
-    padding: 8px;
-    font: 11px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    padding: 3px 9px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--faint);
+    border-radius: 6px;
+  }
+  .tab:hover {
     color: var(--dim);
   }
   .tab.on {
-    color: var(--acc);
-    box-shadow: inset 0 -2px 0 var(--acc);
+    color: var(--tx);
+    background: var(--raised);
   }
   .sec {
     flex: 1;
@@ -173,22 +177,24 @@
     padding-top: 4px;
   }
   .new {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 7px;
-    width: 100%;
-    padding: 4.5px 8px;
-    font-size: 12.5px;
-    line-height: 1;
-    color: var(--faint);
+    gap: 6px;
+    width: auto;
+    margin: 8px 8px 4px auto;
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--dim);
     background: none;
-    border: none;
+    border: 1px solid var(--line2);
+    border-radius: 6px;
     cursor: pointer;
-    text-align: left;
   }
   .new:hover {
-    color: var(--text);
-    background: var(--panel2);
+    color: var(--tx);
+    border-color: #3a3d47;
   }
   .new .ci {
     display: block;
@@ -205,9 +211,11 @@
     gap: 6px;
     width: 100%;
     text-align: left;
-    padding: 8px 12px 4px;
-    font: 10px var(--mono);
-    letter-spacing: 0.08em;
+    padding: 10px 8px 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--faint);
   }
   .arch-h .ci {

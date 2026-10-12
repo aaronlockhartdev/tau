@@ -62,7 +62,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 26px;
+    height: 24px;
     flex: none;
     padding: 0 12px;
     background: var(--bg);
@@ -99,6 +99,7 @@
   .sdot.run {
     background: var(--green);
     box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent);
+    animation: pulse 1.4s infinite;
   }
   .stt {
     color: var(--tx);

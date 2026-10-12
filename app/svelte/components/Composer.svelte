@@ -258,7 +258,7 @@
     flex: none;
     margin: 0 16px 12px;
     border: 1px solid var(--line2);
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--panel);
   }
   .crow {
@@ -364,6 +364,7 @@
     cursor: pointer;
     background: none;
     border: none;
+    white-space: nowrap;
   }
   .mchip:hover {
     color: var(--dim);
@@ -391,6 +392,9 @@
   .chint {
     font: 10px var(--mono);
     color: var(--faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .dropdown {
     position: absolute;

@@ -84,18 +84,21 @@
   .trow {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 4.5px 8px 4.5px calc(var(--indent, 0px) + 8px);
+    gap: 8px;
+    padding: 6px 8px 6px calc(var(--indent, 0px) + 8px);
+    border-radius: 8px;
+    border: 1px solid transparent;
     cursor: pointer;
     font-size: 12.5px;
     line-height: 1;
   }
   .trow:hover {
-    background: var(--panel2);
+    background: rgba(255, 255, 255, 0.04);
   }
   .trow.sel,
   .trow.multi {
-    background: color-mix(in srgb, var(--acc) 8%, transparent);
+    background: var(--raised);
+    border-color: var(--line2);
   }
   .trow.dimmed {
     cursor: default;

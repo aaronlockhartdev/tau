@@ -255,11 +255,15 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 7px 10px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    padding: 6px 4px;
     cursor: pointer;
+  }
+  .tool .chip:hover {
+    background: rgba(255, 255, 255, 0.04);
   }
   .tool .chip .ic {
     color: var(--dim);
@@ -278,7 +282,9 @@
     white-space: nowrap;
   }
   .tool .chip .st {
-    font-size: 12px;
+    font: 10px var(--mono);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     color: var(--faint);
   }
   .tool .chip .st.ok {
