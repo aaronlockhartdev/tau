@@ -1,0 +1,1082 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>τ workbench · session-first prototype</title>
+<!--
+  WORKBENCH — the session-first prototype. Home is ONE session, done exceptionally:
+  transcript central, crew (sub-agents) first-class in the right dock AND nested live
+  in the parent transcript, attention as a small compact sheet, fleet as a step-out
+  list for the scale-up case. Sized for the real day: 1 session + 3–4 workers.
+  Run: open app/prototype-workbench.html
+-->
+<style>
+/* ============ tokens ============ */
+:root {
+  --bg: #0d0e11;
+  --panel: #141519;
+  --raised: #1a1c21;
+  --line: #26282f;
+  --line2: #30323b;
+  --text: #e8eaed;
+  --text2: #9ba0aa;
+  --faint: #6b7078;
+  --acc: #4c8dff;
+  --ok: #3fb950;
+  --warn: #d9a03f;
+  --bad: #f0553f;
+  --sans: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { font: 13px/1.55 var(--sans); color: var(--text); background: var(--bg); }
+#app { display: grid; grid-template-rows: 48px 1fr 24px; height: 100vh; }
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+svg { display: block; }
+::selection { background: rgba(76,141,255,.22); }
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #2c2e36; border-radius: 5px; border: 2px solid var(--bg); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes flashbg { 0% { background: rgba(76,141,255,.14); } 100% { background: transparent; } }
+@keyframes rise { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+/* ============ topbar ============ */
+.topbar { display: flex; align-items: center; gap: 12px; padding: 0 12px; background: var(--bg); border-bottom: 1px solid var(--line); }
+.wstabs { display: flex; align-items: stretch; gap: 1px; }
+.wstab { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 10px; font-size: 12.5px; font-weight: 500; color: var(--text2); border-radius: 8px 8px 0 0; }
+.wstab:hover { background: rgba(255,255,255,.05); color: var(--text); }
+.wstab.on { background: var(--panel); color: var(--text); font-weight: 600; }
+.wstab.on::before, .wstab.on::after { content: ""; position: absolute; bottom: 0; width: 9px; height: 9px; }
+.wstab.on::before { left: -9px; background: radial-gradient(circle at 100% 100%, var(--panel) 6.5px, transparent 7px); }
+.wstab.on::after { right: -9px; background: radial-gradient(circle at 0 100%, var(--panel) 6.5px, transparent 7px); }
+.wstab .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: pulse 1.4s infinite; }
+.wstab .dot.idle { background: var(--faint); animation: none; }
+.wstab-add { display: grid; place-items: center; width: 26px; color: var(--faint); border-radius: 6px; }
+.wstab-add:hover { background: rgba(255,255,255,.07); color: var(--text); }
+.tbsp { flex: 1; }
+.ibtn { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: var(--text2); position: relative; }
+.ibtn:hover { background: rgba(255,255,255,.07); color: var(--text); }
+.ibtn svg { width: 15px; height: 15px; }
+.bcnt { position: absolute; top: 2px; right: 1px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: 8px; background: var(--bad); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+.kbtn { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 8px; color: var(--text2); font-size: 12px; }
+.kbtn:hover { border-color: #3a3d47; color: var(--text); }
+.kbtn svg { width: 13px; height: 13px; }
+.kbtn kbd { font: 10.5px var(--mono); color: var(--faint); }
+
+/* ============ body grid ============ */
+.body { display: grid; grid-template-columns: 256px minmax(0,1fr) 300px; min-height: 0; }
+.pane { background: var(--panel); min-height: 0; display: flex; flex-direction: column; }
+.pane.left { border-right: 1px solid var(--line); }
+.dock { border-left: 1px solid var(--line); min-height: 0; }
+.phead { display: flex; align-items: center; gap: 8px; padding: 9px 12px 7px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.newghost { margin-left: auto; font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text2); padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line2); }
+.newghost:hover { color: var(--text); border-color: #3a3d47; }
+.ptabs { display: flex; gap: 2px; padding: 0 12px 8px; border-bottom: 1px solid var(--line); }
+.ptab { padding: 3px 9px; font-size: 11.5px; font-weight: 600; color: var(--faint); border-radius: 6px; }
+.ptab:hover { color: var(--text2); }
+.ptab.on { color: var(--text); background: var(--raised); }
+.pscroll { flex: 1; overflow-y: auto; padding: 8px 8px 16px; }
+.grp { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); padding: 10px 8px 5px; }
+.sessrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
+.sessrow:hover { background: rgba(255,255,255,.04); }
+.sessrow.active { background: var(--raised); border-color: var(--line2); }
+.sessrow.needs { background: rgba(240,85,63,.08); }
+.sessrow.needs:hover { background: rgba(240,85,63,.13); }
+.sessrow.sel { outline: 1px solid var(--acc); outline-offset: -1px; }
+.sessrow .sdot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.sdot.run { background: var(--ok); animation: pulse 1.4s infinite; }
+.sdot.needs { background: var(--bad); }
+.sdot.idle { background: #4a4d55; }
+.sdot.done { background: #2e8b42; }
+.sdot.fail { background: var(--bad); animation: none; }
+.sessrow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.sessrow .tag { font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.tag.run { color: var(--ok); } .tag.needs { color: var(--bad); } .tag.done { color: #4aa75e; }
+.crewsub { margin: 2px 0 4px 21px; border-left: 1px solid var(--line); padding-left: 8px; }
+.crewk { display: flex; align-items: center; gap: 7px; padding: 3px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text2); }
+.crewk:hover { background: rgba(255,255,255,.05); color: var(--text); }
+.crewk.on { background: rgba(76,141,255,.12); color: var(--text); }
+.crewk .sdot { width: 6px; height: 6px; }
+.crewk .cktag { margin-left: auto; font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+
+/* file tree (left, files tab) */
+.frow { display: flex; align-items: center; gap: 7px; padding: 4px 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: var(--text2); }
+.frow:hover { background: rgba(255,255,255,.04); color: var(--text); }
+.frow.sel { background: var(--raised); color: var(--text); }
+.frow .fp { color: var(--faint); font-size: 11px; width: 14px; text-align: center; }
+.frow .fnm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fbadge { font: 10px var(--mono); font-weight: 700; width: 15px; text-align: center; border-radius: 4px; }
+.fbadge.m { color: var(--warn); } .fbadge.a { color: var(--ok); } .fbadge.d { color: var(--bad); }
+.fcount { font: 10.5px var(--mono); color: var(--faint); }
+
+/* ============ center ============ */
+.center { position: relative; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
+.chead { display: flex; align-items: center; gap: 10px; padding: 10px 18px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.chead .cname { font-size: 14px; font-weight: 700; }
+.chead .cws { font-size: 11px; color: var(--faint); padding: 1px 7px; border: 1px solid var(--line2); border-radius: 20px; }
+.schip { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; border-radius: 20px; }
+.schip.run { color: var(--ok); background: rgba(63,185,80,.12); }
+.schip.needs { color: var(--bad); background: rgba(240,85,63,.12); }
+.schip.idle { color: var(--faint); background: rgba(255,255,255,.06); }
+.schip.done { color: #4aa75e; background: rgba(63,185,80,.09); }
+.fchip { display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600; color: var(--acc); background: rgba(76,141,255,.12); border: 1px solid rgba(76,141,255,.3); padding: 2px 9px; border-radius: 20px; cursor: pointer; white-space: nowrap; }
+.fchip svg { width: 10px; height: 10px; }
+.fchip:hover { background: rgba(76,141,255,.2); }
+.chead .cright { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); }
+.chead .cright .mono { font-family: var(--mono); }
+.tscroll { flex: 1; overflow-y: auto; min-height: 0; }
+.page { max-width: 860px; margin: 0 auto; padding: 18px 22px 8px; }
+.earlier { text-align: center; font-size: 11.5px; color: var(--faint); padding: 8px 0 14px; cursor: pointer; }
+.earlier:hover { color: var(--text2); }
+.earlier::before { content: "── "; } .earlier::after { content: " ──"; }
+
+/* entries */
+.tuser { margin: 14px 0 10px; }
+.tuser .role { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.tuser p { margin: 4px 0 0; font-size: 13.5px; line-height: 1.6; }
+.tmsg { margin: 0 0 16px; position: relative; }
+.tmsg .who { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.tmsg .who b { font-size: 12px; }
+.tmsg .who .ts { font-size: 11px; color: var(--faint); }
+.think { border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); margin: 6px 0; font-size: 12px; color: var(--text2); }
+.think .th { display: flex; align-items: center; gap: 7px; padding: 6px 10px; cursor: pointer; }
+.think .th .el { margin-left: auto; font: 10.5px var(--mono); color: var(--faint); }
+.think .th .tw { font-size: 11px; }
+.think .tb { display: none; padding: 0 12px 9px; color: var(--faint); font-size: 12px; }
+.think.open .tb { display: block; }
+.tools { margin: 8px 0; display: grid; gap: 4px; }
+.tcard { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: start; border: 1px solid var(--line); border-radius: 8px; background: var(--raised); padding: 6px 10px; }
+.tcard .ticon { font-size: 12px; color: var(--faint); margin-top: 2px; }
+.tcard .tname { font: 12px var(--mono); font-weight: 600; }
+.tcard .targs { font: 11.5px var(--mono); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tcard .tstate { font: 10.5px var(--mono); color: var(--faint); white-space: nowrap; }
+.tcard.running .tstate { color: var(--acc); }
+.tcard.running .ticon { color: var(--acc); animation: spin 1.1s linear infinite; display: inline-block; }
+.tcard.err .tname { color: var(--bad); }
+.tcard .tout { display: none; grid-column: 1 / 4; margin-top: 6px; padding: 8px 10px; background: var(--bg); border-radius: 6px; font: 11.5px/1.6 var(--mono); color: var(--text2); white-space: pre-wrap; }
+.tcard.open .tout { display: block; }
+.tcard { cursor: pointer; }
+.md { font-size: 13.5px; line-height: 1.65; margin: 8px 0; }
+.md b { color: #fff; }
+.caret { display: inline-block; width: 7px; height: 13px; background: var(--acc); vertical-align: -2px; animation: blink .9s steps(1) infinite; border-radius: 1px; }
+.sysdiv { display: flex; align-items: center; gap: 8px; margin: 14px 0; padding: 5px 10px; border: 1px dashed var(--line2); border-radius: 8px; font-size: 11.5px; color: var(--faint); }
+.sysdiv .sic { font-size: 12px; }
+.sysdiv.compact { color: var(--warn); border-color: rgba(217,160,63,.35); }
+.sysdiv.drain { color: var(--acc); border-color: rgba(76,141,255,.35); }
+
+/* sub-agent block in transcript */
+.subblock { margin: 10px 0 12px; border: 1px solid var(--line); border-left: 2px solid var(--faint); border-radius: 8px; background: rgba(255,255,255,.015); }
+.subblock.running { border-left-color: var(--ok); }
+.subblock.needs { border-left-color: var(--bad); background: rgba(240,85,63,.05); }
+.subblock.done { border-left-color: #2e8b42; }
+.subblock.failed { border-left-color: var(--bad); }
+.sbhead { display: flex; align-items: center; gap: 8px; padding: 7px 10px; }
+.sbhead .sbnm { font-size: 12.5px; font-weight: 700; }
+.sbhead .sbt { font-size: 11.5px; color: var(--faint); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sbhead .sbmeta { font: 10.5px var(--mono); color: var(--faint); }
+.fbtn { font-size: 10.5px; font-weight: 700; color: var(--acc); border: 1px solid rgba(76,141,255,.4); padding: 1px 9px; border-radius: 20px; }
+.fbtn:hover { background: rgba(76,141,255,.15); }
+.fbtn.on { background: var(--acc); color: #fff; border-color: var(--acc); }
+.sbbody { padding: 2px 10px 9px; display: grid; gap: 3px; }
+.sbbody .tcard { background: var(--panel); opacity: .88; }
+.sbdotline { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--faint); padding: 2px 0; }
+.report { margin: 10px 0 14px; border: 1px solid rgba(63,185,80,.35); border-left: 3px solid var(--ok); border-radius: 8px; background: rgba(63,185,80,.06); padding: 9px 12px; cursor: pointer; }
+.report:hover { background: rgba(63,185,80,.1); }
+.report .rlab { display: flex; align-items: center; gap: 7px; font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--ok); }
+.report .rlab svg { width: 12px; height: 12px; }
+.report .rlab .rsub { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--faint); }
+.report .rtxt { margin-top: 5px; font-size: 12.5px; line-height: 1.55; color: var(--text); }
+.report.ask { border-color: rgba(240,85,63,.4); border-left-color: var(--bad); background: rgba(240,85,63,.06); }
+.report.ask .rlab { color: var(--bad); }
+.tacts { position: absolute; top: 2px; right: 0; display: none; gap: 4px; }
+.tmsg:hover .tacts, .report:hover .tacts { display: flex; }
+.tact { font-size: 10.5px; font-weight: 600; color: var(--faint); border: 1px solid var(--line2); background: var(--panel); padding: 1px 8px; border-radius: 6px; }
+.tact:hover { color: var(--text); border-color: #3a3d47; }
+.dimmed { opacity: .38; }
+
+/* new-activity pill */
+.newpill { position: absolute; bottom: 148px; left: 50%; transform: translateX(-50%); background: var(--acc); color: #fff; font-size: 11.5px; font-weight: 700; padding: 4px 12px; border-radius: 20px; box-shadow: 0 4px 14px rgba(76,141,255,.4); cursor: pointer; display: flex; gap: 6px; align-items: center; }
+
+/* ============ queue + composer ============ */
+.queue { border-top: 1px solid var(--line); background: var(--panel); padding: 8px 18px 4px; }
+.ql { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); margin-bottom: 4px; }
+.qsec { display: flex; align-items: baseline; gap: 8px; padding: 5px 0 2px; }
+.qsec .qk { font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.qsec.steer .qk { color: var(--acc); } .qsec.follow .qk { color: var(--warn); }
+.qsec .qd { font-size: 10.5px; color: var(--faint); }
+.qrow { display: flex; align-items: center; gap: 8px; padding: 3px 0 3px 12px; font-size: 12.5px; }
+.qrow .qtxt { flex: 1; }
+.qrow .qdel { color: var(--faint); font-size: 14px; line-height: 1; opacity: 0; }
+.qrow:hover .qdel { opacity: 1; }
+.qrow:hover .qdel:hover { color: var(--bad); }
+.composer { margin: 10px 18px 12px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raised); }
+.composer:focus-within { border-color: rgba(76,141,255,.5); }
+.composer textarea { display: block; width: 100%; background: none; border: none; outline: none; resize: none; color: var(--text); font: 13.5px/1.55 var(--sans); padding: 11px 14px 4px; }
+.composer textarea::placeholder { color: var(--faint); }
+.cf { display: flex; align-items: center; gap: 8px; padding: 6px 10px 9px; }
+.lanes { display: flex; gap: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.lane { font-size: 11px; font-weight: 600; color: var(--faint); padding: 2px 9px; border-radius: 6px; white-space: nowrap; }
+.lane:hover { color: var(--text2); }
+.lane.on { background: var(--raised); color: var(--text); }
+.lane.on.steer { color: var(--acc); } .lane.on.force { color: var(--bad); } .lane.on.follow { color: var(--warn); }
+.cspacer { flex: 1; }
+.modelchip { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text2); border: 1px solid var(--line2); padding: 3px 9px; border-radius: 8px; }
+.modelchip:hover { color: var(--text); border-color: #3a3d47; }
+.modelchip .mmono { font-family: var(--mono); }
+.send { display: grid; place-items: center; width: 34px; height: 28px; border-radius: 8px; background: var(--acc); color: #fff; }
+.send:hover { background: #5d99ff; }
+.send svg { width: 14px; height: 14px; }
+.send.stop { background: var(--bad); }
+.send.stop:hover { background: #ff6a52; }
+
+/* ============ right dock ============ */
+.dhead { display: flex; align-items: center; gap: 2px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.dtab { font-size: 11.5px; font-weight: 600; color: var(--faint); padding: 3px 10px; border-radius: 7px; }
+.dtab:hover { color: var(--text2); }
+.dtab.on { color: var(--text); background: var(--raised); }
+.dtab .dn { font-size: 10px; color: var(--faint); margin-left: 5px; }
+.dscroll { flex: 1; overflow-y: auto; padding: 10px 10px 16px; }
+.dhint { font-size: 11px; color: var(--faint); padding: 2px 6px 8px; }
+
+/* crew rows */
+.crewrow { border: 1px solid var(--line); border-radius: 10px; background: var(--raised); margin-bottom: 8px; overflow: hidden; }
+.crewrow.needs { border-color: rgba(240,85,63,.45); background: rgba(240,85,63,.07); }
+.crewrow.failed { border-color: rgba(240,85,63,.45); }
+.crewrow.flash { animation: flashbg 1.2s ease-out; }
+.cr1 { display: flex; align-items: center; gap: 8px; padding: 8px 10px 4px; cursor: pointer; }
+.cr1 .nm { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr1 .stag { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.stag.run { color: var(--ok); } .stag.needs { color: var(--bad); } .stag.idle { color: var(--faint); } .stag.done { color: #4aa75e; } .stag.fail { color: var(--bad); }
+.cr2 { padding: 0 10px 4px; font-size: 11.5px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cr3 { display: flex; align-items: center; gap: 10px; padding: 4px 10px 8px; font: 10.5px var(--mono); color: var(--faint); }
+.cr3 .live { color: var(--acc); }
+.cr3 .cx { margin-left: auto; font-size: 9px; color: var(--faint); transition: transform .15s; }
+.crewrow.open .cx { transform: rotate(90deg); }
+.crxm { display: none; border-top: 1px solid var(--line); padding: 7px 10px; font-size: 11.5px; color: var(--text2); }
+.crewrow.open .crxm { display: block; }
+.crxm div { padding: 1.5px 0; }
+.crxm .t { color: var(--faint); font: 10px var(--mono); margin-right: 6px; }
+
+/* task cards */
+.taskcard { border: 1px solid var(--line); border-radius: 10px; background: var(--raised); padding: 9px 11px; margin-bottom: 9px; }
+.taskcard .tt { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700; }
+.tstate { margin-left: auto; font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 1.5px 8px; border-radius: 20px; }
+.tstate.inp { color: var(--acc); background: rgba(76,141,255,.13); }
+.tstate.pend { color: var(--faint); background: rgba(255,255,255,.06); }
+.tstate.done { color: #4aa75e; background: rgba(63,185,80,.1); }
+.tstate.blocked { color: var(--bad); background: rgba(240,85,63,.12); }
+.tprog { display: flex; align-items: center; gap: 8px; margin: 7px 0 4px; }
+.tbar { flex: 1; height: 4px; border-radius: 2px; background: var(--bg); overflow: hidden; }
+.tbar i { display: block; height: 100%; background: var(--acc); border-radius: 2px; }
+.tprog .tpct { font: 10.5px var(--mono); color: var(--faint); }
+.tsteps { margin: 6px 0; display: grid; gap: 3px; }
+.step { display: flex; gap: 7px; font-size: 12px; color: var(--text2); }
+.step .si { width: 14px; flex: none; text-align: center; font-size: 11px; }
+.step.done { color: var(--faint); } .step.done .si { color: var(--ok); }
+.step.cur { color: var(--text); } .step.cur .si { color: var(--acc); }
+.tcrit { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--line); display: grid; gap: 3px; }
+.tcrit .cl { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.crit { display: flex; gap: 7px; font-size: 11.5px; color: var(--text2); }
+.crit .ci { width: 13px; flex: none; text-align: center; }
+.crit.pass .ci { color: var(--ok); } .crit.fail .ci { color: var(--faint); }
+.tblock { margin-top: 7px; padding: 7px 9px; background: rgba(240,85,63,.08); border-radius: 7px; font-size: 11.5px; color: var(--text); }
+.tblock .bl { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--bad); }
+.tresume { margin-top: 6px; padding: 7px 9px; background: var(--bg); border-radius: 7px; font: 11px/1.6 var(--mono); color: var(--text2); }
+.tresume .bl { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--acc); font-family: var(--sans); }
+
+/* ============ peek sheet (diff) ============ */
+.peek { position: absolute; top: 0; right: 0; bottom: 0; width: 470px; max-width: 90%; background: var(--panel); border-left: 1px solid var(--line2); box-shadow: -16px 0 44px rgba(0,0,0,.5); z-index: 25; display: grid; grid-template-rows: auto 1fr auto; transform: translateX(103%); transition: transform .18s ease; }
+#app.has-peek .peek { transform: none; }
+.peek .ph { display: flex; align-items: center; gap: 9px; padding: 10px 13px; border-bottom: 1px solid var(--line); }
+.peek .ph .pf { font: 12.5px var(--mono); font-weight: 600; }
+.peek .ph .ps { font: 11px var(--mono); color: var(--faint); }
+.peek .ph .px { margin-left: auto; }
+.pdiff { overflow-y: auto; padding: 10px 0; font: 11.5px/1.65 var(--mono); }
+.dl { padding: 0 13px; white-space: pre-wrap; word-break: break-word; }
+.dl-hd { color: var(--faint); background: rgba(255,255,255,.03); }
+.dl-add { color: #7ee787; background: rgba(63,185,80,.09); }
+.dl-del { color: #ffa198; background: rgba(240,85,63,.09); }
+.dl-ctx { color: var(--text2); }
+.peek .pfoot { padding: 9px 13px; border-top: 1px solid var(--line); font-size: 11.5px; color: var(--faint); display: flex; gap: 8px; align-items: center; }
+.peek .pfoot .btn { font-size: 11.5px; font-weight: 600; color: var(--acc); }
+.peek .pfoot .btn:hover { text-decoration: underline; }
+
+/* ============ overlays: attention / fleet / palette ============ */
+.overlay { position: fixed; inset: 0; z-index: 40; background: rgba(5,6,8,.72); display: grid; place-items: start center; padding-top: 9vh; }
+.sheet { width: 520px; max-height: 66vh; background: var(--raised); border: 1px solid var(--line2); border-radius: 14px; box-shadow: 0 24px 70px rgba(0,0,0,.6); display: grid; grid-template-rows: auto 1fr; overflow: hidden; animation: rise .16s ease; }
+.sheet .sh { padding: 13px 16px 10px; border-bottom: 1px solid var(--line); }
+.sheet .sh .st { font-size: 14px; font-weight: 700; }
+.sheet .sh .ss { font-size: 11.5px; color: var(--faint); margin-top: 2px; }
+.sheet .sb { overflow-y: auto; padding: 8px; }
+.arow { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; padding: 9px 11px; border-radius: 9px; cursor: pointer; border: 1px solid transparent; }
+.arow:hover { background: var(--raised); border-color: var(--line2); }
+.arow .an { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.arow .aw { font-size: 10.5px; color: var(--faint); font-weight: 500; }
+.arow .ar { grid-row: 2; grid-column: 1; font-size: 12px; color: var(--bad); }
+.arow .aj { grid-row: 1 / 3; align-self: center; font-size: 11px; font-weight: 700; color: var(--acc); border: 1px solid rgba(76,141,255,.4); padding: 3px 11px; border-radius: 8px; }
+.arow .aj:hover { background: rgba(76,141,255,.14); }
+.aempty { padding: 26px; text-align: center; color: var(--faint); font-size: 12.5px; }
+.frow2 { display: flex; align-items: center; gap: 9px; padding: 7px 11px; border-radius: 9px; cursor: pointer; }
+.frow2:hover { background: var(--raised); }
+.frow2 .fn { flex: 1; font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frow2 .fw { font-size: 10.5px; color: var(--faint); width: 92px; }
+.frow2 .ft { font: 10.5px var(--mono); color: var(--faint); width: 74px; text-align: right; }
+
+/* palette */
+.palwrap { width: 560px; }
+.pal { width: 100%; background: var(--raised); border: 1px solid var(--line2); border-radius: 14px; box-shadow: 0 24px 70px rgba(0,0,0,.6); overflow: hidden; animation: rise .14s ease; }
+.pal-in { width: 100%; background: none; border: none; outline: none; color: var(--text); font: 14px var(--sans); padding: 14px 16px; border-bottom: 1px solid var(--line); }
+.pal-in::placeholder { color: var(--faint); }
+.pal-list { max-height: 340px; overflow-y: auto; padding: 6px; }
+.pal-g { font-size: 10.5px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--faint); padding: 8px 10px 3px; }
+.pal-item { padding: 6px 10px; border-radius: 8px; font-size: 13px; color: var(--text2); cursor: pointer; display: flex; justify-content: space-between; gap: 10px; }
+.pal-item:hover, .pal-item.sel { background: var(--raised); color: var(--text); }
+.pal-item .pk { font: 10.5px var(--mono); color: var(--faint); }
+.pal-foot { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--faint); }
+.pal-empty { padding: 22px; text-align: center; color: var(--faint); }
+
+/* ============ toasts ============ */
+.toasts { position: fixed; right: 14px; bottom: 34px; z-index: 60; display: grid; gap: 7px; }
+.toast { display: flex; align-items: center; gap: 9px; background: var(--raised); border: 1px solid var(--line2); border-left: 3px solid var(--acc); border-radius: 9px; padding: 8px 13px; font-size: 12.5px; box-shadow: 0 8px 26px rgba(0,0,0,.5); animation: rise .18s ease; max-width: 330px; }
+.toast .tt2 { font-weight: 700; }
+.toast .tm2 { color: var(--faint); font-size: 11.5px; }
+.toast.ok { border-left-color: var(--ok); }
+.toast.bad { border-left-color: var(--bad); }
+
+/* ============ statusbar ============ */
+.statusbar { display: flex; align-items: center; gap: 0; background: var(--panel); border-top: 1px solid var(--line); padding: 0 10px; font-size: 11px; color: var(--faint); overflow: hidden; }
+.seg { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 100%; border-right: 1px solid var(--line); white-space: nowrap; }
+.seg:first-child { padding-left: 2px; }
+.seg .sd { width: 7px; height: 7px; border-radius: 50%; }
+.seg b { color: var(--text2); font-weight: 600; }
+.seg .mono { font-family: var(--mono); }
+.sgauge { display: flex; align-items: center; gap: 6px; }
+.sbar { width: 56px; height: 4px; border-radius: 2px; background: var(--bg); overflow: hidden; }
+.sbar i { display: block; height: 100%; background: var(--ok); }
+.sbar i.hot { background: var(--warn); }
+.sgauge.busy .sbar i { animation: pulse 1s infinite; }
+.seg.right { margin-left: auto; border-right: none; }
+
+/* ============ focus mode ============ */
+#app.mode-focus .pane.left, #app.mode-focus .dock { display: none; }
+#app.mode-focus .body { grid-template-columns: 1fr; }
+#app.mode-focus .page { max-width: 900px; }
+.frail { display: none; }
+#app.mode-focus .frail { display: flex; position: fixed; top: 50%; transform: translateY(-50%); z-index: 20; flex-direction: column; gap: 6px; padding: 6px 4px; background: var(--panel); border: 1px solid var(--line2); border-radius: 12px; }
+#app.mode-focus .frail.l { left: 10px; }
+#app.mode-focus .frail.r { right: 10px; }
+.frail button { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--text2); }
+.frail button:hover { background: rgba(255,255,255,.08); color: var(--text); }
+.frail button.on { background: var(--raised); color: var(--acc); }
+.frail button svg { width: 15px; height: 15px; }
+.insp { position: fixed; top: 56px; bottom: 32px; width: 320px; z-index: 22; background: var(--panel); border: 1px solid var(--line2); border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.55); display: grid; grid-template-rows: auto 1fr; overflow: hidden; }
+#app.mode-focus .insp.r { right: 52px; }
+#app.mode-focus .insp.l { left: 52px; }
+.insp .sh { display: flex; align-items: center; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.insp .sh .x { margin-left: auto; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+/* ============ helpers ============ */
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const pad2 = n => String(n).padStart(2, '0');
+const now = () => { const d = new Date(); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+const ago = min => { const d = new Date(Date.now() - min * 60000); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+const fmtK = n => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+
+/* ============ workspaces + sessions ============ */
+const WS = {
+  tau: { name: 'tau', color: '#4c8dff' },
+  chairs: { name: 'bloody-chairs', color: '#e08a3c' },
+  pi: { name: 'pi', color: '#a371f7' },
+};
+const SESS = [
+  { id: 's1', ws: 'tau', name: 'CSS architecture review', state: 'running', model: 'gpt-5.2', tok: 41200, cost: 0.31, elapsed: '26m', needs: null },
+  { id: 's2', ws: 'tau', name: 'Wayfinder map #12', state: 'needs', model: 'gpt-5.2', tok: 41200, cost: 0.12, elapsed: '1h', needs: 'Should the board view ship in v0, or wait for the focus-mode work?' },
+  { id: 's3', ws: 'tau', name: 'Refactor store windowing', state: 'running', model: 'claude-sonnet-4', tok: 84200, cost: 0.52, elapsed: '12m', needs: null },
+  { id: 's4', ws: 'tau', name: 'Compaction thresholds', state: 'idle', model: 'gpt-5.2', tok: 18300, cost: 0.09, elapsed: '3d', needs: null },
+  { id: 's5', ws: 'chairs', name: 'Input remap pass', state: 'running', model: 'gpt-5.2', tok: 18200, cost: 0.12, elapsed: '8m', needs: null },
+  { id: 's6', ws: 'chairs', name: 'Credits screen pass', state: 'idle', model: 'claude-sonnet-4', tok: 9100, cost: 0.06, elapsed: '40m', needs: null },
+  { id: 's7', ws: 'pi', name: 'Fuzz harness triage', state: 'running', model: 'gpt-5.2', tok: 63400, cost: 0.41, elapsed: '17m', needs: null },
+];
+const sById = id => SESS.find(s => s.id === id);
+
+/* the crew — s1's sub-agents (the 1 + 3-4 case) */
+const CREW = [
+  { id: 'u1', sid: 's1', name: 'researcher', task: 'Survey token usage across sibling tools', state: 'running', wait: null, model: 'gpt-5.2', tok: 12400, el: '4m', latest: 'bash · rg -n "use:.*" app/svelte',
+    recent: [['12:31', 'spawned · context: compacted'], ['12:33', 'read · docs/research/agent-gui-layouts.md'], ['12:36', 'bash · rg -n "use:.*" app/svelte']] },
+  { id: 'u2', sid: 's1', name: 'reviewer', task: 'Review the extracted token scale', state: 'idle', wait: 'parent', model: 'gpt-5.2', tok: 8100, el: '2m', latest: 'parked · waiting on parent',
+    recent: [['12:38', 'spawned · context: fresh'], ['12:40', 'idled · waiting_on: parent']] },
+  { id: 'u3', sid: 's1', name: 'coder', task: 'Extract accent scale into design-tokens.css', state: 'running', wait: null, model: 'claude-sonnet-4', tok: 15200, el: '3m', latest: 'edit · svelte/Composer.svelte',
+    recent: [['12:35', 'spawned · context: fork'], ['12:37', 'edit · design-tokens.css'], ['12:41', 'edit · svelte/Composer.svelte']] },
+  { id: 'u4', sid: 's1', name: 'style-audit', task: 'Audit inline styles across Svelte components', state: 'done', wait: null, model: 'gpt-5.2', tok: 9800, el: '9m', latest: 'done · report delivered',
+    recent: [['12:22', 'spawned · context: fresh'], ['12:30', 'done · 9 components surveyed']],
+    report: '23 inline style declarations across 9 components. 7 re-decide tokens that design-tokens.css already owns — the accent scale in four of them. Extraction pass first, then a contrast sweep of the extracted values.' },
+];
+const uById = id => CREW.find(u => u.id === id);
+
+/* ============ hero transcript (s1) ============ */
+const T = [
+  { k: 'sys', kind: 'compact', text: 'compacted · 31.2k → 4.1k tokens · gen 7' },
+  { k: 'user', text: 'I noticed that the way I am building my CSS, I am doing a lot of the stuff inline in the Svelte files. What do you think?' },
+  { k: 'think', text: 'The user is asking about CSS architecture — inline styles in Svelte components. I should measure the actual footprint before opining: count inline style attributes, sample a few, compare against the token file. Then decide: extract, consolidate, or leave.', open: false, meta: '4.2s · 312 tok' },
+  { k: 'tools', items: [
+    { name: 'bash', args: 'grep -rn "style=" app/svelte | wc -l', state: 'done', out: '23', el: '0.4s' },
+    { name: 'read', args: 'design-tokens.css', state: 'done', out: '48 lines · :root { --bg … --acc } + 2 utility classes', el: '0.1s' },
+  ]},
+  { k: 'md', text: '23 inline declarations, and 7 of them re-decide tokens that `design-tokens.css` already owns. Two directions: extract them into the token file, or accept the drift. I’d extract — but first I want to know how the sibling harnesses shape their scales, so I’m fanning out.' },
+  { k: 'sys', kind: 'spawn', text: 'subagent spawned · researcher — surveying sibling tools' },
+  { k: 'sub', sub: 'u1' },
+  { k: 'sys', kind: 'spawn', text: 'subagent spawned · coder — extracting the accent scale' },
+  { k: 'sub', sub: 'u3' },
+  { k: 'sub', sub: 'u2' },
+  { k: 'sub', sub: 'u4' },
+  { k: 'report', sub: 'u4' },
+  { k: 'think', text: 'The audit confirms the drift is concentrated in the accent scale. Plan: two-step pass. Step 1 is extraction — coder is on it. Step 2 is a contrast sweep of the extracted values so we don’t bake the drift into the token file. Researcher’s sibling survey will tell us the shape to mirror.', open: false, meta: '2.8s · 214 tok' },
+  { k: 'tools', items: [
+    { name: 'read', args: 'svelte/Transcript.svelte · 12–40', state: 'done', out: '… style:color: var(--text2) …  (6 inline decisions)', el: '0.1s' },
+  ]},
+  { k: 'md', id: 'stream', text: 'The audit confirms it: seven components re-decide the accent scale. I’m proposing a **two-step pass** — first the extraction (coder is on it), then a contrast sweep of the extracted tokens so we don’t bake in the drift. Researcher is checking whether the pi harness keeps its scale in one file — if so, we mirror that shape and the token file stays the single source of truth.', stream: true },
+];
+
+/* generic transcripts for the other sessions */
+const DTRANS = {
+  s2: [
+    { k: 'user', text: 'Map out the wayfinder navigation flows before we scope v1.' },
+    { k: 'md', text: 'Draft map is up: 4 flows, 3 decision points. One needs your call before I continue.' },
+    { k: 'ask', text: 'Should the board view ship in v0, or wait for the focus-mode work? Your call.' },
+  ],
+  s3: [
+    { k: 'user', text: 'The store re-renders the whole window on every scroll. Fix it.' },
+    { k: 'tools', items: [{ name: 'bash', args: 'cargo clippy -p tau-gui -- -D warnings', state: 'running', el: '…' }] },
+    { k: 'md', text: 'Clippy is clean; reproducing the re-render with a trace build before touching the windowing pass.' },
+  ],
+  s4: [{ k: 'md', text: 'Threshold study complete: 30k/40k confirmed against the 280-session corpus. Notes in docs/research/om-thresholds.md.' }],
+  s5: [
+    { k: 'user', text: 'Remap layer 3 to the global map with a fallback.' },
+    { k: 'md', text: 'Two bindings collide at layer 3. Remapping needs a decision: global map wins, or the per-key override?' },
+    { k: 'ask', text: 'Which binding should win at the layer-3 collision — global map or per-key override?' },
+  ],
+  s6: [{ k: 'md', text: 'Credits screen pass done. Diff is 2 files, +38/−21. Ready for review whenever.' }],
+  s7: [
+    { k: 'user', text: 'Triage the new fuzz corpus — anything that panics the JSONL writer?' },
+    { k: 'tools', items: [{ name: 'bash', args: './target/fuzz/jsonl_writer corpus/fuzz -max_time 5', state: 'running', el: '…' }] },
+    { k: 'md', text: 'Corpus running. One candidate crash on a 3 KB input with a lone U+FFFD run — reproducing under Miri next.' },
+  ],
+};
+
+/* ============ tasks (per-session, s1) ============ */
+const TASKS = [
+  { id: 't1', name: 'Extract token scale into shared design tokens', state: 'in_progress', pct: 45,
+    steps: [['done', 'Measure inline usage across components'], ['done', 'Draft the two-step extraction plan'], ['cur', 'Apply extraction to the 7 components'], ['todo', 'Verify contrast + snapshot diff']],
+    crit: [['pass', 'Token file remains the single source of truth'], ['fail', 'No inline re-decisions remain (0 of 7 fixed so far)']] },
+  { id: 't2', name: 'Transcript virtualization pass', state: 'blocked', pct: 20,
+    steps: [['done', 'Profile hydration at 10k entries'], ['cur', 'Benchmark virtua p95'], ['todo', 'Wire paged hydration']],
+    crit: [['fail', 'p95 scroll frame < 16 ms at 10k entries']],
+    block: 'No 10k-entry corpus on this machine — can’t benchmark honestly.',
+    resume: 'step: benchmark virtua p95\nexpected: p95 < 16ms @ 10k\ngap: fixture missing\nnext: generate via accept-tools fixture gen' },
+];
+
+/* ============ files (git-aware) ============ */
+const FILES = [
+  { p: 'design-tokens.css', st: 'm', add: 12, del: 4 },
+  { p: 'svelte/Composer.svelte', st: 'm', add: 8, del: 31 },
+  { p: 'svelte/Transcript.svelte', st: 'm', add: 44, del: 12 },
+  { p: 'lib/tokens.test.ts', st: 'a', add: 38, del: 0 },
+];
+const DIFF = {
+  'design-tokens.css': [
+    ['hd', '@@ -12,6 +12,14 @@ :root'],
+    ['ctx', '  --acc: #4c8dff;'],
+    ['del', '  --acc-soft: #4c8dff33;'],
+    ['add', '  --acc-050: #eef4ff;'],
+    ['add', '  --acc-100: #d9e6ff;'],
+    ['add', '  --acc-200: #b3ccff;'],
+    ['add', '  --acc-400: #7aabff;'],
+    ['add', '  --acc-500: #4c8dff;'],
+    ['add', '  --acc-600: #3a75e0;'],
+    ['add', '  /* scale owns the accent ramp — components pick a step, never a hue */'],
+    ['ctx', '  --ok: #3fb950;'],
+    ['ctx', '  --warn: #d9a03f;'],
+  ],
+  'svelte/Composer.svelte': [
+    ['hd', '@@ -31,9 +31,6 @@ <style>'],
+    ['del', '    .lane.on { color: #4c8dff; }'],
+    ['del', '    .send { background: #4c8dff; }'],
+    ['add', '    .lane.on { color: var(--acc-500); }'],
+    ['add', '    .send { background: var(--acc-500); }'],
+    ['ctx', '    .send:hover { filter: brightness(1.08); }'],
+  ],
+  'svelte/Transcript.svelte': [
+    ['hd', '@@ -88,12 +88,18 @@ virtualized window'],
+    ['ctx', '  const items = useEntries(store);'],
+    ['add', '  // paged hydration: only the visible range + 600px buffer materializes'],
+    ['add', '  const window = useVirtual(items, { buffer: 600, initialSize: 40 });'],
+    ['del', '  const rendered = items.slice(0, 400);'],
+    ['ctx', ''],
+    ['ctx', '  return window.render();'],
+  ],
+  'lib/tokens.test.ts': [
+    ['hd', '@@ -0,0 +1,8 @@'],
+    ['add', "import { designTokens } from './tokens';"],
+    ['add', ''],
+    ['add', 'test("accent scale is the single source of truth", () => {'],
+    ['add', '  expect(designTokens.accent).toHaveLength(8);'],
+    ['add', '  expect(designTokens.accent[5]).toBe("#4c8dff");'],
+    ['add', '});'],
+  ],
+};
+
+/* ============ state ============ */
+const S = {
+  ws: 'tau', session: 's1',
+  paneTab: 'sessions', dockTab: 'crew',
+  focus: false, insp: null,
+  sheet: null,                      // 'attention' | 'fleet'
+  pal: false, palText: '', palSel: 0,
+  follow: null,                     // followed sub-agent id
+  peekFile: null,
+  compT: '', lane: 'steering',
+  thinkAll: false, openTools: {},
+  openSubs: {},
+  sessSel: 0,
+  toasts: [],
+  om: { obs: 27400, thr: 30000, pending: 600, busy: true },
+  tps: 0, streamChars: 0, streamDone: false,
+  sim: { t: 0, i: 0 },
+  userAdds: {},
+};
+let _tid = 0;
+function toast(title, msg, kind) { S.toasts.push({ id: ++_tid, title, msg, kind: kind || '' }); if (S.toasts.length > 4) S.toasts.shift(); setTimeout(() => { S.toasts = S.toasts.filter(t => t.id !== _tid); }, 6000); }
+function markFlash(id) { S._flash = S._flash || {}; S._flash[id] = Date.now(); }
+/* ============ icons ============ */
+const I = {
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>',
+  focus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3H5a2 2 0 00-2 2v3M16 3h3a2 2 0 012 2v3M8 21H5a2 2 0 01-2-2v-3M16 21h3a2 2 0 002-2v-3"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
+  file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>',
+  users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/></svg>',
+  check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+  send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h15M13 6l6 6-6 6"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+};
+
+/* ============ topbar ============ */
+function topbarHtml() {
+  const needs = SESS.filter(s => s.state === 'needs').length;
+  const tabs = Object.entries(WS).map(([k, w]) => {
+    const hasRun = SESS.some(s => s.ws === k && s.state === 'running');
+    return `<button class="wstab ${S.ws === k ? 'on' : ''}" data-act="wstab" data-id="${k}"><span class="dot ${hasRun ? '' : 'idle'}"></span>${esc(w.name)}</button>`;
+  }).join('');
+  return `<div class="topbar">
+    <div class="wstabs">${tabs}<button class="wstab-add" data-act="newws" title="new workspace">${I.plus}</button></div>
+    <div class="tbsp"></div>
+    <button class="ibtn" data-act="attention" title="needs you (⌘.)">${I.bell}${needs ? `<span class="bcnt">${needs}</span>` : ''}</button>
+    <button class="ibtn" data-act="focus" title="focus mode">${I.focus}</button>
+    <button class="kbtn" data-act="pal">${I.search}Search <kbd>⌘K</kbd></button>
+  </div>`;
+}
+
+/* ============ left pane ============ */
+function crewKinds() { return CREW.filter(u => u.sid === S.session); }
+function sessionsHtml() {
+  const wsKeys = Object.keys(WS).filter(k => SESS.some(s => s.ws === k));
+  let html = ''; let idx = -1;
+  for (const k of wsKeys) {
+    const list = SESS.filter(s => s.ws === k);
+    html += `<div class="grp">${esc(WS[k].name)} · ${list.length}</div>`;
+    for (const s of list) {
+      idx++;
+      html += `<div class="sessrow ${s.id === S.session ? 'active' : ''} ${s.state === 'needs' ? 'needs' : ''} ${S.sessSel === idx ? 'sel' : ''}" data-act="open" data-id="${s.id}">
+        <span class="sdot ${s.state === 'running' ? 'run' : s.state}"></span>
+        <span class="nm">${esc(s.name)}</span>
+        <span class="tag ${s.state}">${s.state === 'running' ? 'run' : s.state}</span>
+      </div>`;
+      if (s.id === S.session) {
+        const kids = crewKinds();
+        if (kids.length) html += `<div class="crewsub">` + kids.map(u =>
+          `<div class="crewk ${S.follow === u.id ? 'on' : ''}" data-act="follow" data-id="${u.id}">
+            <span class="sdot ${u.state === 'running' ? 'run' : u.state}"></span>${esc(u.name)}
+            <span class="cktag">${u.state === 'idle' && u.wait ? 'wait' : u.state}</span></div>`).join('') + `</div>`;
+      }
+    }
+  }
+  return html;
+}
+function filesListHtml() {
+  return FILES.map(f => `<div class="frow ${S.peekFile === f.p ? 'sel' : ''}" data-act="peek" data-id="${esc(f.p)}">
+    <span class="fp">${I.file}</span><span class="fnm">${esc(f.p)}</span>
+    <span class="fbadge ${f.st}">${f.st.toUpperCase()}</span><span class="fcount">+${f.add} −${f.del}</span></div>`).join('');
+}
+function leftHtml() {
+  return `<aside class="pane left">
+    <div class="phead">${S.paneTab === 'sessions' ? 'Sessions' : 'Files'}<button class="newghost" data-act="newsess">+ New</button></div>
+    <div class="ptabs">
+      <button class="ptab ${S.paneTab === 'sessions' ? 'on' : ''}" data-act="ptab" data-id="sessions">Sessions</button>
+      <button class="ptab ${S.paneTab === 'files' ? 'on' : ''}" data-act="ptab" data-id="files">Files</button>
+    </div>
+    <div class="pscroll">${S.paneTab === 'sessions' ? sessionsHtml() : filesListHtml()}</div>
+  </aside>`;
+}
+
+/* ============ center: transcript ============ */
+function toolsHtml(items, keyBase) {
+  return `<div class="tools">` + items.map((t, i) => {
+    const open = S.openTools[keyBase + ':' + i] ? ' open' : '';
+    const icon = t.state === 'running' ? '◌' : (t.state === 'err' ? '✕' : '✓');
+    return `<div class="tcard ${t.state}${open}" data-act="tcard" data-id="${keyBase}:${i}">
+      <span class="ticon">${icon}</span>
+      <span><span class="tname">${esc(t.name)}</span> <span class="targs">${esc(t.args)}</span></span>
+      <span class="tstate">${t.state === 'running' ? 'running' : t.state + ' · ' + t.el}</span>
+      <div class="tout">${esc(t.out || '')}</div>
+    </div>`; }).join('') + `</div>`;
+}
+function subblockHtml(u) {
+  const cls = u.state === 'running' ? 'running' : u.state === 'needs' ? 'needs' : u.state === 'failed' ? 'failed' : u.state === 'done' ? 'done' : '';
+  const [tn, ta] = u.latest.split('·').map(s => s.trim());
+  const tool = u.state === 'running' ? `<div class="tcard running"><span class="ticon">◌</span><span><span class="tname">${esc(tn || '…')}</span> <span class="targs">${esc(ta || '')}</span></span><span class="tstate">running</span><div class="tout"></div></div>` : '';
+  const parked = u.state === 'idle' && u.wait ? `<div class="sbdotline"><span class="sdot idle"></span>parked · waiting on ${u.wait}</div>` : '';
+  return `<div class="subblock ${cls}">
+    <div class="sbhead">
+      <span class="sdot ${u.state === 'running' ? 'run' : u.state}"></span>
+      <span class="sbnm">${esc(u.name)}</span>
+      <span class="sbt">${esc(u.task)}</span>
+      <span class="sbmeta">${fmtK(u.tok)} tok · ${u.el}</span>
+      <button class="fbtn ${S.follow === u.id ? 'on' : ''}" data-act="follow" data-id="${u.id}">${S.follow === u.id ? 'following' : 'follow'}</button>
+    </div>
+    <div class="sbbody">${tool}${parked}</div>
+  </div>`;
+}
+function reportHtml(u) {
+  return `<div class="report" data-act="follow" data-id="${u.id}">
+    <div class="rlab">${I.check} report · ${esc(u.name)} <span class="rsub">schema-validated · ${u.el}</span></div>
+    <div class="rtxt">${esc(u.report || '')}</div>
+  </div>`;
+}
+function entryHtml(e, idx) {
+  switch (e.k) {
+    case 'user': return `<div class="tuser"><span class="role">You${e.t ? ' · ' + e.t : ''}</span><p>${esc(e.text)}</p></div>`;
+    case 'think': {
+      const open = e.open || S.thinkAll;
+      return `<div class="think ${open ? 'open' : ''}" data-act="think" data-id="${idx}">
+        <div class="th">✦ reasoning<span class="tw">${open ? '▾' : '▸'}</span><span class="el">${esc(e.meta || '')}</span></div>
+        <div class="tb">${esc(e.text)}</div></div>`; }
+    case 'tools': return toolsHtml(e.items, 't' + idx);
+    case 'md': {
+      let text = e.text;
+      if (e.stream && !S.streamDone) text = text.slice(0, Math.max(0, S.streamChars));
+      return `<div class="md">${text.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>')}${e.stream && !S.streamDone ? '<span class="caret"></span>' : ''}</div>`;
+    }
+    case 'sys': {
+      const icon = e.kind === 'compact' ? '⇢' : e.kind === 'drain' ? '≡' : e.kind === 'wake' ? '◈' : '⊕';
+      return `<div class="sysdiv ${e.kind}"><span class="sic">${icon}</span>${esc(e.text)}</div>`; }
+    case 'sub': { const u = uById(e.sub); return u ? subblockHtml(u) : ''; }
+    case 'report': { const u = uById(e.sub); return u ? reportHtml(u) : ''; }
+    case 'ask': return `<div class="report ask"><div class="rlab">✳ waiting on you</div><div class="rtxt">${esc(e.text)}</div></div>`;
+    default: return '';
+  }
+}
+function followDim(e) {
+  if (!S.follow) return '';
+  if (e.k === 'sub' && e.sub === S.follow) return '';
+  if (e.k === 'report' && e.sub === S.follow) return '';
+  return ' dimmed';
+}
+function centerHtml() {
+  const s = sById(S.session);
+  const crew = crewKinds();
+  const running = s.state === 'running';
+  const base = S.session === 's1' ? T : (DTRANS[S.session] || []);
+  const extra = S.userAdds[S.session] || [];
+  const entries = base.concat(extra);
+  const fchip = S.follow ? `<span class="fchip" data-act="unfollow">following · ${esc(uById(S.follow).name)} ${I.x}</span>` : '';
+  const trans = `<div class="earlier">${47 + (S.session === 's1' ? entries.length : 0)} earlier entries · compacted into observational memory</div>` +
+    entries.map((e, i) => `<div class="entry${followDim(e)}">${entryHtml(e, i)}</div>`).join('');
+  const pill = S._newPill ? `<div class="newpill" data-act="pill">${I.arrow} new activity</div>` : '';
+  const queue = (QUEUE.steer.length || QUEUE.follow.length) ? `<div class="queue">
+      <div class="ql">Queue · ${QUEUE.steer.length + QUEUE.follow.length}</div>
+      ${QUEUE.steer.length ? `<div class="qsec steer"><span class="qk">steering</span><span class="qd">next tool boundary</span></div>` + QUEUE.steer.map((x, i) => `<div class="qrow"><span class="qtxt">${esc(x)}</span><button class="qdel" data-act="qdel" data-id="steer:${i}">✕</button></div>`).join('') : ''}
+      ${QUEUE.follow.length ? `<div class="qsec follow"><span class="qk">follow-up</span><span class="qd">after work completes</span></div>` + QUEUE.follow.map((x, i) => `<div class="qrow"><span class="qtxt">${esc(x)}</span><button class="qdel" data-act="qdel" data-id="follow:${i}">✕</button></div>`).join('') : ''}
+    </div>` : '';
+  const stop = running && !S.compT;
+  const comp = `<div class="composer">
+      <textarea id="comp-in" rows="2" placeholder="message ${esc(s.name)} — enter sends as ${S.lane}">${esc(S.compT)}</textarea>
+      <div class="cf">
+        <div class="lanes">
+          <button class="lane force ${S.lane === 'force' ? 'on' : ''}" data-act="lane" data-id="force" title="kills the in-flight stream, delivers at head of queue">force</button>
+          <button class="lane steer ${S.lane === 'steering' ? 'on' : ''}" data-act="lane" data-id="steering" title="delivered at the next LLM call">steering</button>
+          <button class="lane follow ${S.lane === 'follow_up' ? 'on' : ''}" data-act="lane" data-id="follow_up" title="delivered after all work finishes">follow-up</button>
+        </div>
+        <div class="cspacer"></div>
+        <button class="modelchip" data-act="model">⚡ <span class="mmono">${esc(s.model)}</span> ⌄</button>
+        <button class="send ${stop ? 'stop' : ''}" data-act="send" title="${stop ? 'stop' : 'send'}">${stop ? I.stop : I.send}</button>
+      </div>
+    </div>`;
+  return `<main class="center">
+    <div class="chead">
+      <span class="cname">${esc(s.name)}</span>
+      <span class="cws">${esc(WS[s.ws].name)}</span>
+      <span class="schip ${s.state}">${s.state}</span>
+      ${fchip}
+      <span class="cright"><span class="mono">${esc(s.model)}</span> · ${s.elapsed} · ${fmtK(s.tok)} tok · $${s.cost.toFixed(2)}</span>
+    </div>
+    <div class="tscroll" id="tscroll"><div class="page">${trans}</div></div>
+    ${pill}${queue}${comp}${peekHtml()}
+  </main>`;
+}
+
+/* ============ right dock ============ */
+function crewRowHtml(u) {
+  const open = S.openSubs[u.id] ? ' open' : '';
+  const flash = S._flash && S._flash[u.id] && Date.now() - S._flash[u.id] < 1400 ? ' flash' : '';
+  const cls = u.state === 'needs' ? ' needs' : u.state === 'failed' ? ' failed' : '';
+  const tag = u.state === 'idle' && u.wait ? 'waiting' : u.state;
+  return `<div class="crewrow${cls}${open}${flash}" data-sub="${u.id}">
+    <div class="cr1" data-act="follow" data-id="${u.id}">
+      <span class="sdot ${u.state === 'running' ? 'run' : u.state}"></span>
+      <span class="nm">${esc(u.name)}</span>
+      <span class="stag ${tag}">${tag}</span>
+    </div>
+    <div class="cr2">${esc(u.task)}</div>
+    <div class="cr3"><span class="${u.state === 'running' ? 'live' : ''}">◦ ${esc(u.latest)}</span><span>${fmtK(u.tok)} · ${u.el}</span><span class="cx" data-act="subx" data-id="${u.id}">▶</span></div>
+    <div class="crxm">${u.recent.map(r => `<div><span class="t">${r[0]}</span>${esc(r[1])}</div>`).join('')}</div>
+  </div>`;
+}
+function taskCardHtml(t) {
+  const stCls = { in_progress: 'inp', pending: 'pend', done: 'done', blocked: 'blocked' }[t.state] || 'pend';
+  const steps = t.steps.map(st => `<div class="step ${st[0] === 'done' ? 'done' : st[0] === 'cur' ? 'cur' : ''}"><span class="si">${st[0] === 'done' ? '✓' : st[0] === 'cur' ? '◉' : '○'}</span>${esc(st[1])}</div>`).join('');
+  const crit = t.crit.map(c => `<div class="crit ${c[0]}"><span class="ci">${c[0] === 'pass' ? '✓' : '○'}</span>${esc(c[1])}</div>`).join('');
+  return `<div class="taskcard">
+    <div class="tt">${esc(t.name)}<span class="tstate ${stCls}">${t.state === 'in_progress' ? 'in progress' : t.state}</span></div>
+    <div class="tprog"><div class="tbar"><i style="width:${t.pct}%"></i></div><span class="tpct">${t.pct}%</span></div>
+    <div class="tsteps">${steps}</div>
+    <div class="tcrit"><div class="cl">acceptance · evidence-gated</div>${crit}</div>
+    ${t.block ? `<div class="tblock"><div class="bl">blocked</div>${esc(t.block)}</div>` : ''}
+    ${t.resume ? `<div class="tresume"><div class="bl">resume contract</div>${esc(t.resume)}</div>` : ''}
+  </div>`;
+}
+function dockBody() {
+  if (S.dockTab === 'crew') return `<div class="dhint">live · click a worker to follow its stream</div>` + CREW.filter(u => u.sid === S.session).map(crewRowHtml).join('');
+  if (S.dockTab === 'tasks') return TASKS.map(taskCardHtml).join('');
+  return filesListHtml();
+}
+function dockHtml() {
+  const nCrew = CREW.filter(u => u.sid === S.session).length;
+  const nNeeds = CREW.filter(u => u.sid === S.session && u.state === 'needs').length;
+  const tab = (id, label, n) => `<button class="dtab ${S.dockTab === id ? 'on' : ''}" data-act="dtab" data-id="${id}">${label}${n ? `<span class="dn">${n}</span>` : ''}</button>`;
+  return `<aside class="dock">
+    <div class="dhead">${tab('crew', 'Crew', nNeeds)}${tab('tasks', 'Tasks', TASKS.length)}${tab('files', 'Files', FILES.length)}</div>
+    <div class="dscroll">${dockBody()}</div>
+  </aside>`;
+}
+
+/* ============ peek (diff) ============ */
+function peekHtml() {
+  if (!S.peekFile) return '<div class="peek"></div>';
+  const f = FILES.find(x => x.p === S.peekFile) || { p: S.peekFile, add: 0, del: 0 };
+  const lines = (DIFF[S.peekFile] || [['ctx', '(no diff staged)']]).map(l => `<div class="dl dl-${l[0]}">${l[0] === 'add' ? '+ ' : l[0] === 'del' ? '− ' : '  '}${esc(l[1])}</div>`).join('');
+  return `<div class="peek">
+    <div class="ph"><span class="pf">${esc(f.p)}</span><span class="ps">+${f.add} −${f.del}</span><button class="ibtn px" data-act="peekx">${I.x}</button></div>
+    <div class="pdiff">${lines}</div>
+    <div class="pfoot"><button class="btn" data-act="commit">commit via the agent →</button><span>${FILES.length} files in this session · 2 staged</span></div>
+  </div>`;
+}
+
+/* ============ statusbar ============ */
+function statusbarHtml() {
+  const s = sById(S.session);
+  const omPct = Math.min(100, Math.round(100 * S.om.obs / S.om.thr));
+  return `<div class="statusbar">
+    <div class="seg"><span class="sd" style="background:${s.state === 'running' ? 'var(--ok)' : s.state === 'needs' ? 'var(--bad)' : '#4a4d55'}"></span><b>${s.state}</b></div>
+    <div class="seg">${esc(WS[s.ws].name)} <span style="color:var(--line2)">·</span> ${esc(s.name)}</div>
+    <div class="seg sgauge ${S.om.busy ? 'busy' : ''}">OM <span class="sbar"><i class="${omPct > 88 ? 'hot' : ''}" style="width:${omPct}%"></i></span><span class="mono">${(S.om.obs / 1000).toFixed(1)}k/${(S.om.thr / 1000).toFixed(1)}k</span></div>
+    <div class="seg mono">↑ ${(s.tok / 1000).toFixed(1)}k · ↓ ${(s.tok * 0.31 / 1000).toFixed(1)}k</div>
+    <div class="seg mono">cache 87%</div>
+    <div class="seg mono">${S.tps ? S.tps + ' tps' : '· · ·'}</div>
+    <div class="seg mono">$${s.cost.toFixed(2)}</div>
+    <div class="seg right">esc closes · r reasoning · ⌘K commands</div>
+  </div>`;
+}
+
+/* ============ overlays ============ */
+function attentionHtml() {
+  if (S.sheet !== 'attention') return '';
+  const items = SESS.filter(s => s.state === 'needs');
+  const rows = items.length ? items.map(s => `<div class="arow" data-act="jump" data-id="${s.id}">
+      <div class="an"><span class="sdot needs"></span>${esc(s.name)} <span class="aw">${esc(WS[s.ws].name)} · ${s.elapsed}</span></div>
+      <div class="ar">${esc(s.needs || 'asked a question')}</div>
+      <button class="aj">jump →</button>
+    </div>`).join('') : `<div class="aempty">nothing needs you — the fleet is on its own</div>`;
+  return `<div class="overlay" data-act="overlay"><div class="sheet">
+    <div class="sh"><div class="st">Needs you · ${items.length}</div><div class="ss">across ${Object.keys(WS).length} workspaces · ⌘.</div></div>
+    <div class="sb">${rows}</div>
+  </div></div>`;
+}
+function fleetHtml() {
+  if (S.sheet !== 'fleet') return '';
+  const rows = SESS.map(s => `<div class="frow2" data-act="jump" data-id="${s.id}">
+      <span class="sdot ${s.state === 'running' ? 'run' : s.state}"></span>
+      <span class="fn">${esc(s.name)}</span>
+      <span class="fw">${esc(WS[s.ws].name)}</span>
+      <span class="ft">${fmtK(s.tok)} tok</span>
+      <span class="stag ${s.state === 'idle' && s.state !== 'needs' ? 'idle' : s.state}">${s.state}</span>
+    </div>`).join('');
+  return `<div class="overlay" data-act="overlay"><div class="sheet">
+    <div class="sh"><div class="st">Fleet · ${SESS.length} sessions</div><div class="ss">every workspace, one glance · ⌘\\</div></div>
+    <div class="sb">${rows}</div>
+  </div></div>`;
+}
+function palItems() {
+  const items = [];
+  for (const s of SESS) items.push({ g: 'open session', label: s.name + '  ·  ' + WS[s.ws].name, k: '⏎', run: () => { S.ws = s.ws; S.session = s.id; S.follow = null; S.peekFile = null; } });
+  for (const u of CREW) items.push({ g: 'follow crew', label: u.name + '  ·  ' + u.state, run: () => { S.session = 's1'; S.follow = u.id; S.dockTab = 'crew'; } });
+  items.push({ g: 'view', label: 'attention · needs you', k: '⌘.', run: () => { S.sheet = 'attention'; } });
+  items.push({ g: 'view', label: 'fleet · all sessions', k: '⌘\\', run: () => { S.sheet = 'fleet'; } });
+  items.push({ g: 'view', label: 'toggle focus mode', k: 'F', run: () => { S.focus = !S.focus; S.insp = null; } });
+  items.push({ g: 'view', label: 'dock → crew', k: '⌘1', run: () => { S.dockTab = 'crew'; } });
+  items.push({ g: 'view', label: 'dock → tasks', k: '⌘2', run: () => { S.dockTab = 'tasks'; } });
+  items.push({ g: 'view', label: 'dock → files', k: '⌘3', run: () => { S.dockTab = 'files'; } });
+  items.push({ g: 'session', label: 'new session in ' + WS[S.ws].name, k: '⌘N', run: () => toast(WS[S.ws].name, 'new session ready', 'ok') });
+  items.push({ g: 'session', label: 'stop current turn', run: () => { const s = sById(S.session); if (s.state === 'running') { s.state = 'idle'; S.streamDone = true; S.tps = 0; toast(s.name, 'stopped · partial kept'); } } });
+  items.push({ g: 'session', label: 'archive current session', run: () => toast(sById(S.session).name, 'archived → archive/ (zstd)', 'ok') });
+  return items;
+}
+function palHtml() {
+  if (!S.pal) return '';
+  const q = S.palText.toLowerCase();
+  const items = palItems().filter(i => !q || i.label.toLowerCase().includes(q));
+  let html = '', lastG = '';
+  items.forEach((i, n) => {
+    if (i.g !== lastG) { html += `<div class="pal-g">${i.g}</div>`; lastG = i.g; }
+    html += `<div class="pal-item ${n === S.palSel ? 'sel' : ''}" data-pal="${n}">${esc(i.label)}${i.k ? `<span class="pk">${i.k}</span>` : ''}</div>`;
+  });
+  return `<div class="overlay" data-act="overlay-pal"><div class="palwrap"><div class="pal">
+    <input class="pal-in" id="pal-in" placeholder="type a command…" value="${esc(S.palText)}">
+    <div class="pal-list" id="pal-list">${html || '<div class="pal-empty">no matches</div>'}</div>
+    <div class="pal-foot" id="pal-foot">${items.length} commands · ⏎ run · esc close</div>
+  </div></div></div>`;
+}
+function toastsHtml() {
+  return `<div class="toasts">${S.toasts.map(t => `<div class="toast ${t.kind}"><span class="tt2">${esc(t.title)}</span><span class="tm2">${esc(t.msg || '')}</span></div>`).join('')}</div>`;
+}
+
+/* ============ focus mode rails + inspector ============ */
+function frailsHtml() {
+  if (!S.focus) return '';
+  const rbtn = (id, icon, title) => `<button class="${S.insp === id ? 'on' : ''}" data-act="insp" data-id="${id}" title="${title}">${icon}</button>`;
+  let insp = '';
+  if (S.insp) {
+    const body = S.insp === 'crew' ? CREW.filter(u => u.sid === S.session).map(crewRowHtml).join('')
+      : S.insp === 'tasks' ? TASKS.map(taskCardHtml).join('')
+      : S.insp === 'files' ? filesListHtml()
+      : sessionsHtml();
+    insp = `<div class="insp ${S.insp === 'sessions' ? 'l' : 'r'}">
+      <div class="sh"><span style="font-size:11.5px;font-weight:700;color:var(--text2);padding:2px 8px">${S.insp === 'sessions' ? 'Sessions' : S.insp[0].toUpperCase() + S.insp.slice(1)}</span>
+      <button class="ibtn x" data-act="inspx">${I.x}</button></div>
+      <div class="dscroll">${body}</div>
+    </div>`;
+  }
+  return `<div class="frail l">${rbtn('sessions', I.search, 'sessions')}</div>
+    <div class="frail r">${rbtn('crew', I.users, 'crew')}${rbtn('tasks', I.check, 'tasks')}${rbtn('files', I.file, 'files')}</div>${insp}`;
+}
+
+/* ============ shell + render ============ */
+function shell() {
+  return topbarHtml() +
+    `<div class="body">${leftHtml()}${centerHtml()}${dockHtml()}</div>` +
+    statusbarHtml() + frailsHtml() + attentionHtml() + fleetHtml() + palHtml() + toastsHtml();
+}
+function render() {
+  const app = document.getElementById('app');
+  app.className = (S.focus ? 'mode-focus' : '') + (S.peekFile ? ' has-peek' : '');
+  const cs = document.getElementById('tscroll');
+  const cdist = cs ? cs.scrollHeight - cs.scrollTop - cs.clientHeight : 0;
+  const cstick = cdist < 80;
+  const was = document.activeElement && document.activeElement.id ? document.activeElement.id : null;
+  app.innerHTML = shell();
+  const c2 = document.getElementById('tscroll');
+  if (c2) c2.scrollTop = cstick ? c2.scrollHeight : Math.max(0, c2.scrollHeight - cdist - c2.clientHeight);
+  if (was === 'comp-in') { const i = document.getElementById('comp-in'); if (i) { i.focus(); i.selectionStart = i.selectionEnd = i.value.length; } }
+  const p = document.getElementById('pal-in');
+  if (p) { p.focus(); if (was === 'pal-in') { p.selectionStart = p.selectionEnd = p.value.length; } else p.select(); }
+  wire();
+}
+/* ============ queue + send ============ */
+const QUEUE = { steer: ['Also check whether tokens.css is imported by the docs site'], follow: ['After the pass: run the contrast audit across dark + light'] };
+function send() {
+  const text = S.compT.trim(); if (!text) return;
+  const s = sById(S.session);
+  S.compT = '';
+  const mine = S.userAdds[S.session] = S.userAdds[S.session] || [];
+  if (s.state === 'running' && S.lane !== 'force') {
+    (S.lane === 'steering' ? QUEUE.steer : QUEUE.follow).push(text);
+    toast(s.name, 'queued · ' + (S.lane === 'steering' ? 'next tool boundary' : 'after work completes'));
+  } else {
+    if (S.lane === 'force' && s.state === 'running') mine.push({ k: 'sys', kind: 'drain', text: 'force · in-flight stream interrupted — partial kept, delivered at head of queue' });
+    mine.push({ k: 'user', text, t: now() });
+    if (s.state !== 'running') { s.state = 'running'; S.tps = 18; toast(s.name, 'turn started', 'ok'); }
+  }
+  render();
+}
+
+/* ============ wire ============ */
+function wire() {
+  const app = document.getElementById('app');
+  app.onclick = e => {
+    const palIt = e.target.closest('[data-pal]');
+    if (palIt) {
+      const items = palItems().filter(i => !S.palText || i.label.toLowerCase().includes(S.palText.toLowerCase()));
+      const fn = items[+palIt.dataset.pal]; S.pal = false;
+      if (fn) fn.run();
+      render(); return;
+    }
+    const el = e.target.closest('[data-act]'); if (!el) return;
+    const act = el.dataset.act, id = el.dataset.id;
+    switch (act) {
+      case 'wstab': S.ws = id; break;
+      case 'newws': toast('new workspace', 'pick a folder…', 'ok'); break;
+      case 'newsess': toast(WS[S.ws].name, 'new session ready', 'ok'); break;
+      case 'attention': S.sheet = S.sheet === 'attention' ? null : 'attention'; break;
+      case 'focus': S.focus = !S.focus; S.insp = null; break;
+      case 'pal': S.pal = !S.pal; S.palText = ''; S.palSel = 0; break;
+      case 'overlay': S.sheet = null; break;
+      case 'overlay-pal': S.pal = false; break;
+      case 'open': { const s = sById(id); S.ws = s.ws; S.session = s.id; S.follow = null; S.peekFile = null; break; }
+      case 'follow': {
+        if (S.session !== 's1') { S.ws = 'tau'; S.session = 's1'; }
+        S.follow = S.follow === id ? null : id; S.dockTab = 'crew';
+        toast(uById(id).name, S.follow ? 'following its stream' : 'unfollowed');
+        break;
+      }
+      case 'unfollow': S.follow = null; break;
+      case 'ptab': S.paneTab = id; break;
+      case 'dtab': S.dockTab = id; break;
+      case 'peek': S.peekFile = S.peekFile === id ? null : id; break;
+      case 'peekx': S.peekFile = null; break;
+      case 'commit': toast(sById(S.session).name, 'commit requested · queued as follow-up', 'ok'); break;
+      case 'think': S.thinkAll = !S.thinkAll; break;
+      case 'tcard': S.openTools[id] = !S.openTools[id]; break;
+      case 'subx': S.openSubs[id] = !S.openSubs[id]; break;
+      case 'lane': S.lane = id; break;
+      case 'model': toast('providers', 'gpt-5.2 · claude-sonnet-4 · qwen3.7 — ⌘K to switch', 'ok'); break;
+      case 'send': send(); return;
+      case 'qdel': { const [sec, i] = id.split(':'); QUEUE[sec === 'steer' ? 'steer' : 'follow'].splice(+i, 1); break; }
+      case 'jump': { const s = sById(id); S.ws = s.ws; S.session = s.id; S.sheet = null; S.follow = null; break; }
+      case 'insp': S.insp = S.insp === id ? null : id; break;
+      case 'inspx': S.insp = null; break;
+      case 'pill': S._newPill = false; break;
+    }
+    render();
+  };
+  const ci = document.getElementById('comp-in');
+  if (ci) ci.addEventListener('input', () => { S.compT = ci.value; });
+  const pi = document.getElementById('pal-in');
+  if (pi) pi.addEventListener('input', () => {
+    S.palText = pi.value; S.palSel = 0;
+    const q = S.palText.toLowerCase();
+    const items = palItems().filter(i => !q || i.label.toLowerCase().includes(q));
+    let html = '', lastG = '';
+    items.forEach((i, n) => {
+      if (i.g !== lastG) { html += `<div class="pal-g">${i.g}</div>`; lastG = i.g; }
+      html += `<div class="pal-item ${n === 0 ? 'sel' : ''}" data-pal="${n}">${esc(i.label)}${i.k ? `<span class="pk">${i.k}</span>` : ''}</div>`;
+    });
+    const list = document.getElementById('pal-list'); if (list) list.innerHTML = html || '<div class="pal-empty">no matches</div>';
+    const foot = document.getElementById('pal-foot'); if (foot) foot.textContent = items.length + ' commands · ⏎ run · esc close';
+  });
+}
+
+/* ============ keyboard ============ */
+const ALL_ORDER = () => { const out = []; for (const k of Object.keys(WS)) for (const s of SESS.filter(x => x.ws === k)) out.push(s); return out; };
+document.addEventListener('keydown', e => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  const inInput = tag === 'input' || tag === 'textarea';
+  if (e.metaKey && e.key === 'k') { e.preventDefault(); S.pal = !S.pal; S.palText = ''; S.palSel = 0; render(); return; }
+  if (e.metaKey && e.key === '.') { e.preventDefault(); S.sheet = S.sheet === 'attention' ? null : 'attention'; render(); return; }
+  if (e.metaKey && e.key === '\\') { e.preventDefault(); S.sheet = S.sheet === 'fleet' ? null : 'fleet'; render(); return; }
+  if (e.metaKey && (e.key === '1' || e.key === '2' || e.key === '3')) { e.preventDefault(); S.dockTab = ['crew', 'tasks', 'files'][+e.key - 1]; render(); return; }
+  if (e.key === 'Escape') {
+    if (S.pal) S.pal = false;
+    else if (S.sheet) S.sheet = null;
+    else if (S.peekFile) S.peekFile = null;
+    else if (S.insp) S.insp = null;
+    else if (S.follow) S.follow = null;
+    render(); return;
+  }
+  if (inInput) {
+    if (e.target.id === 'comp-in' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); return; }
+    if (e.target.id === 'pal-in') {
+      const items = palItems().filter(i => !S.palText || i.label.toLowerCase().includes(S.palText.toLowerCase()));
+      if (e.key === 'ArrowDown') { e.preventDefault(); S.palSel = Math.min(items.length - 1, S.palSel + 1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); S.palSel = Math.max(0, S.palSel - 1); }
+      else if (e.key === 'Enter') { e.preventDefault(); S.pal = false; const fn = items[S.palSel]; if (fn) fn.run(); }
+      render(); return;
+    }
+    return;
+  }
+  if (e.key === 'j') { S.sessSel = Math.min(ALL_ORDER().length - 1, S.sessSel + 1); render(); }
+  else if (e.key === 'k') { S.sessSel = Math.max(0, S.sessSel - 1); render(); }
+  else if (e.key === 'Enter') { const s = ALL_ORDER()[S.sessSel]; if (s) { S.ws = s.ws; S.session = s.id; render(); } }
+  else if (e.key === 'r') { S.thinkAll = !S.thinkAll; render(); }
+  else if (e.key === 'f') { S.focus = !S.focus; S.insp = null; render(); }
+});
+
+/* ============ simulation (the acceptance story: 1 session + 2 live child streams) ============ */
+const SIMSCRIPT = [
+  { at: 2,   fn: () => { const u = uById('u1'); u.latest = 'bash · rg -n "use:.*" docs/research'; u.tok += 400; markFlash('u1'); } },
+  { at: 4,   fn: () => { const u = uById('u3'); u.latest = 'edit · svelte/Transcript.svelte'; u.tok += 600; markFlash('u3'); } },
+  { at: 6.5, fn: () => { const u = uById('u1'); u.tok += 900; u.latest = 'read · pi/src/agent/theme.rs'; markFlash('u1'); } },
+  { at: 8,   fn: () => { const u = uById('u2'); u.state = 'running'; u.wait = null; u.latest = 'read · design-tokens.css (extracted)'; u.tok += 500; markFlash('u2');
+    const i = T.findIndex(x => x.k === 'sub' && x.sub === 'u2');
+    if (i > -1) T.splice(i, 0, { k: 'sys', kind: 'wake', text: 'subagent woke · reviewer — parent resumed, review started' });
+    toast('reviewer', 'woke · now running', 'ok'); } },
+  { at: 10,  fn: () => { const q = QUEUE.steer.shift(); if (q) { const i = T.findIndex(x => x.id === 'stream'); if (i > -1) T.splice(i, 0, { k: 'sys', kind: 'drain', text: 'steering delivered · ' + q }); } } },
+  { at: 12,  fn: () => { const u = uById('u1'); u.state = 'done'; u.latest = 'done · report delivered';
+    u.report = 'The pi harness keeps its scale in one file (theme.rs) — 8 steps, hue fixed, lightness ramped. Mirroring that shape keeps the token file a single source of truth. Conductor and Zed split the scale across two files; both drift.';
+    const i = T.findIndex(x => x.k === 'sub' && x.sub === 'u1');
+    if (i > -1) T.splice(i + 1, 0, { k: 'report', sub: 'u1' });
+    TASKS[0].pct = 62; markFlash('u1'); toast('researcher', 'report landed in-thread', 'ok'); } },
+  { at: 15,  fn: () => { const s = sById('s5'); s.state = 'needs'; s.needs = 'Which binding should win at the layer-3 collision?'; toast('Input remap pass', 'asked a question · bloody-chairs', 'bad'); } },
+  { at: 17,  fn: () => { S.om.obs = 9800; S.om.pending = 0;
+    const i = T.findIndex(x => x.id === 'stream');
+    if (i > -1) T.splice(i, 0, { k: 'sys', kind: 'compact', text: 'observer · 31.2k unobserved → 4.1k observations · gen 8' }); } },
+  { at: 20,  fn: () => { const u = uById('u3'); u.state = 'done'; u.latest = 'done · report delivered';
+    u.report = 'Extraction done: 7 components now read the accent scale from :root. Composer −31 inline lines, Transcript −12. Snapshot diff is clean; the contrast sweep is the remaining step.';
+    const i = T.findIndex(x => x.k === 'sub' && x.sub === 'u3');
+    if (i > -1) T.splice(i + 1, 0, { k: 'report', sub: 'u3' });
+    TASKS[0].pct = 80; markFlash('u3'); toast('coder', 'extraction pass complete', 'ok'); } },
+  { at: 24,  fn: () => { const s = sById('s1'); s.state = 'idle'; S.streamDone = true; S.tps = 0; S.om.busy = false; toast(s.name, 'turn complete · 26.4k tok · +$0.09', 'ok'); } },
+];
+function simTick() {
+  const a = document.activeElement;
+  const typing = a && (a.id === 'comp-in' || a.id === 'pal-in');
+  if (S.pal || typing) return; // demo freezes while the user is driving
+  const cs = document.getElementById('tscroll');
+  const atBottom = cs ? cs.scrollHeight - cs.scrollTop - cs.clientHeight < 80 : true;
+  S.sim.t += 0.1;
+  let fired = false;
+  while (S.sim.i < SIMSCRIPT.length && SIMSCRIPT[S.sim.i].at <= S.sim.t) { SIMSCRIPT[S.sim.i].fn(); S.sim.i++; fired = true; }
+  const s = sById('s1');
+  if (s.state === 'running' && !S.streamDone) {
+    S.streamChars += 2; S.tps = 18; s.tok += 25;
+    const stream = T.find(e => e.id === 'stream');
+    if (stream && S.streamChars >= stream.text.length) S.streamDone = true;
+  }
+  for (const u of CREW) if (u.state === 'running') u.tok += 8;
+  if (fired && !atBottom) S._newPill = true;
+  if (atBottom) S._newPill = false;
+  render();
+}
+render();
+setInterval(simTick, 100);
+</script>
+</body>
+</html>
