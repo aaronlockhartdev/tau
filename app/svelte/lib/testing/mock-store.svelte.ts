@@ -10,7 +10,7 @@
 import { vi } from 'vitest';
 import type { FilesCache } from '../files';
 import type { PaneState } from '../panes';
-import type { FileEntry, SkillInfo, SessionMeta, Workspace } from '../protocol';
+import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../protocol';
 import { makeStub, type SessionState } from '../sessions';
 
 export function paneDefault(): PaneState {
@@ -46,6 +46,9 @@ export function freshDefaults() {
     skills: {} as Record<string, SkillInfo[]>,
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,
+    gitStatus: {} as Record<string, GitStatus | null>,
+    peek: null as { workspace: string; path: string } | null,
+    peekDiff: null as string | null,
     pane: {} as Record<string, PaneState>,
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null
@@ -69,6 +72,10 @@ export const newSession = vi.fn(() => Promise.resolve(null));
 export const switchSession = vi.fn(async () => {});
 export const setFollow = vi.fn((h: string | null) => {
   store.follow = h;
+});
+export const setPeek = vi.fn((p: { workspace: string; path: string } | null) => {
+  store.peek = p;
+  store.peekDiff = null;
 });
 export const renameSession = vi.fn(async () => {});
 export const archiveSession = vi.fn(async () => {});

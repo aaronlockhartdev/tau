@@ -47,6 +47,7 @@ mod dispatch;
 mod dispatch_commands;
 mod dispatch_sessions;
 mod forwarding;
+mod git;
 mod launch;
 pub mod pump;
 mod sessions;
@@ -78,6 +79,8 @@ mod tests_archive_disk;
 mod tests_archive_edges;
 #[cfg(test)]
 mod tests_dispatch;
+#[cfg(test)]
+mod tests_git;
 #[cfg(test)]
 mod tests_launch;
 #[cfg(test)]

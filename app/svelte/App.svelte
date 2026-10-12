@@ -13,9 +13,10 @@
   import Composer from './components/Composer.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import ModelMenu from './components/ModelMenu.svelte';
+  import PeekSheet from './components/PeekSheet.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, newSession, windowTitle, currentSession } from './lib/store.svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setPeek } from './lib/store.svelte';
   import { isTauri } from './lib/protocol';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
@@ -33,6 +34,11 @@
   // new session in the active workspace (app-global: it fires from the
   // composer too, where it is the natural "start over" key).
   function onKeydown(e: KeyboardEvent): void {
+    // The peek sheet claims Escape before anything else does.
+    if (e.key === 'Escape' && store.peek) {
+      setPeek(null);
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
       e.preventDefault();
       const ws = currentSession()?.meta.workspace ?? null;
@@ -86,6 +92,7 @@
         {#if store.modelMenuOpen}
           <ModelMenu />
         {/if}
+        <PeekSheet />
       {:else}
         <div class="empty">
           <span class="big">No workspace open</span>

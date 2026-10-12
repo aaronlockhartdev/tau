@@ -360,6 +360,18 @@ export interface FileEntry {
   size: number;
 }
 
+export interface GitStatus {
+  branch: string;
+  modified: string[];
+  untracked: string[];
+  deleted: string[];
+}
+
+export interface GitDiff {
+  path: string;
+  diff: string;
+}
+
 export type Command =
   | { type: 'workspace_open'; cwd: string }
   | { type: 'workspace_list' }
@@ -398,7 +410,9 @@ export type Command =
   | { type: 'provider_delete'; name: string }
   | { type: 'file_read'; workspace: string; path: string; offset: number | null; limit: number | null }
   | { type: 'file_list'; workspace: string; path: string }
-  | { type: 'file_unlist'; workspace: string; path: string };
+  | { type: 'file_unlist'; workspace: string; path: string }
+  | { type: 'git_status'; workspace: string }
+  | { type: 'git_diff'; workspace: string; path: string };
 
 export type CommandOutput =
   | { kind: 'none' }
@@ -415,7 +429,9 @@ export type CommandOutput =
   | { kind: 'subagent'; subagent: SubagentInfo }
   | { kind: 'subagents'; subagents: SubagentInfo[] }
   | { kind: 'file'; file: { text: string; truncated: boolean } }
-  | { kind: 'files'; files: FileEntry[] };
+  | { kind: 'files'; files: FileEntry[] }
+  | { kind: 'git_status'; status: GitStatus }
+  | { kind: 'git_diff'; diff: GitDiff };
 
 export type SessionEventKind =
   | { kind: 'branch_move'; leaf: string }

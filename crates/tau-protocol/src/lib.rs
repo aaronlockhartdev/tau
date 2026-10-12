@@ -80,6 +80,24 @@ pub struct FileEntry {
     pub dir: bool,
     pub size: u64,
 }
+
+/// A workspace's git status (the files tab's M/A/D badges and the
+/// peek sheet's file switcher). Paths are relative to the workspace root.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GitStatus {
+    pub branch: String,
+    pub modified: Vec<String>,
+    pub untracked: Vec<String>,
+    pub deleted: Vec<String>,
+}
+
+/// A unified diff for one workspace file (the peek sheet). Untracked files
+/// have no diff; the sheet falls back to the file text.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GitDiff {
+    pub path: String,
+    pub diff: String,
+}
 /// A dispatch error, serializable so any transport can return it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -154,6 +172,12 @@ pub enum CommandOutput {
     },
     Files {
         files: Vec<FileEntry>,
+    },
+    GitStatus {
+        status: GitStatus,
+    },
+    GitDiff {
+        diff: GitDiff,
     },
 }
 
@@ -362,6 +386,17 @@ pub enum Command {
         /// workspace root (`.` for the root itself).
         path: String,
     },
+
+    /// The workspace's git status (files tab badges, peek sheet switcher).
+    GitStatus {
+        workspace: String,
+    },
+    /// The unified diff of one file vs HEAD (the peek sheet).
+    GitDiff {
+        workspace: String,
+        /// Absolute, or relative to the workspace root.
+        path: String,
+    },
 }
 
 /// An event pushed from the core to clients (spec §8). Every event carries
@@ -543,6 +578,11 @@ mod tests {
             Command::FileUnlist {
                 workspace: "w1".into(),
                 path: "src".into(),
+            },
+            Command::GitStatus { workspace: "w1".into() },
+            Command::GitDiff {
+                workspace: "w1".into(),
+                path: "a/b.txt".into(),
             },
         ];
         for cmd in &commands {

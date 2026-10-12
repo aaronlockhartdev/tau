@@ -14,6 +14,7 @@
     isTauri,
     type Event,
     type FileEntry,
+    type GitStatus,
     type SessionMeta,
     type SkillInfo,
     type Workspace
@@ -103,6 +104,12 @@
     // listing is recorded per workspace/path and cleared when the same dir
     // lists successfully again.
     fileErrors: {} as Record<string, Record<string, string>>,
+    // Git status per workspace (workbench P4): the files tab's M/A/D badges
+    // and the peek sheet's switcher. null = not a git repository.
+    gitStatus: {} as Record<string, GitStatus | null>,
+    // The peek sheet (P4): the file under diff inspection, and its diff text.
+    peek: null as { workspace: string; path: string } | null,
+    peekDiff: null as string | null,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>,
@@ -306,6 +313,7 @@
     // every other dir is fetched on expansion.
     store.files = ensureWorkspace(store.files, real.id);
     void fetchDir(real.id, '.');
+    void refreshGitStatus(real.id);
     // Archived sessions are listed (for the archive folder) but can't be
     // opened; auto-open the most recent live one, else start a fresh session.
     const unarchived =
@@ -360,6 +368,48 @@
       await command({ type: 'file_unlist', workspace: ws, path });
     } catch {
       // a collapse for a gone workspace is a no-op
+    }
+  }
+
+  // The files tab's badges and the peek sheet's switcher refresh on open
+  // and on every file-tree change. A non-git workspace records null (the
+  // badges simply stay off), never an error.
+  async function refreshGitStatus(ws: string): Promise<void> {
+    try {
+      const out = await command({ type: 'git_status', workspace: ws });
+      store.gitStatus = {
+        ...store.gitStatus,
+        [ws]: out.kind === 'git_status' ? out.status : null
+      };
+    } catch {
+      store.gitStatus = { ...store.gitStatus, [ws]: null };
+    }
+  }
+
+  export function setPeek(peek: { workspace: string; path: string } | null): void {
+    store.peek = peek;
+    store.peekDiff = null;
+    if (peek) void fetchPeekDiff(peek);
+  }
+
+  async function fetchPeekDiff(peek: { workspace: string; path: string }): Promise<void> {
+    try {
+      const out = await command({ type: 'git_diff', workspace: peek.workspace, path: peek.path });
+      // A slower switch wins nothing: a stale fetch must not clobber the
+      // sheet the user moved on from. Field compare — the $state proxy means
+      // store.peek is never === to the raw object that started the fetch.
+      if (
+        out.kind === 'git_diff' &&
+        store.peek?.workspace === peek.workspace &&
+        store.peek?.path === peek.path
+      )
+        store.peekDiff = out.diff.diff;
+    } catch {
+      if (
+        store.peek?.workspace === peek.workspace &&
+        store.peek?.path === peek.path
+      )
+        store.peekDiff = '';
     }
   }
 
@@ -656,6 +706,7 @@
         }
         if (ev.type === 'file_tree_changed') {
           scheduleRefetch(ev.workspace, ev.changed);
+          void refreshGitStatus(ev.workspace);
         }
         continue;
       }

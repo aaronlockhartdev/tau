@@ -3,8 +3,8 @@
 //! The arms are grouped per domain in their own files; the entry routes.
 
 use super::{
-    Arc, BufRead, Command, CommandOutput, Core, FileText, Path, PathBuf, ProtocolError,
-    ProviderInfo, list_dir,
+    Arc, BufRead, Command, CommandOutput, Core, FileText, Path, PathBuf,
+    ProviderInfo, list_dir, ProtocolError,
 };
 
 fn resolve_path(cwd: &str, path: &str) -> PathBuf {
@@ -56,7 +56,9 @@ impl Core {
             | Command::ProviderDelete { .. }
             | Command::FileRead { .. }
             | Command::FileList { .. }
-            | Command::FileUnlist { .. } => self.dispatch_misc(cmd),
+            | Command::FileUnlist { .. }
+            | Command::GitStatus { .. }
+            | Command::GitDiff { .. } => self.dispatch_misc(cmd),
         }
     }
 
@@ -171,6 +173,19 @@ impl Core {
                 let dir = resolve_path(&workspace.cwd, &path);
                 self.unwatch_tree_dir(&workspace, &dir);
                 Ok(CommandOutput::None)
+            }
+            Command::GitStatus { workspace } => {
+                let workspace = self.workspace(&workspace)?;
+                Ok(CommandOutput::GitStatus {
+                    status: super::git::git_status(Path::new(&workspace.cwd))?,
+                })
+            }
+            Command::GitDiff { workspace, path } => {
+                let workspace = self.workspace(&workspace)?;
+                let file = resolve_path(&workspace.cwd, &path);
+                Ok(CommandOutput::GitDiff {
+                    diff: super::git::git_diff(Path::new(&workspace.cwd), &file)?,
+                })
             }
             _ => unreachable!("dispatch routes the arm"),
         }
