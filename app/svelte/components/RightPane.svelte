@@ -8,8 +8,8 @@
   // detail sections. The sub-agents panel renders a tree (nesting
   // supported) — double-click opens the sub-agent's session, which is an
   // ordinary session (a tab opens for it).
-  import { store, pane, ensurePane, switchSession, currentSession, type PaneState } from '../lib/store.svelte';
-  import { fmtAgo } from '../lib/format';
+  import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store.svelte';
+  import { fmtAgo, fmtK } from '../lib/format';
   import { onActivate } from '../lib/ui';
   import type { Task, SubagentInfo } from '../lib/protocol';
 
@@ -29,15 +29,19 @@
 
   const subs = $derived(cur ? cur.subagents : []);
   const isLive = (i: SubagentInfo) => i.state === 'running' || i.state === 'idle';
-  const byMru = (a: SubagentInfo, b: SubagentInfo) => childMru(b) - childMru(a);
-  const liveSubs = $derived(subs.filter(isLive).sort(byMru));
-  const histSubs = $derived(subs.filter((i) => !isLive(i)).sort(byMru));
+  // Crew order (P3): running first, then waiting, then terminal — MRU breaks
+  // the ties within a rank.
+  const crewRank = (i: SubagentInfo) => (i.state === 'running' ? 0 : i.state === 'idle' ? 1 : 2);
+  const byCrew = (a: SubagentInfo, b: SubagentInfo) =>
+    crewRank(a) - crewRank(b) || childMru(b) - childMru(a);
+  const liveSubs = $derived(subs.filter(isLive).sort(byCrew));
+  const histSubs = $derived(subs.filter((i) => !isLive(i)).sort(byCrew));
   const grandOf = (list: SubagentInfo[], liveOnly: boolean) => {
     const map: Record<string, SubagentInfo[]> = {};
     for (const r of list) {
       const child = store.sessions[r.child];
       const kids = child?.subagents ?? [];
-      map[r.handle] = (liveOnly ? kids.filter(isLive) : kids.filter((i) => !isLive(i))).sort(byMru);
+      map[r.handle] = (liveOnly ? kids.filter(isLive) : kids.filter((i) => !isLive(i))).sort(byCrew);
     }
     return map;
   };
@@ -160,7 +164,7 @@
       {:else}
         {#snippet subRow(r: SubagentInfo, deep: boolean)}
           <div
-            class="srow2"
+            class="srow2 crewrow"
             class:d2={deep}
             class:sel={p.selSub === r.handle}
             role="button"
@@ -169,9 +173,37 @@
             onkeydown={onActivate(() => selectSub(r.handle))}
             ondblclick={() => void switchSession(r.child)}
           >
-            <span class="badge {r.state}"><span class="dot"></span>{r.state}{r.waiting_on ? ` · ${r.waiting_on}` : ''}</span>
-            <span class="ln">{titleOf(r)}</span>
-            <span class="lm">{r.task?.id ?? ''}</span>
+            <div class="l1">
+              <span class="badge {r.state}"><span class="dot"></span>{r.state}{r.waiting_on ? ` · ${r.waiting_on}` : ''}</span>
+              <span class="ln">{titleOf(r)}</span>
+              <span class="chip">{r.agent_type}</span>
+              <span class="chip dim">{r.context_mode}</span>
+              {#if r.usage}<span class="lm">{fmtK(r.usage.input_tokens)} in · {fmtK(r.usage.output_tokens)} out</span>{/if}
+              <span class="acts">
+                <button
+                  type="button"
+                  class="act"
+                  class:on={store.follow === r.handle}
+                  title="follow this worker in the transcript"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    setFollow(store.follow === r.handle ? null : r.handle);
+                  }}
+                >{store.follow === r.handle ? 'following' : 'follow'}</button>
+                <button
+                  type="button"
+                  class="act"
+                  title="open the child session"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    void switchSession(r.child);
+                  }}
+                >open</button>
+              </span>
+            </div>
+            {#if r.last_message}
+              <div class="l2">{r.last_message}</div>
+            {/if}
           </div>
         {/snippet}
         {#if liveSubs.length > 0}
@@ -389,6 +421,63 @@
   }
   .srow2.d2 {
     padding-left: 34px;
+  }
+  /* The live crew row (P3): two lines — identity + live line. */
+  .crewrow {
+    align-items: flex-start;
+    position: relative;
+  }
+  .crewrow .l1 {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
+  .crewrow .chip {
+    flex: none;
+    font: 9.5px var(--mono);
+    color: var(--dim);
+    background: var(--panel3);
+    border-radius: 4px;
+    padding: 0 5px;
+  }
+  .crewrow .chip.dim {
+    color: var(--faint);
+  }
+  .crewrow .lm {
+    flex: none;
+  }
+  .crewrow .l2 {
+    margin: 2px 0 0 19px;
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .crewrow .acts {
+    flex: none;
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+    opacity: 0;
+  }
+  .crewrow:hover .acts {
+    opacity: 1;
+  }
+  .crewrow .act {
+    background: none;
+    border: 1px solid var(--line2);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font: 10px var(--mono);
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .crewrow .act.on {
+    color: var(--acc);
+    border-color: var(--acc);
   }
   .badge {
     display: inline-flex;

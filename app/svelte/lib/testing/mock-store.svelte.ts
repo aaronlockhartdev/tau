@@ -31,6 +31,7 @@ export function paneDefault(): PaneState {
 export function freshDefaults() {
   return {
     focus: false,
+    follow: null as string | null,
     modelMenuOpen: false,
     reasoningOpen: true,
     entryOpen: new Map(),
@@ -66,6 +67,9 @@ export const closeWorkspaces = vi.fn(async () => {});
 export const tabSelect = vi.fn();
 export const newSession = vi.fn(() => Promise.resolve(null));
 export const switchSession = vi.fn(async () => {});
+export const setFollow = vi.fn((h: string | null) => {
+  store.follow = h;
+});
 export const renameSession = vi.fn(async () => {});
 export const archiveSession = vi.fn(async () => {});
 export const restoreSession = vi.fn(async () => {});

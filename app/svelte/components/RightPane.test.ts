@@ -181,10 +181,13 @@ describe('RightPane', () => {
     expect(screen.getByText('No sub-agents — ask the agent to spawn one')).toBeInTheDocument();
   });
 
-  it('groups sub-agents into live and history with badge, title and task id', async () => {
+  it('groups sub-agents into live and history with badge, title, chips and live line', async () => {
     seed({
       subagents: [
-        sub('h1', 'c1', { task: task('t9') }),
+        sub('h1', 'c1', {
+          last_message: 'reading the config files',
+          usage: { input_tokens: 1200, output_tokens: 80, total_tokens: 1280, cached_prompt_tokens: 0 }
+        }),
         sub('h2', 'c2', { state: 'done' })
       ],
       sessions: {
@@ -198,8 +201,70 @@ describe('RightPane', () => {
     expect(screen.getByText('history · 1')).toBeInTheDocument();
     expect(screen.getByText('running')).toBeInTheDocument();
     expect(screen.getByText('worker one')).toBeInTheDocument();
-    expect(screen.getByText('t9')).toBeInTheDocument();
+    expect(screen.getByText('1.2k in · 80 out')).toBeInTheDocument();
+    expect(screen.getByText('reading the config files')).toBeInTheDocument();
     expect(screen.queryByText('worker two')).toBeNull();
+  });
+
+  it('orders the crew running first, then waiting, then terminal', async () => {
+    seed({
+      subagents: [
+        sub('hA', 'cA', { state: 'idle', waiting_on: 'parent' }),
+        sub('hB', 'cB'),
+        sub('hC', 'cC', { state: 'done' }),
+        sub('hD', 'cD', { state: 'idle', waiting_on: 'user' })
+      ],
+      sessions: {
+        cA: seedState(meta('cA', { title: 'alpha' }), { parent: 's1', mru: 1 }),
+        cB: seedState(meta('cB', { title: 'beta' }), { parent: 's1', mru: 2 }),
+        cC: seedState(meta('cC', { title: 'gamma' }), { parent: 's1', mru: 3 }),
+        cD: seedState(meta('cD', { title: 'delta' }), { parent: 's1', mru: 4 })
+      }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'sub-agents' }));
+    await user.click(screen.getByRole('button', { name: /history · 1/ }));
+    const names = [...document.querySelectorAll('.crewrow .ln')].map((n) => n.textContent ?? '');
+    expect(names).toEqual(['beta', 'delta', 'alpha', 'gamma']);
+  });
+
+  it('refreshes the live line when a new last_message lands', async () => {
+    seed({
+      subagents: [sub('h1', 'c1', { last_message: 'first line' })],
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'sub-agents' }));
+    expect(screen.getByText('first line')).toBeInTheDocument();
+    mockStore.sessions['s1'] = seedState(meta('s1'), {
+      over: { subagents: [sub('h1', 'c1', { last_message: 'second line' })] }
+    });
+    await tick();
+    expect(screen.getByText('second line')).toBeInTheDocument();
+  });
+
+  it('follow toggles the store follow handle', async () => {
+    seed({
+      subagents: [sub('h1', 'c1')],
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'sub-agents' }));
+    await user.click(screen.getByRole('button', { name: 'follow' }));
+    expect(mockStore.follow).toBe('h1');
+    await user.click(screen.getByRole('button', { name: 'following' }));
+    expect(mockStore.follow).toBeNull();
+  });
+
+  it('open calls switchSession with the child id', async () => {
+    seed({
+      subagents: [sub('h1', 'c1')],
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'sub-agents' }));
+    await user.click(screen.getByRole('button', { name: 'open' }));
+    expect(switchSession).toHaveBeenCalledWith('c1');
   });
 
   it('clicking a sub-agent row selects it', async () => {
