@@ -48,6 +48,7 @@ export interface Header {
 // the thinking line, the tool chip, or the card shell.
 export type Shell =
   | { kind: 'bubble'; text: string }
+  | { kind: 'divider'; label: string; tint: 'drain' | 'compact' }
   | { kind: 'stline'; icon: string; label: string }
   | { kind: 'think'; label: string; meta: string | null; openKey: 'think'; body: string }
   | {
@@ -366,7 +367,15 @@ export function present(
           ]
         };
       }
-      return { shells: [{ kind: 'bubble', text }] };
+      const shells: Shell[] = [];
+      // A queued message that has delivered: the one-line record of WHEN it
+      // landed (steering at the next tool boundary, follow-up at the end).
+      if (entry.lane === 'steering')
+        shells.push({ kind: 'divider', label: 'steering · next tool boundary', tint: 'drain' });
+      else if (entry.lane === 'follow_up')
+        shells.push({ kind: 'divider', label: 'follow-up · after work completes', tint: 'drain' });
+      shells.push({ kind: 'bubble', text });
+      return { shells };
     }
     case 'message':
     case 'interrupted': {
@@ -402,7 +411,13 @@ export function present(
     }
     case 'om':
       if (!text.trim()) return null;
-      return { shells: [observationShell(entry, text)] };
+      // The one-line marker above the collapsible record.
+      return {
+        shells: [
+          { kind: 'divider', label: 'compaction · observation log updated', tint: 'compact' },
+          observationShell(entry, text)
+        ]
+      };
     case 'system': {
       if (!text.trim()) return null;
       if (text.startsWith('model: ')) {

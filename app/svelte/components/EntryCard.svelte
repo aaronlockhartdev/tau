@@ -69,6 +69,10 @@
 {#snippet shellView(shell: Shell)}
   {#if shell.kind === 'bubble'}
     <div class="tuser"><span class="bubble">{shell.text}</span></div>
+  {:else if shell.kind === 'divider'}
+    <div class="divider t-{shell.tint}">
+      <span>{shell.label}</span>
+    </div>
   {:else if shell.kind === 'stline'}
     <div class="stline">
       <svg class="ic" width="13" height="13"><use href={`#${shell.icon}`}/></svg>{shell.label}
@@ -158,6 +162,29 @@
     padding: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  /* Queue-delivery and compaction markers: one quiet line, tinted by kind, */
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 2px 8px;
+    font: 10px var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .divider::before,
+  .divider::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--line);
+    opacity: 0.5;
+  }
+  .divider.t-drain {
+    color: var(--acc);
+  }
+  .divider.t-compact {
+    color: var(--amber);
   }
   .think {
     display: flex;

@@ -21,7 +21,7 @@ function cardOf(
 ): Extract<Shell, { kind: 'card' }> {
   const p = present(entry, { sourceLabel: over.sourceLabel ?? '', parentLabel: over.parentLabel ?? '' });
   if (!p) throw new Error('expected a presentation');
-  const s = p.shells[0];
+  const s = p.shells.find((s) => s.kind === 'card');
   if (!s || s.kind !== 'card') throw new Error('expected a card shell');
   return s;
 }
@@ -188,6 +188,40 @@ describe('present', () => {
     expect(present({ id: 'e1', kind: 'user', text: 'hi' }, ctx)?.shells).toEqual([
       { kind: 'bubble', text: 'hi' }
     ]);
+  });
+
+  it('a steering delivery carries its lane divider', () => {
+    expect(present({ id: 'e1', kind: 'user', text: 'do X', lane: 'steering' }, ctx)?.shells).toEqual(
+      [
+        { kind: 'divider', label: 'steering · next tool boundary', tint: 'drain' },
+        { kind: 'bubble', text: 'do X' }
+      ]
+    );
+  });
+
+  it('a follow-up delivery carries its lane divider', () => {
+    expect(
+      present({ id: 'e1', kind: 'user', text: 'then do Y', lane: 'follow_up' }, ctx)?.shells
+    ).toEqual([
+      { kind: 'divider', label: 'follow-up · after work completes', tint: 'drain' },
+      { kind: 'bubble', text: 'then do Y' }
+    ]);
+  });
+
+  it('a force send has no divider', () => {
+    expect(present({ id: 'e1', kind: 'user', text: 'stop', lane: 'force' }, ctx)?.shells).toEqual(
+      [{ kind: 'bubble', text: 'stop' }]
+    );
+  });
+
+  it('a compaction record leads with its divider', () => {
+    const p = present({ id: 'e1', kind: 'om', text: 'plain' }, ctx);
+    expect(p?.shells[0]).toEqual({
+      kind: 'divider',
+      label: 'compaction · observation log updated',
+      tint: 'compact'
+    });
+    expect(p?.shells).toHaveLength(2);
   });
 
   it('a skill user entry is a card that collapses to a preview with an expando', () => {

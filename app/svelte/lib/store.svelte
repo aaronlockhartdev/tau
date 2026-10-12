@@ -65,6 +65,9 @@
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
     focus: false,
+    // The follow filter (P2): the handle of the sub-agent the transcript is
+    // focused on; non-followed entries render dimmed. Cleared by the chip.
+    follow: null as string | null,
     modelMenuOpen: false,
     // Seeded from the per-user presentation registry (spec §12, #35):
     // 'visible-by-default' is the user's standing preference, and the 'r'
@@ -140,6 +143,10 @@
   }
   export function toggleAllReasoning(): void {
     store.reasoningOpen = !store.reasoningOpen;
+  }
+
+  export function setFollow(handle: string | null): void {
+    store.follow = handle;
   }
 
   export function windowTitle(): string {

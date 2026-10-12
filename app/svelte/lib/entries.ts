@@ -56,12 +56,16 @@ export function decodeEntry(v: ViewEntry): Entry {
     case 'user': {
       const text = typeof p.text === 'string' ? p.text : '';
       const source = typeof p.source === 'string' ? p.source : undefined;
+      // The lane rides the payload (the queue-delivery divider's source).
+      const lane =
+        p.lane === 'force' || p.lane === 'steering' || p.lane === 'follow_up' ? p.lane : undefined;
       const sk = p.skill as { name?: unknown; location?: unknown } | undefined;
       return {
         id: v.id,
         kind: 'user',
         text,
         source,
+        lane,
         skill: sk ? { name: typeof sk.name === 'string' ? sk.name : '', location: typeof sk.location === 'string' ? sk.location : '' } : undefined,
         // The child → parent direction is payload-derived (source); the
         // parent → child case needs the session's parent link, so the

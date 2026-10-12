@@ -181,7 +181,7 @@ export type TaskPayload =
 // One variant per kind (C9); the last is the escape for a kind the card
 // renders generically (a compaction record, a pre-v0 file).
 export type Entry =
-  | { id: string; kind: 'user'; text: string; source?: string; skill?: SkillRef; msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> } }
+  | { id: string; kind: 'user'; text: string; source?: string; skill?: SkillRef; lane?: MessageLane; msg?: { prose: string; kv: Array<{ k: string; lines: string[] }> } }
   | MessageEntry
   | { id: string; kind: 'tool'; text?: string; name?: string; call_id?: string; args?: Record<string, unknown>; output?: string; status?: 'ok' | 'running' | 'error' }
   | { id: string; kind: 'om'; text: string; thinking?: string; input?: string; suggestedResponse?: string; model?: string }
@@ -209,6 +209,7 @@ export type AnyEntry = {
   kind: string;
   text?: string;
   source?: string;
+  lane?: MessageLane;
   skill?: SkillRef;
   reasoning?: string;
   calls?: string[];
