@@ -51,6 +51,9 @@ export function freshDefaults() {
     peek: null as { workspace: string; path: string } | null,
     peekDiff: null as string | null,
     attentionOpen: false,
+    paletteOpen: false,
+    fleetOpen: false,
+    focusInspector: null as 'left' | 'right' | null,
     pane: {} as Record<string, PaneState>,
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null

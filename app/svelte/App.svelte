@@ -15,9 +15,12 @@
   import ModelMenu from './components/ModelMenu.svelte';
   import PeekSheet from './components/PeekSheet.svelte';
   import AttentionSheet from './components/AttentionSheet.svelte';
+  import CommandPalette from './components/CommandPalette.svelte';
+  import FleetList from './components/FleetList.svelte';
+  import FocusRails from './components/FocusRails.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setPeek } from './lib/store.svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setPeek, pane, switchSession } from './lib/store.svelte';
   import { isTauri } from './lib/protocol';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
@@ -34,18 +37,75 @@
   // while a field has focus so it never fights the composer. ⌘/Ctrl+N opens a
   // new session in the active workspace (app-global: it fires from the
   // composer too, where it is the natural "start over" key).
+  // The keymap (workbench P6): ⌘K palette, ⌘\ fleet, ⌘. attention, f focus
+  // mode, j/k session nav, Enter opens the selected session. The Escape
+  // cascade closes overlays in the order they open: palette → attention →
+  // fleet → peek → inspector → follow. Single letters are skipped while a
+  // text field has focus so they never fight the composer.
+  function typing(e: KeyboardEvent): boolean {
+    const t = e.target as HTMLElement | null;
+    return !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable));
+  }
+  function visibleSessions(): string[] {
+    const ws = currentSession()?.meta.workspace ?? null;
+    if (!ws) return [];
+    return Object.values(store.sessions)
+      .filter((s) => s.meta.workspace === ws && !s.parent && !s.archived)
+      .sort((a, b) => b.mru - a.mru)
+      .map((s) => s.meta.id);
+  }
+  function navSession(delta: number): void {
+    const ws = currentSession()?.meta.workspace ?? null;
+    const q = ws ? pane(ws) : null;
+    if (!q || q.ltab !== 'sessions') return;
+    const ids = visibleSessions();
+    if (ids.length === 0) return;
+    const anchor = q.selAnchor ? ids.indexOf(q.selAnchor) : -1;
+    const next = (anchor + delta + ids.length) % ids.length;
+    q.selected = [ids[next]!];
+    q.selAnchor = ids[next]!;
+  }
   function onKeydown(e: KeyboardEvent): void {
-    // The peek sheet claims Escape before anything else does.
     if (e.key === 'Escape') {
-      // Overlays close in the order they open: attention, then peek.
+      if (store.paletteOpen) {
+        store.paletteOpen = false;
+        return;
+      }
       if (store.attentionOpen) {
         store.attentionOpen = false;
+        return;
+      }
+      if (store.fleetOpen) {
+        store.fleetOpen = false;
         return;
       }
       if (store.peek) {
         setPeek(null);
         return;
       }
+      if (store.focusInspector) {
+        store.focusInspector = null;
+        return;
+      }
+      if (store.follow) {
+        store.follow = null;
+        return;
+      }
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      store.paletteOpen = !store.paletteOpen;
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
+      e.preventDefault();
+      store.fleetOpen = !store.fleetOpen;
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === '.') {
+      e.preventDefault();
+      store.attentionOpen = !store.attentionOpen;
+      return;
     }
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
       e.preventDefault();
@@ -53,10 +113,18 @@
       if (ws) void newSession(ws);
       return;
     }
-    if (e.key !== 'r' || e.metaKey || e.ctrlKey || e.altKey) return;
-    const t = e.target as HTMLElement | null;
-    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-    toggleAllReasoning();
+    if (typing(e)) return;
+    const k = e.key.toLowerCase();
+    if (k === 'j') navSession(1);
+    else if (k === 'k') navSession(-1);
+    else if (k === 'f') store.focus = !store.focus;
+    else if (k === 'r') toggleAllReasoning();
+    else if (e.key === 'Enter') {
+      const ws = currentSession()?.meta.workspace ?? null;
+      const q = ws ? pane(ws) : null;
+      const sel = q?.selAnchor;
+      if (q && sel) void switchSession(sel);
+    }
   }
   onMount(() => window.addEventListener('keydown', onKeydown));
   onDestroy(() => window.removeEventListener('keydown', onKeydown));
@@ -112,8 +180,11 @@
     <aside class="right">
       <RightPane />
     </aside>
+    <FocusRails />
   </div>
   <StatusBar />
+  <CommandPalette />
+  <FleetList />
 </div>
 
 <style>
@@ -123,6 +194,7 @@
     height: 100vh;
   }
   .body {
+    position: relative;
     display: grid;
     grid-template-columns: 280px 1fr 330px;
     grid-template-rows: 1fr;

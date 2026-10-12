@@ -68,6 +68,9 @@
   export const store = $state({
     focus: false,
     attentionOpen: false,
+    paletteOpen: false,
+    fleetOpen: false,
+    focusInspector: null as 'left' | 'right' | null,
     // The follow filter (P2): the handle of the sub-agent the transcript is
     // focused on; non-followed entries render dimmed. Cleared by the chip.
     follow: null as string | null,
