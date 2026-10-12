@@ -304,10 +304,16 @@ The palette's **keymap page** is where the GUI mapping is documented.
 
 ## 8. Build status
 
-`app/prototype-board-v2.html` (single file, no dependencies, 1,669 lines) is
-built and verified in Chrome: all three center views, the attention sheet,
-palette + keymap page, focus-mode rails with non-modal inspectors, lanes,
-`/`+`@` autocomplete, send/stop, and the scripted simulation (turn 2 start,
-steering drain at the turn boundary, sub-agent completion, cross-workspace
-needs-you) all render and respond correctly. Open it directly in a browser —
-no server needed.
+`app/prototype-board-v2.html` (single file, no dependencies, 1,673 lines) is
+built and verified in Chrome. Every user navigation path was walked with
+screenshots: initial chat load, board → card → chat, changes view with
+file-list and tree → diff jumps, files tab with git badges, sub-agent
+tabs, the bell → cross-workspace needs-you → reply loop, focus mode with
+edge rails and non-modal inspector sheets, command palette with keymap
+page, `/` and `@` autocomplete, and the model menu. The walk surfaced and
+fixed three bugs (the app root was not height-constrained so the status
+bar and composer could clip off-screen; focus mode rendered an empty
+void because the `.focus` class was never applied; the palette input lost
+focus when opened from the button) plus two composer cosmetics (lane
+label wrap, OM-meter truncation). Open it directly in a browser — no
+server needed.

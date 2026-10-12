@@ -74,7 +74,7 @@ svg { display: block; }
 @keyframes slidein { from { transform: translateX(16px); opacity: 0; } }
 
 /* ============ topbar ============ */
-.shell { display: grid; grid-template-rows: 48px 1fr 24px; height: 100%; }
+#app { display: grid; grid-template-rows: 48px 1fr 24px; height: 100vh; }
 .topbar { display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--bg); }
 .wstabs { align-self: stretch; display: flex; align-items: stretch; gap: 1px; }
 .wstab { position: relative; display: flex; align-items: center; gap: 7px; padding: 0 8px 0 10px; font-size: 12.5px; font-weight: 500; color: var(--text2); border-radius: 8px 8px 0 0; }
@@ -300,13 +300,14 @@ svg { display: block; }
 .composer .aci .acd { color: var(--faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer .acm { padding: 5px 10px; font: 10px var(--mono); color: var(--faint); border-top: 1px solid var(--line); }
 .composer .cf { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
-.composer .cact { display: flex; align-items: center; gap: 8px; font: 11px var(--mono); color: var(--faint); overflow: hidden; white-space: nowrap; }
+.composer .cact { display: flex; align-items: center; gap: 8px; font: 11px var(--mono); color: var(--faint); flex: 1; min-width: 0; white-space: nowrap; }
+.composer .cact .actx { overflow: hidden; text-overflow: ellipsis; }
 .composer .cact .cdot2 { width: 5px; height: 5px; border-radius: 50%; background: var(--acc); animation: pulse 1.2s infinite; flex: none; }
 .composer .ommini { display: flex; align-items: center; gap: 6px; font: 10.5px var(--mono); color: var(--faint); flex: none; }
 .composer .ommini .omgauge { width: 44px; }
 .composer .spacer { flex: 1; }
 .lanes { display: flex; gap: 2px; padding: 2px; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; }
-.lanes button { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 4px; color: var(--faint); }
+.lanes button { display: flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 700; padding: 3px 9px; border-radius: 4px; color: var(--faint); white-space: nowrap; }
 .lanes button:hover { color: var(--text2); }
 .lanes button.on { background: var(--raised); color: var(--text); }
 .lanes button.on.force { color: var(--bad); }
@@ -413,6 +414,7 @@ svg { display: block; }
 
 /* ============ focus mode ============ */
 .focuscol { display: none; height: 100%; }
+.focuscol .center { flex: 1; }
 .focus .compact { display: none; }
 .focus .focuscol { display: flex; flex-direction: column; }
 .focuscol .page { max-width: 760px; padding: 24px 48px 16px; }
@@ -776,6 +778,7 @@ const app = document.getElementById('app');
 function render() {
   const ae = document.activeElement;
   const was = ae ? ae.id : null;
+  document.getElementById('app').classList.toggle('focus', S.focus);
   const t0 = document.getElementById('tscroll');
   const stick = t0 ? (t0.scrollHeight - t0.scrollTop - t0.clientHeight < 90) : true;
   const prevTop = t0 ? t0.scrollTop : 0;
@@ -1009,7 +1012,7 @@ function composerHtml() {
   return '<div class="composer">' + acHtml() +
     '<textarea id="comp" rows="1" placeholder="message — / commands · @ files · force / steering / follow-up">' + esc(S.composer.text) + '</textarea>' +
     '<div class="cf">' +
-      '<div class="cact">' + (running ? '<span class="cdot2"></span>' + esc(s.activity) : qn + ' queued') +
+      '<div class="cact">' + (running ? '<span class="cdot2"></span><span class="actx">' + esc(s.activity) + '</span>' : '<span class="actx">' + qn + ' queued</span>') +
       '<span class="ommini">' + IC.gauge + ' <span class="omgauge"><i style="width:' + omPct + '%"></i></span> ' + fmtK(S.om.obs) + '/' + fmtK(S.om.thr) + '</span></div>' +
       '<div class="spacer"></div>' +
       '<button class="modelchip" data-act="model" title="provider + model">' + IC.spark + ' ' + S.composer.model + ' ' + IC.chevron + '</button>' +
@@ -1563,7 +1566,8 @@ function wire(was, stick, prevTop) {
   if (fs2) fs2.addEventListener('input', () => { S.fileSearch = fs2.value; render(); });
   // restore focus
   if (was === 'comp') { const c = app.querySelector('#comp'); if (c) { c.focus(); c.selectionStart = c.selectionEnd = c.value.length; } }
-  if (was === 'pal-in') { const p = app.querySelector('#pal-in'); if (p) p.focus(); }
+  const p = app.querySelector('#pal-in');
+  if (p) { p.focus(); if (was !== 'pal-in') p.select(); }
   if (was === 's-search') { const s2 = app.querySelector('#s-search'); if (s2) s2.focus(); }
   if (was === 'f-search') { const f3 = app.querySelector('#f-search'); if (f3) f3.focus(); }
   if (was === 'f-search2') { const f4 = app.querySelector('#f-search2'); if (f4) f4.focus(); }
