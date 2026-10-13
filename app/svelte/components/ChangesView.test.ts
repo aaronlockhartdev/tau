@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
-// The peek sheet: a non-modal diff viewer. Renders only while a peek is open;
-// the switcher lists the workspace's changed files; close and switch assert
-// the setPeek wiring.
+// The changes view: the center-column diff viewer. Renders in place of the
+// transcript while a file is open; the switcher lists the workspace's
+// changed files; close and switch assert the setChangesView wiring.
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import PeekSheet from './PeekSheet.svelte';
-import { mockStore, resetMockStore, setPeek } from '../lib/testing/mock-store.svelte.ts';
+import ChangesView from './ChangesView.svelte';
+import { mockStore, resetMockStore, setChangesView } from '../lib/testing/mock-store.svelte.ts';
 
 vi.mock('../lib/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
@@ -32,28 +32,28 @@ function seedStatus(): void {
 }
 
 async function mount(): Promise<void> {
-  render(PeekSheet);
+  render(ChangesView);
   await tick();
 }
 
 const user = userEvent.setup();
 
-describe('PeekSheet', () => {
+describe('ChangesView', () => {
   beforeEach(() => {
     seedStatus();
   });
 
-  it('renders nothing while no peek is open', async () => {
+  it('renders nothing while no view is open', async () => {
     await mount();
     expect(screen.queryByText('src/a.ts')).toBeNull();
   });
 
   it('renders the diff with tinted lines and a file switcher', async () => {
-    setPeek({ workspace: WS, path: 'src/a.ts' });
-    mockStore.peekDiff =
+    setChangesView({ workspace: WS, path: 'src/a.ts' });
+    mockStore.changesViewDiff =
       'diff --git a/src/a.ts b/src/a.ts\n@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
     await mount();
-    expect(document.querySelector('.peek .title')?.textContent).toBe('src/a.ts');
+    expect(document.querySelector('.view .title')?.textContent).toBe('src/a.ts');
     expect(document.querySelector('.diff .al')?.textContent).toBe('+new line');
     expect(document.querySelector('.diff .dl')?.textContent).toBe('-old line');
     expect(document.querySelector('.diff .hh')?.textContent).toBe('@@ -1,2 +1,2 @@');
@@ -65,27 +65,27 @@ describe('PeekSheet', () => {
   });
 
   it('shows a note for a file with no diff', async () => {
-    setPeek({ workspace: WS, path: 'notes.md' });
-    mockStore.peekDiff = '';
+    setChangesView({ workspace: WS, path: 'notes.md' });
+    mockStore.changesViewDiff = '';
     await mount();
     expect(screen.getByText('no diff — untracked or not in git')).toBeInTheDocument();
   });
 
-  it('close calls setPeek with null', async () => {
-    setPeek({ workspace: WS, path: 'src/a.ts' });
-    mockStore.peekDiff = '+x';
-    vi.mocked(setPeek).mockClear();
+  it('close calls setChangesView with null', async () => {
+    setChangesView({ workspace: WS, path: 'src/a.ts' });
+    mockStore.changesViewDiff = '+x';
+    vi.mocked(setChangesView).mockClear();
     await mount();
     await user.click(screen.getByTitle('close (esc)'));
-    expect(setPeek).toHaveBeenCalledWith(null);
+    expect(setChangesView).toHaveBeenCalledWith(null);
   });
 
   it('switching files keeps the workspace and changes the path', async () => {
-    setPeek({ workspace: WS, path: 'src/a.ts' });
-    mockStore.peekDiff = '+x';
-    vi.mocked(setPeek).mockClear();
+    setChangesView({ workspace: WS, path: 'src/a.ts' });
+    mockStore.changesViewDiff = '+x';
+    vi.mocked(setChangesView).mockClear();
     await mount();
     await user.click(screen.getByRole('button', { name: 'b.ts' }));
-    expect(setPeek).toHaveBeenCalledWith({ workspace: WS, path: 'src/b.ts' });
+    expect(setChangesView).toHaveBeenCalledWith({ workspace: WS, path: 'src/b.ts' });
   });
 });

@@ -13,14 +13,14 @@
   import Composer from './components/Composer.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import ModelMenu from './components/ModelMenu.svelte';
-  import PeekSheet from './components/PeekSheet.svelte';
+  import ChangesView from './components/ChangesView.svelte';
   import AttentionSheet from './components/AttentionSheet.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import FleetList from './components/FleetList.svelte';
   import FocusRails from './components/FocusRails.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setPeek, pane, switchSession } from './lib/store.svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setChangesView, pane, switchSession } from './lib/store.svelte';
   import { TriangleAlert } from '@lucide/svelte';
   import { isTauri } from './lib/protocol';
   // The dynamic window title (the center header was deleted): the session's
@@ -80,8 +80,8 @@
         store.fleetOpen = false;
         return;
       }
-      if (store.peek) {
-        setPeek(null);
+      if (store.changesView) {
+        setChangesView(null);
         return;
       }
       if (store.focusInspector) {
@@ -150,7 +150,11 @@
       {:else if cur}
         <div class="readcol">
           {#key store.current}
-            <Transcript />
+            {#if store.changesView}
+              <ChangesView />
+            {:else}
+              <Transcript />
+            {/if}
           {/key}
           <Queue />
           <Composer />
@@ -158,7 +162,6 @@
         {#if store.modelMenuOpen}
           <ModelMenu />
         {/if}
-        <PeekSheet />
         <AttentionSheet />
       {:else}
         <div class="empty">

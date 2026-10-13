@@ -15,7 +15,6 @@
     type Event,
     type FileEntry,
     type GitStatus,
-    type NumstatEntry,
     type SessionMeta,
     type SkillInfo,
     type Workspace
@@ -34,7 +33,6 @@
     archiveSession,
     deleteSession,
     newSession,
-    fetchChanges,
     refetchSessionList,
     renameSession,
     restoreSession,
@@ -111,16 +109,14 @@
     // listing is recorded per workspace/path and cleared when the same dir
     // lists successfully again.
     fileErrors: {} as Record<string, Record<string, string>>,
-    // Git status per workspace (workbench P4): the files tab's M/A/D badges
-    // and the peek sheet's switcher. null = not a git repository.
+    // Git status per workspace (workbench P4): the tree's change tints and
+    // the changes view's file switcher. null = not a git repository.
     gitStatus: {} as Record<string, GitStatus | null>,
-    // The changes tab (file-tree plan, phase 3): the numstat row list per
-    // workspace. null = not a git repository (the tab shows its empty state).
-    changes: {} as Record<string, NumstatEntry[] | null>,
-    changesLoading: false,
-    // The peek sheet (P4): the file under diff inspection, and its diff text.
-    peek: null as { workspace: string; path: string } | null,
-    peekDiff: null as string | null,
+    // The changes view (file-tree plan): the file under diff inspection in
+    // the center column, and its diff text. Replaces the transcript while
+    // open; the future editor lands in the same slot.
+    changesView: null as { workspace: string; path: string } | null,
+    changesViewDiff: null as string | null,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>,
@@ -333,7 +329,6 @@
     store.files = ensureWorkspace(store.files, real.id);
     void fetchDir(real.id, '.');
     void refreshGitStatus(real.id);
-    void fetchChanges(real.id);
     // Archived sessions are listed (for the archive folder) but can't be
     // opened; auto-open the most recent live one, else start a fresh session.
     const unarchived =
@@ -391,9 +386,9 @@
     }
   }
 
-  // The files tab's badges and the peek sheet's switcher refresh on open
+  // The tree's change tints and the changes view's switcher refresh on open
   // and on every file-tree change. A non-git workspace records null (the
-  // badges simply stay off), never an error.
+  // tints simply stay off), never an error.
   async function refreshGitStatus(ws: string): Promise<void> {
     try {
       const out = await command({ type: 'git_status', workspace: ws });
@@ -406,49 +401,30 @@
     }
   }
 
-  // The changes tab's list: the numstat snapshot from the core (cached
-  // there, so a refetch is a cache read after the first). A non-git
-  // workspace records null — the tab shows its empty state.
-  async function fetchChanges(ws: string): Promise<void> {
-    store.changesLoading = true;
-    try {
-      const out = await command({ type: 'git_numstat', workspace: ws });
-      if (!store.workspaces.some((w) => w.id === ws)) return;
-      store.changes = {
-        ...store.changes,
-        [ws]: out.kind === 'git_numstat' ? out.entries : null
-      };
-    } catch {
-      store.changes = { ...store.changes, [ws]: null };
-    } finally {
-      store.changesLoading = false;
-    }
+  export function setChangesView(v: { workspace: string; path: string } | null): void {
+    store.changesView = v;
+    store.changesViewDiff = null;
+    if (v) void fetchChangesViewDiff(v);
   }
 
-  export function setPeek(peek: { workspace: string; path: string } | null): void {
-    store.peek = peek;
-    store.peekDiff = null;
-    if (peek) void fetchPeekDiff(peek);
-  }
-
-  async function fetchPeekDiff(peek: { workspace: string; path: string }): Promise<void> {
+  async function fetchChangesViewDiff(v: { workspace: string; path: string }): Promise<void> {
     try {
-      const out = await command({ type: 'git_diff', workspace: peek.workspace, path: peek.path });
+      const out = await command({ type: 'git_diff', workspace: v.workspace, path: v.path });
       // A slower switch wins nothing: a stale fetch must not clobber the
-      // sheet the user moved on from. Field compare — the $state proxy means
-      // store.peek is never === to the raw object that started the fetch.
+      // view the user moved on from. Field compare — the $state proxy means
+      // store.changesView is never === to the raw object that started it.
       if (
         out.kind === 'git_diff' &&
-        store.peek?.workspace === peek.workspace &&
-        store.peek?.path === peek.path
+        store.changesView?.workspace === v.workspace &&
+        store.changesView?.path === v.path
       )
-        store.peekDiff = out.diff.diff;
+        store.changesViewDiff = out.diff.diff;
     } catch {
       if (
-        store.peek?.workspace === peek.workspace &&
-        store.peek?.path === peek.path
+        store.changesView?.workspace === v.workspace &&
+        store.changesView?.path === v.path
       )
-        store.peekDiff = '';
+        store.changesViewDiff = '';
     }
   }
 
@@ -522,7 +498,6 @@
       store.fileErrors = next;
     }
     store.files = removeWorkspace(store.files, ws.id);
-    delete store.changes[ws.id];
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
@@ -747,7 +722,6 @@
         if (ev.type === 'file_tree_changed') {
           scheduleRefetch(ev.workspace, ev.changed);
           void refreshGitStatus(ev.workspace);
-          void fetchChanges(ev.workspace);
         }
         continue;
       }

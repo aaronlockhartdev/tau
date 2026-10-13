@@ -1,17 +1,17 @@
 <script lang="ts">
-  // The peek sheet (workbench P4): a non-modal 470px diff viewer anchored to
-  // the right edge of the center column. The center column is always the
-  // transcript — the sheet overlays it, it never replaces it.
-  import { store, setPeek } from '../lib/store.svelte';
+  // The changes view (file-tree plan): the file's git diff in the center
+  // column, replacing the transcript while open. A file row in the tree
+  // opens it; the future editor lands in this same slot.
+  import { store, setChangesView } from '../lib/store.svelte';
 
-  const peek = $derived(store.peek);
-  const diff = $derived(store.peekDiff);
-  const git = $derived(peek ? (store.gitStatus[peek.workspace] ?? null) : null);
+  const view = $derived(store.changesView);
+  const diff = $derived(store.changesViewDiff);
+  const git = $derived(view ? (store.gitStatus[view.workspace] ?? null) : null);
 
   // The switcher lists every changed file in the workspace; the current
-  // peek stays put when the status refreshes around it.
+  // file stays put when the status refreshes around it.
   const files = $derived.by((): string[] => {
-    if (!peek || !git) return [];
+    if (!view || !git) return [];
     const seen = new Set<string>();
     const out: string[] = [];
     for (const p of [...git.modified, ...git.untracked, ...git.deleted]) {
@@ -20,30 +20,30 @@
         out.push(p);
       }
     }
-    if (peek && !seen.has(peek.path)) out.push(peek.path);
+    if (view && !seen.has(view.path)) out.push(view.path);
     return out;
   });
 
   const lines = $derived.by(() => (diff ?? '').split('\n'));
   const hasDiff = $derived(
-    peek ? !!(git && (git.modified.includes(peek.path) || git.deleted.includes(peek.path))) : false
+    view ? !!(git && (git.modified.includes(view.path) || git.deleted.includes(view.path))) : false
   );
 
   function pick(p: string): void {
-    if (peek) setPeek({ ...peek, path: p });
+    if (view) setChangesView({ ...view, path: p });
   }
 </script>
 
-{#if peek}
-  <div class="peek">
-    <div class="ph">
-      <div class="title" title={peek.path}>{peek.path}</div>
-      <button class="x" title="close (esc)" onclick={() => setPeek(null)}>×</button>
+{#if view}
+  <div class="view">
+    <div class="hd">
+      <div class="title" title={view.path}>{view.path}</div>
+      <button class="x" title="close (esc)" onclick={() => setChangesView(null)}>×</button>
     </div>
     {#if files.length > 1}
       <div class="switcher">
         {#each files as f (f)}
-          <button class="f" class:on={f === peek.path} onclick={() => pick(f)} title={f}>
+          <button class="f" class:on={f === view.path} onclick={() => pick(f)} title={f}>
             {f.split('/').pop()}
           </button>
         {/each}
@@ -70,24 +70,19 @@
 {/if}
 
 <style>
-  .peek {
-    position: absolute;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    width: 470px;
+  /* Same slot as the transcript: it fills the center column's reading
+     column (and its focus-mode width) with the column's own background. */
+  .view {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    background: var(--panel);
-    border-left: 1px solid var(--line2);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
-    z-index: 20;
+    min-height: 0;
   }
-  .ph {
+  .hd {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--line);
     flex: none;
   }
@@ -118,7 +113,7 @@
   .switcher {
     display: flex;
     gap: 4px;
-    padding: 6px 10px;
+    padding: 6px 16px;
     border-bottom: 1px solid var(--line);
     overflow-x: auto;
     flex: none;
@@ -148,17 +143,16 @@
     min-height: 0;
   }
   .note {
-    padding: 16px 12px;
+    padding: 16px;
     font-size: 12px;
     color: var(--faint);
   }
   .diff {
     margin: 0;
-    padding: 8px 0;
+    padding: 8px 16px;
     font: 11px/1.6 var(--mono);
   }
   .diff > div {
-    padding: 0 12px;
     white-space: pre-wrap;
     word-break: break-all;
   }

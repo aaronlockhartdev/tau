@@ -6,7 +6,7 @@
   // and svelte-check chokes on its renamed props).
   import FileNode from './FileNode.svelte';
   import TreeNode from './TreeNode.svelte';
-  import { store, toggleFileDir, retryDirFetch, fileCache, setPeek } from '../lib/store.svelte';
+  import { store, toggleFileDir, retryDirFetch, fileCache, setChangesView } from '../lib/store.svelte';
   import { fileIcon, fileKind } from '../lib/files';
   import type { FileEntry } from '../lib/protocol';
 
@@ -27,8 +27,8 @@
 
   function toggle(): void {
     if (!entry.dir) {
-      // A file row opens the peek sheet (P4); dirs toggle their listing.
-      setPeek({ workspace: ws, path: entry.path });
+      // A file row opens the changes view in the center column; dirs toggle their listing.
+      setChangesView({ workspace: ws, path: entry.path });
       return;
     }
     if (store.fileErrors[ws]?.[entry.path]) {
