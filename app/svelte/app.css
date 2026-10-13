@@ -31,8 +31,8 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--tx);
-  font: 14px/1.45 var(--sans);
   font: 13px/1.55 var(--sans);
+}
 
 /* Nothing in the app rubber-bands: the main-frame (whole-window) bounce and
    every inner scroller, including the chat, are off. */
