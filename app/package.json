@@ -16,7 +16,9 @@
     "@lucide/svelte": "^1.55.0",
     "@tauri-apps/api": "^2.12.2",
     "@tauri-apps/plugin-dialog": "^2.8.1",
+    "jsdiff": "^1.1.1",
     "markdown-it": "^15.0.2",
+    "shiki": "^4.5.0",
     "virtua": "^0.53.3"
   },
   "devDependencies": {

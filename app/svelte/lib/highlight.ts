@@ -26,7 +26,7 @@ type Token = { content: string; color?: string };
 let instance: Promise<Highlighter> | null = null;
 
 function hl(): Promise<Highlighter> {
-  instance ??= createHighlighter({ themes: [THEME], langs: [...LANGS] });
+  if (instance === null) instance = createHighlighter({ themes: [THEME], langs: [...LANGS] });
   return instance;
 }
 
