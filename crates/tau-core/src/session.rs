@@ -50,6 +50,15 @@ struct Header {
 /// — there is deliberately no full-dump read API (spec §3 protocol rule).
 pub(crate) type EntryEventHook = Arc<dyn Fn(&Entry) + Send + Sync>;
 
+/// #149: a side entry deferred behind an in-flight entry. Its id was minted
+/// (and its wire upsert fired) at stage time; the file line is written under
+/// that id, in order, once the in-flight entry it was minted behind lands.
+struct StagedEntry {
+    id: String,
+    kind: String,
+    payload: Value,
+}
+
 pub struct SessionStore {
     id: String,
     root: PathBuf,
@@ -81,6 +90,22 @@ pub struct SessionStore {
     /// surface. Fired at the append choke point so every write path — the
     /// turn loop, the task tools, the OM — emits.
     entry_event_hook: Option<EntryEventHook>,
+    /// #149: a turn-loop task-tool dispatch is in progress on this store. A
+    /// side `append` (the task tool's record) stages — it mints its id and
+    /// fires its upsert, but does not write the line — while this is set, so
+    /// the line lands (via the next `append_entry`) after the in-flight tool
+    /// entry it was minted behind, keeping file order equal to id order. A
+    /// command (no turn-loop dispatch) leaves it clear and writes at once.
+    defer_side_appends: bool,
+    /// #149: entries minted but not yet written on this store (the in-flight
+    /// streaming assistant / tool call). A side `append` stages only while a
+    /// turn-loop dispatch is deferring AND one of these is in flight — with
+    /// nothing in flight (an idle owner) there is no line to order behind, so
+    /// the write goes at once and is never stranded.
+    in_flight: usize,
+    /// #149: side appends deferred behind an in-flight entry, written (under
+    /// their pre-minted id) when the in-flight entry lands.
+    staged: Vec<StagedEntry>,
 }
 
 /// Storage errors.
@@ -156,6 +181,9 @@ impl SessionStore {
             entry_len: Vec::new(),
             file_len: 0,
             entry_event_hook: None,
+            defer_side_appends: false,
+            in_flight: 0,
+            staged: Vec::new(),
         }
     }
 
@@ -222,6 +250,7 @@ impl SessionStore {
         // (duplicate id -> cyclic parent chain; see the live-om 80GB
         // regression). A failed open surfaces on the following append.
         let _ = self.ensure_open();
+        self.in_flight += 1;
         let id = format!("{:08}", self.next);
         self.next += 1;
         id
@@ -349,6 +378,29 @@ impl SessionStore {
                 entry.verify(i + 2)?;
                 out.push(entry);
             }
+        }
+        Ok(out)
+    }
+
+    /// #149: the file's entries plus the staged (minted, not yet written)
+    /// side entries, in order — the session's logical entry set while a turn
+    /// is in flight. The task layer's read-modify-write (a transition writes
+    /// an event, then re-reads the task list) must see the staged events, or
+    /// it reads a stale status. The staged entries are the most recent, so
+    /// they trail the file's entries.
+    pub(crate) fn entries_with_staged(&self) -> Result<Vec<Entry>, Error> {
+        let mut out = self.entries_range(0, usize::MAX)?;
+        for s in &self.staged {
+            out.push(Entry {
+                id: s.id.clone(),
+                parent: None,
+                timestamp: 0,
+                kind: s.kind.clone(),
+                payload: s.payload.clone(),
+                blob: None,
+                first_kept_entry_id: None,
+                crc: None,
+            });
         }
         Ok(out)
     }

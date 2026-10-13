@@ -245,7 +245,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
     .unwrap();
 
     // A child is a leaf: the planning tools are refused on the child.
-    let refused = child.task_tool_call("task_create", &serde_json::json!({ "title": "no" }));
+    let refused = child.task_tool_call("task_create", &serde_json::json!({ "title": "no" }), false);
     assert!(
         refused.starts_with("task_create: not available in a child session"),
         "{refused}"
@@ -253,7 +253,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
 
     // The worker tools route to the parent's store: the child sees the
     // parent's task.
-    let started = child.task_tool_call("task_start", &serde_json::json!({ "task": "task-1" }));
+    let started = child.task_tool_call("task_start", &serde_json::json!({ "task": "task-1" }), false);
     assert!(started.contains("task-1"), "{started}");
     assert!(started.contains("child ping"), "{started}");
 }

@@ -347,3 +347,71 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
     );
     drop(core);
 }
+
+/// #149: a `task_create` tool call whose side entry mints while the assistant
+/// entry is in flight must not invert the session's file. The side entry is
+/// staged (minted + upserted, not written) and written, in order, when the
+/// in-flight entry lands — file order stays equal to id order.
+#[tokio::test]
+async fn a_task_side_entry_lands_in_id_order_behind_the_in_flight_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Call 0 is a task_create tool call; the later calls answer plain text and
+    // end the turn.
+    let mut providers = BTreeMap::new();
+    providers.insert(
+        "dev".into(),
+        crate::config::Provider::with_model("canned://task-create", "model"),
+    );
+    let core = CoreBuilder::custom(providers).build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session: m } => m,
+        other => panic!("expected a session: {other:?}"),
+    };
+    core.dispatch(Command::MessageSend {
+        session: session.id.clone(),
+        text: "go".into(),
+        lane: MessageLane::FollowUp,
+    })
+    .unwrap();
+    // Wait for the turn to start, then settle.
+    let is_running = || {
+        core.sessions
+            .lock()
+            .unwrap()
+            .get(&session.id)
+            .is_some_and(|l| l.turn.load(Ordering::SeqCst))
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !is_running() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(is_running(), "the turn never started");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while is_running() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(!is_running(), "the turn never settled");
+
+    // The file: every entry line in strict id order.
+    let mut store = SessionStore::for_workspace(tmp.path(), &session.id);
+    store.open().unwrap();
+    let entries = store.entries_range(0, usize::MAX).unwrap();
+    let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted, "file line order diverges from id order: {ids:?}");
+    // The task side entry is present in the file.
+    assert!(
+        entries.iter().any(|e| e.kind == crate::task::KIND_TASK),
+        "the task side entry is missing: {entries:?}"
+    );
+    drop(core);
+}

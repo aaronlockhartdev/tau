@@ -105,7 +105,11 @@ pub async fn dispatch(
         // Tasks live in this session's own store (spec §5.3) — parent and
         // child alike. Routed before the sub-agent surface so a child
         // (which has no supervisor) still gets its tools.
-        name if name.starts_with("task_") => session.task_tool_call(name, &call.args).into(),
+        name if name.starts_with("task_") => {
+            // #149: a turn-loop task dispatch defers the record's write behind
+            // the in-flight tool entry.
+            session.task_tool_call(name, &call.args, true).into()
+        }
         "recall" => session.recall_scoped(&call.args).into(),
         name if name.starts_with("subagent_") => match supervisor.as_ref() {
             Some(sup) => crate::subagent::route_parent(sup, call).into(),

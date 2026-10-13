@@ -201,8 +201,11 @@ use crate::session::SessionStore;
 type StoreResult<T> = Result<T, String>;
 
 fn load(store: &SessionStore) -> StoreResult<Vec<Task>> {
+    // #149: include the staged (minted, not yet written) task events — a
+    // transition re-reads the list right after writing one, and the write is
+    // deferred behind the in-flight entry, so the file alone is stale.
     store
-        .entries_range(0, usize::MAX)
+        .entries_with_staged()
         .map(|v| fold_entries(&v))
         .map_err(|e| e.to_string())
 }

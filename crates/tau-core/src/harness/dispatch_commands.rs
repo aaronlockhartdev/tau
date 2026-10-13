@@ -231,7 +231,7 @@ impl Core {
                 // session, review B3); the id rule lives in the tool path.
                 let out = live
                     .agent
-                    .task_tool_call("task_create", &json!({ "title": title }));
+                    .task_tool_call("task_create", &json!({ "title": title }), false);
                 if out.starts_with("task_create:") {
                     return Err(ProtocolError::Other { message: out });
                 }
@@ -292,6 +292,7 @@ impl Core {
                         "summary": summary,
                         "passed": passed,
                     }),
+                    false,
                 );
                 if out.starts_with("task_evidence:") {
                     return Err(ProtocolError::Other { message: out });
@@ -303,7 +304,7 @@ impl Core {
                 let live = self.live_unarchived(&session)?;
                 let out = live
                     .agent
-                    .task_tool_call("task_cancel", &json!({ "task": task }));
+                    .task_tool_call("task_cancel", &json!({ "task": task }), false);
                 if out.starts_with("task_cancel:") {
                     return Err(ProtocolError::Other { message: out });
                 }

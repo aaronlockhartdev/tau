@@ -19,6 +19,25 @@ fn resolve_om_model(om_model: &str, model: &str) -> String {
     }
 }
 
+/// #149: settles the session store on every turn exit — the break-fallthrough
+/// tail alone misses the `?` error returns, which would strand staged side
+/// entries (in-memory only) and pin the in-flight count for the next turn.
+struct TurnSettleGuard<'a> {
+    agent: &'a AgentSession,
+}
+
+impl Drop for TurnSettleGuard<'_> {
+    fn drop(&mut self) {
+        let mut inner = self
+            .agent
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        // Best-effort: a settlement error is no worse than the turn's own.
+        let _ = inner.store.settle_turn();
+    }
+}
+
 impl AgentSession {
     /// Run turns until the queue is empty.
     pub async fn process(&self) -> Result<(), AgentError> {
@@ -39,6 +58,10 @@ impl AgentSession {
 
     #[allow(clippy::too_many_lines)] // one turn loop; splitting is refactoring
     async fn run_turn(&self) -> Result<(), AgentError> {
+        // #149: settle the store on every exit path (a `?` error skips the
+        // break-fallthrough tail): flush staged side entries, clear the
+        // in-flight count.
+        let _settle = TurnSettleGuard { agent: self };
         // A force send or stop that targeted this turn is captured before the
         // call loop clears the per-call kill flag; it marks every segment of
         // the turn interrupted, not just the one cut mid-flight.

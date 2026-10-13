@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use super::{BlobRef, DEFAULT_BLOB_THRESHOLD, Entry, Error, Header, SessionStore, ZSTD_LEVEL};
+use super::{
+    BlobRef, DEFAULT_BLOB_THRESHOLD, Entry, Error, Header, SessionStore, StagedEntry, ZSTD_LEVEL,
+};
 
 impl SessionStore {
     pub(super) fn blob_path(&self, id: &str) -> PathBuf {
@@ -254,6 +256,23 @@ impl SessionStore {
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
         let id = self.mint_id();
+        // #149: an earlier-minted entry is still in flight (not written);
+        // writing this one now would land it ahead of that entry's line,
+        // inverting file order against id order. Stage it — the next
+        // append_entry (the in-flight entry landing) writes it, in order,
+        // under this id.
+        if self.defer_side_appends && self.in_flight > 1 {
+            let entry = self.new_entry(&id, kind, payload.clone(), None);
+            if let Some(hook) = &self.entry_event_hook {
+                hook(&entry);
+            }
+            self.staged.push(StagedEntry {
+                id,
+                kind: kind.to_owned(),
+                payload,
+            });
+            return Ok(entry);
+        }
         self.append_entry(&id, kind, payload, parent)
     }
 
@@ -269,8 +288,14 @@ impl SessionStore {
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
         let entry = self.append_line(self.new_entry(id, kind, payload, None), parent)?;
+        self.in_flight = self.in_flight.saturating_sub(1);
         if let Some(hook) = &self.entry_event_hook {
             hook(&entry);
+        }
+        // #149: write the side entries that staged behind it, in order, before
+        // anything newer is minted.
+        if !self.staged.is_empty() {
+            self.flush_staged()?;
         }
         Ok(entry)
     }
@@ -286,6 +311,33 @@ impl SessionStore {
         }
     }
 
+    /// #149: set/clear the turn-loop task-tool staging flag (the dispatch
+    /// sets it true for the duration of the tool call, then resets it).
+    pub(crate) fn set_defer_side_appends(&mut self, defer: bool) {
+        self.defer_side_appends = defer;
+    }
+
+    /// #149: write the staged side entries, in staging order, under their
+    /// pre-minted ids (ADR-0008), each parented to the current leaf (chain
+    /// semantics, as a direct append would be).
+    fn flush_staged(&mut self) -> Result<(), Error> {
+        let pending = std::mem::take(&mut self.staged);
+        for e in pending {
+            let parent = self.leaf()?.map(|e| e.id.clone());
+            self.append_entry(&e.id, &e.kind, e.payload, parent.as_deref())?;
+        }
+        Ok(())
+    }
+
+    /// #149: turn-end settlement — the turn loop's drop guard calls this on
+    /// every exit path, including `?` errors: flush the staged side entries so
+    /// a deferred record is never stranded, and clear the in-flight count (a
+    /// mint that never wrote is a ghost that must not pin the next turn).
+    pub(crate) fn settle_turn(&mut self) -> Result<(), Error> {
+        self.flush_staged()?;
+        self.in_flight = 0;
+        Ok(())
+    }
 
     /// entry line in the file; `None` = a fresh session with no entries (not
     /// an error — the first entry starts a root branch).
@@ -436,6 +488,35 @@ mod tests {
         // Wire-only: the file still holds just the header.
         let raw = fs::read_to_string(s.path()).unwrap();
         assert_eq!(raw.lines().count(), 1, "the file holds only the header: {raw}");
+    }
+
+    #[test]
+    fn a_side_append_stages_while_an_entry_is_in_flight_then_flushes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = store(tmp.path(), "s1");
+        s.create().unwrap();
+        // A turn-loop task dispatch is in progress; an entry is minted (in
+        // flight, not written).
+        s.set_defer_side_appends(true);
+        let inflight = s.mint_id();
+        // A side append (a task entry) landing while it is in flight is
+        // staged, not written — the file still holds only the header.
+        let task = s
+            .append("task", Value::String("create the task".into()), None)
+            .unwrap();
+        let raw = fs::read_to_string(s.path()).unwrap();
+        assert_eq!(raw.lines().count(), 1, "staged: header only: {raw}");
+        // The in-flight entry lands: its append_entry flushes the staged side
+        // entry, in order, under the pre-minted id.
+        s.append_entry(&inflight, "assistant", Value::String("thinking".into()), None)
+            .unwrap();
+        let entries = s.entries_range(0, 10).unwrap();
+        let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![inflight.as_str(), task.id.as_str()],
+            "file order must equal id order"
+        );
     }
 
     #[test]

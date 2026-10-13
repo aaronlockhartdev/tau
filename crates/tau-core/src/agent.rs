@@ -471,7 +471,7 @@ impl AgentSession {
     /// file (one store, one lock); the child's pane is a projection.
     /// The child's `inner` is read and released before the parent's lock
     /// is taken: no child-lock → parent-lock nesting (the deadlock guard).
-    fn task_tool_dispatch(&self, name: &str, args: &Value) -> String {
+    fn task_tool_dispatch(&self, name: &str, args: &Value, defer: bool) -> String {
         let (is_child, parent) = {
             let inner = self
                 .inner
@@ -485,14 +485,26 @@ impl AgentSession {
         if let Some(r) = tools::surface::task_child_refusal(is_child, name) {
             return r;
         }
+        // #149: a turn-loop task dispatch defers the record's file write (it
+        // lands behind the in-flight tool entry); a command writes at once.
+        // The flag is set on the owner's store — where the write goes — for
+        // the duration of the call only.
         if let Some(parent) = parent {
-            parent.with_task_store(|store| crate::task::tool_call(store, name, args))
+            parent.with_task_store(|store| {
+                store.set_defer_side_appends(defer);
+                let out = crate::task::tool_call(store, name, args);
+                store.set_defer_side_appends(false);
+                out
+            })
         } else {
             let mut inner = self
                 .inner
                 .lock()
                 .expect("agent inner: no panic while the lock is held");
-            crate::task::tool_call(&mut inner.store, name, args)
+            inner.store.set_defer_side_appends(defer);
+            let out = crate::task::tool_call(&mut inner.store, name, args);
+            inner.store.set_defer_side_appends(false);
+            out
         }
     }
 
@@ -518,8 +530,8 @@ impl AgentSession {
 
     /// The seven task tools (the app's task commands; the model's dispatch
     /// routes them through the surface) — both share the child→parent routing.
-    pub(crate) fn task_tool_call(&self, name: &str, args: &Value) -> String {
-        self.task_tool_dispatch(name, args)
+    pub(crate) fn task_tool_call(&self, name: &str, args: &Value, defer: bool) -> String {
+        self.task_tool_dispatch(name, args, defer)
     }
 
     #[cfg(test)]
