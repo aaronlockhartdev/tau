@@ -1,5 +1,8 @@
+#[cfg(debug_assertions)]
 use std::fmt::Write as _;
+#[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(debug_assertions)]
 use std::time::Duration;
 
 use super::{
