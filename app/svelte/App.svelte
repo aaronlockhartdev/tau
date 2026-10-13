@@ -147,6 +147,13 @@
     <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-9"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0114 0"/></symbol>
     <symbol id="i-archive" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 001 1h12a1 1 0 001-1V8M10 12h4"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0112 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 19a2 2 0 004 0"/></symbol>
+    <symbol id="i-focus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+    <symbol id="i-blocked" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.5 5.5l13 13"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L1.5 21h21L12 3z"/><path d="M12 10v5M12 18h.01"/></symbol>
   </svg>
   <WorkspaceTabs />
   <div class="body" class:focus={focus}>
@@ -155,7 +162,7 @@
     </aside>
     <main class="center">
       {#if error}
-        <div class="err">⚠ {error}</div>
+        <div class="err"><svg class="ei" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-alert" /></svg>{error}</div>
       {/if}
       {#if loading}
         <div class="empty"><span class="big">Loading…</span></div>
@@ -233,11 +240,22 @@
     overflow: hidden;
   }
   .err {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 6px 16px;
     font: 11.5px var(--mono);
     color: var(--red);
     background: color-mix(in srgb, var(--red) 8%, transparent);
     border-bottom: 1px solid var(--line);
+  }
+  .err .ei {
+    width: 13px;
+    height: 13px;
+    flex: none;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
   }
   .empty {
     flex: 1;

@@ -163,7 +163,7 @@
       </button>
     {/if}
     {#if shell.intmark}
-      <div class="intmark">⚡ interrupted</div>
+      <div class="intmark"><svg class="im" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bolt" /></svg>interrupted</div>
     {/if}
   </div>
 {/if}
@@ -365,9 +365,16 @@
     color: var(--tx);
   }
   .intmark {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font: 11px var(--mono);
     color: var(--amber);
     margin-top: 6px;
+  }
+  .intmark .im {
+    width: 11px;
+    height: 11px;
   }
   .hd .caret {
     margin-left: auto;

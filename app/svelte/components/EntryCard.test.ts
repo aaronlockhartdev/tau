@@ -242,7 +242,7 @@ describe('EntryCard', () => {
   it('an interrupted entry carries the interrupted mark', () => {
     mount({ id: 'e1', kind: 'interrupted', text: 'partial' });
     expect(screen.getByText('partial')).toBeInTheDocument();
-    expect(screen.getByText('⚡ interrupted')).toBeInTheDocument();
+    expect(screen.getByText('interrupted')).toBeInTheDocument();
   });
 
   it('a skill user entry shows the preview and dblclick reveals the full text', async () => {

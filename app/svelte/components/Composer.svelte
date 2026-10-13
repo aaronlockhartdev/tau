@@ -19,6 +19,10 @@
   import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';
 
   let text = $state('');
+  // This WebKit build does not match :focus-within (verified: an ancestor
+  // of the focused textarea reports matches(':focus-within') === false), so
+  // the focus ring is driven from focusin/focusout instead.
+  let focused = $state(false);
   let lane = $state<PendingMsg['lane']>('steering');
 
   const lanes: Array<{ id: PendingMsg['lane']; label: string; title: string }> = [
@@ -165,7 +169,14 @@
   }
 </script>
 
-<div class="composer">
+<div
+  class="composer"
+  class:focus={focused}
+  onfocusin={() => (focused = true)}
+  onfocusout={(e) => {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) focused = false;
+  }}
+>
   {#if archived}
     <div class="crow archived">
       <svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-archive" /></svg>
@@ -246,7 +257,13 @@
         title={asStop ? 'stop the in-flight turn' : 'send'}
         onclick={asStop ? () => void stop() : submit}
       >
-        {asStop ? '■' : running ? (lane === 'force' ? '⚡' : '↑') : '↑'}
+        {#if asStop}
+          <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop" /></svg>
+        {:else if running && lane === 'force'}
+          <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bolt" /></svg>
+        {:else}
+          <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-send" /></svg>
+        {/if}
       </button>
     </div>
   {/if}
@@ -261,11 +278,14 @@
     border-radius: 12px;
     background: var(--panel);
   }
+  .composer.focus {
+    border-color: rgba(76, 141, 255, 0.5);
+  }
   .crow {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 11px 14px 6px;
   }
   .crow.archived {
     font: 12px var(--mono);
@@ -320,18 +340,21 @@
     color: var(--acc);
   }
   .send {
-    width: 26px;
+    width: 30px;
     height: 26px;
-    border-radius: 7px;
+    border-radius: 8px;
     background: var(--acc);
     color: #060a10;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
     flex: none;
     border: none;
     cursor: pointer;
+  }
+  .send .si {
+    width: 14px;
+    height: 14px;
   }
   .send.disabled {
     opacity: 0.35;
@@ -344,7 +367,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 12px 9px;
+    padding: 0 14px 10px;
   }
   .cmeta {
     display: flex;
@@ -374,15 +397,15 @@
     color: var(--dim);
   }
   .mchip .mi {
-    width: 11px;
-    height: 11px;
+    width: 12px;
+    height: 12px;
     stroke: var(--faint);
     fill: none;
     stroke-width: 2;
   }
   .mchip .chev {
-    width: 8px;
-    height: 8px;
+    width: 10px;
+    height: 10px;
     stroke: var(--faint);
     fill: none;
     stroke-width: 2;

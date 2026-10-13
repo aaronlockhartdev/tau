@@ -129,7 +129,7 @@
                 {#if t.blockers.length > 0}
                   <div class="dl">blocker</div>
                   <div class="block">
-                    ⛔ {t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
+                    <span class="bmark"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-blocked" /></svg></span>{t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
                   </div>
                 {/if}
                 <div class="a">
@@ -386,6 +386,17 @@
   .ld .block {
     color: var(--red);
     font-size: 12px;
+  }
+  .ld .block .bmark {
+    display: inline-flex;
+    margin-right: 4px;
+  }
+  .ld .block .bi {
+    width: 12px;
+    height: 12px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
   }
   .ld .a {
     margin-top: 6px;

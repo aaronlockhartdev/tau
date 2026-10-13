@@ -110,7 +110,7 @@
     title="Focus mode: hide side panes"
     onclick={() => (store.focus = !store.focus)}
   >
-    ⤢
+    <svg class="fi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-focus" /></svg>
   </button>
   <button
     class="bell"
@@ -118,7 +118,7 @@
     title="Needs your attention"
     onclick={() => (store.attentionOpen = !store.attentionOpen)}
   >
-    🔔
+    <svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bell" /></svg>
     {#if attention().length > 0}
       <span class="count">{attention().length}</span>
     {/if}
@@ -226,7 +226,9 @@
     height: 30px;
     border-radius: 8px;
     color: var(--dim);
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .focus:hover {
     color: var(--tx);
@@ -245,8 +247,19 @@
     background: none;
     border: none;
     color: var(--dim);
-    font-size: 13px;
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
+  }
+  .focus .fi,
+  .bell .bi {
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
   }
   .bell:hover {
     color: var(--tx);

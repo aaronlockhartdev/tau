@@ -171,7 +171,7 @@ describe('RightPane', () => {
     });
     await mount();
     await user.click(screen.getByRole('button', { name: /task t1/ }));
-    expect(screen.getByText(/⛔ waiting on api key — user/)).toBeInTheDocument();
+    expect(screen.getByText(/waiting on api key — user/)).toBeInTheDocument();
   });
 
   it('shows the empty hint with no sub-agents', async () => {
