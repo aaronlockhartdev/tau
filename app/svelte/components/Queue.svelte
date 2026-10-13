@@ -1,6 +1,6 @@
 <script lang="ts">
   // Two-section vertical queue above the composer (spec §9):
-  // steering ("next opportunity") on top, follow-up ("after work
+  // steering ("next tool boundary") on top, follow-up ("after work
   // completes") below. Child reports (a sub-agent's wake) carry a source
   // and get their own section, distinct from the user's own messages.
   // Items are deletable; the core's queue events are the source of truth,
@@ -34,7 +34,7 @@
       {/each}
     {/snippet}
     {@render queueSection('subagent reports', reports, true)}
-    {@render queueSection('next opportunity', steering, false)}
+    {@render queueSection('next tool boundary', steering, false)}
     {@render queueSection('after work completes', followUp, false)}
   </div>
 {/if}

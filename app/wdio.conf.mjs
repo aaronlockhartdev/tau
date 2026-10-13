@@ -61,7 +61,8 @@ const LEG_SPECS = {
     'mock-text.spec.mjs',
     'mock-tool.spec.mjs',
     'mock-multi.spec.mjs',
-    'mock-subagent.spec.mjs'
+    'mock-subagent.spec.mjs',
+    'mock-workbench.spec.mjs'
   ]
 };
 // The isolated HOME keeps the run from touching the real ~/.config/tau; an

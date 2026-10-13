@@ -31,7 +31,10 @@
     <span class="sep">·</span>
     <span class="k">om</span>
     {#if s && s.om.kind === 'idle'}
-      <span class="om">{fmtK(s.om.observation_tokens)}/{fmtK(s.om.reflector_threshold)}</span>
+      <span class="om">
+        {fmtK(s.om.observation_tokens)}/{fmtK(s.om.reflector_threshold)}
+        {#if s.om.pending_tokens > 0}<span class="ompend">+{fmtK(s.om.pending_tokens)}</span>{/if}
+      </span>
     {:else if s}
       <span class="om busy">{s.om.kind}<span class="pulse">…</span></span>
     {/if}
@@ -111,6 +114,11 @@
   }
   .om {
     color: var(--faint);
+  }
+  .ompend {
+    color: var(--faint);
+    opacity: 0.7;
+    margin-left: 4px;
   }
   .om.busy {
     color: var(--acc);

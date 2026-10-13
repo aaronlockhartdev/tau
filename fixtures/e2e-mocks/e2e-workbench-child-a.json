@@ -1,0 +1,19 @@
+{
+  "match": "e2e-workbench-child-a",
+  "turns": [
+    {
+      "calls": [
+        {
+          "name": "parent_notify",
+          "arguments": {
+            "text": "task-1 finished: evidence in place",
+            "done": true,
+            "output": { "status": "ok" }
+          }
+        }
+      ]
+    },
+    { "text": "Done. (e2e workbench child a)" }
+  ],
+  "usage": { "input_tokens": 150, "output_tokens": 60, "total_tokens": 210 }
+}
