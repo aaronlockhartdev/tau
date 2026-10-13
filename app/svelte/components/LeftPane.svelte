@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Left pane (spec §9, the #11 verdict): tabbed files | sessions. The
+  // Left pane (spec §9, the #11 verdict): tabbed files | changes | sessions.
   // sessions tab is the MRU-sorted session tree — sub-agent sessions
   // grouped under their parent (collapsible; the active session's chain
   // expanded by default), an archive folder at the bottom, and the badge

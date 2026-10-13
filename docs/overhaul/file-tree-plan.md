@@ -107,6 +107,15 @@ all three states; LeftPane test for the tab, its rows, and the peek wiring.
 
 ## Tickets
 
-Covers and closes #116 on completion. Phases land as: (1) icons commit,
-(2) protocol+core+styling commit, (3) changes-tab commit — each gate-green
-(svelte-check, vitest, eslint; core: nextest + clippy).
+Covers and closes #116. All three phases shipped 2026-10-13:
+
+1. Icons — `2faeb46` (file-type icons via Lucide, `fileKind`/`fileIcon` in `lib/files.ts`).
+2. Git-aware tree — `b3eefd6` (protocol `FileEntry.ignored`/`git` + `NumstatEntry` +
+   `git_numstat`; the per-workspace cached git snapshot in `harness/git.rs`, annotated at
+   the dispatch layer; tinted names, `+N −M` stats, ignored rows greyed, the P4 letter
+   badge retired).
+3. Changes tab — `ffc1579` (files | changes | sessions; numstat rows reusing the tree's
+   tint/stats styling, click opens the peek sheet; refetch on `file_tree_changed`).
+
+Deferred from the draft: the count badge on the changes tab (the row list is the count,
+and a badge would need a separate unread-model) — revisit if it earns its keep.
