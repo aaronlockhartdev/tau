@@ -274,8 +274,19 @@ impl SessionStore {
         }
         Ok(entry)
     }
+    /// Wire-only upsert for a pre-minted id (ADR-0008, #148): fires the
+    /// entry event without writing the file line, which a later
+    /// `append_entry` under the same id settles. A queue-time write would
+    /// land ahead of any earlier-minted entry still in flight (the
+    /// streaming assistant), inverting file order against id order — the
+    /// defer is what keeps the two equal.
+    pub fn upsert_event(&self, id: &str, kind: &str, payload: Value) {
+        if let Some(hook) = &self.entry_event_hook {
+            hook(&self.new_entry(id, kind, payload, None));
+        }
+    }
 
-    /// The active leaf: the persisted branch choice if any, else the last
+
     /// entry line in the file; `None` = a fresh session with no entries (not
     /// an error — the first entry starts a root branch).
     pub fn leaf(&mut self) -> Result<Option<Entry>, Error> {
@@ -408,6 +419,23 @@ mod tests {
         let content = fs::read_to_string(s.path()).unwrap();
         let line = content.lines().last().unwrap();
         assert!(!line.contains(&"x".repeat(50)));
+    }
+
+    #[test]
+    fn upsert_event_fires_the_hook_without_writing_a_line() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = store(tmp.path(), "s1");
+        s.create().unwrap();
+        let fired = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let f = std::sync::Arc::clone(&fired);
+        s.set_entry_event_hook(Some(std::sync::Arc::new(move |e: &Entry| {
+            f.lock().unwrap().push(e.id.clone());
+        })));
+        s.upsert_event("00000042", "user", Value::String("hi".into()));
+        assert_eq!(fired.lock().unwrap().as_slice(), &["00000042".to_string()]);
+        // Wire-only: the file still holds just the header.
+        let raw = fs::read_to_string(s.path()).unwrap();
+        assert_eq!(raw.lines().count(), 1, "the file holds only the header: {raw}");
     }
 
     #[test]

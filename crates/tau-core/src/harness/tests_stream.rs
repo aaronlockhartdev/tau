@@ -242,3 +242,108 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
     );
     drop(core);
 }
+
+/// #148: a child's done report landing while the parent's call is in flight
+/// must not invert the parent's file. The report's entry is minted at queue
+/// time (its upsert fires then, so the GUI shows the report now) but its
+/// line is written at the turn loop's dequeue — after the in-flight
+/// assistant line lands. File order stays equal to id order.
+#[tokio::test]
+async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight() {
+    let tmp = tempfile::tempdir().unwrap();
+    // The parent's first call hangs in prefill for 2 s (the in-flight
+    // window); the child finishes in ~0.8 s, inside it.
+    let mut providers = BTreeMap::new();
+    providers.insert(
+        "dev".into(),
+        crate::config::Provider::with_model("canned://slow-first", "model"),
+    );
+    let core = CoreBuilder::custom(providers)
+        .with_child_factory(Arc::new(SlowChildFactory {
+            body: done_body(),
+            delay_ms: 400,
+        }))
+        .build();
+    let collected = collect_events(&core);
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session: m } => m,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let sub = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "do it".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    core.dispatch(Command::MessageSend {
+        session: session.id.clone(),
+        text: "go".into(),
+        lane: MessageLane::FollowUp,
+    })
+    .unwrap();
+    // The steer is drained mid-turn: wait for the turn to start, then settle.
+    let is_running = || {
+        core.sessions
+            .lock()
+            .unwrap()
+            .get(&session.id)
+            .is_some_and(|l| l.turn.load(Ordering::SeqCst))
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !is_running() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(is_running(), "the parent's turn never started");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while is_running() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(!is_running(), "the parent's turn never settled");
+
+    // The parent's file: every entry line in strict id order.
+    let mut store = SessionStore::for_workspace(tmp.path(), &session.id);
+    store.open().unwrap();
+    let entries = store.entries_range(0, usize::MAX).unwrap();
+    let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
+    let mut sorted = ids.clone();
+    sorted.sort();
+    assert_eq!(ids, sorted, "file line order diverges from id order: {ids:?}");
+    // The report is present, attributed to the child.
+    assert!(
+        entries.iter().any(|e| {
+            e.kind == crate::agent::KIND_USER
+                && e.payload["lane"] == "steering"
+                && e.payload["source"] == json!(sub.child)
+        }),
+        "the steering report is missing from the file: {entries:?}"
+    );
+    // Its upsert fired at queue time (the GUI shows the report while the
+    // parent's turn is in flight).
+    let sid = session.id.clone();
+    assert!(
+        collected.lock().unwrap().iter().any(|e| {
+            matches!(
+                e,
+                Event::EntryUpsert { session, entry, .. }
+                    if *session == sid
+                        && entry.payload["source"] == json!(sub.child)
+            )
+        }),
+        "no queue-time upsert for the steering report"
+    );
+    drop(core);
+}

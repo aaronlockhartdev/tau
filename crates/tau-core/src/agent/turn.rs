@@ -541,13 +541,7 @@ impl AgentSession {
             ),
         ));
     }
-    #[allow(clippy::too_many_lines)] // one append pass; splitting is refactoring
     fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
-        // A steering report was already appended at queue time (so the GUI
-        // showed it immediately); don't append it a second time here.
-        if msg.in_file {
-            return Ok(());
-        }
         let skill = msg
             .skill
             .as_ref()
@@ -555,16 +549,20 @@ impl AgentSession {
                 name: name.clone(),
                 location: location.clone(),
             });
-        self.append(
-            KIND_USER,
-            tau_protocol::payload::UserPayload {
-                text: msg.text,
-                lane: lane_name(msg.lane).to_owned(),
-                source: msg.source,
-                skill,
-            }
-            .to_value(),
-        )
+        let payload = tau_protocol::payload::UserPayload {
+            text: msg.text,
+            lane: lane_name(msg.lane).to_owned(),
+            source: msg.source,
+            skill,
+        }
+        .to_value();
+        // A notified steering's id was minted at queue time (its upsert
+        // already fired): the line lands now, under that id, after the
+        // in-flight entry it was queued behind (#148).
+        match msg.entry_id {
+            Some(id) => self.append_id(&id, KIND_USER, payload),
+            None => self.append(KIND_USER, payload),
+        }
     }
 
     fn append_assistant(

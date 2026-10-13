@@ -1,4 +1,6 @@
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
 use super::{
     Arc, FunctionCall, Future, Pin, Provider, ProviderError, Requests, ResponseRequest, TurnEvent,
@@ -217,6 +219,43 @@ impl TurnProvider for PrefillHangProvider {
         })
     }
 }
+
+#[cfg(debug_assertions)]
+fn script_plain() -> String {
+    "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}\n\ndata: [DONE]\n\n"
+        .to_string()
+}
+
+/// `canned://slow-first` — #148's in-flight window: the first call hangs in
+/// prefill for 2 s (a queue-time event lands while it is in flight), the
+/// later calls answer immediately.
+#[cfg(debug_assertions)]
+struct SlowFirstProvider {
+    index: AtomicUsize,
+}
+
+#[cfg(debug_assertions)]
+impl TurnProvider for SlowFirstProvider {
+    fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
+        let first = self.index.fetch_add(1, Ordering::SeqCst) == 0;
+        let (events, _) = decode_stream(&script_plain()).expect("plain script decodes");
+        Box::pin(async move {
+            if first {
+                tokio::time::sleep(Duration::from_millis(2000)).await;
+            }
+            let mut result = TurnResult::default();
+            for event in &events {
+                if !sink.event(event.clone()) {
+                    break;
+                }
+                fold_event(event, &mut result);
+            }
+            result.completed = true;
+            Ok(result)
+        })
+    }
+}
+
 /// A provider entry with this base URL is a scripted stream, not an HTTP
 /// endpoint: the `canned()` test seam promoted to a provider entry so the
 /// GUI's real-app E2E can drive deterministic turns through the real core.
@@ -268,6 +307,11 @@ pub fn canned_dev(provider: &Provider) -> Option<TurnProviderRef> {
     #[cfg(debug_assertions)]
     {
         let script = provider.base_url.strip_prefix(CANNED_SCHEME)?;
+        if script == "slow-first" {
+            return Some(Arc::new(SlowFirstProvider {
+                index: AtomicUsize::new(0),
+            }));
+        }
         let body = match script {
             "text" => script_text(),
             "reasoning" => script_reasoning(),

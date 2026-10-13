@@ -96,10 +96,11 @@ struct Queued {
     /// A skill invocation (ticket #28): the entry's payload carries
     /// `(name, location)` so the GUI renders its green block.
     skill: Option<(String, String)>,
-    /// The entry was appended to the file at queue time (a steering report
-    /// lands now, so the GUI shows it immediately); the turn loop's dequeue
-    /// skips the second append.
-    in_file: bool,
+    /// The entry's pre-minted id: a notified steering report mints its id
+    /// at queue time (the wire upsert fires then) and the turn loop's
+    /// dequeue writes the file line under it (#148) — never a queue-time
+    /// write, which would land ahead of an in-flight earlier-minted entry.
+    entry_id: Option<String>,
 }
 
 const fn lane_name(lane: Lane) -> &'static str {
@@ -252,7 +253,7 @@ impl AgentSession {
             lane,
             source: None,
             skill,
-            in_file: false,
+            entry_id: None,
         };
         if lane == Lane::Force {
             self.kill.store(true, Ordering::SeqCst);
@@ -299,28 +300,36 @@ impl AgentSession {
         self.stop.store(false, Ordering::SeqCst);
         let text = text.into();
         let steering = matches!(lane, Lane::Steering);
-        // A steering report is appended to the file the moment it is queued, so
-        // the EntryUpsert event fires now and the GUI shows the report immediately
-        // (not at the next LLM-call boundary, which for an idle parent may be a
-        // long way off). The in_file flag tells the turn loop's dequeue to skip
-        // the second append.
-        if steering {
-            let _ = inner.store.append(
+        // The report's entry is minted now and its upsert fires now — the
+        // GUI shows it while the parent's turn is in flight — but the file
+        // line is NOT written here: a queue-time write would land ahead of
+        // the in-flight assistant entry's line (minted earlier, written when
+        // the call returns), inverting file order against id order (#148).
+        // The turn loop's dequeue writes the line under the same id, after
+        // that line has landed.
+        let entry_id = if steering {
+            let id = inner.store.mint_id();
+            inner.store.upsert_event(
+                &id,
                 KIND_USER,
-                serde_json::json!({
-                    "text": text,
-                    "lane": "steering",
-                    "source": source,
-                }),
-                None,
+                tau_protocol::payload::UserPayload {
+                    text: text.clone(),
+                    lane: "steering".to_owned(),
+                    source: Some(source.clone()),
+                    skill: None,
+                }
+                .to_value(),
             );
-        }
+            Some(id)
+        } else {
+            None
+        };
         inner.queue.push_back(Queued {
             text,
             lane,
             source: Some(source),
             skill: None,
-            in_file: steering,
+            entry_id,
         });
     }
 
