@@ -75,8 +75,10 @@
 
 <div class="pane">
   <div class="tabs" role="tablist">
-    <button class="tab" class:on={p?.rtab === 'tasks'} disabled={!p} onclick={() => { if (p) setRtab('tasks'); }}>tasks</button>
-    <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p} onclick={() => { if (p) setRtab('subs'); }}>sub-agents</button>
+    <div class="seg">
+      <button class="tab" class:on={p?.rtab === 'tasks'} disabled={!p} onclick={() => { if (p) setRtab('tasks'); }}>tasks</button>
+      <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p} onclick={() => { if (p) setRtab('subs'); }}>sub-agents</button>
+    </div>
   </div>
   {#if p}
   {#if p.rtab === 'tasks'}
@@ -244,13 +246,20 @@
   .tabs {
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 0 12px 8px;
-    border-bottom: 1px solid var(--line);
+    gap: 8px;
+    padding: 10px 12px 8px;
     flex: none;
   }
+  .seg {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
   .tab {
-    padding: 3px 9px;
+    padding: 4px 10px;
     font-size: 11.5px;
     font-weight: 600;
     color: var(--faint);

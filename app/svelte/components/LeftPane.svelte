@@ -75,8 +75,15 @@
 
 <div class="pane">
   <div class="tabs" role="tablist">
+  <div class="seg">
     <button class="tab" class:on={p?.ltab === 'files'} disabled={!p} onclick={() => { if (p) setLtab('files'); }}>files</button>
     <button class="tab" class:on={p?.ltab === 'sessions'} disabled={!p} onclick={() => { if (p) setLtab('sessions'); }}>sessions</button>
+  </div>
+  {#if p && ws}
+    <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
+      <svg class="ci" width="13" height="13"><use href="#i-plus" /></svg>
+    </button>
+  {/if}
   </div>
   {#if p && ws}
     {#if p.ltab === 'files'}
@@ -103,9 +110,6 @@
     {:else}
       <div class="sec">
         <div class="tree">
-          <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
-            <svg class="ci" width="10" height="10"><use href="#i-plus" /></svg> new session
-          </button>
           {#if top.length === 0}
             <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
@@ -141,13 +145,20 @@
   .tabs {
     display: flex;
     align-items: center;
-    gap: 2px;
-    padding: 0 12px 8px;
-    border-bottom: 1px solid var(--line);
+    gap: 8px;
+    padding: 10px 12px 8px;
     flex: none;
   }
+  .seg {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
   .tab {
-    padding: 3px 9px;
+    padding: 4px 10px;
     font-size: 11.5px;
     font-weight: 600;
     color: var(--faint);
@@ -179,28 +190,28 @@
     padding-top: 4px;
   }
   .new {
-    display: inline-flex;
+    margin-left: auto;
+    width: 26px;
+    height: 26px;
+    display: flex;
     align-items: center;
-    gap: 6px;
-    width: auto;
-    margin: 8px 8px 4px auto;
-    padding: 2px 8px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1.4;
-    color: var(--dim);
-    background: none;
+    justify-content: center;
+    background: transparent;
     border: 1px solid var(--line2);
-    border-radius: 6px;
+    border-radius: 7px;
+    color: var(--dim);
     cursor: pointer;
   }
   .new:hover {
     color: var(--tx);
-    border-color: #3a3d47;
+    border-color: var(--acc);
   }
   .new .ci {
-    display: block;
-    flex: none;
+    width: 13px;
+    height: 13px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
   }
   .arch {
     border-top: 1px solid var(--line);
