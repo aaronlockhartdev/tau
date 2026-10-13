@@ -28,7 +28,7 @@
   function toggle(): void {
     if (!entry.dir) {
       // A file row opens the changes view in the center column; dirs toggle their listing.
-      setChangesView({ workspace: ws, path: entry.path });
+      setChangesView({ workspace: ws, path: entry.path, ignored: entry.ignored });
       return;
     }
     if (store.fileErrors[ws]?.[entry.path]) {

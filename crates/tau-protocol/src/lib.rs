@@ -202,6 +202,9 @@ pub enum CommandOutput {
     GitDiff {
         diff: GitDiff,
     },
+    GitShow {
+        text: String,
+    },
 }
 
 /// A command from any transport client to the core (spec §8, settled #10).
@@ -416,6 +419,13 @@ pub enum Command {
     },
     /// The unified diff of one file vs HEAD (the peek sheet).
     GitDiff {
+        workspace: String,
+        /// Absolute, or relative to the workspace root.
+        path: String,
+    },
+    /// A file's content at a git revision (default HEAD) — the
+    /// file-content view's diff base.
+    GitShow {
         workspace: String,
         /// Absolute, or relative to the workspace root.
         path: String,

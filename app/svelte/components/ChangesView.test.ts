@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-// The changes view: the center-column diff viewer. Renders in place of the
-// transcript while a file is open; the switcher lists the workspace's
-// changed files; close and switch assert the setChangesView wiring.
+// The file-content view: the center-column viewer. Renders the file's actual
+// content with line numbers and git-diff gutter marks (added/removed).
+// Highlighting is mocked out — this tests the render structure, not shiki.
+// Close + switch assert the setChangesView wiring.
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
@@ -13,6 +14,12 @@ vi.mock('../lib/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
+
+// Decouple the render test from shiki's WASM engine: one plain (uncolored)
+// token per line, so assertions are about the diff structure, not colors.
+vi.mock('../lib/highlight', () => ({
+  highlightLines: (code: string) => Promise.resolve(code.split('\n').map((l) => [{ content: l }]))
+}));
 
 const WS = 'w1';
 
@@ -31,61 +38,100 @@ function seedStatus(): void {
   });
 }
 
-async function mount(): Promise<void> {
-  render(ChangesView);
-  await tick();
-}
-
 const user = userEvent.setup();
 
+// Open the view on a file with a given current + base (git) content.
+function open(p: string, next: string, base: string): void {
+  setChangesView({ workspace: WS, path: p, ignored: false });
+  mockStore.changesViewNew = next;
+  mockStore.changesViewBase = base;
+}
+
+function lines(): Element[] {
+  return [...document.querySelectorAll('.code .line')];
+}
+
 describe('ChangesView', () => {
-  beforeEach(() => {
-    seedStatus();
-  });
+  beforeEach(() => seedStatus());
 
   it('renders nothing while no view is open', async () => {
-    await mount();
+    render(ChangesView);
+    await tick();
     expect(screen.queryByText('src/a.ts')).toBeNull();
   });
 
-  it('renders the diff with tinted lines and a file switcher', async () => {
-    setChangesView({ workspace: WS, path: 'src/a.ts' });
-    mockStore.changesViewDiff =
-      'diff --git a/src/a.ts b/src/a.ts\n@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
-    await mount();
+  it('renders file content with line numbers and diff marks', async () => {
+    // base 'one' → new 'two\nthree': the old line is a removed ghost, the two
+    // new lines are added. Render order is the interleaved diff order.
+    open('src/a.ts', 'two\nthree', 'one');
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(3));
+
+    const ls = lines();
+    expect(ls.map((l) => l.querySelector('.ln')?.textContent)).toEqual(['', '1', '2']);
+    expect(ls.map((l) => l.querySelector('.mk')?.textContent)).toEqual(['−', '+', '+']);
+    expect(ls[0]!).toHaveClass('removed');
+    expect(ls[1]!).toHaveClass('added');
+    expect(ls[2]!).toHaveClass('added');
+    expect(ls[0]!.querySelector('.src')?.textContent).toBe('one');
+    expect(ls[1]!.querySelector('.src')?.textContent).toBe('two');
+  });
+
+  it('shows all context lines when nothing changed', async () => {
+    open('src/a.ts', 'a\nb', 'a\nb');
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(2));
+
+    const ls = lines();
+    expect(ls.map((l) => l.querySelector('.ln')?.textContent)).toEqual(['1', '2']);
+    expect(ls.map((l) => l.querySelector('.mk')?.textContent)).toEqual(['', '']);
+    expect(document.querySelector('.code .line.added')).toBeNull();
+    expect(document.querySelector('.code .line.removed')).toBeNull();
+  });
+
+  it('renders an untracked file as all-added', async () => {
+    open('notes.md', 'hello\nworld', '');
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(2));
+
+    expect(lines().every((l) => l.classList.contains('added'))).toBe(true);
+  });
+
+  it('shows a note for an empty file', async () => {
+    open('src/a.ts', '', '');
+    render(ChangesView);
+    await vi.waitFor(() => expect(screen.getByText('empty file')).toBeInTheDocument());
+  });
+
+  it('lists the changed files in the switcher, the current one on', async () => {
+    open('src/a.ts', 'x', 'y');
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(2));
+
     expect(document.querySelector('.view .title')?.textContent).toBe('src/a.ts');
-    expect(document.querySelector('.diff .al')?.textContent).toBe('+new line');
-    expect(document.querySelector('.diff .dl')?.textContent).toBe('-old line');
-    expect(document.querySelector('.diff .hh')?.textContent).toBe('@@ -1,2 +1,2 @@');
-    // The switcher lists every changed file, the current one marked on.
     const on = screen.getByRole('button', { name: 'a.ts' });
     expect(on).toHaveClass('on');
     expect(screen.getByRole('button', { name: 'b.ts' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'notes.md' })).toBeInTheDocument();
   });
 
-  it('shows a note for a file with no diff', async () => {
-    setChangesView({ workspace: WS, path: 'notes.md' });
-    mockStore.changesViewDiff = '';
-    await mount();
-    expect(screen.getByText('no diff — untracked or not in git')).toBeInTheDocument();
-  });
-
   it('close calls setChangesView with null', async () => {
-    setChangesView({ workspace: WS, path: 'src/a.ts' });
-    mockStore.changesViewDiff = '+x';
+    open('src/a.ts', 'x', 'y');
     vi.mocked(setChangesView).mockClear();
-    await mount();
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(2));
+
     await user.click(screen.getByTitle('close (esc)'));
     expect(setChangesView).toHaveBeenCalledWith(null);
   });
 
   it('switching files keeps the workspace and changes the path', async () => {
-    setChangesView({ workspace: WS, path: 'src/a.ts' });
-    mockStore.changesViewDiff = '+x';
+    open('src/a.ts', 'x', 'y');
     vi.mocked(setChangesView).mockClear();
-    await mount();
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(2));
+
     await user.click(screen.getByRole('button', { name: 'b.ts' }));
-    expect(setChangesView).toHaveBeenCalledWith({ workspace: WS, path: 'src/b.ts' });
+    expect(setChangesView).toHaveBeenCalledWith({ workspace: WS, path: 'src/b.ts', ignored: false });
   });
 });

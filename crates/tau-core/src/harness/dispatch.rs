@@ -118,7 +118,8 @@ impl Core {
             | Command::FileList { .. }
             | Command::FileUnlist { .. }
             | Command::GitStatus { .. }
-            | Command::GitDiff { .. } => self.dispatch_misc(cmd),
+            | Command::GitDiff { .. }
+            | Command::GitShow { .. } => self.dispatch_misc(cmd),
         }
     }
 
@@ -215,6 +216,12 @@ impl Core {
                 let file = resolve_path(&workspace.cwd, &path);
                 Ok(CommandOutput::GitDiff {
                     diff: super::git::git_diff(Path::new(&workspace.cwd), &file)?,
+                })
+            }
+            Command::GitShow { workspace, path } => {
+                let workspace = self.workspace(&workspace)?;
+                Ok(CommandOutput::GitShow {
+                    text: super::git::git_show(Path::new(&workspace.cwd), &path)?,
                 })
             }
             _ => unreachable!("dispatch routes the arm"),

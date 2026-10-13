@@ -60,7 +60,7 @@ pub(super) async fn read(
     };
     let rows = match hashline::render(&content) {
         Ok(rows) => rows,
-        Err(e) => return e.to_string().into(),
+        Err(e) => return format!("read: {e}").into(),
     };
     let offset = usize::try_from(
         args.get("offset")
@@ -215,7 +215,7 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         },
     ) {
         Ok(e) => e,
-        Err(e) => return e.to_string().into(),
+        Err(e) => return format!("edit: {e}").into(),
     };
     if let Err(e) = write_atomic(&path, &edited.content) {
         return format!("edit: cannot write {}: {e}", path.display()).into();

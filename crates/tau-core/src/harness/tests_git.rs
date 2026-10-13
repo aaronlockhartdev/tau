@@ -115,6 +115,73 @@ async fn git_diff_of_a_modified_file_is_unified() {
     assert!(diff.diff.contains("+changed"), "diff: {}", diff.diff);
 }
 
+#[tokio::test]
+async fn git_show_returns_the_base_content_of_a_tracked_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    // Diverge the working copy so the HEAD base differs from the file on disk.
+    std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let text = match core
+        .dispatch(Command::GitShow {
+            workspace: workspace.id.clone(),
+            path: "a.txt".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::GitShow { text } => text,
+        other => panic!("expected git show: {other:?}"),
+    };
+    // HEAD holds the committed "one\n", not the working-copy "changed\n".
+    assert_eq!(text, "one\n");
+}
+
+#[tokio::test]
+async fn git_show_of_an_untracked_path_is_an_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    std::fs::write(tmp.path().join("untracked.txt"), "new\n").unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let err = core
+        .dispatch(Command::GitShow {
+            workspace: workspace.id.clone(),
+            path: "untracked.txt".into(),
+        })
+        .unwrap_err();
+    assert!(
+        matches!(err, ProtocolError::Other { .. }),
+        "expected a transportable error, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn git_show_from_a_subdir_workspace_resolves_the_toplevel_offset() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    // A subdirectory becomes the workspace root; its file is toplevel-relative
+    // as sub/nested.txt, so `git show` needs the `sub/` prefix the core adds.
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("nested.txt"), "nested\n").unwrap();
+    git_ok(tmp.path(), &["add", "sub/nested.txt"]);
+    git_ok(tmp.path(), &["commit", "-qm", "sub"]);
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &sub).await;
+    let text = match core
+        .dispatch(Command::GitShow {
+            workspace: workspace.id.clone(),
+            path: "nested.txt".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::GitShow { text } => text,
+        other => panic!("expected git show: {other:?}"),
+    };
+    assert_eq!(text, "nested\n");
+}
+
 
 #[tokio::test]
 async fn file_listing_is_annotated_with_git_state_and_ignored() {

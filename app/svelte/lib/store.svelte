@@ -113,10 +113,12 @@
     // the changes view's file switcher. null = not a git repository.
     gitStatus: {} as Record<string, GitStatus | null>,
     // The changes view (file-tree plan): the file under diff inspection in
-    // the center column, and its diff text. Replaces the transcript while
-    // open; the future editor lands in the same slot.
-    changesView: null as { workspace: string; path: string } | null,
-    changesViewDiff: null as string | null,
+    // the center column, and its file content + git base (for the diff
+    // indicators). Replaces the transcript while open; the future editor
+    // lands in the same slot.
+    changesView: null as { workspace: string; path: string; ignored: boolean } | null,
+    changesViewNew: null as string | null,
+    changesViewBase: null as string | null,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>,
@@ -401,30 +403,27 @@
     }
   }
 
-  export function setChangesView(v: { workspace: string; path: string } | null): void {
+  export function setChangesView(v: { workspace: string; path: string; ignored: boolean } | null): void {
     store.changesView = v;
-    store.changesViewDiff = null;
-    if (v) void fetchChangesViewDiff(v);
+    store.changesViewNew = null;
+    store.changesViewBase = null;
+    if (v) void fetchChangesViewFile(v);
   }
 
-  async function fetchChangesViewDiff(v: { workspace: string; path: string }): Promise<void> {
-    try {
-      const out = await command({ type: 'git_diff', workspace: v.workspace, path: v.path });
-      // A slower switch wins nothing: a stale fetch must not clobber the
-      // view the user moved on from. Field compare — the $state proxy means
-      // store.changesView is never === to the raw object that started it.
-      if (
-        out.kind === 'git_diff' &&
-        store.changesView?.workspace === v.workspace &&
-        store.changesView?.path === v.path
-      )
-        store.changesViewDiff = out.diff.diff;
-    } catch {
-      if (
-        store.changesView?.workspace === v.workspace &&
-        store.changesView?.path === v.path
-      )
-        store.changesViewDiff = '';
+  async function fetchChangesViewFile(v: { workspace: string; path: string; ignored: boolean }): Promise<void> {
+    // The file content and its git base are independent; each absence means
+    // what it means (file gone = deleted, no base = untracked). A stale fetch
+    // must not clobber the view the user moved on from (field compare, since
+    // the $state proxy breaks ===).
+    const file = await command({ type: 'file_read', workspace: v.workspace, path: v.path, offset: null, limit: null }).then((o) => (o.kind === 'file' ? o.file.text : '')).catch(() => '');
+    // A gitignored file has no committed base; diffing it against empty would
+    // paint it all-added. Render it plain (base = current content) instead.
+    const base = v.ignored
+      ? file
+      : await command({ type: 'git_show', workspace: v.workspace, path: v.path }).then((o) => (o.kind === 'git_show' ? o.text : '')).catch(() => '');
+    if (store.changesView?.workspace === v.workspace && store.changesView?.path === v.path) {
+      store.changesViewNew = file;
+      store.changesViewBase = base;
     }
   }
 
@@ -722,6 +721,14 @@
         if (ev.type === 'file_tree_changed') {
           scheduleRefetch(ev.workspace, ev.changed);
           void refreshGitStatus(ev.workspace);
+          // Live file-content view: a change under the open file's dir
+          // (the watcher reports the parent dir) re-fetches its content +
+          // base so the view tracks the file as it is edited.
+          const cv = store.changesView;
+          if (cv && cv.workspace === ev.workspace) {
+            const touches = ev.changed.some((d) => cv.path === d || cv.path.startsWith(d + '/'));
+            if (touches) void fetchChangesViewFile(cv);
+          }
         }
         continue;
       }

@@ -105,6 +105,38 @@ pub fn git_diff(cwd: &Path, file: &Path) -> Result<GitDiff, ProtocolError> {
     Ok(GitDiff { path, diff: out })
 }
 
+/// A file's content at HEAD (the file-content view's diff base). The path is
+/// resolved toplevel-relative — `git show rev:path` takes a repo-root path, not
+/// the absolute one the dispatch layer hands over. A path absent from HEAD is an
+/// error (the caller treats it as "no base", i.e. an untracked file).
+pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
+    let top = run_git(cwd, &["rev-parse", "--show-toplevel"])?;
+    // `git show rev:path` wants a toplevel-relative path, but the command's
+    // path is cwd-relative. Express the cwd→toplevel offset in canonical form
+    // (so a /var → /private/var symlink can't defeat the strip) and prepend it.
+    let top = std::fs::canonicalize(top.trim())
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git toplevel: {e}"),
+        })?;
+    let cwdc = std::fs::canonicalize(cwd)
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git cwd: {e}"),
+        })?;
+    let prefix = cwdc
+        .strip_prefix(&top)
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    let spec = if prefix.as_os_str().is_empty() {
+        format!("HEAD:{rel}")
+    } else {
+        format!("HEAD:{}/{}", prefix.display(), rel)
+    };
+    // file_read strips \r; normalize the base the same way, or a CRLF file
+    // diffs whole-file (a raw \r on every line reads as a change to each).
+    let out = run_git(cwd, &["show", spec.as_str()])?;
+    Ok(out.replace("\r\n", "\n"))
+}
+
 /// A workspace's combined git state (file-tree plan, phase 2): which files
 /// changed (status), by how much (numstat), and which paths are .gitignored
 /// (the ignore set). Three spawns total, cached per workspace and
@@ -122,6 +154,13 @@ pub struct GitSnapshot {
     /// neither the tree nor the changes tab does per-row file reads.
     pub numstat: HashMap<String, NumstatCounts>,
     pub ignored: HashSet<String>,
+    /// Dir prefixes holding a tracked / shown-untracked / ignored file,
+    /// precomputed at snapshot time so `is_ignored_dir` is an O(1) lookup on
+    /// every (live) listing. A folder is greyed only when it is an ignored
+    /// dir with no tracked or shown-untracked file under it.
+    pub tracked_dirs: HashSet<String>,
+    pub shown_dirs: HashSet<String>,
+    pub ignored_dirs: HashSet<String>,
 }
 
 pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
@@ -136,11 +175,20 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
             (count_lines(&cwd.join(path)), Some(0))
         });
     }
-    let ignored = ignored_set(cwd)?;
+    let (ignored, shown) = untracked_sets(cwd)?;
+    let tracked = tracked_set(cwd)?;
+    // Precompute the dir-prefix sets once, so `is_ignored_dir` is an O(1)
+    // lookup on every (live) listing rather than a scan of the file sets.
+    let tracked_dirs = dir_prefixes(&tracked);
+    let shown_dirs = dir_prefixes(&shown);
+    let ignored_dirs = dir_prefixes(&ignored);
     Ok(GitSnapshot {
         status,
         numstat,
         ignored,
+        tracked_dirs,
+        shown_dirs,
+        ignored_dirs,
     })
 }
 
@@ -162,17 +210,40 @@ pub fn parse_numstat(output: &str) -> Vec<(String, NumstatCounts)> {
         .collect()
 }
 
-/// The .gitignored set (file-tree plan): what `ls-files --others` (every
-/// untracked path) has that `--exclude-standard` (untracked minus ignored)
-/// drops. A set difference — no per-file stat.
-pub fn ignored_set(cwd: &Path) -> Result<HashSet<String>, ProtocolError> {
+/// The two partitions of `ls-files --others` (every untracked path): the
+/// ignored ones (what `--exclude-standard` drops) and the shown ones. A set
+/// difference — no per-file stat.
+pub fn untracked_sets(cwd: &Path) -> Result<(HashSet<String>, HashSet<String>), ProtocolError> {
     let all = run_git(cwd, &["ls-files", "--others"])?;
     let shown = run_git(cwd, &["ls-files", "--others", "--exclude-standard"])?;
     let shown: HashSet<String> = shown.lines().map(str::to_owned).collect();
-    Ok(all.lines()
+    let ignored = all
+        .lines()
         .map(str::to_owned)
         .filter(|p| !shown.contains(p))
-        .collect())
+        .collect();
+    Ok((ignored, shown))
+}
+
+/// Every tracked (committed) path — a folder is only "all ignored" when it
+/// has no tracked file under it.
+pub fn tracked_set(cwd: &Path) -> Result<HashSet<String>, ProtocolError> {
+    let out = run_git(cwd, &["ls-files"])?;
+    Ok(out.lines().map(str::to_owned).collect())
+}
+
+/// Every ancestor-dir prefix of each path (an `a/b/c.rs` contributes `a` and
+/// `a/b`). Precomputing these turns the per-dir "is this folder all-ignored"
+/// check into a set lookup.
+fn dir_prefixes(paths: &HashSet<String>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for p in paths {
+        let segs: Vec<&str> = p.split('/').collect();
+        for i in 1..segs.len() {
+            out.insert(segs[..i].join("/"));
+        }
+    }
+    out
 }
 
 /// An untracked file's line count (the numstat stand-in): a pure read,
@@ -194,14 +265,28 @@ pub fn count_lines(path: &Path) -> Option<u32> {
 
 
 /// Annotate a dir listing with the snapshot's ignore + git state
-/// (file-tree plan, phase 2). Directories carry no git state: a dir's
-/// change status is its children's, derived by the GUI.
+/// (file-tree plan, phase 2). A file is greyed when .gitignored; a folder
+/// is greyed when everything under it is .gitignored — a source dir that
+/// also holds a tracked (or shown-untracked) file is not.
 pub fn annotate(files: &mut [FileEntry], snap: Option<&GitSnapshot>) {
     let Some(snap) = snap else { return };
-    for f in files.iter_mut().filter(|f| !f.dir) {
+    for f in files.iter_mut() {
+        if f.dir {
+            f.ignored = is_ignored_dir(&f.path, snap);
+            continue;
+        }
         f.ignored = snap.ignored.contains(&f.path);
         f.git = git_state_of(&f.path, snap);
     }
+}
+
+/// A folder is all-ignored when it is an ignored dir with no tracked or
+/// shown-untracked file under it (the dir-prefix sets are precomputed at
+/// snapshot time, so this is three O(1) lookups).
+fn is_ignored_dir(prefix: &str, snap: &GitSnapshot) -> bool {
+    !snap.tracked_dirs.contains(prefix)
+        && !snap.shown_dirs.contains(prefix)
+        && snap.ignored_dirs.contains(prefix)
 }
 
 fn git_state_of(path: &str, snap: &GitSnapshot) -> Option<FileGit> {
@@ -307,6 +392,9 @@ mod tests {
                 m
             },
             ignored: ["target/x".into()].into_iter().collect(),
+            shown_dirs: HashSet::new(),
+            tracked_dirs: HashSet::new(),
+            ignored_dirs: HashSet::new(),
         };
         let mut files = vec![
             FileEntry {
@@ -338,6 +426,41 @@ mod tests {
         assert_eq!(files[0].git, Some(FileGit { state: FileGitState::Modified, added: Some(3), deleted: Some(1) }));
         assert_eq!(files[1].git, Some(FileGit { state: FileGitState::Untracked, added: None, deleted: None }));
         assert!(files[2].ignored && files[2].git.is_none());
+    }
+
+    #[test]
+    fn annotate_greys_a_folder_only_when_everything_under_it_is_ignored() {
+        let snap = GitSnapshot {
+            status: GitStatus {
+                branch: "main".into(),
+                modified: vec![],
+                untracked: vec![],
+                deleted: vec![],
+            },
+            numstat: HashMap::new(),
+            ignored: ["node_modules/pkg.js".to_owned(), "build/out.bin".to_owned()]
+                .into_iter()
+                .collect(),
+            shown_dirs: ["docs".to_owned()].into_iter().collect(),
+            tracked_dirs: ["src".to_owned()].into_iter().collect(),
+            ignored_dirs: ["node_modules".to_owned(), "build".to_owned()]
+                .into_iter()
+                .collect(),
+        };
+        let dir = |name: &str| FileEntry {
+            name: name.into(),
+            path: name.into(),
+            dir: true,
+            size: 0,
+            ignored: false,
+            git: None,
+        };
+        let mut files = vec![dir("src"), dir("docs"), dir("node_modules"), dir("build")];
+        annotate(&mut files, Some(&snap));
+        assert!(!files[0].ignored, "a dir with a tracked file is not all-ignored");
+        assert!(!files[1].ignored, "a dir with a shown-untracked file is not all-ignored");
+        assert!(files[2].ignored, "a dir with only ignored files is greyed");
+        assert!(files[3].ignored, "a dir with only ignored files is greyed");
     }
 
     #[test]

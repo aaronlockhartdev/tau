@@ -25,8 +25,11 @@
   // F3 grouping: active = not done; history = done. The history section
   // collapses behind its count header (p.historyOpen).
   const byUpdated = (a: Task, b: Task) => b.updated - a.updated;
-  const liveTasks = $derived(tasks.filter((t) => t.status !== 'done').sort(byUpdated));
-  const histTasks = $derived(tasks.filter((t) => t.status === 'done').sort(byUpdated));
+  // Terminal = done OR cancelled: both leave the active list, and a canceled
+  // task is history (its work is over), not live.
+  const isTerminal = (t: Task) => t.status === 'done' || t.status === 'cancelled';
+  const liveTasks = $derived(tasks.filter((t) => !isTerminal(t)).sort(byUpdated));
+  const histTasks = $derived(tasks.filter(isTerminal).sort(byUpdated));
 
   const subs = $derived(cur ? cur.subagents : []);
   const isLive = (i: SubagentInfo) => i.state === 'running' || i.state === 'idle';
@@ -547,11 +550,13 @@
     background: var(--red);
   }
   .badge.stopped,
-  .badge.pending {
+  .badge.pending,
+  .badge.cancelled {
     color: var(--dim);
   }
   .badge.stopped .dot,
-  .badge.pending .dot {
+  .badge.pending .dot,
+  .badge.cancelled .dot {
     background: var(--dim);
   }
   @keyframes pulse {

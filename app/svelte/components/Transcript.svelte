@@ -38,6 +38,8 @@
   const mountedFor = store.current;
 
   let el = $state<HTMLDivElement | null>(null);
+  // The virtualized content track: observed for in-place growth (below).
+  let trackEl = $state<HTMLDivElement | null>(null);
   // The --tsgo checker cannot infer the exported handle of virtua's generic
   // .svelte component from node_modules (it sees a plain SvelteComponent),
   // so the binding is cast at the site. `any` is the only form that passes:
@@ -147,6 +149,24 @@
     if (el.scrollHeight > el.clientHeight) {
       ref.scrollToIndex(n - 1, { align: 'end' });
     }
+  });
+
+  // In-place growth (a streaming assistant, a tool result landing, a card
+  // expanding) leaves the entry count unchanged, so the count-driven pin
+  // above never re-fires and the view loses the bottom. A ResizeObserver on
+  // the track re-pins whenever the content grows while we are stuck.
+  $effect(() => {
+    if (!trackEl) return;
+    const ro = new ResizeObserver(() => {
+      if (!ref || !shouldStickToBottom) return;
+      // A list that fits needs no pin: pinning it leaves virtua's base offset
+      // stale — the same reason the count-pin guards on overflow.
+      if (!el || el.scrollHeight <= el.clientHeight) return;
+      const n = all.length;
+      if (n > 0) ref.scrollToIndex(n - 1, { align: 'end' });
+    });
+    ro.observe(trackEl);
+    return () => ro.disconnect();
   });
 
   // Paged read around the visible window (spec §8): virtua's range drives
@@ -263,7 +283,7 @@
         <div class="sub">send a message below to start the session</div>
       </div>
     {:else}
-      <div class="track">
+      <div class="track" bind:this={trackEl}>
         <Virtualizer
           bind:this={ref as any}
           scrollRef={el ?? undefined}

@@ -102,7 +102,7 @@ export function decodeEntry(v: ViewEntry): Entry {
         call_id: typeof p.call_id === 'string' ? p.call_id : undefined,
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: typeof p.output === 'string' ? p.output : undefined,
-        status: toolStatus(p.output),
+        status: toolStatus(typeof p.name === 'string' ? p.name : '', p.output),
         // The sidecar's bytes are gone (blob deleted from disk): the record is
         // what it is — say so, never fake a still-running call.
         unavailable: v.payload == null && v.blob != null ? true : undefined
@@ -175,14 +175,21 @@ export function upsertEntry(entries: Record<string, Entry>, v: ViewEntry): void 
 }
 
 // The persisted tool output records a failure: the bash executor prefixes
-// "exit N" (non-zero N) or "bash: <error>" (spawn/timeout). All other tools
-// report free text — a failure there is content, not status.
-function toolStatus(output: unknown): 'running' | 'ok' | 'error' {
+// "exit N" (non-zero N) or "bash: <error>" (spawn/timeout). Every other tool
+// prefixes a failure with its own name ("read: cannot read ...") and the
+// dispatcher prefixes routing failures; a success never does, so the prefix
+// is a reliable failure discriminator.
+export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'error' {
   if (output === undefined || output === '') return 'running';
   const s = typeof output === 'string' ? output : '';
-  const m = /^exit (\d+)/.exec(s);
-  if (m) return m[1] === '0' ? 'ok' : 'error';
-  if (/^bash: /.test(s)) return 'error';
+  if (name === 'bash') {
+    const m = /^exit (\d+)/.exec(s);
+    if (m) return m[1] === '0' ? 'ok' : 'error';
+    if (/^bash: /.test(s)) return 'error';
+    return 'ok';
+  }
+  if (s.startsWith(`${name}: `)) return 'error';
+  if (/^(error:|unknown tool:|unknown task tool)/.test(s)) return 'error';
   return 'ok';
 }
 

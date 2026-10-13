@@ -48,8 +48,9 @@ export function freshDefaults() {
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,
     gitStatus: {} as Record<string, GitStatus | null>,
-    changesView: null as { workspace: string; path: string } | null,
-    changesViewDiff: null as string | null,
+    changesView: null as { workspace: string; path: string; ignored: boolean } | null,
+    changesViewNew: null as string | null,
+    changesViewBase: null as string | null,
     attentionOpen: false,
     paletteOpen: false,
     fleetOpen: false,
@@ -81,9 +82,10 @@ export const switchSession = vi.fn(async () => {});
 export const setFollow = vi.fn((h: string | null) => {
   store.follow = h;
 });
-export const setChangesView = vi.fn((p: { workspace: string; path: string } | null) => {
+export const setChangesView = vi.fn((p: { workspace: string; path: string; ignored: boolean } | null) => {
   store.changesView = p;
-  store.changesViewDiff = null;
+  store.changesViewNew = null;
+  store.changesViewBase = null;
 });
 export const renameSession = vi.fn(async () => {});
 export const archiveSession = vi.fn(async () => {});

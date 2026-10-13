@@ -9,7 +9,7 @@
   import type { Entry } from '../lib/protocol';
   import CardShell from './CardShell.svelte';
   import { onActivate } from '../lib/ui';
-  import { Sparkles } from '@lucide/svelte';
+  import { Layers, Sparkles } from '@lucide/svelte';
 
   let {
     entry,
@@ -109,7 +109,7 @@
 {#if p}
 <div class="wrap" class:batch={!!batch} bind:this={el}>
   {#if batch && batch.index === 0}
-    <div class="batch-mark">⊞ {batch.size} batched</div>
+    <div class="batch-mark"><Layers class="bich" size={12} /> {batch.size} batched</div>
   {/if}
   {#if turn}
     <div class="thd">{turn}</div>
@@ -133,11 +133,18 @@
     border-left: 2px solid var(--line);
   }
   .batch-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font: 10px var(--mono);
     color: var(--muted);
     /* Negative margin pulls the mark's left edge onto the line, so the
        line runs straight down under it. */
     margin: 0 0 3px -12px;
+  }
+  .batch-mark :global(.bich) {
+    color: var(--faint);
+    flex: none;
   }
   .thd {
     display: flex;
