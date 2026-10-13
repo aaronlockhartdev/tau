@@ -121,17 +121,6 @@ pub struct GitDiff {
     pub diff: String,
 }
 
-/// One changed file's line counts (the changes tab's rows). Untracked
-/// files carry their line count as `added` with `deleted: 0`; binary
-/// files have a state with no counts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct NumstatEntry {
-    /// Workspace-relative path.
-    pub path: String,
-    pub added: Option<u32>,
-    pub deleted: Option<u32>,
-    pub state: FileGitState,
-}
 /// A dispatch error, serializable so any transport can return it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -212,9 +201,6 @@ pub enum CommandOutput {
     },
     GitDiff {
         diff: GitDiff,
-    },
-    GitNumstat {
-        entries: Vec<NumstatEntry>,
     },
 }
 
@@ -434,10 +420,6 @@ pub enum Command {
         /// Absolute, or relative to the workspace root.
         path: String,
     },
-    /// The workspace's changed files with line counts (the changes tab).
-    GitNumstat {
-        workspace: String,
-    },
 }
 
 /// An event pushed from the core to clients (spec §8). Every event carries
@@ -625,7 +607,6 @@ mod tests {
                 workspace: "w1".into(),
                 path: "a/b.txt".into(),
             },
-            Command::GitNumstat { workspace: "w1".into() },
         ];
         for cmd in &commands {
             let json = serde_json::to_string(cmd).unwrap();

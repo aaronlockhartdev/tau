@@ -149,8 +149,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     file_list: () => ({ kind: 'files', files: [] }),
     file_unlist: () => ({ kind: 'none' }),
     git_status: () => ({ kind: 'git_status', status: { branch: 'main', modified: [], untracked: [], deleted: [] } }),
-    git_diff: () => ({ kind: 'git_diff', diff: { path: '', diff: '' } }),
-    git_numstat: () => ({ kind: 'git_numstat', entries: [] })
+    git_diff: () => ({ kind: 'git_diff', diff: { path: '', diff: '' } })
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
 }

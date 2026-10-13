@@ -8,7 +8,7 @@ use std::io::BufRead;
 use std::path::Path;
 use std::process::Command as Process;
 
-use tau_protocol::{FileEntry, FileGit, FileGitState, GitDiff, GitStatus, NumstatEntry, ProtocolError};
+use tau_protocol::{FileEntry, FileGit, FileGitState, GitDiff, GitStatus, ProtocolError};
 
 /// Parse `git status --porcelain=v2` output into the GUI's badge model.
 /// Entry lines read `1 <XY> <sub> <m> <sm> <mm> <X> <Y> <path>`; untracked
@@ -192,30 +192,6 @@ pub fn count_lines(path: &Path) -> Option<u32> {
     Some(n)
 }
 
-/// The changes tab's rows (file-tree plan, phase 3's source): the status
-/// sets supply the files and their state, the snapshot's numstat map the
-/// counts (untracked files were measured at snapshot time).
-pub fn numstat_entries(snap: &GitSnapshot) -> Vec<NumstatEntry> {
-    let entry = |path: &str, state: FileGitState| {
-        let (added, deleted) = snap.numstat.get(path).copied().unwrap_or((None, None));
-        NumstatEntry {
-            path: path.to_string(),
-            added,
-            deleted,
-            state,
-        }
-    };
-    let mut out: Vec<NumstatEntry> = snap
-        .status
-        .modified
-        .iter()
-        .map(|p| entry(p, FileGitState::Modified))
-        .chain(snap.status.untracked.iter().map(|p| entry(p, FileGitState::Untracked)))
-        .chain(snap.status.deleted.iter().map(|p| entry(p, FileGitState::Deleted)))
-        .collect();
-    out.sort_by(|a, b| a.path.cmp(&b.path));
-    out
-}
 
 /// Annotate a dir listing with the snapshot's ignore + git state
 /// (file-tree plan, phase 2). Directories carry no git state: a dir's

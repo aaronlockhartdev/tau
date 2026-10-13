@@ -115,54 +115,6 @@ async fn git_diff_of_a_modified_file_is_unified() {
     assert!(diff.diff.contains("+changed"), "diff: {}", diff.diff);
 }
 
-#[tokio::test]
-async fn git_numstat_reports_counts_for_all_three_states() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_repo(tmp.path());
-    // a.txt: 1 line changed; c.txt: 3 untracked lines; b.txt: 1 line deleted.
-    std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
-    std::fs::remove_file(tmp.path().join("b.txt")).unwrap();
-    std::fs::write(tmp.path().join("c.txt"), "one\ntwo\nthree\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
-    let workspace = open_ws(&core, tmp.path()).await;
-    let entries = match core
-        .dispatch(Command::GitNumstat {
-            workspace: workspace.id.clone(),
-        })
-        .unwrap()
-    {
-        CommandOutput::GitNumstat { entries } => entries,
-        other => panic!("expected git numstat: {other:?}"),
-    };
-    let by_path: std::collections::HashMap<_, _> =
-        entries.iter().map(|e| (e.path.as_str(), e)).collect();
-    let a = by_path["a.txt"];
-    assert_eq!(a.state, FileGitState::Modified);
-    assert_eq!((a.added, a.deleted), (Some(1), Some(1)));
-    let b = by_path["b.txt"];
-    assert_eq!(b.state, FileGitState::Deleted);
-    assert_eq!((b.added, b.deleted), (Some(0), Some(1)));
-    let c = by_path["c.txt"];
-    assert_eq!(c.state, FileGitState::Untracked);
-    // Untracked files are measured by line count, not by git diff.
-    assert_eq!((c.added, c.deleted), (Some(3), Some(0)));
-}
-
-#[tokio::test]
-async fn git_numstat_in_a_non_git_workspace_is_an_error() {
-    let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
-    let workspace = open_ws(&core, tmp.path()).await;
-    let err = core
-        .dispatch(Command::GitNumstat {
-            workspace: workspace.id.clone(),
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, ProtocolError::Other { .. }),
-        "expected a transportable error, got {err:?}"
-    );
-}
 
 #[tokio::test]
 async fn file_listing_is_annotated_with_git_state_and_ignored() {

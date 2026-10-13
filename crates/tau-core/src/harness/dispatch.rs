@@ -118,7 +118,6 @@ impl Core {
             | Command::FileList { .. }
             | Command::FileUnlist { .. }
             | Command::GitStatus { .. }
-            | Command::GitNumstat { .. }
             | Command::GitDiff { .. } => self.dispatch_misc(cmd),
         }
     }
@@ -209,15 +208,6 @@ impl Core {
                 })?;
                 Ok(CommandOutput::GitStatus {
                     status: status.status,
-                })
-            }
-            Command::GitNumstat { workspace } => {
-                let workspace = self.workspace(&workspace)?;
-                let snap = self.git_snapshot(&workspace).ok_or(ProtocolError::Other {
-                    message: "git numstat: no snapshot (not a git workspace?)".into(),
-                })?;
-                Ok(CommandOutput::GitNumstat {
-                    entries: super::git::numstat_entries(&snap),
                 })
             }
             Command::GitDiff { workspace, path } => {

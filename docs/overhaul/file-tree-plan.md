@@ -114,8 +114,9 @@ Covers and closes #116. All three phases shipped 2026-10-13:
    `git_numstat`; the per-workspace cached git snapshot in `harness/git.rs`, annotated at
    the dispatch layer; tinted names, `+N −M` stats, ignored rows greyed, the P4 letter
    badge retired).
-3. Changes tab — `ffc1579` (files | changes | sessions; numstat rows reusing the tree's
-   tint/stats styling, click opens the peek sheet; refetch on `file_tree_changed`).
-
-Deferred from the draft: the count badge on the changes tab (the row list is the count,
-and a badge would need a separate unread-model) — revisit if it earns its keep.
+3. Changes view — `ffc1579` shipped the changes tab; the next day's direction
+   replaced it: the diff viewer moved to center stage. A file row in the tree now
+   opens the file's git diff in the center column in place of the transcript (the
+   slot the future editor lands in); the left pane is back to files | sessions and
+   the 470px peek sheet is gone (`PeekSheet` → `ChangesView`, `peek` →
+   `changesView` in the store).
