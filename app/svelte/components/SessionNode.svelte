@@ -18,6 +18,7 @@
   import { groupIsOpen } from '../lib/sessions';
   import { nextSelection } from '../lib/selection';
   import { tick } from 'svelte';
+  import { Archive } from '@lucide/svelte';
   import { ctxClamp } from '../lib/ui';
   import { fmtAgo } from '../lib/format';
   import SessionNode from './SessionNode.svelte';
@@ -251,7 +252,7 @@
         void archiveSession(session.meta.id);
       }}
     >
-      <svg class="ci" width="11" height="11"><use href="#i-archive" /></svg>
+      <Archive class="ci" size={11} />
     </button>
   {/if}
 {/snippet}

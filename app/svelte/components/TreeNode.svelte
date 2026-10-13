@@ -5,6 +5,7 @@
   // the recursion stays with each tree.
   import type { Snippet } from 'svelte';
   import { isActivateKey } from '../lib/ui';
+  import { ChevronDown } from '@lucide/svelte';
 
   let {
     depth = 0,
@@ -77,7 +78,7 @@
       }}
     >
       {#if expanded !== null}
-        <svg class="ci" width="11" height="11"><use href="#i-chev"/></svg>
+        <ChevronDown class="ci" width="11" height="11" />
       {/if}
     </button>
     {@render label()}
@@ -120,11 +121,11 @@
     flex: none;
     color: var(--dim);
   }
-  .trow .chev .ci {
+  .trow .chev :global(.ci) {
     display: block;
     transition: transform 0.12s;
   }
-  .trow .chev:not(.open) .ci {
+  .trow .chev:not(.open) :global(.ci) {
     transform: rotate(-90deg);
   }
   .trow .chev:not(.has) {

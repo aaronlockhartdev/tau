@@ -4,6 +4,7 @@
   // and its toggles stay in EntryCard (the store map is the persistence
   // layer); this child is a stateless renderer over them.
   import type { ExpandSlot, KvRow, Section, Shell } from '../lib/presentation';
+  import { Zap } from '@lucide/svelte';
 
   type CardShellShell = Extract<Shell, { kind: 'tool' | 'card' }>;
 
@@ -58,6 +59,7 @@
   {/if}
 {/snippet}
 {#if shell.kind === 'tool'}
+  {@const Icon = shell.icon}
   <div class="tool" class:open={open.tool}>
     <div
       class="chip"
@@ -70,7 +72,7 @@
       }}
       onkeydown={onKey(() => setOpen('tool'))}
     >
-      <svg class="ic" width="13" height="13"><use href={`#${shell.icon}`}/></svg>
+      <Icon class="ic" size={13} />
       <span class="nm">{shell.label}</span>
       <span class="sum">{shell.summary}</span>
       <span class="st {shell.status === 'ok' ? 'ok' : shell.status === 'error' ? 'err' : 'pend'}">
@@ -107,6 +109,7 @@
     {#if shell.header}
       {@const h = shell.header}
       {@const hopen = h.open}
+      {@const Icon = h.icon}
       {#if hopen !== null}
         <div
           class="hd {h.cls}"
@@ -120,7 +123,7 @@
           }}
           onkeydown={onKey(() => setOpen(hopen))}
         >
-          <svg class="ic" width="13" height="13"><use href={`#${h.icon}`}/></svg>{h.label}
+          <Icon class="ic" size={13} />{h.label}
           {#if h.meta}
             <span class="meta">{h.meta}</span>
           {/if}
@@ -130,7 +133,7 @@
         </div>
       {:else}
         <div class="hd {h.cls}">
-          <svg class="ic" width="13" height="13"><use href={`#${h.icon}`}/></svg>{h.label}
+          <Icon class="ic" size={13} />{h.label}
           {#if h.meta}
             <span class="meta">{h.meta}</span>
           {/if}
@@ -163,7 +166,7 @@
       </button>
     {/if}
     {#if shell.intmark}
-      <div class="intmark"><svg class="im" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bolt" /></svg>interrupted</div>
+      <div class="intmark"><Zap class="im" size={14} fill="currentColor" color="none" />interrupted</div>
     {/if}
   </div>
 {/if}
@@ -190,17 +193,17 @@
   .card2.collapsed .hd {
     margin-bottom: 0;
   }
-  .hd .ic {
+  .hd :global(.ic) {
     color: var(--purple);
   }
-  .hd.sub .ic {
+  .hd.sub :global(.ic) {
     color: var(--amber);
   }
-  .hd.par .ic {
+  .hd.par :global(.ic) {
     color: var(--acc);
   }
-  .hd.skill .ic,
-  .hd.obs .ic {
+  .hd.skill :global(.ic),
+  .hd.obs :global(.ic) {
     color: var(--green);
   }
   .txt2 {
@@ -265,7 +268,7 @@
   .tool .chip:hover {
     background: rgba(255, 255, 255, 0.04);
   }
-  .tool .chip .ic {
+  .tool .chip :global(.ic) {
     color: var(--dim);
   }
   .tool .chip .nm {
@@ -372,9 +375,8 @@
     color: var(--amber);
     margin-top: 6px;
   }
-  .intmark .im {
-    width: 11px;
-    height: 11px;
+  .intmark :global(.im) {
+    flex: none;
   }
   .hd .caret {
     margin-left: auto;

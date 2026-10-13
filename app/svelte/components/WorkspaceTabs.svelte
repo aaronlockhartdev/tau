@@ -19,6 +19,7 @@
   import type { Workspace } from '../lib/protocol';
   import { tick } from 'svelte';
   import { ctxClamp } from '../lib/ui';
+  import { Bell, Maximize2 } from '@lucide/svelte';
 
   // The right-click menu: its position plus the selection it acts on.
   let ctx = $state<{ x: number; y: number; ids: string[] } | null>(null);
@@ -110,7 +111,7 @@
     title="Focus mode: hide side panes"
     onclick={() => (store.focus = !store.focus)}
   >
-    <svg class="fi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-focus" /></svg>
+    <Maximize2 class="fi" size={15} aria-hidden="true" />
   </button>
   <button
     class="bell"
@@ -118,7 +119,7 @@
     title="Needs your attention"
     onclick={() => (store.attentionOpen = !store.attentionOpen)}
   >
-    <svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bell" /></svg>
+    <Bell class="bi" size={15} aria-hidden="true" />
     {#if attention().length > 0}
       <span class="count">{attention().length}</span>
     {/if}
@@ -253,13 +254,9 @@
     justify-content: center;
     cursor: pointer;
   }
-  .focus .fi,
-  .bell .bi {
-    width: 15px;
-    height: 15px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
+  .focus :global(.fi),
+  .bell :global(.bi) {
+    flex: none;
   }
   .bell:hover {
     color: var(--tx);

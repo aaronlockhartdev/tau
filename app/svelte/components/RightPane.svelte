@@ -11,6 +11,7 @@
   import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store.svelte';
   import { fmtAgo, fmtK } from '../lib/format';
   import { onActivate } from '../lib/ui';
+  import { ChevronDown, CircleSlash } from '@lucide/svelte';
   import type { Task, SubagentInfo } from '../lib/protocol';
 
   const cur = $derived(currentSession());
@@ -96,7 +97,7 @@
             onkeydown={onActivate(() => toggleTask(t.id))}
           >
             <div class="lh">
-              <svg class="chev" class:open={p?.expandedTasks.includes(t.id)}><use href="#i-chev"/></svg>
+              <ChevronDown class="chev {p?.expandedTasks.includes(t.id) ? 'open' : ''}" size={10} />
               <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
                 <span class="dot"></span>{t.status}
               </span>
@@ -131,7 +132,7 @@
                 {#if t.blockers.length > 0}
                   <div class="dl">blocker</div>
                   <div class="block">
-                    <span class="bmark"><svg class="bi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-blocked" /></svg></span>{t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
+                    <span class="bmark"><CircleSlash class="bi" size={12} aria-hidden="true" /></span>{t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
                   </div>
                 {/if}
                 <div class="a">
@@ -149,7 +150,7 @@
         {/each}
         {#if histTasks.length > 0}
           <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onActivate(toggleHist)}>
-            <svg class="chev"><use href="#i-chev"/></svg>history · {histTasks.length}
+            <ChevronDown class="chev" size={10} />history · {histTasks.length}
           </div>
           {#if p.historyOpen}
             {#each histTasks as t (t.id)}
@@ -219,7 +220,7 @@
         {/each}
         {#if histSubs.length > 0}
           <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onActivate(toggleHist)}>
-            <svg class="chev"><use href="#i-chev"/></svg>history · {histSubs.length}
+            <ChevronDown class="chev" size={10} />history · {histSubs.length}
           </div>
           {#if p.historyOpen}
             {#each histSubs as r (r.handle)}
@@ -286,13 +287,11 @@
   .ghead[role='button'] {
     cursor: pointer;
   }
-  .ghead .chev {
-    width: 10px;
-    height: 10px;
+  .ghead :global(.chev) {
     flex: none;
     transition: transform 0.12s;
   }
-  .ghead.open .chev {
+  .ghead.open :global(.chev) {
     transform: rotate(90deg);
   }
   .list {
@@ -336,14 +335,12 @@
     font: 9.5px var(--mono);
     color: var(--faint);
   }
-  .lrow .chev {
-    width: 10px;
-    height: 10px;
+  .lrow :global(.chev) {
     flex: none;
     color: var(--dim);
     transition: transform 0.12s;
   }
-  .lrow .chev.open {
+  .lrow :global(.chev.open) {
     transform: rotate(90deg);
   }
   .lrow .ld {
@@ -400,12 +397,8 @@
     display: inline-flex;
     margin-right: 4px;
   }
-  .ld .block .bi {
-    width: 12px;
-    height: 12px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
+  .ld .block :global(.bi) {
+    flex: none;
   }
   .ld .a {
     margin-top: 6px;

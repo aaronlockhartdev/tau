@@ -16,6 +16,7 @@
   // expansion happens at the message_send boundary, not here.
   import { store, send, stop, currentSession, type PendingMsg } from '../lib/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
+  import { Archive, ArrowUp, Bot, ChevronDown, Square, Zap } from '@lucide/svelte';
   import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';
 
   let text = $state('');
@@ -179,7 +180,7 @@
 >
   {#if archived}
     <div class="crow archived">
-      <svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-archive" /></svg>
+      <Archive class="ai" size={14} aria-hidden="true" />
       <span>archived — restore to continue</span>
     </div>
   {:else}
@@ -232,9 +233,9 @@
           title="switch model"
           onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
         >
-          <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
+          <Bot class="mi" size={12} aria-hidden="true" />
           <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
-          <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
+          <ChevronDown class="chev" size={10} aria-hidden="true" />
         </button>
         <span class="chint">enter send · shift+enter newline · / commands</span>
       </div>
@@ -258,11 +259,11 @@
         onclick={asStop ? () => void stop() : submit}
       >
         {#if asStop}
-          <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-stop" /></svg>
+          <Square class="si" size={14} fill="currentColor" color="none" aria-hidden="true" />
         {:else if running && lane === 'force'}
-          <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bolt" /></svg>
+          <Zap class="si" size={14} fill="currentColor" color="none" aria-hidden="true" />
         {:else}
-          <svg class="si" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-send" /></svg>
+          <ArrowUp class="si" size={14} aria-hidden="true" />
         {/if}
       </button>
     </div>
@@ -292,9 +293,7 @@
     color: var(--faint);
     gap: 8px;
   }
-  .crow.archived .ai {
-    width: 14px;
-    height: 14px;
+  .crow.archived :global(.ai) {
     flex: none;
   }
   .cin {
@@ -352,10 +351,6 @@
     border: none;
     cursor: pointer;
   }
-  .send .si {
-    width: 14px;
-    height: 14px;
-  }
   .send.disabled {
     opacity: 0.35;
   }
@@ -396,19 +391,9 @@
   .mchip:hover {
     color: var(--dim);
   }
-  .mchip .mi {
-    width: 12px;
-    height: 12px;
+  .mchip :global(.mi) {
     stroke: var(--faint);
-    fill: none;
-    stroke-width: 2;
-  }
-  .mchip .chev {
-    width: 10px;
-    height: 10px;
-    stroke: var(--faint);
-    fill: none;
-    stroke-width: 2;
+    flex: none;
   }
   .mchip .mname {
     color: var(--dim);

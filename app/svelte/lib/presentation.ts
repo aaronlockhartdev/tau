@@ -4,11 +4,14 @@
 // kind touches this module only, and the mapping is testable without
 // mounting a component.
 
+import type { Component } from 'svelte';
+import type { LucideProps } from '@lucide/svelte';
 import type {
   AnyEntry,
   Entry,
   SkillRef
 } from './protocol';
+import { Book, Bot, Check, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, md, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
 import { fmtK } from './format';
@@ -32,7 +35,7 @@ export type Section =
   | { type: 'pre'; text: string; label?: string };
 
 export interface Header {
-  icon: string;
+  icon: LucideIcon;
   label: string;
   cls: 'sub' | 'par' | 'skill' | 'obs' | 'sys';
   meta: string | null;
@@ -49,11 +52,11 @@ export interface Header {
 export type Shell =
   | { kind: 'bubble'; text: string }
   | { kind: 'divider'; label: string; tint: 'drain' | 'compact' }
-  | { kind: 'stline'; icon: string; label: string }
+  | { kind: 'stline'; icon: LucideIcon; label: string }
   | { kind: 'think'; label: string; meta: string | null; openKey: 'think'; body: string }
   | {
     kind: 'tool';
-    icon: string;
+    icon: LucideIcon;
     label: string;
     summary: string;
     status?: 'ok' | 'running' | 'error';
@@ -109,12 +112,14 @@ function toolSummary(e: ToolEntry): string {
   return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
 }
 
-function toolIcon(name: string | undefined): string {
-  if (['read', 'write', 'edit'].includes(name ?? '')) return 'i-file';
-  if (name?.startsWith('subagent_') || name === 'parent_notify') return 'i-bot';
-  if (name === 'recall') return 'i-search';
-  if (name?.startsWith('task_')) return 'i-check';
-  return 'i-term';
+type LucideIcon = Component<LucideProps>;
+
+function toolIcon(name: string | undefined): LucideIcon {
+  if (['read', 'write', 'edit'].includes(name ?? '')) return File;
+  if (name?.startsWith('subagent_') || name === 'parent_notify') return Bot;
+  if (name === 'recall') return Search;
+  if (name?.startsWith('task_')) return Check;
+  return Terminal;
 }
 
 function toolShell(e: ToolEntry, out: string): Shell {
@@ -177,7 +182,7 @@ function skillCard(skill: SkillRef, text: string): Shell {
   const long = text.length > 200;
   return card({
     header: {
-      icon: 'i-book',
+      icon: Book,
       label: `skill · ${skill.name}`,
       cls: 'skill',
       meta: null,
@@ -216,7 +221,7 @@ function subagentStateLabel(p: SubagentEntry['payload']): string {
 function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
   const p = e.payload;
   if (p && p.event === 'state') {
-    return { kind: 'stline', icon: 'i-bot', label: subagentStateLabel(p) };
+    return { kind: 'stline', icon: Bot, label: subagentStateLabel(p) };
   }
   // The spawn/notify label is the parent's view of a child; the child's
   // own transcript resolves the parent label too (it renders the
@@ -236,7 +241,7 @@ function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
       : [];
   return card({
     header: {
-      icon: 'i-bot',
+      icon: Bot,
       label,
       cls: parentLabel ? 'sys' : 'sub',
       meta: null,
@@ -278,7 +283,7 @@ function taskShell(e: TaskEntry, text: string): Shell {
       : [];
   return card({
     header: {
-      icon: 'i-check',
+      icon: Check,
       label: p ? taskLabel(p) : 'task',
       cls: 'sys',
       meta: null,
@@ -304,7 +309,7 @@ function observationShell(e: OmEntry, text: string): Shell {
   if (e.input) body.push({ type: 'pre', text: e.input, label: 'input' });
   return card({
     header: {
-      icon: 'i-book',
+      icon: Book,
       label: 'observation',
       cls: 'obs',
       meta: e.model ?? null,
@@ -336,7 +341,7 @@ export function present(
           shells: [
             card({
               header: {
-                icon: 'i-bot',
+                icon: Bot,
                 label: ctx.sourceLabel ? `sub-agent · ${ctx.sourceLabel}` : 'sub-agent',
                 cls: 'sub',
                 meta: null,
@@ -358,7 +363,7 @@ export function present(
           shells: [
             card({
               header: {
-                icon: 'i-user',
+                icon: User,
                 label: `parent · ${ctx.parentLabel}`,
                 cls: 'par',
                 meta: null,
@@ -425,13 +430,13 @@ export function present(
     case 'system': {
       if (!text.trim()) return null;
       if (text.startsWith('model: ')) {
-        return { shells: [{ kind: 'stline', icon: 'i-bot', label: text }] };
+        return { shells: [{ kind: 'stline', icon: Bot, label: text }] };
       }
       return {
         shells: [
           card({
             header: {
-              icon: 'i-term',
+              icon: Terminal,
               label: 'system',
               cls: 'sys',
               meta: null,
@@ -450,7 +455,7 @@ export function present(
         shells: [
           card({
             header: {
-              icon: 'i-bot',
+              icon: Bot,
               label: 'spawn snapshot',
               cls: 'sub',
               meta: null,

@@ -9,6 +9,7 @@
   import type { Entry } from '../lib/protocol';
   import CardShell from './CardShell.svelte';
   import { onActivate } from '../lib/ui';
+  import { Sparkles } from '@lucide/svelte';
 
   let {
     entry,
@@ -74,8 +75,9 @@
       <span>{shell.label}</span>
     </div>
   {:else if shell.kind === 'stline'}
+    {@const Icon = shell.icon}
     <div class="stline">
-      <svg class="ic" width="13" height="13"><use href={`#${shell.icon}`}/></svg>{shell.label}
+      <Icon class="ic" size={13} />{shell.label}
     </div>
   {:else if shell.kind === 'think'}
     <div
@@ -91,7 +93,7 @@
       }}
       onkeydown={onActivate(() => setOpen('think'))}
     >
-      <svg class="ic" width="13" height="13"><use href="#i-spark"/></svg>
+      <Sparkles class="ic" size={13} />
       <span>{shell.label}</span>
       {#if shell.meta}
         <span class="meta">{shell.meta}</span>
@@ -195,7 +197,7 @@
     color: var(--faint);
     cursor: pointer;
   }
-  .think .ic {
+  .think :global(.ic) {
     color: var(--purple);
     opacity: 0.7;
   }
@@ -213,7 +215,7 @@
     font: 12px var(--sans);
     color: var(--faint);
   }
-  .stline .ic {
+  .stline :global(.ic) {
     color: var(--purple);
     opacity: 0.7;
   }

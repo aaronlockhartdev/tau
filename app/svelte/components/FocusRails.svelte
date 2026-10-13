@@ -6,6 +6,7 @@
   // state persists across toggles. The corner chips were too small to
   // aim at and too far from the working area.
   import { store } from '../lib/store.svelte';
+  import { ChevronDown } from '@lucide/svelte';
   import LeftPane from './LeftPane.svelte';
   import RightPane from './RightPane.svelte';
 
@@ -24,7 +25,7 @@
     title="show files & sessions"
     onclick={() => toggle('left')}
   >
-    <svg><use href="#i-chev" /></svg>
+    <ChevronDown size={14} />
   </button>
   <button
     class="handle right"
@@ -32,7 +33,7 @@
     title="show tasks & sub-agents"
     onclick={() => toggle('right')}
   >
-    <svg><use href="#i-chev" /></svg>
+    <ChevronDown size={14} />
   </button>
   {#if side}
     <div class="insp" class:insp-left={side === 'left'}>
@@ -75,24 +76,20 @@
     color: var(--tx);
     border-color: var(--acc);
   }
-  .handle svg {
-    width: 14px;
-    height: 14px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
+  .handle :global(svg) {
+    display: block;
   }
   /* The chevron points at the pane it summons; open state points back. */
-  .handle.left svg {
+  .handle.left :global(svg) {
     transform: rotate(90deg);
   }
-  .handle.left.on svg {
+  .handle.left.on :global(svg) {
     transform: rotate(-90deg);
   }
-  .handle.right svg {
+  .handle.right :global(svg) {
     transform: rotate(-90deg);
   }
-  .handle.right.on svg {
+  .handle.right.on :global(svg) {
     transform: rotate(90deg);
   }
   .handle.on {

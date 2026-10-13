@@ -135,7 +135,7 @@ describe('Composer', () => {
     await user.click(screen.getByRole('button', { name: 'force' }));
     const input = screen.getByPlaceholderText(PH);
     await user.type(input, 'nudge');
-    expect(screen.getByTitle('send').querySelector('use')?.getAttribute('href')).toBe('#i-bolt');
+    expect(screen.getByTitle('send').querySelector('svg.lucide-zap')).not.toBeNull();
     await user.keyboard('{Enter}');
     expect(send).toHaveBeenCalledWith('nudge', 'force');
   });

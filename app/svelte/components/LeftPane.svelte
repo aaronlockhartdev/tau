@@ -10,6 +10,7 @@
   import { onActivate } from '../lib/ui';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
+  import { ChevronDown, Plus } from '@lucide/svelte';
   import FileNode from './FileNode.svelte';
 
   const ws = $derived(currentSession()?.meta.workspace ?? null);
@@ -81,7 +82,7 @@
   </div>
   {#if p && ws && p.ltab === 'sessions'}
     <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
-      <svg class="ci" width="13" height="13"><use href="#i-plus" /></svg>
+      <Plus class="ci" width="13" height="13" />
     </button>
   {/if}
   </div>
@@ -121,7 +122,7 @@
         {#if archived.length}
         <div class="arch">
           <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }}>
-            <svg class="ci" width="10" height="10" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev" /></svg> archive · {archived.length}
+            <ChevronDown class="ci {p.archOpen ? 'open' : ''}" size={10} /> archive · {archived.length}
           </button>
           {#if p.archOpen}
             {#each archived as s (s.meta.id)}
@@ -206,12 +207,8 @@
     color: var(--tx);
     border-color: var(--acc);
   }
-  .new .ci {
-    width: 13px;
-    height: 13px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
+  .new :global(.ci) {
+    display: block;
   }
   .arch {
     border-top: 1px solid var(--line);
@@ -231,9 +228,13 @@
     text-transform: uppercase;
     color: var(--faint);
   }
-  .arch-h .ci {
+  .arch-h :global(.ci) {
     display: block;
+    transform: rotate(-90deg);
     transition: transform 0.12s;
+  }
+  .arch-h :global(.ci.open) {
+    transform: rotate(0deg);
   }
   .empty {
     padding: 24px;

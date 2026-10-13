@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { md } from './markdown';
 import { present, type Shell } from './presentation';
+import { Bot, Check, File, Search, Terminal } from '@lucide/svelte';
 import type { Entry, MessageEntry } from './protocol';
 
 const ctx = { sourceLabel: '', parentLabel: '' };
@@ -91,7 +92,7 @@ describe('present', () => {
     })[0];
     expect(s).toEqual({
       kind: 'tool',
-      icon: 'i-term',
+      icon: Terminal,
       label: 'bash',
       summary: 'ls -la',
       status: 'ok',
@@ -114,12 +115,12 @@ describe('present', () => {
       if (s?.kind !== 'tool') throw new Error('expected a tool shell');
       return s.icon;
     };
-    expect(icon('read')).toBe('i-file');
-    expect(icon('subagent_spawn')).toBe('i-bot');
-    expect(icon('parent_notify')).toBe('i-bot');
-    expect(icon('recall')).toBe('i-search');
-    expect(icon('task_create')).toBe('i-check');
-    expect(icon('bash')).toBe('i-term');
+    expect(icon('read')).toBe(File);
+    expect(icon('subagent_spawn')).toBe(Bot);
+    expect(icon('parent_notify')).toBe(Bot);
+    expect(icon('recall')).toBe(Search);
+    expect(icon('task_create')).toBe(Check);
+    expect(icon('bash')).toBe(Terminal);
   });
 
   it('a task card labels the event and reveals the payload rows without the event key', () => {
@@ -288,7 +289,7 @@ describe('present', () => {
         },
         ctx
       )?.shells
-    ).toEqual([{ kind: 'stline', icon: 'i-bot', label: 'state: idle · parent' }]);
+    ).toEqual([{ kind: 'stline', icon: Bot, label: 'state: idle · parent' }]);
   });
 
   it('labels a spawn event by the parent, but not in the child\'s own session', () => {
@@ -312,10 +313,10 @@ describe('present', () => {
   it('a model system entry is a state line; other system entries are cards', () => {
     expect(
       present({ id: 'e1', kind: 'system', text: 'model: acme/x-1' }, ctx)?.shells
-    ).toEqual([{ kind: 'stline', icon: 'i-bot', label: 'model: acme/x-1' }]);
+    ).toEqual([{ kind: 'stline', icon: Bot, label: 'model: acme/x-1' }]);
     const c = cardOf({ id: 'e1', kind: 'system', text: 'something else' });
     expect(c.header?.label).toBe('system');
-    expect(c.header?.icon).toBe('i-term');
+    expect(c.header?.icon).toBe(Terminal);
   });
 
   it('a spawn snapshot is a labelled card', () => {
