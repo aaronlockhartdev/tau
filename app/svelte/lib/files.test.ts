@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ensureWorkspace,
+  fileIcon,
   putListing,
   removeWorkspace,
   scheduleRefetch,
@@ -8,6 +9,7 @@ import {
   waveDirs,
   type FilesCache
 } from './files';
+import { File, FileCog, FileCode, FileJson, FileText, Folder, GitBranch, Image } from '@lucide/svelte';
 import type { FileEntry } from './protocol';
 
 const f: FileEntry = { name: 'x', path: 'x', dir: false, size: 1 };
@@ -97,5 +99,24 @@ describe('scheduleRefetch / waveDirs', () => {
       { ws: 'w1', path: '.' },
       { ws: 'w1', path: 'src' }
     ]);
+  });
+});
+
+describe('fileIcon', () => {
+  it('maps extensions to their kind icons', () => {
+    expect(fileIcon('main.ts')).toBe(FileCode);
+    expect(fileIcon('App.svelte')).toBe(FileCode);
+    expect(fileIcon('lib.rs')).toBe(FileCode);
+    expect(fileIcon('data.json')).toBe(FileJson);
+    expect(fileIcon('README.md')).toBe(FileText);
+    expect(fileIcon('Cargo.toml')).toBe(FileCog);
+    expect(fileIcon('photo.png')).toBe(Image);
+    expect(fileIcon('.gitignore')).toBe(GitBranch);
+  });
+
+  it('dirs get the folder icon, unknown extensions the generic file', () => {
+    expect(fileIcon('src', true)).toBe(Folder);
+    expect(fileIcon('weird.xyz')).toBe(File);
+    expect(fileIcon('Makefile')).toBe(File);
   });
 });

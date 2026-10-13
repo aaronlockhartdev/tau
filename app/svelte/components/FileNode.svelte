@@ -7,6 +7,7 @@
   import FileNode from './FileNode.svelte';
   import TreeNode from './TreeNode.svelte';
   import { store, toggleFileDir, retryDirFetch, fileCache, setPeek } from '../lib/store.svelte';
+  import { fileIcon, fileKind } from '../lib/files';
   import type { FileEntry } from '../lib/protocol';
 
   // A file's git badge (P4): D beats A beats M when a path appears in more
@@ -42,6 +43,8 @@
 </script>
 
 {#snippet rowLabel()}
+  {@const Icon = fileIcon(entry.name, entry.dir)}
+  <Icon class="fic k-{fileKind(entry.name, entry.dir)}" size={14} />
   <span class="name">{entry.name}</span>
   {#if gitBadge}
     <span class="gitb {gitBadge}">{gitBadge}</span>
@@ -66,6 +69,30 @@
 {/if}
 
 <style>
+  :global(.fic) {
+    flex: none;
+    opacity: 0.85;
+  }
+  :global(.k-code) {
+    color: var(--acc);
+  }
+  :global(.k-json),
+  :global(.k-git) {
+    color: var(--amber);
+  }
+  :global(.k-doc) {
+    color: var(--green);
+  }
+  :global(.k-conf) {
+    color: var(--purple);
+  }
+  :global(.k-img),
+  :global(.k-dir) {
+    color: var(--dim);
+  }
+  :global(.k-gen) {
+    color: var(--faint);
+  }
   .name {
     flex: 1;
     overflow: hidden;
