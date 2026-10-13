@@ -15,6 +15,7 @@
     type Event,
     type FileEntry,
     type GitStatus,
+    type NumstatEntry,
     type SessionMeta,
     type SkillInfo,
     type Workspace
@@ -33,6 +34,7 @@
     archiveSession,
     deleteSession,
     newSession,
+    fetchChanges,
     refetchSessionList,
     renameSession,
     restoreSession,
@@ -112,6 +114,10 @@
     // Git status per workspace (workbench P4): the files tab's M/A/D badges
     // and the peek sheet's switcher. null = not a git repository.
     gitStatus: {} as Record<string, GitStatus | null>,
+    // The changes tab (file-tree plan, phase 3): the numstat row list per
+    // workspace. null = not a git repository (the tab shows its empty state).
+    changes: {} as Record<string, NumstatEntry[] | null>,
+    changesLoading: false,
     // The peek sheet (P4): the file under diff inspection, and its diff text.
     peek: null as { workspace: string; path: string } | null,
     peekDiff: null as string | null,
@@ -327,6 +333,7 @@
     store.files = ensureWorkspace(store.files, real.id);
     void fetchDir(real.id, '.');
     void refreshGitStatus(real.id);
+    void fetchChanges(real.id);
     // Archived sessions are listed (for the archive folder) but can't be
     // opened; auto-open the most recent live one, else start a fresh session.
     const unarchived =
@@ -396,6 +403,25 @@
       };
     } catch {
       store.gitStatus = { ...store.gitStatus, [ws]: null };
+    }
+  }
+
+  // The changes tab's list: the numstat snapshot from the core (cached
+  // there, so a refetch is a cache read after the first). A non-git
+  // workspace records null — the tab shows its empty state.
+  async function fetchChanges(ws: string): Promise<void> {
+    store.changesLoading = true;
+    try {
+      const out = await command({ type: 'git_numstat', workspace: ws });
+      if (!store.workspaces.some((w) => w.id === ws)) return;
+      store.changes = {
+        ...store.changes,
+        [ws]: out.kind === 'git_numstat' ? out.entries : null
+      };
+    } catch {
+      store.changes = { ...store.changes, [ws]: null };
+    } finally {
+      store.changesLoading = false;
     }
   }
 
@@ -496,6 +522,7 @@
       store.fileErrors = next;
     }
     store.files = removeWorkspace(store.files, ws.id);
+    delete store.changes[ws.id];
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
@@ -720,6 +747,7 @@
         if (ev.type === 'file_tree_changed') {
           scheduleRefetch(ev.workspace, ev.changed);
           void refreshGitStatus(ev.workspace);
+          void fetchChanges(ev.workspace);
         }
         continue;
       }

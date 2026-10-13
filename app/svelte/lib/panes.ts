@@ -4,7 +4,7 @@
 import { nextSelection } from './selection';
 
 export interface PaneState {
-  ltab: 'files' | 'sessions';
+  ltab: 'files' | 'changes' | 'sessions';
   rtab: 'tasks' | 'subs';
   // F3: the right-pane history section (done/failed/stopped rows) starts
   // collapsed; per-row badges carry the exact state, so no filter exists.

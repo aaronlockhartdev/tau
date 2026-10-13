@@ -15,6 +15,7 @@ import {
   newSession,
   resetMockStore,
   retryDirFetch,
+  setPeek,
   seedState
 } from '../lib/testing/mock-store.svelte.ts';
 
@@ -141,6 +142,40 @@ describe('LeftPane', () => {
     expect(mockStore.pane[WS]?.ltab).toBe('files');
     await userEvent.click(screen.getByRole('button', { name: 'sessions' }));
     expect(mockStore.pane[WS]?.ltab).toBe('sessions');
+  });
+
+  it('the changes tab lists the numstat rows with tint and stats', async () => {
+    mockStore.changes = {
+      [WS]: [
+        { path: 'app/svelte/lib/files.ts', added: 38, deleted: 30, state: 'modified' },
+        { path: 'new.md', added: 12, deleted: 0, state: 'untracked' },
+        { path: 'gone.rs', added: 0, deleted: 5, state: 'deleted' }
+      ]
+    };
+    await mount();
+    await userEvent.click(screen.getByRole('button', { name: 'changes' }));
+    expect(screen.getByText('files.ts').className).toContain('modified');
+    expect(screen.getByText('new.md').className).toContain('untracked');
+    expect(screen.getByText('gone.rs').className).toContain('deleted');
+    expect(screen.getByText('+38')).toBeInTheDocument();
+    expect(screen.getByText('−5')).toBeInTheDocument();
+  });
+
+  it('a changes row opens the peek sheet for its path', async () => {
+    mockStore.changes = {
+      [WS]: [{ path: 'crates/tau-core/src/lib.rs', added: 1, deleted: 1, state: 'modified' }]
+    };
+    await mount();
+    await userEvent.click(screen.getByRole('button', { name: 'changes' }));
+    await userEvent.click(screen.getByText('lib.rs'));
+    expect(setPeek).toHaveBeenCalledWith({ workspace: WS, path: 'crates/tau-core/src/lib.rs' });
+  });
+
+  it('a non-git workspace shows the empty state on the changes tab', async () => {
+    mockStore.changes = { [WS]: null };
+    await mount();
+    await userEvent.click(screen.getByRole('button', { name: 'changes' }));
+    expect(screen.getByText('No changes.')).toBeInTheDocument();
   });
 
   it('a click away from the rows clears the selection', async () => {

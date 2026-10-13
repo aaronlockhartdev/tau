@@ -10,7 +10,7 @@
 import { vi } from 'vitest';
 import type { FilesCache } from '../files';
 import type { PaneState } from '../panes';
-import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../protocol';
+import type { FileEntry, GitStatus, NumstatEntry, SkillInfo, SessionMeta, Workspace } from '../protocol';
 import { attentionOf, type AttentionItem } from '../attention';
 import { makeStub, type SessionState } from '../sessions';
 
@@ -48,6 +48,8 @@ export function freshDefaults() {
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,
     gitStatus: {} as Record<string, GitStatus | null>,
+    changes: {} as Record<string, NumstatEntry[] | null>,
+    changesLoading: false,
     peek: null as { workspace: string; path: string } | null,
     peekDiff: null as string | null,
     attentionOpen: false,

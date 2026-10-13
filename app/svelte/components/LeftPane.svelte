@@ -6,7 +6,7 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, setPeek, type PaneState } from '../lib/store.svelte';
   import { onActivate } from '../lib/ui';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
@@ -72,12 +72,22 @@
     const q = pane(ws);
     if (q) q.ltab = t;
   }
+
+  // The changes tab (file-tree plan, phase 3): the numstat row list. null
+  // (non-git workspace) and a loaded empty list both render "No changes."
+  const changesList = $derived(store.changes[ws ?? ''] ?? []);
+
+  // A changes row opens the existing peek sheet (the git_diff path).
+  function openChange(path: string): void {
+    if (ws) setPeek({ workspace: ws, path });
+  }
 </script>
 
 <div class="pane">
   <div class="tabs" role="tablist">
   <div class="seg">
     <button class="tab" class:on={p?.ltab === 'files'} disabled={!p} onclick={() => { if (p) setLtab('files'); }}>files</button>
+    <button class="tab" class:on={p?.ltab === 'changes'} disabled={!p} onclick={() => { if (p) setLtab('changes'); }}>changes</button>
     <button class="tab" class:on={p?.ltab === 'sessions'} disabled={!p} onclick={() => { if (p) setLtab('sessions'); }}>sessions</button>
   </div>
   {#if p && ws && p.ltab === 'sessions'}
@@ -106,6 +116,32 @@
           >failed to list — click to retry</div>
         {:else}
           <div class="note">No files listed yet.</div>
+        {/if}
+      </div>
+    {:else if p.ltab === 'changes'}
+      <div class="sec">
+        {#if store.changesLoading}
+          <div class="note">loading…</div>
+        {:else if changesList.length === 0}
+          <div class="note">No changes.</div>
+        {:else}
+          <div class="tree">
+            {#each changesList as c (c.path)}
+              {@const slash = c.path.lastIndexOf('/')}
+              <button
+                class="crow"
+                type="button"
+                title={c.path}
+                onclick={() => openChange(c.path)}
+              >
+                <span class="cpath">{slash >= 0 ? c.path.slice(0, slash + 1) : ''}</span>
+                <span class="cname tint {c.state}">{slash >= 0 ? c.path.slice(slash + 1) : c.path}</span>
+                {#if c.added != null && c.deleted != null}
+                  <span class="cstats"><span class="add">+{c.added}</span> <span class="del">−{c.deleted}</span></span>
+                {/if}
+              </button>
+            {/each}
+          </div>
         {/if}
       </div>
     {:else}
@@ -189,6 +225,56 @@
   }
   .tree {
     padding-top: 4px;
+  }
+  .crow {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    width: 100%;
+    padding: 3px 8px;
+    background: transparent;
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .crow:hover {
+    background: var(--raised);
+  }
+  .cpath {
+    flex: none;
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .cname {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11.5px;
+  }
+  :global(.tint.modified) {
+    color: var(--amber);
+  }
+  :global(.tint.untracked) {
+    color: var(--green);
+  }
+  :global(.tint.deleted) {
+    color: var(--red);
+  }
+  .cstats {
+    flex: none;
+    font: 10.5px var(--mono);
+  }
+  .cstats .add {
+    color: var(--green);
+  }
+  .cstats .del {
+    color: var(--red);
   }
   .new {
     margin-left: auto;
