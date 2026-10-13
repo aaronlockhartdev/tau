@@ -1,64 +1,39 @@
 <script lang="ts">
-  // Focus-mode pane menus (workbench P6, second restyle): small floating
-  // segmented chips in the top corners — the same control language as the
-  // pane tab headers — replacing the full-height edge rails. A click
-  // points the pane at a tab, then toggles a non-modal inspector sheet
-  // (the real side pane) beside it.
-  import { store, pane, currentSession } from '../lib/store.svelte';
+  // Focus-mode pane handles (workbench P6, third restyle): one vertical
+  // pill per window edge, mid-height — a drawer handle. It toggles that
+  // side's inspector sheet (the real side pane); the tab choice lives in
+  // the pane's own labelled header inside the sheet, and the pane's tab
+  // state persists across toggles. The corner chips were too small to
+  // aim at and too far from the working area.
+  import { store } from '../lib/store.svelte';
   import LeftPane from './LeftPane.svelte';
   import RightPane from './RightPane.svelte';
 
   const on = $derived(store.focus);
   const side = $derived(store.focusInspector);
-  const ws = $derived(currentSession()?.meta.workspace ?? null);
-  const q = $derived(ws ? pane(ws) : null);
 
-  function chip(s: 'left' | 'right', tab: string): void {
-    if (q) {
-      if (s === 'left') q.ltab = tab as 'files' | 'sessions';
-      else q.rtab = tab as 'tasks' | 'subs';
-    }
+  function toggle(s: 'left' | 'right'): void {
     store.focusInspector = store.focusInspector === s ? null : s;
   }
 </script>
 
 {#if on}
-  <div class="chips left" class:shift={side === 'left'}>
-    <button
-      class="chip"
-      class:on={side === 'left' && q?.ltab === 'sessions'}
-      title="sessions"
-      onclick={() => chip('left', 'sessions')}
-    >
-      <svg><use href="#i-book" /></svg>
-    </button>
-    <button
-      class="chip"
-      class:on={side === 'left' && q?.ltab === 'files'}
-      title="files"
-      onclick={() => chip('left', 'files')}
-    >
-      <svg><use href="#i-file" /></svg>
-    </button>
-  </div>
-  <div class="chips right" class:shift={side === 'right'}>
-    <button
-      class="chip"
-      class:on={side === 'right' && q?.rtab === 'tasks'}
-      title="tasks"
-      onclick={() => chip('right', 'tasks')}
-    >
-      <svg><use href="#i-check" /></svg>
-    </button>
-    <button
-      class="chip"
-      class:on={side === 'right' && q?.rtab === 'subs'}
-      title="sub-agents"
-      onclick={() => chip('right', 'subagents')}
-    >
-      <svg><use href="#i-bot" /></svg>
-    </button>
-  </div>
+  <button
+    class="handle left"
+    class:on={side === 'left'}
+    title="show files & sessions"
+    onclick={() => toggle('left')}
+  >
+    <svg><use href="#i-chev" /></svg>
+  </button>
+  <button
+    class="handle right"
+    class:on={side === 'right'}
+    title="show tasks & sub-agents"
+    onclick={() => toggle('right')}
+  >
+    <svg><use href="#i-chev" /></svg>
+  </button>
   {#if side}
     <div class="insp" class:insp-left={side === 'left'}>
       {#if side === 'left'}
@@ -71,55 +46,58 @@
 {/if}
 
 <style>
-  .chips {
+  .handle {
     position: absolute;
-    top: 10px;
-    display: flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--panel2);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    z-index: 31;
-  }
-  .chips.left {
-    left: 12px;
-  }
-  /* When the sheet is open the chips step out past it, staying clickable. */
-  .chips.left.shift {
-    left: 316px;
-  }
-  .chips.right {
-    right: 12px;
-  }
-  .chips.right.shift {
-    right: 316px;
-  }
-  .chip {
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 64px;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
-    height: 24px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
+    background: var(--panel2);
+    border: 1px solid var(--line2);
     color: var(--dim);
     cursor: pointer;
+    z-index: 31;
   }
-  .chip svg {
+  .handle.left {
+    left: 0;
+    border-left: none;
+    border-radius: 0 8px 8px 0;
+  }
+  .handle.right {
+    right: 0;
+    border-right: none;
+    border-radius: 8px 0 0 8px;
+  }
+  .handle:hover {
+    color: var(--tx);
+    border-color: var(--acc);
+  }
+  .handle svg {
     width: 14px;
     height: 14px;
     stroke: currentColor;
     fill: none;
-    stroke-width: 1.8;
+    stroke-width: 2;
   }
-  .chip:hover {
-    color: var(--tx);
+  /* The chevron points at the pane it summons; open state points back. */
+  .handle.left svg {
+    transform: rotate(90deg);
   }
-  .chip.on {
-    color: var(--tx);
-    background: var(--raised);
+  .handle.left.on svg {
+    transform: rotate(-90deg);
+  }
+  .handle.right svg {
+    transform: rotate(-90deg);
+  }
+  .handle.right.on svg {
+    transform: rotate(90deg);
+  }
+  .handle.on {
+    color: var(--acc);
+    border-color: var(--acc);
   }
   .insp {
     position: absolute;
@@ -133,9 +111,11 @@
     z-index: 30;
   }
   .insp.insp-left {
-    left: 12px;
+    left: 0;
+    border-left: none;
   }
   .insp:not(.insp-left) {
-    right: 12px;
+    right: 0;
+    border-right: none;
   }
 </style>

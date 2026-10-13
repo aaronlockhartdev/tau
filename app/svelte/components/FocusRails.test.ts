@@ -41,39 +41,35 @@ describe('FocusRails', () => {
     expect(screen.queryByTitle('sessions')).toBeNull();
   });
 
-  it('shows a pill per pane tab on each edge', () => {
+  it('shows one drawer handle per edge', () => {
     render(FocusRails);
-    expect(screen.getByTitle('sessions')).toBeTruthy();
-    expect(screen.getByTitle('files')).toBeTruthy();
-    expect(screen.getByTitle('tasks')).toBeTruthy();
-    expect(screen.getByTitle('sub-agents')).toBeTruthy();
+    expect(screen.getByTitle('show files & sessions')).toBeTruthy();
+    expect(screen.getByTitle('show tasks & sub-agents')).toBeTruthy();
   });
 
-  it('a pill opens its side\'s inspector and points the pane at the tab', async () => {
+  it('a handle opens its side\'s inspector with the real pane', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    await user.click(screen.getByTitle('files'));
+    await user.click(screen.getByTitle('show files & sessions'));
     expect(store.focusInspector).toBe('left');
-    expect(store.pane['w1']!.ltab).toBe('files');
-    // The inspector carries the real pane.
+    // The inspector carries the real pane (with its own tab header).
     expect(screen.getByRole('tablist')).toBeTruthy();
   });
 
-  it('the right rail opens the right inspector on the sub-agents tab', async () => {
+  it('the right handle opens the right inspector', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    await user.click(screen.getByTitle('sub-agents'));
+    await user.click(screen.getByTitle('show tasks & sub-agents'));
     expect(store.focusInspector).toBe('right');
-    expect(store.pane['w1']!.rtab).toBe('subagents');
   });
 
   it('clicking the active side again closes the inspector', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    const pill = () => screen.getByTitle('files');
-    await user.click(pill());
+    const handle = () => screen.getByTitle('show files & sessions');
+    await user.click(handle());
     expect(store.focusInspector).toBe('left');
-    await user.click(pill());
+    await user.click(handle());
     expect(store.focusInspector).toBeNull();
   });
 });
