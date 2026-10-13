@@ -78,7 +78,7 @@
       }}
     >
       {#if expanded !== null}
-        <ChevronDown class="ci" width="11" height="11" />
+        <ChevronDown class="ci" size={11} />
       {/if}
     </button>
     {@render label()}

@@ -4,8 +4,7 @@
 // kind touches this module only, and the mapping is testable without
 // mounting a component.
 
-import type { Component } from 'svelte';
-import type { LucideProps } from '@lucide/svelte';
+import type { LucideIcon } from '@lucide/svelte';
 import type {
   AnyEntry,
   Entry,
@@ -111,8 +110,6 @@ function toolSummary(e: ToolEntry): string {
   const s = typeof v === 'string' ? v : '';
   return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
 }
-
-type LucideIcon = Component<LucideProps>;
 
 function toolIcon(name: string | undefined): LucideIcon {
   if (['read', 'write', 'edit'].includes(name ?? '')) return File;

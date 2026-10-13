@@ -83,14 +83,6 @@ input {
   to { opacity: 1; transform: none; }
 }
 
-/* The icon sprite mounted in App.svelte: zero-size, out of layout. */
-.sprites {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-}
-
 /* The right-click menu, shared by the tab strip and the session tree
    (F1): position:fixed at the clamped point, panel styling. */
 .ctxmenu {

@@ -82,7 +82,7 @@
   </div>
   {#if p && ws && p.ltab === 'sessions'}
     <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
-      <Plus class="ci" width="13" height="13" />
+      <Plus class="ci" size={13} />
     </button>
   {/if}
   </div>

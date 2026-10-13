@@ -247,9 +247,6 @@
   }
   .err :global(.ei) {
     flex: none;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
   }
   .empty {
     flex: 1;
