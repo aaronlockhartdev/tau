@@ -65,6 +65,11 @@ pub struct Core {
     /// second consumer of the shared `Watcher` plumbing, visibility-driven
     /// (it watches the dirs the pane has expanded, #115).
     pub(crate) tree_watchers: Mutex<HashMap<String, Watcher>>,
+    /// The per-workspace git snapshot cache (file-tree plan, phase 2): one
+    /// entry per open workspace, `None` = not a git repo (negative results
+    /// cached too, so a non-git workspace costs three spawns, not three per
+    /// listing). Invalidated on `file_tree_changed` and workspace close.
+    pub(crate) git_snapshots: Mutex<HashMap<String, Option<super::git::GitSnapshot>>>,
     pub(crate) system_dir: Option<PathBuf>,
     /// The user's home dir (the home-level `.agents/skills/` root; the
     /// `system_dir` seam's sibling for tests).
@@ -178,6 +183,7 @@ impl CoreBuilder {
             home_watcher: Mutex::new(None),
             project_watchers: Mutex::new(HashMap::new()),
             tree_watchers: Mutex::new(HashMap::new()),
+            git_snapshots: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             home: self.home.clone(),
             custom: self.custom,
@@ -519,6 +525,10 @@ impl Core {
         self.tree_watchers
             .lock()
             .expect("tree watchers: no panic while the lock is held")
+            .remove(id);
+        self.git_snapshots
+            .lock()
+            .expect("git snapshots: no panic while the lock is held")
             .remove(id);
         Ok(())
     }

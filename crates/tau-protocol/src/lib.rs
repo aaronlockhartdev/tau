@@ -79,6 +79,28 @@ pub struct FileEntry {
     pub path: String,
     pub dir: bool,
     pub size: u64,
+    /// In .gitignore: shown in the tree, greyed (the display set stays the
+    /// filesystem walk — ignore status only changes styling).
+    pub ignored: bool,
+    /// Git change state for the entry; None outside a git workspace.
+    pub git: Option<FileGit>,
+}
+
+/// A file's git change state (the tree's tint + line-change stats).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileGit {
+    pub state: FileGitState,
+    /// `git diff --numstat` counts; None when unmeasurable (binary file).
+    pub added: Option<u32>,
+    pub deleted: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileGitState {
+    Modified,
+    Untracked,
+    Deleted,
 }
 
 /// A workspace's git status (the files tab's M/A/D badges and the
@@ -97,6 +119,18 @@ pub struct GitStatus {
 pub struct GitDiff {
     pub path: String,
     pub diff: String,
+}
+
+/// One changed file's line counts (the changes tab's rows). Untracked
+/// files carry their line count as `added` with `deleted: 0`; binary
+/// files have a state with no counts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NumstatEntry {
+    /// Workspace-relative path.
+    pub path: String,
+    pub added: Option<u32>,
+    pub deleted: Option<u32>,
+    pub state: FileGitState,
 }
 /// A dispatch error, serializable so any transport can return it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +212,9 @@ pub enum CommandOutput {
     },
     GitDiff {
         diff: GitDiff,
+    },
+    GitNumstat {
+        entries: Vec<NumstatEntry>,
     },
 }
 
@@ -397,6 +434,10 @@ pub enum Command {
         /// Absolute, or relative to the workspace root.
         path: String,
     },
+    /// The workspace's changed files with line counts (the changes tab).
+    GitNumstat {
+        workspace: String,
+    },
 }
 
 /// An event pushed from the core to clients (spec §8). Every event carries
@@ -584,6 +625,7 @@ mod tests {
                 workspace: "w1".into(),
                 path: "a/b.txt".into(),
             },
+            Command::GitNumstat { workspace: "w1".into() },
         ];
         for cmd in &commands {
             let json = serde_json::to_string(cmd).unwrap();
@@ -718,6 +760,8 @@ mod tests {
                     path: "d".into(),
                     dir: true,
                     size: 0,
+                    ignored: false,
+                    git: None,
                 }],
             },
         ];

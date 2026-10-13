@@ -358,6 +358,26 @@ export interface FileEntry {
   path: string;
   dir: boolean;
   size: number;
+  /** In .gitignore: shown in the tree, greyed (styling only). */
+  ignored: boolean;
+  /** Git change state; null outside a git workspace. */
+  git: FileGit | null;
+}
+
+export type FileGitState = 'modified' | 'untracked' | 'deleted';
+
+export interface FileGit {
+  state: FileGitState;
+  /** numstat counts; null when unmeasurable (binary). */
+  added: number | null;
+  deleted: number | null;
+}
+
+export interface NumstatEntry {
+  path: string;
+  added: number | null;
+  deleted: number | null;
+  state: FileGitState;
 }
 
 export interface GitStatus {
@@ -412,7 +432,8 @@ export type Command =
   | { type: 'file_list'; workspace: string; path: string }
   | { type: 'file_unlist'; workspace: string; path: string }
   | { type: 'git_status'; workspace: string }
-  | { type: 'git_diff'; workspace: string; path: string };
+  | { type: 'git_diff'; workspace: string; path: string }
+  | { type: 'git_numstat'; workspace: string };
 
 export type CommandOutput =
   | { kind: 'none' }
@@ -431,7 +452,8 @@ export type CommandOutput =
   | { kind: 'file'; file: { text: string; truncated: boolean } }
   | { kind: 'files'; files: FileEntry[] }
   | { kind: 'git_status'; status: GitStatus }
-  | { kind: 'git_diff'; diff: GitDiff };
+  | { kind: 'git_diff'; diff: GitDiff }
+  | { kind: 'git_numstat'; entries: NumstatEntry[] };
 
 export type SessionEventKind =
   | { kind: 'branch_move'; leaf: string }

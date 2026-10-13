@@ -111,6 +111,12 @@ impl Core {
             };
             let changed = tree_changed_dirs(&cwd, &batch);
             if !changed.is_empty() {
+                // A tree change invalidates the git snapshot: the next
+                // listing (or numstat) rebuilds it.
+                core.git_snapshots
+                    .lock()
+                    .expect("git snapshots: no panic while the lock is held")
+                    .remove(&id);
                 core.emit(Event::FileTreeChanged {
                     workspace: ws.id,
                     changed,
@@ -273,6 +279,8 @@ pub(crate) fn list_dir(cwd: &Path, dir: &Path) -> Vec<FileEntry> {
             path: rel,
             dir: is_dir,
             size,
+            ignored: false,
+            git: None,
         });
     }
     out.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));

@@ -10,21 +10,20 @@
   import { fileIcon, fileKind } from '../lib/files';
   import type { FileEntry } from '../lib/protocol';
 
-  // A file's git badge (P4): D beats A beats M when a path appears in more
-  // than one status list.
-  const gitBadge = $derived.by((): 'M' | 'A' | 'D' | null => {
-    if (entry.dir) return null;
-    const s = store.gitStatus[ws];
-    if (!s) return null;
-    if (s.deleted.includes(entry.path)) return 'D';
-    if (s.untracked.includes(entry.path)) return 'A';
-    if (s.modified.includes(entry.path)) return 'M';
-    return null;
-  });
 
   let { entry, ws, depth = 0 }: { entry: FileEntry; ws: string; depth?: number } = $props();
 
   const children = $derived(fileCache(ws)?.[entry.path] ?? null);
+
+  // Git awareness (file-tree plan, phase 2): the entry's change state
+  // tints the name; numstat counts (when measurable) render as +N −M.
+  // The P4 letter badge retires — tint + stats replace it.
+  const gitState = $derived(entry.git?.state ?? null);
+  const stats = $derived.by(() => {
+    const g = entry.git;
+    if (!g || g.added == null || g.deleted == null) return null;
+    return { added: g.added, deleted: g.deleted };
+  });
 
   function toggle(): void {
     if (!entry.dir) {
@@ -45,18 +44,20 @@
 {#snippet rowLabel()}
   {@const Icon = fileIcon(entry.name, entry.dir)}
   <Icon class="fic k-{fileKind(entry.name, entry.dir)}" size={14} />
-  <span class="name">{entry.name}</span>
-  {#if gitBadge}
-    <span class="gitb {gitBadge}">{gitBadge}</span>
+  <span class="name {gitState ? `tint ${gitState}` : ''}">{entry.name}</span>
+  {#if stats}
+    <span class="stats"><span class="add">+{stats.added}</span> <span class="del">−{stats.deleted}</span></span>
   {/if}
 {/snippet}
-<TreeNode
-  {depth}
-  expanded={entry.dir ? children !== null : null}
-  onRow={toggle}
-  onToggle={toggle}
-  label={rowLabel}
-/>
+<div class:ign={entry.ignored}>
+  <TreeNode
+    {depth}
+    expanded={entry.dir ? children !== null : null}
+    onRow={toggle}
+    onToggle={toggle}
+    label={rowLabel}
+  />
+</div>
 {#if entry.dir && children}
   <div class="kids">
     {#each children as c (c.path)}
@@ -99,20 +100,27 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .gitb {
-    flex: none;
-    width: 12px;
-    text-align: center;
-    font: 700 9.5px var(--mono);
-  }
-  .gitb.M {
+  :global(.tint.modified) {
     color: var(--amber);
   }
-  .gitb.A {
+  :global(.tint.untracked) {
     color: var(--green);
   }
-  .gitb.D {
+  :global(.tint.deleted) {
     color: var(--red);
+  }
+  .stats {
+    flex: none;
+    font: 10.5px var(--mono);
+  }
+  .stats .add {
+    color: var(--green);
+  }
+  .stats .del {
+    color: var(--red);
+  }
+  .ign {
+    opacity: 0.45;
   }
   .kids {
     display: flex;

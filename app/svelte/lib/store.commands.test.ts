@@ -110,7 +110,8 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     file_list: () => ({ kind: 'files', files: [] }),
     file_unlist: () => ({ kind: 'none' }),
     git_status: () => ({ kind: 'git_status', status: { branch: 'main', modified: [], untracked: [], deleted: [] } }),
-    git_diff: () => ({ kind: 'git_diff', diff: { path: '', diff: '' } })
+    git_diff: () => ({ kind: 'git_diff', diff: { path: '', diff: '' } }),
+    git_numstat: () => ({ kind: 'git_numstat', entries: [] })
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
 }
@@ -310,7 +311,7 @@ describe('read facade (F2)', () => {
   });
 
   it('fileCache returns the workspace listing', () => {
-    const e: FileEntry = { name: 'a.txt', path: '.', dir: false, size: 3 };
+    const e: FileEntry = { name: 'a.txt', path: '.', dir: false, size: 3, ignored: false, git: null };
     store.files = { w1: { '.': [e] } };
     expect(fileCache('w1')?.['.']).toEqual([e]);
   });

@@ -149,7 +149,8 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     file_list: () => ({ kind: 'files', files: [] }),
     file_unlist: () => ({ kind: 'none' }),
     git_status: () => ({ kind: 'git_status', status: { branch: 'main', modified: [], untracked: [], deleted: [] } }),
-    git_diff: () => ({ kind: 'git_diff', diff: { path: '', diff: '' } })
+    git_diff: () => ({ kind: 'git_diff', diff: { path: '', diff: '' } }),
+    git_numstat: () => ({ kind: 'git_numstat', entries: [] })
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
 }
@@ -848,7 +849,7 @@ describe('subagent_event', () => {
 });
 
 describe('files pane', () => {
-  const f = { name: 'x', path: 'x', dir: false, size: 1 };
+  const f = { name: 'x', path: 'x', dir: false, size: 1, ignored: false, git: null };
 
   it('expand fetches on first expand; collapse drops the listing', async () => {
     store.files = { w1: {} };

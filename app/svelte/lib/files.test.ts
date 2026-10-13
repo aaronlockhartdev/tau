@@ -12,8 +12,8 @@ import {
 import { File, FileCog, FileCode, FileJson, FileText, Folder, GitBranch, Image } from '@lucide/svelte';
 import type { FileEntry } from './protocol';
 
-const f: FileEntry = { name: 'x', path: 'x', dir: false, size: 1 };
-const d: FileEntry = { name: 'src', path: 'src', dir: true, size: 0 };
+const f: FileEntry = { name: 'x', path: 'x', dir: false, size: 1, ignored: false, git: null };
+const d: FileEntry = { name: 'src', path: 'src', dir: true, size: 0, ignored: false, git: null };
 
 describe('ensureWorkspace / removeWorkspace', () => {
   it('ensure creates a missing workspace, keeps an existing cache reference', () => {
