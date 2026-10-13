@@ -97,7 +97,11 @@ function toolOutput(e: ToolEntry): string {
 }
 
 // The chip's one-line summary: the argument that names the operation.
+function toolUnavailable(e: ToolEntry): boolean {
+  return (e as { unavailable?: boolean }).unavailable === true;
+}
 function toolSummary(e: ToolEntry): string {
+  if (toolUnavailable(e)) return 'content unavailable — sidecar blob missing';
   const a = e.args;
   if (!a) return e.text ?? '';
   const v = a.command ?? a.file_path ?? a.task ?? a.query ?? a.task_id ?? a.title ?? a.message;
@@ -124,7 +128,7 @@ function toolShell(e: ToolEntry, out: string): Shell {
     icon: toolIcon(e.name),
     label: e.name ?? '',
     summary: toolSummary(e),
-    status: e.status,
+    status: toolUnavailable(e) ? 'error' : e.status,
     openKey: 'tool',
     kv,
     output: out

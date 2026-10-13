@@ -153,21 +153,25 @@
   }
   .tabs {
     display: flex;
-    align-items: stretch;
-    gap: 1px;
+    align-items: center;
+    gap: 4px;
   }
   .tab {
     position: relative;
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 0 8px 0 10px;
-    border-radius: 8px 8px 0 0;
+    /* A floating inset tab: a 30px pill centred in the 48px bar, all
+       corners rounded, a hairline border on the active one. The old
+       full-height slab with notched bottom corners read as a block, not
+       a tab. */
+    height: 30px;
+    padding: 0 8px 0 11px;
+    border-radius: 8px;
     font-size: 12.5px;
     font-weight: 500;
     color: var(--dim);
     border: 1px solid transparent;
-    border-bottom: none;
   }
   .tab:hover {
     background: rgba(255, 255, 255, 0.05);
@@ -180,26 +184,7 @@
     color: var(--tx);
     font-weight: 600;
     background: var(--panel);
-  }
-  .tab.active::before,
-  .tab.active::after,
-  .tab.multi::before,
-  .tab.multi::after {
-    content: "";
-    position: absolute;
-    bottom: 0;
-    width: 9px;
-    height: 9px;
-  }
-  .tab.active::before,
-  .tab.multi::before {
-    left: -9px;
-    background: radial-gradient(circle at 100% 100%, var(--panel) 6.5px, transparent 7px);
-  }
-  .tab.active::after,
-  .tab.multi::after {
-    right: -9px;
-    background: radial-gradient(circle at 0 100%, var(--panel) 6.5px, transparent 7px);
+    border-color: var(--line);
   }
   .tab .tabname {
     display: inline-flex;

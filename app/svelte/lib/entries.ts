@@ -102,7 +102,10 @@ export function decodeEntry(v: ViewEntry): Entry {
         call_id: typeof p.call_id === 'string' ? p.call_id : undefined,
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: typeof p.output === 'string' ? p.output : undefined,
-        status: toolStatus(p.output)
+        status: toolStatus(p.output),
+        // The sidecar's bytes are gone (blob deleted from disk): the record is
+        // what it is — say so, never fake a still-running call.
+        unavailable: v.payload == null && v.blob != null ? true : undefined
       };
     }
     case 'om': {

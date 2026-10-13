@@ -350,7 +350,11 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-right: auto;
+    /* flex:1 + min-width:0 (not margin-right:auto): an auto-margin item
+       sized to its content will not shrink, and the nowrap hint would push
+       the lane selector out of the box. */
+    flex: 1;
+    min-width: 0;
   }
   /* The model chip is minimal: no border, no fill — dim text, a faint
      icon, a small chevron; hover lifts the text to primary. */
@@ -395,6 +399,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
   }
   .dropdown {
     position: absolute;
