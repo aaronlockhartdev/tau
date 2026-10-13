@@ -79,7 +79,7 @@
     <button class="tab" class:on={p?.ltab === 'files'} disabled={!p} onclick={() => { if (p) setLtab('files'); }}>files</button>
     <button class="tab" class:on={p?.ltab === 'sessions'} disabled={!p} onclick={() => { if (p) setLtab('sessions'); }}>sessions</button>
   </div>
-  {#if p && ws}
+  {#if p && ws && p.ltab === 'sessions'}
     <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
       <svg class="ci" width="13" height="13"><use href="#i-plus" /></svg>
     </button>

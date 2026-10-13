@@ -1,4 +1,4 @@
-// The focus-mode rails: pills open the non-modal inspector sheets.
+// The focus-mode rails: icon buttons open the non-modal inspector sheets.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
@@ -38,21 +38,21 @@ describe('FocusRails', () => {
   it('renders nothing outside focus mode', () => {
     store.focus = false;
     render(FocusRails);
-    expect(screen.queryByText('sessions')).toBeNull();
+    expect(screen.queryByTitle('sessions')).toBeNull();
   });
 
   it('shows a pill per pane tab on each edge', () => {
     render(FocusRails);
-    expect(screen.getByText('sessions')).toBeTruthy();
-    expect(screen.getByText('files')).toBeTruthy();
-    expect(screen.getByText('tasks')).toBeTruthy();
-    expect(screen.getByText('sub-agents')).toBeTruthy();
+    expect(screen.getByTitle('sessions')).toBeTruthy();
+    expect(screen.getByTitle('files')).toBeTruthy();
+    expect(screen.getByTitle('tasks')).toBeTruthy();
+    expect(screen.getByTitle('sub-agents')).toBeTruthy();
   });
 
   it('a pill opens its side\'s inspector and points the pane at the tab', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    await user.click(screen.getByText('files'));
+    await user.click(screen.getByTitle('files'));
     expect(store.focusInspector).toBe('left');
     expect(store.pane['w1']!.ltab).toBe('files');
     // The inspector carries the real pane.
@@ -62,7 +62,7 @@ describe('FocusRails', () => {
   it('the right rail opens the right inspector on the sub-agents tab', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    await user.click(screen.getByText('sub-agents'));
+    await user.click(screen.getByTitle('sub-agents'));
     expect(store.focusInspector).toBe('right');
     expect(store.pane['w1']!.rtab).toBe('subagents');
   });
@@ -70,7 +70,7 @@ describe('FocusRails', () => {
   it('clicking the active side again closes the inspector', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    const pill = () => screen.getAllByText('files').find((el) => el.closest('.rail'))!;
+    const pill = () => screen.getByTitle('files');
     await user.click(pill());
     expect(store.focusInspector).toBe('left');
     await user.click(pill());

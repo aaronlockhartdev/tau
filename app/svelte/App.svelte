@@ -167,11 +167,13 @@
       {#if loading}
         <div class="empty"><span class="big">Loading…</span></div>
       {:else if cur}
-        {#key store.current}
-        <Transcript />
-        {/key}
-        <Queue />
-        <Composer />
+        <div class="readcol">
+          {#key store.current}
+            <Transcript />
+          {/key}
+          <Queue />
+          <Composer />
+        </div>
         {#if store.modelMenuOpen}
           <ModelMenu />
         {/if}
@@ -218,6 +220,19 @@
   .body.focus .center {
     grid-column: 2;
     grid-row: 1;
+  }
+  .readcol {
+    display: contents;
+  }
+  /* Focus mode is a reading view: the transcript column is width-
+     capped and centred so the panel background shows on both sides. */
+  .body.focus .readcol {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
   }
   .left {
     background: var(--panel);

@@ -1,18 +1,19 @@
 <script lang="ts">
-  // The focus-mode rails (workbench P6): edge pill strips that open
-  // non-modal inspector sheets — the real side panes, floating beside the
-  // rail — instead of nothing. A pill points its pane at a tab, then
-  // toggles the sheet.
+  // Focus-mode pane menus (workbench P6, second restyle): small floating
+  // segmented chips in the top corners — the same control language as the
+  // pane tab headers — replacing the full-height edge rails. A click
+  // points the pane at a tab, then toggles a non-modal inspector sheet
+  // (the real side pane) beside it.
   import { store, pane, currentSession } from '../lib/store.svelte';
   import LeftPane from './LeftPane.svelte';
   import RightPane from './RightPane.svelte';
 
   const on = $derived(store.focus);
   const side = $derived(store.focusInspector);
+  const ws = $derived(currentSession()?.meta.workspace ?? null);
+  const q = $derived(ws ? pane(ws) : null);
 
-  function railPill(s: 'left' | 'right', tab: string): void {
-    const ws = currentSession()?.meta.workspace ?? null;
-    const q = ws ? pane(ws) : null;
+  function chip(s: 'left' | 'right', tab: string): void {
     if (q) {
       if (s === 'left') q.ltab = tab as 'files' | 'sessions';
       else q.rtab = tab as 'tasks' | 'subs';
@@ -22,66 +23,103 @@
 </script>
 
 {#if on}
-  <div class="rails">
-    <div class="rail rleft">
-      <button class="pill" class:on={side === 'left'} onclick={() => railPill('left', 'sessions')}>sessions</button>
-      <button class="pill" class:on={side === 'left'} onclick={() => railPill('left', 'files')}>files</button>
-    </div>
-    <div class="rail rright">
-      <button class="pill" class:on={side === 'right'} onclick={() => railPill('right', 'tasks')}>tasks</button>
-      <button class="pill" class:on={side === 'right'} onclick={() => railPill('right', 'subagents')}>sub-agents</button>
-    </div>
-    {#if side}
-      <div class="insp" class:insp-left={side === 'left'}>
-        {#if side === 'left'}
-          <LeftPane />
-        {:else}
-          <RightPane />
-        {/if}
-      </div>
-    {/if}
+  <div class="chips left" class:shift={side === 'left'}>
+    <button
+      class="chip"
+      class:on={side === 'left' && q?.ltab === 'sessions'}
+      title="sessions"
+      onclick={() => chip('left', 'sessions')}
+    >
+      <svg><use href="#i-book" /></svg>
+    </button>
+    <button
+      class="chip"
+      class:on={side === 'left' && q?.ltab === 'files'}
+      title="files"
+      onclick={() => chip('left', 'files')}
+    >
+      <svg><use href="#i-file" /></svg>
+    </button>
   </div>
+  <div class="chips right" class:shift={side === 'right'}>
+    <button
+      class="chip"
+      class:on={side === 'right' && q?.rtab === 'tasks'}
+      title="tasks"
+      onclick={() => chip('right', 'tasks')}
+    >
+      <svg><use href="#i-check" /></svg>
+    </button>
+    <button
+      class="chip"
+      class:on={side === 'right' && q?.rtab === 'subs'}
+      title="sub-agents"
+      onclick={() => chip('right', 'subagents')}
+    >
+      <svg><use href="#i-bot" /></svg>
+    </button>
+  </div>
+  {#if side}
+    <div class="insp" class:insp-left={side === 'left'}>
+      {#if side === 'left'}
+        <LeftPane />
+      {:else}
+        <RightPane />
+      {/if}
+    </div>
+  {/if}
 {/if}
 
 <style>
-  .rails {
+  .chips {
     position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 30;
-  }
-  .rail {
-    position: absolute;
-    top: 12px;
+    top: 10px;
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-    pointer-events: auto;
-  }
-  .rail.rleft {
-    left: 8px;
-  }
-  .rail.rright {
-    right: 8px;
-  }
-  .pill {
-    writing-mode: vertical-rl;
-    padding: 8px 5px;
-    border-radius: 10px;
-    border: 1px solid var(--line2);
+    gap: 2px;
+    padding: 2px;
     background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    z-index: 31;
+  }
+  .chips.left {
+    left: 12px;
+  }
+  /* When the sheet is open the chips step out past it, staying clickable. */
+  .chips.left.shift {
+    left: 316px;
+  }
+  .chips.right {
+    right: 12px;
+  }
+  .chips.right.shift {
+    right: 316px;
+  }
+  .chip {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 24px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
     color: var(--dim);
-    font: 10px var(--mono);
-    letter-spacing: 0.04em;
     cursor: pointer;
   }
-  .pill:hover {
+  .chip svg {
+    width: 14px;
+    height: 14px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.8;
+  }
+  .chip:hover {
     color: var(--tx);
   }
-  .pill.on {
-    background: color-mix(in srgb, var(--acc) 16%, var(--panel2));
+  .chip.on {
     color: var(--tx);
-    border-color: var(--acc);
+    background: var(--raised);
   }
   .insp {
     position: absolute;
@@ -92,12 +130,12 @@
     border: 1px solid var(--line2);
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
     overflow: auto;
-    pointer-events: auto;
+    z-index: 30;
   }
   .insp.insp-left {
-    left: 40px;
+    left: 12px;
   }
   .insp:not(.insp-left) {
-    right: 40px;
+    right: 12px;
   }
 </style>
