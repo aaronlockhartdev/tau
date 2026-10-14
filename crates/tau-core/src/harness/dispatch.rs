@@ -205,7 +205,7 @@ impl Core {
                     message: "git status: no snapshot (not a git workspace?)".into(),
                 })?;
                 Ok(CommandOutput::GitStatus {
-                    status: status.status,
+                    status: super::git::rebase_status(status.status, &status.offset),
                 })
             }
             Command::GitShow { workspace, path } => {

@@ -224,3 +224,163 @@ async fn a_file_ignored_by_a_nested_gitignore_is_greyed() {
         "non-ignored sibling is not greyed"
     );
 }
+
+#[tokio::test]
+async fn git_status_in_a_subdir_workspace_is_cwd_relative_and_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    // A subdirectory becomes the workspace, with its own tracked file.
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("keep.txt"), "keep\n").unwrap();
+    git_ok(tmp.path(), &["add", "sub/keep.txt"]);
+    git_ok(tmp.path(), &["commit", "-qm", "sub"]);
+    // A change inside the workspace, plus one outside it (must be dropped).
+    std::fs::write(sub.join("keep.txt"), "changed\n").unwrap();
+    std::fs::write(sub.join("new.txt"), "new\n").unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &sub).await;
+    let status = match core
+        .dispatch(Command::GitStatus {
+            workspace: workspace.id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::GitStatus { status } => status,
+        other => panic!("expected git status: {other:?}"),
+    };
+    // cwd-relative (no "sub/" prefix) and scoped to the workspace subtree.
+    assert_eq!(status.modified, vec!["keep.txt"]);
+    assert_eq!(status.untracked, vec!["new.txt"]);
+    assert!(!status.modified.iter().any(|p| p == "a.txt"));
+}
+
+#[tokio::test]
+async fn file_listing_in_a_subdir_workspace_carries_git_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join("keep.txt"), "keep\n").unwrap();
+    git_ok(tmp.path(), &["add", "sub/keep.txt"]);
+    git_ok(tmp.path(), &["commit", "-qm", "sub"]);
+    std::fs::write(sub.join("keep.txt"), "changed\n").unwrap();
+    std::fs::write(sub.join("new.txt"), "new\n").unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &sub).await;
+    let files = match core
+        .dispatch(Command::FileList {
+            workspace: workspace.id.clone(),
+            path: ".".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Files { files } => files,
+        other => panic!("expected files: {other:?}"),
+    };
+    let by_path: std::collections::HashMap<_, _> =
+        files.iter().map(|f| (f.path.as_str(), f)).collect();
+    // Badges resolve for a subdir workspace: the cwd-relative path matches the
+    // (now cwd-relative) status entry.
+    assert_eq!(
+        by_path["keep.txt"].git,
+        Some(FileGit {
+            state: FileGitState::Modified,
+            added: Some(1),
+            deleted: Some(1),
+        })
+    );
+    assert_eq!(
+        by_path["new.txt"].git.as_ref().map(|g| g.state),
+        Some(FileGitState::Untracked)
+    );
+}
+
+#[tokio::test]
+async fn a_subdir_workspace_neither_leaks_a_sibling_gitignore_nor_loses_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    // A sibling toplevel dir (sub2/) with a .gitignore, and a same-named dir
+    // inside the workspace (sub/sub2/): the sibling's pattern must not reach in.
+    // The workspace's own .gitignore must still apply.
+    let sub = tmp.path().join("sub");
+    let sib = tmp.path().join("sub2");
+    std::fs::create_dir_all(sub.join("sub2")).unwrap();
+    std::fs::create_dir(&sib).unwrap();
+    std::fs::write(sib.join(".gitignore"), "notes.md\n").unwrap();
+    std::fs::write(sub.join("sub2/notes.md"), "n\n").unwrap();
+    std::fs::write(sub.join(".gitignore"), "inner.log\n").unwrap();
+    std::fs::write(sub.join("inner.log"), "l\n").unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &sub).await;
+    let root = match core
+        .dispatch(Command::FileList {
+            workspace: workspace.id.clone(),
+            path: ".".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Files { files } => files,
+        other => panic!("expected files: {other:?}"),
+    };
+    let by_path: std::collections::HashMap<_, _> =
+        root.iter().map(|f| (f.path.as_str(), f)).collect();
+    // The workspace's own .gitignore applies (inner.log is greyed).
+    assert!(by_path["inner.log"].ignored, "workspace .gitignore applies");
+    // The sibling sub2/.gitignore does NOT reach into sub/sub2/ (no false positive).
+    let sub2 = match core
+        .dispatch(Command::FileList {
+            workspace: workspace.id.clone(),
+            path: "sub2".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Files { files } => files,
+        other => panic!("expected files: {other:?}"),
+    };
+    let notes = sub2.iter().find(|f| f.path == "sub2/notes.md").unwrap();
+    assert!(
+        !notes.ignored,
+        "sibling .gitignore does not leak into the workspace"
+    );
+}
+
+#[tokio::test]
+async fn folder_greying_in_a_subdir_workspace_ignores_only_ignored_dirs() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    // A subdir workspace with a tracked dir (real content) and an ignored-only dir.
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir_all(sub.join("real")).unwrap();
+    std::fs::create_dir_all(sub.join("junk")).unwrap();
+    std::fs::write(sub.join("real/keep.txt"), "keep\n").unwrap();
+    std::fs::write(sub.join(".gitignore"), "junk/\n").unwrap();
+    std::fs::write(sub.join("junk/x.txt"), "x\n").unwrap();
+    git_ok(tmp.path(), &["add", "sub/real/keep.txt", "sub/.gitignore"]);
+    git_ok(tmp.path(), &["commit", "-qm", "sub"]);
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &sub).await;
+    let files = match core
+        .dispatch(Command::FileList {
+            workspace: workspace.id.clone(),
+            path: ".".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Files { files } => files,
+        other => panic!("expected files: {other:?}"),
+    };
+    let by_path: std::collections::HashMap<_, _> =
+        files.iter().map(|f| (f.path.as_str(), f)).collect();
+    // The real dir (tracked content) is not greyed; the junk dir (only ignored
+    // content) is — both resolved cwd-relative for the subdir workspace.
+    assert!(
+        !by_path["real"].ignored,
+        "dir with tracked content is not greyed"
+    );
+    assert!(
+        by_path["junk"].ignored,
+        "dir whose only content is ignored is greyed"
+    );
+}

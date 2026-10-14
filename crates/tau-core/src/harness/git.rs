@@ -94,17 +94,15 @@ fn status_of(repo: &gix::Repository) -> Result<GitStatus, ProtocolError> {
     Ok(status)
 }
 
-/// A file's content at HEAD (the file-content view's diff base). The path is
-/// resolved toplevel-relative — the HEAD tree is rooted at the repo root, not
-/// the workspace the dispatch layer hands over. A path absent from HEAD is an
-/// error (the caller treats it as "no base", i.e. an untracked file).
-pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
-    let repo = open_repo(cwd)?;
-    // The command's path is cwd-relative; the HEAD tree is rooted at the
-    // toplevel. Express the cwd→toplevel offset in canonical form (so a
-    // /var → /private/var symlink can't defeat the strip) and prepend it.
+/// The workspace's position within the repo, workdir-relative and in canonical
+/// form (so a /var → /private/var symlink can't defeat the strip): empty for a
+/// toplevel workspace, e.g. `sub` for one opened at <repo>/sub. Shared by
+/// `git_show` (which prepends it to a cwd-relative path) and `git_snapshot`
+/// (which stores it so `annotate` can translate cwd-relative tree paths into the
+/// toplevel-relative terms the rest of the snapshot uses).
+fn cwd_offset(repo: &gix::Repository, cwd: &Path) -> Result<String, ProtocolError> {
     let workdir = repo.workdir().ok_or(ProtocolError::Other {
-        message: "git show: not a worktree".into(),
+        message: "git offset: not a worktree".into(),
     })?;
     let top = std::fs::canonicalize(workdir).map_err(|e| ProtocolError::Other {
         message: format!("git toplevel: {e}"),
@@ -112,14 +110,46 @@ pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
     let cwdc = std::fs::canonicalize(cwd).map_err(|e| ProtocolError::Other {
         message: format!("git cwd: {e}"),
     })?;
-    let prefix = cwdc
+    Ok(cwdc
         .strip_prefix(&top)
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
-    let spec = if prefix.as_os_str().is_empty() {
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default())
+}
+
+/// Express a toplevel-relative status in the workspace's cwd-relative terms for
+/// the wire: strip the workspace's `offset` from each path and drop changes
+/// outside the workspace (a subdir workspace reports only its own subtree). An
+/// empty offset (toplevel workspace) is a no-op.
+pub fn rebase_status(status: GitStatus, offset: &str) -> GitStatus {
+    let prefix = format!("{offset}/");
+    let strip = |p: &String| {
+        if offset.is_empty() {
+            Some(p.clone())
+        } else {
+            p.strip_prefix(&prefix).map(ToString::to_string)
+        }
+    };
+    GitStatus {
+        branch: status.branch,
+        modified: status.modified.iter().filter_map(&strip).collect(),
+        untracked: status.untracked.iter().filter_map(&strip).collect(),
+        deleted: status.deleted.iter().filter_map(&strip).collect(),
+    }
+}
+
+/// A file's content at HEAD (the file-content view's diff base). The path is
+/// resolved toplevel-relative — the HEAD tree is rooted at the repo root, not
+/// the workspace the dispatch layer hands over. A path absent from HEAD is an
+/// error (the caller treats it as "no base", i.e. an untracked file).
+pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
+    let repo = open_repo(cwd)?;
+    // The command's path is cwd-relative; the HEAD tree is rooted at the
+    // toplevel. Prepend the cwd→toplevel offset (empty for a toplevel workspace).
+    let offset = cwd_offset(&repo, cwd)?;
+    let spec = if offset.is_empty() {
         rel.to_string()
     } else {
-        format!("{}/{}", prefix.display(), rel)
+        format!("{offset}/{rel}")
     };
     let tree = repo
         .head_commit()
@@ -163,11 +193,22 @@ pub struct GitSnapshot {
     pub tracked_dirs: HashSet<String>,
     /// Dir prefixes holding a shown (non-ignored) untracked file.
     pub shown_dirs: HashSet<String>,
+    /// The workspace's workdir-relative position (empty for a toplevel
+    /// workspace). `annotate` prepends it to each cwd-relative tree path so the
+    /// toplevel-relative lookups below line up for a subdir workspace.
+    pub offset: String,
 }
 
 pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
     let repo = open_repo(cwd)?;
     let status = status_of(&repo)?;
+    // The snapshot stays in gix's toplevel-relative terms; the workspace's
+    // position within the repo rides along for `annotate` to translate
+    // cwd-relative tree paths. File reads below are toplevel-relative too.
+    let workdir = repo.workdir().ok_or(ProtocolError::Other {
+        message: "git snapshot: not a worktree".into(),
+    })?;
+    let offset = cwd_offset(&repo, cwd)?;
 
     // numstat: line-diff each modified file against its HEAD blob (a bounded
     // set — the ignored files never appear in `status`), and count lines for
@@ -180,11 +221,11 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
     for path in &status.modified {
         numstat.insert(
             path.clone(),
-            modified_numstat(&repo, head_tree.as_ref(), cwd, path),
+            modified_numstat(&repo, head_tree.as_ref(), workdir, path),
         );
     }
     for path in &status.untracked {
-        numstat.insert(path.clone(), (count_lines(&cwd.join(path)), Some(0)));
+        numstat.insert(path.clone(), (count_lines(&workdir.join(path)), Some(0)));
     }
 
     // The ignore patterns: info/exclude, the root .gitignore, and every nested
@@ -211,6 +252,7 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
         ignore,
         tracked_dirs,
         shown_dirs,
+        offset,
     })
 }
 
@@ -221,8 +263,9 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
 /// meant to avoid. Each nested file is scoped to its own directory (the search
 /// `base`), so git's "closest .gitignore wins" rule holds via the search's
 /// reverse-iteration match order.
-/// Bases are workdir-rooted, so a subdir workspace (cwd ≠ workdir) may spuriously
-/// grey a path against a sibling subtree's nested pattern (pre-existing, cosmetic).
+/// Bases are workdir-rooted (toplevel-relative); `annotate` translates each
+/// cwd-relative tree path into those terms before checking, so a subdir
+/// workspace matches correctly and a sibling subtree's pattern never leaks in.
 fn build_ignore_search(repo: &gix::Repository) -> Result<gix::ignore::Search, ProtocolError> {
     let mut buf = Vec::new();
     let mut search = gix::ignore::Search::from_git_dir(
@@ -307,10 +350,10 @@ fn is_ignored_by_search(search: &gix::ignore::Search, rel_dir: &str) -> bool {
 fn modified_numstat(
     repo: &gix::Repository,
     head_tree: Option<&gix::Tree>,
-    cwd: &Path,
+    base: &Path,
     path: &str,
 ) -> NumstatCounts {
-    let Ok(new) = std::fs::read_to_string(cwd.join(path)) else {
+    let Ok(new) = std::fs::read_to_string(base.join(path)) else {
         return (None, None); // binary worktree copy
     };
     match head_tree.and_then(|tree| head_blob(repo, tree, path)) {
@@ -413,15 +456,28 @@ pub fn count_lines(path: &Path) -> Option<u32> {
 pub fn annotate(files: &mut [FileEntry], snap: Option<&GitSnapshot>) {
     let Some(snap) = snap else { return };
     for f in files.iter_mut() {
+        // The snapshot is toplevel-relative; a subdir workspace's tree paths are
+        // cwd-relative, so translate before any lookup (empty offset = no-op).
+        let rel = workdir_rel(&snap.offset, &f.path);
         f.ignored = if f.dir {
-            is_ignored_dir(&f.path, snap)
+            is_ignored_dir(&rel, snap)
         } else {
-            is_ignored(&f.path, false, snap)
+            is_ignored(&rel, false, snap)
         };
         if f.dir {
             continue;
         }
-        f.git = git_state_of(&f.path, snap);
+        f.git = git_state_of(&rel, snap);
+    }
+}
+
+/// A cwd-relative tree path in the snapshot's toplevel-relative terms: prepend
+/// the workspace's `offset` (a no-op for a toplevel workspace).
+fn workdir_rel(offset: &str, cwd_rel: &str) -> String {
+    if offset.is_empty() {
+        cwd_rel.to_string()
+    } else {
+        format!("{offset}/{cwd_rel}")
     }
 }
 
@@ -537,6 +593,7 @@ mod tests {
             ignore: ignore_search(&["target/"]),
             tracked_dirs: HashSet::new(),
             shown_dirs: HashSet::new(),
+            offset: String::new(),
         };
         let mut files = vec![
             entry("a.rs", "src/a.rs", false),
@@ -583,6 +640,7 @@ mod tests {
                 s
             },
             shown_dirs: HashSet::new(),
+            offset: String::new(),
         };
         let mut files = vec![
             entry("pi", ".pi", true),
@@ -614,6 +672,7 @@ mod tests {
             ignore: ignore_search(&[".tau/", "node_modules/"]),
             tracked_dirs: HashSet::new(),
             shown_dirs: HashSet::new(),
+            offset: String::new(),
         };
         // `.tau/skills` is empty and never in the pattern list, but its
         // ancestor `.tau` is ignored, so the whole subtree is greyed.
