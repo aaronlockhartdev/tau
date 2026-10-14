@@ -82,7 +82,7 @@
       {:else if lines.length === 0}
         <div class="note">empty file</div>
       {:else}
-        <pre class="code">
+        <div class="code">
           {#each lines as rl (rl.key)}
             <div class="line" class:added={rl.mark === 'add'} class:removed={rl.mark === 'del'}>
               <span class="ln">{rl.no}</span>
@@ -90,7 +90,7 @@
               <span class="src">{#each rl.spans as s (s)}<span style:color={s.color}>{s.text}</span>{/each}</span>
             </div>
           {/each}
-        </pre>
+        </div>
       {/if}
     </div>
   </div>
