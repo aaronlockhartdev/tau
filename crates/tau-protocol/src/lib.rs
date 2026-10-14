@@ -113,13 +113,6 @@ pub struct GitStatus {
     pub deleted: Vec<String>,
 }
 
-/// A unified diff for one workspace file (the peek sheet). Untracked files
-/// have no diff; the sheet falls back to the file text.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GitDiff {
-    pub path: String,
-    pub diff: String,
-}
 
 /// A dispatch error, serializable so any transport can return it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,9 +191,6 @@ pub enum CommandOutput {
     },
     GitStatus {
         status: GitStatus,
-    },
-    GitDiff {
-        diff: GitDiff,
     },
     GitShow {
         text: String,
@@ -417,12 +407,6 @@ pub enum Command {
     GitStatus {
         workspace: String,
     },
-    /// The unified diff of one file vs HEAD (the peek sheet).
-    GitDiff {
-        workspace: String,
-        /// Absolute, or relative to the workspace root.
-        path: String,
-    },
     /// A file's content at a git revision (default HEAD) — the
     /// file-content view's diff base.
     GitShow {
@@ -613,10 +597,6 @@ mod tests {
                 path: "src".into(),
             },
             Command::GitStatus { workspace: "w1".into() },
-            Command::GitDiff {
-                workspace: "w1".into(),
-                path: "a/b.txt".into(),
-            },
         ];
         for cmd in &commands {
             let json = serde_json::to_string(cmd).unwrap();

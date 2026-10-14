@@ -8,14 +8,14 @@
 use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
-use std::process::Command as Process;
 
-use tau_protocol::{FileEntry, FileGit, FileGitState, GitDiff, GitStatus, ProtocolError};
+use tau_protocol::{FileEntry, FileGit, FileGitState, GitStatus, ProtocolError};
 
-/// Open `cwd` as a git repository. A non-git path is a protocol catch-all
-/// (matches `git_status_in_a_non_git_workspace_is_an_error`).
+/// Discover the git repository at (or enclosing) `cwd` — a workspace may be a
+/// subdirectory of the repo. A non-git path is a protocol catch-all (matches
+/// `git_status_in_a_non_git_workspace_is_an_error`).
 fn open_repo(cwd: &Path) -> Result<gix::Repository, ProtocolError> {
-    gix::open(cwd).map_err(|e| ProtocolError::Other {
+    gix::discover(cwd).map_err(|e| ProtocolError::Other {
         message: format!("git open: {e}"),
     })
 }
@@ -89,65 +89,47 @@ fn status_of(repo: &gix::Repository) -> Result<GitStatus, ProtocolError> {
     Ok(status)
 }
 
-fn run_git(cwd: &Path, args: &[&str]) -> Result<String, ProtocolError> {
-    let out = Process::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .output()
-        .map_err(|e| ProtocolError::Other {
-            message: format!("git: {e}"),
-        })?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        return Err(ProtocolError::Other {
-            message: format!("git {}: {}", args.join(" "), stderr.trim()),
-        });
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
 
-/// Unified diff of one file vs HEAD (staged + unstaged). The returned path
-/// is workspace-relative when the file lives under the workspace root.
-pub fn git_diff(cwd: &Path, file: &Path) -> Result<GitDiff, ProtocolError> {
-    let out = run_git(cwd, &["diff", "HEAD", "--", &file.display().to_string()])?;
-    let path = file
-        .strip_prefix(cwd)
-        .ok()
-        .and_then(|p| p.to_str())
-        .map_or(file.display().to_string(), str::to_string);
-    Ok(GitDiff { path, diff: out })
-}
 
 /// A file's content at HEAD (the file-content view's diff base). The path is
-/// resolved toplevel-relative — `git show rev:path` takes a repo-root path, not
-/// the absolute one the dispatch layer hands over. A path absent from HEAD is an
+/// resolved toplevel-relative — the HEAD tree is rooted at the repo root, not
+/// the workspace the dispatch layer hands over. A path absent from HEAD is an
 /// error (the caller treats it as "no base", i.e. an untracked file).
 pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
-    let top = run_git(cwd, &["rev-parse", "--show-toplevel"])?;
-    // `git show rev:path` wants a toplevel-relative path, but the command's
-    // path is cwd-relative. Express the cwd→toplevel offset in canonical form
-    // (so a /var → /private/var symlink can't defeat the strip) and prepend it.
-    let top = std::fs::canonicalize(top.trim())
-        .map_err(|e| ProtocolError::Other {
-            message: format!("git toplevel: {e}"),
-        })?;
-    let cwdc = std::fs::canonicalize(cwd)
-        .map_err(|e| ProtocolError::Other {
-            message: format!("git cwd: {e}"),
-        })?;
-    let prefix = cwdc
-        .strip_prefix(&top)
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+    let repo = open_repo(cwd)?;
+    // The command's path is cwd-relative; the HEAD tree is rooted at the
+    // toplevel. Express the cwd→toplevel offset in canonical form (so a
+    // /var → /private/var symlink can't defeat the strip) and prepend it.
+    let workdir = repo.workdir().ok_or(ProtocolError::Other {
+        message: "git show: not a worktree".into(),
+    })?;
+    let top = std::fs::canonicalize(workdir).map_err(|e| ProtocolError::Other {
+        message: format!("git toplevel: {e}"),
+    })?;
+    let cwdc = std::fs::canonicalize(cwd).map_err(|e| ProtocolError::Other {
+        message: format!("git cwd: {e}"),
+    })?;
+    let prefix = cwdc.strip_prefix(&top).map(Path::to_path_buf).unwrap_or_default();
     let spec = if prefix.as_os_str().is_empty() {
-        format!("HEAD:{rel}")
+        rel.to_string()
     } else {
-        format!("HEAD:{}/{}", prefix.display(), rel)
+        format!("{}/{}", prefix.display(), rel)
     };
+    let tree = repo
+        .head_commit()
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git show: {e}"),
+        })?
+        .tree()
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git show: {e}"),
+        })?;
+    let text = head_blob(&repo, &tree, &spec).ok_or(ProtocolError::Other {
+        message: format!("git show: {rel} is not in HEAD"),
+    })?;
     // file_read strips \r; normalize the base the same way, or a CRLF file
     // diffs whole-file (a raw \r on every line reads as a change to each).
-    let out = run_git(cwd, &["show", spec.as_str()])?;
-    Ok(out.replace("\r\n", "\n"))
+    Ok(text.replace("\r\n", "\n"))
 }
 
 /// The numstat map's value: `(added, deleted)`; a `None` count is

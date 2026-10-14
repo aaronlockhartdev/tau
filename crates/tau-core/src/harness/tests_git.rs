@@ -75,47 +75,6 @@ async fn git_status_in_a_non_git_workspace_is_an_error() {
 }
 
 #[tokio::test]
-async fn git_diff_of_a_missing_path_is_empty_not_an_error() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_repo(tmp.path());
-    let core = CoreBuilder::custom(providers()).build();
-    let workspace = open_ws(&core, tmp.path()).await;
-    let diff = match core
-        .dispatch(Command::GitDiff {
-            workspace: workspace.id.clone(),
-            path: "nope.txt".into(),
-        })
-        .unwrap()
-    {
-        CommandOutput::GitDiff { diff } => diff,
-        other => panic!("expected git diff: {other:?}"),
-    };
-    assert_eq!(diff.path, "nope.txt");
-    assert!(diff.diff.is_empty());
-}
-
-#[tokio::test]
-async fn git_diff_of_a_modified_file_is_unified() {
-    let tmp = tempfile::tempdir().unwrap();
-    init_repo(tmp.path());
-    std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
-    let workspace = open_ws(&core, tmp.path()).await;
-    let diff = match core
-        .dispatch(Command::GitDiff {
-            workspace: workspace.id.clone(),
-            path: "a.txt".into(),
-        })
-        .unwrap()
-    {
-        CommandOutput::GitDiff { diff } => diff,
-        other => panic!("expected git diff: {other:?}"),
-    };
-    assert_eq!(diff.path, "a.txt");
-    assert!(diff.diff.contains("+changed"), "diff: {}", diff.diff);
-}
-
-#[tokio::test]
 async fn git_show_returns_the_base_content_of_a_tracked_file() {
     let tmp = tempfile::tempdir().unwrap();
     init_repo(tmp.path());

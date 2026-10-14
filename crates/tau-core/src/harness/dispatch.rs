@@ -118,7 +118,6 @@ impl Core {
             | Command::FileList { .. }
             | Command::FileUnlist { .. }
             | Command::GitStatus { .. }
-            | Command::GitDiff { .. }
             | Command::GitShow { .. } => self.dispatch_misc(cmd),
         }
     }
@@ -209,13 +208,6 @@ impl Core {
                 })?;
                 Ok(CommandOutput::GitStatus {
                     status: status.status,
-                })
-            }
-            Command::GitDiff { workspace, path } => {
-                let workspace = self.workspace(&workspace)?;
-                let file = resolve_path(&workspace.cwd, &path);
-                Ok(CommandOutput::GitDiff {
-                    diff: super::git::git_diff(Path::new(&workspace.cwd), &file)?,
                 })
             }
             Command::GitShow { workspace, path } => {

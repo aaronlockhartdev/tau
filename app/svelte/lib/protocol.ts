@@ -381,12 +381,6 @@ export interface GitStatus {
   deleted: string[];
 }
 
-export interface GitDiff {
-  path: string;
-  diff: string;
-}
-
-
 export type Command =
   | { type: 'workspace_open'; cwd: string }
   | { type: 'workspace_list' }
@@ -427,7 +421,6 @@ export type Command =
   | { type: 'file_list'; workspace: string; path: string }
   | { type: 'file_unlist'; workspace: string; path: string }
   | { type: 'git_status'; workspace: string }
-  | { type: 'git_diff'; workspace: string; path: string }
   | { type: 'git_show'; workspace: string; path: string };
 
 export type CommandOutput =
@@ -447,7 +440,6 @@ export type CommandOutput =
   | { kind: 'file'; file: { text: string; truncated: boolean } }
   | { kind: 'files'; files: FileEntry[] }
   | { kind: 'git_status'; status: GitStatus }
-  | { kind: 'git_diff'; diff: GitDiff }
   | { kind: 'git_show'; text: string };
 
 export type SessionEventKind =
