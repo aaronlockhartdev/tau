@@ -153,8 +153,9 @@ pub struct GitSnapshot {
     /// snapshot time, so neither the tree nor the changes tab does per-row
     /// file reads.
     pub numstat: HashMap<String, NumstatCounts>,
-    /// Loaded ignore patterns (info/exclude + the root .gitignore). A path is
-    /// greyed when it or an ancestor dir matches — see `is_ignored`.
+    /// Loaded ignore patterns: info/exclude, the root .gitignore, and every
+    /// nested .gitignore (each scoped to its own dir). A path is greyed when it
+    /// or an ancestor dir matches — see `is_ignored`.
     pub ignore: gix::ignore::Search,
     /// Dir prefixes holding a tracked file (from the index). A folder with no
     /// tracked and no shown-untracked content is fully-ignored and greyed; this
@@ -186,19 +187,10 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
         numstat.insert(path.clone(), (count_lines(&cwd.join(path)), Some(0)));
     }
 
-    // The ignore patterns: info/exclude + the worktree's root .gitignore.
-    // Nested .gitignore files are not consulted (v0 scope; the status walk
-    // above already uses gix's full ignore machinery for pruning).
-    let mut buf = Vec::new();
-    let ignore = gix::ignore::Search::from_git_dir(
-        repo.git_dir(),
-        repo.workdir().map(|dir| dir.join(".gitignore")),
-        &mut buf,
-        gix::ignore::search::Ignore::default(),
-    )
-    .map_err(|e| ProtocolError::Other {
-        message: format!("git ignore: {e}"),
-    })?;
+    // The ignore patterns: info/exclude, the root .gitignore, and every nested
+    // .gitignore reachable through non-ignored dirs (build_ignore_search folds
+    // them in, each scoped to its own directory).
+    let ignore = build_ignore_search(&repo)?;
 
     // Folder-greying sets: a dir is greyed when it holds neither a tracked
     // nor a shown-untracked file - everything under it is ignored. The index
@@ -220,6 +212,93 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
         tracked_dirs,
         shown_dirs,
     })
+}
+
+/// The worktree's ignore patterns: info/exclude, the root .gitignore, and every
+/// nested .gitignore reachable through non-ignored directories. The recursive
+/// walk prunes dirs the (growing) search already ignores, so it never descends
+/// into e.g. `target/` — the 467k-file case the gix migration (ADR-0011) was
+/// meant to avoid. Each nested file is scoped to its own directory (the search
+/// `base`), so git's "closest .gitignore wins" rule holds via the search's
+/// reverse-iteration match order.
+/// Bases are workdir-rooted, so a subdir workspace (cwd ≠ workdir) may spuriously
+/// grey a path against a sibling subtree's nested pattern (pre-existing, cosmetic).
+fn build_ignore_search(repo: &gix::Repository) -> Result<gix::ignore::Search, ProtocolError> {
+    let mut buf = Vec::new();
+    let mut search = gix::ignore::Search::from_git_dir(
+        repo.git_dir(),
+        repo.workdir().map(|dir| dir.join(".gitignore")),
+        &mut buf,
+        gix::ignore::search::Ignore::default(),
+    )
+    .map_err(|e| ProtocolError::Other {
+        message: format!("git ignore: {e}"),
+    })?;
+    if let Some(workdir) = repo.workdir() {
+        collect_nested_gitignores(workdir, "", workdir, &mut search);
+    }
+    Ok(search)
+}
+
+/// Recursively fold `.gitignore` files under `dir` into `search`, pruning dirs
+/// the search already ignores (their subtree is greyed wholesale, so no nested
+/// pattern in it can matter). `workdir` is the repo root the pattern bases are
+/// scoped against; `rel` is `dir`'s workdir-relative path, for the prune check.
+fn collect_nested_gitignores(
+    dir: &Path,
+    rel: &str,
+    workdir: &Path,
+    search: &mut gix::ignore::Search,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        // The repo's own .git dir is never worktree content.
+        if name == ".git" {
+            continue;
+        }
+        let rel_sub = if rel.is_empty() {
+            name.to_string()
+        } else {
+            format!("{rel}/{name}")
+        };
+        if is_ignored_by_search(search, &rel_sub) {
+            continue;
+        }
+        let subdir = dir.join(&file_name);
+        let gitignore = subdir.join(".gitignore");
+        if let Ok(bytes) = std::fs::read(&gitignore) {
+            search.add_patterns_buffer(
+                &bytes,
+                gitignore,
+                Some(workdir),
+                gix::ignore::search::Ignore::default(),
+            );
+        }
+        collect_nested_gitignores(&subdir, &rel_sub, workdir, search);
+    }
+}
+
+/// A workdir-relative dir is ignored when the search matches it as a directory
+/// with a non-negative pattern. The prune test for the nested-gitignore walk:
+/// an ancestor match would have pruned higher up, so only this level is checked.
+fn is_ignored_by_search(search: &gix::ignore::Search, rel_dir: &str) -> bool {
+    search
+        .pattern_matching_relative_path(
+            gix::bstr::BStr::new(rel_dir.as_bytes()),
+            Some(true),
+            gix::glob::pattern::Case::default(),
+        )
+        .is_some_and(|m| !m.pattern.is_negative())
 }
 
 /// A modified file's `(added, deleted)`: a line-diff of its HEAD blob against

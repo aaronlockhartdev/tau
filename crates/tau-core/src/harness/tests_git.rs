@@ -187,3 +187,40 @@ async fn file_listing_is_annotated_with_git_state_and_ignored() {
     assert!(h.ignored);
     assert!(h.git.is_none());
 }
+
+#[tokio::test]
+async fn a_file_ignored_by_a_nested_gitignore_is_greyed() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_repo(tmp.path());
+    // A nested .gitignore (not the root one) ignores sub/nested.txt; the root
+    // .gitignore knows nothing of it. Only folding in the nested file greys it.
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(sub.join(".gitignore"), "nested.txt\n").unwrap();
+    std::fs::write(sub.join("nested.txt"), "n\n").unwrap();
+    std::fs::write(sub.join("visible.txt"), "v\n").unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let files = match core
+        .dispatch(Command::FileList {
+            workspace: workspace.id.clone(),
+            path: "sub".into(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Files { files } => files,
+        other => panic!("expected files: {other:?}"),
+    };
+    let by_path: std::collections::HashMap<_, _> =
+        files.iter().map(|f| (f.path.as_str(), f)).collect();
+    // nested.txt is ignored by sub/.gitignore (a nested file the root-only
+    // search never saw); its non-ignored sibling is not greyed.
+    assert!(
+        by_path["sub/nested.txt"].ignored,
+        "nested-gitignore file is greyed"
+    );
+    assert!(
+        !by_path["sub/visible.txt"].ignored,
+        "non-ignored sibling is not greyed"
+    );
+}
