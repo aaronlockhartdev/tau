@@ -88,7 +88,7 @@
   });
 </script>
 
-<div class="bar" data-tauri-drag-region>
+<div class="bar" class:fs={store.fullscreen} data-tauri-drag-region>
   <span class="logo">τ</span>
   <div class="tabs">
     {#each store.workspaces as w (w.id)}
@@ -144,6 +144,12 @@
     background: var(--bg);
     border-bottom: 1px solid var(--line);
     user-select: none;
+  }
+
+  /* Fullscreen: the traffic lights are gone, so drop the inset that cleared
+     them (the 96px left pad) back to the symmetric 12px. */
+  .bar.fs {
+    padding-left: 12px;
   }
   .logo {
     align-self: center;

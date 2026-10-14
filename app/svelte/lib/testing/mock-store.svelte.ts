@@ -32,6 +32,7 @@ export function paneDefault(): PaneState {
 export function freshDefaults() {
   return {
     focus: false,
+    fullscreen: false,
     follow: null as string | null,
     modelMenuOpen: false,
     reasoningOpen: true,

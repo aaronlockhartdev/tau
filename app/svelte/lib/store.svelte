@@ -63,6 +63,7 @@
   import { errText } from './errors';
   export type { PaneState } from './panes';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { attentionOf, type AttentionItem } from './attention';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
@@ -70,6 +71,9 @@
     // The wall clock the relative-age labels read; ticked every 30s so idle
     // ages advance live (each tick rewrites only the label text).
     now: Date.now(),
+    // Window fullscreen state: the top bar drops its traffic-light inset when
+    // the OS hides the controls (tracked by the module-scope listener below).
+    fullscreen: false,
     attentionOpen: false,
     paletteOpen: false,
     fleetOpen: false,
@@ -138,6 +142,16 @@
   setInterval(() => {
     store.now = Date.now();
   }, 30_000);
+
+  // The top bar reserves left padding for the macOS traffic lights; they're
+  // hidden in fullscreen, so track that state to drop the inset. Tauri has no
+  // fullscreen-changed event, so re-query on resize (the accepted pattern,
+  // tauri-apps/tauri#7162) — the callback lands once the transition settles.
+  if (isTauri()) {
+    const win = getCurrentWindow();
+    void win.isFullscreen().then((fs) => (store.fullscreen = fs));
+    void win.onResized(() => void win.isFullscreen().then((fs) => (store.fullscreen = fs)));
+  }
 
   // The needs-you list (P5): a pure fold over the sessions, so any pane
   // (bell, sheet, tree tint) reads one shared projection. A function —
