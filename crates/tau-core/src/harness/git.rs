@@ -1,67 +1,92 @@
-//! Workspace git status and one-file diffs (workbench P4): thin shell-outs
-//! to the git CLI. The core keeps no git library dependency (ADR-0002); the
-//! files tab badges and the peek sheet need exactly what
-//! `git status --porcelain=v2` and `git diff` produce.
+//! Workspace git status and one-file content (workbench P4), now on `gix`
+//! (the pure-Rust git library) instead of `git` CLI shell-outs (ADR-0011).
+//! The file-tree badges, the changes tab, and the file-content view need the
+//! status split, per-file numstat, an authoritative per-path ignore check
+//! (greying `target/` and empty ignored dirs like `.tau/skills` without
+//! enumerating them), and a file's content at HEAD for the diff base.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::Path;
 use std::process::Command as Process;
 
 use tau_protocol::{FileEntry, FileGit, FileGitState, GitDiff, GitStatus, ProtocolError};
 
-/// Parse `git status --porcelain=v2` output into the GUI's badge model.
-/// Entry lines read `1 <XY> <sub> <m> <sm> <mm> <X> <Y> <path>`; untracked
-/// entries read `? <path>`; a rename's live name sits on its paired `2` line.
-pub fn parse_status(output: &str) -> GitStatus {
-    let lines: Vec<&str> = output.lines().collect();
+/// Open `cwd` as a git repository. A non-git path is a protocol catch-all
+/// (matches `git_status_in_a_non_git_workspace_is_an_error`).
+fn open_repo(cwd: &Path) -> Result<gix::Repository, ProtocolError> {
+    gix::open(cwd).map_err(|e| ProtocolError::Other {
+        message: format!("git open: {e}"),
+    })
+}
+
+
+/// The status split from an open repository: the branch name plus the
+/// worktree-vs-index changes, classified into modified / deleted / untracked.
+fn status_of(repo: &gix::Repository) -> Result<GitStatus, ProtocolError> {
+    let branch = repo
+        .head_name()
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git head: {e}"),
+        })?
+        .map(|name| name.shorten().to_string())
+        .unwrap_or_default();
+
+    let platform = repo
+        .status(gix::progress::Discard)
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git status: {e}"),
+        })?;
+    let changes = platform
+        .into_iter(std::iter::empty::<gix::bstr::BString>())
+        .map_err(|e| ProtocolError::Other {
+            message: format!("git status: {e}"),
+        })?;
+
     let mut status = GitStatus {
-        branch: String::new(),
+        branch,
         modified: Vec::new(),
         untracked: Vec::new(),
         deleted: Vec::new(),
     };
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        i += 1;
-        if let Some(head) = line.strip_prefix("# branch.head ") {
-            status.branch = head.to_string();
-        } else if let Some(path) = line.strip_prefix("? ") {
-            status.untracked.push(unquote(path));
-        } else if let Some(rest) = line.strip_prefix("1 ") {
-            // A rename's `1` line names the old file; the paired `2` line
-            // names the live one, which is what the badge should show.
-            let path = if rest.starts_with('R') {
-                lines
-                    .get(i)
-                    .and_then(|l| l.strip_prefix("2 "))
-                    .and_then(path_of)
-                    .or_else(|| path_of(rest))
-            } else {
-                path_of(rest)
-            };
-            let xy = rest.get(..2).unwrap_or("");
-            match path {
-                Some(p) if xy.contains('D') => status.deleted.push(p),
-                Some(p) => status.modified.push(p),
-                None => {}
+    for change in changes {
+        let change = change.map_err(|e| ProtocolError::Other {
+            message: format!("git status: {e}"),
+        })?;
+        // Only worktree-vs-index changes feed the badge model; staged
+        // (tree-vs-index) changes are out of scope.
+        let gix::status::Item::IndexWorktree(change) = change else {
+            continue
+        };
+        match change {
+            gix::status::index_worktree::Item::Modification {
+                rela_path,
+                status: entry_status,
+                ..
+            } => {
+                let path = String::from_utf8_lossy(&rela_path).into_owned();
+                if let gix::status::plumbing::index_as_worktree::EntryStatus::Change(c) = entry_status {
+                    match c {
+                        gix::status::plumbing::index_as_worktree::Change::Modification { .. }
+                        | gix::status::plumbing::index_as_worktree::Change::Type { .. } => {
+                            status.modified.push(path);
+                        }
+                        gix::status::plumbing::index_as_worktree::Change::Removed => {
+                            status.deleted.push(path);
+                        }
+                        gix::status::plumbing::index_as_worktree::Change::SubmoduleModification(_) => {}
+                    }
+                }
             }
+            gix::status::index_worktree::Item::DirectoryContents { entry, .. } => {
+                status
+                    .untracked
+                    .push(String::from_utf8_lossy(&entry.rela_path).into_owned());
+            }
+            gix::status::index_worktree::Item::Rewrite { .. } => {}
         }
     }
-    status
-}
-
-/// The last whitespace field of a v2 entry body is the path (C-quoted when
-/// it holds special characters; v0 unquotes the trivial case only).
-fn path_of(body: &str) -> Option<String> {
-    body.split_whitespace().last().map(unquote)
-}
-
-fn unquote(path: &str) -> String {
-    path.strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .map_or(path.to_string(), str::to_string)
+    Ok(status)
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Result<String, ProtocolError> {
@@ -79,18 +104,6 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, ProtocolError> {
         });
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-}
-
-pub fn git_status(cwd: &Path) -> Result<GitStatus, ProtocolError> {
-    let out = run_git(cwd, &["status", "--porcelain=v2"])?;
-    let mut status = parse_status(&out);
-    if status.branch.is_empty() {
-        // This git build omits the v2 header lines; fall back to rev-parse.
-        status.branch = run_git(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?
-            .trim()
-            .to_string();
-    }
-    Ok(status)
 }
 
 /// Unified diff of one file vs HEAD (staged + unstaged). The returned path
@@ -137,113 +150,128 @@ pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
     Ok(out.replace("\r\n", "\n"))
 }
 
-/// A workspace's combined git state (file-tree plan, phase 2): which files
-/// changed (status), by how much (numstat), and which paths are .gitignored
-/// (the ignore set). Three spawns total, cached per workspace and
-/// invalidated on `file_tree_changed`; every dir listing in the workspace
-/// annotates from it.
 /// The numstat map's value: `(added, deleted)`; a `None` count is
 /// unmeasurable (binary).
 pub type NumstatCounts = (Option<u32>, Option<u32>);
 
+/// A workspace's combined git state (file-tree plan, phase 2), now built by a
+/// single in-process `gix` pass instead of five `git` spawns. `ignore` carries
+/// the loaded gitignore patterns so `annotate` can grey any path — empty dirs
+/// included — without enumerating the worktree.
 #[derive(Clone)]
 pub struct GitSnapshot {
     pub status: GitStatus,
-    /// Changed path → (added, deleted); `None` count = unmeasurable
-    /// (binary). Untracked files are measured here, at snapshot time, so
-    /// neither the tree nor the changes tab does per-row file reads.
+    /// Changed path → (added, deleted); untracked files are measured here, at
+    /// snapshot time, so neither the tree nor the changes tab does per-row
+    /// file reads.
     pub numstat: HashMap<String, NumstatCounts>,
-    pub ignored: HashSet<String>,
-    /// Dir prefixes holding a tracked / shown-untracked / ignored file,
-    /// precomputed at snapshot time so `is_ignored_dir` is an O(1) lookup on
-    /// every (live) listing. A folder is greyed only when it is an ignored
-    /// dir with no tracked or shown-untracked file under it.
-    pub tracked_dirs: HashSet<String>,
-    pub shown_dirs: HashSet<String>,
-    pub ignored_dirs: HashSet<String>,
+    /// Loaded ignore patterns (info/exclude + the root .gitignore). A path is
+    /// greyed when it or an ancestor dir matches — see `is_ignored`.
+    pub ignore: gix::ignore::Search,
 }
 
 pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
-    let status = git_status(cwd)?;
-    let mut numstat = parse_numstat(&run_git(cwd, &["diff", "--numstat", "HEAD"])?)
-        .into_iter()
-        .collect::<HashMap<_, _>>();
-    // `git diff` never measures untracked files: count their lines now,
-    // once per snapshot, not per tree row.
-    for path in &status.untracked {
-        numstat.entry(path.clone()).or_insert_with(|| {
-            (count_lines(&cwd.join(path)), Some(0))
-        });
+    let repo = open_repo(cwd)?;
+    let status = status_of(&repo)?;
+
+    // numstat: line-diff each modified file against its HEAD blob (a bounded
+    // set — the ignored files never appear in `status`), and count lines for
+    // untracked files. Never touches the 467k-file `target/`.
+    let head_tree = repo
+        .head_commit()
+        .ok()
+        .and_then(|commit| commit.tree().ok());
+    let mut numstat = HashMap::new();
+    for path in &status.modified {
+        numstat.insert(
+            path.clone(),
+            modified_numstat(&repo, head_tree.as_ref(), cwd, path),
+        );
     }
-    let (ignored, shown) = untracked_sets(cwd)?;
-    let tracked = tracked_set(cwd)?;
-    // Precompute the dir-prefix sets once, so `is_ignored_dir` is an O(1)
-    // lookup on every (live) listing rather than a scan of the file sets.
-    let tracked_dirs = dir_prefixes(&tracked);
-    let shown_dirs = dir_prefixes(&shown);
-    let ignored_dirs = dir_prefixes(&ignored);
+    for path in &status.untracked {
+        numstat.insert(path.clone(), (count_lines(&cwd.join(path)), Some(0)));
+    }
+
+    // The ignore patterns: info/exclude + the worktree's root .gitignore.
+    // Nested .gitignore files are not consulted (v0 scope; the status walk
+    // above already uses gix's full ignore machinery for pruning).
+    let mut buf = Vec::new();
+    let ignore = gix::ignore::Search::from_git_dir(
+        repo.git_dir(),
+        repo.workdir().map(|dir| dir.join(".gitignore")),
+        &mut buf,
+        gix::ignore::search::Ignore::default(),
+    )
+    .map_err(|e| ProtocolError::Other {
+        message: format!("git ignore: {e}"),
+    })?;
+
     Ok(GitSnapshot {
         status,
         numstat,
-        ignored,
-        tracked_dirs,
-        shown_dirs,
-        ignored_dirs,
+        ignore,
     })
 }
 
-/// Parse `git diff --numstat` output: `added<TAB>deleted<TAB>path` per
-/// line; a binary file reads `-` for a count and carries none.
-pub fn parse_numstat(output: &str) -> Vec<(String, NumstatCounts)> {
-    let count = |s: &str| s.trim().parse::<u32>().ok();
-    output
-        .lines()
-        .filter_map(|line| {
-            let mut f = line.split('\t');
-            match (f.next(), f.next(), f.next()) {
-                (Some(a), Some(d), Some(p)) if !p.trim().is_empty() => {
-                    Some((unquote(p), (count(a), count(d))))
-                }
-                _ => None,
-            }
-        })
-        .collect()
+/// A modified file's `(added, deleted)`: a line-diff of its HEAD blob against
+/// the worktree copy. A binary worktree copy is unmeasurable; a file with no
+/// HEAD base reads as all-added.
+fn modified_numstat(
+    repo: &gix::Repository,
+    head_tree: Option<&gix::Tree>,
+    cwd: &Path,
+    path: &str,
+) -> NumstatCounts {
+    let Ok(new) = std::fs::read_to_string(cwd.join(path)) else {
+        return (None, None); // binary worktree copy
+    };
+    match head_tree.and_then(|tree| head_blob(repo, tree, path)) {
+        Some(old) => {
+            let (added, deleted) = line_diff_counts(&old, &new);
+            (Some(added), Some(deleted))
+        }
+        None => (
+            Some(u32::try_from(new.lines().count()).unwrap_or(u32::MAX)),
+            Some(0),
+        ),
+    }
 }
 
-/// The two partitions of `ls-files --others` (every untracked path): the
-/// ignored ones (what `--exclude-standard` drops) and the shown ones. A set
-/// difference — no per-file stat.
-pub fn untracked_sets(cwd: &Path) -> Result<(HashSet<String>, HashSet<String>), ProtocolError> {
-    let all = run_git(cwd, &["ls-files", "--others"])?;
-    let shown = run_git(cwd, &["ls-files", "--others", "--exclude-standard"])?;
-    let shown: HashSet<String> = shown.lines().map(str::to_owned).collect();
-    let ignored = all
-        .lines()
-        .map(str::to_owned)
-        .filter(|p| !shown.contains(p))
-        .collect();
-    Ok((ignored, shown))
-}
-
-/// Every tracked (committed) path — a folder is only "all ignored" when it
-/// has no tracked file under it.
-pub fn tracked_set(cwd: &Path) -> Result<HashSet<String>, ProtocolError> {
-    let out = run_git(cwd, &["ls-files"])?;
-    Ok(out.lines().map(str::to_owned).collect())
-}
-
-/// Every ancestor-dir prefix of each path (an `a/b/c.rs` contributes `a` and
-/// `a/b`). Precomputing these turns the per-dir "is this folder all-ignored"
-/// check into a set lookup.
-fn dir_prefixes(paths: &HashSet<String>) -> HashSet<String> {
-    let mut out = HashSet::new();
-    for p in paths {
-        let segs: Vec<&str> = p.split('/').collect();
-        for i in 1..segs.len() {
-            out.insert(segs[..i].join("/"));
+/// `(added, deleted)` line counts of a line-based diff, via `similar`. A
+/// replace is emitted by `similar` as a paired delete + insert, so both sides
+/// are counted.
+fn line_diff_counts(old: &str, new: &str) -> (u32, u32) {
+    let diff = similar::TextDiff::from_lines(old, new);
+    let (mut added, mut deleted) = (0u32, 0u32);
+    for op in diff.iter_all_changes() {
+        let lines = u32::try_from(op.value().lines().count()).unwrap_or(u32::MAX);
+        match op.tag() {
+            similar::ChangeTag::Insert => added = added.saturating_add(lines),
+            similar::ChangeTag::Delete => deleted = deleted.saturating_add(lines),
+            similar::ChangeTag::Equal => {}
         }
     }
-    out
+    (added, deleted)
+}
+
+/// Read a file's bytes at HEAD by walking the tree path segment by segment
+/// (`gix` has no `find_file`; a `Tree` only exposes single-name `find_entry`).
+fn head_blob(repo: &gix::Repository, tree: &gix::Tree, rel: &str) -> Option<String> {
+    let mut parts = rel.split('/');
+    let name = parts.next()?;
+    let entry = tree.find_entry(name)?;
+    match entry.kind() {
+        gix::object::tree::EntryKind::Tree => {
+            let rest = parts.collect::<Vec<_>>().join("/");
+            let next = repo.find_tree(entry.id()).ok()?;
+            head_blob(repo, &next, &rest)
+        }
+        gix::object::tree::EntryKind::Blob | gix::object::tree::EntryKind::BlobExecutable => {
+            let blob = repo.find_blob(entry.id()).ok()?;
+            Some(String::from_utf8_lossy(&blob.data).into_owned())
+        }
+        _ => None,
+    }
 }
 
 /// An untracked file's line count (the numstat stand-in): a pure read,
@@ -263,30 +291,45 @@ pub fn count_lines(path: &Path) -> Option<u32> {
     Some(n)
 }
 
-
 /// Annotate a dir listing with the snapshot's ignore + git state
-/// (file-tree plan, phase 2). A file is greyed when .gitignored; a folder
-/// is greyed when everything under it is .gitignored — a source dir that
-/// also holds a tracked (or shown-untracked) file is not.
+/// (file-tree plan, phase 2). A node is greyed when it (or an ancestor dir)
+/// is .gitignored; a non-ignored file also carries its git state.
 pub fn annotate(files: &mut [FileEntry], snap: Option<&GitSnapshot>) {
     let Some(snap) = snap else { return };
     for f in files.iter_mut() {
+        f.ignored = is_ignored(&f.path, f.dir, snap);
         if f.dir {
-            f.ignored = is_ignored_dir(&f.path, snap);
             continue;
         }
-        f.ignored = snap.ignored.contains(&f.path);
         f.git = git_state_of(&f.path, snap);
     }
 }
 
-/// A folder is all-ignored when it is an ignored dir with no tracked or
-/// shown-untracked file under it (the dir-prefix sets are precomputed at
-/// snapshot time, so this is three O(1) lookups).
-fn is_ignored_dir(prefix: &str, snap: &GitSnapshot) -> bool {
-    !snap.tracked_dirs.contains(prefix)
-        && !snap.shown_dirs.contains(prefix)
-        && snap.ignored_dirs.contains(prefix)
+/// A path is ignored when it, or any ancestor directory, matches a loaded
+/// ignore pattern — the rule that greys an empty ignored dir (`.tau/skills`)
+/// just like its ignored parent (`.tau/`).
+fn is_ignored(path: &str, is_dir: bool, snap: &GitSnapshot) -> bool {
+    let mut current = path;
+    let mut at_leaf = true;
+    loop {
+        let dir = if at_leaf { is_dir } else { true };
+        let matched = snap
+            .ignore
+            .pattern_matching_relative_path(
+                gix::bstr::BStr::new(current.as_bytes()),
+                Some(dir),
+                gix::glob::pattern::Case::default(),
+            )
+            .is_some_and(|m| !m.pattern.is_negative());
+        if matched {
+            return true;
+        }
+        let Some((parent, _)) = current.rsplit_once('/') else {
+            return false;
+        };
+        current = parent;
+        at_leaf = false;
+    }
 }
 
 fn git_state_of(path: &str, snap: &GitSnapshot) -> Option<FileGit> {
@@ -323,58 +366,22 @@ fn git_state_of(path: &str, snap: &GitSnapshot) -> Option<FileGit> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parses_branch_modifications_untracked_and_deletions() {
-        let out = "# branch.head main\n\
-                   1 .M   N...  100644 100644 100644 aaaa bbbb src/a.rs\n\
-                   1 M.   N...  100644 100644 100644 aaaa bbbb src/b.rs\n\
-                   ? docs/new.md\n\
-                   1 .D   -----  -      aaaa cccc -      src/gone.rs\n";
-        let s = parse_status(out);
-        assert_eq!(s.branch, "main");
-        assert_eq!(s.modified, vec!["src/a.rs", "src/b.rs"]);
-        assert_eq!(s.untracked, vec!["docs/new.md"]);
-        assert_eq!(s.deleted, vec!["src/gone.rs"]);
+    fn ignore_search(patterns: &[&str]) -> gix::ignore::Search {
+        gix::ignore::Search::from_overrides(
+            patterns.to_vec(),
+            gix::ignore::search::Ignore::default(),
+        )
     }
 
-    #[test]
-    fn rename_badges_the_live_name_from_the_pair_line() {
-        let out = "# branch.head dev\n\
-                   1 R.   N...  100644 100644 100644 aaaa bbbb old/name.rs\n\
-                   2 R.   N...  100644 100644 100644 aaaa bbbb new/name.rs\n";
-        let s = parse_status(out);
-        assert_eq!(s.modified, vec!["new/name.rs"]);
-        assert!(s.deleted.is_empty());
-    }
-
-    #[test]
-    fn empty_status_is_a_clean_state() {
-        let s = parse_status("# branch.head main\n");
-        assert_eq!(s.branch, "main");
-        assert!(s.modified.is_empty() && s.untracked.is_empty() && s.deleted.is_empty());
-    }
-
-    #[test]
-    fn parses_numstat_counts_and_binary_markers() {
-        let out = "3\t1\tsrc/a.rs\n\t\t\n-\t-\tassets/logo.png\n0\t5\tdocs/gone.md\n";
-        let v = parse_numstat(out);
-        assert_eq!(v, vec![
-            ("src/a.rs".into(), (Some(3), Some(1))),
-            ("assets/logo.png".into(), (None, None)),
-            ("docs/gone.md".into(), (Some(0), Some(5))),
-        ]);
-    }
-
-    #[test]
-    fn malformed_numstat_lines_are_skipped() {
-        let v = parse_numstat("no-tabs-here\n1\t2\n");
-        assert!(v.is_empty());
-    }
-
-    #[test]
-    fn unquoted_numstat_paths_are_kept() {
-        let v = parse_numstat("1\t1\t\"src/odd name.rs\"\n");
-        assert_eq!(v, vec![("src/odd name.rs".into(), (Some(1), Some(1)))]);
+    fn entry(name: &str, path: &str, dir: bool) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            path: path.into(),
+            dir,
+            size: 0,
+            ignored: false,
+            git: None,
+        }
     }
 
     #[test]
@@ -391,45 +398,35 @@ mod tests {
                 m.insert("src/a.rs".to_owned(), (Some(3), Some(1)));
                 m
             },
-            ignored: ["target/x".into()].into_iter().collect(),
-            shown_dirs: HashSet::new(),
-            tracked_dirs: HashSet::new(),
-            ignored_dirs: HashSet::new(),
+            ignore: ignore_search(&["target/"]),
         };
         let mut files = vec![
-            FileEntry {
-                name: "a.rs".into(),
-                path: "src/a.rs".into(),
-                dir: false,
-                size: 1,
-                ignored: false,
-                git: None,
-            },
-            FileEntry {
-                name: "new.md".into(),
-                path: "new.md".into(),
-                dir: false,
-                size: 1,
-                ignored: false,
-                git: None,
-            },
-            FileEntry {
-                name: "x".into(),
-                path: "target/x".into(),
-                dir: false,
-                size: 1,
-                ignored: false,
-                git: None,
-            },
+            entry("a.rs", "src/a.rs", false),
+            entry("new.md", "new.md", false),
+            entry("x", "target/x", false),
         ];
         annotate(&mut files, Some(&snap));
-        assert_eq!(files[0].git, Some(FileGit { state: FileGitState::Modified, added: Some(3), deleted: Some(1) }));
-        assert_eq!(files[1].git, Some(FileGit { state: FileGitState::Untracked, added: None, deleted: None }));
+        assert_eq!(
+            files[0].git,
+            Some(FileGit {
+                state: FileGitState::Modified,
+                added: Some(3),
+                deleted: Some(1)
+            })
+        );
+        assert_eq!(
+            files[1].git,
+            Some(FileGit {
+                state: FileGitState::Untracked,
+                added: None,
+                deleted: None
+            })
+        );
         assert!(files[2].ignored && files[2].git.is_none());
     }
 
     #[test]
-    fn annotate_greys_a_folder_only_when_everything_under_it_is_ignored() {
+    fn a_path_under_an_ignored_dir_is_ignored() {
         let snap = GitSnapshot {
             status: GitStatus {
                 branch: "main".into(),
@@ -438,42 +435,28 @@ mod tests {
                 deleted: vec![],
             },
             numstat: HashMap::new(),
-            ignored: ["node_modules/pkg.js".to_owned(), "build/out.bin".to_owned()]
-                .into_iter()
-                .collect(),
-            shown_dirs: ["docs".to_owned()].into_iter().collect(),
-            tracked_dirs: ["src".to_owned()].into_iter().collect(),
-            ignored_dirs: ["node_modules".to_owned(), "build".to_owned()]
-                .into_iter()
-                .collect(),
+            ignore: ignore_search(&[".tau/", "node_modules/"]),
         };
-        let dir = |name: &str| FileEntry {
-            name: name.into(),
-            path: name.into(),
-            dir: true,
-            size: 0,
-            ignored: false,
-            git: None,
-        };
-        let mut files = vec![dir("src"), dir("docs"), dir("node_modules"), dir("build")];
-        annotate(&mut files, Some(&snap));
-        assert!(!files[0].ignored, "a dir with a tracked file is not all-ignored");
-        assert!(!files[1].ignored, "a dir with a shown-untracked file is not all-ignored");
-        assert!(files[2].ignored, "a dir with only ignored files is greyed");
-        assert!(files[3].ignored, "a dir with only ignored files is greyed");
+        // `.tau/skills` is empty and never in the pattern list, but its
+        // ancestor `.tau` is ignored, so the whole subtree is greyed.
+        assert!(is_ignored(".tau", true, &snap));
+        assert!(is_ignored(".tau/skills", true, &snap));
+        assert!(is_ignored("node_modules/pkg.js", false, &snap));
+        assert!(!is_ignored("crates", true, &snap));
+        assert!(!is_ignored("crates/tau-core", true, &snap));
     }
 
     #[test]
     fn annotate_is_a_noop_without_a_snapshot() {
-        let mut files = vec![FileEntry {
-            name: "a.rs".into(),
-            path: "a.rs".into(),
-            dir: false,
-            size: 1,
-            ignored: false,
-            git: None,
-        }];
+        let mut files = vec![entry("a.rs", "a.rs", false)];
         annotate(&mut files, None);
         assert!(!files[0].ignored && files[0].git.is_none());
+    }
+
+    #[test]
+    fn line_diff_counts_added_and_deleted_lines() {
+        // b→x is a replace (1 delete + 1 insert); the trailing y is an insert.
+        let (added, deleted) = line_diff_counts("a\nb\nc\n", "a\nx\nc\ny\n");
+        assert_eq!((added, deleted), (2, 1));
     }
 }
