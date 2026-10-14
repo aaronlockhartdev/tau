@@ -95,7 +95,7 @@
     border: 1px solid transparent;
     cursor: pointer;
     font-size: 12.5px;
-    line-height: 1;
+    line-height: 1.3;
   }
   .trow:hover {
     background: rgba(255, 255, 255, 0.04);
