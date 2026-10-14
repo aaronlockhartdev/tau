@@ -5,7 +5,7 @@
 //! (greying `target/` and empty ignored dirs like `.tau/skills` without
 //! enumerating them), and a file's content at HEAD for the diff base.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::BufRead;
 use std::path::Path;
 
@@ -19,7 +19,6 @@ fn open_repo(cwd: &Path) -> Result<gix::Repository, ProtocolError> {
         message: format!("git open: {e}"),
     })
 }
-
 
 /// The status split from an open repository: the branch name plus the
 /// worktree-vs-index changes, classified into modified / deleted / untracked.
@@ -56,7 +55,7 @@ fn status_of(repo: &gix::Repository) -> Result<GitStatus, ProtocolError> {
         // Only worktree-vs-index changes feed the badge model; staged
         // (tree-vs-index) changes are out of scope.
         let gix::status::Item::IndexWorktree(change) = change else {
-            continue
+            continue;
         };
         match change {
             gix::status::index_worktree::Item::Modification {
@@ -65,16 +64,22 @@ fn status_of(repo: &gix::Repository) -> Result<GitStatus, ProtocolError> {
                 ..
             } => {
                 let path = String::from_utf8_lossy(&rela_path).into_owned();
-                if let gix::status::plumbing::index_as_worktree::EntryStatus::Change(c) = entry_status {
+                if let gix::status::plumbing::index_as_worktree::EntryStatus::Change(c) =
+                    entry_status
+                {
                     match c {
-                        gix::status::plumbing::index_as_worktree::Change::Modification { .. }
+                        gix::status::plumbing::index_as_worktree::Change::Modification {
+                            ..
+                        }
                         | gix::status::plumbing::index_as_worktree::Change::Type { .. } => {
                             status.modified.push(path);
                         }
                         gix::status::plumbing::index_as_worktree::Change::Removed => {
                             status.deleted.push(path);
                         }
-                        gix::status::plumbing::index_as_worktree::Change::SubmoduleModification(_) => {}
+                        gix::status::plumbing::index_as_worktree::Change::SubmoduleModification(
+                            _,
+                        ) => {}
                     }
                 }
             }
@@ -88,8 +93,6 @@ fn status_of(repo: &gix::Repository) -> Result<GitStatus, ProtocolError> {
     }
     Ok(status)
 }
-
-
 
 /// A file's content at HEAD (the file-content view's diff base). The path is
 /// resolved toplevel-relative — the HEAD tree is rooted at the repo root, not
@@ -109,7 +112,10 @@ pub fn git_show(cwd: &Path, rel: &str) -> Result<String, ProtocolError> {
     let cwdc = std::fs::canonicalize(cwd).map_err(|e| ProtocolError::Other {
         message: format!("git cwd: {e}"),
     })?;
-    let prefix = cwdc.strip_prefix(&top).map(Path::to_path_buf).unwrap_or_default();
+    let prefix = cwdc
+        .strip_prefix(&top)
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let spec = if prefix.as_os_str().is_empty() {
         rel.to_string()
     } else {
@@ -150,6 +156,12 @@ pub struct GitSnapshot {
     /// Loaded ignore patterns (info/exclude + the root .gitignore). A path is
     /// greyed when it or an ancestor dir matches — see `is_ignored`.
     pub ignore: gix::ignore::Search,
+    /// Dir prefixes holding a tracked file (from the index). A folder with no
+    /// tracked and no shown-untracked content is fully-ignored and greyed; this
+    /// set keeps real folders (e.g. `crates/`) out of the greying.
+    pub tracked_dirs: HashSet<String>,
+    /// Dir prefixes holding a shown (non-ignored) untracked file.
+    pub shown_dirs: HashSet<String>,
 }
 
 pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
@@ -188,10 +200,25 @@ pub fn git_snapshot(cwd: &Path) -> Result<GitSnapshot, ProtocolError> {
         message: format!("git ignore: {e}"),
     })?;
 
+    // Folder-greying sets: a dir is greyed when it holds neither a tracked
+    // nor a shown-untracked file - everything under it is ignored. The index
+    // and the status untracked set are both bounded (ignored dirs like
+    // target/ appear in neither), so this stays cheap.
+    let mut tracked_dirs = HashSet::new();
+    if let Some(tree) = &head_tree {
+        collect_tree_paths(&repo, tree, "", &mut tracked_dirs);
+    }
+    let mut shown_dirs = HashSet::new();
+    for p in &status.untracked {
+        add_dir_prefixes(p, &mut shown_dirs);
+    }
+
     Ok(GitSnapshot {
         status,
         numstat,
         ignore,
+        tracked_dirs,
+        shown_dirs,
     })
 }
 
@@ -256,6 +283,34 @@ fn head_blob(repo: &gix::Repository, tree: &gix::Tree, rel: &str) -> Option<Stri
     }
 }
 
+/// Recursively collect the ancestor-directory prefixes of every blob in `tree`
+/// into `into` — the set of dirs that transitively hold a tracked file. A blob
+/// `a/b/c` contributes `a`, `a/b`, `a/b/c`; git stores no empty trees, so every
+/// recorded dir has tracked content beneath it.
+fn collect_tree_paths(
+    repo: &gix::Repository,
+    tree: &gix::Tree,
+    prefix: &str,
+    into: &mut HashSet<String>,
+) {
+    let Ok(decoded) = tree.decode() else { return };
+    for entry in &decoded.entries {
+        let name = String::from_utf8_lossy(entry.filename).into_owned();
+        let full = if prefix.is_empty() {
+            name
+        } else {
+            format!("{prefix}/{name}")
+        };
+        if entry.mode.is_tree() {
+            if let Ok(sub) = repo.find_tree(entry.oid) {
+                collect_tree_paths(repo, &sub, &full, into);
+            }
+        } else {
+            add_dir_prefixes(&full, into);
+        }
+    }
+}
+
 /// An untracked file's line count (the numstat stand-in): a pure read,
 /// capped so a huge untracked file stays cheap.
 pub fn count_lines(path: &Path) -> Option<u32> {
@@ -279,7 +334,11 @@ pub fn count_lines(path: &Path) -> Option<u32> {
 pub fn annotate(files: &mut [FileEntry], snap: Option<&GitSnapshot>) {
     let Some(snap) = snap else { return };
     for f in files.iter_mut() {
-        f.ignored = is_ignored(&f.path, f.dir, snap);
+        f.ignored = if f.dir {
+            is_ignored_dir(&f.path, snap)
+        } else {
+            is_ignored(&f.path, false, snap)
+        };
         if f.dir {
             continue;
         }
@@ -314,6 +373,26 @@ fn is_ignored(path: &str, is_dir: bool, snap: &GitSnapshot) -> bool {
     }
 }
 
+/// Insert every proper ancestor-directory prefix of a file `path` into `into`
+/// (`a/b/c` yields `a` and `a/b`; a top-level file yields none).
+fn add_dir_prefixes(path: &str, into: &mut HashSet<String>) {
+    let segments: Vec<&str> = path.split('/').collect();
+    let mut prefix = String::new();
+    for seg in &segments[..segments.len().saturating_sub(1)] {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(seg);
+        into.insert(prefix.clone());
+    }
+}
+
+/// A dir is greyed when it has no tracked and no shown-untracked content, i.e.
+/// everything under it is ignored (so `.pi` and `target/` grey, `crates/` does not).
+fn is_ignored_dir(path: &str, snap: &GitSnapshot) -> bool {
+    !snap.tracked_dirs.contains(path) && !snap.shown_dirs.contains(path)
+}
+
 fn git_state_of(path: &str, snap: &GitSnapshot) -> Option<FileGit> {
     if snap.status.deleted.iter().any(|p| p == path) {
         return Some(FileGit {
@@ -329,11 +408,7 @@ fn git_state_of(path: &str, snap: &GitSnapshot) -> Option<FileGit> {
             deleted: None,
         });
     }
-    let (added, deleted) = snap
-        .numstat
-        .get(path)
-        .copied()
-        .unwrap_or((None, None));
+    let (added, deleted) = snap.numstat.get(path).copied().unwrap_or((None, None));
     snap.status
         .modified
         .iter()
@@ -381,6 +456,8 @@ mod tests {
                 m
             },
             ignore: ignore_search(&["target/"]),
+            tracked_dirs: HashSet::new(),
+            shown_dirs: HashSet::new(),
         };
         let mut files = vec![
             entry("a.rs", "src/a.rs", false),
@@ -408,6 +485,44 @@ mod tests {
     }
 
     #[test]
+    fn a_dir_whose_only_content_is_ignored_is_greyed() {
+        // `.pi` is not itself ignored, but it holds no tracked and no
+        // shown-untracked file - its sole child `.pi/skills` is ignored - so it
+        // is greyed like its child, while `crates` (tracked content) is not.
+        let snap = GitSnapshot {
+            status: GitStatus {
+                branch: "main".into(),
+                modified: vec![],
+                untracked: vec![],
+                deleted: vec![],
+            },
+            numstat: HashMap::new(),
+            ignore: ignore_search(&[".pi/skills/"]),
+            tracked_dirs: {
+                let mut s = HashSet::new();
+                s.insert("crates".to_owned());
+                s
+            },
+            shown_dirs: HashSet::new(),
+        };
+        let mut files = vec![
+            entry("pi", ".pi", true),
+            entry("skills", ".pi/skills", true),
+            entry("crates", "crates", true),
+        ];
+        annotate(&mut files, Some(&snap));
+        assert!(
+            files[0].ignored,
+            ".pi is greyed: its only content is ignored"
+        );
+        assert!(files[1].ignored, ".pi/skills is greyed: directly ignored");
+        assert!(
+            !files[2].ignored,
+            "crates is not greyed: it has tracked content"
+        );
+    }
+
+    #[test]
     fn a_path_under_an_ignored_dir_is_ignored() {
         let snap = GitSnapshot {
             status: GitStatus {
@@ -418,6 +533,8 @@ mod tests {
             },
             numstat: HashMap::new(),
             ignore: ignore_search(&[".tau/", "node_modules/"]),
+            tracked_dirs: HashSet::new(),
+            shown_dirs: HashSet::new(),
         };
         // `.tau/skills` is empty and never in the pattern list, but its
         // ancestor `.tau` is ignored, so the whole subtree is greyed.
