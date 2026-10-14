@@ -179,7 +179,7 @@
   .code {
     margin: 0;
     padding: 8px 0 24px;
-    font: 11.5px/1.55 var(--mono);
+    font: 11.5px/1.4 var(--mono);
     color: #d4d4d4;
   }
   .line {
