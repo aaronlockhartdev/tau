@@ -144,13 +144,37 @@
   }, 30_000);
 
   // The top bar reserves left padding for the macOS traffic lights; they're
-  // hidden in fullscreen, so track that state to drop the inset. Tauri has no
-  // fullscreen-changed event, so re-query on resize (the accepted pattern,
-  // tauri-apps/tauri#7162) — the callback lands once the transition settles.
+  // hidden in fullscreen, so we drop the inset there. Tauri has no
+  // fullscreen-changed event, so we track it off the window resize event
+  // (tauri-apps/tauri#7162). Entering is clean: isFullscreen() flips true at
+  // the animation's start. Exiting is the catch: isFullscreen() stays true
+  // until the animation ENDS, by then the lights are back and briefly cover
+  // the logo. The resize event, though, fires at the exit animation's START,
+  // and a resize while settled in fullscreen can only be that exit (macOS
+  // won't let you resize a fullscreen window) — so we restore the inset then,
+  // before isFullscreen catches up. The grace window skips the enter
+  // animation's own resizes; `exiting` ignores the stale-true mid-exit.
   if (isTauri()) {
     const win = getCurrentWindow();
-    void win.isFullscreen().then((fs) => (store.fullscreen = fs));
-    void win.onResized(() => void win.isFullscreen().then((fs) => (store.fullscreen = fs)));
+    let enterAt = 0;
+    let exiting = false;
+    const settle = 1200; // longer than the enter animation, so its resizes fall inside the window
+    const sync = () =>
+      void win.isFullscreen().then((fs) => {
+        if (exiting && fs) return; // stale-true mid-exit; wait for the false
+        exiting = false;
+        store.fullscreen = fs;
+        enterAt = fs ? Date.now() : 0;
+      });
+    sync();
+    void win.onResized(() => {
+      if (store.fullscreen && Date.now() - enterAt > settle) {
+        exiting = true;
+        store.fullscreen = false; // exit animation starting; move the logo clear now
+        return;
+      }
+      sync();
+    });
   }
 
   // The needs-you list (P5): a pure fold over the sessions, so any pane

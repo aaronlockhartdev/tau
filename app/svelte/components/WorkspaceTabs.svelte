@@ -16,6 +16,7 @@
     closeWorkspaces,
     tabSelect
   } from '../lib/store.svelte';
+  import TauLogo from './TauLogo.svelte';
   import type { Workspace } from '../lib/protocol';
   import { tick } from 'svelte';
   import { ctxClamp } from '../lib/ui';
@@ -89,7 +90,7 @@
 </script>
 
 <div class="bar" class:fs={store.fullscreen} data-tauri-drag-region>
-  <span class="logo">τ</span>
+  <span class="logo" aria-hidden="true"><TauLogo size="0.75em" /></span>
   <div class="tabs">
     {#each store.workspaces as w (w.id)}
       <div
@@ -140,23 +141,22 @@
     align-items: stretch;
     gap: 1px;
     height: 48px;
-    padding: 0 12px 0 96px;
+    padding: 0 12px 0 90px;
     background: var(--bg);
     border-bottom: 1px solid var(--line);
     user-select: none;
   }
 
   /* Fullscreen: the traffic lights are gone, so drop the inset that cleared
-     them (the 96px left pad) back to the symmetric 12px. */
+     them (the 90px left pad) back to the symmetric 12px. */
   .bar.fs {
     padding-left: 12px;
   }
   .logo {
     align-self: center;
-    font-size: 14px;
-    font-weight: 700;
+    font-size: 16px;
     color: var(--tx);
-    padding: 0 10px 0 2px;
+    padding: 0 14px 0 2px;
   }
   .tabs {
     display: flex;
