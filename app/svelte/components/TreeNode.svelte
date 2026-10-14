@@ -90,7 +90,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 8px 6px calc(var(--indent, 0px) + 8px);
+    padding: 3px 8px 3px calc(var(--indent, 0px) + 8px);
     border-radius: 8px;
     border: 1px solid transparent;
     cursor: pointer;
