@@ -3,8 +3,8 @@
 //! The arms are grouped per domain in their own files; the entry routes.
 
 use super::{
-    Arc, BufRead, Command, CommandOutput, Core, FileText, Path, PathBuf, ProviderInfo, Workspace,
-    list_dir, ProtocolError,
+    Arc, BufRead, Command, CommandOutput, Core, FileText, Path, PathBuf, ProtocolError,
+    ProviderInfo, Workspace, list_dir,
 };
 
 fn resolve_path(cwd: &str, path: &str) -> PathBuf {
@@ -190,9 +190,7 @@ impl Core {
                 // The tree's git awareness (file-tree plan, phase 2): the
                 // cached snapshot annotates ignore + change state.
                 super::git::annotate(&mut files, self.git_snapshot(&workspace).as_ref());
-                Ok(CommandOutput::Files {
-                    files,
-                })
+                Ok(CommandOutput::Files { files })
             }
 
             Command::FileUnlist { workspace, path } => {

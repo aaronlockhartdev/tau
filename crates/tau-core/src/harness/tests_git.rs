@@ -141,7 +141,6 @@ async fn git_show_from_a_subdir_workspace_resolves_the_toplevel_offset() {
     assert_eq!(text, "nested\n");
 }
 
-
 #[tokio::test]
 async fn file_listing_is_annotated_with_git_state_and_ignored() {
     let tmp = tempfile::tempdir().unwrap();
@@ -167,11 +166,21 @@ async fn file_listing_is_annotated_with_git_state_and_ignored() {
         files.iter().map(|f| (f.path.as_str(), f)).collect();
     // Modified: state + numstat counts, not ignored.
     let a = by_path["a.txt"];
-    assert_eq!(a.git, Some(FileGit { state: FileGitState::Modified, added: Some(1), deleted: Some(1) }));
+    assert_eq!(
+        a.git,
+        Some(FileGit {
+            state: FileGitState::Modified,
+            added: Some(1),
+            deleted: Some(1)
+        })
+    );
     assert!(!a.ignored);
     // Untracked: state present, not ignored.
     let s = by_path["shown.txt"];
-    assert_eq!(s.git.as_ref().map(|g| g.state), Some(FileGitState::Untracked));
+    assert_eq!(
+        s.git.as_ref().map(|g| g.state),
+        Some(FileGitState::Untracked)
+    );
     assert!(!s.ignored);
     // Ignored: shown but greyed by the flag, no git state.
     let h = by_path["hidden.txt"];

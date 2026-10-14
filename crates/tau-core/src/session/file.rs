@@ -487,7 +487,11 @@ mod tests {
         assert_eq!(fired.lock().unwrap().as_slice(), &["00000042".to_string()]);
         // Wire-only: the file still holds just the header.
         let raw = fs::read_to_string(s.path()).unwrap();
-        assert_eq!(raw.lines().count(), 1, "the file holds only the header: {raw}");
+        assert_eq!(
+            raw.lines().count(),
+            1,
+            "the file holds only the header: {raw}"
+        );
     }
 
     #[test]
@@ -508,8 +512,13 @@ mod tests {
         assert_eq!(raw.lines().count(), 1, "staged: header only: {raw}");
         // The in-flight entry lands: its append_entry flushes the staged side
         // entry, in order, under the pre-minted id.
-        s.append_entry(&inflight, "assistant", Value::String("thinking".into()), None)
-            .unwrap();
+        s.append_entry(
+            &inflight,
+            "assistant",
+            Value::String("thinking".into()),
+            None,
+        )
+        .unwrap();
         let entries = s.entries_range(0, 10).unwrap();
         let ids: Vec<&str> = entries.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(

@@ -321,7 +321,10 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
     let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
     let mut sorted = ids.clone();
     sorted.sort();
-    assert_eq!(ids, sorted, "file line order diverges from id order: {ids:?}");
+    assert_eq!(
+        ids, sorted,
+        "file line order diverges from id order: {ids:?}"
+    );
     // The report is present, attributed to the child.
     assert!(
         entries.iter().any(|e| {
@@ -407,7 +410,10 @@ async fn a_task_side_entry_lands_in_id_order_behind_the_in_flight_entry() {
     let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
     let mut sorted = ids.clone();
     sorted.sort();
-    assert_eq!(ids, sorted, "file line order diverges from id order: {ids:?}");
+    assert_eq!(
+        ids, sorted,
+        "file line order diverges from id order: {ids:?}"
+    );
     // The task side entry is present in the file.
     assert!(
         entries.iter().any(|e| e.kind == crate::task::KIND_TASK),

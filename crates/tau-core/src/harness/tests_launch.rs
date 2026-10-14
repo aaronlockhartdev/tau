@@ -253,7 +253,11 @@ fn launch_child_routes_task_tools_through_the_parent() {
 
     // The worker tools route to the parent's store: the child sees the
     // parent's task.
-    let started = child.task_tool_call("task_start", &serde_json::json!({ "task": "task-1" }), false);
+    let started = child.task_tool_call(
+        "task_start",
+        &serde_json::json!({ "task": "task-1" }),
+        false,
+    );
     assert!(started.contains("task-1"), "{started}");
     assert!(started.contains("child ping"), "{started}");
 }
