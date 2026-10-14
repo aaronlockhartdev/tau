@@ -139,7 +139,7 @@
                   </div>
                 {/if}
                 <div class="a">
-                  {t.worker ? `assigned: ${t.worker.session} (${t.worker.status})` : 'unassigned'} · modified {fmtAgo(t.updated)}
+                  {t.worker ? `assigned: ${t.worker.session} (${t.worker.status})` : 'unassigned'} · modified {fmtAgo(t.updated, store.now)}
                 </div>
               </div>
             {/if}

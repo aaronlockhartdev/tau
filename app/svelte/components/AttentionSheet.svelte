@@ -33,7 +33,7 @@
             <span class="ws">{wsName(item.workspace)}</span>
           </div>
           <div class="reason">{item.reason}</div>
-          <div class="meta">{item.since > 0 ? fmtAgo(item.since) : 'now'}</div>
+          <div class="meta">{item.since > 0 ? fmtAgo(item.since, store.now) : 'now'}</div>
         </button>
       {/each}
     </div>

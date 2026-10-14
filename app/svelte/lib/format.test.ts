@@ -27,6 +27,11 @@ describe('fmtAgo', () => {
     expect(fmtAgo(ago(14 * DAY))).toBe('14d'); // was "336h"
     expect(fmtAgo(ago(400 * DAY))).toBe('1y'); // 400d is past a year
   });
+
+  it('honours an explicit now, so a shared clock tick advances the label', () => {
+    expect(fmtAgo(now - 14 * HOUR, now)).toBe('14h');
+    expect(fmtAgo(now - 14 * HOUR, now + 24 * HOUR)).toBe('1d');
+  });
 });
 
 describe('fmtK', () => {

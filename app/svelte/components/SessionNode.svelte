@@ -239,7 +239,7 @@
   {:else if !session.archived}
     <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
   {/if}
-  <span class="mru">{fmtAgo(session.mru)}</span>
+  <span class="mru">{fmtAgo(session.mru, store.now)}</span>
   {#if !session.archived && !session.parent}
     <button
       class="arch-b"

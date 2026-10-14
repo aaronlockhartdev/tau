@@ -67,6 +67,9 @@
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
     focus: false,
+    // The wall clock the relative-age labels read; ticked every 30s so idle
+    // ages advance live (each tick rewrites only the label text).
+    now: Date.now(),
     attentionOpen: false,
     paletteOpen: false,
     fleetOpen: false,
@@ -129,6 +132,12 @@
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null
   });
+
+  // Advance the wall clock on a slow tick so relative-age labels (session mru,
+  // attention "since", task "modified") stay current without session activity.
+  setInterval(() => {
+    store.now = Date.now();
+  }, 30_000);
 
   // The needs-you list (P5): a pure fold over the sessions, so any pane
   // (bell, sheet, tree tint) reads one shared projection. A function —

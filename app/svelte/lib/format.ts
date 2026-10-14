@@ -4,8 +4,8 @@ import prettyMilliseconds from 'pretty-ms';
 
 // Compact age: "just now" under a minute, then the single largest unit
 // (m / h / d / y) via pretty-ms's compact mode.
-export function fmtAgo(ms: number): string {
-  const age = Date.now() - ms;
+export function fmtAgo(ms: number, now: number = Date.now()): string {
+  const age = now - ms;
   return age < 60_000 ? 'just now' : prettyMilliseconds(age, { compact: true });
 }
 
