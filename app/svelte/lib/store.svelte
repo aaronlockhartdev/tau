@@ -154,14 +154,17 @@
   // won't let you resize a fullscreen window) — so we restore the inset then,
   // before isFullscreen catches up. The grace window skips the enter
   // animation's own resizes; `exiting` ignores the stale-true mid-exit.
+  // A rapid exit inside the grace window is indistinguishable from the enter
+  // animation (no pre-transition signal), so it keeps the inset dropped once — cosmetic.
   if (isTauri()) {
     const win = getCurrentWindow();
     let enterAt = 0;
     let exiting = false;
+    let exitAt = 0;
     const settle = 1200; // longer than the enter animation, so its resizes fall inside the window
     const sync = () =>
       void win.isFullscreen().then((fs) => {
-        if (exiting && fs) return; // stale-true mid-exit; wait for the false
+        if (exiting && fs && Date.now() - exitAt < settle) return; // stale-true only mid-exit
         exiting = false;
         store.fullscreen = fs;
         enterAt = fs ? Date.now() : 0;
@@ -170,6 +173,7 @@
     void win.onResized(() => {
       if (store.fullscreen && Date.now() - enterAt > settle) {
         exiting = true;
+        exitAt = Date.now();
         store.fullscreen = false; // exit animation starting; move the logo clear now
         return;
       }
