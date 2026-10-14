@@ -1,6 +1,6 @@
 # Migrating the file-tree git harness from `git` shell-outs to `gix`
 
-**Status**: proposed. **Owner**: assigned subagent. **Supersedes**: the shell-out
+**Status**: done (2026-10-13). **Recorded as**: ADR-0011. **Supersedes**: the shell-out
 implementation in `crates/tau-core/src/harness/git.rs`.
 
 ## Why
