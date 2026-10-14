@@ -24,6 +24,10 @@ insta = { version = "1", features = ["json"] }
 sha2 = "0.10"
 notify = "8.2"
 notify-debouncer-full = "0.7"
+# Pure-Rust git for the file-tree harness (ADR-0011): status + ignore + blob reads
+# in-process, no `git` CLI spawns.
+gix = { version = "0.88", default-features = false, features = ["status", "revision", "excludes", "sha1"] }
+similar = "3"
 
 [workspace.lints.clippy]
 # Maximum strictness (2026-10-01): the whole pedantic group (CI's `-D warnings`

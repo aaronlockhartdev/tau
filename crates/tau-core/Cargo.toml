@@ -23,6 +23,8 @@ names = { workspace = true }
 rand = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
+gix = { workspace = true }
+similar = { workspace = true }
 tau-protocol = { path = "../tau-protocol" }
 
 [dev-dependencies]
