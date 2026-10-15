@@ -84,6 +84,22 @@ describe('ChangesView', () => {
     expect(ls[1]!.querySelector('.src')?.textContent).toBe('two');
   });
 
+  it('does not diff the last line when only the trailing newline differs', async () => {
+    seedOpen('src/a.ts', 'a\nb', 'a\nb\n'); // same lines; base carries a final newline
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(2));
+    expect(document.querySelector('.code .line.added')).toBeNull();
+    expect(document.querySelector('.code .line.removed')).toBeNull();
+  });
+
+  it('sizes the line-number gutter to the widest line number', async () => {
+    const big = Array.from({ length: 1000 }, (_, i) => `l${i}`).join('\n');
+    seedOpen('src/big.ts', big, big); // 1000 lines -> 4-digit numbers
+    render(ChangesView);
+    await vi.waitFor(() => expect(lines().length).toBe(1000));
+    expect(document.querySelector('.code')!.getAttribute('style')).toContain('--lnw: 4');
+  });
+
   it('shows all context lines when nothing changed', async () => {
     seedOpen('src/a.ts', 'a\nb', 'a\nb');
     render(ChangesView);

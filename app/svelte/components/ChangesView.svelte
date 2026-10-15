@@ -23,6 +23,10 @@
   // recompute never clobbers a newer one; a highlight failure (a prod WASM/grammar
   // init rejection) falls back to plain, uncolored lines rather than sticking.
   let lines = $state<RenderLine[]>([]);
+  // The gutter must fit the widest line number (4+ digits on a large file
+  // overflow a fixed 4ch and spill onto the diff mark and the text); size it
+  // to the longest number actually shown.
+  const lnDigits = $derived(lines.reduce((m, l) => Math.max(m, l.no.length), 0) || 4);
   $effect(() => {
     const a = active;
     const n = next;
@@ -85,7 +89,7 @@
       {:else if next === ''}
         <div class="note">empty file</div>
       {:else}
-        <div class="code">
+        <div class="code" style={`--lnw: ${lnDigits}`}>
           {#each lines as rl (rl.key)}
             <div class="line" class:added={rl.mark === 'add'} class:removed={rl.mark === 'del'}>
               <span class="ln">{rl.no}</span>
@@ -196,7 +200,7 @@
   }
   .ln {
     flex: none;
-    width: 4ch;
+    width: calc(var(--lnw, 4) * 1ch + 20px);
     text-align: right;
     padding: 0 8px 0 12px;
     color: var(--faint);

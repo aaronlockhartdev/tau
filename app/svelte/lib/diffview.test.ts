@@ -43,6 +43,19 @@ describe('buildDiffLines', () => {
       { kind: 'added', text: 'b', newIdx: 1 },
     ]);
   });
+
+  it('a trailing-newline-only difference does not diff the last line', () => {
+    // base and next hold the same lines; only the final newline differs. The
+    // last line is context, not a spurious removed+re-added pair.
+    expect(buildDiffLines('a\nb\n', 'a\nb')).toEqual([
+      { kind: 'context', text: 'a', newIdx: 0 },
+      { kind: 'context', text: 'b', newIdx: 1 },
+    ]);
+    expect(buildDiffLines('a\nb', 'a\nb\n')).toEqual([
+      { kind: 'context', text: 'a', newIdx: 0 },
+      { kind: 'context', text: 'b', newIdx: 1 },
+    ]);
+  });
 });
 
 describe('assemble', () => {

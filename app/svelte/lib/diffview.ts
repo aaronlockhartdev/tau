@@ -18,7 +18,14 @@ export type RenderLine = { key: number; no: string; mark: Mark; spans: Span[] };
 export function buildDiffLines(base: string, next: string): DiffLine[] {
   const out: DiffLine[] = [];
   let newIdx = 0;
-  for (const c of diffLines(base, next)) {
+  // jsdiff's line diff is sensitive to a missing final newline: it can diff the
+  // last line as changed when one leg ends in \n and the other doesn't. Normalize
+  // both legs to end in a newline so a trailing-newline-only difference is a no-op
+  // (an empty leg stays empty).
+  const norm = (s: string) => (s && !s.endsWith('\n') ? s + '\n' : s);
+  const b = norm(base);
+  const n = norm(next);
+  for (const c of diffLines(b, n)) {
     const lines = c.value.split('\n');
     if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
     for (const text of lines) {
