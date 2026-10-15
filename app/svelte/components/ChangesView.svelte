@@ -155,7 +155,7 @@
   .tab.on {
     color: var(--acc);
     border-color: var(--acc);
-    background: rgba(76, 141, 255, 0.1);
+    background: color-mix(in srgb, var(--acc) 10%, transparent);
   }
   .tname {
     cursor: pointer;
@@ -188,8 +188,8 @@
   .code {
     margin: 0;
     padding: 8px 0 24px;
-    font: 11.5px/1.4 var(--mono);
-    color: #d4d4d4;
+    font: 11.5px/1.5 var(--mono);
+    color: var(--code-fg);
   }
   .line {
     display: flex;
@@ -216,22 +216,22 @@
     padding-right: 16px;
   }
   .line.added {
-    background: rgba(63, 185, 80, 0.14);
+    background: var(--diff-add-bg);
   }
   .line.added .mk {
-    color: #7ee08a;
+    color: var(--diff-add-fg);
   }
   .line.added .ln {
-    color: rgba(126, 224, 138, 0.7);
+    color: var(--diff-add-fg);
   }
   .line.removed {
-    background: rgba(240, 85, 63, 0.14);
+    background: var(--diff-del-bg);
   }
   .line.removed .mk {
-    color: #ff9d8f;
+    color: var(--diff-del-fg);
   }
   .line.removed .src {
-    color: #ff9d8f;
+    color: var(--diff-del-fg);
   }
   .line.removed .ln {
     color: transparent;

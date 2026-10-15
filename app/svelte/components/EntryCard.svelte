@@ -261,11 +261,11 @@
   }
   /* The renderer's output arrives via @html, outside scoping. */
   :global(pre.code) {
-    padding: 10px;
+    padding: 8px;
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 6px;
-    font: 12px/1.5 var(--mono);
+    font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     margin: 6px 0;
@@ -281,7 +281,7 @@
     color: var(--acc);
   }
   :global(.md strong) {
-    color: #fff;
+    color: var(--tx);
   }
   :global(.md em) {
     color: var(--dim);

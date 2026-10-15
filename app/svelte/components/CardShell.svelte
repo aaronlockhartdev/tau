@@ -259,7 +259,7 @@
     font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
     word-break: break-word;
-    color: var(--dim);
+    color: var(--code-fg);
   }
   .tool .chip {
     display: flex;
@@ -363,7 +363,7 @@
     font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    color: var(--dim);
+    color: var(--code-fg);
   }
   .expando {
     display: inline-block;

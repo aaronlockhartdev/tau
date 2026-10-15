@@ -105,8 +105,8 @@
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 6px;
-    font: 11.5px/1.4 var(--mono);
-    color: #d4d4d4;
+    font: 11.5px/1.5 var(--mono);
+    color: var(--code-fg);
   }
   .line {
     display: flex;
@@ -124,19 +124,19 @@
     overflow-wrap: anywhere;
   }
   .line.added {
-    background: rgba(63, 185, 80, 0.14);
+    background: var(--diff-add-bg);
   }
   .line.added .mk {
-    color: #7ee08a;
+    color: var(--diff-add-fg);
   }
   .line.removed {
-    background: rgba(240, 85, 63, 0.14);
+    background: var(--diff-del-bg);
   }
   .line.removed .mk {
-    color: #ff9d8f;
+    color: var(--diff-del-fg);
   }
   .line.removed .src {
-    color: #ff9d8f;
+    color: var(--diff-del-fg);
   }
   .to-trunc {
     margin-top: 4px;

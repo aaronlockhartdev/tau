@@ -17,6 +17,14 @@
   --amber: #d9a03f;
   --red: #f0553f;
   --purple: #9d8ae6;
+  /* Code + diff semantics, shared by the transcript tool output
+     (ToolOutput) and the file viewer (ChangesView) so both draw from one
+     language; derived from the palette above so a token change propagates. */
+  --code-fg: #d4d4d4;
+  --diff-add-bg: color-mix(in srgb, var(--green) 15%, transparent);
+  --diff-add-fg: color-mix(in srgb, var(--green) 50%, var(--tx));
+  --diff-del-bg: color-mix(in srgb, var(--red) 15%, transparent);
+  --diff-del-fg: color-mix(in srgb, var(--red) 50%, var(--tx));
   --mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
   --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
