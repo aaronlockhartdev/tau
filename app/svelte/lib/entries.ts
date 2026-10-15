@@ -102,7 +102,7 @@ export function decodeEntry(v: ViewEntry): Entry {
         call_id: typeof p.call_id === 'string' ? p.call_id : undefined,
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: typeof p.output === 'string' ? p.output : undefined,
-        status: toolStatus(typeof p.name === 'string' ? p.name : '', p.output),
+        status: decodeToolStatus(p),
         // The sidecar's bytes are gone (blob deleted from disk): the record is
         // what it is — say so, never fake a still-running call.
         unavailable: v.payload == null && v.blob != null ? true : undefined
@@ -191,5 +191,15 @@ export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'e
   if (s.startsWith(`${name}: `)) return 'error';
   if (/^(error:|unknown tool:|unknown task tool)/.test(s)) return 'error';
   return 'ok';
+}
+
+// The core's explicit status (B5) wins when present; the prefix heuristic is
+// the back-compat fallback for records written before it existed. A running
+// call has neither an explicit status nor an output, so it falls through to
+// toolStatus's 'running'.
+function decodeToolStatus(p: Record<string, unknown>): 'ok' | 'running' | 'error' {
+  const s = p.status;
+  if (s === 'ok' || s === 'error') return s;
+  return toolStatus(typeof p.name === 'string' ? p.name : '', p.output);
 }
 

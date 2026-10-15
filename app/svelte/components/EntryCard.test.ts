@@ -270,4 +270,23 @@ describe('EntryCard', () => {
     const { container } = mount({ id: 'e1', kind: 'message', text: '' });
     expect(container.querySelector('.wrap')).toBeNull();
   });
+
+  it('a batched card carries the count mark and the batch-last flag', () => {
+    // A 1-card batch: index 0 is both first (carries the mark) and last.
+    const { container } = mount(
+      { id: 'e1', kind: 'tool', name: 'read', status: 'ok', output: 'x' },
+      { batch: { index: 0, size: 1 } }
+    );
+    expect(container.querySelector('.batch-mark')?.textContent).toContain('1 batched');
+    expect(container.querySelector('.wrap.batch')).toHaveClass('batch-last');
+  });
+
+  it('a non-final batched card is not flagged batch-last', () => {
+    const { container } = mount(
+      { id: 'e1', kind: 'tool', name: 'read', status: 'ok', output: 'x' },
+      { batch: { index: 0, size: 3 } }
+    );
+    expect(container.querySelector('.batch-mark')?.textContent).toContain('3 batched');
+    expect(container.querySelector('.wrap.batch')).not.toHaveClass('batch-last');
+  });
 });

@@ -123,6 +123,9 @@ export interface ToolPayload {
   name: string;
   args: Record<string, unknown>;
   output: unknown;
+  // Explicit completion status the core emits (B5): the string-prefix
+  // heuristic in entries.ts is only the fallback for older records.
+  status?: 'ok' | 'error';
 }
 
 // The OM record (crates/tau-core/src/om.rs OmRecord) as the `om` entry's

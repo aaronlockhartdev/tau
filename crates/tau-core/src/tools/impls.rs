@@ -191,6 +191,7 @@ fn write_atomic_inner(
 }
 
 pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
+    const CAP: usize = 200;
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
         return "edit: missing \"path\"".into();
     };
@@ -220,24 +221,61 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
     if let Err(e) = write_atomic(&path, &edited.content) {
         return format!("edit: cannot write {}: {e}", path.display()).into();
     }
-    // Bounded output (the reference returns the changed region, not the
-    // whole file): the changed lines plus two context lines per side, with
-    // their fresh anchors, plus the result line count.
+    // Bounded before/after diff (the reference returns the changed region,
+    // not the whole file): removed lines, added lines with their fresh
+    // anchors, a little unchanged context — capped so a huge edit stays small.
     if edited.first_changed > edited.last_changed {
         return format!("edited {} (no change)", path.display()).into();
     }
-    let rows = hashline::render(&edited.content).unwrap_or_default();
-    let lo = edited.first_changed.saturating_sub(1).saturating_sub(2);
-    let hi = (edited.last_changed + 2).min(rows.len());
-    (format!(
+    let new_lines: Vec<String> = edited.content.lines().map(str::to_owned).collect();
+    let total = new_lines.len();
+    // The changed region in the new file, 0-based.
+    let lo = edited.first_changed.saturating_sub(1);
+    let hi = edited.last_changed.min(total);
+    // Change lines: removed (old) then added (new, carrying the fresh anchor).
+    let mut change: Vec<String> = Vec::with_capacity(edited.removed_lines.len() + (hi - lo));
+    for line in &edited.removed_lines {
+        change.push(format!("-{line}"));
+    }
+    for (line, hash) in new_lines[lo..hi].iter().zip(edited.hashes[lo..hi].iter()) {
+        change.push(format!("+ {hash} {line}"));
+    }
+    // Cap the body at ~200 lines; a larger change shows its head + a count.
+    let mut body: Vec<String> = Vec::new();
+    let mut notice: Option<String> = None;
+    if change.len() > CAP {
+        body.extend(change.iter().take(CAP).cloned());
+        notice = Some(format!("… {} more lines changed", change.len() - CAP));
+    } else {
+        body.extend(change);
+        // A little unchanged context for orientation, kept within the cap.
+        let budget = CAP - body.len();
+        let mut ctx = Vec::new();
+        for line in new_lines.iter().take(lo).rev().take(2) {
+            ctx.push(format!(" {line}"));
+        }
+        for line in new_lines.iter().skip(hi).take(2) {
+            if ctx.len() >= 2 {
+                break;
+            }
+            ctx.push(format!(" {line}"));
+        }
+        body.extend(ctx.into_iter().take(budget));
+    }
+    let summary = format!(
         "edited {} (lines {}–{} of {})",
         path.display(),
         edited.first_changed,
         edited.last_changed,
-        rows.len()
-    ) + "\n"
-        + &rows[lo..hi].join("\n"))
-        .into()
+        total
+    );
+    let mut out = summary + "\n";
+    out.push_str(&body.join("\n"));
+    if let Some(n) = notice {
+        out.push('\n');
+        out.push_str(&n);
+    }
+    out.into()
 }
 
 pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {

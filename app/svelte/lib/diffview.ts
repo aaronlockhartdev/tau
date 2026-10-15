@@ -50,6 +50,65 @@ export function assemble(diff: DiffLine[], tokens: Token[][]): RenderLine[] {
   });
 }
 
+// The edit tool's bounded-diff output (the contract the core emits): a summary
+// header, then body lines whose FIRST char is the marker — `-` removed, `+`
+// added (carrying the fresh 3-char anchor), ` ` context — and an optional
+// truncation notice. Parsed so the card renders it as a colored git-style diff.
+export interface EditDiffLine {
+  kind: 'removed' | 'added' | 'context';
+  text: string;
+  anchor?: string;
+}
+export interface EditDiff {
+  header: string;
+  lines: EditDiffLine[];
+  truncated?: string;
+}
+
+export function parseEditDiff(text: string): EditDiff | null {
+  const raw = text.split('\n');
+  const header = raw[0] ?? '';
+  if (!header.startsWith('edited ')) return null;
+  const lines: EditDiffLine[] = [];
+  let truncated: string | undefined;
+  for (const row of raw.slice(1)) {
+    if (row === '') continue;
+    const m = row[0];
+    if (m === '…') {
+      truncated = row;
+    } else if (m === '-') {
+      lines.push({ kind: 'removed', text: row.slice(1) });
+    } else if (m === '+') {
+      // "+ {hash} {line}": a space after the +, the fresh 3-char anchor, a
+      // space, then the added line (matches the core's emitter exactly).
+      lines.push({ kind: 'added', text: row.slice(6), anchor: row.slice(2, 5) });
+    } else if (m === ' ') {
+      lines.push({ kind: 'context', text: row.slice(1) });
+    } else {
+      lines.push({ kind: 'context', text: row });
+    }
+  }
+  return { header, lines, truncated };
+}
+
+// Map a parsed edit diff onto the file-view diff model: added/context lines
+// carry a running new-file index (so assemble pulls their syntax tokens);
+// removed lines are unnumbered ghosts.
+export function editDiffToDiffLines(d: EditDiff): DiffLine[] {
+  let newIdx = 0;
+  return d.lines.map((l) =>
+    l.kind === 'removed'
+      ? { kind: 'removed', text: l.text }
+      : { kind: l.kind, text: l.text, newIdx: newIdx++ }
+  );
+}
+
+// The new-file fragment (added + context lines, in order) as one string — the
+// input to highlightLines for an edit diff.
+export function editDiffCode(d: EditDiff): string {
+  return d.lines.filter((l) => l.kind !== 'removed').map((l) => l.text).join('\n');
+}
+
 // Extension → shiki language id; unknown extensions fall through to 'text'
 // (rendered plain, no grammar).
 const BY_EXT: Record<string, string> = {

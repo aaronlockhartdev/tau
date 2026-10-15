@@ -107,7 +107,12 @@
   {/if}
 {/snippet}
 {#if p}
-<div class="wrap" class:batch={!!batch} bind:this={el}>
+<div
+  class="wrap"
+  class:batch={!!batch}
+  class:batch-last={batch ? batch.index === batch.size - 1 : false}
+  bind:this={el}
+>
   {#if batch && batch.index === 0}
     <div class="batch-mark"><Layers class="bich" size={12} /> {batch.size} batched</div>
   {/if}
@@ -128,9 +133,22 @@
      run together; the first card carries the count. */
   .wrap.batch {
     /* No margin-left override: the line sits at 16px, inline with the
-       other cards' left edge. The padding clears the content from it. */
+       other cards' left edge. The padding clears the content from it.
+       position:relative anchors the ::after that bridges the gap below. */
+    position: relative;
     padding-left: 10px;
     border-left: 2px solid var(--line);
+  }
+  /* Bridge the 10px margin below each non-last card so the connector line
+     runs continuously down the batch (a dash per card reads as broken). */
+  .wrap.batch:not(.batch-last)::after {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 100%;
+    width: 2px;
+    height: 10px;
+    background: var(--line);
   }
   .batch-mark {
     display: inline-flex;
@@ -138,8 +156,11 @@
     gap: 4px;
     font: 10px var(--mono);
     color: var(--muted);
-    /* Negative margin pulls the mark's left edge onto the line, so the
-       line runs straight down under it. */
+    /* A background cap so the mark sits cleanly on the connector line (the
+       line runs down beneath it) instead of showing through the text. */
+    background: var(--bg);
+    padding-right: 4px;
+    /* Negative margin pulls the mark's left edge onto the line. */
     margin: 0 0 3px -12px;
   }
   .batch-mark :global(.bich) {

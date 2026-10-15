@@ -61,6 +61,9 @@ export type Shell =
     status?: 'ok' | 'running' | 'error';
     openKey: 'tool';
     kv: KvRow[];
+    // The file path arg (read/write/edit): names the grammar for the output
+    // renderer's syntax highlighting.
+    path?: string;
     output: { text: string; closed: string; long: boolean } | null;
   }
   | {
@@ -98,6 +101,15 @@ function toolOutput(e: ToolEntry): string {
   return [command, e.output ?? ''].filter(Boolean).join('\n\n');
 }
 
+// The tools whose result the reader cares about at the END (a file's tail,
+// a command's final lines) collapse to the TAIL; everything else keeps the
+// head.
+const TAIL_TOOLS = ['edit', 'read', 'write', 'bash'];
+function closedPreview(out: string, name: string): string {
+  if (out.length <= 200) return out;
+  return TAIL_TOOLS.includes(name) ? ' …' + out.slice(-200) : out.slice(0, 200) + ' …';
+}
+
 // The chip's one-line summary: the argument that names the operation.
 function toolUnavailable(e: ToolEntry): boolean {
   return (e as { unavailable?: boolean }).unavailable === true;
@@ -106,7 +118,7 @@ function toolSummary(e: ToolEntry): string {
   if (toolUnavailable(e)) return 'content unavailable — sidecar blob missing';
   const a = e.args;
   if (!a) return e.text ?? '';
-  const v = a.command ?? a.file_path ?? a.task ?? a.query ?? a.task_id ?? a.title ?? a.message;
+  const v = a.command ?? a.path ?? a.task ?? a.query ?? a.task_id ?? a.title ?? a.message;
   const s = typeof v === 'string' ? v : '';
   return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
 }
@@ -133,10 +145,11 @@ function toolShell(e: ToolEntry, out: string): Shell {
     status: toolUnavailable(e) ? 'error' : e.status,
     openKey: 'tool',
     kv,
+    path: typeof e.args?.path === 'string' ? e.args.path : undefined,
     output: out
       ? {
         text: out,
-        closed: out.length > 200 ? out.slice(0, 200) + ' …' : out,
+        closed: closedPreview(out, e.name ?? ''),
         long: out.length > 200
       }
       : null

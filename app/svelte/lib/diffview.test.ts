@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { buildDiffLines, assemble, langFor } from './diffview';
+import {
+  assemble,
+  buildDiffLines,
+  editDiffCode,
+  editDiffToDiffLines,
+  langFor,
+  parseEditDiff
+} from './diffview';
 
 describe('buildDiffLines', () => {
   it('interleaves context, added, and removed lines with new-file indices', () => {
@@ -56,6 +63,58 @@ describe('assemble', () => {
   it('a line with no tokens renders a single empty span', () => {
     const r = assemble([{ kind: 'context', text: 'x', newIdx: 0 }], [[]]);
     expect(r[0]?.spans).toEqual([]);
+  });
+});
+
+describe('parseEditDiff', () => {
+  it('parses the header, the removed/added/context body, and the truncation notice', () => {
+    const text =
+      'edited src/a.ts (lines 3–5 of 40)\n' +
+      '-old one\n' +
+      '+ abc new one\n' +
+      ' ctx line\n' +
+      '… 12 more lines changed';
+    const d = parseEditDiff(text);
+    expect(d?.header).toBe('edited src/a.ts (lines 3–5 of 40)');
+    expect(d?.lines).toEqual([
+      { kind: 'removed', text: 'old one' },
+      { kind: 'added', text: 'new one', anchor: 'abc' },
+      { kind: 'context', text: 'ctx line' }
+    ]);
+    expect(d?.truncated).toBe('… 12 more lines changed');
+  });
+
+  it('returns null only when there is no diff header', () => {
+    // A no-change edit still carries a header (the GUI shows it, empty body).
+    expect(parseEditDiff('edited src/a.ts (no change)')).toEqual({
+      header: 'edited src/a.ts (no change)',
+      lines: [],
+      truncated: undefined
+    });
+    expect(parseEditDiff('some other output')).toBeNull();
+  });
+
+  it('treats an unknown leading char as context', () => {
+    const d = parseEditDiff('edited a.ts (lines 1–1 of 2)\nX line');
+    expect(d?.lines).toEqual([{ kind: 'context', text: 'X line' }]);
+  });
+});
+
+describe('editDiffToDiffLines', () => {
+  it('indexes added/context lines and leaves removed unnumbered', () => {
+    const d = parseEditDiff('edited a.ts (lines 1–2 of 3)\n-old\n+ abc new\n ctx');
+    expect(editDiffToDiffLines(d!)).toEqual([
+      { kind: 'removed', text: 'old' },
+      { kind: 'added', text: 'new', newIdx: 0 },
+      { kind: 'context', text: 'ctx', newIdx: 1 }
+    ]);
+  });
+});
+
+describe('editDiffCode', () => {
+  it('is the added+context fragment in order, without removed lines', () => {
+    const d = parseEditDiff('edited a.ts (lines 1–2 of 3)\n-old\n+ abc new\n ctx');
+    expect(editDiffCode(d!)).toBe('new\nctx');
   });
 });
 

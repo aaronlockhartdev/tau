@@ -362,6 +362,7 @@ mod payloads {
                 media_type: "image/png".into(),
                 data_base64: "AAAA".into(),
             }),
+            status: None,
         };
         assert_json_snapshot!(p);
     }

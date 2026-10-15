@@ -9,6 +9,7 @@
 // exports; it needs `allowImportingTsExtensions` in tsconfig.json.
 import { vi } from 'vitest';
 import type { FilesCache } from '../files';
+import type { OpenFiles } from '../openfiles';
 import type { PaneState } from '../panes';
 import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../protocol';
 import { attentionOf, type AttentionItem } from '../attention';
@@ -16,6 +17,7 @@ import { makeStub, type SessionState } from '../sessions';
 
 export function paneDefault(): PaneState {
   return {
+    center: 'chat',
     ltab: 'sessions',
     rtab: 'tasks',
     historyOpen: false,
@@ -49,9 +51,11 @@ export function freshDefaults() {
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,
     gitStatus: {} as Record<string, GitStatus | null>,
-    changesView: null as { workspace: string; path: string; ignored: boolean } | null,
-    changesViewNew: null as string | null,
-    changesViewBase: null as string | null,
+    openFiles: {} as OpenFiles,
+    activeFile: null as { workspace: string; path: string } | null,
+    activeFileNew: null as string | null,
+    activeFileBase: null as string | null,
+    activeFileError: null as string | null,
     attentionOpen: false,
     paletteOpen: false,
     fleetOpen: false,
@@ -83,11 +87,10 @@ export const switchSession = vi.fn(async () => {});
 export const setFollow = vi.fn((h: string | null) => {
   store.follow = h;
 });
-export const setChangesView = vi.fn((p: { workspace: string; path: string; ignored: boolean } | null) => {
-  store.changesView = p;
-  store.changesViewNew = null;
-  store.changesViewBase = null;
-});
+export const openFile = vi.fn();
+export const closeFile = vi.fn();
+export const selectFile = vi.fn();
+export const setCenterMode = vi.fn();
 export const renameSession = vi.fn(async () => {});
 export const archiveSession = vi.fn(async () => {});
 export const restoreSession = vi.fn(async () => {});
@@ -134,6 +137,10 @@ const commandFns = [
   tabSelect,
   newSession,
   switchSession,
+  openFile,
+  closeFile,
+  selectFile,
+  setCenterMode,
   renameSession,
   archiveSession,
   restoreSession,

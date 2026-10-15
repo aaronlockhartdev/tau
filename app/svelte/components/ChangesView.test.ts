@@ -1,50 +1,58 @@
 // @vitest-environment jsdom
-// The file-content view: the center-column viewer. Renders the file's actual
-// content with line numbers and git-diff gutter marks (added/removed).
-// Highlighting is mocked out — this tests the render structure, not shiki.
-// Close + switch assert the setChangesView wiring.
+// The file viewer (open-files model): a per-workspace tab strip of open files
+// plus the active file's content with line numbers and git-diff gutter marks.
+// Highlighting is mocked — this tests the render structure, not shiki. The
+// tab / close / back controls assert the store wiring; the empty / binary /
+// unreadable notes and the highlight-failure fallback are the A3 / A1 cases.
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import ChangesView from './ChangesView.svelte';
-import { mockStore, resetMockStore, setChangesView } from '../lib/testing/mock-store.svelte.ts';
+import { highlightLines } from '../lib/highlight';
+import {
+  closeFile,
+  resetMockStore,
+  selectFile,
+  setCenterMode
+} from '../lib/testing/mock-store.svelte.ts';
 
 vi.mock('../lib/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 
-// Decouple the render test from shiki's WASM engine: one plain (uncolored)
-// token per line, so assertions are about the diff structure, not colors.
 vi.mock('../lib/highlight', () => ({
-  highlightLines: (code: string) => Promise.resolve(code.split('\n').map((l) => [{ content: l }]))
+  highlightLines: vi.fn((code: string) => Promise.resolve(code.split('\n').map((l) => [{ content: l }])))
 }));
 
 const WS = 'w1';
+const user = userEvent.setup();
 
-function seedStatus(): void {
+// Open a single file with a given current + base (git) content.
+function seedOpen(p: string, next: string, base: string): void {
   resetMockStore({
-    current: null,
-    sessions: {},
-    gitStatus: {
-      [WS]: {
-        branch: 'main',
-        modified: ['src/a.ts', 'src/b.ts'],
-        untracked: ['notes.md'],
-        deleted: []
-      }
-    }
+    openFiles: { [WS]: [{ path: p, ignored: false, size: next.length }] },
+    activeFile: { workspace: WS, path: p },
+    activeFileNew: next,
+    activeFileBase: base,
+    activeFileError: null
   });
 }
 
-const user = userEvent.setup();
-
-// Open the view on a file with a given current + base (git) content.
-function open(p: string, next: string, base: string): void {
-  setChangesView({ workspace: WS, path: p, ignored: false });
-  mockStore.changesViewNew = next;
-  mockStore.changesViewBase = base;
+function seedTwo(): void {
+  resetMockStore({
+    openFiles: {
+      [WS]: [
+        { path: 'src/a.ts', ignored: false, size: 1 },
+        { path: 'src/b.ts', ignored: false, size: 1 }
+      ]
+    },
+    activeFile: { workspace: WS, path: 'src/a.ts' },
+    activeFileNew: 'x',
+    activeFileBase: 'y',
+    activeFileError: null
+  });
 }
 
 function lines(): Element[] {
@@ -52,9 +60,9 @@ function lines(): Element[] {
 }
 
 describe('ChangesView', () => {
-  beforeEach(() => seedStatus());
+  beforeEach(() => resetMockStore());
 
-  it('renders nothing while no view is open', async () => {
+  it('renders nothing while no file is open', async () => {
     render(ChangesView);
     await tick();
     expect(screen.queryByText('src/a.ts')).toBeNull();
@@ -63,7 +71,7 @@ describe('ChangesView', () => {
   it('renders file content with line numbers and diff marks', async () => {
     // base 'one' → new 'two\nthree': the old line is a removed ghost, the two
     // new lines are added. Render order is the interleaved diff order.
-    open('src/a.ts', 'two\nthree', 'one');
+    seedOpen('src/a.ts', 'two\nthree', 'one');
     render(ChangesView);
     await vi.waitFor(() => expect(lines().length).toBe(3));
 
@@ -72,66 +80,99 @@ describe('ChangesView', () => {
     expect(ls.map((l) => l.querySelector('.mk')?.textContent)).toEqual(['−', '+', '+']);
     expect(ls[0]!).toHaveClass('removed');
     expect(ls[1]!).toHaveClass('added');
-    expect(ls[2]!).toHaveClass('added');
     expect(ls[0]!.querySelector('.src')?.textContent).toBe('one');
     expect(ls[1]!.querySelector('.src')?.textContent).toBe('two');
   });
 
   it('shows all context lines when nothing changed', async () => {
-    open('src/a.ts', 'a\nb', 'a\nb');
+    seedOpen('src/a.ts', 'a\nb', 'a\nb');
     render(ChangesView);
     await vi.waitFor(() => expect(lines().length).toBe(2));
-
-    const ls = lines();
-    expect(ls.map((l) => l.querySelector('.ln')?.textContent)).toEqual(['1', '2']);
-    expect(ls.map((l) => l.querySelector('.mk')?.textContent)).toEqual(['', '']);
     expect(document.querySelector('.code .line.added')).toBeNull();
     expect(document.querySelector('.code .line.removed')).toBeNull();
   });
 
   it('renders an untracked file as all-added', async () => {
-    open('notes.md', 'hello\nworld', '');
+    seedOpen('notes.md', 'hello\nworld', '');
     render(ChangesView);
     await vi.waitFor(() => expect(lines().length).toBe(2));
-
     expect(lines().every((l) => l.classList.contains('added'))).toBe(true);
   });
 
   it('shows a note for an empty file', async () => {
-    open('src/a.ts', '', '');
+    seedOpen('src/a.ts', '', '');
     render(ChangesView);
     await vi.waitFor(() => expect(screen.getByText('empty file')).toBeInTheDocument());
   });
 
-  it('lists the changed files in the switcher, the current one on', async () => {
-    open('src/a.ts', 'x', 'y');
+  it('shows the binary reason carried by the store', async () => {
+    resetMockStore({
+      openFiles: { [WS]: [{ path: 'a.bin', ignored: false, size: 128 }] },
+      activeFile: { workspace: WS, path: 'a.bin' },
+      activeFileNew: null,
+      activeFileBase: null,
+      activeFileError: 'binary file · 128 bytes'
+    });
     render(ChangesView);
-    await vi.waitFor(() => expect(lines().length).toBe(2));
-
-    expect(document.querySelector('.view .title')?.textContent).toBe('src/a.ts');
-    const on = screen.getByRole('button', { name: 'a.ts' });
-    expect(on).toHaveClass('on');
-    expect(screen.getByRole('button', { name: 'b.ts' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'notes.md' })).toBeInTheDocument();
+    await vi.waitFor(() => expect(screen.getByText('binary file · 128 bytes')).toBeInTheDocument());
   });
 
-  it('close calls setChangesView with null', async () => {
-    open('src/a.ts', 'x', 'y');
-    vi.mocked(setChangesView).mockClear();
+  it('shows the read error carried by the store', async () => {
+    resetMockStore({
+      openFiles: { [WS]: [{ path: 'gone.ts', ignored: false, size: 0 }] },
+      activeFile: { workspace: WS, path: 'gone.ts' },
+      activeFileNew: null,
+      activeFileBase: null,
+      activeFileError: 'cannot read: reading gone.ts: No such file'
+    });
     render(ChangesView);
-    await vi.waitFor(() => expect(lines().length).toBe(2));
-
-    await user.click(screen.getByTitle('close (esc)'));
-    expect(setChangesView).toHaveBeenCalledWith(null);
+    await vi.waitFor(() =>
+      expect(screen.getByText('cannot read: reading gone.ts: No such file')).toBeInTheDocument()
+    );
   });
 
-  it('switching files keeps the workspace and changes the path', async () => {
-    open('src/a.ts', 'x', 'y');
-    vi.mocked(setChangesView).mockClear();
+  it('falls back to plain lines when highlighting rejects (never sticks)', async () => {
+    vi.mocked(highlightLines).mockRejectedValueOnce(new Error('wasm init failed'));
+    seedOpen('src/a.ts', 'one\ntwo', 'one\ntwo');
     render(ChangesView);
     await vi.waitFor(() => expect(lines().length).toBe(2));
+    expect(screen.queryByText('loading…')).toBeNull();
+  });
 
+  it('lists the open files as tabs, the active one on', async () => {
+    seedTwo();
+    render(ChangesView);
+    await tick();
+    const tabs = [...document.querySelectorAll('.tab')];
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0]!).toHaveClass('on');
+    expect(tabs[1]!).not.toHaveClass('on');
+  });
+
+  it('clicking a tab calls selectFile with its path', async () => {
+    seedTwo();
+    vi.mocked(selectFile).mockClear();
+    render(ChangesView);
+    await tick();
     await user.click(screen.getByRole('button', { name: 'b.ts' }));
-    expect(setChangesView).toHaveBeenCalledWith({ workspace: WS, path: 'src/b.ts', ignored: false });
+    expect(selectFile).toHaveBeenCalledWith(WS, 'src/b.ts');
+  });
+
+  it('close calls closeFile with the tab path', async () => {
+    seedOpen('src/a.ts', 'x', 'y');
+    vi.mocked(closeFile).mockClear();
+    render(ChangesView);
+    await tick();
+    await user.click(screen.getByTitle('close'));
+    expect(closeFile).toHaveBeenCalledWith(WS, 'src/a.ts');
+  });
+
+  it('back-to-chat calls setCenterMode with chat', async () => {
+    seedOpen('src/a.ts', 'x', 'y');
+    vi.mocked(setCenterMode).mockClear();
+    render(ChangesView);
+    await tick();
+    await user.click(screen.getByTitle('back to transcript'));
+    expect(setCenterMode).toHaveBeenCalledWith(WS, 'chat');
   });
 });

@@ -341,6 +341,50 @@ pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>)
     }
 }
 
+/// The core's verdict on a tool result — the source of truth for the GUI's
+/// status indicator (the frontend reads it rather than re-deriving it). `bash`
+/// keys off the exit code; the rest use the dispatcher's failure conventions —
+/// a `<name>: ` prefix, a routing `error:`/`unknown` prefix, or recall's
+/// unprefixed miss messages.
+#[must_use]
+pub fn tool_status(name: &str, output: &ToolOutput) -> &'static str {
+    let text = match output {
+        // An image is a successful read, never an error.
+        ToolOutput::Image(_) => return "ok",
+        ToolOutput::Text(t) => t.as_str(),
+    };
+    if name == "bash" {
+        if let Some(rest) = text.strip_prefix("exit ") {
+            let code = rest.split_whitespace().next().unwrap_or("");
+            return if code == "0" { "ok" } else { "error" };
+        }
+        return if text.starts_with("bash: ") {
+            "error"
+        } else {
+            "ok"
+        };
+    }
+    if text.starts_with("error: ")
+        || text.starts_with("unknown tool: ")
+        || text.starts_with("unknown task tool")
+    {
+        return "error";
+    }
+    if text.starts_with(&format!("{name}: ")) {
+        return "error";
+    }
+    // recall's miss messages carry no name prefix.
+    if name == "recall"
+        && (text.starts_with("no observation group")
+            || text.starts_with("the group has no range")
+            || text.starts_with("session read failed")
+            || text.starts_with("range start not in this session"))
+    {
+        return "error";
+    }
+    "ok"
+}
+
 mod impls;
 pub mod surface;
 use impls::{bash, edit, read, write};

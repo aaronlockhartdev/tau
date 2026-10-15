@@ -102,6 +102,62 @@ describe('present', () => {
     });
   });
 
+  it('a long read output collapses to the TAIL preview', () => {
+    const body = 'HEAD' + 'y'.repeat(300) + 'TAIL';
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'read',
+      args: { path: 'a.txt' },
+      status: 'ok',
+      output: body
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.output?.long).toBe(true);
+    expect(s.output?.closed).toBe(' …' + body.slice(-200));
+    expect(s.output?.text).toBe(body);
+  });
+
+  it('a long non-tail tool output keeps the HEAD preview', () => {
+    const body = 'HEAD' + 'y'.repeat(300) + 'TAIL';
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'recall',
+      args: { query: 'q' },
+      status: 'ok',
+      output: body
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.output?.closed).toBe(body.slice(0, 200) + ' …');
+  });
+
+  it('carries the path arg onto the tool shell for output highlighting', () => {
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'edit',
+      args: { path: 'src/a.ts' },
+      status: 'ok',
+      output: 'edited src/a.ts (lines 1–1 of 2)\n+ abc x'
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.path).toBe('src/a.ts');
+  });
+
+  it('uses the path arg for the chip summary of file tools (not JSON)', () => {
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'read',
+      args: { path: 'src/a.ts' },
+      status: 'ok',
+      output: 'x'
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.summary).toBe('src/a.ts');
+  });
+
   it('a running tool has no output section', () => {
     const s = shells({ id: 'e1', kind: 'tool', name: 'read', status: 'running' })[0];
     if (s?.kind !== 'tool') throw new Error('expected a tool shell');

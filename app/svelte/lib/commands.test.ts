@@ -89,6 +89,7 @@ describe('newSession / renameSession', () => {
   it('newSession opens the fresh session and drops into inline rename', async () => {
     defaultIPC();
     store.pane[WS.id] = {
+      center: 'chat',
       ltab: 'sessions',
       rtab: 'tasks',
       historyOpen: false,

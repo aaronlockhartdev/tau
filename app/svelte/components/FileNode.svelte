@@ -1,12 +1,12 @@
 <script lang="ts">
   // One node of the files tree (ticket #32): a dir row toggles its listing
   // (the store fetches on first expand, FileTreeChanged keeps it fresh); a
-  // file row is inert — v0 has no file preview. The row shell is the shared
+  // file row opens it in the center's file viewer. The row shell is the shared
   // TreeNode; the recursion is the self-import (svelte:self is deprecated
   // and svelte-check chokes on its renamed props).
   import FileNode from './FileNode.svelte';
   import TreeNode from './TreeNode.svelte';
-  import { store, toggleFileDir, retryDirFetch, fileCache, setChangesView } from '../lib/store.svelte';
+  import { store, toggleFileDir, retryDirFetch, fileCache, openFile } from '../lib/store.svelte';
   import { fileIcon, fileKind } from '../lib/files';
   import type { FileEntry } from '../lib/protocol';
 
@@ -27,8 +27,8 @@
 
   function toggle(): void {
     if (!entry.dir) {
-      // A file row opens the changes view in the center column; dirs toggle their listing.
-      setChangesView({ workspace: ws, path: entry.path, ignored: entry.ignored });
+      // A file row opens it in the center's file viewer; dirs toggle their listing.
+      openFile(ws, entry.path, entry.ignored, entry.size);
       return;
     }
     if (store.fileErrors[ws]?.[entry.path]) {

@@ -231,3 +231,115 @@ async fn an_oversized_image_is_refused_loudly() {
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
     }
 }
+
+#[tokio::test]
+async fn edit_output_is_a_bounded_before_after_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "d.txt", "content": "alpha\nbeta\ngamma\ndelta\n"}),
+    )
+    .await;
+    let read_out = text(read(dir.path(), &json!({"path": "d.txt"}), None).await);
+    let lines: Vec<&str> = read_out.lines().collect();
+    let from = lines[1].split('│').next().unwrap().to_string();
+    let to = lines[2].split('│').next().unwrap().to_string();
+    let out = text(
+        edit(
+            dir.path(),
+            &json!({"path": "d.txt", "from": from, "to": to, "content": "BETA'\nGAMMA'"}),
+        )
+        .await,
+    );
+    // The one-line summary, then a bounded body of marked lines.
+    assert!(
+        out.starts_with("edited ") && out.contains("(lines 2–3 of 4)"),
+        "summary: {out}"
+    );
+    let body: Vec<&str> = out.lines().skip(1).collect();
+    // Removed lines are '-'-prefixed (no anchor — they are gone).
+    assert!(body.contains(&"-beta"), "missing -beta: {out}");
+    assert!(body.contains(&"-gamma"), "missing -gamma: {out}");
+    // Added lines are '+ <fresh-anchor> <line>'.
+    assert!(
+        body.iter()
+            .any(|l| l.starts_with("+ ") && l.ends_with(" BETA'")),
+        "added line missing its fresh anchor: {out}"
+    );
+    assert!(
+        body.iter()
+            .any(|l| l.starts_with("+ ") && l.ends_with(" GAMMA'")),
+        "added line missing its fresh anchor: {out}"
+    );
+    // Unchanged neighbours are ' <line>' context.
+    assert!(body.contains(&" alpha"), "missing context: {out}");
+    assert!(body.contains(&" delta"), "missing context: {out}");
+    assert!(body.len() <= 8, "diff not bounded to the region: {out}");
+}
+
+#[test]
+fn tool_status_reflects_the_dispatcher_verdict() {
+    // bash: the exit code is the verdict.
+    assert_eq!(
+        tool_status("bash", &ToolOutput::Text("exit 0\nok".into())),
+        "ok"
+    );
+    assert_eq!(
+        tool_status("bash", &ToolOutput::Text("exit 3\nboom".into())),
+        "error"
+    );
+    assert_eq!(
+        tool_status("bash", &ToolOutput::Text("bash: spawn failed".into())),
+        "error"
+    );
+    // A named tool's failure carries its name as a prefix.
+    assert_eq!(
+        tool_status(
+            "read",
+            &ToolOutput::Text("read: cannot read x: no such file".into())
+        ),
+        "error"
+    );
+    assert_eq!(
+        tool_status("edit", &ToolOutput::Text("edit: stale anchor".into())),
+        "error"
+    );
+    // recall's miss messages carry no name prefix.
+    assert_eq!(
+        tool_status(
+            "recall",
+            &ToolOutput::Text("no observation group g1".into())
+        ),
+        "error"
+    );
+    assert_eq!(
+        tool_status("recall", &ToolOutput::Text("the group has no range".into())),
+        "error"
+    );
+    // A plain success is ok.
+    assert_eq!(
+        tool_status("read", &ToolOutput::Text("HASH│line".into())),
+        "ok"
+    );
+    assert_eq!(
+        tool_status("write", &ToolOutput::Text("wrote x (3 bytes)".into())),
+        "ok"
+    );
+    // Routing / parse failures.
+    assert_eq!(
+        tool_status("recall", &ToolOutput::Text("unknown tool: recall".into())),
+        "error"
+    );
+    // An image result is a success, never an error.
+    assert_eq!(
+        tool_status(
+            "read",
+            &ToolOutput::Image(tau_protocol::payload::ImageBlock {
+                kind: "image".into(),
+                media_type: "image/png".into(),
+                data_base64: "AA".into(),
+            })
+        ),
+        "ok"
+    );
+}

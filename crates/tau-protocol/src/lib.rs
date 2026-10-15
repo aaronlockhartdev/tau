@@ -113,7 +113,6 @@ pub struct GitStatus {
     pub deleted: Vec<String>,
 }
 
-
 /// A dispatch error, serializable so any transport can return it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -596,7 +595,9 @@ mod tests {
                 workspace: "w1".into(),
                 path: "src".into(),
             },
-            Command::GitStatus { workspace: "w1".into() },
+            Command::GitStatus {
+                workspace: "w1".into(),
+            },
         ];
         for cmd in &commands {
             let json = serde_json::to_string(cmd).unwrap();

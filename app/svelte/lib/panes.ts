@@ -4,6 +4,9 @@
 import { nextSelection } from './selection';
 
 export interface PaneState {
+  // The center column's view: the transcript ('chat') or the file viewer
+  // ('files'). Open files are separate state, so 'chat' keeps them alive.
+  center: 'chat' | 'files';
   ltab: 'files' | 'sessions';
   rtab: 'tasks' | 'subs';
   // F3: the right-pane history section (done/failed/stopped rows) starts
@@ -26,6 +29,7 @@ export interface PaneState {
 // just watched finish is what they expect to see, not an empty tab.
 export function defaultPane(): PaneState {
   return {
+    center: 'chat',
     ltab: 'sessions',
     rtab: 'tasks',
     historyOpen: false,

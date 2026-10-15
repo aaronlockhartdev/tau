@@ -20,8 +20,8 @@
   import FocusRails from './components/FocusRails.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setChangesView, pane, switchSession } from './lib/store.svelte';
-  import { TriangleAlert } from '@lucide/svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setCenterMode, pane, switchSession } from './lib/store.svelte';
+  import { FileText, TriangleAlert } from '@lucide/svelte';
   import { isTauri } from './lib/protocol';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
@@ -80,8 +80,8 @@
         store.fleetOpen = false;
         return;
       }
-      if (store.changesView) {
-        setChangesView(null);
+      if (centerFiles && curWs) {
+        setCenterMode(curWs, 'chat');
         return;
       }
       if (store.focusInspector) {
@@ -133,6 +133,12 @@
   const loading = $derived(store.loading);
   const error = $derived(store.error);
   const focus = $derived(store.focus);
+  const curWs = $derived(currentSession()?.meta.workspace ?? null);
+  // The center column's view: the file viewer when pane.center is 'files', else
+  // the transcript. Open files are separate state, so the transcript shows a
+  // "resume" affordance while any are open.
+  const centerFiles = $derived(pane(curWs)?.center === 'files');
+  const openCount = $derived(curWs ? (store.openFiles[curWs] ?? []).length : 0);
 </script>
 
 <div class="shell">
@@ -150,9 +156,15 @@
       {:else if cur}
         <div class="readcol">
           {#key store.current}
-            {#if store.changesView}
+            {#if centerFiles}
               <ChangesView />
             {:else}
+              {#if openCount > 0}
+                <button class="resume" onclick={() => curWs && setCenterMode(curWs, 'files')}>
+                  <FileText size={12} aria-hidden="true" />
+                  <span>{openCount} file{openCount === 1 ? '' : 's'} open</span>
+                </button>
+              {/if}
               <Transcript />
             {/if}
           {/key}
@@ -237,6 +249,27 @@
     min-width: 0;
     min-height: 0;
     overflow: hidden;
+  }
+  /* The transcript's "files are open" affordance: a compact pill that toggles
+     the center back to the file viewer (the open set is untouched). */
+  .resume {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    margin: 6px 16px 0;
+    padding: 4px 10px;
+    border: 1px solid var(--line2);
+    border-radius: 6px;
+    color: var(--dim);
+    font: 11px var(--mono);
+  }
+  .resume:hover {
+    color: var(--tx);
+    border-color: var(--acc);
+  }
+  .resume :global(svg) {
+    flex: none;
   }
   .err {
     display: flex;

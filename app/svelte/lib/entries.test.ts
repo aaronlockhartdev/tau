@@ -125,6 +125,34 @@ describe('resolveBlobs (om)', () => {
     expect(views[0]!.blob).toBe(v.blob);
   });
 });
+
+describe('decodeEntry (tool status, B5)', () => {
+  function toolView(status: unknown, output: unknown): ViewEntry {
+    return {
+      id: 't1',
+      parent: null,
+      kind: 'tool',
+      timestamp: 1,
+      payload: { name: 'read', output, status },
+      blob: null,
+      first_kept: null
+    };
+  }
+  const decoded = (v: ViewEntry) => (decodeEntry(v) as { status?: string }).status;
+
+  it('prefers the core-emitted status over the prefix heuristic', () => {
+    // "read: ..." is an error by the heuristic, but the explicit ok wins.
+    expect(decoded(toolView('ok', 'read: cannot read /x'))).toBe('ok');
+    expect(decoded(toolView('error', 'file contents'))).toBe('error');
+  });
+
+  it('falls back to the heuristic when no explicit status is present', () => {
+    expect(decoded(toolView(undefined, 'read: cannot read /x'))).toBe('error');
+    expect(decoded(toolView(undefined, 'file contents'))).toBe('ok');
+    expect(decoded(toolView(undefined, undefined))).toBe('running');
+  });
+});
+
 describe('toolStatus', () => {
   it('a non-bash tool is a failure when the output starts with its own name', () => {
     expect(toolStatus('read', 'read: cannot read /x: no such file')).toBe('error');

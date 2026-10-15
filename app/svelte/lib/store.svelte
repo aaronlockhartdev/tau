@@ -60,6 +60,7 @@
     waveDirs
   } from './files';
   import { applyTabSelect, defaultPane, paneOf, type PaneState } from './panes';
+  import { closeIn, openIn, type OpenFiles } from './openfiles';
   import { errText } from './errors';
   export type { PaneState } from './panes';
   import { listen } from '@tauri-apps/api/event';
@@ -119,13 +120,17 @@
     // Git status per workspace (workbench P4): the tree's change tints and
     // the changes view's file switcher. null = not a git repository.
     gitStatus: {} as Record<string, GitStatus | null>,
-    // The changes view (file-tree plan): the file under diff inspection in
-    // the center column, and its file content + git base (for the diff
-    // indicators). Replaces the transcript while open; the future editor
-    // lands in the same slot.
-    changesView: null as { workspace: string; path: string; ignored: boolean } | null,
-    changesViewNew: null as string | null,
-    changesViewBase: null as string | null,
+    // The file viewer (open-files model): a persistent, per-workspace set of
+    // open files (closable tabs), independent of git status. The center column
+    // toggles between the transcript and the viewer (pane.center); open files
+    // survive a switch to the transcript. activeFile* is the shown tab: a null
+    // New is "loading", a set Error is a real reason (binary / unreadable), ''
+    // is an empty file.
+    openFiles: {} as OpenFiles,
+    activeFile: null as { workspace: string; path: string } | null,
+    activeFileNew: null as string | null,
+    activeFileBase: null as string | null,
+    activeFileError: null as string | null,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>,
@@ -454,28 +459,114 @@
     }
   }
 
-  export function setChangesView(v: { workspace: string; path: string; ignored: boolean } | null): void {
-    store.changesView = v;
-    store.changesViewNew = null;
-    store.changesViewBase = null;
-    if (v) void fetchChangesViewFile(v);
+  // Open a file in the viewer: adds it to the workspace's open set (a no-op if
+  // already open), makes it the active tab, and switches the center to the file
+  // viewer. pane.center is what keeps the files alive across a switch to the
+  // transcript (the first-class toggle).
+  export function openFile(ws: string, path: string, ignored: boolean, size: number): void {
+    const { list } = openIn(store.openFiles[ws] ?? [], { path, ignored, size });
+    store.openFiles = { ...store.openFiles, [ws]: list };
+    store.activeFile = { workspace: ws, path };
+    ensurePane(ws).center = 'files';
+    void fetchActiveFile(ws, path);
   }
 
-  async function fetchChangesViewFile(v: { workspace: string; path: string; ignored: boolean }): Promise<void> {
-    // The file content and its git base are independent; each absence means
-    // what it means (file gone = deleted, no base = untracked). A stale fetch
-    // must not clobber the view the user moved on from (field compare, since
-    // the $state proxy breaks ===).
-    const file = await command({ type: 'file_read', workspace: v.workspace, path: v.path, offset: null, limit: null }).then((o) => (o.kind === 'file' ? o.file.text : '')).catch(() => '');
+  // Close a tab: drop it from the open set. The neighbour tab takes the active
+  // slot; closing the last file returns the center to the transcript.
+  export function closeFile(ws: string, path: string): void {
+    const { list, activate } = closeIn(store.openFiles[ws] ?? [], path);
+    store.openFiles = { ...store.openFiles, [ws]: list };
+    const a = store.activeFile;
+    if (!a || a.workspace !== ws || a.path !== path) return;
+    if (activate === null) {
+      store.activeFile = null;
+      store.activeFileNew = null;
+      store.activeFileBase = null;
+      store.activeFileError = null;
+      ensurePane(ws).center = 'chat';
+      return;
+    }
+    const next = list[activate]!;
+    store.activeFile = { workspace: ws, path: next.path };
+    void fetchActiveFile(ws, next.path);
+  }
+
+  // Activate an already-open tab (the tab strip's click).
+  export function selectFile(ws: string, path: string): void {
+    if (!(store.openFiles[ws] ?? []).some((f) => f.path === path)) return;
+    store.activeFile = { workspace: ws, path };
+    ensurePane(ws).center = 'files';
+    void fetchActiveFile(ws, path);
+  }
+
+  // The center-column toggle: transcript ⇄ file viewer. The open set is
+  // untouched, so a switch to the transcript and back restores the active file.
+  export function setCenterMode(ws: string, mode: 'chat' | 'files'): void {
+    const p = ensurePane(ws);
+    if (p.center === mode) return;
+    p.center = mode;
+    if (mode === 'files' && store.activeFile?.workspace !== ws) {
+      const first = (store.openFiles[ws] ?? [])[0];
+      if (first) {
+        store.activeFile = { workspace: ws, path: first.path };
+        void fetchActiveFile(ws, first.path);
+      }
+    }
+  }
+
+  // A session switch can move us to a workspace the single global activeFile
+  // no longer belongs to. Re-point it to that workspace's active tab — or clear
+  // it and drop the center to the transcript if nothing is open there — so the
+  // viewer never shows a foreign file.
+  export function reconcileActiveFile(ws: string): void {
+    if (ws === '' || store.activeFile?.workspace === ws) return;
+    const first = (store.openFiles[ws] ?? [])[0];
+    if (first) {
+      store.activeFile = { workspace: ws, path: first.path };
+      void fetchActiveFile(ws, first.path);
+      return;
+    }
+    store.activeFile = null;
+    store.activeFileNew = null;
+    store.activeFileBase = null;
+    store.activeFileError = null;
+    ensurePane(ws).center = 'chat';
+  }
+
+  // The active tab's content + git base. A file_read rejection is a real reason
+  // (binary / unreadable), not an empty file: it is surfaced, not swallowed. A
+  // stale fetch must not clobber the tab the user moved on from (field compare,
+  // since the $state proxy breaks ===).
+  async function fetchActiveFile(ws: string, path: string): Promise<void> {
+    const entry = (store.openFiles[ws] ?? []).find((f) => f.path === path);
+    const ignored = entry?.ignored ?? false;
+    const size = entry?.size ?? 0;
+    let file: string;
+    try {
+      const out = await command({ type: 'file_read', workspace: ws, path, offset: null, limit: null });
+      file = out.kind === 'file' ? out.file.text : '';
+    } catch (e) {
+      if (store.activeFile?.workspace !== ws || store.activeFile?.path !== path) return;
+      store.activeFileNew = null;
+      store.activeFileBase = null;
+      store.activeFileError = isBinaryError(errText(e)) ? `binary file · ${size} bytes` : `cannot read: ${errText(e)}`;
+      return;
+    }
     // A gitignored file has no committed base; diffing it against empty would
     // paint it all-added. Render it plain (base = current content) instead.
-    const base = v.ignored
+    const base = ignored
       ? file
-      : await command({ type: 'git_show', workspace: v.workspace, path: v.path }).then((o) => (o.kind === 'git_show' ? o.text : '')).catch(() => '');
-    if (store.changesView?.workspace === v.workspace && store.changesView?.path === v.path) {
-      store.changesViewNew = file;
-      store.changesViewBase = base;
-    }
+      : await command({ type: 'git_show', workspace: ws, path }).then((o) => (o.kind === 'git_show' ? o.text : '')).catch(() => '');
+    if (store.activeFile?.workspace !== ws || store.activeFile?.path !== path) return;
+    store.activeFileNew = file;
+    store.activeFileBase = base;
+    store.activeFileError = null;
+  }
+
+  // The core rejects non-UTF-8 files (its line reader errors on invalid bytes);
+  // that rejection is a binary file, not a read failure.
+  function isBinaryError(msg: string): boolean {
+    return /utf-?8/i.test(msg);
   }
 
   // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
@@ -548,6 +639,15 @@
       store.fileErrors = next;
     }
     store.files = removeWorkspace(store.files, ws.id);
+    // The closed workspace's open files (and the active file, if it pointed
+    // here) are dead with it.
+    delete store.openFiles[ws.id];
+    if (store.activeFile?.workspace === ws.id) {
+      store.activeFile = null;
+      store.activeFileNew = null;
+      store.activeFileBase = null;
+      store.activeFileError = null;
+    }
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
@@ -772,13 +872,13 @@
         if (ev.type === 'file_tree_changed') {
           scheduleRefetch(ev.workspace, ev.changed);
           void refreshGitStatus(ev.workspace);
-          // Live file-content view: a change under the open file's dir
-          // (the watcher reports the parent dir) re-fetches its content +
-          // base so the view tracks the file as it is edited.
-          const cv = store.changesView;
-          if (cv && cv.workspace === ev.workspace) {
-            const touches = ev.changed.some((d) => cv.path === d || cv.path.startsWith(d + '/'));
-            if (touches) void fetchChangesViewFile(cv);
+          // Live file-content view: a change under the active file's dir
+          // (the watcher reports the parent dir) re-fetches its content + base
+          // so the viewer tracks the file as it is edited.
+          const af = store.activeFile;
+          if (af && af.workspace === ev.workspace) {
+            const touches = ev.changed.some((d) => af.path === d || af.path.startsWith(d + '/'));
+            if (touches) void fetchActiveFile(af.workspace, af.path);
           }
         }
         continue;

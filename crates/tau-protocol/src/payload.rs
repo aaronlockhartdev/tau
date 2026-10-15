@@ -140,14 +140,18 @@ pub struct AssistantPayload {
     pub calls: Vec<FunctionCall>,
 }
 
-/// The tool entry's payload (spec §5.4): one call, its arguments, and the
-/// result as the dispatcher returned it.
+/// The tool entry's payload (spec §5.4): one call, its arguments, the result
+/// as the dispatcher returned it, and the core's success/failure verdict — the
+/// source of truth for the GUI's status indicator. Absent while the call is in
+/// flight (the call-phase record carries no output yet).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPayload {
     pub call_id: String,
     pub name: String,
     pub args: Value,
     pub output: ToolOutput,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
 }
 
 /// A tool result's content (#34): plain text — the common, cheap path —
@@ -265,6 +269,7 @@ mod tests {
             name: "read".into(),
             args: json!({"path": "a.txt"}),
             output: ToolOutput::Text("line".into()),
+            status: None,
         };
         assert_eq!(text.to_value()["output"], "line");
 
@@ -277,6 +282,7 @@ mod tests {
                 media_type: "image/png".into(),
                 data_base64: "AAAA".into(),
             }),
+            status: None,
         };
         assert_eq!(
             image.to_value()["output"],

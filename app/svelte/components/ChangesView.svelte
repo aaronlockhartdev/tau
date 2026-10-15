@@ -1,85 +1,88 @@
 <script lang="ts">
-  // The file-content view (file-tree plan): the file's actual content in the
-  // center column, with git-diff indicators in the gutter (added lines green,
-  // deletions as red ghosts) and syntax highlighting (shiki). It tracks the
-  // file live — the store re-fetches its content + base on file_tree_changed.
-  import { store, setChangesView } from '../lib/store.svelte';
+  // The file viewer (open-files model): a persistent, per-workspace set of open
+  // files as closable tabs, independent of git status. The active tab's content
+  // renders with git-diff gutter marks and syntax highlighting (shiki), tracked
+  // live — the store re-fetches it on file_tree_changed. The center column
+  // toggles between this and the transcript (pane.center); the "chat" control
+  // and Esc leave the viewer without closing any file.
+  import { store, closeFile, selectFile, setCenterMode } from '../lib/store.svelte';
   import { buildDiffLines, assemble, langFor, type RenderLine } from '../lib/diffview';
   import { highlightLines } from '../lib/highlight';
+  import { onActivate } from '../lib/ui';
+  import { MessageSquare } from '@lucide/svelte';
 
-  const view = $derived(store.changesView);
-  const next = $derived(store.changesViewNew);
-  const base = $derived(store.changesViewBase);
-  const git = $derived(view ? (store.gitStatus[view.workspace] ?? null) : null);
+  const active = $derived(store.activeFile);
+  const ws = $derived(active?.workspace ?? null);
+  const openList = $derived(active ? (store.openFiles[active.workspace] ?? []) : []);
+  const next = $derived(store.activeFileNew);
+  const base = $derived(store.activeFileBase);
+  const err = $derived(store.activeFileError);
 
-  // The switcher lists every changed file; the current file stays put when
-  // the status refreshes around it.
-  const files = $derived.by((): string[] => {
-    if (!view || !git) return [];
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const p of [...git.modified, ...git.untracked, ...git.deleted]) {
-      if (!seen.has(p)) {
-        seen.add(p);
-        out.push(p);
-      }
-    }
-    if (view && !seen.has(view.path)) out.push(view.path);
-    return out;
-  });
-
-  // Render lines (line number + diff mark + syntax spans), recomputed when
-  // the content, base, or language changes. The async highlight is guarded so
-  // a slow recompute never clobbers a newer one.
+  // Render lines (line number + diff mark + syntax spans), recomputed when the
+  // content, base, or language changes. The async highlight is guarded so a slow
+  // recompute never clobbers a newer one; a highlight failure (a prod WASM/grammar
+  // init rejection) falls back to plain, uncolored lines rather than sticking.
   let lines = $state<RenderLine[]>([]);
-  let loading = $state(true);
-
   $effect(() => {
-    const v = view;
+    const a = active;
     const n = next;
     const b = base;
-    if (!v || n === null) {
+    if (!a || n === null) {
       lines = [];
-      loading = true;
       return;
     }
     let live = true;
     void (async () => {
-      const tokens = await highlightLines(n, langFor(v.path));
+      let tokens;
+      try {
+        tokens = await highlightLines(n, langFor(a.path));
+      } catch {
+        tokens = n.split('\n').map((l) => [{ content: l }]);
+      }
       if (!live) return;
       lines = assemble(buildDiffLines(b ?? '', n), tokens);
-      loading = false;
     })();
     return () => {
       live = false;
     };
   });
-
-  function pick(p: string): void {
-    // Switcher files are changed (git status), never .gitignored.
-    if (view) setChangesView({ ...view, path: p, ignored: false });
-  }
 </script>
 
-{#if view}
+{#if active && ws}
   <div class="view">
-    <div class="hd">
-      <div class="title" title={view.path}>{view.path}</div>
-      <button class="x" title="close (esc)" onclick={() => setChangesView(null)}>×</button>
-    </div>
-    {#if files.length > 1}
-      <div class="switcher">
-        {#each files as f (f)}
-          <button class="f" class:on={f === view.path} onclick={() => pick(f)} title={f}>
-            {f.split('/').pop()}
-          </button>
+    <div class="bar">
+      <button class="back" title="back to transcript" onclick={() => setCenterMode(ws, 'chat')}>
+        <MessageSquare size={12} aria-hidden="true" />
+        <span>chat</span>
+      </button>
+      <div class="tabs">
+        {#each openList as f (f.path)}
+          <div class="tab" class:on={f.path === active.path} title={f.path}>
+            <span
+              class="tname"
+              role="button"
+              tabindex="0"
+              onclick={() => selectFile(ws, f.path)}
+              onkeydown={onActivate(() => selectFile(ws, f.path))}
+            >{f.path.split('/').pop()}</span>
+            <span
+              class="tx"
+              title="close"
+              role="button"
+              tabindex="0"
+              onclick={() => closeFile(ws, f.path)}
+              onkeydown={onActivate(() => closeFile(ws, f.path))}
+            >×</span>
+          </div>
         {/each}
       </div>
-    {/if}
+    </div>
     <div class="body">
-      {#if loading}
+      {#if err !== null}
+        <div class="note">{err}</div>
+      {:else if next === null}
         <div class="note">loading…</div>
-      {:else if lines.length === 0}
+      {:else if next === ''}
         <div class="note">empty file</div>
       {:else}
         <div class="code">
@@ -105,64 +108,70 @@
     flex-direction: column;
     min-height: 0;
   }
-  .hd {
+  .bar {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 16px;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--line);
     flex: none;
   }
-  .title {
-    flex: 1;
-    min-width: 0;
-    font: 12px var(--mono);
-    color: var(--tx);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .x {
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     flex: none;
-    background: none;
-    border: none;
-    color: var(--dim);
-    font-size: 15px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 5px;
-  }
-  .x:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--tx);
-  }
-  .switcher {
-    display: flex;
-    gap: 4px;
-    padding: 6px 16px;
-    border-bottom: 1px solid var(--line);
-    overflow-x: auto;
-    flex: none;
-  }
-  .f {
-    flex: none;
-    background: none;
+    padding: 3px 8px;
     border: 1px solid var(--line2);
     border-radius: 5px;
-    padding: 2px 8px;
-    font: 10.5px var(--mono);
     color: var(--dim);
-    cursor: pointer;
+    font: 10.5px var(--mono);
   }
-  .f:hover {
+  .back:hover {
     color: var(--tx);
     border-color: var(--acc);
   }
-  .f.on {
+  .back :global(svg) {
+    flex: none;
+  }
+  .tabs {
+    display: flex;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+  }
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    padding: 2px 4px 2px 8px;
+    border: 1px solid var(--line2);
+    border-radius: 5px;
+    color: var(--dim);
+    font: 10.5px var(--mono);
+  }
+  .tab.on {
     color: var(--acc);
     border-color: var(--acc);
     background: rgba(76, 141, 255, 0.1);
+  }
+  .tname {
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .tx {
+    cursor: pointer;
+    padding: 0 3px;
+    border-radius: 3px;
+    color: var(--faint);
+    font-size: 13px;
+    line-height: 1;
+  }
+  .tx:hover {
+    color: var(--tx);
+    background: rgba(255, 255, 255, 0.08);
   }
   .body {
     flex: 1;

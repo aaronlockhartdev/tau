@@ -5,6 +5,7 @@
   // layer); this child is a stateless renderer over them.
   import type { ExpandSlot, KvRow, Section, Shell } from '../lib/presentation';
   import { Zap } from '@lucide/svelte';
+  import ToolOutput from './ToolOutput.svelte';
 
   type CardShellShell = Extract<Shell, { kind: 'tool' | 'card' }>;
 
@@ -88,7 +89,13 @@
       <div class="x">
         {@render kvRows(shell.kv)}
         {#if shell.output}
-          <div class="out"><pre>{open.output ? shell.output.text : shell.output.closed}</pre></div>
+          <div class="out">
+            {#if open.output || !shell.output.long}
+              <ToolOutput text={shell.output.text} name={shell.label} path={shell.path} />
+            {:else}
+              <pre>{shell.output.closed}</pre>
+            {/if}
+          </div>
           {#if shell.output.long}
             <button class="expando" onclick={() => setOpen('output')}>
               {open.output ? '▾ hide output' : `▸ full output (${shell.output.text.length} chars)`}
