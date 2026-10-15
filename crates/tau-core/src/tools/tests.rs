@@ -1,4 +1,4 @@
-use super::impls::image_media_type;
+use super::impls::{bash, edit, image_media_type, read, write};
 use super::*;
 use base64::Engine;
 use std::fmt::Write as _;
@@ -284,38 +284,22 @@ async fn edit_output_is_a_bounded_before_after_diff() {
     assert!(body.len() <= 8, "diff not bounded to the region: {out}");
 }
 
-fn call(name: &str, args: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: "1".into(),
-        name: name.into(),
-        args,
-    }
-}
-
 #[tokio::test]
-async fn dispatch_carries_a_typed_verdict() {
+async fn core_tools_carry_a_typed_verdict() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path();
     // bash: the exit code is the verdict.
-    let ok = dispatch(cwd, &call("bash", json!({"command": "true"})), None).await;
+    let ok = bash(cwd, &json!({"command": "true"})).await;
     assert_eq!(ok.status(), "ok");
-    let err = dispatch(cwd, &call("bash", json!({"command": "false"})), None).await;
+    let err = bash(cwd, &json!({"command": "false"})).await;
     assert_eq!(err.status(), "error");
     // read: a missing file is an error; a present one is ok.
-    let err = dispatch(cwd, &call("read", json!({"path": "missing.txt"})), None).await;
+    let err = read(cwd, &json!({"path": "missing.txt"}), None).await;
     assert_eq!(err.status(), "error");
     std::fs::write(cwd.join("a.txt"), "hi\n").unwrap();
-    let ok = dispatch(cwd, &call("read", json!({"path": "a.txt"})), None).await;
+    let ok = read(cwd, &json!({"path": "a.txt"}), None).await;
     assert_eq!(ok.status(), "ok");
     // write: a clean write is ok.
-    let ok = dispatch(
-        cwd,
-        &call("write", json!({"path": "b.txt", "content": "x"})),
-        None,
-    )
-    .await;
+    let ok = write(cwd, &json!({"path": "b.txt", "content": "x"})).await;
     assert_eq!(ok.status(), "ok");
-    // a call with no matching tool is an error.
-    let err = dispatch(cwd, &call("no_such_tool", json!({})), None).await;
-    assert_eq!(err.status(), "error");
 }

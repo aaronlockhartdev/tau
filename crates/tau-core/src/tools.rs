@@ -366,21 +366,8 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
     v
 }
 
-/// Dispatch one tool call. Never panics on bad input — the diagnostic is the
-/// result (the model's only recovery path).
-pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>) -> ToolResult {
-    match call.name.as_str() {
-        "read" => read(cwd, &call.args, image_max_bytes).await,
-        "write" => write(cwd, &call.args).await,
-        "edit" => edit(cwd, &call.args).await,
-        "bash" => bash(cwd, &call.args).await,
-        other => ToolResult::err(format!("unknown tool: {other}").into()),
-    }
-}
-
 mod impls;
 pub mod surface;
-use impls::{bash, edit, read, write};
 
 #[cfg(test)]
 mod tests;

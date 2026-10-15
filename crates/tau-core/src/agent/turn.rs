@@ -341,7 +341,16 @@ impl AgentSession {
             // ticket #70: an unparseable call is a parse error, never a silent
             // null-args dispatch — the model reads the error and self-corrects.
             let result = match &parsed {
-                Ok(_) => tools::surface::dispatch(self, &cwd, image_max, sup, link, &tc).await,
+                Ok(_) => {
+                    let ctx = tools::surface::DispatchCtx {
+                        session: self,
+                        cwd: &cwd,
+                        image_max_bytes: image_max,
+                        supervisor: sup,
+                        child: link,
+                    };
+                    tools::surface::dispatch(ctx, &tc).await
+                }
                 Err(e) => tools::ToolResult::err(tau_protocol::payload::ToolOutput::Text(format!(
                     "error: arguments are not valid JSON: {e}"
                 ))),

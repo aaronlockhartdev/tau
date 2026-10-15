@@ -12,7 +12,7 @@ use crate::om::OmRecord;
 use crate::provider::ToolSpec;
 use crate::session::SessionStore;
 use crate::subagent::testkit::{CannedFactory, TestBridge, TestDriver};
-use crate::subagent::{Supervisor, SupervisorParams};
+use crate::subagent::{ChildLink, Supervisor, SupervisorParams};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -31,6 +31,23 @@ fn text(out: ToolResult) -> String {
     match out.output {
         ToolOutput::Text(t) => t,
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
+    }
+}
+
+/// A dispatch context for a test session: the image cap is `None`; the
+/// surface tests vary only session / supervisor / child.
+fn ctx<'a>(
+    session: &'a AgentSession,
+    cwd: &'a std::path::Path,
+    supervisor: Option<Arc<Supervisor>>,
+    child: Option<Arc<ChildLink>>,
+) -> surface::DispatchCtx<'a> {
+    surface::DispatchCtx {
+        session,
+        cwd,
+        image_max_bytes: None,
+        supervisor,
+        child,
     }
 }
 
@@ -230,7 +247,7 @@ async fn a_child_refuses_supervisor_tools_through_the_surface() {
         name: "subagent_spawn".into(),
         args: serde_json::json!({ "type": "general", "brief": "x" }),
     };
-    let out = surface::dispatch(&child, &cwd, None, None, child.child_link(), &call).await;
+    let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
     assert_eq!(text(out), "subagent_spawn: not available in this session");
 
     let call = ToolCall {
@@ -238,7 +255,7 @@ async fn a_child_refuses_supervisor_tools_through_the_surface() {
         name: "task_create".into(),
         args: serde_json::json!({ "title": "t" }),
     };
-    let out = surface::dispatch(&child, &cwd, None, None, child.child_link(), &call).await;
+    let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
     assert_eq!(
         text(out),
         "task_create: not available in a child session — work the task your parent assigned"
@@ -258,7 +275,7 @@ async fn a_parent_refuses_parent_notify_through_the_surface() {
         name: "parent_notify".into(),
         args: serde_json::json!({ "text": "hi" }),
     };
-    let out = surface::dispatch(&parent, &cwd, None, Some(sup), None, &call).await;
+    let out = surface::dispatch(ctx(parent.as_ref(), &cwd, Some(sup), None), &call).await;
     assert_eq!(
         text(out),
         "parent_notify: not available in a top-level session"
@@ -278,7 +295,7 @@ async fn a_child_core_tool_is_not_swallowed_by_the_link() {
         name: "bash".into(),
         args: serde_json::json!({ "command": "echo surface" }),
     };
-    let out = surface::dispatch(&child, &cwd, None, None, child.child_link(), &call).await;
+    let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
     let t = text(out);
     assert!(t.starts_with("exit 0"), "{t}");
     assert!(t.contains("surface"), "{t}");
