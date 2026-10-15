@@ -1,7 +1,7 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildState, ContextMode, KIND_SUBAGENT,
     Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned,
-    StateNotice, Supervisor, Weak, json, om_integration, title_on_disk, tools,
+    Supervisor, Weak, json, om_integration, title_on_disk, tools,
 };
 use crate::harness::SessionRole;
 
@@ -250,14 +250,12 @@ impl Supervisor {
                             sup.mark_failed(&child, "state entry failed".into());
                             break;
                         }
-                        sup.bridge.state(&StateNotice {
-                            parent: sup.parent_session.clone(),
-                            handle: child.handle.clone(),
-                            child: child.session_id.clone(),
-                            state: ChildState::Running,
-                            note: Some("resumed by a queued message".into()),
-                            resume_contract: None,
-                        });
+                        sup.emit_state(
+                            &child,
+                            ChildState::Running,
+                            Some("resumed by a queued message".into()),
+                            None,
+                        );
                         continue;
                     }
                     // No polling (review N8): a message, a nudge, or a

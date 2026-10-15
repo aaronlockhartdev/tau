@@ -1,6 +1,6 @@
 use super::{
-    Arc, Child, ChildState, KIND_SUBAGENT, Lane, StateNotice, Supervisor, Value, WaitingOn,
-    WakeKind, WakeNotice, Weak, json,
+    Arc, Child, ChildState, KIND_SUBAGENT, Lane, ResumeContract, StateNotice, Supervisor, Value,
+    WaitingOn, WakeKind, WakeNotice, Weak, json,
 };
 
 impl Supervisor {
@@ -57,6 +57,46 @@ impl Supervisor {
             .map(|_| ())
     }
 
+    /// Emit a child state transition: the identity (parent, handle, child)
+    /// comes from the supervisor + the child; the caller supplies the new
+    /// state and its note / resume contract.
+    pub(super) fn emit_state(
+        &self,
+        child: &Arc<Child>,
+        state: ChildState,
+        note: Option<String>,
+        resume_contract: Option<ResumeContract>,
+    ) {
+        self.bridge.state(&StateNotice {
+            parent: self.parent_session.clone(),
+            handle: child.handle.clone(),
+            child: child.session_id.clone(),
+            state,
+            note,
+            resume_contract,
+        });
+    }
+
+    /// Emit a parent wake: the identity (parent, child) comes from the
+    /// supervisor + the child; the caller supplies the wake kind + payload.
+    pub(super) fn emit_wake(
+        &self,
+        child: &Arc<Child>,
+        kind: WakeKind,
+        text: String,
+        waiting_on: Option<WaitingOn>,
+        output: Option<Value>,
+    ) {
+        self.bridge.wake(&WakeNotice {
+            parent: self.parent_session.clone(),
+            child: child.session_id.clone(),
+            kind,
+            text,
+            waiting_on,
+            output,
+        });
+    }
+
     pub(super) fn mark_failed(&self, child: &Arc<Child>, reason: String) {
         // The state entry itself can fail (storage down): nothing further
         // to do — the in-memory state already says failed.
@@ -65,26 +105,17 @@ impl Supervisor {
         }) {
             tracing::warn!("subagent state entry failed: {e}");
         }
-        self.bridge.state(&StateNotice {
-            parent: self.parent_session.clone(),
-            handle: child.handle.clone(),
-            child: child.session_id.clone(),
-            state: ChildState::Failed {
+        self.emit_state(
+            child,
+            ChildState::Failed {
                 reason: reason.clone(),
             },
-            note: Some(reason.clone()),
-            resume_contract: None,
-        });
+            Some(reason.clone()),
+            None,
+        );
         // A failed child auto-notifies the parent to investigate (ADR-0001
         // wake rules: failed is always woken).
-        self.bridge.wake(&WakeNotice {
-            parent: self.parent_session.clone(),
-            child: child.session_id.clone(),
-            kind: WakeKind::Failed,
-            text: reason,
-            waiting_on: None,
-            output: None,
-        });
+        self.emit_wake(child, WakeKind::Failed, reason, None, None);
     }
 
     /// The child-side `parent_notify` (routed here from the child's loop).
@@ -160,24 +191,15 @@ impl Supervisor {
             }) {
                 return e;
             }
-            self.bridge.state(&StateNotice {
-                parent: self.parent_session.clone(),
-                handle: child.handle.clone(),
-                child: child.session_id.clone(),
-                state: ChildState::Done {
+            self.emit_state(
+                &child,
+                ChildState::Done {
                     output: output.clone(),
                 },
-                note: None,
-                resume_contract: None,
-            });
-            self.bridge.wake(&WakeNotice {
-                parent: self.parent_session.clone(),
-                child: child.session_id.clone(),
-                kind: WakeKind::Done,
-                text: text.to_owned(),
-                waiting_on: None,
-                output,
-            });
+                None,
+                None,
+            );
+            self.emit_wake(&child, WakeKind::Done, text.to_owned(), None, output);
             "done: the parent has your result".into()
         } else {
             // A note parks the child. The declared (or default) wait
@@ -186,26 +208,23 @@ impl Supervisor {
             if let Err(e) = child.set_state(&ChildState::Idle { waiting_on }) {
                 return e;
             }
-            self.bridge.state(&StateNotice {
-                parent: self.parent_session.clone(),
-                handle: child.handle.clone(),
-                child: child.session_id.clone(),
-                state: ChildState::Idle { waiting_on },
-                note: Some(text.to_owned()),
-                resume_contract: None,
-            });
+            self.emit_state(
+                &child,
+                ChildState::Idle { waiting_on },
+                Some(text.to_owned()),
+                None,
+            );
             if waiting_on == WaitingOn::Parent {
                 // A parked parent (including a user-stopped one) is woken
                 // with the child's stated need; user/subagent waits are
                 // GUI-badge only.
-                self.bridge.wake(&WakeNotice {
-                    parent: self.parent_session.clone(),
-                    child: child.session_id.clone(),
-                    kind: WakeKind::Waiting,
-                    text: text.to_owned(),
-                    waiting_on: Some(WaitingOn::Parent),
-                    output: None,
-                });
+                self.emit_wake(
+                    &child,
+                    WakeKind::Waiting,
+                    text.to_owned(),
+                    Some(WaitingOn::Parent),
+                    None,
+                );
             }
             "noted: you are parked".into()
         }

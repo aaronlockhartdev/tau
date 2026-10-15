@@ -2,10 +2,10 @@
 
 use super::thinking::thinking_adjusted_max_output;
 use super::{
-    AgentSession, Arc, AtomicBool, AtomicU64, Config, Core, Event, ForwardingProvider, HashMap,
-    LiveSession, MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionRole, SessionStore, SkillInfo, TurnConfig, ViewEntry, Workspace, session_inner,
-    session_name, skill_info, unique_name,
+    AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
+    MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionRole,
+    SessionStore, SkillInfo, TurnConfig, ViewEntry, Workspace, session_inner, session_name,
+    skill_info, unique_name,
 };
 
 impl Core {
@@ -281,17 +281,14 @@ impl Core {
         // The live shell's provider (the stream-forwarding seam); the
         // constructor takes the same resolved first provider for the
         // supervisor's child factory (one resolution, ticket #43).
-        let provider = Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &first, &config.requests),
-            tx: self.events_tx.clone(),
-            pipe: self.pipe.clone(),
-            workspace: workspace.id.clone(),
-            session: store.id().to_owned(),
-            stop: Arc::new(AtomicBool::new(false)),
-            call_seq: AtomicU64::new(0),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            completed: Arc::new(Mutex::new(HashMap::new())),
-        });
+        let provider = Arc::new(ForwardingProvider::new(
+            session_inner(&self.client, &first, &config.requests),
+            self.events_tx.clone(),
+            self.pipe.clone(),
+            workspace.id.clone(),
+            store.id().to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
         let agent = AgentSession::launch(
             store,
             SessionRole::Root {

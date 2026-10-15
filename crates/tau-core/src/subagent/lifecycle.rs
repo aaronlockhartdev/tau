@@ -1,7 +1,4 @@
-use super::{
-    Arc, Child, ChildState, Lane, Ordering, StateNotice, StoppedBy, Supervisor, WakeKind,
-    WakeNotice,
-};
+use super::{Arc, Child, ChildState, Lane, Ordering, StoppedBy, Supervisor, WakeKind};
 
 impl Supervisor {
     /// `subagent_message` (and the GUI's send to a child): running → the
@@ -47,14 +44,7 @@ impl Supervisor {
             let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
             child.set_state(&ChildState::Running)?;
             child.wake.notify_one();
-            self.bridge.state(&StateNotice {
-                parent: self.parent_session.clone(),
-                handle: child.handle.clone(),
-                child: child.session_id.clone(),
-                state: ChildState::Running,
-                note: Some("resumed".into()),
-                resume_contract: None,
-            });
+            self.emit_state(&child, ChildState::Running, Some("resumed".into()), None);
             child.agent.send(text, Lane::FollowUp);
             // A drive ended by stop/failure/done is gone: this resume
             // starts a fresh one (only an idle drive persists and
@@ -119,24 +109,15 @@ impl Supervisor {
                     || t.status == crate::task::STATUS_BLOCKED
             })
             .map(|t| crate::task::resume_contract(&t));
-        self.bridge.state(&StateNotice {
-            parent: self.parent_session.clone(),
-            handle: child.handle.clone(),
-            child: child.session_id.clone(),
-            state: ChildState::Stopped { by },
-            note: Some(note.clone()),
-            resume_contract: resume_contract.clone(),
-        });
+        self.emit_state(
+            child,
+            ChildState::Stopped { by },
+            Some(note.clone()),
+            resume_contract.clone(),
+        );
         // The parent is told the child is stopped: its model's view of the
         // delegation must not keep the child running.
-        self.bridge.wake(&WakeNotice {
-            parent: self.parent_session.clone(),
-            child: child.session_id.clone(),
-            kind: WakeKind::Stopped,
-            text: note,
-            waiting_on: None,
-            output: None,
-        });
+        self.emit_wake(child, WakeKind::Stopped, note, None, None);
         match resume_contract {
             Some(rc) => Ok(format!(
                 "stopped sub-agent {name}; its assigned task stays live (resume contract: {})",

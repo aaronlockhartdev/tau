@@ -408,17 +408,14 @@ async fn a_live_om_run_emits_om_status_events() {
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}}}}\n\n",
         text = "<observations>observed</observations>"
     );
-    let provider = Arc::new(ForwardingProvider {
-        inner: provider::canned(&body),
-        tx: core.events_tx.clone(),
-        pipe: core.pipe.clone(),
-        workspace: workspace.id.clone(),
-        session: sid.clone(),
-        stop: Arc::new(AtomicBool::new(false)),
-        call_seq: AtomicU64::new(0),
-        calls: Arc::new(Mutex::new(Vec::new())),
-        completed: Arc::new(Mutex::new(HashMap::new())),
-    });
+    let provider = Arc::new(ForwardingProvider::new(
+        provider::canned(&body),
+        core.events_tx.clone(),
+        core.pipe.clone(),
+        workspace.id.clone(),
+        sid.clone(),
+        Arc::new(AtomicBool::new(false)),
+    ));
     let agent = Arc::new(AgentSession::new(SessionParams {
         store,
         system_prompt: "be terse".into(),

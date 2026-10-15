@@ -119,7 +119,6 @@ async fn dispatch_line(server: &Server, line: &str) {
     }
 }
 
-
 async fn session_new(server: &Server, rpc: &Rpc) {
     let Some(id) = &rpc.id else {
         return;

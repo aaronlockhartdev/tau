@@ -31,6 +31,31 @@ pub(crate) struct ForwardingProvider {
     pub(crate) completed: Arc<Mutex<HashMap<String, bool>>>,
 }
 
+impl ForwardingProvider {
+    /// The six live dependencies, named; the per-provider call bookkeeping
+    /// (seq, call ids, completion map) is always fresh.
+    pub(crate) fn new(
+        inner: TurnProviderRef,
+        tx: mpsc::Sender<Event>,
+        pipe: PipeCounters,
+        workspace: String,
+        session: String,
+        stop: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner,
+            tx,
+            pipe,
+            workspace,
+            session,
+            stop,
+            call_seq: AtomicU64::new(0),
+            calls: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
 impl TurnProvider for ForwardingProvider {
     fn forwarding_inner(&self) -> Option<TurnProviderRef> {
         Some(self.inner.clone())
@@ -211,17 +236,14 @@ pub(crate) struct ForwardingChildFactory {
 }
 impl ChildProviderFactory for ForwardingChildFactory {
     fn create(&self, child: &str) -> TurnProviderRef {
-        Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &self.provider, &self.requests),
-            tx: self.tx.clone(),
-            pipe: self.pipe.clone(),
-            workspace: self.workspace.clone(),
-            session: child.to_owned(),
-            stop: Arc::new(AtomicBool::new(false)),
-            call_seq: AtomicU64::new(0),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            completed: Arc::new(Mutex::new(HashMap::new())),
-        })
+        Arc::new(ForwardingProvider::new(
+            session_inner(&self.client, &self.provider, &self.requests),
+            self.tx.clone(),
+            self.pipe.clone(),
+            self.workspace.clone(),
+            child.to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ))
     }
 }
 
@@ -307,17 +329,14 @@ impl SubagentBridge for SessionSubagentBridge {
                 title,
             },
         });
-        let provider = Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &self.provider, &self.requests),
-            tx: self.core.events_tx.clone(),
-            pipe: self.core.pipe.clone(),
-            workspace: self.workspace.clone(),
-            session: n.child.clone(),
-            stop: agent.stop_flag(),
-            call_seq: AtomicU64::new(0),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            completed: Arc::new(Mutex::new(HashMap::new())),
-        });
+        let provider = Arc::new(ForwardingProvider::new(
+            session_inner(&self.client, &self.provider, &self.requests),
+            self.core.events_tx.clone(),
+            self.core.pipe.clone(),
+            self.workspace.clone(),
+            n.child.clone(),
+            agent.stop_flag(),
+        ));
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),
