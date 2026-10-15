@@ -89,16 +89,8 @@ impl Core {
                     }
                     Err(_) => (
                         None,
-                        self.workspaces
-                            .lock()
-                            .expect("workspaces map: no panic while the lock is held")
-                            .values()
-                            .find(|w| {
-                                Self::session_access(w)
-                                    .iter()
-                                    .any(|m| m.id == session && !m.archived)
-                            })
-                            .map(|w| PathBuf::from(w.cwd.clone()))
+                        self.owning_session(&session)
+                            .map(|(w, _)| PathBuf::from(w.cwd.clone()))
                             .ok_or_else(|| ProtocolError::NotFound {
                                 what: format!("session {session} is not open"),
                             })?,
@@ -181,16 +173,8 @@ impl Core {
                 // last `model:` note on the branch is the current one.
                 else {
                     let cwd = self
-                        .workspaces
-                        .lock()
-                        .expect("workspaces map: no panic while the lock is held")
-                        .values()
-                        .find(|w| {
-                            Self::session_access(w)
-                                .iter()
-                                .any(|m| m.id == session && !m.archived)
-                        })
-                        .map(|w| PathBuf::from(w.cwd.clone()))
+                        .owning_session(&session)
+                        .map(|(w, _)| PathBuf::from(w.cwd.clone()))
                         .ok_or_else(|| ProtocolError::NotFound {
                             what: format!("session {session} is not open"),
                         })?;

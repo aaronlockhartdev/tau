@@ -116,6 +116,21 @@ impl Core {
             .collect()
     }
 
+    /// The (workspace, session-meta) pair owning a non-archived session,
+    /// scanning every open workspace — the one home for that lookup.
+    pub(crate) fn owning_session(&self, id: &str) -> Option<(Workspace, SessionMeta)> {
+        self.workspaces
+            .lock()
+            .expect("workspaces map: no panic while the lock is held")
+            .values()
+            .find_map(|w| {
+                Self::session_access(w)
+                    .into_iter()
+                    .find(|m| m.id == id && !m.archived)
+                    .map(|m| (w.clone(), m))
+            })
+    }
+
     /// A name free of collisions among the workspace's sessions (the file is
     /// the record, so the check is against the disk titles).
     pub(crate) fn fresh_session_name(workspace: &Workspace) -> String {

@@ -128,16 +128,7 @@ impl Core {
     /// a live session is (idle live state, no OM, no queue).
     pub(crate) fn snapshot_from_disk(&self, id: &str) -> Result<Snapshot, ProtocolError> {
         let (workspace, meta) = self
-            .workspaces
-            .lock()
-            .expect("workspaces map: no panic while the lock is held")
-            .values()
-            .find_map(|w| {
-                Self::session_access(w)
-                    .into_iter()
-                    .find(|m| m.id == id && !m.archived)
-                    .map(|m| (w.clone(), m))
-            })
+            .owning_session(id)
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("session {id} is not open"),
             })?;
@@ -187,16 +178,8 @@ impl Core {
         range: Option<tau_protocol::snapshot::EntryRange>,
     ) -> Result<Vec<ViewEntry>, ProtocolError> {
         let cwd = self
-            .workspaces
-            .lock()
-            .expect("workspaces map: no panic while the lock is held")
-            .values()
-            .find(|w| {
-                Self::session_access(w)
-                    .iter()
-                    .any(|m| m.id == id && !m.archived)
-            })
-            .map(|w| w.cwd.clone())
+            .owning_session(id)
+            .map(|(w, _)| w.cwd.clone())
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("session {id} is not open"),
             })?;

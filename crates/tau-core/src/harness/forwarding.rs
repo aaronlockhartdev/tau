@@ -183,13 +183,7 @@ pub(crate) const fn mode_to_protocol(m: crate::subagent::ContextMode) -> Context
 /// The core's child record as the protocol's (the protocol crate is
 /// independent of the core — ADR-0002 — so the mapping lives here).
 pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInfo {
-    let state = match &i.state {
-        crate::subagent::ChildState::Running => "running",
-        crate::subagent::ChildState::Idle { .. } => "idle",
-        crate::subagent::ChildState::Done { .. } => "done",
-        crate::subagent::ChildState::Failed { .. } => "failed",
-        crate::subagent::ChildState::Stopped { .. } => "stopped",
-    };
+    let state = i.state.kind();
     SubagentInfo {
         handle: i.handle.clone(),
         child: i.child.clone(),
@@ -391,14 +385,7 @@ impl SubagentBridge for SessionSubagentBridge {
             kind: SubagentEventKind::State {
                 handle: n.handle.clone(),
                 child: n.child.clone(),
-                state: match &n.state {
-                    crate::subagent::ChildState::Running => "running",
-                    crate::subagent::ChildState::Idle { .. } => "idle",
-                    crate::subagent::ChildState::Done { .. } => "done",
-                    crate::subagent::ChildState::Failed { .. } => "failed",
-                    crate::subagent::ChildState::Stopped { .. } => "stopped",
-                }
-                .to_owned(),
+                state: n.state.kind().to_owned(),
                 detail,
                 note: n.note.clone(),
             },
