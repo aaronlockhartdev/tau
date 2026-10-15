@@ -471,6 +471,13 @@
     void fetchActiveFile(ws, path);
   }
 
+  function resetActiveFile(): void {
+    store.activeFile = null;
+    store.activeFileNew = null;
+    store.activeFileBase = null;
+    store.activeFileError = null;
+  }
+
   // Close a tab: drop it from the open set. The neighbour tab takes the active
   // slot; closing the last file returns the center to the transcript.
   export function closeFile(ws: string, path: string): void {
@@ -479,10 +486,7 @@
     const a = store.activeFile;
     if (!a || a.workspace !== ws || a.path !== path) return;
     if (activate === null) {
-      store.activeFile = null;
-      store.activeFileNew = null;
-      store.activeFileBase = null;
-      store.activeFileError = null;
+      resetActiveFile();
       ensurePane(ws).center = 'chat';
       return;
     }
@@ -526,10 +530,7 @@
       void fetchActiveFile(ws, first.path);
       return;
     }
-    store.activeFile = null;
-    store.activeFileNew = null;
-    store.activeFileBase = null;
-    store.activeFileError = null;
+    resetActiveFile();
     ensurePane(ws).center = 'chat';
   }
 
@@ -643,10 +644,7 @@
     // here) are dead with it.
     delete store.openFiles[ws.id];
     if (store.activeFile?.workspace === ws.id) {
-      store.activeFile = null;
-      store.activeFileNew = null;
-      store.activeFileBase = null;
-      store.activeFileError = null;
+      resetActiveFile();
     }
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
