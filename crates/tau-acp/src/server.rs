@@ -49,6 +49,20 @@ impl Server {
         *slot = Some(core.clone());
         core
     }
+
+    /// Dispatch `cmd`, answering a JSON-RPC internal-error response on a
+    /// `ProtocolError`; `None` once that error has been sent (the caller
+    /// returns).
+    async fn dispatch(&self, id: &Value, cmd: Command) -> Option<CommandOutput> {
+        match self.ensure_core().await.dispatch(cmd) {
+            Ok(out) => Some(out),
+            Err(e) => {
+                self.out
+                    .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
+                None
+            }
+        }
+    }
 }
 
 /// Run the server over the given streams until stdin closes.
@@ -136,35 +150,36 @@ async fn session_new(server: &Server, rpc: &Rpc) {
         ));
         return;
     };
-    let core = server.ensure_core().await;
-    let workspace = match core.dispatch(Command::WorkspaceOpen {
-        cwd: cwd.to_owned(),
-    }) {
-        Ok(CommandOutput::Workspace { workspace }) => workspace,
-        Ok(_) => unreachable!("dispatch routes the arm"),
-        Err(e) => {
-            server
-                .out
-                .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
-            return;
-        }
+    let workspace = match server
+        .dispatch(
+            id,
+            Command::WorkspaceOpen {
+                cwd: cwd.to_owned(),
+            },
+        )
+        .await
+    {
+        Some(CommandOutput::Workspace { workspace }) => workspace,
+        Some(_) => unreachable!("dispatch routes the arm"),
+        None => return,
     };
-    let session = match core.dispatch(Command::SessionNew {
-        workspace: workspace.id.clone(),
-        title: None,
-        // The ACP surface is the headless surface (ticket #73): the frame
-        // replaces the interactive product's base prompt; the context files
-        // and skills catalog still append after it.
-        base_prompt: Some(crate::headless::FRAME.to_owned()),
-    }) {
-        Ok(CommandOutput::Session { session }) => session,
-        Ok(_) => unreachable!("dispatch routes the arm"),
-        Err(e) => {
-            server
-                .out
-                .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
-            return;
-        }
+    let session = match server
+        .dispatch(
+            id,
+            Command::SessionNew {
+                workspace: workspace.id.clone(),
+                title: None,
+                // The ACP surface is the headless surface (ticket #73): the
+                // frame replaces the interactive product's base prompt; the
+                // context files and skills catalog still append after it.
+                base_prompt: Some(crate::headless::FRAME.to_owned()),
+            },
+        )
+        .await
+    {
+        Some(CommandOutput::Session { session }) => session,
+        Some(_) => unreachable!("dispatch routes the arm"),
+        None => return,
     };
     // The model selector (Harbor's `--model` path): every configured model
     // id for this workspace (the project layer included, M4), the effective
@@ -459,36 +474,37 @@ async fn set_config_option(server: &Server, rpc: &Rpc) {
         };
         state.cwd.clone()
     };
-    let core = server.ensure_core().await;
     let value = value.expect("checked above");
-    match core.dispatch(Command::SessionSetModel {
-        session: session_id.to_owned(),
-        model: value.to_owned(),
-    }) {
-        Ok(_) => {
-            // The v1 schema marks `configOptions` required on this response:
-            // the updated model select, `currentValue` on the model just set.
-            let (models, _default) = server.config.model_options_for(&cwd).await;
-            // The window follows the selection (N5): the next turn's
-            // `usage_update` sizes against the new model.
-            let context_window = server.config.context_window_for(&cwd, value).await;
-            {
-                let mut reg = server
-                    .registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
-                if let Some(state) = reg.get_mut(session_id) {
-                    state.context_window = context_window;
-                }
+    if server
+        .dispatch(
+            id,
+            Command::SessionSetModel {
+                session: session_id.to_owned(),
+                model: value.to_owned(),
+            },
+        )
+        .await
+        .is_some()
+    {
+        // The v1 schema marks `configOptions` required on this response:
+        // the updated model select, `currentValue` on the model just set.
+        let (models, _default) = server.config.model_options_for(&cwd).await;
+        // The window follows the selection (N5): the next turn's
+        // `usage_update` sizes against the new model.
+        let context_window = server.config.context_window_for(&cwd, value).await;
+        {
+            let mut reg = server
+                .registry
+                .lock()
+                .expect("session registry: no panic while the lock is held");
+            if let Some(state) = reg.get_mut(session_id) {
+                state.context_window = context_window;
             }
-            server.out.send(&transport::result(
-                id,
-                &json!({ "configOptions": [model_option(&models, value)] }),
-            ));
         }
-        Err(e) => server
-            .out
-            .send(&transport::error(id, INTERNAL_ERROR, &e.to_string())),
+        server.out.send(&transport::result(
+            id,
+            &json!({ "configOptions": [model_option(&models, value)] }),
+        ));
     }
 }
 
