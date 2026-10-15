@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use tau_core::harness::Core;
-use tau_protocol::{Command, CommandOutput, MessageLane, ProtocolError};
+use tau_protocol::{Command, CommandOutput, MessageLane};
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 use tokio::sync::oneshot;
 
@@ -119,14 +119,6 @@ async fn dispatch_line(server: &Server, line: &str) {
     }
 }
 
-fn protocol_message(e: &ProtocolError) -> String {
-    match e {
-        ProtocolError::Unsupported { message } | ProtocolError::Other { message } => {
-            message.clone()
-        }
-        ProtocolError::NotFound { what } => format!("not found: {what}"),
-    }
-}
 
 async fn session_new(server: &Server, rpc: &Rpc) {
     let Some(id) = &rpc.id else {
@@ -154,7 +146,7 @@ async fn session_new(server: &Server, rpc: &Rpc) {
         Err(e) => {
             server
                 .out
-                .send(&transport::error(id, INTERNAL_ERROR, &protocol_message(&e)));
+                .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
             return;
         }
     };
@@ -171,7 +163,7 @@ async fn session_new(server: &Server, rpc: &Rpc) {
         Err(e) => {
             server
                 .out
-                .send(&transport::error(id, INTERNAL_ERROR, &protocol_message(&e)));
+                .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
             return;
         }
     };
@@ -339,7 +331,7 @@ async fn session_prompt(server: &Server, rpc: &Rpc) {
         release_turn_lock(server, session_id);
         server
             .out
-            .send(&transport::error(id, INTERNAL_ERROR, &protocol_message(&e)));
+            .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
         return;
     }
 
@@ -418,7 +410,7 @@ async fn session_cancel(server: &Server, rpc: &Rpc) {
     if let Err(e) = core.dispatch(Command::MessageStop {
         session: session_id.to_owned(),
     }) {
-        tracing::warn!("acp: cancel for {session_id}: {}", protocol_message(&e));
+        tracing::warn!("acp: cancel for {session_id}: {}", e);
     }
     // The in-flight prompt (if any) answers `stopReason: "cancelled"` when
     // the interrupted turn settles.
@@ -497,7 +489,7 @@ async fn set_config_option(server: &Server, rpc: &Rpc) {
         }
         Err(e) => server
             .out
-            .send(&transport::error(id, INTERNAL_ERROR, &protocol_message(&e))),
+            .send(&transport::error(id, INTERNAL_ERROR, &e.to_string())),
     }
 }
 

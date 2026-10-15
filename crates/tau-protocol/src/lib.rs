@@ -131,6 +131,18 @@ pub enum ProtocolError {
     },
 }
 
+impl std::fmt::Display for ProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let msg = match self {
+            Self::Unsupported { message } | Self::Other { message } => message.as_str(),
+            Self::NotFound { what } => what.as_str(),
+        };
+        f.write_str(msg)
+    }
+}
+
+impl std::error::Error for ProtocolError {}
+
 /// The result of a command; each variant is the typed shape the Svelte side
 /// compiles against (ADR-0006: no richer in-process API).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

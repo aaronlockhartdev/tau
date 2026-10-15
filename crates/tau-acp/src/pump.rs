@@ -229,11 +229,7 @@ fn settle_headless(
             {
                 // Refused before the turn started: settle now — never loop
                 // on a refused send.
-                let message = match &e {
-                    tau_protocol::ProtocolError::Unsupported { message }
-                    | tau_protocol::ProtocolError::Other { message } => message.clone(),
-                    tau_protocol::ProtocolError::NotFound { what } => what.clone(),
-                };
+                let message = e.to_string();
                 let mut guard = registry
                     .lock()
                     .expect("session registry: no panic while the lock is held");
