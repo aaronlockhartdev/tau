@@ -8,6 +8,7 @@
   import { store, closeFile, selectFile, setCenterMode } from '../lib/store.svelte';
   import { buildDiffLines, assemble, langFor, type RenderLine } from '../lib/diffview';
   import { highlightLines } from '../lib/highlight';
+  import CodeLines from './CodeLines.svelte';
   import { onActivate } from '../lib/ui';
   import { MessageSquare } from '@lucide/svelte';
 
@@ -89,14 +90,8 @@
       {:else if next === ''}
         <div class="note">empty file</div>
       {:else}
-        <div class="code" style={`--lnw: ${lnDigits}`}>
-          {#each lines as rl (rl.key)}
-            <div class="line" class:added={rl.mark === 'add'} class:removed={rl.mark === 'del'}>
-              <span class="ln">{rl.no}</span>
-              <span class="mk">{rl.mark === 'add' ? '+' : rl.mark === 'del' ? '−' : ''}</span>
-              <span class="src">{#each rl.spans as s (s)}<span style:color={s.color}>{s.text}</span>{/each}</span>
-            </div>
-          {/each}
+        <div class="code" style={`--lnw: ${lnDigits}; --src-pad: 16px`}>
+          <CodeLines {lines} numbered />
         </div>
       {/if}
     </div>
@@ -194,50 +189,5 @@
     padding: 8px 0 24px;
     font: 11.5px/1.5 var(--mono);
     color: var(--code-fg);
-  }
-  .line {
-    display: flex;
-  }
-  .ln {
-    flex: none;
-    width: calc(var(--lnw, 4) * 1ch + 20px);
-    text-align: right;
-    padding: 0 8px 0 12px;
-    color: var(--faint);
-    user-select: none;
-  }
-  .mk {
-    flex: none;
-    width: 1.2ch;
-    text-align: center;
-    color: transparent;
-    user-select: none;
-  }
-  .src {
-    flex: 1;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    padding-right: 16px;
-  }
-  .line.added {
-    background: var(--diff-add-bg);
-  }
-  .line.added .mk {
-    color: var(--diff-add-fg);
-  }
-  .line.added .ln {
-    color: var(--diff-add-fg);
-  }
-  .line.removed {
-    background: var(--diff-del-bg);
-  }
-  .line.removed .mk {
-    color: var(--diff-del-fg);
-  }
-  .line.removed .src {
-    color: var(--diff-del-fg);
-  }
-  .line.removed .ln {
-    color: transparent;
   }
 </style>

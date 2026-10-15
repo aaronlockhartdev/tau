@@ -12,6 +12,7 @@
     type RenderLine
   } from '../lib/diffview';
   import { highlightLines } from '../lib/highlight';
+  import CodeLines from './CodeLines.svelte';
 
   let { text, name, path }: { text: string; name: string; path?: string } = $props();
 
@@ -64,14 +65,7 @@
     <div class="to-hd">{header}</div>
   {/if}
   <div class="to-code">
-    {#each lines as rl (rl.key)}
-      <div class="line" class:added={rl.mark === 'add'} class:removed={rl.mark === 'del'}>
-        <span class="mk">{rl.mark === 'add' ? '+' : rl.mark === 'del' ? '−' : ''}</span>
-        <span class="src"
-          >{#each rl.spans as s (s)}<span style:color={s.color}>{s.text}</span>{/each}</span
-        >
-      </div>
-    {/each}
+    <CodeLines {lines} />
   </div>
   {#if truncated}
     <div class="to-trunc">{truncated}</div>
@@ -107,36 +101,6 @@
     border-radius: 6px;
     font: 11.5px/1.5 var(--mono);
     color: var(--code-fg);
-  }
-  .line {
-    display: flex;
-  }
-  .mk {
-    flex: none;
-    width: 1.2ch;
-    text-align: center;
-    color: transparent;
-    user-select: none;
-  }
-  .src {
-    flex: 1;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .line.added {
-    background: var(--diff-add-bg);
-  }
-  .line.added .mk {
-    color: var(--diff-add-fg);
-  }
-  .line.removed {
-    background: var(--diff-del-bg);
-  }
-  .line.removed .mk {
-    color: var(--diff-del-fg);
-  }
-  .line.removed .src {
-    color: var(--diff-del-fg);
   }
   .to-trunc {
     margin-top: 4px;
