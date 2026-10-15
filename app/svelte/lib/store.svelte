@@ -67,6 +67,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { attentionOf, type AttentionItem } from './attention';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
+  import { warmupHighlighter } from './highlight';
   export const store = $state({
     focus: false,
     // The wall clock the relative-age labels read; ticked every 30s so idle
@@ -260,6 +261,10 @@
     if (store.loading) return;
     store.loading = true;
     store.error = null;
+    // Warm the syntax highlighter in the background: loading every bundled
+    // grammar is a one-time cost, so start it now and a first file open is
+    // instant rather than paying the load inline.
+    warmupHighlighter();
     try {
       const params = new URLSearchParams(window.location.search);
       // Outside the Tauri shell there is no core to talk to; invoke would
