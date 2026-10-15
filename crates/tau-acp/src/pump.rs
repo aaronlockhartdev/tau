@@ -16,21 +16,32 @@ use tau_core::harness::Core;
 use tau_protocol::snapshot::ViewEntry;
 use tau_protocol::{Command, Event, MessageLane, SystemEventKind};
 
+/// The four values every pump handler needs, named once: a future pump
+/// dependency (a clock, a policy) adds a field, not a parameter to `handle`
+/// and `settle_headless`.
+struct PumpCtx<'a> {
+    core: &'a Arc<Core>,
+    out: &'a Out,
+    registry: &'a Registry,
+    params: &'a crate::headless::Params,
+}
+
 pub async fn run(core: Arc<Core>, out: Out, registry: Arc<Registry>) {
     let params = crate::headless::Params::from_env();
+    let ctx = PumpCtx {
+        core: &core,
+        out: &out,
+        registry: registry.as_ref(),
+        params: &params,
+    };
     let mut rx = core.events();
     while let Some(event) = rx.recv().await {
-        handle(&event, &core, &out, &registry, &params);
+        handle(&ctx, &event);
     }
 }
 
-fn handle(
-    event: &Event,
-    core: &Arc<Core>,
-    out: &Out,
-    registry: &Registry,
-    params: &crate::headless::Params,
-) {
+fn handle(ctx: &PumpCtx, event: &Event) {
+    let PumpCtx { out, registry, .. } = ctx;
     match event {
         Event::EntryUpsert { session, entry, .. } => {
             let updates = {
@@ -100,7 +111,7 @@ fn handle(
                     .and_then(|s| queue_settle(s, items.is_empty()))
             };
             if let Some(outcome) = outcome {
-                settle_headless(core, out, registry, params, session, outcome);
+                settle_headless(ctx, session, outcome);
             }
         }
         // A session-scoped system error kills the turn: the prompt gets a
@@ -161,14 +172,13 @@ fn queue_settle(s: &crate::sessions::SessionState, queue_empty: bool) -> Option<
 /// turn's stream end, and errors, are terminal; a cancel landing in the
 /// post-turn window answers the completed outcome, not `cancelled`
 /// (ticket #78).
-fn settle_headless(
-    core: &Arc<Core>,
-    out: &Out,
-    registry: &Registry,
-    params: &crate::headless::Params,
-    session: &str,
-    outcome: Outcome,
-) {
+fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
+    let PumpCtx {
+        core,
+        out,
+        registry,
+        params,
+    } = ctx;
     let _ = out; // the response rides the pending oneshot, not the pump
     let decision = match &outcome {
         Outcome::EndTurn => {
