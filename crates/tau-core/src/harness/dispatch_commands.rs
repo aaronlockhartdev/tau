@@ -229,12 +229,9 @@ impl Core {
                 let live = self.live_unarchived(&session)?;
                 // Routed through the session's own store (one writer per
                 // session, review B3); the id rule lives in the tool path.
-                let out =
-                    live.agent
-                        .task_tool_call("task_create", &json!({ "title": title }), false);
-                if out.starts_with("task_create:") {
-                    return Err(ProtocolError::Other { message: out });
-                }
+                live.agent
+                    .task_tool_call("task_create", &json!({ "title": title }), false)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
                 self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
@@ -284,30 +281,26 @@ impl Core {
                 passed,
             } => {
                 let live = self.live_unarchived(&session)?;
-                let out = live.agent.task_tool_call(
-                    "task_evidence",
-                    &json!({
-                        "task": task,
-                        "criterion": criterion,
-                        "summary": summary,
-                        "passed": passed,
-                    }),
-                    false,
-                );
-                if out.starts_with("task_evidence:") {
-                    return Err(ProtocolError::Other { message: out });
-                }
+                live.agent
+                    .task_tool_call(
+                        "task_evidence",
+                        &json!({
+                            "task": task,
+                            "criterion": criterion,
+                            "summary": summary,
+                            "passed": passed,
+                        }),
+                        false,
+                    )
+                    .map_err(|e| ProtocolError::Other { message: e })?;
                 self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }
             Command::TaskCancel { session, task } => {
                 let live = self.live_unarchived(&session)?;
-                let out = live
-                    .agent
-                    .task_tool_call("task_cancel", &json!({ "task": task }), false);
-                if out.starts_with("task_cancel:") {
-                    return Err(ProtocolError::Other { message: out });
-                }
+                live.agent
+                    .task_tool_call("task_cancel", &json!({ "task": task }), false)
+                    .map_err(|e| ProtocolError::Other { message: e })?;
                 self.emit_task_changed(&live, &session);
                 Ok(CommandOutput::None)
             }

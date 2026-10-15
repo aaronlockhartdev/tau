@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 /// The text of a tool output: these tests assert on text, and an image
 /// block on these paths is a bug.
-fn text(out: ToolOutput) -> String {
-    match out {
+fn text(out: ToolResult) -> String {
+    match out.output {
         ToolOutput::Text(t) => t,
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
     }
@@ -182,7 +182,10 @@ async fn read_returns_an_image_block_for_a_png() {
     let dir = tempfile::tempdir().unwrap();
     let png = b"\x89PNG\r\n\x1a\nfake-png-pixels";
     std::fs::write(dir.path().join("shot.png"), png).unwrap();
-    match read(dir.path(), &json!({"path": "shot.png"}), None).await {
+    match read(dir.path(), &json!({"path": "shot.png"}), None)
+        .await
+        .output
+    {
         ToolOutput::Image(img) => {
             assert_eq!(img.kind, "image");
             assert_eq!(img.media_type, "image/png");
@@ -203,7 +206,10 @@ async fn read_returns_an_image_block_for_a_jpeg() {
     let dir = tempfile::tempdir().unwrap();
     let jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF";
     std::fs::write(dir.path().join("shot.jpg"), jpeg).unwrap();
-    match read(dir.path(), &json!({"path": "shot.jpg"}), None).await {
+    match read(dir.path(), &json!({"path": "shot.jpg"}), None)
+        .await
+        .output
+    {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/jpeg"),
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
     }
@@ -226,6 +232,7 @@ async fn an_oversized_image_is_refused_loudly() {
         Some(u64::try_from(png.len()).expect("fixture size, well under u64::MAX")),
     )
     .await
+    .output
     {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/png"),
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
@@ -277,69 +284,38 @@ async fn edit_output_is_a_bounded_before_after_diff() {
     assert!(body.len() <= 8, "diff not bounded to the region: {out}");
 }
 
-#[test]
-fn tool_status_reflects_the_dispatcher_verdict() {
+fn call(name: &str, args: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: "1".into(),
+        name: name.into(),
+        args,
+    }
+}
+
+#[tokio::test]
+async fn dispatch_carries_a_typed_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path();
     // bash: the exit code is the verdict.
-    assert_eq!(
-        tool_status("bash", &ToolOutput::Text("exit 0\nok".into())),
-        "ok"
-    );
-    assert_eq!(
-        tool_status("bash", &ToolOutput::Text("exit 3\nboom".into())),
-        "error"
-    );
-    assert_eq!(
-        tool_status("bash", &ToolOutput::Text("bash: spawn failed".into())),
-        "error"
-    );
-    // A named tool's failure carries its name as a prefix.
-    assert_eq!(
-        tool_status(
-            "read",
-            &ToolOutput::Text("read: cannot read x: no such file".into())
-        ),
-        "error"
-    );
-    assert_eq!(
-        tool_status("edit", &ToolOutput::Text("edit: stale anchor".into())),
-        "error"
-    );
-    // recall's miss messages carry no name prefix.
-    assert_eq!(
-        tool_status(
-            "recall",
-            &ToolOutput::Text("no observation group g1".into())
-        ),
-        "error"
-    );
-    assert_eq!(
-        tool_status("recall", &ToolOutput::Text("the group has no range".into())),
-        "error"
-    );
-    // A plain success is ok.
-    assert_eq!(
-        tool_status("read", &ToolOutput::Text("HASH│line".into())),
-        "ok"
-    );
-    assert_eq!(
-        tool_status("write", &ToolOutput::Text("wrote x (3 bytes)".into())),
-        "ok"
-    );
-    // Routing / parse failures.
-    assert_eq!(
-        tool_status("recall", &ToolOutput::Text("unknown tool: recall".into())),
-        "error"
-    );
-    // An image result is a success, never an error.
-    assert_eq!(
-        tool_status(
-            "read",
-            &ToolOutput::Image(tau_protocol::payload::ImageBlock {
-                kind: "image".into(),
-                media_type: "image/png".into(),
-                data_base64: "AA".into(),
-            })
-        ),
-        "ok"
-    );
+    let ok = dispatch(cwd, &call("bash", json!({"command": "true"})), None).await;
+    assert_eq!(ok.status(), "ok");
+    let err = dispatch(cwd, &call("bash", json!({"command": "false"})), None).await;
+    assert_eq!(err.status(), "error");
+    // read: a missing file is an error; a present one is ok.
+    let err = dispatch(cwd, &call("read", json!({"path": "missing.txt"})), None).await;
+    assert_eq!(err.status(), "error");
+    std::fs::write(cwd.join("a.txt"), "hi\n").unwrap();
+    let ok = dispatch(cwd, &call("read", json!({"path": "a.txt"})), None).await;
+    assert_eq!(ok.status(), "ok");
+    // write: a clean write is ok.
+    let ok = dispatch(
+        cwd,
+        &call("write", json!({"path": "b.txt", "content": "x"})),
+        None,
+    )
+    .await;
+    assert_eq!(ok.status(), "ok");
+    // a call with no matching tool is an error.
+    let err = dispatch(cwd, &call("no_such_tool", json!({})), None).await;
+    assert_eq!(err.status(), "error");
 }

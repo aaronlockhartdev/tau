@@ -22,6 +22,43 @@ pub struct ToolCall {
 /// vision-capable endpoint can see (#34).
 pub use tau_protocol::payload::ToolOutput;
 
+/// A tool's result: the model-facing output plus an explicit ok/error verdict
+/// set by the tool itself (which knows whether it succeeded) — the source of
+/// truth for the GUI status indicator.
+#[derive(Debug, Clone)]
+pub struct ToolResult {
+    pub output: ToolOutput,
+    pub ok: bool,
+}
+
+impl ToolResult {
+    #[must_use]
+    pub fn ok(output: ToolOutput) -> Self {
+        Self { output, ok: true }
+    }
+
+    #[must_use]
+    pub fn err(output: ToolOutput) -> Self {
+        Self { output, ok: false }
+    }
+
+    /// The wire status string for `ToolPayload.status`.
+    #[must_use]
+    pub fn status(&self) -> &'static str {
+        if self.ok { "ok" } else { "error" }
+    }
+
+    /// A typed verdict from a `Result<String, String>` source: `Ok` maps to a
+    /// success, `Err` to a failure — a surface tool's `Result` becomes a
+    /// `ToolResult` without the dispatcher re-reading the text.
+    pub(crate) fn from_result(r: Result<String, String>) -> Self {
+        match r {
+            Ok(s) => Self::ok(s.into()),
+            Err(e) => Self::err(e.into()),
+        }
+    }
+}
+
 /// The model-facing definitions of the four core tools.
 #[must_use]
 pub fn tool_specs() -> Vec<ToolSpec> {
@@ -331,58 +368,14 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
 
 /// Dispatch one tool call. Never panics on bad input — the diagnostic is the
 /// result (the model's only recovery path).
-pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>) -> ToolOutput {
+pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>) -> ToolResult {
     match call.name.as_str() {
         "read" => read(cwd, &call.args, image_max_bytes).await,
         "write" => write(cwd, &call.args).await,
         "edit" => edit(cwd, &call.args).await,
         "bash" => bash(cwd, &call.args).await,
-        other => format!("unknown tool: {other}").into(),
+        other => ToolResult::err(format!("unknown tool: {other}").into()),
     }
-}
-
-/// The core's verdict on a tool result — the source of truth for the GUI's
-/// status indicator (the frontend reads it rather than re-deriving it). `bash`
-/// keys off the exit code; the rest use the dispatcher's failure conventions —
-/// a `<name>: ` prefix, a routing `error:`/`unknown` prefix, or recall's
-/// unprefixed miss messages.
-#[must_use]
-pub fn tool_status(name: &str, output: &ToolOutput) -> &'static str {
-    let text = match output {
-        // An image is a successful read, never an error.
-        ToolOutput::Image(_) => return "ok",
-        ToolOutput::Text(t) => t.as_str(),
-    };
-    if name == "bash" {
-        if let Some(rest) = text.strip_prefix("exit ") {
-            let code = rest.split_whitespace().next().unwrap_or("");
-            return if code == "0" { "ok" } else { "error" };
-        }
-        return if text.starts_with("bash: ") {
-            "error"
-        } else {
-            "ok"
-        };
-    }
-    if text.starts_with("error: ")
-        || text.starts_with("unknown tool: ")
-        || text.starts_with("unknown task tool")
-    {
-        return "error";
-    }
-    if text.starts_with(&format!("{name}: ")) {
-        return "error";
-    }
-    // recall's miss messages carry no name prefix.
-    if name == "recall"
-        && (text.starts_with("no observation group")
-            || text.starts_with("the group has no range")
-            || text.starts_with("session read failed")
-            || text.starts_with("range start not in this session"))
-    {
-        return "error";
-    }
-    "ok"
 }
 
 mod impls;

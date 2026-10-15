@@ -54,12 +54,12 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
         ..Default::default()
     };
     // Simple range: exactly its two entries.
-    let out = recall(&mut store, &record, &json!({ "group": "a" }));
+    let out = recall(&mut store, &record, &json!({ "group": "a" })).unwrap();
     assert!(out.contains("00000001"), "{out}");
     assert!(out.contains("00000002"), "{out}");
     assert!(!out.contains("00000003"), "{out}");
     // Merged span: first segment's start to the last segment's end.
-    let out = recall(&mut store, &record, &json!({ "group": "b" }));
+    let out = recall(&mut store, &record, &json!({ "group": "b" })).unwrap();
     for id in ["00000003", "00000004", "00000005", "00000006"] {
         assert!(out.contains(id), "{out}");
     }
@@ -69,16 +69,26 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
     assert!(!out.contains(&"l".repeat(201)), "{out}");
     // Not-found paths: no arg, unknown group, rangeless group, and a
     // range pointing outside this session (a parent-scoped group).
-    assert!(recall(&mut store, &record, &json!({})).contains("missing"));
     assert!(
-        recall(&mut store, &record, &json!({ "group": "nope" })).contains("no observation group")
+        recall(&mut store, &record, &json!({}))
+            .unwrap_err()
+            .contains("missing")
+    );
+    assert!(
+        recall(&mut store, &record, &json!({ "group": "nope" }))
+            .unwrap_err()
+            .contains("no observation group")
     );
     let no_range = OmRecord {
         active_observations: "<observation-group id=\"c\" range=\",\">orphan</observation-group>"
             .into(),
         ..Default::default()
     };
-    assert!(recall(&mut store, &no_range, &json!({ "group": "c" })).contains("no range"));
+    assert!(
+        recall(&mut store, &no_range, &json!({ "group": "c" }))
+            .unwrap_err()
+            .contains("no range")
+    );
     let foreign = OmRecord {
         active_observations: om::wrap_in_observation_group(
             "foreign",
@@ -88,7 +98,11 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
         ),
         ..Default::default()
     };
-    assert!(recall(&mut store, &foreign, &json!({ "group": "d" })).contains("not in this session"));
+    assert!(
+        recall(&mut store, &foreign, &json!({ "group": "d" }))
+            .unwrap_err()
+            .contains("not in this session")
+    );
 }
 
 #[test]

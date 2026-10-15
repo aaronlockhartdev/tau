@@ -4,7 +4,7 @@
 //! names; the spawn-time agent-type filter and the child task-refusal rule
 //! live here, not smeared across the loop, the spawn, and the agent.
 
-use super::{ToolCall, ToolOutput};
+use super::{ToolCall, ToolResult};
 use crate::agent::AgentSession;
 use crate::harness::SessionRole;
 use crate::provider::ToolSpec;
@@ -83,7 +83,7 @@ pub async fn dispatch(
     supervisor: Option<Arc<Supervisor>>,
     child: Option<Arc<ChildLink>>,
     call: &ToolCall,
-) -> ToolOutput {
+) -> ToolResult {
     match call.name.as_str() {
         // Cross-session: routed through the supervisor, which runs both
         // sides on the sessions' own stores (review B3).
@@ -96,11 +96,11 @@ pub async fn dispatch(
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 match sup.assign_task(task, worker) {
-                    Ok(()) => format!("assigned {task} to {worker}").into(),
-                    Err(e) => e.into(),
+                    Ok(()) => ToolResult::ok(format!("assigned {task} to {worker}").into()),
+                    Err(e) => ToolResult::err(e.into()),
                 }
             }
-            None => "task_assign: this session has no sub-agents".into(),
+            None => ToolResult::err("task_assign: this session has no sub-agents".into()),
         },
         // Tasks live in this session's own store (spec §5.3) — parent and
         // child alike. Routed before the sub-agent surface so a child
@@ -108,16 +108,16 @@ pub async fn dispatch(
         name if name.starts_with("task_") => {
             // #149: a turn-loop task dispatch defers the record's write behind
             // the in-flight tool entry.
-            session.task_tool_call(name, &call.args, true).into()
+            ToolResult::from_result(session.task_tool_call(name, &call.args, true))
         }
-        "recall" => session.recall_scoped(&call.args).into(),
+        "recall" => ToolResult::from_result(session.recall_scoped(&call.args)),
         name if name.starts_with("subagent_") => match supervisor.as_ref() {
-            Some(sup) => crate::subagent::route_parent(sup, call).into(),
-            None => format!("{name}: not available in this session").into(),
+            Some(sup) => ToolResult::from_result(crate::subagent::route_parent(sup, call)),
+            None => ToolResult::err(format!("{name}: not available in this session").into()),
         },
         "parent_notify" => match child.as_deref() {
-            Some(link) => link.notify(&call.args).into(),
-            None => "parent_notify: not available in a top-level session".into(),
+            Some(link) => ToolResult::ok(link.notify(&call.args).into()),
+            None => ToolResult::err("parent_notify: not available in a top-level session".into()),
         },
         _ => super::dispatch(cwd, call, image_max_bytes).await,
     }

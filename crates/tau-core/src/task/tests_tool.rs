@@ -16,6 +16,15 @@ fn session_in(dir: &std::path::Path, id: &str) -> SessionStore {
     store
 }
 
+/// The tool's output text, success or diagnostic alike: `tool_call` returns a
+/// typed `Result` now, and these tests assert on the string either way.
+fn call_str(store: &mut SessionStore, name: &str, args: &Value) -> String {
+    match tool_call(store, name, args) {
+        Ok(s) => s,
+        Err(e) => e,
+    }
+}
+
 /// A created task with one criterion: the shared fixture for the
 /// transition tests.
 fn with_task(store: &mut SessionStore) {
@@ -33,7 +42,7 @@ fn with_task(store: &mut SessionStore) {
 fn create_reports_the_id_steps_and_criteria() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
-    let out = tool_call(
+    let out = call_str(
         &mut store,
         "task_create",
         &json!({
@@ -50,7 +59,7 @@ fn create_missing_title_is_a_diagnostic() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_create", &json!({ "steps": [] })),
+        call_str(&mut store, "task_create", &json!({ "steps": [] })),
         "task_create: missing \"title\""
     );
 }
@@ -60,7 +69,7 @@ fn create_step_without_text_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(
+        call_str(
             &mut store,
             "task_create",
             &json!({ "title": "t", "steps": [{ "expected_output": "x" }] })
@@ -74,7 +83,7 @@ fn create_step_without_expected_output_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(
+        call_str(
             &mut store,
             "task_create",
             &json!({ "title": "t", "steps": [{ "text": "draft" }] })
@@ -88,7 +97,7 @@ fn create_non_string_criterion_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(
+        call_str(
             &mut store,
             "task_create",
             &json!({ "title": "t", "criteria": [42] })
@@ -102,7 +111,7 @@ fn start_missing_task_is_a_diagnostic() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_start", &json!({})),
+        call_str(&mut store, "task_start", &json!({})),
         "task_start: missing \"task\""
     );
 }
@@ -112,7 +121,7 @@ fn start_of_an_unknown_task_reports_the_store_error() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_start", &json!({ "task": "task-1" })),
+        call_str(&mut store, "task_start", &json!({ "task": "task-1" })),
         "task_start: task task-1: not found in this session"
     );
 }
@@ -122,15 +131,15 @@ fn evidence_missing_fields_are_diagnostics() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_evidence", &json!({ "criterion": "c" })),
+        call_str(&mut store, "task_evidence", &json!({ "criterion": "c" })),
         "task_evidence: missing \"task\""
     );
     assert_eq!(
-        tool_call(&mut store, "task_evidence", &json!({ "task": "task-1" })),
+        call_str(&mut store, "task_evidence", &json!({ "task": "task-1" })),
         "task_evidence: missing \"criterion\""
     );
     assert_eq!(
-        tool_call(
+        call_str(
             &mut store,
             "task_evidence",
             &json!({ "task": "task-1", "criterion": "c" })
@@ -144,7 +153,7 @@ fn evidence_of_an_unknown_task_reports_the_store_error() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(
+        call_str(
             &mut store,
             "task_evidence",
             &json!({ "task": "task-1", "criterion": "c", "summary": "s" })
@@ -158,11 +167,11 @@ fn block_missing_fields_are_diagnostics() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_block", &json!({ "reason": "r" })),
+        call_str(&mut store, "task_block", &json!({ "reason": "r" })),
         "task_block: missing \"task\""
     );
     assert_eq!(
-        tool_call(&mut store, "task_block", &json!({ "task": "task-1" })),
+        call_str(&mut store, "task_block", &json!({ "task": "task-1" })),
         "task_block: missing \"reason\""
     );
 }
@@ -172,7 +181,7 @@ fn finish_missing_task_is_a_diagnostic() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_finish", &json!({})),
+        call_str(&mut store, "task_finish", &json!({})),
         "task_finish: missing \"task\""
     );
 }
@@ -182,7 +191,7 @@ fn cancel_missing_task_is_a_diagnostic() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_cancel", &json!({})),
+        call_str(&mut store, "task_cancel", &json!({})),
         "task_cancel: missing \"task\""
     );
 }
@@ -192,7 +201,7 @@ fn cancel_of_an_unknown_task_reports_the_store_error() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_cancel", &json!({ "task": "task-9" })),
+        call_str(&mut store, "task_cancel", &json!({ "task": "task-9" })),
         "task_cancel: task task-9: not found in this session"
     );
 }
@@ -202,7 +211,7 @@ fn an_unknown_tool_name_is_named() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     assert_eq!(
-        tool_call(&mut store, "task_teleport", &json!({})),
+        call_str(&mut store, "task_teleport", &json!({})),
         "unknown task tool task_teleport"
     );
 }
@@ -211,23 +220,23 @@ fn an_unknown_tool_name_is_named() {
 fn the_full_lifecycle_runs_create_start_evidence_finish() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
-    tool_call(
+    call_str(
         &mut store,
         "task_create",
         &json!({ "title": "ship it", "criteria": ["it builds"] }),
     );
     assert!(
-        tool_call(&mut store, "task_start", &json!({ "task": "task-1" })).contains("in_progress")
+        call_str(&mut store, "task_start", &json!({ "task": "task-1" })).contains("in_progress")
     );
     assert!(
-        tool_call(
+        call_str(
             &mut store,
             "task_evidence",
             &json!({ "task": "task-1", "criterion": "it builds", "summary": "green" })
         )
         .contains("task-1")
     );
-    assert!(tool_call(&mut store, "task_finish", &json!({ "task": "task-1" })).contains("done"));
+    assert!(call_str(&mut store, "task_finish", &json!({ "task": "task-1" })).contains("done"));
 }
 
 #[test]
@@ -235,14 +244,14 @@ fn finish_without_passing_evidence_is_refused_unless_forced() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path(), "s1");
     with_task(&mut store);
-    tool_call(&mut store, "task_start", &json!({ "task": "task-1" }));
-    let refused = tool_call(&mut store, "task_finish", &json!({ "task": "task-1" }));
+    call_str(&mut store, "task_start", &json!({ "task": "task-1" }));
+    let refused = call_str(&mut store, "task_finish", &json!({ "task": "task-1" }));
     assert!(refused.contains("task-1"), "{refused}");
     assert!(
         !refused.contains("done"),
         "an unmet criterion must not finish: {refused}"
     );
-    let forced = tool_call(
+    let forced = call_str(
         &mut store,
         "task_finish",
         &json!({ "task": "task-1", "force": true, "reason": "ship it anyway" }),

@@ -351,9 +351,9 @@ pub fn seed_compacted_child(
 /// The `recall` tool (spec §4): browse the raw entries an observation group
 /// covers. Groups carry `range="startEntryId:endEntryId"` (comma-joined
 /// segments for a merged span); browsing only, no vector search.
-pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> String {
+pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Result<String, String> {
     let Some(group_id) = args.get("group").and_then(Value::as_str) else {
-        return "recall: missing \"group\"".into();
+        return Err("recall: missing \"group\"".into());
     };
     // Search the whole log: the frozen prefix is included even while
     // demoted (it stays in the record, recall reaches it — spec §4).
@@ -362,7 +362,7 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
         .into_iter()
         .find(|g| g.id == group_id)
     else {
-        return format!("no observation group {group_id}");
+        return Err(format!("no observation group {group_id}"));
     };
     let segments: Vec<&str> = group
         .range
@@ -374,13 +374,13 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
         segments.first().and_then(|s| s.split(':').next()),
         segments.last().and_then(|s| s.split(':').next_back()),
     ) else {
-        return "the group has no range".into();
+        return Err("the group has no range".into());
     };
     let Ok(entries) = store.entries_range(0, usize::MAX) else {
-        return "session read failed".into();
+        return Err("session read failed".into());
     };
     let Some(start_idx) = entries.iter().position(|e| e.id == start) else {
-        return "range start not in this session".into();
+        return Err("range start not in this session".into());
     };
     let end_idx = entries
         .iter()
@@ -392,7 +392,7 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Stri
         let preview: String = text.chars().take(200).collect();
         let _ = writeln!(out, "{} {} {}", e.id, e.kind, preview);
     }
-    out
+    Ok(out)
 }
 
 /// The idle gap before the latest turn, in seconds: the timestamp distance

@@ -137,11 +137,15 @@ async fn a_compacted_child_recalls_the_parent_session() {
     s.drive.await.unwrap();
     let child = sup.child_agent(&s.handle).unwrap();
     // Parent scope: the parent's raw entries come back.
-    let out = child.recall_scoped(&json!({ "group": "pg", "scope": "parent" }));
+    let out = child
+        .recall_scoped(&json!({ "group": "pg", "scope": "parent" }))
+        .unwrap();
     assert!(out.contains("parent raw one"), "{out}");
     assert!(out.contains("parent raw two"), "{out}");
     // The parent itself has no parent link.
-    let out = parent.recall_scoped(&json!({ "group": "pg", "scope": "parent" }));
+    let out = parent
+        .recall_scoped(&json!({ "group": "pg", "scope": "parent" }))
+        .unwrap_err();
     assert!(out.contains("needs a parent link"), "{out}");
 }
 

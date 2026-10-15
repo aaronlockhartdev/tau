@@ -631,14 +631,14 @@ pub struct SubagentInfo {
 
 /// Route a tool call at the parent's sub-agent surface (called from the
 /// loop's tool dispatch; diagnostics are results, never panics).
-pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
+pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> Result<String, String> {
     match tc.name.as_str() {
         "subagent_spawn" => {
             let Some(agent_type) = tc.args.get("type").and_then(Value::as_str) else {
-                return "subagent_spawn: missing \"type\"".into();
+                return Err("subagent_spawn: missing \"type\"".into());
             };
             let Some(brief) = tc.args.get("brief").and_then(Value::as_str) else {
-                return "subagent_spawn: missing \"brief\"".into();
+                return Err("subagent_spawn: missing \"brief\"".into());
             };
             let context_mode =
                 tc.args
@@ -655,17 +655,17 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
                     // The spawn reports the child's name: the model refers
                     // to it by name in the sub-agent tools that follow
                     // (the session id stays the machine key, internal).
-                    format!(
+                    Ok(format!(
                         "spawned sub-agent {}; it reports back via parent_notify",
                         s.name
-                    )
+                    ))
                 }
-                Err(e) => e,
+                Err(e) => Err(e),
             }
         }
         "subagent_message" => {
             let Some(name) = tc.args.get("name").and_then(Value::as_str) else {
-                return "subagent_message: missing \"name\"".into();
+                return Err("subagent_message: missing \"name\"".into());
             };
             let text = tc
                 .args
@@ -673,42 +673,44 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> String {
                 .and_then(Value::as_str)
                 .map(str::to_owned);
             match sup.message(name, text, Lane::Steering) {
-                Ok(s) => s,
-                Err(e) => e,
+                Ok(s) => Ok(s),
+                Err(e) => Err(e),
             }
         }
         "subagent_stop" => {
             let Some(name) = tc.args.get("name").and_then(Value::as_str) else {
-                return "subagent_stop: missing \"name\"".into();
+                return Err("subagent_stop: missing \"name\"".into());
             };
             match sup.stop(name, StoppedBy::Parent) {
-                Ok(s) => s,
-                Err(e) => e,
+                Ok(s) => Ok(s),
+                Err(e) => Err(e),
             }
         }
         "subagent_state" => {
             let Some(name) = tc.args.get("name").and_then(Value::as_str) else {
-                return "subagent_state: missing \"name\"".into();
+                return Err("subagent_state: missing \"name\"".into());
             };
             match sup.state_info(name) {
                 Some(info) => {
                     let name = sup
                         .resolve(name)
                         .map_or_else(|| info.child.clone(), |c| c.name.clone());
-                    format!(
+                    Ok(format!(
                         "{name}: {}{} — session {}",
                         info.state.kind(),
                         info.waiting_on
                             .map(|w| format!(" (waiting on {})", w.as_str()))
                             .unwrap_or_default(),
                         info.child
-                    )
+                    ))
                 }
-                None => format!("subagent_state: no sub-agent {name} in this session"),
+                None => Err(format!(
+                    "subagent_state: no sub-agent {name} in this session"
+                )),
             }
         }
         // The core tools route through the loop's normal dispatch.
-        other => format!("unknown tool: {other}"),
+        other => Err(format!("unknown tool: {other}")),
     }
 }
 

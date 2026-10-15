@@ -3,7 +3,7 @@
 //! the module, previously only reachable by running a whole turn.
 
 use super::surface;
-use super::{ToolCall, ToolOutput};
+use super::{ToolCall, ToolOutput, ToolResult};
 use crate::agent::{AgentSession, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
@@ -27,8 +27,8 @@ fn fresh_store(cwd: &std::path::Path, id: &str) -> SessionStore {
 }
 
 /// The tool output's text: an image block on these paths is a bug.
-fn text(out: ToolOutput) -> String {
-    match out {
+fn text(out: ToolResult) -> String {
+    match out.output {
         ToolOutput::Text(t) => t,
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
     }

@@ -419,7 +419,7 @@ impl AgentSession {
     /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
     /// the parent session's raw history (a compacted child's frozen prefix
     /// points there); everything else is this session's own log.
-    pub(crate) fn recall_scoped(&self, args: &Value) -> String {
+    pub(crate) fn recall_scoped(&self, args: &Value) -> Result<String, String> {
         if args.get("scope").and_then(Value::as_str) == Some("parent") {
             let (link, cwd) = {
                 let inner = self
@@ -434,14 +434,20 @@ impl AgentSession {
                     // is opaque, never parsed.
                     let mut store = SessionStore::for_workspace(&cwd, link.parent_session());
                     match store.open() {
-                        Ok(()) => match crate::om_integration::OmState::load_record(&mut store) {
-                            Ok(record) => crate::om_integration::recall(&mut store, &record, args),
-                            Err(e) => format!("recall: parent record: {e}"),
-                        },
-                        Err(e) => format!("recall: parent session: {e}"),
+                        Ok(()) => {
+                            let record =
+                                match crate::om_integration::OmState::load_record(&mut store) {
+                                    Ok(r) => r,
+                                    Err(e) => return Err(format!("recall: parent record: {e}")),
+                                };
+                            crate::om_integration::recall(&mut store, &record, args)
+                        }
+                        Err(e) => Err(format!("recall: parent session: {e}")),
                     }
                 }
-                None => "recall: scope \"parent\" needs a parent link (compacted child)".into(),
+                None => {
+                    Err("recall: scope \"parent\" needs a parent link (compacted child)".into())
+                }
             }
         } else {
             let mut inner = self
@@ -471,7 +477,7 @@ impl AgentSession {
     /// file (one store, one lock); the child's pane is a projection.
     /// The child's `inner` is read and released before the parent's lock
     /// is taken: no child-lock → parent-lock nesting (the deadlock guard).
-    fn task_tool_dispatch(&self, name: &str, args: &Value, defer: bool) -> String {
+    fn task_tool_dispatch(&self, name: &str, args: &Value, defer: bool) -> Result<String, String> {
         let (is_child, parent) = {
             let inner = self
                 .inner
@@ -483,7 +489,7 @@ impl AgentSession {
             )
         };
         if let Some(r) = tools::surface::task_child_refusal(is_child, name) {
-            return r;
+            return Err(r);
         }
         // #149: a turn-loop task dispatch defers the record's file write (it
         // lands behind the in-flight tool entry); a command writes at once.
@@ -530,7 +536,12 @@ impl AgentSession {
 
     /// The seven task tools (the app's task commands; the model's dispatch
     /// routes them through the surface) — both share the child→parent routing.
-    pub(crate) fn task_tool_call(&self, name: &str, args: &Value, defer: bool) -> String {
+    pub(crate) fn task_tool_call(
+        &self,
+        name: &str,
+        args: &Value,
+        defer: bool,
+    ) -> Result<String, String> {
         self.task_tool_dispatch(name, args, defer)
     }
 

@@ -722,7 +722,8 @@ async fn the_subagent_tools_address_a_child_by_name() {
             name: "subagent_state".into(),
             args: json!({ "name": s.name }),
         },
-    );
+    )
+    .unwrap();
     assert!(out.starts_with(&s.name), "{out}");
     assert!(
         !out.contains(&s.handle),
@@ -738,7 +739,8 @@ async fn the_subagent_tools_address_a_child_by_name() {
             name: "subagent_spawn".into(),
             args: json!({ "type": "general", "brief": "second", "context_mode": "fresh" }),
         },
-    );
+    )
+    .unwrap();
     let name = out
         .strip_prefix("spawned sub-agent ")
         .and_then(|r| r.split_once("; it reports back via parent_notify"))
