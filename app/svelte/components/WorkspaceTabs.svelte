@@ -18,8 +18,7 @@
   } from '../lib/store.svelte';
   import TauLogo from './TauLogo.svelte';
   import type { Workspace } from '../lib/protocol';
-  import { tick } from 'svelte';
-  import { ctxClamp } from '../lib/ui';
+  import { useContextMenu } from '../lib/useContextMenu.svelte';
   import { Bell, Maximize2 } from '@lucide/svelte';
 
   // The right-click menu: its position plus the selection it acts on.
@@ -59,34 +58,21 @@
     ctx = null;
     void closeWorkspaces(store.workspaces.filter((w) => ids.includes(w.id)));
   }
+  $effect(() =>
+    useContextMenu(ctx, menu, {
+      close: () => {
+        store.tabSelected = [];
+        store.tabSelAnchor = null;
+        ctx = null;
+      },
+      ignoreClick: (e) => {
+        const t = e.target as Element | null;
+        return !!(t?.closest?.('.tabs') || t?.closest?.('.ctxmenu'));
+      },
+      extraActive: () => store.tabSelected.length > 0
+    }),
+  );
 
-  $effect(() => {
-    if (!ctx && store.tabSelected.length === 0) return;
-    const clear = () => {
-      store.tabSelected = [];
-      store.tabSelAnchor = null;
-      ctx = null;
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') clear();
-    };
-    const close = (e: MouseEvent) => {
-      const t = e.target as Element | null;
-      if (t?.closest?.('.tabs') || t?.closest?.('.ctxmenu')) return;
-      clear();
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    void tick().then(() => {
-      const el = menu.el;
-      if (!ctx || !el) return;
-      menu.pos = ctxClamp(ctx, el);
-    });
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKey);
-    };
-  });
 </script>
 
 <div class="bar" class:fs={store.fullscreen} data-tauri-drag-region>

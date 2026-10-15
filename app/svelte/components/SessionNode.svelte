@@ -19,7 +19,7 @@
   import { nextSelection } from '../lib/selection';
   import { tick } from 'svelte';
   import { Archive } from '@lucide/svelte';
-  import { ctxClamp } from '../lib/ui';
+  import { useContextMenu } from '../lib/useContextMenu.svelte';
   import { fmtAgo } from '../lib/format';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -181,24 +181,7 @@
     ctx = { x: e.clientX, y: e.clientY };
     menu.pos = { x: e.clientX, y: e.clientY };
   }
-  $effect(() => {
-    if (!ctx) return;
-    const close = () => (ctx = null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    void tick().then(() => {
-      const el = menu.el;
-      if (!ctx || !el) return;
-      menu.pos = ctxClamp(ctx, el);
-    });
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKey);
-    };
-  });
+  $effect(() => useContextMenu(ctx, menu, { close: () => (ctx = null) }));
   function sessionRunning(s: SessionState): boolean {
     return (
       s.turn === 'running' ||
