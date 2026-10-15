@@ -14,23 +14,36 @@ pub struct AssembledContext {
     pub om_input_items: Vec<InputEntry>,
 }
 
+/// The session's active branch: every entry, then the leaf's branch.
+fn branch_of(store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
+    let all = store.entries_range(0, usize::MAX)?;
+    let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
+    Ok(branch_entries(&all, leaf.as_deref()))
+}
+
+/// The raw entries strictly after `cursor_id` in `branch` (all of them when the
+/// cursor is absent or not on the branch).
+fn raw_after(branch: &[Entry], cursor_id: Option<&str>) -> Vec<Entry> {
+    let after = match cursor_id {
+        Some(id) => match branch.iter().position(|e| e.id == id) {
+            Some(i) => &branch[i + 1..],
+            None => branch,
+        },
+        None => branch,
+    };
+    after.iter().filter(|e| is_raw(e)).cloned().collect()
+}
 impl OmState {
     /// The unobserved raw on the active branch: the entries after the
     /// cursor. A missing cursor means the whole branch; a cursor not on
     /// this branch (a branch switch) means the branch is unobserved —
     /// the cursor is path-scoped (spec §4).
     pub fn unobserved(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-        let all = store.entries_range(0, usize::MAX)?;
-        let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
-        let branch = branch_entries(&all, leaf.as_deref());
+        let branch = branch_of(store)?;
         let Some(cursor) = &self.record.cursor else {
             return Ok(branch);
         };
-        let unobserved = match branch.iter().position(|e| e.id == cursor.entry_id) {
-            Some(i) => &branch[i + 1..],
-            None => &branch[..],
-        };
-        Ok(unobserved.iter().filter(|e| is_raw(e)).cloned().collect())
+        Ok(raw_after(&branch, Some(cursor.entry_id.as_str())))
     }
 
     #[must_use]
@@ -404,17 +417,8 @@ impl OmState {
     /// cursor never lags the observation cursor — promotion advances the
     /// latter to the buffered material's end).
     pub(super) fn unbuffered(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-        let all = store.entries_range(0, usize::MAX)?;
-        let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
-        let branch = branch_entries(&all, leaf.as_deref());
-        let after = match &self.buffer_cursor {
-            Some(id) => match branch.iter().position(|e| e.id == *id) {
-                Some(i) => &branch[i + 1..],
-                None => &branch[..],
-            },
-            None => &branch[..],
-        };
-        Ok(after.iter().filter(|e| is_raw(e)).cloned().collect())
+        let branch = branch_of(store)?;
+        Ok(raw_after(&branch, self.buffer_cursor.as_deref()))
     }
 
     /// The Reflector prompt for a level (spec §4): the frozen variant
