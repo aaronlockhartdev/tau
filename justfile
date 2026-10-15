@@ -19,7 +19,9 @@ build:
     set -eu
     cd "{{justfile_directory()}}"
     cargo build --workspace --release
-    (cd app && npm ci && npm run build)
+    # npm ci only — tauri's beforeBuildCommand (tauri.conf.json) runs the
+    # frontend build; building here too ran vite twice per `just build`.
+    (cd app && npm ci)
     if [ "$(uname)" = "Darwin" ]; then
       (cd app && npx tauri build --bundles app,dmg)
     else
