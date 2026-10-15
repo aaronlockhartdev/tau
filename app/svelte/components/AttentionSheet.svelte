@@ -4,6 +4,7 @@
   // the session (the workspace context follows the session).
   import { store, attention, switchSession } from '../lib/store.svelte';
   import { fmtAgo } from '../lib/format';
+  import Overlay from './Overlay.svelte';
 
   const open = $derived(store.attentionOpen);
   const items = $derived(attention());
@@ -16,12 +17,13 @@
 </script>
 
 {#if open}
-  <div class="dim" role="presentation" onclick={() => (store.attentionOpen = false)}></div>
-  <div class="sheet" role="dialog" aria-label="Needs your attention">
-    <div class="head">
-      <span>needs you · {items.length}</span>
-      <button class="x" title="close" onclick={() => (store.attentionOpen = false)}>×</button>
-    </div>
+  <Overlay
+    label="Needs your attention"
+    panel="sheet"
+    z={40}
+    title={`needs you · ${items.length}`}
+    onClose={() => (store.attentionOpen = false)}
+  >
     <div class="list">
       {#if items.length === 0}
         <div class="empty">nothing is waiting — all clear</div>
@@ -37,56 +39,17 @@
         </button>
       {/each}
     </div>
-  </div>
+  </Overlay>
 {/if}
 
 <style>
-  .dim {
-    position: fixed;
-    inset: 0;
-    background: rgba(5, 6, 8, 0.72);
-    z-index: 40;
-  }
-  .sheet {
-    position: fixed;
+  :global(.sheet) {
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
     width: 420px;
     max-height: 60vh;
-    display: flex;
-    flex-direction: column;
-    background: var(--raised);
-    border: 1px solid var(--line2);
-    border-radius: 10px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
-    z-index: 41;
-  }
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--line);
-    font: 700 10.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    color: var(--red);
-    flex: none;
-  }
-  .x {
-    background: none;
-    border: none;
-    color: var(--dim);
-    font-size: 15px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 2px 6px;
-    border-radius: 5px;
-  }
-  .x:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: var(--tx);
+    --head-color: var(--red);
   }
   .list {
     overflow: auto;

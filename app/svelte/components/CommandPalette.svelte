@@ -4,6 +4,7 @@
   // j/k + arrows move the active row, Enter runs it, Esc closes.
   import { store, switchSession, setFollow, newSession, archiveSession, stop } from '../lib/store.svelte';
   import { paletteItems, filterItems, type PaletteItem } from '../lib/palette';
+  import Overlay from './Overlay.svelte';
 
   const open = $derived(store.paletteOpen);
   let query = $state('');
@@ -76,8 +77,12 @@
 </script>
 
 {#if open}
-  <div class="dim" role="presentation" onclick={() => (store.paletteOpen = false)}></div>
-  <div class="pal" role="dialog" aria-label="Command palette">
+  <Overlay
+    label="Command palette"
+    panel="pal"
+    z={60}
+    onClose={() => (store.paletteOpen = false)}
+  >
     <input
       bind:this={input}
       bind:value={query}
@@ -105,30 +110,16 @@
         <div class="empty">no match</div>
       {/if}
     </div>
-  </div>
+  </Overlay>
 {/if}
 
 <style>
-  .dim {
-    position: fixed;
-    inset: 0;
-    background: rgba(5, 6, 8, 0.72);
-    z-index: 60;
-  }
-  .pal {
-    position: fixed;
+  :global(.pal) {
     top: 18%;
     left: 50%;
     transform: translateX(-50%);
     width: 520px;
     max-height: 60vh;
-    display: flex;
-    flex-direction: column;
-    background: var(--raised);
-    border: 1px solid var(--line2);
-    border-radius: 10px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
-    z-index: 61;
     overflow: hidden;
   }
   .q {
