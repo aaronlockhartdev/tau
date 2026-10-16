@@ -69,6 +69,11 @@ impl AgentSession {
         // A force/stop that landed before the turn applies to the first call
         // only; later calls in the turn are fresh.
         let mut first_call = true;
+        // The plan state (design: re-injected at turn boundaries and after
+        // compaction only): captured once here and reused for every assembly
+        // in the turn, so a mid-turn plan-file edit can't churn the provider
+        // prefix cache; a mid-turn compaction re-captures it.
+        let mut plan_state = self.plan_state();
         loop {
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
@@ -134,11 +139,6 @@ impl AgentSession {
                 } else {
                     Some(contracts)
                 };
-                // The watcher-parsed plan state (design: the plan file is
-                // the source of truth): re-injected at every assembly — a
-                // turn boundary and a post-compaction call are both
-                // assemblies, so one site covers both.
-                let plan_state = inner.plan_hook.as_ref().and_then(|h| h());
                 // Assembly runs on the persistent state, not a clone: it is
                 // pure over the record, and the one-shot continuation-hint
                 // flip must stick (a clone's flip would be dropped, and the
@@ -253,6 +253,8 @@ impl AgentSession {
                 {
                     self.run_tools(&result.calls).await?;
                     self.om_mid_loop();
+                    // A mid-turn compaction is a re-injection point (design).
+                    plan_state = self.plan_state();
                     continue;
                 }
                 break;
@@ -265,6 +267,9 @@ impl AgentSession {
             }
             self.run_tools(&result.calls).await?;
             self.om_mid_loop();
+            // A mid-turn compaction is a re-injection point (design): the
+            // next assembly carries the refreshed state.
+            plan_state = self.plan_state();
             if self
                 .inner
                 .lock()
@@ -389,6 +394,19 @@ impl AgentSession {
         self.provider
             .forwarding_inner()
             .unwrap_or_else(|| self.provider.clone())
+    }
+    /// The watcher-parsed plan state (design: the plan file is the source of
+    /// truth), read under the session lock. Captured once per turn and
+    /// re-captured after a mid-turn compaction — the re-injection points —
+    /// not on every assembly, so a mid-turn plan-file edit can't churn the
+    /// provider prefix cache for the rest of the turn.
+    fn plan_state(&self) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .plan_hook
+            .as_ref()
+            .and_then(|h| h())
     }
 
     /// The turn-end OM pass (ticket #22, R4): one call — `settle_turn`

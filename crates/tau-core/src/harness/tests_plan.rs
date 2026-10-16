@@ -98,6 +98,48 @@ async fn session_new_seeds_the_plan_file_and_injects_its_path() {
         Some("# Current plan state")
     );
 }
+/// N2: the production wiring path — `SessionNew` wires the plan-state hook
+/// (`wire_events`), and the re-injection reaches the provider's request
+/// end-to-end, with no manual hook wiring (the `manual_session` tests set
+/// the hook by hand, duplicating `wire_events`).
+#[tokio::test]
+async fn session_new_reinjection_reaches_the_provider() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let provider = Arc::new(Capturing {
+        bodies: vec![crate::agent::testkit::sse("working", &[])],
+        index: AtomicUsize::new(0),
+        seen: Arc::new(Mutex::new(Vec::new())),
+    });
+    let seen = provider.seen.clone();
+    // The root-provider seam: `SessionNew` binds the capturing provider to
+    // the root session, so the turn's request is captured end-to-end.
+    let core = CoreBuilder::custom(providers())
+        .with_root_provider(provider)
+        .build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    core.dispatch(Command::MessageSend {
+        session: meta.id.clone(),
+        text: "go".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    let live = core.live(&meta.id).unwrap();
+    settle_turn(&live, &seen).await;
+
+    let ins = seen
+        .lock()
+        .unwrap()
+        .first()
+        .and_then(Clone::clone)
+        .expect("the request carries instructions");
+    assert!(
+        ins.contains("# Current plan state"),
+        "the production wiring re-injects the plan state: {ins}"
+    );
+}
 
 #[tokio::test]
 async fn a_plan_file_change_updates_the_plan_state() {

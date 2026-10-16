@@ -164,9 +164,17 @@ pub fn render(plan: &Plan) -> String {
     out
 }
 
-/// The system-prompt plan-file section header: `with_path` replaces an
-/// existing section at this marker.
+/// The model-facing plan-file section heading. `with_path` targets the
+/// section through `PLAN_SECTION_ANCHOR`, not this bare heading — a user
+/// AGENTS.md may legitimately carry a literal `# Plan file`.
 pub const PLAN_SECTION_HEADER: &str = "# Plan file";
+
+/// The injected section's unambiguous anchor: the heading plus the fixed
+/// intro line that always immediately follows it. `with_path` matches this
+/// composite, not the bare heading, so a user AGENTS.md that carries a
+/// literal `# Plan file` is never mistaken for the injected section — only
+/// the text this code injects has the composite.
+pub const PLAN_SECTION_ANCHOR: &str = "# Plan file\n\nYour plan lives at `";
 
 /// The system-prompt plan-file section: the file's exact path plus the
 /// keep-current instruction (the model edits it with its ordinary
@@ -191,7 +199,7 @@ pub fn section(file: &Path) -> String {
 #[must_use]
 pub fn with_path(prompt: &str, file: &Path) -> String {
     let section = section(file);
-    let Some(start) = prompt.find(PLAN_SECTION_HEADER) else {
+    let Some(start) = prompt.find(PLAN_SECTION_ANCHOR) else {
         return format!("{prompt}\n\n{section}");
     };
     // `find` indexes at a char boundary, so the slices are safe. The
@@ -437,6 +445,20 @@ the parser is the culprit
         assert!(child.ends_with("<available_skills>\n</available_skills>"));
     }
 
+    #[test]
+    fn with_path_does_not_truncate_user_content_named_like_the_section() {
+        // A user AGENTS.md carrying a literal `# Plan file` heading: the
+        // replacement must target the injected section (the anchor
+        // composite), never the user's heading.
+        let user = "base\n\n# Plan file\n\nthe user's own plan notes";
+        let parent = with_path(user, Path::new("/w/.tau/plans/parent.md"));
+        let child = with_path(&parent, Path::new("/w/.tau/plans/child.md"));
+        // The user's content survives the replacement.
+        assert!(child.contains("the user's own plan notes"));
+        // The injected section is replaced with the child's path.
+        assert!(child.contains("/w/.tau/plans/child.md"));
+        assert!(!child.contains("parent.md"));
+    }
     #[test]
     fn render_omits_empty_sections() {
         assert_eq!(render(&Plan::default()), "# Current plan state");

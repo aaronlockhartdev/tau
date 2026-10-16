@@ -296,8 +296,12 @@ impl Core {
         // The live shell's provider (the stream-forwarding seam); the
         // constructor takes the same resolved first provider for the
         // supervisor's child factory (one resolution, ticket #43).
+        let inner = self
+            .root_provider
+            .clone()
+            .unwrap_or_else(|| session_inner(&self.client, &first, &config.requests));
         let provider = Arc::new(ForwardingProvider::new(
-            session_inner(&self.client, &first, &config.requests),
+            inner,
             self.events_tx.clone(),
             self.pipe.clone(),
             workspace.id.clone(),

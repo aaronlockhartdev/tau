@@ -3,7 +3,8 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicU64, BTreeMap, ChildProviderFactory, Config, Duration,
     Event, ForwardingProvider, HashMap, Lane, MessageLane, Mutex, Ordering, Path, PathBuf,
-    ProtocolError, SessionMeta, SkillInfo, SystemEventKind, Watcher, Weak, Workspace, config, mpsc,
+    ProtocolError, SessionMeta, SkillInfo, SystemEventKind, TurnProviderRef, Watcher, Weak,
+    Workspace, config, mpsc,
 };
 
 /// The watcher's debounce window (design #30): a save burst (a temp-write
@@ -96,6 +97,11 @@ pub struct Core {
     pub(crate) events_rx: Mutex<Option<mpsc::Receiver<Event>>>,
     /// The test-seam child provider factory (None in production builds).
     pub(crate) child_factory: Option<Arc<dyn ChildProviderFactory>>,
+    /// The test-seam root provider: when set, the `SessionNew`/reopen path
+    /// binds this to the root session instead of the config's first provider
+    /// (None in production builds), so a test can capture the re-injected
+    /// instructions through the production wiring.
+    pub(crate) root_provider: Option<TurnProviderRef>,
     /// Child handle → parent session (the spawn's record, R3): the handle
     /// is opaque — a command carrying it resolves the parent from here,
     /// never from the handle's format.
@@ -115,6 +121,10 @@ pub struct CoreBuilder {
     /// A test seam: the child provider factory replaces the production
     /// one (tests script child turns).
     child_factory: Option<Arc<dyn ChildProviderFactory>>,
+    /// A test seam: the root provider the `SessionNew`/reopen path binds to
+    /// the root session (tests capture the re-injected instructions through
+    /// the production wiring).
+    root_provider: Option<TurnProviderRef>,
 }
 
 impl CoreBuilder {
@@ -129,6 +139,7 @@ impl CoreBuilder {
             custom: false,
             providers: BTreeMap::new(),
             child_factory: None,
+            root_provider: None,
         }
     }
 
@@ -141,6 +152,7 @@ impl CoreBuilder {
             custom: true,
             providers,
             child_factory: None,
+            root_provider: None,
         }
     }
 
@@ -158,6 +170,14 @@ impl CoreBuilder {
     #[must_use]
     pub fn with_child_factory(mut self, f: Arc<dyn ChildProviderFactory>) -> Self {
         self.child_factory = Some(f);
+        self
+    }
+    /// A test seam: the root session (the `SessionNew`/reopen path) binds
+    /// this provider instead of the config's first provider, so a test can
+    /// capture the re-injected instructions through the production wiring.
+    #[must_use]
+    pub fn with_root_provider(mut self, p: TurnProviderRef) -> Self {
+        self.root_provider = Some(p);
         self
     }
 
@@ -215,6 +235,7 @@ impl CoreBuilder {
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             child_factory: self.child_factory.clone(),
+            root_provider: self.root_provider.clone(),
             child_handles: Mutex::new(HashMap::new()),
         });
         core.self_weak
