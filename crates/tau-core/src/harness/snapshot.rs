@@ -73,6 +73,7 @@ impl Core {
                 } else {
                     TurnState::Idle
                 },
+                gate_failed: live.agent.gate_failed(),
                 subagents: live
                     .agent
                     .subagents()
@@ -162,6 +163,7 @@ impl Core {
             live: LiveState {
                 queue: vec![],
                 turn: TurnState::Idle,
+                gate_failed: false,
                 subagents: vec![],
                 tasks: crate::task::fold_entries(&entries),
             },

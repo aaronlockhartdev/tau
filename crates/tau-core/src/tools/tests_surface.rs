@@ -71,6 +71,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             tool_batch_on_force: ToolBatchPolicy::Complete,
             om: None,
             om_model: String::new(),
+            gates: None,
         },
     )
     .unwrap();
@@ -91,6 +92,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
@@ -193,6 +195,7 @@ fn the_role_specs_table_is_exact() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         om: None,
         om_model: String::new(),
+        gates: None,
     };
     assert_eq!(
         names(surface::specs_for(&bare, None)),

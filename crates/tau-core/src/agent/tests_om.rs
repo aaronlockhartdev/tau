@@ -61,6 +61,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
         provider: provider.clone(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),
@@ -157,6 +158,7 @@ async fn om_runs_notify_the_status_hook_in_order() {
         provider: provider.clone(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),
@@ -234,6 +236,7 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
         provider: provider.clone(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord {
@@ -332,6 +335,7 @@ async fn a_compaction_reinjects_the_active_task_resume_contract() {
         provider: provider.clone(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),

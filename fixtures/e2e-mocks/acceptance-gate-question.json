@@ -1,0 +1,12 @@
+{
+  "match": "test -f question-target.txt",
+  "turns": [
+    {
+      "calls": [
+        { "name": "write", "arguments": { "path": "q.txt", "content": "a" } }
+      ]
+    },
+    { "text": "QUESTION: should I continue with the remaining steps?" }
+  ],
+  "usage": { "input_tokens": 120, "output_tokens": 60, "total_tokens": 180 }
+}

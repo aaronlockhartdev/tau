@@ -40,6 +40,7 @@ expression: output
     "live": {
       "queue": [],
       "turn": "running",
+      "gate_failed": false,
       "subagents": [
         {
           "handle": "s1-1",

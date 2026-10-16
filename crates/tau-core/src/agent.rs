@@ -134,6 +134,12 @@ pub(crate) struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
+    /// The completion gate (spec §5.3); `None` = no gate configured.
+    pub(crate) gates: Option<crate::config::Gates>,
+    /// The live gate state: `true` when the most recent gate-qualified turn
+    /// failed after exhausting `max_retries` repairs; a pass clears it
+    /// (spec §5.3: the session is marked `gate_failed`).
+    pub(crate) gate_failed: bool,
     pub(crate) om: Option<crate::om_integration::OmState>,
     /// The in-flight background buffer cycle (ticket #86 P2): set under
     /// the lock at spawn, so the task's first re-lock sees it; process
@@ -189,6 +195,8 @@ pub(crate) struct SessionParams {
     pub provider: TurnProviderRef,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
+    /// The completion gate (spec §5.3); `None` = no gate.
+    pub gates: Option<crate::config::Gates>,
     /// The OM integration state (ticket #22); `None` = OM disabled and the
     /// loop behaves as before.
     pub om: Option<crate::om_integration::OmState>,
@@ -228,6 +236,8 @@ impl AgentSession {
                 tool_batch_on_force: p.tool_batch_on_force,
                 turn: p.turn,
                 queue: VecDeque::new(),
+                gates: p.gates,
+                gate_failed: false,
                 om: p.om,
                 om_inflight: None,
                 om_buffer_boundary: 0,
@@ -663,11 +673,23 @@ impl AgentSession {
             .om
             .clone()
     }
+
+    /// The live gate state (spec §5.3): `true` when the most recent
+    /// gate-qualified turn failed after exhausting `max_retries` repairs.
+    #[must_use]
+    pub(crate) fn gate_failed(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .gate_failed
+    }
 }
 mod turn;
 
 #[cfg(test)]
 pub(crate) mod testkit;
+#[cfg(test)]
+mod tests_gate;
 #[cfg(test)]
 mod tests_om;
 #[cfg(test)]

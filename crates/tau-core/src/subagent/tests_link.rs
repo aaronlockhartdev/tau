@@ -38,6 +38,7 @@ fn sup_with_parent(
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,

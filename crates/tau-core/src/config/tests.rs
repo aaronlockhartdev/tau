@@ -26,6 +26,35 @@ fn absent_files_yield_defaults() {
     assert_eq!(config.cache.retention, CacheRetention::None);
     assert_eq!(config.limits.image.jpeg_quality, 80);
     assert_eq!(config.limits.max_request_bytes, None);
+    // No `[gates]` section: no gate (enforce-always — presence is the switch).
+    assert!(config.gates.is_none());
+}
+
+#[test]
+fn gates_section_parses_with_defaults_for_omitted_fields() {
+    // The section's presence turns the gate on; omitted fields take their
+    // defaults (timeout 300 s, max_retries 2).
+    let toml = "[gates]\ncommand = \"cargo test\"\n";
+    let config = load_from(toml, "").unwrap();
+    let gates = config.gates.as_ref().unwrap();
+    assert_eq!(gates.command, "cargo test");
+    assert_eq!(gates.timeout_secs, 300);
+    assert_eq!(gates.max_retries, 2);
+}
+
+#[test]
+fn gates_section_overrides_defaults() {
+    let toml = "[gates]\ncommand = \"just check\"\ntimeout_secs = 42\nmax_retries = 5\n";
+    let config = load_from(toml, "").unwrap();
+    let gates = config.gates.as_ref().unwrap();
+    assert_eq!(gates.command, "just check");
+    assert_eq!(gates.timeout_secs, 42);
+    assert_eq!(gates.max_retries, 5);
+}
+
+#[test]
+fn gates_unknown_key_is_rejected() {
+    assert!(load_from("[gates]\ncommand = \"x\"\nbogus = 1\n", "").is_err());
 }
 
 #[test]

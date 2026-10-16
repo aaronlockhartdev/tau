@@ -9,7 +9,7 @@
 //! the child's file is the record; the in-memory state is its live view.
 
 use crate::agent::{AgentSession, Lane, TurnConfig};
-use crate::config::{Om, SubAgents, ToolBatchPolicy};
+use crate::config::{Gates, Om, SubAgents, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::om_integration::{self, OmState};
 use crate::provider::{TurnProviderRef, Usage};
@@ -384,6 +384,7 @@ pub struct Supervisor {
     om_model: String,
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
+    gates: Option<Gates>,
     bridge: Arc<dyn SubagentBridge>,
     driver: Arc<dyn ChildDriver>,
     core: Option<Weak<crate::harness::Core>>,
@@ -400,6 +401,7 @@ pub(crate) struct Inherited {
     pub(crate) om: Om,
     pub(crate) om_model: String,
     pub(crate) tool_batch_on_force: ToolBatchPolicy,
+    pub(crate) gates: Option<Gates>,
 }
 
 /// The supervisor's construction inputs (the dispatch assembles them from
@@ -414,6 +416,7 @@ pub struct SupervisorParams {
     pub om_model: String,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
+    pub gates: Option<Gates>,
     pub caps: SubAgents,
     /// The session's depth (top-level = 0); a spawn fails when the child's
     /// depth (depth + 1) would exceed `max_depth`.
@@ -476,6 +479,7 @@ impl Supervisor {
             om_model: p.om_model,
             tool_batch_on_force: p.tool_batch_on_force,
             turn: p.turn,
+            gates: p.gates,
             bridge: p.bridge,
             driver: p.driver,
             core: p.core,
@@ -492,6 +496,7 @@ impl Supervisor {
             om: self.om.clone(),
             om_model: self.om_model.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
+            gates: self.gates.clone(),
         }
     }
 

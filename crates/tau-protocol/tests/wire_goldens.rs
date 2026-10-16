@@ -249,6 +249,7 @@ mod outputs {
                 live: LiveState {
                     queue: vec![],
                     turn: TurnState::Running,
+                    gate_failed: false,
                     subagents: vec![SubagentInfo {
                         handle: "s1-1".into(),
                         child: "s2".into(),

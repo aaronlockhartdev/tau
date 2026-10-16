@@ -675,6 +675,7 @@ mod tests {
             live: snapshot::LiveState {
                 queue: vec![],
                 turn: snapshot::TurnState::Idle,
+                gate_failed: false,
                 subagents: vec![],
                 tasks: vec![],
             },

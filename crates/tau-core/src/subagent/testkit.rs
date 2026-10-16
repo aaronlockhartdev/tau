@@ -206,6 +206,7 @@ pub(crate) fn harness_full(
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         caps,
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],

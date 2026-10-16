@@ -70,6 +70,8 @@ pub enum SessionRole {
         om: Option<OmState>,
         /// The OM model; empty = the session's model.
         om_model: String,
+        /// The completion gate (spec §5.3); `None` = no gate.
+        gates: Option<crate::config::Gates>,
     },
 }
 
@@ -79,6 +81,7 @@ impl AgentSession {
     /// link, event hooks — so no call site spreads the parameters. Returns
     /// the `Arc` because the call sites all keep an `Arc` (the root's
     /// queue hook captures a `Weak` self-reference, not a strong one).
+    #[allow(clippy::too_many_lines)] // one arm per session role; splitting is refactoring
     pub fn launch(
         store: SessionStore,
         role: SessionRole,
@@ -94,11 +97,13 @@ impl AgentSession {
                 tool_batch_on_force,
                 om,
                 om_model,
+                gates,
             } => {
-                // The plan file (design: session-scoped, the source of
-                // truth): seeded at session start. The bare role (test
-                // kits) has no core to observe through.
+                // The plan file (design: session-scoped, the source of truth):
+                // seeded at start. The bare role (test kits) has no core to seed through.
                 crate::plan::seed(&cwd, store.id());
+                let mut system_prompt = system_prompt;
+                crate::gate::with_section(&mut system_prompt, &gates);
                 Ok(Arc::new(Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -108,6 +113,7 @@ impl AgentSession {
                     provider,
                     tool_batch_on_force,
                     turn,
+                    gates,
                     om,
                     om_model,
                     subagents: None,
@@ -138,6 +144,7 @@ impl AgentSession {
                     provider,
                     tool_batch_on_force: d.tool_batch_on_force,
                     turn: d.turn,
+                    gates: d.gates,
                     om: Some(OmState::from_config(&d.om, record)),
                     om_model: d.om_model,
                     subagents: None,
@@ -224,6 +231,7 @@ impl AgentSession {
             provider,
             tool_batch_on_force: d.tool_batch_on_force,
             turn: d.turn,
+            gates: d.gates,
             om: Some(OmState::from_config(&d.om, record)),
             om_model: d.om_model,
             subagents: Some(sup.clone()),
@@ -336,6 +344,7 @@ fn root_session(
     crate::plan::seed(&cwd, store.id());
     core.refresh_plan(&cwd, store.id());
     let mut system_prompt = crate::plan::with_path(&system_prompt, &plan_path);
+    crate::gate::with_section(&mut system_prompt, &config.gates);
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen
     // — the catalog is frozen at that moment (a running session's prompt
@@ -380,6 +389,7 @@ fn root_session(
         om_model: config.om.om_model.clone(),
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
+        gates: config.gates.clone(),
         caps: config.subagents.clone(),
         types: crate::agent_type::discover(core.system_dir.as_deref(), &cwd),
         depth: 0,
@@ -404,6 +414,7 @@ fn root_session(
         provider,
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn,
+        gates: config.gates.clone(),
         om: Some(OmState::from_config(&config.om, record)),
         om_model: config.om.om_model.clone(),
         subagents: Some(sup.clone()),

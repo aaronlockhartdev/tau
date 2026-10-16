@@ -7,6 +7,7 @@ pub mod agent;
 pub mod agent_type;
 pub mod config;
 pub mod context;
+pub mod gate;
 pub mod harness;
 pub mod hashline;
 pub mod om;

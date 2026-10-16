@@ -1,8 +1,9 @@
 use super::{
     AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
     FunctionCallInput, FunctionCallOutputInput, Inner, InputEntry, InputMessage, KIND_ASSISTANT,
-    KIND_TOOL, KIND_USER, Lane, Ordering, Queued, ResponseRequest, SessionStore, ToolBatchPolicy,
-    TurnConfig, TurnEvent, TurnProviderRef, TurnResult, TurnSink, Value, lane_name, tools,
+    KIND_SYSTEM, KIND_TOOL, KIND_USER, Lane, Ordering, Queued, ResponseRequest, SessionStore,
+    ToolBatchPolicy, TurnConfig, TurnEvent, TurnProviderRef, TurnResult, TurnSink, Value,
+    lane_name, tools,
 };
 use std::collections::HashMap;
 use std::future::Future;
@@ -69,6 +70,11 @@ impl AgentSession {
         // A force/stop that landed before the turn applies to the first call
         // only; later calls in the turn are fresh.
         let mut first_call = true;
+        // The turn's tool-call count (the gate's qualification: a turn-end
+        // is gated only if the turn used ≥1 tool, spec §5.3) and the gate
+        // repair attempts (bounded by `max_retries`).
+        let mut tool_calls = 0usize;
+        let mut gate_retries = 0u32;
         // The plan state (design: re-injected at turn boundaries and after
         // compaction only): captured once here and reused for every assembly
         // in the turn, so a mid-turn plan-file edit can't churn the provider
@@ -252,6 +258,7 @@ impl AgentSession {
                     && !result.calls.is_empty()
                 {
                     self.run_tools(&result.calls).await?;
+                    tool_calls += result.calls.len();
                     self.om_mid_loop();
                     // A mid-turn compaction is a re-injection point (design).
                     plan_state = self.plan_state();
@@ -263,9 +270,23 @@ impl AgentSession {
                 // The model ended the turn: the synchronous OM pass runs
                 // before any follow-up starts the next one (spec §4).
                 self.om_turn_end().await?;
-                break;
+                // The completion gate (spec §5.3): a qualifying turn-end
+                // (≥1 tool call, no QUESTION: marker) runs the check. A
+                // pass stands the turn; a fail records a system entry,
+                // bounces a steering-lane repair turn, and — after
+                // max_retries — marks the session gate_failed.
+                let end = self
+                    .gate_turn_end(&result.text, tool_calls, &mut gate_retries)
+                    .await?;
+                if end {
+                    break;
+                }
+                // A failed check bounced a repair: continue the loop so the
+                // injected steering message rides the next LLM call.
+                continue;
             }
             self.run_tools(&result.calls).await?;
+            tool_calls += result.calls.len();
             self.om_mid_loop();
             // A mid-turn compaction is a re-injection point (design): the
             // next assembly carries the refreshed state.
@@ -522,6 +543,82 @@ impl AgentSession {
             }
         }
         Ok(())
+    }
+    /// The turn-end stop-hook (spec §5.3): run the completion gate on a
+    /// qualifying turn-end. Returns `true` when the turn ends here (a pass,
+    /// a `gate_failed`, a `QUESTION:` skip, a no-tool turn, or no gate) and
+    /// `false` when a failed check bounces a repair turn (the caller
+    /// continues the loop).
+    async fn gate_turn_end(
+        &self,
+        text: &str,
+        tool_calls: usize,
+        retries: &mut u32,
+    ) -> Result<bool, AgentError> {
+        // The gate config + cwd, read under the session lock.
+        let (gates, cwd) = {
+            let inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
+            (inner.gates.clone(), inner.cwd.clone())
+        };
+        let Some(gates) = gates else {
+            return Ok(true); // no gate configured: the turn stands
+        };
+        // A QUESTION: marker: the model is asking the user — the turn is
+        // awaiting_input and the gate is skipped (spec §5.3).
+        if crate::gate::is_question(text) {
+            return Ok(true);
+        }
+        // A turn with no tool call is not qualifying: nothing to verify.
+        if tool_calls == 0 {
+            return Ok(true);
+        }
+        // Run the check (honoring the deadline).
+        let result = crate::gate::run(&gates, &cwd).await;
+        if result.passed {
+            // A pass clears any prior gate_failed: the live state is the
+            // current gate status.
+            self.set_gate_failed(false);
+            return Ok(true); // the turn stands
+        }
+        // A failed check: count the attempt and record it (a system entry).
+        *retries += 1;
+        if *retries > gates.max_retries {
+            // max_retries failed repairs: the session is gate_failed.
+            self.append(
+                KIND_SYSTEM,
+                serde_json::json!({
+                    "note": crate::gate::failed_note(&gates, &result, gates.max_retries)
+                }),
+            )?;
+            self.set_gate_failed(true);
+            return Ok(true); // end the turn
+        }
+        self.append(
+            KIND_SYSTEM,
+            serde_json::json!({
+                "note": crate::gate::failure_note(&gates, &result, *retries)
+            }),
+        )?;
+        // Bounce a repair turn: the steering message lands at the head of
+        // the next LLM call in this same turn (spec §7).
+        self.enqueue(
+            crate::gate::repair_message(&gates, &result, *retries, gates.max_retries),
+            Lane::Steering,
+            None,
+        );
+        Ok(false) // continue the loop for the repair
+    }
+
+    /// Set the live gate state (spec §5.3).
+    fn set_gate_failed(&self, failed: bool) {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        inner.gate_failed = failed;
     }
 
     /// The mid-episode interval-boundary trigger (ticket #86 P2, D3/D4):

@@ -134,6 +134,12 @@ pub enum TurnState {
 pub struct LiveState {
     pub queue: Vec<QueuedItem>,
     pub turn: TurnState,
+    /// The completion gate's live state (spec §5.3): `true` when the most
+    /// recent gate-qualified turn failed after exhausting `max_retries`
+    /// repairs — the status-bar field and badge. Defaulted so snapshots
+    /// written before the field existed decode.
+    #[serde(default)]
+    pub gate_failed: bool,
     /// The session's children (structured state — the GUI's sub-agent
     /// panel); empty for child sessions (the depth cap is structural).
     pub subagents: Vec<crate::SubagentInfo>,
@@ -296,6 +302,7 @@ mod tests {
                 source: Some("s2".into()),
             }],
             turn: TurnState::Running,
+            gate_failed: false,
             subagents: vec![crate::SubagentInfo {
                 handle: "h1".into(),
                 child: "s2".into(),
@@ -390,6 +397,7 @@ mod tests {
             live: LiveState {
                 queue: vec![],
                 turn: TurnState::Idle,
+                gate_failed: false,
                 subagents: vec![],
                 tasks: vec![],
             },

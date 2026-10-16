@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, Weak};
 use serde_json::{Value, json};
 use tau_core::agent::{AgentSession, Lane, TurnConfig};
 use tau_core::agent_type::builtin_general;
-use tau_core::config::{Om, OmRetries, Provider, Requests, SubAgents, ToolBatchPolicy};
+use tau_core::config::{Gates, Om, OmRetries, Provider, Requests, SubAgents, ToolBatchPolicy};
 use tau_core::harness::SessionRole;
 use tau_core::om::OmRecord;
 use tau_core::om_integration::OmState;
@@ -116,6 +116,7 @@ async fn accept_tools(ctx: &Ctx) -> Result<(), String> {
             tools: tools::tool_specs(),
             cwd: ws.path().into(),
             turn: capped(),
+            gates: None,
             tool_batch_on_force: ToolBatchPolicy::default(),
             om: None,
             om_model: String::new(),
@@ -180,6 +181,118 @@ impl ChildDriver for AcceptanceDriver {
 struct AcceptanceBridge {
     parent: Mutex<Weak<AgentSession>>,
 }
+/// The completion gate (spec §5.3): a failing check bounces repair turns
+/// until `max_retries` is exhausted (the session is marked `gate_failed`), and
+/// a `QUESTION:`-ending turn skips the gate.
+#[allow(clippy::too_many_lines)]
+async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
+    // A bare session with a completion gate: the check command is stated in
+    // the system prompt's gate section, which the mock scenario matches on.
+    fn gated_session(
+        ws: &tempfile::TempDir,
+        ctx: &Ctx,
+        command: &str,
+    ) -> Result<(String, Arc<AgentSession>), String> {
+        let (id, store) = new_session(ws.path());
+        let (_, prov) = production(ctx);
+        let gates = Gates {
+            command: command.into(),
+            timeout_secs: 30,
+            max_retries: 2,
+        };
+        let agent = AgentSession::launch(
+            store,
+            SessionRole::Bare {
+                provider: prov,
+                system_prompt: TOOLS_PROMPT.into(),
+                model: ctx.model.clone(),
+                tools: tools::tool_specs(),
+                cwd: ws.path().into(),
+                turn: capped(),
+                tool_batch_on_force: ToolBatchPolicy::default(),
+                om: None,
+                om_model: String::new(),
+                gates: Some(gates),
+            },
+        )
+        .map_err(|e| format!("launch failed: {e:?}"))?;
+        Ok((id, agent))
+    }
+
+    // The gate's records: the system entries it wrote (the failure log).
+    fn gate_notes(store: &SessionStore) -> Vec<String> {
+        all_entries(store)
+            .into_iter()
+            .filter(|e| e.kind == tau_core::agent::KIND_SYSTEM)
+            .filter_map(|e| {
+                e.payload
+                    .get("note")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .filter(|n| n.contains("completion gate"))
+            .collect()
+    }
+    fn assistant_count(store: &SessionStore) -> usize {
+        all_entries(store)
+            .iter()
+            .filter(|e| e.kind == tau_core::agent::KIND_ASSISTANT)
+            .count()
+    }
+
+    // --- Scenario 1: a failing check exhausts the retries → gate_failed. ---
+    let ws = temp_ws();
+    let (id, agent) = gated_session(&ws, ctx, "test -f gate-target.txt")?;
+    agent.send("Do the work and finish.", Lane::Steering);
+    agent.process().await.map_err(|e| e.to_string())?;
+    drop(agent);
+    let store = SessionStore::for_workspace(ws.path(), &id);
+    // The initial check + two repairs: two tool rounds + three final-text
+    // segments → five assistant entries (the repair bounces).
+    let assistants = assistant_count(&store);
+    if assistants != 5 {
+        return Err(format!(
+            "accept-gate: expected 5 assistant entries (2 tool + 3 final), saw {assistants}"
+        ));
+    }
+    let notes = gate_notes(&store);
+    if notes.len() != 3 {
+        return Err(format!(
+            "accept-gate: expected 3 gate records (initial + 2 repairs), saw {notes:?}"
+        ));
+    }
+    if !notes.last().is_some_and(|n| n.contains("gate_failed")) {
+        return Err(format!(
+            "accept-gate: the final record does not name gate_failed: {notes:?}"
+        ));
+    }
+    println!("accept-gate: the failing check bounced 2 repairs and marked the session gate_failed");
+
+    // --- Scenario 2: a QUESTION:-ending turn skips the gate. ---
+    let ws = temp_ws();
+    let (id, agent) = gated_session(&ws, ctx, "test -f question-target.txt")?;
+    agent.send("Do the work and finish.", Lane::Steering);
+    agent.process().await.map_err(|e| e.to_string())?;
+    drop(agent);
+    let store = SessionStore::for_workspace(ws.path(), &id);
+    // Two assistant entries (the tool round + the QUESTION: final): the gate
+    // is skipped, so no repair bounce and no gate record.
+    let assistants = assistant_count(&store);
+    if assistants != 2 {
+        return Err(format!(
+            "accept-gate (question): expected 2 assistant entries, saw {assistants}"
+        ));
+    }
+    let notes = gate_notes(&store);
+    if !notes.is_empty() {
+        return Err(format!(
+            "accept-gate (question): the gate should be skipped, saw records {notes:?}"
+        ));
+    }
+    println!("accept-gate: the QUESTION:-ending turn skipped the gate");
+
+    Ok(())
+}
 
 impl SubagentBridge for AcceptanceBridge {
     fn spawned(&self, _n: &SpawnNotice) {}
@@ -225,6 +338,7 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
+        gates: None,
         caps: SubAgents::default(),
         depth: 0,
         types: vec![builtin_general()],
@@ -436,6 +550,7 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             tools: tools::tool_specs(),
             cwd: ws.path().into(),
             turn: capped(),
+            gates: None,
             tool_batch_on_force: ToolBatchPolicy::default(),
             om: Some(om),
             om_model: String::new(),
@@ -580,13 +695,15 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "accept-tools" | "accept-subagent" | "accept-om" | "core" => suite = args[i].as_str(),
+            "accept-tools" | "accept-subagent" | "accept-om" | "accept-gate" | "core" => {
+                suite = args[i].as_str();
+            }
             _ => {}
         }
         i += 1;
     }
     if suite.is_empty() {
-        eprintln!("usage: tau-test <accept-tools|accept-subagent|accept-om|core>");
+        eprintln!("usage: tau-test <accept-tools|accept-subagent|accept-om|accept-gate|core>");
         std::process::exit(2);
     }
     let ctx = Ctx { endpoint, model };
@@ -599,6 +716,7 @@ fn main() {
         "accept-tools" => rt.block_on(accept_tools(&ctx)),
         "accept-subagent" => rt.block_on(accept_subagent(&ctx)),
         "accept-om" => rt.block_on(accept_om(&ctx)),
+        "accept-gate" => rt.block_on(accept_gate(&ctx)),
         _ => rt.block_on(async { core_offline() }),
     };
     match result {
