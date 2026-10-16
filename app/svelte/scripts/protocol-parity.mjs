@@ -63,7 +63,12 @@ function snake(name) {
 function stripComments(src) {
   return src
     .split('\n')
-    .filter((l) => !l.trimStart().startsWith('///') && !l.trimStart().startsWith('//'))
+    .filter(
+      (l) =>
+        !l.trimStart().startsWith('///') &&
+        !l.trimStart().startsWith('//') &&
+        !l.trimStart().startsWith('/*'),
+    )
     .join('\n');
 }
 function bodyAfter(src, from) {
