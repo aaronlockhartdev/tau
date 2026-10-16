@@ -184,18 +184,39 @@ pub fn section(file: &Path) -> String {
 
 /// The session's plan-file section in a system prompt: an existing
 /// section (inherited from a parent's prompt) is replaced — a child's
-/// prompt must name the child's own file, not the parent's.
+/// prompt must name the child's own file, not the parent's. The
+/// replacement is section-scoped: the layers that follow the section
+/// (the skills catalog is the assembled prompt's last layer) are
+/// preserved.
 #[must_use]
 pub fn with_path(prompt: &str, file: &Path) -> String {
     let section = section(file);
-    let start = prompt.find(PLAN_SECTION_HEADER).unwrap_or(prompt.len());
-    // `find` indexes at a char boundary, so the slice is safe.
+    let Some(start) = prompt.find(PLAN_SECTION_HEADER) else {
+        return format!("{prompt}\n\n{section}");
+    };
+    // `find` indexes at a char boundary, so the slices are safe. The
+    // section's body is a single paragraph, so the first layer separator
+    // after the header's blank line bounds the old section — a
+    // heading-only boundary would run to end-of-prompt and swallow the
+    // skills catalog, which carries no `# ` heading of its own.
+    let header_end = prompt
+        .get(start..)
+        .and_then(|rest| rest.find('\n').map(|i| start + i))
+        .unwrap_or(prompt.len());
+    let end = prompt
+        .get(header_end + 2..)
+        .and_then(|rest| rest.find("\n\n").map(|i| header_end + 2 + i))
+        .unwrap_or(prompt.len());
     let mut out = prompt.get(..start).unwrap_or(prompt).to_owned();
     while out.ends_with(' ') || out.ends_with('\n') {
         out.pop();
     }
     out.push_str("\n\n");
     out.push_str(&section);
+    if end < prompt.len() {
+        out.push_str("\n\n");
+        out.push_str(prompt.get(end + 2..).unwrap_or(""));
+    }
     out
 }
 
@@ -402,6 +423,18 @@ the parser is the culprit
         assert!(child.contains("/w/.tau/plans/child.md"));
         assert!(!child.contains("parent.md"));
         assert_eq!(child.matches(PLAN_SECTION_HEADER).count(), 1);
+    }
+
+    #[test]
+    fn with_path_replaces_only_the_section_and_keeps_what_follows() {
+        let parent = with_path("base", Path::new("/w/.tau/plans/parent.md"));
+        let layered = format!("{parent}\n\n<available_skills>\n</available_skills>");
+        let child = with_path(&layered, Path::new("/w/.tau/plans/child.md"));
+        assert!(child.contains("/w/.tau/plans/child.md"));
+        assert!(!child.contains("parent.md"));
+        assert_eq!(child.matches(PLAN_SECTION_HEADER).count(), 1);
+        // The layer after the section survives the replacement, still last.
+        assert!(child.ends_with("<available_skills>\n</available_skills>"));
     }
 
     #[test]

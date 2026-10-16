@@ -310,3 +310,57 @@ async fn a_spawned_child_prompt_names_its_own_plan_file() {
     // The child's state is observed at spawn.
     assert!(core.plan_state(&spawned.session_id).is_some());
 }
+
+/// B1: the section replacement is section-scoped, so a child in a
+/// skills-bearing workspace keeps the inherited skills catalog — the
+/// catalog is the layer after the plan section, not part of it.
+#[tokio::test]
+async fn a_spawned_child_keeps_the_inherited_skills_catalog() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    // A model-invocable project skill: the parent's prompt carries the
+    // catalog as the layer after the plan section.
+    std::fs::create_dir_all(cwd.join(".tau").join("skills").join("alpha")).unwrap();
+    std::fs::write(
+        cwd.join(".tau")
+            .join("skills")
+            .join("alpha")
+            .join("SKILL.md"),
+        "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+    let live = core.live(&meta.id).unwrap();
+    // The precondition: the parent's prompt carries the catalog.
+    let parent_prompt = live.agent.system_prompt();
+    assert!(
+        parent_prompt.contains("<available_skills>"),
+        "the parent prompt carries the catalog: {parent_prompt}"
+    );
+    let sup = live
+        .agent
+        .subagents()
+        .expect("the root session carries a supervisor");
+
+    let spawned = sup
+        .spawn("general", "do the thing", None, None, "call-1")
+        .unwrap();
+    let prompt = spawned.agent.system_prompt();
+    // The child's prompt names its own plan file (the inherited section
+    // is replaced, not stacked)...
+    assert!(
+        prompt.contains(
+            &crate::plan::path(&cwd, &spawned.session_id)
+                .display()
+                .to_string()
+        ),
+        "the child prompt names its own plan file: {prompt}"
+    );
+    // ...and the catalog survives the replacement, still the last layer.
+    assert!(
+        prompt.contains("<available_skills>") && prompt.ends_with("</available_skills>"),
+        "the child keeps the inherited skills catalog: {prompt}"
+    );
+}
