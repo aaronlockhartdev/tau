@@ -684,6 +684,7 @@ impl AgentSession {
             .gate_failed
     }
 }
+mod gate_hook;
 mod turn;
 
 #[cfg(test)]
