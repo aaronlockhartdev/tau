@@ -1,4 +1,4 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 export default defineConfig({
@@ -16,13 +16,7 @@ export default defineConfig({
     rollupOptions: {
       input: ['./index.html']
     }
-  },
-  test: {
-    // The shiki highlighter loads all 346 bundled grammars (~1.4 s); under CI
-    // + coverage instrumentation that can exceed the 5 s default, so give the
-    // highlight / warmup-dependent tests headroom.
-    testTimeout: 20000
-  },
+  }
 }
 );
 

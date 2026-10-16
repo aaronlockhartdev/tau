@@ -8,6 +8,10 @@ export default defineConfig({
   plugins: [svelte(), svelteTesting()],
   test: {
     environment: 'jsdom',
+    // The shiki highlighter loads all 346 bundled grammars (~1.4 s); under CI
+    // + coverage instrumentation that can exceed the 5 s default, so give the
+    // highlight / warmup-dependent tests headroom.
+    testTimeout: 20000,
     setupFiles: ['svelte/vitest-setup.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
     coverage: {
