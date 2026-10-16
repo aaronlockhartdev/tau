@@ -5,8 +5,7 @@ import { createHighlighter, bundledLanguages, type BundledLanguage, type Highlig
 const THEME = 'dark-plus';
 // Every grammar shiki bundles, so any file language the workbench opens is
 // highlighted — not a hand-picked subset. The full set loads on first
-// highlight (a one-time cost, warmable in the background via
-// warmupHighlighter) and is then cached for the session.
+// highlight (a one-time cost) and is then cached for the session.
 const LANGS: string[] = Object.keys(bundledLanguages);
 
 type Token = { content: string; color?: string };
@@ -23,15 +22,6 @@ function hl(): Promise<Highlighter> {
     });
   }
   return instance;
-}
-
-// Kick off the all-grammar highlighter load in the background so a first file
-// open finds it ready instead of paying the one-time load inline. Idempotent:
-// it shares the singleton promise hl() uses.
-export function warmupHighlighter(): void {
-  // A failed warmup is harmless: the singleton has reset, so the next real
-  // highlight retries and handles its own failure.
-  void hl().catch(() => {});
 }
 
 // Per-line syntax tokens for a file body. A real grammar yields shiki's
