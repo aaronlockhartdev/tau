@@ -226,6 +226,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
         depth: 0,
         bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
 
     // The child through the constructor: the role carries the link and
@@ -331,6 +332,7 @@ fn launch_seam_session_is_freed_when_dropped() {
         depth: 0,
         bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
     let agent = AgentSession::launch(
         store,

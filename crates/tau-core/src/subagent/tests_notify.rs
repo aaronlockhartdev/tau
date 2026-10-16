@@ -108,6 +108,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         types: vec![crate::agent_type::builtin_general()],
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
         store,
@@ -222,6 +223,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
         types: vec![crate::agent_type::builtin_general()],
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
         store,
@@ -343,6 +345,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         types: vec![crate::agent_type::builtin_general()],
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
         store,
@@ -473,6 +476,7 @@ async fn a_child_task_tools_route_to_the_parents_store() {
         types: vec![crate::agent_type::builtin_general()],
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
         store,

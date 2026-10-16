@@ -96,6 +96,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         depth: 0,
         bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
 
     let child = AgentSession::launch(

@@ -120,6 +120,11 @@ pub(crate) type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 /// consumed): the app re-emits the queue snapshot so the GUI's queue pane
 /// doesn't stay stale until the turn boundary.
 pub(crate) type QueueEventHook = Arc<dyn Fn() + Send + Sync>;
+/// The plan-state reader (design: the plan file is the source of truth):
+/// the harness wires it to the core's watcher-parsed state; it returns
+/// the rendered current state, or `None` when the session has no
+/// observed plan state yet.
+pub(crate) type PlanStateHook = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 pub(crate) struct Inner {
     pub(crate) store: SessionStore,
     system_prompt: String,
@@ -151,6 +156,9 @@ pub(crate) struct Inner {
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
     queue_event_hook: Option<QueueEventHook>,
+    /// The plan-state reader (design: re-injected at each turn boundary
+    /// and after compaction); `None` = no plan wiring (test kits, seams).
+    plan_hook: Option<PlanStateHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -227,6 +235,7 @@ impl AgentSession {
                 om_status_hook: None,
                 entry_upsert_hook: None,
                 queue_event_hook: None,
+                plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
                 parent_task_store: None,
@@ -567,6 +576,15 @@ impl AgentSession {
             .lock()
             .expect("agent inner: no panic while the lock is held")
             .queue_event_hook = hook;
+    }
+
+    /// The plan-state reader (design: the plan file is the source of
+    /// truth); `None` clears it.
+    pub(crate) fn set_plan_hook(&self, hook: Option<PlanStateHook>) {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .plan_hook = hook;
     }
 
     /// The live entry sink, set on this session's store (the append choke

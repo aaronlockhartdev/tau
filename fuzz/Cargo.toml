@@ -45,6 +45,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "parse_plan"
+path = "fuzz_targets/parse_plan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "parse_sse"
 path = "fuzz_targets/parse_sse.rs"
 test = false

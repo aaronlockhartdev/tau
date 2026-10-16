@@ -1,0 +1,312 @@
+//! The plan-file substrate's harness wiring (ticket #164, T1): the
+//! session start seeds the file and injects its path, the plan watcher
+//! keeps the parsed state fresh, and the assembly re-injects the state
+//! at each turn boundary.
+
+use super::*;
+use crate::harness::testkit::*;
+use std::sync::atomic::AtomicUsize;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// A scripted provider that records each request's instructions — the
+/// assertion surface for what the assembly injected.
+struct Capturing {
+    bodies: Vec<String>,
+    index: AtomicUsize,
+    seen: Arc<Mutex<Vec<Option<String>>>>,
+}
+
+impl provider::TurnProvider for Capturing {
+    fn call<'a>(
+        &self,
+        request: &provider::ResponseRequest,
+        sink: &'a mut dyn provider::TurnSink,
+    ) -> provider::ProviderTurn<'a> {
+        let body = self
+            .bodies
+            .get(self.index.fetch_add(1, Ordering::SeqCst))
+            .cloned()
+            .unwrap_or_else(|| crate::agent::testkit::sse("done", &[]));
+        let instructions = request.instructions().map(str::to_owned);
+        let seen = self.seen.clone();
+        let inner = provider::canned(&body);
+        let turn = inner.call(request, sink);
+        Box::pin(async move {
+            seen.lock().unwrap().push(instructions);
+            turn.await
+        })
+    }
+}
+
+/// One turn, drained: the turn flag clears and the capture is non-empty.
+async fn settle_turn(live: &Arc<LiveSession>, seen: &Arc<Mutex<Vec<Option<String>>>>) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let idle = !live.turn.load(Ordering::SeqCst);
+        let captured = !seen.lock().unwrap().is_empty();
+        if idle && captured {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the turn never settled"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// `SessionNew` through the production root path.
+fn new_root_session(core: &Arc<Core>, ws: &Workspace) -> tau_protocol::snapshot::SessionMeta {
+    let out = core
+        .dispatch(Command::SessionNew {
+            workspace: ws.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap();
+    match out {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn session_new_seeds_the_plan_file_and_injects_its_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    // Seeded at session start, at the design's path.
+    let plan_file = crate::plan::path(&cwd, &meta.id);
+    assert!(
+        plan_file.is_file(),
+        "the plan file is seeded: {plan_file:?}"
+    );
+    // Its exact path is in the system prompt.
+    let live = core.live(&meta.id).unwrap();
+    let prompt = live.agent.system_prompt();
+    assert!(
+        prompt.contains(&plan_file.display().to_string()),
+        "the prompt names the plan file: {prompt}"
+    );
+    // The initial state is the parsed skeleton: no steps yet.
+    assert_eq!(
+        core.plan_state(&meta.id).as_deref(),
+        Some("# Current plan state")
+    );
+}
+
+#[tokio::test]
+async fn a_plan_file_change_updates_the_plan_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+    let plan_file = crate::plan::path(&cwd, &meta.id);
+
+    std::fs::write(
+        &plan_file,
+        "# Plan\n\n## Steps\n- [x] done step\n- [ ] open step\n\n## Criteria\nbuild passes\n",
+    )
+    .unwrap();
+
+    // The watcher re-reads and parses; the state carries the change.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let state = core.plan_state(&meta.id);
+        let updated = state
+            .as_deref()
+            .is_some_and(|s| s.contains("- [x] done step") && s.contains("build passes"));
+        if updated {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the plan state never picked up the change: {state:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[tokio::test]
+async fn the_plan_state_is_reinjected_into_the_assembly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let provider = Arc::new(Capturing {
+        bodies: vec![crate::agent::testkit::sse("working", &[])],
+        index: AtomicUsize::new(0),
+        seen: Arc::new(Mutex::new(Vec::new())),
+    });
+    let seen = provider.seen.clone();
+    let live = manual_session(&core, &workspace, provider, TurnConfig::default());
+    let sid = live.meta.lock().unwrap().id.clone();
+
+    // The production shape: the core's watcher-parsed state.
+    let core_weak = Arc::downgrade(&core);
+    let hook_sid = sid.clone();
+    live.agent.set_plan_hook(Some(Arc::new(move || {
+        core_weak
+            .upgrade()
+            .and_then(|core| core.plan_state(&hook_sid))
+    })));
+    // The session-start observation: the seeded skeleton.
+    core.refresh_plan(Path::new(&workspace.cwd), &sid);
+
+    core.dispatch(Command::MessageSend {
+        session: sid.clone(),
+        text: "go".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    settle_turn(&live, &seen).await;
+
+    let ins = seen
+        .lock()
+        .unwrap()
+        .first()
+        .and_then(Clone::clone)
+        .expect("the request carries instructions");
+    assert!(
+        ins.contains("# Current plan state"),
+        "the plan state is re-injected: {ins}"
+    );
+}
+
+#[tokio::test]
+async fn a_plan_change_between_turns_changes_the_injected_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let provider = Arc::new(Capturing {
+        bodies: vec![crate::agent::testkit::sse("working", &[])],
+        index: AtomicUsize::new(0),
+        seen: Arc::new(Mutex::new(Vec::new())),
+    });
+    let seen = provider.seen.clone();
+    let live = manual_session(&core, &workspace, provider, TurnConfig::default());
+    let sid = live.meta.lock().unwrap().id.clone();
+    let core_weak = Arc::downgrade(&core);
+    let hook_sid = sid.clone();
+    live.agent.set_plan_hook(Some(Arc::new(move || {
+        core_weak
+            .upgrade()
+            .and_then(|core| core.plan_state(&hook_sid))
+    })));
+    core.refresh_plan(Path::new(&workspace.cwd), &sid);
+    let plan_file = crate::plan::path(&cwd, &sid);
+
+    // Turn 1: the seeded skeleton (no steps).
+    core.dispatch(Command::MessageSend {
+        session: sid.clone(),
+        text: "go".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    settle_turn(&live, &seen).await;
+    let first = seen.lock().unwrap()[0]
+        .clone()
+        .expect("the first request carries instructions");
+    assert!(!first.contains("done step"), "turn 1: {first}");
+
+    // The model edits the plan; the watcher refreshes the state.
+    std::fs::write(&plan_file, "## Steps\n- [x] done step\n").unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let updated = core
+            .plan_state(&sid)
+            .as_deref()
+            .is_some_and(|s| s.contains("done step"));
+        if updated {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the watcher never refreshed the plan state"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Turn 2: the assembly carries the updated state.
+    core.dispatch(Command::MessageSend {
+        session: sid.clone(),
+        text: "go again".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    let prev = seen.lock().unwrap().len();
+    settle_turn(&live, &seen).await;
+    let seen = seen.lock().unwrap();
+    assert!(seen.len() > prev, "turn 2 never ran");
+    let second = seen[prev]
+        .clone()
+        .expect("the second request carries instructions");
+    assert!(
+        second.contains("- [x] done step"),
+        "turn 2 carries the updated plan: {second}"
+    );
+}
+
+#[tokio::test]
+async fn closing_a_session_drops_its_plan_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+    assert!(core.plan_state(&meta.id).is_some());
+
+    core.dispatch(Command::SessionClose {
+        session: meta.id.clone(),
+    })
+    .unwrap();
+    assert!(
+        core.plan_state(&meta.id).is_none(),
+        "a closed session keeps no plan state"
+    );
+}
+
+#[tokio::test]
+async fn a_spawned_child_prompt_names_its_own_plan_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+    let live = core.live(&meta.id).unwrap();
+    let sup = live
+        .agent
+        .subagents()
+        .expect("the root session carries a supervisor");
+    assert!(
+        sup.core().is_some(),
+        "production root: the supervisor carries the core"
+    );
+
+    let parent_plan = crate::plan::path(&cwd, &meta.id);
+    let spawned = sup
+        .spawn("general", "do the thing", None, None, "call-1")
+        .unwrap();
+    let child_plan = crate::plan::path(Path::new(&spawned.cwd), &spawned.session_id);
+
+    // The child's file is seeded, its prompt names it, and the inherited
+    // parent path is gone (replaced, not stacked).
+    assert!(child_plan.is_file(), "the child's plan file is seeded");
+    let prompt = spawned.agent.system_prompt();
+    assert!(
+        prompt.contains(&child_plan.display().to_string()),
+        "the child prompt names its own plan file: {prompt}"
+    );
+    assert!(
+        !prompt.contains(&parent_plan.display().to_string()),
+        "the parent's path is replaced: {prompt}"
+    );
+    // The child's state is observed at spawn.
+    assert!(core.plan_state(&spawned.session_id).is_some());
+}

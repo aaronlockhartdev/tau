@@ -125,6 +125,45 @@ impl Core {
         });
     }
 
+    /// The workspace's plan watcher (design: the plan file is the source
+    /// of truth): the `.tau/plans` root, started from the first
+    /// `open_workspace`; a batch re-reads the changed plan files into the
+    /// core's state cache. `workspace_close` drops the entry (the
+    /// debouncer stops on drop), so the map tracks the open workspaces.
+    pub(crate) fn start_plan_watcher(&self, workspace: &Workspace) {
+        let cwd = Path::new(&workspace.cwd);
+        if !cwd.is_dir() {
+            return;
+        }
+        let mut map = self
+            .plan_watchers
+            .lock()
+            .expect("plan watchers: no panic while the lock is held");
+        if map.contains_key(&workspace.id) {
+            return;
+        }
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        watcher.add(&cwd.join(".tau").join("plans"));
+        map.insert(workspace.id.clone(), watcher);
+        drop(map);
+        let Some(core) = self.self_arc() else {
+            return;
+        };
+        let id = workspace.id.clone();
+        spawn_watcher_consumer(&core, rx, move |core, batch| {
+            let Some(ws) = core
+                .workspaces
+                .lock()
+                .expect("workspaces map: no panic while the lock is held")
+                .get(&id)
+                .cloned()
+            else {
+                return;
+            };
+            refresh_plan_batch(&core, &ws, &batch);
+        });
+    }
+
     /// Register a dir on the workspace's tree watcher (visibility-driven,
     /// #115): a `file_list` means the pane is showing the dir, so watch it.
     /// No-op if the workspace has no tree watcher yet.
@@ -185,6 +224,30 @@ pub(crate) fn spawn_watcher_consumer(
         .expect("the watcher thread spawns");
 }
 
+/// A batch's plan updates (design: the watcher is the parser's only call
+/// site): each changed `.md` under the workspace's plans dir re-reads that
+/// session's plan file. An empty batch is a rescan trigger (the design's
+/// lost-events case) — every plan file in the dir is re-read, so a lost
+/// event self-heals on the next rescan.
+pub(crate) fn refresh_plan_batch(core: &Core, ws: &Workspace, batch: &Batch) {
+    let cwd = Path::new(&ws.cwd);
+    if batch.is_empty() {
+        if let Ok(rd) = std::fs::read_dir(cwd.join(".tau").join("plans")) {
+            for ent in rd.flatten() {
+                if let Some(sid) = crate::plan::session_of(&ent.path(), cwd) {
+                    core.refresh_plan(cwd, &sid);
+                }
+            }
+        }
+        return;
+    }
+    for path in batch {
+        if let Some(sid) = crate::plan::session_of(path, cwd) {
+            core.refresh_plan(cwd, &sid);
+        }
+    }
+}
+
 /// The drop is the test teardown for the watchers a close did not stop;
 /// it joins each debouncer thread (the `Watcher`'s own drop does the
 /// joining).
@@ -201,6 +264,14 @@ impl Drop for Core {
         self.tree_watchers
             .lock()
             .expect("tree watchers: no panic while the lock is held")
+            .clear();
+        self.plan_watchers
+            .lock()
+            .expect("plan watchers: no panic while the lock is held")
+            .clear();
+        self.plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
             .clear();
     }
 }

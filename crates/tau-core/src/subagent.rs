@@ -386,6 +386,7 @@ pub struct Supervisor {
     turn: TurnConfig,
     bridge: Arc<dyn SubagentBridge>,
     driver: Arc<dyn ChildDriver>,
+    core: Option<Weak<crate::harness::Core>>,
 }
 
 /// The values a session built around this supervisor inherits (the
@@ -422,6 +423,10 @@ pub struct SupervisorParams {
     pub types: Vec<crate::agent_type::AgentType>,
     pub bridge: Arc<dyn SubagentBridge>,
     pub driver: Arc<dyn ChildDriver>,
+    /// The core the parent session runs under (production): the plan-file
+    /// wiring (seed, the prompt's path, the state re-injection) routes
+    /// through it. `None` on the test seams (no plan wiring).
+    pub core: Option<Weak<crate::harness::Core>>,
 }
 
 /// A completed spawn: everything the dispatch needs to register the child
@@ -473,6 +478,7 @@ impl Supervisor {
             turn: p.turn,
             bridge: p.bridge,
             driver: p.driver,
+            core: p.core,
         })
     }
 
@@ -487,6 +493,13 @@ impl Supervisor {
             om_model: self.om_model.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
         }
+    }
+
+    /// The core link (production); `None` on the test seams (no plan
+    /// wiring).
+    #[must_use]
+    pub fn core(&self) -> Option<Weak<crate::harness::Core>> {
+        self.core.clone()
     }
 
     /// The parent's session id (the supervisor's own — the child's

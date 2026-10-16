@@ -247,6 +247,12 @@ impl Core {
                     .lock()
                     .expect("sessions map: no panic while the lock is held")
                     .remove(&session);
+                // The plan state is a cache of the file (design): a closed
+                // session keeps no parallel state — the file is the record.
+                self.plans
+                    .lock()
+                    .expect("plan states: no panic while the lock is held")
+                    .remove(&session);
                 if let Some(live) = closed {
                     // Closing a running CHILD session routes through the
                     // parent's supervisor (the terminal Stopped record, the

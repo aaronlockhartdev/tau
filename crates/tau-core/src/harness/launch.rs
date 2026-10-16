@@ -6,7 +6,7 @@
 
 use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, Mutex,
-    OmStatusKind, PathBuf, ProtocolError, SessionParams, SessionStore, SessionSubagentBridge,
+    OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore, SessionSubagentBridge,
     SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver, TurnConfig, Workspace, context,
     derive_turn, entry_to_view, last_model_note, tools,
 };
@@ -94,20 +94,26 @@ impl AgentSession {
                 tool_batch_on_force,
                 om,
                 om_model,
-            } => Ok(Arc::new(Self::new(SessionParams {
-                store,
-                system_prompt,
-                model,
-                tools,
-                cwd,
-                provider,
-                tool_batch_on_force,
-                turn,
-                om,
-                om_model,
-                subagents: None,
-                child: None,
-            }))),
+            } => {
+                // The plan file (design: session-scoped, the source of
+                // truth): seeded at session start. The bare role (test
+                // kits) has no core to observe through.
+                crate::plan::seed(&cwd, store.id());
+                Ok(Arc::new(Self::new(SessionParams {
+                    store,
+                    system_prompt,
+                    model,
+                    tools,
+                    cwd,
+                    provider,
+                    tool_batch_on_force,
+                    turn,
+                    om,
+                    om_model,
+                    subagents: None,
+                    child: None,
+                })))
+            }
             SessionRole::Child {
                 supervisor,
                 parent,
@@ -119,6 +125,10 @@ impl AgentSession {
                 handle,
             } => {
                 let d = supervisor.inherited();
+                // The plan file (design: session-scoped, the source of
+                // truth): the child's own file, replacing any inherited section.
+                let sid = store.id().to_owned();
+                let (system_prompt, core) = plan_wiring(&supervisor, &system_prompt, &d.cwd, &sid);
                 let agent = Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -136,6 +146,9 @@ impl AgentSession {
                 // The child's task tools route to the parent's store (the
                 // shared task model); the `Weak` upgrades per call.
                 agent.set_parent_task_store(Some(parent));
+                // The plan-state re-injection (design: turn boundaries and
+                // post-compaction): the core's watcher-parsed state.
+                wire_plan_hook(&agent, core, &sid);
                 Ok(Arc::new(agent))
             }
             SessionRole::Root {
@@ -194,9 +207,17 @@ impl AgentSession {
         let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        // The plan file (design): the prompt's section and the state
+        // re-injection exist only when the caller passes a prompt and
+        // the supervisor carries a core (the test seams carry none).
+        let sid = store.id().to_owned();
+        let (system_prompt, core) = match system_prompt {
+            Some(prompt) => plan_wiring(sup, &prompt, &d.cwd, &sid),
+            None => (d.system_prompt.clone(), None),
+        };
         let agent = Arc::new(Self::new(SessionParams {
             store,
-            system_prompt: system_prompt.unwrap_or(d.system_prompt),
+            system_prompt,
             model: d.model,
             tools: tools::surface::root_specs(),
             cwd: d.cwd,
@@ -208,8 +229,47 @@ impl AgentSession {
             subagents: Some(sup.clone()),
             child: None,
         }));
+        wire_plan_hook(&agent, core, &sid);
         sup.attach_parent(&agent);
         Ok(agent)
+    }
+}
+
+/// The plan-state re-injection hook (design: turn boundaries and
+/// post-compaction): the core's watcher-parsed state, upgraded per call.
+/// `None` (a core-less test seam) wires nothing.
+fn wire_plan_hook(agent: &AgentSession, core: Option<Arc<Core>>, sid: &str) {
+    if let Some(core) = core {
+        let core = Arc::downgrade(&core);
+        let sid = sid.to_owned();
+        agent.set_plan_hook(Some(Arc::new(move || {
+            core.upgrade().and_then(|core| core.plan_state(&sid))
+        })));
+    }
+}
+
+/// The plan wiring the supervisor-linked roles share (design: the plan
+/// file is the source of truth): seed the session's file, and — when the
+/// supervisor carries a core — observe the file's current state and point
+/// the prompt at the session's own file (replacing any inherited
+/// section). A core-less supervisor (the test seams) passes the prompt
+/// through untouched.
+fn plan_wiring(
+    sup: &Supervisor,
+    prompt: &str,
+    cwd: &Path,
+    sid: &str,
+) -> (String, Option<Arc<Core>>) {
+    crate::plan::seed(cwd, sid);
+    match sup.core().and_then(|w| w.upgrade()) {
+        Some(core) => {
+            core.refresh_plan(cwd, sid);
+            (
+                crate::plan::with_path(prompt, &crate::plan::path(cwd, sid)),
+                Some(core),
+            )
+        }
+        None => (prompt.to_owned(), None),
     }
 }
 
@@ -260,10 +320,22 @@ fn root_session(
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
     let layers = context::discover(&cwd, &core.system_dir_of());
-    let mut system_prompt = context::assemble(
+    let system_prompt = context::assemble(
         base_prompt.unwrap_or("You are Tau, a coding agent."),
         &layers,
     );
+
+    // The plan file (design: the source of truth): seeded at session
+    // start (create-if-missing — a re-opened session keeps the model's
+    // plan), its exact path injected into the prompt, and the parsed
+    // state refreshed here so the first assembly carries it. The
+    // section lands in the supervisor's prompt too: a spawned child
+    // inherits it, then replaces it with its own path. It lands before
+    // the skills catalog: the catalog is the last layer (tests_skills).
+    let plan_path = crate::plan::path(&cwd, store.id());
+    crate::plan::seed(&cwd, store.id());
+    core.refresh_plan(&cwd, store.id());
+    let mut system_prompt = crate::plan::with_path(&system_prompt, &plan_path);
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen
     // — the catalog is frozen at that moment (a running session's prompt
@@ -315,6 +387,7 @@ fn root_session(
         driver: Arc::new(TurnChildDriver {
             core: Arc::downgrade(core),
         }),
+        core: Some(Arc::downgrade(core)),
     });
     bridge
         .sup
@@ -344,7 +417,17 @@ fn root_session(
 /// The root's four event hooks: the `om_status` kind-string shaping, the
 /// queue projection, and the two entry tees (ADR-0008's file-line
 /// upserts).
-fn wire_events(core: &Core, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {
+fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {
+    // The plan-state hook (design: the plan file is the source of
+    // truth): the core's watcher-parsed state, re-injected at each
+    // assembly. A `Weak` keeps the hook from pinning the core.
+    {
+        let core_weak = Arc::downgrade(core);
+        let sid = sid.to_owned();
+        agent.set_plan_hook(Some(Arc::new(move || {
+            core_weak.upgrade().and_then(|core| core.plan_state(&sid))
+        })));
+    }
     // The core's om_status hook takes the kind string; this closure
     // shapes it into the protocol event on the shared channel.
     {

@@ -230,6 +230,7 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
         types: vec![builtin_general()],
         bridge: bridge.clone(),
         driver: Arc::new(AcceptanceDriver),
+        core: None,
     });
     let agent = AgentSession::launch(
         store,

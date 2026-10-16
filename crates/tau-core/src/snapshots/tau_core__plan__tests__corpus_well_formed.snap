@@ -1,0 +1,22 @@
+---
+source: crates/tau-core/src/plan.rs
+expression: "parse(&corpus_raw(\"well_formed\"))"
+---
+{
+  "steps": [
+    {
+      "text": "investigate the failure",
+      "done": true
+    },
+    {
+      "text": "fix the parser",
+      "done": false
+    },
+    {
+      "text": "add tests",
+      "done": false
+    }
+  ],
+  "criteria": "- build passes\n",
+  "notes": "\n\nthe parser is the culprit"
+}

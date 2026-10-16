@@ -11,6 +11,7 @@ pub mod harness;
 pub mod hashline;
 pub mod om;
 pub mod om_integration;
+pub mod plan;
 pub mod provider;
 pub mod session;
 pub mod skills;

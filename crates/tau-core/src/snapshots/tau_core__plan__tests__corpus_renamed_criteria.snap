@@ -1,0 +1,9 @@
+---
+source: crates/tau-core/src/plan.rs
+expression: "parse(&corpus_raw(\"renamed_criteria\"))"
+---
+{
+  "steps": [],
+  "criteria": "cargo nextest passes\nmore",
+  "notes": ""
+}

@@ -134,6 +134,11 @@ impl AgentSession {
                 } else {
                     Some(contracts)
                 };
+                // The watcher-parsed plan state (design: the plan file is
+                // the source of truth): re-injected at every assembly — a
+                // turn boundary and a post-compaction call are both
+                // assemblies, so one site covers both.
+                let plan_state = inner.plan_hook.as_ref().and_then(|h| h());
                 // Assembly runs on the persistent state, not a clone: it is
                 // pure over the record, and the one-shot continuation-hint
                 // flip must stick (a clone's flip would be dropped, and the
@@ -147,14 +152,20 @@ impl AgentSession {
                         .into_iter()
                         .chain(input_items(&raw))
                         .collect();
-                    (assembled.instructions, input)
+                    (
+                        with_plan_state(assembled.instructions, plan_state.as_deref()),
+                        input,
+                    )
                 } else {
                     let mut instructions = base;
                     if let Some(contract) = &contract {
                         instructions.push_str("\n\n# Task (resume contract)\n");
                         instructions.push_str(contract);
                     }
-                    (instructions, input_items(&entries))
+                    (
+                        with_plan_state(instructions, plan_state.as_deref()),
+                        input_items(&entries),
+                    )
                 }
             };
             let turn = self.turn_config();
@@ -797,6 +808,17 @@ fn repair_tool_call_arguments(result: &mut TurnResult) {
             _ => {}
         }
     }
+}
+
+/// The watcher-parsed plan state appended to the assembled instructions
+/// (the design's re-injection); `None` = the session has no observed plan
+/// state yet, and the assembly is untouched.
+fn with_plan_state(mut instructions: String, plan: Option<&str>) -> String {
+    if let Some(plan) = plan {
+        instructions.push_str("\n\n");
+        instructions.push_str(plan);
+    }
+    instructions
 }
 
 /// The session's entries (file order) mapped to responses-API input items:

@@ -1,0 +1,26 @@
+---
+source: crates/tau-core/src/plan.rs
+expression: "parse(&corpus_raw(\"malformed_checkboxes\"))"
+---
+{
+  "steps": [
+    {
+      "text": "ok",
+      "done": false
+    },
+    {
+      "text": "upper",
+      "done": true
+    },
+    {
+      "text": "plus",
+      "done": false
+    },
+    {
+      "text": "empty box",
+      "done": false
+    }
+  ],
+  "criteria": "",
+  "notes": "- [x\n- [ xx] junk\n- [ x] spaced"
+}

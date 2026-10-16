@@ -65,6 +65,14 @@ pub struct Core {
     /// second consumer of the shared `Watcher` plumbing, visibility-driven
     /// (it watches the dirs the pane has expanded, #115).
     pub(crate) tree_watchers: Mutex<HashMap<String, Watcher>>,
+    /// The watcher-parsed plan state per session (design: the plan file is
+    /// the source of truth; this is its parse, kept fresh by the
+    /// per-workspace plan watcher). Dropped on session close — the file on
+    /// disk is the record, the cache is not.
+    pub(crate) plans: Mutex<HashMap<String, crate::plan::Plan>>,
+    /// The per-workspace plan watcher (the `.tau/plans` root): a batch
+    /// re-reads the changed plan files into the state cache.
+    pub(crate) plan_watchers: Mutex<HashMap<String, Watcher>>,
     /// The per-workspace git snapshot cache (file-tree plan, phase 2): one
     /// entry per open workspace, `None` = not a git repo (negative results
     /// cached too, so a non-git workspace costs three spawns, not three per
@@ -183,6 +191,8 @@ impl CoreBuilder {
             home_watcher: Mutex::new(None),
             project_watchers: Mutex::new(HashMap::new()),
             tree_watchers: Mutex::new(HashMap::new()),
+            plans: Mutex::new(HashMap::new()),
+            plan_watchers: Mutex::new(HashMap::new()),
             git_snapshots: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             home: self.home.clone(),
@@ -439,6 +449,7 @@ impl Core {
         self.set_workspace_open(&workspace, true);
         self.start_project_watcher(&workspace);
         self.start_tree_watcher(&workspace);
+        self.start_plan_watcher(&workspace);
         workspace
     }
 
@@ -526,11 +537,48 @@ impl Core {
             .lock()
             .expect("tree watchers: no panic while the lock is held")
             .remove(id);
+        self.plan_watchers
+            .lock()
+            .expect("plan watchers: no panic while the lock is held")
+            .remove(id);
         self.git_snapshots
             .lock()
             .expect("git snapshots: no panic while the lock is held")
             .remove(id);
         Ok(())
+    }
+
+    /// The session's current plan state, rendered for injection (the
+    /// watcher-parsed state of the plan file); `None` until the first
+    /// observation.
+    pub(crate) fn plan_state(&self, session: &str) -> Option<String> {
+        self.plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
+            .get(session)
+            .map(crate::plan::render)
+    }
+
+    /// Re-read and parse the session's plan file into the state cache: the
+    /// plan watcher's consumer, and the session-start seed. A failed read
+    /// (a torn write, a delete) degrades to an empty plan — the parser is
+    /// total, so nothing here can fail a turn.
+    pub(crate) fn refresh_plan(&self, workspace: &Path, session_id: &str) {
+        let raw =
+            std::fs::read_to_string(crate::plan::path(workspace, session_id)).unwrap_or_default();
+        let plan = crate::plan::parse(&raw);
+        let done = plan.done_count();
+        let total = plan.steps.len();
+        self.plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
+            .insert(session_id.to_owned(), plan);
+        tracing::info!(
+            session = %session_id,
+            done,
+            total,
+            "plan state observed"
+        );
     }
 
     pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {
