@@ -157,7 +157,13 @@ impl Supervisor {
         let child_prompt = if ty.name == "general" {
             self.system_prompt.clone()
         } else {
-            ty.body.clone()
+            // A `.md` type's prompt is its own body, so the gate section —
+            // stated in the prompt when a gate is configured (spec §5.3) —
+            // is appended here; the inherited supervisor prompt reaches
+            // only `general` children.
+            let mut body = ty.body.clone();
+            crate::gate::with_section(&mut body, &self.gates);
+            body
         };
         let child_model = ty.model.clone().unwrap_or_else(|| self.model.clone());
         let child_tools = tools::surface::child_specs(ty.tools.as_deref());

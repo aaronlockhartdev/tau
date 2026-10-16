@@ -53,6 +53,20 @@ fn gates_section_overrides_defaults() {
 }
 
 #[test]
+fn a_bare_gates_section_is_a_no_gate() {
+    // An empty/blank command (the omitted key's serde default included) must
+    // not turn the gate on as a silent no-op: `bash -c ""` exits 0.
+    for toml in [
+        "[gates]\n",
+        "[gates]\ncommand = \"\"\n",
+        "[gates]\ncommand = \"   \"\n",
+    ] {
+        let config = load_from(toml, "").unwrap();
+        assert!(config.gates.is_none(), "expected no gate for: {toml}");
+    }
+}
+
+#[test]
 fn gates_unknown_key_is_rejected() {
     assert!(load_from("[gates]\ncommand = \"x\"\nbogus = 1\n", "").is_err());
 }

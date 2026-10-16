@@ -6,11 +6,12 @@ use super::{
     testkit::{collect_events, open_ws, providers},
 };
 use crate::agent_type::builtin_general;
-use crate::config::{Om, Provider, SubAgents, ToolBatchPolicy};
+use crate::config::{Gates, Om, Provider, SubAgents, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::subagent::testkit::{CannedFactory, TestBridge, TestDriver};
 use crate::subagent::{Supervisor, SupervisorParams};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 
 fn canned_provider() -> crate::provider::TurnProviderRef {
@@ -215,6 +216,7 @@ fn launch_child_routes_task_tools_through_the_parent() {
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
+            instructions: Arc::new(Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
@@ -322,6 +324,7 @@ fn launch_seam_session_is_freed_when_dropped() {
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
+            instructions: Arc::new(Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
@@ -355,4 +358,93 @@ fn launch_seam_session_is_freed_when_dropped() {
         Arc::try_unwrap(agent).is_ok(),
         "the session must be droppable"
     );
+}
+
+#[tokio::test]
+async fn a_reopened_session_resumes_gate_failed_from_the_record() {
+    // A session that ended `gate_failed` resumes that state on re-open: the
+    // record is the single source of truth (spec §5.3).
+    let dir = tempfile::tempdir().unwrap();
+    let store = fresh_store(dir.path(), "parent");
+    let bridge: Arc<dyn crate::subagent::SubagentBridge> = Arc::new(TestBridge::default());
+    let sup = Supervisor::new(SupervisorParams {
+        parent_session: "parent".into(),
+        cwd: dir.path().to_path_buf(),
+        provider: Arc::new(CannedFactory {
+            scripts: vec![],
+            delays: vec![],
+            created: AtomicUsize::new(0),
+            calls: Arc::new(AtomicUsize::new(0)),
+            instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }),
+        model: "test-model".into(),
+        system_prompt: "be terse".into(),
+        om: Om::default(),
+        om_model: String::new(),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: crate::agent::TurnConfig::default(),
+        gates: Some(Gates {
+            command: "false".into(),
+            max_retries: 1,
+            ..Gates::default()
+        }),
+        caps: SubAgents::default(),
+        types: vec![builtin_general()],
+        depth: 0,
+        bridge,
+        driver: Arc::new(TestDriver),
+        core: None,
+    });
+    // The first life: the check fails through its one repair.
+    let write = |id: &str| {
+        crate::agent::testkit::sse(
+            "",
+            &[(
+                "write".into(),
+                id.into(),
+                r#"{"path":"a.txt","content":"x"}"#.into(),
+            )],
+        )
+    };
+    let provider = Arc::new(crate::agent::testkit::ScriptedProvider::new(vec![
+        write("c1"),
+        crate::agent::testkit::sse("done", &[]),
+        write("c2"),
+        crate::agent::testkit::sse("done", &[]),
+    ]));
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider,
+            supervisor: Some(sup.clone()),
+            system_prompt: None,
+            base_prompt: None,
+            first_provider: None,
+        },
+    )
+    .unwrap();
+    agent.send("work", crate::agent::Lane::FollowUp);
+    agent.process().await.unwrap();
+    assert!(agent.gate_failed(), "retries exhausted → gate_failed");
+    drop(agent);
+
+    // The re-open: a fresh session around the same store resumes the state.
+    let reopened = AgentSession::launch(
+        SessionStore::for_workspace(dir.path(), "parent"),
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider: canned_provider(),
+            supervisor: Some(sup),
+            system_prompt: None,
+            base_prompt: None,
+            first_provider: None,
+        },
+    )
+    .unwrap();
+    assert!(reopened.gate_failed(), "gate_failed survives the re-open");
 }

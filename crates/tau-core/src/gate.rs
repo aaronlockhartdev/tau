@@ -146,6 +146,34 @@ pub fn with_section(prompt: &mut String, gates: &Option<crate::config::Gates>) {
     }
 }
 
+/// The gate state a reopened session resumes (spec §5.3): the record is
+/// the single source of truth, so the state is derived from the
+/// transcript, not stored a second time. A pass records nothing, so the
+/// newest terminal gate note (the retries-exhausted record) on the active
+/// branch is the session's latest terminal outcome.
+pub(crate) fn initial_gate_failed(
+    store: &mut crate::session::SessionStore,
+) -> Result<bool, crate::session::Error> {
+    let entries: Vec<crate::session::Entry> = store
+        .entries_range_cached(0, usize::MAX)?
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect();
+    let leaf = store.leaf_cached()?.map(|e| e.id);
+    Ok(
+        crate::om_integration::branch_entries(&entries, leaf.as_deref())
+            .iter()
+            .rev()
+            .any(|e| {
+                e.kind == crate::agent::KIND_SYSTEM
+                    && e.payload
+                        .get("note")
+                        .and_then(|n| n.as_str())
+                        .is_some_and(|n| n.contains("marked gate_failed"))
+            }),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

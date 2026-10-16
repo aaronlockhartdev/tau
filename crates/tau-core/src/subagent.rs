@@ -766,6 +766,8 @@ mod tests_caps;
 #[cfg(test)]
 mod tests_context_modes;
 #[cfg(test)]
+mod tests_gate;
+#[cfg(test)]
 mod tests_link;
 #[cfg(test)]
 mod tests_notify;

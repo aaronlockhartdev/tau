@@ -113,6 +113,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
@@ -145,6 +146,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,
@@ -186,6 +188,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
@@ -218,6 +221,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,
@@ -244,6 +248,7 @@ async fn the_depth_cap() {
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
+            instructions: Arc::new(Mutex::new(Vec::new())),
         });
         let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
         Supervisor::new(SupervisorParams {
@@ -321,6 +326,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let driver = Arc::new(NotifyingDriver {
         notify: Arc::new(tokio::sync::Notify::new()),
@@ -357,6 +363,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,

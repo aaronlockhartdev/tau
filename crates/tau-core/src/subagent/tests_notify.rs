@@ -91,6 +91,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -121,6 +122,7 @@ async fn an_assigned_task_is_worked_by_the_child_and_resolves_through_the_gate()
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,
@@ -208,6 +210,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -238,6 +241,7 @@ async fn a_child_cannot_create_assign_or_cancel_tasks() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,
@@ -332,6 +336,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -362,6 +367,7 @@ async fn an_assign_to_a_parked_child_resumes_it_with_the_record() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,
@@ -465,6 +471,7 @@ async fn a_child_task_tools_route_to_the_parents_store() {
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -495,6 +502,7 @@ async fn a_child_task_tools_route_to_the_parents_store() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: None,
         om_model: String::new(),
         subagents: None,

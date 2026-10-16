@@ -171,3 +171,38 @@ async fn a_no_tool_turn_is_not_gated() {
     assert!(!agent.gate_failed());
     assert!(system_notes(&agent).is_empty());
 }
+
+#[tokio::test]
+async fn a_later_passing_turn_clears_the_prior_gate_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    // Turn 1: the check fails through its one repair (max_retries = 1) →
+    // gate_failed. Turn 2: the check passes → the live state clears across
+    // the turn boundary.
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse("", &[write_call("c1", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c2", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c3", "fixed.txt")]),
+        sse("done", &[]),
+    ]));
+    let gates = Gates {
+        command: "test -f fixed.txt".into(),
+        max_retries: 1,
+        ..Gates::default()
+    };
+    let agent = make_agent_with_gate(dir.path(), provider.clone(), gates);
+    agent.send("work", Lane::FollowUp);
+    agent.process().await.unwrap();
+    assert!(agent.gate_failed(), "turn 1 exhausted the retries");
+
+    agent.send("work again", Lane::FollowUp);
+    agent.process().await.unwrap();
+    // Six LLM calls: four in turn 1 (initial + repair + two finals), two
+    // in turn 2.
+    assert_eq!(provider.seen.lock().unwrap().len(), 6);
+    assert!(
+        !agent.gate_failed(),
+        "turn 2's pass clears the prior gate_failed"
+    );
+}

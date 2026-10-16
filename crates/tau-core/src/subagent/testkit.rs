@@ -42,6 +42,9 @@ pub(crate) struct CannedFactory {
     pub(crate) created: AtomicUsize,
     /// Provider calls across every child (the quiescence test's oracle).
     pub(crate) calls: Arc<AtomicUsize>,
+    /// The instructions (system prompt) of each child's first LLM call —
+    /// the prompt-assembly oracle.
+    pub(crate) instructions: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 impl ChildProviderFactory for CannedFactory {
@@ -59,6 +62,7 @@ impl ChildProviderFactory for CannedFactory {
             index: AtomicUsize::new(0),
             pre_delay,
             calls: self.calls.clone(),
+            instructions: self.instructions.clone(),
         })
     }
 }
@@ -68,6 +72,7 @@ pub(crate) struct CannedChildProvider {
     index: AtomicUsize,
     pre_delay: Duration,
     calls: Arc<AtomicUsize>,
+    instructions: Arc<Mutex<Vec<Option<String>>>>,
 }
 impl CannedChildProvider {
     fn next(&self) -> String {
@@ -80,9 +85,20 @@ impl CannedChildProvider {
 impl provider::TurnProvider for CannedChildProvider {
     fn call<'a>(
         &self,
-        _req: &ResponseRequest,
+        req: &ResponseRequest,
         sink: &'a mut dyn TurnSink,
     ) -> provider::ProviderTurn<'a> {
+        if self.index.load(Ordering::SeqCst) == 0 {
+            // The request's `instructions` is private: capture it the way
+            // the wire encodes it (the struct's Serialize).
+            let captured = serde_json::to_value(req).unwrap();
+            self.instructions.lock().unwrap().push(
+                captured
+                    .get("instructions")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
         let body = self.next();
         self.calls.fetch_add(1, Ordering::SeqCst);
         let delay = self.pre_delay;
@@ -194,6 +210,7 @@ pub(crate) fn harness_full(
         delays,
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let provider: Arc<dyn ChildProviderFactory> = factory.clone();
     let sup = Supervisor::new(SupervisorParams {

@@ -383,7 +383,14 @@ impl ConfigFile {
             config.limits = limits.clone();
         }
         if let Some(gates) = &self.gates {
-            config.gates = Some(gates.clone());
+            // A bare `[gates]` (blank `command`) is a no-gate, not a silent
+            // no-op gate: `bash -c ""` exits 0, which would pass every
+            // qualifying turn while the prompt claims verification.
+            config.gates = if gates.command.trim().is_empty() {
+                None
+            } else {
+                Some(gates.clone())
+            };
         }
     }
 }

@@ -197,6 +197,9 @@ pub(crate) struct SessionParams {
     pub turn: TurnConfig,
     /// The completion gate (spec §5.3); `None` = no gate.
     pub gates: Option<crate::config::Gates>,
+    /// The gate state resumed from the session's record on re-open (spec
+    /// §5.3); fresh sessions pass `false`.
+    pub gate_failed: bool,
     /// The OM integration state (ticket #22); `None` = OM disabled and the
     /// loop behaves as before.
     pub om: Option<crate::om_integration::OmState>,
@@ -237,7 +240,7 @@ impl AgentSession {
                 turn: p.turn,
                 queue: VecDeque::new(),
                 gates: p.gates,
-                gate_failed: false,
+                gate_failed: p.gate_failed,
                 om: p.om,
                 om_inflight: None,
                 om_buffer_boundary: 0,

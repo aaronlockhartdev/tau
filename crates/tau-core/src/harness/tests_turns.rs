@@ -426,6 +426,7 @@ async fn a_live_om_run_emits_om_status_events() {
         tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
         turn: TurnConfig::default(),
         gates: None,
+        gate_failed: false,
         om: Some(crate::om_integration::OmState::from_config(
             &om,
             crate::om::OmRecord::default(),

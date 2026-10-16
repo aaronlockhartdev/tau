@@ -114,6 +114,7 @@ impl AgentSession {
                     tool_batch_on_force,
                     turn,
                     gates,
+                    gate_failed: false,
                     om,
                     om_model,
                     subagents: None,
@@ -145,6 +146,7 @@ impl AgentSession {
                     tool_batch_on_force: d.tool_batch_on_force,
                     turn: d.turn,
                     gates: d.gates,
+                    gate_failed: false,
                     om: Some(OmState::from_config(&d.om, record)),
                     om_model: d.om_model,
                     subagents: None,
@@ -222,6 +224,7 @@ impl AgentSession {
             Some(prompt) => plan_wiring(sup, &prompt, &d.cwd, &sid),
             None => (d.system_prompt.clone(), None),
         };
+        let gate_failed = resume_gate_failed(&mut store)?;
         let agent = Arc::new(Self::new(SessionParams {
             store,
             system_prompt,
@@ -232,6 +235,7 @@ impl AgentSession {
             tool_batch_on_force: d.tool_batch_on_force,
             turn: d.turn,
             gates: d.gates,
+            gate_failed,
             om: Some(OmState::from_config(&d.om, record)),
             om_model: d.om_model,
             subagents: Some(sup.clone()),
@@ -254,6 +258,14 @@ fn wire_plan_hook(agent: &AgentSession, core: Option<Arc<Core>>, sid: &str) {
             core.upgrade().and_then(|core| core.plan_state(&sid))
         })));
     }
+}
+
+/// The gate state a reopened session resumes from the record (spec §5.3):
+/// the newest terminal gate outcome on the branch.
+fn resume_gate_failed(store: &mut SessionStore) -> Result<bool, ProtocolError> {
+    crate::gate::initial_gate_failed(store).map_err(|e| ProtocolError::Other {
+        message: e.to_string(),
+    })
 }
 
 /// The plan wiring the supervisor-linked roles share (design: the plan
@@ -324,6 +336,7 @@ fn root_session(
     let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
         message: e.to_string(),
     })?;
+    let gate_failed = resume_gate_failed(&mut store)?;
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
@@ -415,6 +428,7 @@ fn root_session(
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn,
         gates: config.gates.clone(),
+        gate_failed,
         om: Some(OmState::from_config(&config.om, record)),
         om_model: config.om.om_model.clone(),
         subagents: Some(sup.clone()),
