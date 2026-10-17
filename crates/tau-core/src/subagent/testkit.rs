@@ -4,6 +4,7 @@ use super::*;
 use crate::harness::SessionRole;
 use crate::provider::{self, ResponseRequest, TurnSink};
 use crate::session::SessionStore;
+use serde_json::json;
 use std::time::Duration;
 
 #[derive(Default)]

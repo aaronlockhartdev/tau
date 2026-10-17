@@ -78,14 +78,11 @@ impl Core {
             }
             Command::MessageStop { session } => {
                 let live = self.live(&session)?;
-                // A child session stops through its supervisor: the
-                // terminal Stopped state, the freed slot, the parent's
-                // wake. A bare stream cut would leave the child running —
-                // the nudge path resumes it.
-                // A child session stops through its link (R3): the
-                // terminal Stopped state, the freed slot, the parent's
-                // wake. A bare stream cut would leave the child running —
-                // the nudge path resumes it. The parent must be live.
+                // A child session stops through its link (R3) into the
+                // parent's supervisor: the terminal Stopped state, the
+                // freed slot, the state event (no parent wake — spec
+                // §5.2). A bare stream cut would leave the child running:
+                // its drive ends the turn and rests. The parent must be live.
                 if let Some(link) = live.agent.child_link() {
                     self.live(link.parent_session())?;
                     link.stop()

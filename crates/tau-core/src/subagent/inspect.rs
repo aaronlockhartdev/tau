@@ -1,4 +1,5 @@
-use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, WaitingOn, om_integration};
+use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, WaitingOn};
+use crate::om_integration;
 
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).

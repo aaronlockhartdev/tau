@@ -1,4 +1,5 @@
 use super::*;
+use crate::agent::{CallOutput, Entry, FunctionCall, InputEntry, KIND_TOOL};
 
 fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
     Entry {

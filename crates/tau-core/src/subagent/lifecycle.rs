@@ -1,6 +1,7 @@
 use super::{
-    Arc, Child, ChildState, Lane, Ordering, StoppedBy, Supervisor, TurnOrigin, WaitingOn, WakeKind,
+    Arc, Child, ChildState, Ordering, StoppedBy, Supervisor, TurnOrigin, WaitingOn, WakeKind,
 };
+use crate::agent::Lane;
 
 impl Supervisor {
     /// `subagent_message` (and the GUI's send to a child): running → the
@@ -204,11 +205,10 @@ impl Supervisor {
     }
 
     /// Stop one child by handle (the GUI closing the child session): the
-    /// same terminal path as `stop` — a running child's stream is cut,
-    /// and every child gets the terminal Stopped record, the drive's
-    /// wake, the state event, and the parent's wake. A bare stop flag on
-    /// the child session would leave its drive to end the turn without a
-    /// parent notify and burn its one-shot nudge into a bogus `failed`.
+    /// same terminal path as `stop` — a running child's stream is cut, and
+    /// every child gets the terminal Stopped record, the drive's wake, and
+    /// the state event. The parent gets the state event, not a wake (spec
+    /// §5.2: `stopped` → no parent wake).
     pub fn stop_handle(self: &Arc<Self>, handle: &str, by: StoppedBy) -> Result<String, String> {
         let child = self
             .live_children()

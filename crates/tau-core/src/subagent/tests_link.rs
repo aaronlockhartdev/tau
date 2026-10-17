@@ -4,8 +4,8 @@
 //! format) resolves unambiguously.
 
 use super::testkit::{CannedFactory, ScriptedProvider, TestBridge, TestDriver, sse, wait_for};
-use super::{ContextMode, Lane, SubagentBridge, Supervisor, SupervisorParams};
-use crate::agent::{AgentSession, TurnConfig};
+use super::{ContextMode, SubagentBridge, Supervisor, SupervisorParams};
+use crate::agent::{AgentSession, Lane, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
 use crate::harness::SessionRole;

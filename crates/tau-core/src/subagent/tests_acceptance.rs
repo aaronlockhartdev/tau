@@ -1,7 +1,9 @@
 use super::*;
 
+use crate::agent::Lane;
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
+use serde_json::json;
 use std::time::Duration;
 
 /// The ticket's scripted acceptance: a parent spawns three children

@@ -1,9 +1,14 @@
+use super::route::title_on_disk;
 use super::{
     AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildState, ContextMode, KIND_SUBAGENT,
-    Lane, Mutex, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned, Supervisor,
-    TurnOrigin, Weak, json, om_integration, title_on_disk, tools,
+    Mutex, Ordering, SessionStore, SpawnNotice, Spawned, Supervisor, TurnOrigin, Weak,
 };
+use crate::agent::Lane;
 use crate::harness::SessionRole;
+use crate::om::OmRecord;
+use crate::om_integration::{self, OmState};
+use crate::tools;
+use serde_json::json;
 
 impl Supervisor {
     /// Spawn a child (spec §5.1): async — this only sets things up; the

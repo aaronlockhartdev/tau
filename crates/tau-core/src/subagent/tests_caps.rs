@@ -1,8 +1,10 @@
 use super::*;
 
-use crate::agent::SessionParams;
+use crate::agent::{Lane, SessionParams};
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
+use crate::tools;
+use serde_json::json;
 
 /// The concurrency cap is enforced; a child's tool set carries no
 /// spawn tool (the depth cap is structural).

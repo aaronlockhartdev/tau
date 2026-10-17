@@ -1,7 +1,10 @@
 use super::*;
 
+use crate::om::OmRecord;
+use crate::om_integration::{self, OmState};
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
+use serde_json::json;
 
 /// A compacted spawn seeds the parent's observation log verbatim as
 /// the child's frozen prefix (a `spawn-snapshot` entry with the

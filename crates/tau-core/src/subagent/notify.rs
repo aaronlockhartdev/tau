@@ -1,7 +1,9 @@
 use super::{
-    Arc, Child, ChildState, KIND_SUBAGENT, Lane, ResumeContract, StateNotice, Supervisor, Value,
-    WaitingOn, WakeKind, WakeNotice, Weak, json,
+    Arc, Child, ChildState, KIND_SUBAGENT, ResumeContract, StateNotice, Supervisor, Value,
+    WaitingOn, WakeKind, WakeNotice, Weak,
 };
+use crate::agent::Lane;
+use serde_json::json;
 
 impl Supervisor {
     /// Assign one of this session's tasks to a child (spec §5.3): the

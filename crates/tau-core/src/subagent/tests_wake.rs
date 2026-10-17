@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use super::testkit::*;
 use super::*;
+use crate::agent::Lane;
 use crate::subagent::WakeKind;
 use serde_json::json;
 

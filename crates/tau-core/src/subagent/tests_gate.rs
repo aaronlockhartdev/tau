@@ -14,10 +14,16 @@ fn harness_with_gate(
     dir: &std::path::Path,
     gates: Gates,
     types: Vec<crate::agent_type::AgentType>,
-) -> (Arc<Supervisor>, Arc<CannedFactory>, Arc<AgentSession>) {
+    scripts: Vec<Vec<String>>,
+) -> (
+    Arc<Supervisor>,
+    Arc<TestBridge>,
+    Arc<CannedFactory>,
+    Arc<AgentSession>,
+) {
     let bridge = Arc::new(TestBridge::default());
     let factory = Arc::new(CannedFactory {
-        scripts: vec![vec![sse("", &[])]],
+        scripts,
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
@@ -38,7 +44,7 @@ fn harness_with_gate(
         caps: SubAgents::default(),
         depth: 0,
         types,
-        bridge,
+        bridge: bridge.clone(),
         driver: Arc::new(TestDriver),
         core: None,
     });
@@ -60,7 +66,7 @@ fn harness_with_gate(
         },
     )
     .unwrap();
-    (sup, factory, parent)
+    (sup, bridge, factory, parent)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -78,8 +84,12 @@ async fn a_md_type_child_prompt_carries_the_gate_section() {
         model: None,
         context_mode: ContextMode::Fresh,
     };
-    let (sup, factory, _parent) =
-        harness_with_gate(dir.path(), gates, vec![builtin_general(), reviewer]);
+    let (sup, _bridge, factory, _parent) = harness_with_gate(
+        dir.path(),
+        gates,
+        vec![builtin_general(), reviewer],
+        vec![vec![sse("", &[])]],
+    );
 
     let s = sup
         .spawn("reviewer", "review this", None, None, "c0")
@@ -115,4 +125,62 @@ async fn a_md_type_child_prompt_carries_the_gate_section() {
         prompt.contains("cargo nextest run"),
         "the named check: {prompt}"
     );
+}
+
+/// The `gate_failed → failed` arm of the observed rest (spec §5.2): a child
+/// whose gate check has exhausted its repairs rests `failed`, not `idle`
+/// (the gate is checked before the plan; the idle cases elsewhere are the
+/// negative). `failed` also auto-notifies the parent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_gate_failed_child_rests_failed_not_idle() {
+    let dir = tempfile::tempdir().unwrap();
+    let gates = Gates {
+        command: "false".into(),
+        max_retries: 0,
+        ..Gates::default()
+    };
+    // The child uses a tool (the gate's qualification), then ends the turn:
+    // the failing check exhausts its zero repairs and marks the session
+    // gate_failed.
+    let script = vec![
+        sse(
+            "",
+            &[(
+                "bash".into(),
+                "c1".into(),
+                r#"{"command": "echo work"}"#.into(),
+            )],
+        ),
+        sse("the work is done", &[]),
+    ];
+    let (sup, bridge, _factory, _parent) =
+        harness_with_gate(dir.path(), gates, vec![builtin_general()], vec![script]);
+    let s = sup
+        .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
+        .unwrap();
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Failed { .. }
+        )
+    });
+    // The rest is `failed` (observed), carrying the gate's reason.
+    let info = sup.state_info(&s.handle).unwrap();
+    assert!(
+        matches!(
+            &info.state,
+            ChildState::Failed { reason } if reason.contains("gate_failed")
+        ),
+        "the observed state: {info:?}"
+    );
+    // A failed child auto-notifies the parent (ADR-0001 wake rules).
+    assert!(
+        bridge
+            .wakes
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|w| w.child == s.session_id && w.kind == WakeKind::Failed)
+    );
+    s.drive.await.unwrap();
 }
