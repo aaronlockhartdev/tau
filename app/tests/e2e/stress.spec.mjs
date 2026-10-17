@@ -54,7 +54,7 @@ const storeState = () => {
     turn: cur ? cur.turn : null,
     omKind: cur ? cur.om.kind : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
-    tasks: cur ? cur.tasks.length : null,
+    subagents: cur ? cur.subagents.length : null,
     renderRange: s.renderRange,
     lastText: last ? last.text : null
   };
@@ -93,7 +93,7 @@ const panesState = () => {
     leftTabs: left ? q(left, '.tab') : [],
     leftRows: left ? q(left, '.trow') : [],
     rightTabs: right ? q(right, '.tab') : [],
-    rightTasks: right ? q(right, '.lrow') : [],
+    rightRows: right ? q(right, '.lrow') : [],
     rightEmpty: right ? (right.querySelector('.emptyc')?.textContent ?? '') : '',
     bar: barEl ? barEl.textContent.replace(/\s+/g, ' ').trim() : ''
   };
@@ -325,7 +325,7 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
     );
     check('left pane: the session tree lists the fixture session', p1.leftRows.some((r) => r.includes(fixtureSession)), p1.leftRows.join(' | '));
     check('left pane: the sessions tab is active by default', (p1.leftTabs ?? []).includes('sessions'), p1.leftTabs.join(' | '));
-    check('right pane: the tasks tab renders its empty state', p1.rightTasks.length === 0 && p1.rightEmpty.includes('No tasks'), JSON.stringify({ tasks: p1.rightTasks, empty: p1.rightEmpty }));
+    check('right pane: the sub-agents tab renders its empty state', p1.rightRows.length === 0 && p1.rightEmpty.includes('No sub-agents'), JSON.stringify({ rows: p1.rightRows, empty: p1.rightEmpty }));
     check('status bar: state and cost group render', /idle/.test(p1.bar) && /\d+ in · \d+ out/.test(p1.bar), p1.bar);
   });
 

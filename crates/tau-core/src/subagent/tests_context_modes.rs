@@ -1,7 +1,10 @@
 use super::*;
 
+use crate::om::OmRecord;
+use crate::om_integration::{self, OmState};
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
+use serde_json::json;
 
 /// A compacted spawn seeds the parent's observation log verbatim as
 /// the child's frozen prefix (a `spawn-snapshot` entry with the
@@ -33,18 +36,19 @@ async fn a_compacted_spawn_seeds_the_frozen_prefix() {
         },
     )));
     let s = sup
-        .spawn(
-            "general",
-            "compact me",
-            Some(ContextMode::Compacted),
-            None,
-            "c0",
-        )
+        .spawn("general", "compact me", Some(ContextMode::Compacted), "c0")
         .unwrap();
     // Quiesce the child before reading its file from a second store:
-    // its drive ends when the nudge exhausts, after which the file is
-    // stable (review B1: a reader racing the drive saw a torn branch).
-    s.drive.await.unwrap();
+    // it rests (observed `idle`), a stop ends its drive, and the file
+    // is stable (review B1: a reader racing the drive saw a torn
+    // branch).
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Idle { .. }
+        )
+    });
+    sup.stop_handle(&s.handle, StoppedBy::User).unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
     store.open().unwrap();
     // The spawn-snapshot entry (the record in the child's file).
@@ -74,7 +78,7 @@ async fn a_compacted_spawn_seeds_the_frozen_prefix() {
 /// `scope: "parent"` browses the parent session's raw history — the
 /// target of its frozen prefix; a session without a parent link gets a
 /// refusal, not a guess.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_compacted_child_recalls_the_parent_session() {
     let dir = tempfile::tempdir().unwrap();
     let (sup, _, _parent) = harness(
@@ -126,22 +130,29 @@ async fn a_compacted_child_recalls_the_parent_session() {
         .unwrap();
     parent.set_om(Some(OmState::from_config(&Om::default(), record)));
     let s = sup
-        .spawn(
-            "general",
-            "compact me",
-            Some(ContextMode::Compacted),
-            None,
-            "c0",
-        )
+        .spawn("general", "compact me", Some(ContextMode::Compacted), "c0")
         .unwrap();
+    // The child rests (observed `idle`); a stop ends its drive so the
+    // test's handles are all quiescent.
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Idle { .. }
+        )
+    });
+    sup.stop_handle(&s.handle, StoppedBy::User).unwrap();
     s.drive.await.unwrap();
     let child = sup.child_agent(&s.handle).unwrap();
     // Parent scope: the parent's raw entries come back.
-    let out = child.recall_scoped(&json!({ "group": "pg", "scope": "parent" }));
+    let out = child
+        .recall_scoped(&json!({ "group": "pg", "scope": "parent" }))
+        .unwrap();
     assert!(out.contains("parent raw one"), "{out}");
     assert!(out.contains("parent raw two"), "{out}");
     // The parent itself has no parent link.
-    let out = parent.recall_scoped(&json!({ "group": "pg", "scope": "parent" }));
+    let out = parent
+        .recall_scoped(&json!({ "group": "pg", "scope": "parent" }))
+        .unwrap_err();
     assert!(out.contains("needs a parent link"), "{out}");
 }
 
@@ -181,10 +192,18 @@ async fn a_fork_copies_the_tree_and_inherits_the_record() {
         },
     )));
     let s = sup
-        .spawn("general", "fork me", Some(ContextMode::Fork), None, "c0")
+        .spawn("general", "fork me", Some(ContextMode::Fork), "c0")
         .unwrap();
     // Quiesce the child before reading its file from a second store
-    // (review B1, same as the compacted test).
+    // (review B1, same as the compacted test): it rests (observed
+    // `idle`), a stop ends its drive, then the file is stable.
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Idle { .. }
+        )
+    });
+    sup.stop_handle(&s.handle, StoppedBy::User).unwrap();
     s.drive.await.unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
     store.open().unwrap();

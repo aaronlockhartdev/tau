@@ -14,6 +14,7 @@
     isTauri,
     type Event,
     type FileEntry,
+    type GitStatus,
     type SessionMeta,
     type SkillInfo,
     type Workspace
@@ -59,12 +60,28 @@
     waveDirs
   } from './files';
   import { applyTabSelect, defaultPane, paneOf, type PaneState } from './panes';
+  import { closeIn, openIn, type OpenFiles } from './openfiles';
   import { errText } from './errors';
   export type { PaneState } from './panes';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { attentionOf, type AttentionItem } from './attention';
   import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
   export const store = $state({
     focus: false,
+    // The wall clock the relative-age labels read; ticked every 30s so idle
+    // ages advance live (each tick rewrites only the label text).
+    now: Date.now(),
+    // Window fullscreen state: the top bar drops its traffic-light inset when
+    // the OS hides the controls (tracked by the module-scope listener below).
+    fullscreen: false,
+    attentionOpen: false,
+    paletteOpen: false,
+    fleetOpen: false,
+    focusInspector: null as 'left' | 'right' | null,
+    // The follow filter (P2): the handle of the sub-agent the transcript is
+    // focused on; non-followed entries render dimmed. Cleared by the chip.
+    follow: null as string | null,
     modelMenuOpen: false,
     // Seeded from the per-user presentation registry (spec §12, #35):
     // 'visible-by-default' is the user's standing preference, and the 'r'
@@ -100,6 +117,20 @@
     // listing is recorded per workspace/path and cleared when the same dir
     // lists successfully again.
     fileErrors: {} as Record<string, Record<string, string>>,
+    // Git status per workspace (workbench P4): the tree's change tints and
+    // the changes view's file switcher. null = not a git repository.
+    gitStatus: {} as Record<string, GitStatus | null>,
+    // The file viewer (open-files model): a persistent, per-workspace set of
+    // open files (closable tabs), independent of git status. The center column
+    // toggles between the transcript and the viewer (pane.center); open files
+    // survive a switch to the transcript. activeFile* is the shown tab: a null
+    // New is "loading", a set Error is a real reason (binary / unreadable), ''
+    // is an empty file.
+    openFiles: {} as OpenFiles,
+    activeFile: null as { workspace: string; path: string } | null,
+    activeFileNew: null as string | null,
+    activeFileBase: null as string | null,
+    activeFileError: null as string | null,
     // Per-tab isolation (spec §9): each open workspace owns its pane view
     // state; the transcript's conversation state stays per-session.
     pane: {} as Record<string, PaneState>,
@@ -110,6 +141,58 @@
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null
   });
+
+  // Advance the wall clock on a slow tick so relative-age labels (session mru,
+  // attention "since") stay current without session activity.
+  setInterval(() => {
+    store.now = Date.now();
+  }, 30_000);
+
+  // The top bar reserves left padding for the macOS traffic lights; they're
+  // hidden in fullscreen, so we drop the inset there. Tauri has no
+  // fullscreen-changed event, so we track it off the window resize event
+  // (tauri-apps/tauri#7162). Entering is clean: isFullscreen() flips true at
+  // the animation's start. Exiting is the catch: isFullscreen() stays true
+  // until the animation ENDS, by then the lights are back and briefly cover
+  // the logo. The resize event, though, fires at the exit animation's START,
+  // and a resize while settled in fullscreen can only be that exit (macOS
+  // won't let you resize a fullscreen window) — so we restore the inset then,
+  // before isFullscreen catches up. The grace window skips the enter
+  // animation's own resizes; `exiting` ignores the stale-true mid-exit.
+  // A rapid exit inside the grace window is indistinguishable from the enter
+  // animation (no pre-transition signal), so it keeps the inset dropped once — cosmetic.
+  if (isTauri()) {
+    const win = getCurrentWindow();
+    let enterAt = 0;
+    let exiting = false;
+    let exitAt = 0;
+    const settle = 1200; // longer than the enter animation, so its resizes fall inside the window
+    const sync = () =>
+      void win.isFullscreen().then((fs) => {
+        if (exiting && fs && Date.now() - exitAt < settle) return; // stale-true only mid-exit
+        exiting = false;
+        store.fullscreen = fs;
+        enterAt = fs ? Date.now() : 0;
+      });
+    sync();
+    void win.onResized(() => {
+      if (store.fullscreen && Date.now() - enterAt > settle) {
+        exiting = true;
+        exitAt = Date.now();
+        store.fullscreen = false; // exit animation starting; move the logo clear now
+        return;
+      }
+      sync();
+    });
+  }
+
+  // The needs-you list (P5): a pure fold over the sessions, so any pane
+  // (bell, sheet, tree tint) reads one shared projection. A function —
+  // derived state may not be exported from a module.
+  export function attention(): AttentionItem[] {
+    return attentionOf(store.sessions);
+  }
+
 
   // Pure read — a $derived may call this; creation goes through ensurePane
   // (a mutation, only from effects/actions).
@@ -140,6 +223,10 @@
   }
   export function toggleAllReasoning(): void {
     store.reasoningOpen = !store.reasoningOpen;
+  }
+
+  export function setFollow(handle: string | null): void {
+    store.follow = handle;
   }
 
   export function windowTitle(): string {
@@ -299,6 +386,7 @@
     // every other dir is fetched on expansion.
     store.files = ensureWorkspace(store.files, real.id);
     void fetchDir(real.id, '.');
+    void refreshGitStatus(real.id);
     // Archived sessions are listed (for the archive folder) but can't be
     // opened; auto-open the most recent live one, else start a fresh session.
     const unarchived =
@@ -354,6 +442,132 @@
     } catch {
       // a collapse for a gone workspace is a no-op
     }
+  }
+
+  // The tree's change tints and the changes view's switcher refresh on open
+  // and on every file-tree change. A non-git workspace records null (the
+  // tints simply stay off), never an error.
+  async function refreshGitStatus(ws: string): Promise<void> {
+    try {
+      const out = await command({ type: 'git_status', workspace: ws });
+      store.gitStatus = {
+        ...store.gitStatus,
+        [ws]: out.kind === 'git_status' ? out.status : null
+      };
+    } catch {
+      store.gitStatus = { ...store.gitStatus, [ws]: null };
+    }
+  }
+
+  // Open a file in the viewer: adds it to the workspace's open set (a no-op if
+  // already open), makes it the active tab, and switches the center to the file
+  // viewer. pane.center is what keeps the files alive across a switch to the
+  // transcript (the first-class toggle).
+  export function openFile(ws: string, path: string, ignored: boolean, size: number): void {
+    const { list } = openIn(store.openFiles[ws] ?? [], { path, ignored, size });
+    store.openFiles = { ...store.openFiles, [ws]: list };
+    store.activeFile = { workspace: ws, path };
+    ensurePane(ws).center = 'files';
+    void fetchActiveFile(ws, path);
+  }
+
+  function resetActiveFile(): void {
+    store.activeFile = null;
+    store.activeFileNew = null;
+    store.activeFileBase = null;
+    store.activeFileError = null;
+  }
+
+  // Close a tab: drop it from the open set. The neighbour tab takes the active
+  // slot; closing the last file returns the center to the transcript.
+  export function closeFile(ws: string, path: string): void {
+    const { list, activate } = closeIn(store.openFiles[ws] ?? [], path);
+    store.openFiles = { ...store.openFiles, [ws]: list };
+    const a = store.activeFile;
+    if (!a || a.workspace !== ws || a.path !== path) return;
+    if (activate === null) {
+      resetActiveFile();
+      ensurePane(ws).center = 'chat';
+      return;
+    }
+    const next = list[activate]!;
+    store.activeFile = { workspace: ws, path: next.path };
+    void fetchActiveFile(ws, next.path);
+  }
+
+  // Activate an already-open tab (the tab strip's click).
+  export function selectFile(ws: string, path: string): void {
+    if (!(store.openFiles[ws] ?? []).some((f) => f.path === path)) return;
+    store.activeFile = { workspace: ws, path };
+    ensurePane(ws).center = 'files';
+    void fetchActiveFile(ws, path);
+  }
+
+  // The center-column toggle: transcript ⇄ file viewer. The open set is
+  // untouched, so a switch to the transcript and back restores the active file.
+  export function setCenterMode(ws: string, mode: 'chat' | 'files'): void {
+    const p = ensurePane(ws);
+    if (p.center === mode) return;
+    p.center = mode;
+    if (mode === 'files' && store.activeFile?.workspace !== ws) {
+      const first = (store.openFiles[ws] ?? [])[0];
+      if (first) {
+        store.activeFile = { workspace: ws, path: first.path };
+        void fetchActiveFile(ws, first.path);
+      }
+    }
+  }
+
+  // A session switch can move us to a workspace the single global activeFile
+  // no longer belongs to. Re-point it to that workspace's active tab — or clear
+  // it and drop the center to the transcript if nothing is open there — so the
+  // viewer never shows a foreign file.
+  export function reconcileActiveFile(ws: string): void {
+    if (ws === '' || store.activeFile?.workspace === ws) return;
+    const first = (store.openFiles[ws] ?? [])[0];
+    if (first) {
+      store.activeFile = { workspace: ws, path: first.path };
+      void fetchActiveFile(ws, first.path);
+      return;
+    }
+    resetActiveFile();
+    ensurePane(ws).center = 'chat';
+  }
+
+  // The active tab's content + git base. A file_read rejection is a real reason
+  // (binary / unreadable), not an empty file: it is surfaced, not swallowed. A
+  // stale fetch must not clobber the tab the user moved on from (field compare,
+  // since the $state proxy breaks ===).
+  async function fetchActiveFile(ws: string, path: string): Promise<void> {
+    const entry = (store.openFiles[ws] ?? []).find((f) => f.path === path);
+    const ignored = entry?.ignored ?? false;
+    const size = entry?.size ?? 0;
+    let file: string;
+    try {
+      const out = await command({ type: 'file_read', workspace: ws, path, offset: null, limit: null });
+      file = out.kind === 'file' ? out.file.text : '';
+    } catch (e) {
+      if (store.activeFile?.workspace !== ws || store.activeFile?.path !== path) return;
+      store.activeFileNew = null;
+      store.activeFileBase = null;
+      store.activeFileError = isBinaryError(errText(e)) ? `binary file · ${size} bytes` : `cannot read: ${errText(e)}`;
+      return;
+    }
+    // A gitignored file has no committed base; diffing it against empty would
+    // paint it all-added. Render it plain (base = current content) instead.
+    const base = ignored
+      ? file
+      : await command({ type: 'git_show', workspace: ws, path }).then((o) => (o.kind === 'git_show' ? o.text : '')).catch(() => '');
+    if (store.activeFile?.workspace !== ws || store.activeFile?.path !== path) return;
+    store.activeFileNew = file;
+    store.activeFileBase = base;
+    store.activeFileError = null;
+  }
+
+  // The core rejects non-UTF-8 files (its line reader errors on invalid bytes);
+  // that rejection is a binary file, not a read failure.
+  function isBinaryError(msg: string): boolean {
+    return /utf-?8/i.test(msg);
   }
 
   // Expansion: listed dirs collapse back (drop the fetch); unlisted dirs
@@ -426,6 +640,12 @@
       store.fileErrors = next;
     }
     store.files = removeWorkspace(store.files, ws.id);
+    // The closed workspace's open files (and the active file, if it pointed
+    // here) are dead with it.
+    delete store.openFiles[ws.id];
+    if (store.activeFile?.workspace === ws.id) {
+      resetActiveFile();
+    }
     store.workspaces = store.workspaces.filter((w) => w.id !== ws.id);
     for (const [sid, s] of Object.entries(store.sessions)) {
       if (s.meta.workspace === ws.id) delete store.sessions[sid];
@@ -641,14 +861,23 @@
           if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
         }
         if (ev.type === 'skill_list_changed') {
-          // Full-state replacement (ticket #31, the task_changed pattern):
-          // the change guard keeps an unchanged re-emit a no-op.
+          // Full-state replacement (ticket #31): the change guard keeps an
+          // unchanged re-emit a no-op.
           if (JSON.stringify(store.skills[ev.workspace] ?? []) !== JSON.stringify(ev.skills)) {
             store.skills[ev.workspace] = ev.skills;
           }
         }
         if (ev.type === 'file_tree_changed') {
           scheduleRefetch(ev.workspace, ev.changed);
+          void refreshGitStatus(ev.workspace);
+          // Live file-content view: a change under the active file's dir
+          // (the watcher reports the parent dir) re-fetches its content + base
+          // so the viewer tracks the file as it is edited.
+          const af = store.activeFile;
+          if (af && af.workspace === ev.workspace) {
+            const touches = ev.changed.some((d) => af.path === d || af.path.startsWith(d + '/'));
+            if (touches) void fetchActiveFile(af.workspace, af.path);
+          }
         }
         continue;
       }
@@ -689,12 +918,6 @@
           }));
           break;
         }
-        case 'task_changed': {
-          // Full-state replacement (idempotent, spec §8): one event covers
-          // both the model's task tools and the app's task commands.
-          if (JSON.stringify(s.tasks) !== JSON.stringify(ev.tasks)) s.tasks = ev.tasks;
-          break;
-        }
         case 'session_event': {
           if (ev.kind.kind === 'branch_move') s.meta.leaf = ev.kind.leaf;
           break;
@@ -710,6 +933,12 @@
           // The status bar's om gauge: the activity kind is event-driven;
           // the gauge values ride the snapshots.
           s.om.kind = ev.kind;
+          break;
+        }
+        case 'plan_changed': {
+          // The plan pane's data (spec §5.3): full-state replacement — the
+          // watcher's parse renders in place; idempotent by construction.
+          s.plan = ev.plan;
           break;
         }
         case 'system': {

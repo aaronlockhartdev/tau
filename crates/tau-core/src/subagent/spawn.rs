@@ -1,9 +1,14 @@
+use super::route::title_on_disk;
 use super::{
     AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildState, ContextMode, KIND_SUBAGENT,
-    Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned,
-    StateNotice, Supervisor, Weak, json, om_integration, title_on_disk, tools,
+    Mutex, Ordering, SessionStore, SpawnNotice, Spawned, Supervisor, TurnOrigin, Weak,
 };
+use crate::agent::Lane;
 use crate::harness::SessionRole;
+use crate::om::OmRecord;
+use crate::om_integration::{self, OmState};
+use crate::tools;
+use serde_json::json;
 
 impl Supervisor {
     /// Spawn a child (spec §5.1): async — this only sets things up; the
@@ -14,7 +19,6 @@ impl Supervisor {
         agent_type: &str,
         brief: &str,
         context_mode: Option<ContextMode>,
-        task: Option<&str>,
         call_id: &str,
     ) -> Result<Spawned, String> {
         // Resolve the type (spec §5.5): an unknown name is an error that
@@ -85,27 +89,11 @@ impl Supervisor {
                     "context_mode": context_mode,
                     "parent": self.parent_session,
                     "call": call_id,
-                    "task": task,
                 }),
                 leaf.as_deref(),
             )
             .map_err(|e| format!("subagent_spawn: {e}"))?;
 
-        // A spawn with a task is an assignment (spec §5.3): the record
-        // stays in the parent's file with the child set as worker — the
-        // parent is the single source of truth, the child's pane a
-        // projection of it.
-        if let Some(task) = task
-            && let Some(parent) = self
-                .parent
-                .lock()
-                .expect("supervisor parent: no panic while the lock is held")
-                .as_ref()
-                .and_then(Weak::upgrade)
-        {
-            let _ = parent.with_task_store(|cstore| crate::task::assign(cstore, task, &session_id));
-        }
-        // The child's OM record (spec §5.1, ADR-0004): fresh = an empty
         // prefix; compacted = the parent's log verbatim as the frozen
         // prefix; fork = the parent's record copied wholesale (a fork owns
         // its copy outright).
@@ -157,7 +145,13 @@ impl Supervisor {
         let child_prompt = if ty.name == "general" {
             self.system_prompt.clone()
         } else {
-            ty.body.clone()
+            // A `.md` type's prompt is its own body, so the gate section —
+            // stated in the prompt when a gate is configured (spec §5.3) —
+            // is appended here; the inherited supervisor prompt reaches
+            // only `general` children.
+            let mut body = ty.body.clone();
+            crate::gate::with_section(&mut body, &self.gates);
+            body
         };
         let child_model = ty.model.clone().unwrap_or_else(|| self.model.clone());
         let child_tools = tools::surface::child_specs(ty.tools.as_deref());
@@ -167,7 +161,6 @@ impl Supervisor {
             store,
             SessionRole::Child {
                 supervisor: Arc::clone(self),
-                parent: Arc::downgrade(&parent_agent),
                 provider: provider.clone(),
                 system_prompt: child_prompt,
                 model: child_model.clone(),
@@ -189,7 +182,12 @@ impl Supervisor {
             context_mode,
             agent: agent.clone(),
             state: Mutex::new(ChildState::Running),
-            nudge_sent: AtomicBool::new(false),
+            // The spawn's brief is autonomous work: its rest wakes the
+            // delegating parent (spec §5.2 turn-origin wake routing).
+            origin: Mutex::new(TurnOrigin::Spawn),
+            rest_requested: AtomicBool::new(false),
+            declared_output: Mutex::new(None),
+            declared_waiting: Mutex::new(None),
             last_message: Mutex::new(Some(brief.to_owned())),
             drive_gen: AtomicUsize::new(0),
             last_ended_gen: AtomicUsize::new(0),
@@ -227,10 +225,10 @@ impl Supervisor {
     }
 
     /// The child's drive: it runs turns while the child is `Running` and
-    /// sleeps while the child rests in `idle`, so a resume — a message that
-    /// flips the child back to `Running` — is picked up by the same task;
-    /// there is no window in which a resume can race the drive's exit
-    /// (ADR-0001: everything non-running is resumable, nothing
+    /// sleeps while the child rests (`idle`/`awaiting`), so a resume — a
+    /// message that flips the child back to `Running` — is picked up by the
+    /// same task; there is no window in which a resume can race the drive's
+    /// exit (ADR-0001: everything non-running is resumable, nothing
     /// auto-resumes). `done`, `stopped`, and `failed` end the drive — a
     /// done child is quiescent (no polling task held for the session's
     /// life), and the resume path starts a fresh drive for each.
@@ -244,25 +242,30 @@ impl Supervisor {
             }
             match child.state() {
                 ChildState::Running => {}
-                ChildState::Idle { .. } => {
+                // `idle` and `awaiting` are resting states: the drive sleeps
+                // until a resume (a message, a nudge-free world — spec §5.2
+                // deletes the one-shot nudge) or a stop.
+                ChildState::Idle { .. } | ChildState::Awaiting => {
                     if child.agent.has_pending() {
+                        // A message landed while the child rested: a
+                        // message-origin resume (spec §5.2 turn origin).
+                        child.set_origin(TurnOrigin::Message);
+                        child.reset_hints();
                         if child.set_state(&ChildState::Running).is_err() {
                             sup.mark_failed(&child, "state entry failed".into());
                             break;
                         }
-                        sup.bridge.state(&StateNotice {
-                            parent: sup.parent_session.clone(),
-                            handle: child.handle.clone(),
-                            child: child.session_id.clone(),
-                            state: ChildState::Running,
-                            note: Some("resumed by a queued message".into()),
-                            resume_contract: None,
-                        });
+                        sup.emit_state(
+                            &child,
+                            ChildState::Running,
+                            Some("resumed by a queued message".into()),
+                            None,
+                        );
                         continue;
                     }
-                    // No polling (review N8): a message, a nudge, or a
-                    // stop notifies the drive; the permit keeps an
-                    // out-of-order wake from being lost.
+                    // No polling (review N8): a message, or a stop, notifies
+                    // the drive; the permit keeps an out-of-order wake from
+                    // being lost.
                     child.wake.notified().await;
                     continue;
                 }
@@ -277,33 +280,27 @@ impl Supervisor {
                     break;
                 }
             }
-            // The drive drained the queue and the child moved into a rest
-            // state: the loop's head sleeps until a resume.
-            if !matches!(child.state(), ChildState::Running) {
-                continue;
-            }
-            // The nudge sits inside this iteration (after `drive()` returns,
-            // before the loop's head): a superseded drive must not burn the
-            // budget the fresh drive's work period just reset.
+            // A superseded drive bails before settling: the fresh drive owns
+            // the rest (two drives must never settle one child).
             if child.drive_gen.load(Ordering::SeqCst) != drive_gen {
                 break;
             }
-            // A turn ended without `parent_notify`: the one-shot nudge.
-            if !child.nudge_sent.swap(true, Ordering::SeqCst) {
-                let _ = child.agent.append_entry(
-                    crate::agent::KIND_SYSTEM,
-                    json!({ "note": "Nudge: state what you are waiting for, or finish" }),
-                );
-                child.agent.send(NUDGE, Lane::FollowUp);
+            // `parent_notify` (or a stop) already settled the child: the
+            // loop head sleeps until a resume.
+            if !matches!(child.state(), ChildState::Running) {
                 continue;
             }
-            // Nudge exhausted: the three-way fork's remaining arm.
-            sup.mark_failed(
-                &child,
-                "nudge exhausted: the child ended a turn without done or a valid wait declaration"
-                    .to_owned(),
-            );
-            break;
+            // Observed rest (spec §5.2): the turn ended and the child is
+            // still `Running` — the state is read from the observed signals
+            // (gate_failed, the `QUESTION:` marker, the plan file), never
+            // nudged. An undeclared stop is `idle`, never force-`failed`.
+            sup.settle_rest(&child);
+            match child.state() {
+                // done/failed are terminal: the drive ends (the resume path
+                // starts a fresh one); idle/awaiting sleep at the head.
+                ChildState::Done { .. } | ChildState::Failed { .. } => break,
+                _ => {}
+            }
         }
         // The loop exited by any arm: record this generation's end (a
         // superseded drive reporting after the fresh one is a no-op — the

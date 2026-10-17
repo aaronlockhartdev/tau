@@ -1,0 +1,14 @@
+---
+source: crates/tau-core/src/plan.rs
+expression: "parse(&corpus_raw(\"junk_sections\"))"
+---
+{
+  "steps": [
+    {
+      "text": "a step",
+      "done": false
+    }
+  ],
+  "criteria": "",
+  "notes": "random line\nsome body"
+}

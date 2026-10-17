@@ -1,7 +1,9 @@
 use super::*;
 
+use crate::agent::Lane;
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
+use serde_json::json;
 use std::time::Duration;
 
 /// A running child is soft-stopped (the stream cut, the partial kept
@@ -9,17 +11,20 @@ use std::time::Duration;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_stopped_child_keeps_its_partial_and_resumes() {
     let dir = tempfile::tempdir().unwrap();
-    // Child 1: a slow stream (cut by the stop), then after resume a
-    // turn that finishes.
+    // Child 1: a slow stream (cut by the stop); after resume an
+    // undeclared stop (the observed `idle`), then — once the test has
+    // completed its plan file — the done declaration the observation
+    // confirms.
     let slow = concat!(
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n",
         "data: {\"type\":\"response.output_text.delta\",\"delta\":\" \"}\n\n"
     );
-    let (sup, bridge, _factory, _parent) = harness_full(
+    let (sup, _bridge, _factory, _parent) = harness_full(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![vec![
             slow.to_owned(),
+            sse("resuming", &[]),
             sse(
                 "",
                 &[notify_call("n1", "done", true, Some(json!({"r": 1})), None)],
@@ -30,13 +35,41 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
         SubAgents::default(),
     );
     let s = sup
-        .spawn("general", "slow work", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "slow work", Some(ContextMode::Fresh), "c0")
         .unwrap();
     let drive = s.drive;
-    // Let the slow stream start, then stop it.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Let the slow stream start (past the 200 ms pre-delay), then stop
+    // it inside its mid-stream pause — one delta lands, the rest is cut.
+    tokio::time::sleep(Duration::from_millis(300)).await;
     sup.stop(&s.handle, StoppedBy::User).unwrap();
+    // The stop's cut lands while drive #1 is in flight: await it before
+    // resuming — a resume send resets the stop flag, which would let the
+    // cut stream run on (the resume must come after the cut).
     drive.await.unwrap();
+    // The resumed drive rests (observed `idle`: no plan file yet).
+    sup.message(&s.handle, Some("continue".into()), Lane::Steering)
+        .unwrap();
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Idle { .. }
+        )
+    });
+    // The model completes the plan; the resumed declaration is then
+    // confirmed by the observation.
+    std::fs::write(
+        crate::plan::path(dir.path(), &s.session_id),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
+    sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+        .unwrap();
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Done { .. }
+        )
+    });
     // The partial stands as an interrupted entry in the child's file.
     let mut store = SessionStore::for_workspace(dir.path(), &s.session_id);
     store.open().unwrap();
@@ -51,26 +84,6 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
             .unwrap()
             .contains("partial")
     );
-    assert!(matches!(
-        sup.state_info(&s.handle).unwrap().state,
-        ChildState::Stopped {
-            by: StoppedBy::User
-        }
-    ));
-    assert!(bridge.states.lock().unwrap().iter().any(|n| n.state
-        == ChildState::Stopped {
-            by: StoppedBy::User
-        }));
-
-    // Resume from the stopped state: the message starts the next turn.
-    sup.message(&s.handle, Some("continue".into()), Lane::Steering)
-        .unwrap();
-    wait_for(|| {
-        matches!(
-            sup.state_info(&s.handle).unwrap().state,
-            ChildState::Done { .. }
-        )
-    });
     // The resume is a session entry (the state transition is durable).
     let mut cstore = SessionStore::for_workspace(dir.path(), &s.session_id);
     cstore.open().unwrap();
@@ -112,18 +125,19 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
                 sse("", &[]),
             ],
         ],
-        vec![Duration::from_millis(200), Duration::ZERO],
+        vec![Duration::from_millis(200), Duration::from_millis(200)],
         SubAgents {
             max_depth: 1,
             max_concurrent: Some(1),
         },
     );
     let first = sup
-        .spawn("general", "slow", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "slow", Some(ContextMode::Fresh), "c0")
         .unwrap();
     let drive = first.drive;
-    // Let the slow stream start, then stop it.
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Let the slow stream start (past the 200 ms pre-delay), then stop
+    // it inside its mid-stream pause.
+    tokio::time::sleep(Duration::from_millis(300)).await;
     let out = sup.stop(&first.handle, StoppedBy::User).unwrap();
     assert!(out.contains("stopped"), "{out}");
     drive.await.unwrap();
@@ -140,22 +154,23 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
         == ChildState::Stopped {
             by: StoppedBy::User
         }));
-    assert!(
-        bridge
-            .wakes
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|w| w.kind == WakeKind::Stopped),
-        "the stop wakes the parent"
-    );
+    // Spec §5.2: a stopped child wakes nothing — the state event is the
+    // GUI's badge. (Asserted in tests_wake's matrix.)
     // A second stop of the stopped child is a no-op.
     let out = sup.stop(&first.handle, StoppedBy::User).unwrap();
     assert!(out.contains("already stopped"), "{out}");
-    // The slot is freed: a second child spawns at the cap and finishes.
+    // The slot is freed: a second child spawns at the cap. Its plan file
+    // is complete (the test plays the model's edit; the 200 ms pre-delay
+    // is the ordering margin), so its declared done is observed `done` —
+    // the drive ends.
     let second = sup
-        .spawn("general", "second", Some(ContextMode::Fresh), None, "c1")
+        .spawn("general", "second", Some(ContextMode::Fresh), "c1")
         .unwrap();
+    std::fs::write(
+        crate::plan::path(dir.path(), &second.session_id),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     second.drive.await.unwrap();
     assert!(
         matches!(
@@ -172,7 +187,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_non_running_child_refuses_a_second_stop() {
     let dir = tempfile::tempdir().unwrap();
-    let (sup, bridge, _parent) = harness(
+    let (sup, bridge, _factory, _parent) = harness_full(
         dir.path(),
         vec![sse("spawning", &[])],
         vec![
@@ -191,6 +206,7 @@ async fn a_non_running_child_refuses_a_second_stop() {
                     "",
                     &[notify_call("n1", "parked", false, None, Some("user"))],
                 ),
+                sse("", &[]),
                 sse(
                     "",
                     &[notify_call(
@@ -203,11 +219,18 @@ async fn a_non_running_child_refuses_a_second_stop() {
                 ),
             ],
         ],
+        vec![Duration::from_millis(200), Duration::from_millis(200)],
         SubAgents::default(),
     );
     let done_child = sup
-        .spawn("general", "one", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "one", Some(ContextMode::Fresh), "c0")
         .unwrap();
+    // The model keeps its plan complete: the declared done is observed.
+    std::fs::write(
+        crate::plan::path(dir.path(), &done_child.session_id),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     wait_for(|| {
         matches!(
             sup.state_info(&done_child.handle).unwrap().state,
@@ -217,7 +240,7 @@ async fn a_non_running_child_refuses_a_second_stop() {
     let out = sup.stop(&done_child.handle, StoppedBy::User).unwrap();
     assert!(out.contains("already done"), "{out}");
     let parked = sup
-        .spawn("general", "two", Some(ContextMode::Fresh), None, "c1")
+        .spawn("general", "two", Some(ContextMode::Fresh), "c1")
         .unwrap();
     wait_for(|| {
         matches!(
@@ -225,10 +248,17 @@ async fn a_non_running_child_refuses_a_second_stop() {
             ChildState::Idle { .. }
         )
     });
-    // A parked child is not running: the stop is a no-op and the park
+    // The model completes its plan before the resumed declaration, so
+    // that one is observed `done`.
+    std::fs::write(
+        crate::plan::path(dir.path(), &parked.session_id),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
+    // A resting child is not running: the stop is a no-op and the rest
     // stands.
     let out = sup.stop(&parked.handle, StoppedBy::User).unwrap();
-    assert!(out.contains("parked"), "{out}");
+    assert!(out.contains("resting"), "{out}");
     assert!(matches!(
         sup.state_info(&parked.handle).unwrap().state,
         ChildState::Idle { .. }

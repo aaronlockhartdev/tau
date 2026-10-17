@@ -4,8 +4,8 @@
 //! format) resolves unambiguously.
 
 use super::testkit::{CannedFactory, ScriptedProvider, TestBridge, TestDriver, sse, wait_for};
-use super::{ContextMode, Lane, SubagentBridge, Supervisor, SupervisorParams};
-use crate::agent::{AgentSession, TurnConfig};
+use super::{ContextMode, SubagentBridge, Supervisor, SupervisorParams};
+use crate::agent::{AgentSession, Lane, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
 use crate::harness::SessionRole;
@@ -26,6 +26,7 @@ fn sup_with_parent(
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -38,11 +39,13 @@ fn sup_with_parent(
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
     // A scripted parent loop (the parent is a full session): the
     // constructor adopts the pre-built supervisor (the test seam).
@@ -75,7 +78,7 @@ async fn a_handle_round_trips_with_a_hyphenated_parent_id() {
     let (sup, _bridge, _parent) = sup_with_parent(dir.path(), "my-parent");
 
     let spawned = sup
-        .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "work", Some(ContextMode::Fresh), "c0")
         .unwrap();
     assert_eq!(spawned.handle.as_str(), "my-parent-1");
 
@@ -109,50 +112,4 @@ async fn a_handle_round_trips_with_a_hyphenated_parent_id() {
                             == Some("hello")
                 })
     });
-}
-
-/// The child's task view is the parent's task list filtered to
-/// worker == this child (ADR-0001): the link owns the projection, and
-/// the parent's full list stays reachable for the projection events.
-#[tokio::test]
-async fn a_child_task_view_is_the_parent_filtered_to_the_worker() {
-    let dir = tempfile::tempdir().unwrap();
-    let (sup, _bridge, parent) = sup_with_parent(dir.path(), "my-parent");
-
-    // Two tasks on the parent's file; the spawn assigns one to the child
-    // (the record stays in the parent's file with the child as worker).
-    // The tasks are created through the parent agent's store (the single
-    // writer): an external store handle would grow the file out from under
-    // the agent's in-memory id set, and the next append is refused.
-    parent.with_task_store(|cstore| {
-        crate::task::create(cstore, "task-1", "the assigned job", vec![], vec![]).unwrap();
-        crate::task::create(cstore, "task-2", "unassigned", vec![], vec![]).unwrap();
-    });
-
-    let spawned = sup
-        .spawn(
-            "general",
-            "work",
-            Some(ContextMode::Fresh),
-            Some("task-1"),
-            "c0",
-        )
-        .unwrap();
-    let link = spawned
-        .agent
-        .child_link()
-        .expect("the child carries its link");
-
-    // The child's view: exactly the assigned task.
-    let view = link.task_view(dir.path());
-    assert_eq!(
-        view.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
-        vec!["task-1"]
-    );
-
-    // The parent's full list: both tasks (the projection events' source).
-    let all = link
-        .parent_tasks(dir.path())
-        .expect("the parent's file is readable");
-    assert_eq!(all.len(), 2);
 }

@@ -59,7 +59,7 @@ function snap(
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], tasks: [], ...extra.live },
+      live: { queue: [], turn: 'idle', gate_failed: false, plan: { steps: [], criteria: '', notes: '' }, subagents: [], ...extra.live },
       cursor: ''
     }
   };
@@ -96,11 +96,6 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     subagent_spawn: () => ({ kind: 'none' }),
     subagent_message: () => ({ kind: 'none' }),
     subagent_stop: () => ({ kind: 'none' }),
-    task_create: () => ({ kind: 'none' }),
-    task_update: () => ({ kind: 'none' }),
-    task_assign: () => ({ kind: 'none' }),
-    task_evidence: () => ({ kind: 'none' }),
-    task_cancel: () => ({ kind: 'none' }),
     skill_list: () => ({ kind: 'skills', skills: [] }),
     provider_list: () => ({ kind: 'providers', providers: [] }),
     provider_add: () => ({ kind: 'none' }),
@@ -108,7 +103,9 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     provider_delete: () => ({ kind: 'none' }),
     file_read: () => ({ kind: 'file', file: { text: '', truncated: false } }),
     file_list: () => ({ kind: 'files', files: [] }),
-    file_unlist: () => ({ kind: 'none' })
+    file_unlist: () => ({ kind: 'none' }),
+    git_status: () => ({ kind: 'git_status', status: { branch: 'main', modified: [], untracked: [], deleted: [] } }),
+    git_show: () => ({ kind: 'git_show', text: '' })
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
 }
@@ -308,7 +305,7 @@ describe('read facade (F2)', () => {
   });
 
   it('fileCache returns the workspace listing', () => {
-    const e: FileEntry = { name: 'a.txt', path: '.', dir: false, size: 3 };
+    const e: FileEntry = { name: 'a.txt', path: '.', dir: false, size: 3, ignored: false, git: null };
     store.files = { w1: { '.': [e] } };
     expect(fileCache('w1')?.['.']).toEqual([e]);
   });

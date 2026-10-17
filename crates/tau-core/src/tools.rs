@@ -22,6 +22,43 @@ pub struct ToolCall {
 /// vision-capable endpoint can see (#34).
 pub use tau_protocol::payload::ToolOutput;
 
+/// A tool's result: the model-facing output plus an explicit ok/error verdict
+/// set by the tool itself (which knows whether it succeeded) — the source of
+/// truth for the GUI status indicator.
+#[derive(Debug, Clone)]
+pub struct ToolResult {
+    pub output: ToolOutput,
+    pub ok: bool,
+}
+
+impl ToolResult {
+    #[must_use]
+    pub fn ok(output: ToolOutput) -> Self {
+        Self { output, ok: true }
+    }
+
+    #[must_use]
+    pub fn err(output: ToolOutput) -> Self {
+        Self { output, ok: false }
+    }
+
+    /// The wire status string for `ToolPayload.status`.
+    #[must_use]
+    pub fn status(&self) -> &'static str {
+        if self.ok { "ok" } else { "error" }
+    }
+
+    /// A typed verdict from a `Result<String, String>` source: `Ok` maps to a
+    /// success, `Err` to a failure — a surface tool's `Result` becomes a
+    /// `ToolResult` without the dispatcher re-reading the text.
+    pub(crate) fn from_result(r: Result<String, String>) -> Self {
+        match r {
+            Ok(s) => Self::ok(s.into()),
+            Err(e) => Self::err(e.into()),
+        }
+    }
+}
+
 /// The model-facing definitions of the four core tools.
 #[must_use]
 pub fn tool_specs() -> Vec<ToolSpec> {
@@ -119,14 +156,13 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             name: "subagent_spawn".into(),
-            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its name — how you address it in the other sub-agent tools. If the work is already a task, pass task — the child starts with it assigned; a separate assign costs an extra round trip. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
+            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its name — how you address it in the other sub-agent tools. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "type": {"type": "string", "enum": ["general"]},
                     "brief": {"type": "string"},
-                    "context_mode": {"type": "string", "enum": ["fresh", "compacted", "fork"]},
-                    "task": {"type": "string"}
+                    "context_mode": {"type": "string", "enum": ["fresh", "compacted", "fork"]}
                 },
                 "required": ["type", "brief"]
             }),
@@ -147,7 +183,7 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             name: "subagent_stop".into(),
-            description: "Stop a running sub-agent by name (its displayed title; its session id is accepted too): its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already parked/done/failed/stopped) and is left alone.".into(),
+            description: "Stop a running sub-agent by name (its displayed title; its session id is accepted too): its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already resting/done/failed/stopped) and is left alone.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
@@ -167,16 +203,18 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-/// The child-side tool (spec §5.3): the only channel back to the parent.
-/// done:true requires a structured output and ends the child; a note keeps
-/// it parked. `waiting_on` declares what a parking child waits for (the nudge
-/// fork: done / a valid declaration / failed).
+/// The child-side tool (spec §5.2, ADR-0001 revision): the only channel
+/// back to the parent. `done:true` requires a structured output and records
+/// it as the result an observed `done` will carry (a secondary hint — the
+/// turn-end observation confirms it against the child's plan file, or
+/// overrides it); a note records a declared `waiting_on` the child's rest
+/// rides as its badge.
 #[must_use]
 pub fn parent_notify_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         name: "parent_notify".into(),
-        description: "Notify your parent. done:true with an object output finishes the task (the output is the result handed back). Without done, the note parks you; waiting_on declares what you wait for: parent | user | subagent.".into(),
+        description: "Notify your parent. done:true with an object output declares your result (recorded; the turn ends after this call) — your parent is woken with that output when your turn's observation confirms your plan is complete. Without done, the note is recorded; waiting_on declares what you are waiting for (parent | user | subagent) — it rides your rest as a hint.".into(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -190,160 +228,25 @@ pub fn parent_notify_spec() -> ToolSpec {
     }
 }
 
-/// The seven task tools (spec §5.4): free text + ids in; the core enforces
-/// the state machines, the model never sees the enums. Available in every
-/// session — a parent can complete small tasks itself (ADR-0001).
-#[must_use]
-pub fn task_tool_specs() -> Vec<ToolSpec> {
-    vec![
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_create".into(),
-            description: "Create a task in this session: a title, an ordered list of steps (each with its expected output), and acceptance criteria. Returns the task id.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "title": {"type": "string"},
-                    "steps": {"type": "array", "items": {"type": "object", "properties": {"text": {"type": "string"}, "expected_output": {"type": "string"}}, "required": ["text", "expected_output"]}},
-                    "criteria": {"type": "array", "items": {"type": "string"}}
-                },
-                "required": ["title"]
-            }),
-        },
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_assign".into(),
-            description: "Assign a task to a worker session: its record copies into that session, which becomes the live one; this session's copy becomes a status pointer. worker is a session id. Prefer passing the task at spawn time; use this when the worker already exists.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "worker": {"type": "string"}
-                },
-                "required": ["task", "worker"]
-            }),
-        },
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_start".into(),
-            description: "Start working a task (pending, or unblock it).".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {"task": {"type": "string"}},
-                "required": ["task"]
-            }),
-        },
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_evidence".into(),
-            description: "Record evidence for a criterion: a summary, optionally a reproducible command and an artifact, and whether it passed. A task is done only when every criterion has passing evidence.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "criterion": {"type": "string"},
-                    "summary": {"type": "string"},
-                    "command": {"type": "string"},
-                    "artifact": {"type": "string"},
-                    "passed": {"type": "boolean"},
-                    "step": {"type": "string"}
-                },
-                "required": ["task", "criterion", "summary"]
-            }),
-        },
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_block".into(),
-            description: "Block a task with a free-text reason and, optionally, what is needed to unblock it.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "reason": {"type": "string"},
-                    "needs": {"type": "string"}
-                },
-                "required": ["task", "reason"]
-            }),
-        },
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_finish".into(),
-            description: "Finish a task. Fails unless every criterion is satisfied by passing evidence; force:true with a reason is the documented escape.".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "force": {"type": "boolean"},
-                    "reason": {"type": "string"}
-                },
-                "required": ["task"]
-            }),
-        },
-        ToolSpec {
-            kind: "function".into(),
-            name: "task_cancel".into(),
-            description: "Cancel a task (with an optional reason).".into(),
-            parameters: json!({
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string"},
-                    "reason": {"type": "string"}
-                },
-                "required": ["task"]
-            }),
-        },
-    ]
-}
-
-/// A non-child session's tool set: the core tools + the sub-agent tools +
-/// the task tools.
+/// A non-child session's tool set: the core tools + the sub-agent tools.
 #[must_use]
 pub fn agent_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.extend(subagent_tool_specs());
-    v.extend(task_tool_specs());
     v
 }
 
-/// The worker side of the task tools: a child works the record its parent
-/// assigned — it starts, evidences, blocks, and finishes it (spec §5.3).
-#[must_use]
-pub fn worker_task_tool_specs() -> Vec<ToolSpec> {
-    const WORKER: &[&str] = &["task_start", "task_evidence", "task_block", "task_finish"];
-    task_tool_specs()
-        .into_iter()
-        .filter(|s| WORKER.contains(&s.name.as_str()))
-        .collect()
-}
-
-/// A child session's tool set: the core tools + `parent_notify` + the
-/// worker-side task tools — no sub-agent tools (a child cannot spawn,
-/// ADR-0001 depth cap), and no create/assign/cancel: a child is a leaf, so
-/// a task it created itself would be invisible to the parent and would die
-/// with it (spec §5.3).
+/// A child session's tool set: the core tools + `parent_notify` — no
+/// sub-agent tools (a child cannot spawn, ADR-0001 depth cap).
 #[must_use]
 pub fn child_tool_specs() -> Vec<ToolSpec> {
     let mut v = tool_specs();
     v.push(parent_notify_spec());
-    v.extend(worker_task_tool_specs());
     v
-}
-
-/// Dispatch one tool call. Never panics on bad input — the diagnostic is the
-/// result (the model's only recovery path).
-pub async fn dispatch(cwd: &Path, call: &ToolCall, image_max_bytes: Option<u64>) -> ToolOutput {
-    match call.name.as_str() {
-        "read" => read(cwd, &call.args, image_max_bytes).await,
-        "write" => write(cwd, &call.args).await,
-        "edit" => edit(cwd, &call.args).await,
-        "bash" => bash(cwd, &call.args).await,
-        other => format!("unknown tool: {other}").into(),
-    }
 }
 
 mod impls;
 pub mod surface;
-use impls::{bash, edit, read, write};
 
 #[cfg(test)]
 mod tests;

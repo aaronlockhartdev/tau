@@ -2,10 +2,10 @@
 
 use super::thinking::thinking_adjusted_max_output;
 use super::{
-    AgentSession, Arc, AtomicBool, AtomicU64, Config, Core, Event, ForwardingProvider, HashMap,
-    LiveSession, MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionRole, SessionStore, SkillInfo, TurnConfig, ViewEntry, Workspace, session_inner,
-    session_name, skill_info, unique_name,
+    AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
+    MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionRole,
+    SessionStore, SkillInfo, TurnConfig, ViewEntry, Workspace, session_inner, session_name,
+    skill_info, unique_name,
 };
 
 impl Core {
@@ -33,8 +33,8 @@ impl Core {
     }
 
     /// Re-run discovery for `ws`, replace its registry slot, and emit the
-    /// full-state `SkillListChanged` (ticket #31; the `task_changed`
-    /// pattern — idempotent by construction, a lost batch self-heals on
+    /// full-state `SkillListChanged` (ticket #31 — idempotent by
+    /// construction, a lost batch self-heals on
     /// the next `skill_list`). Shared by the watcher's consumer and
     /// `build_live`: the slot is the one the dropdown and the `/skill:`
     /// lookup read. A running session's prompt is not touched (frozen at
@@ -114,6 +114,21 @@ impl Core {
                 m
             })
             .collect()
+    }
+
+    /// The (workspace, session-meta) pair owning a non-archived session,
+    /// scanning every open workspace — the one home for that lookup.
+    pub(crate) fn owning_session(&self, id: &str) -> Option<(Workspace, SessionMeta)> {
+        self.workspaces
+            .lock()
+            .expect("workspaces map: no panic while the lock is held")
+            .values()
+            .find_map(|w| {
+                Self::session_access(w)
+                    .into_iter()
+                    .find(|m| m.id == id && !m.archived)
+                    .map(|m| (w.clone(), m))
+            })
     }
 
     /// A name free of collisions among the workspace's sessions (the file is
@@ -281,17 +296,18 @@ impl Core {
         // The live shell's provider (the stream-forwarding seam); the
         // constructor takes the same resolved first provider for the
         // supervisor's child factory (one resolution, ticket #43).
-        let provider = Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &first, &config.requests),
-            tx: self.events_tx.clone(),
-            pipe: self.pipe.clone(),
-            workspace: workspace.id.clone(),
-            session: store.id().to_owned(),
-            stop: Arc::new(AtomicBool::new(false)),
-            call_seq: AtomicU64::new(0),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            completed: Arc::new(Mutex::new(HashMap::new())),
-        });
+        let inner = self
+            .root_provider
+            .clone()
+            .unwrap_or_else(|| session_inner(&self.client, &first, &config.requests));
+        let provider = Arc::new(ForwardingProvider::new(
+            inner,
+            self.events_tx.clone(),
+            self.pipe.clone(),
+            workspace.id.clone(),
+            store.id().to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ));
         let agent = AgentSession::launch(
             store,
             SessionRole::Root {

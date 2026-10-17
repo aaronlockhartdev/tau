@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { md } from './markdown';
 import { present, type Shell } from './presentation';
+import { Bot, File, Search, Terminal } from '@lucide/svelte';
 import type { Entry, MessageEntry } from './protocol';
 
 const ctx = { sourceLabel: '', parentLabel: '' };
@@ -21,7 +22,7 @@ function cardOf(
 ): Extract<Shell, { kind: 'card' }> {
   const p = present(entry, { sourceLabel: over.sourceLabel ?? '', parentLabel: over.parentLabel ?? '' });
   if (!p) throw new Error('expected a presentation');
-  const s = p.shells[0];
+  const s = p.shells.find((s) => s.kind === 'card');
   if (!s || s.kind !== 'card') throw new Error('expected a card shell');
   return s;
 }
@@ -91,7 +92,7 @@ describe('present', () => {
     })[0];
     expect(s).toEqual({
       kind: 'tool',
-      icon: 'i-term',
+      icon: Terminal,
       label: 'bash',
       summary: 'ls -la',
       status: 'ok',
@@ -99,6 +100,62 @@ describe('present', () => {
       kv: [{ k: 'command', lines: ['ls -la'] }],
       output: { text: 'ls -la\n\nfile1\nfile2', closed: 'ls -la\n\nfile1\nfile2', long: false }
     });
+  });
+
+  it('a long read output collapses to the TAIL preview', () => {
+    const body = 'HEAD' + 'y'.repeat(300) + 'TAIL';
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'read',
+      args: { path: 'a.txt' },
+      status: 'ok',
+      output: body
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.output?.long).toBe(true);
+    expect(s.output?.closed).toBe(' …' + body.slice(-200));
+    expect(s.output?.text).toBe(body);
+  });
+
+  it('a long non-tail tool output keeps the HEAD preview', () => {
+    const body = 'HEAD' + 'y'.repeat(300) + 'TAIL';
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'recall',
+      args: { query: 'q' },
+      status: 'ok',
+      output: body
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.output?.closed).toBe(body.slice(0, 200) + ' …');
+  });
+
+  it('carries the path arg onto the tool shell for output highlighting', () => {
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'edit',
+      args: { path: 'src/a.ts' },
+      status: 'ok',
+      output: 'edited src/a.ts (lines 1–1 of 2)\n+ abc x'
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.path).toBe('src/a.ts');
+  });
+
+  it('uses the path arg for the chip summary of file tools (not JSON)', () => {
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'read',
+      args: { path: 'src/a.ts' },
+      status: 'ok',
+      output: 'x'
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    expect(s.summary).toBe('src/a.ts');
   });
 
   it('a running tool has no output section', () => {
@@ -114,39 +171,13 @@ describe('present', () => {
       if (s?.kind !== 'tool') throw new Error('expected a tool shell');
       return s.icon;
     };
-    expect(icon('read')).toBe('i-file');
-    expect(icon('subagent_spawn')).toBe('i-bot');
-    expect(icon('parent_notify')).toBe('i-bot');
-    expect(icon('recall')).toBe('i-search');
-    expect(icon('task_create')).toBe('i-check');
-    expect(icon('bash')).toBe('i-term');
+    expect(icon('read')).toBe(File);
+    expect(icon('subagent_spawn')).toBe(Bot);
+    expect(icon('parent_notify')).toBe(Bot);
+    expect(icon('recall')).toBe(Search);
+    expect(icon('bash')).toBe(Terminal);
   });
 
-  it('a task card labels the event and reveals the payload rows without the event key', () => {
-    const c = cardOf({
-      id: 'e1',
-      kind: 'task',
-      text: 'x',
-      payload: { event: 'created', id: 't1', title: 'Ship the report', steps: [], criteria: [] }
-    });
-    expect(c.header?.label).toBe('task: Ship the report');
-    expect(c.header?.open).toBe('task');
-    expect(c.header?.singleClick).toBe(true);
-    expect(c.collapseWhenClosed).toBe(true);
-    const reveal = c.reveal;
-    expect(reveal?.group).toBe(false);
-    expect(reveal?.sections).toEqual([
-      {
-        type: 'kv',
-        rows: [
-          { k: 'id', lines: ['t1'] },
-          { k: 'title', lines: ['Ship the report'] },
-          { k: 'steps', lines: [] },
-          { k: 'criteria', lines: [] }
-        ]
-      }
-    ]);
-  });
 
   it('an observation card is collapsible with its body in the reveal', () => {
     const c = cardOf({
@@ -188,6 +219,40 @@ describe('present', () => {
     expect(present({ id: 'e1', kind: 'user', text: 'hi' }, ctx)?.shells).toEqual([
       { kind: 'bubble', text: 'hi' }
     ]);
+  });
+
+  it('a steering delivery carries its lane divider', () => {
+    expect(present({ id: 'e1', kind: 'user', text: 'do X', lane: 'steering' }, ctx)?.shells).toEqual(
+      [
+        { kind: 'divider', label: 'steering · next tool boundary', tint: 'drain' },
+        { kind: 'bubble', text: 'do X' }
+      ]
+    );
+  });
+
+  it('a follow-up delivery carries its lane divider', () => {
+    expect(
+      present({ id: 'e1', kind: 'user', text: 'then do Y', lane: 'follow_up' }, ctx)?.shells
+    ).toEqual([
+      { kind: 'divider', label: 'follow-up · after work completes', tint: 'drain' },
+      { kind: 'bubble', text: 'then do Y' }
+    ]);
+  });
+
+  it('a force send has no divider', () => {
+    expect(present({ id: 'e1', kind: 'user', text: 'stop', lane: 'force' }, ctx)?.shells).toEqual(
+      [{ kind: 'bubble', text: 'stop' }]
+    );
+  });
+
+  it('a compaction record leads with its divider', () => {
+    const p = present({ id: 'e1', kind: 'om', text: 'plain' }, ctx);
+    expect(p?.shells[0]).toEqual({
+      kind: 'divider',
+      label: 'compaction · observation log updated',
+      tint: 'compact'
+    });
+    expect(p?.shells).toHaveLength(2);
   });
 
   it('a skill user entry is a card that collapses to a preview with an expando', () => {
@@ -254,7 +319,7 @@ describe('present', () => {
         },
         ctx
       )?.shells
-    ).toEqual([{ kind: 'stline', icon: 'i-bot', label: 'state: idle · parent' }]);
+    ).toEqual([{ kind: 'stline', icon: Bot, label: 'state: idle · parent' }]);
   });
 
   it('labels a spawn event by the parent, but not in the child\'s own session', () => {
@@ -278,10 +343,10 @@ describe('present', () => {
   it('a model system entry is a state line; other system entries are cards', () => {
     expect(
       present({ id: 'e1', kind: 'system', text: 'model: acme/x-1' }, ctx)?.shells
-    ).toEqual([{ kind: 'stline', icon: 'i-bot', label: 'model: acme/x-1' }]);
+    ).toEqual([{ kind: 'stline', icon: Bot, label: 'model: acme/x-1' }]);
     const c = cardOf({ id: 'e1', kind: 'system', text: 'something else' });
     expect(c.header?.label).toBe('system');
-    expect(c.header?.icon).toBe('i-term');
+    expect(c.header?.icon).toBe(Terminal);
   });
 
   it('a spawn snapshot is a labelled card', () => {

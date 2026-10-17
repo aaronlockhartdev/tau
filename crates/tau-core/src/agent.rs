@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
 /// A message lane (spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,10 +96,11 @@ struct Queued {
     /// A skill invocation (ticket #28): the entry's payload carries
     /// `(name, location)` so the GUI renders its green block.
     skill: Option<(String, String)>,
-    /// The entry was appended to the file at queue time (a steering report
-    /// lands now, so the GUI shows it immediately); the turn loop's dequeue
-    /// skips the second append.
-    in_file: bool,
+    /// The entry's pre-minted id: a notified steering report mints its id
+    /// at queue time (the wire upsert fires then) and the turn loop's
+    /// dequeue writes the file line under it (#148) — never a queue-time
+    /// write, which would land ahead of an in-flight earlier-minted entry.
+    entry_id: Option<String>,
 }
 
 const fn lane_name(lane: Lane) -> &'static str {
@@ -119,6 +120,11 @@ pub(crate) type OmStatusHook = Arc<dyn Fn(&str) + Send + Sync>;
 /// consumed): the app re-emits the queue snapshot so the GUI's queue pane
 /// doesn't stay stale until the turn boundary.
 pub(crate) type QueueEventHook = Arc<dyn Fn() + Send + Sync>;
+/// The plan-state reader (design: the plan file is the source of truth):
+/// the harness wires it to the core's watcher-parsed state; it returns
+/// the rendered current state, or `None` when the session has no
+/// observed plan state yet.
+pub(crate) type PlanStateHook = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 pub(crate) struct Inner {
     pub(crate) store: SessionStore,
     system_prompt: String,
@@ -128,6 +134,12 @@ pub(crate) struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
+    /// The completion gate (spec §5.3); `None` = no gate configured.
+    pub(crate) gates: Option<crate::config::Gates>,
+    /// The live gate state: `true` when the most recent gate-qualified turn
+    /// failed after exhausting `max_retries` repairs; a pass clears it
+    /// (spec §5.3: the session is marked `gate_failed`).
+    pub(crate) gate_failed: bool,
     pub(crate) om: Option<crate::om_integration::OmState>,
     /// The in-flight background buffer cycle (ticket #86 P2): set under
     /// the lock at spawn, so the task's first re-lock sees it; process
@@ -150,17 +162,15 @@ pub(crate) struct Inner {
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
     queue_event_hook: Option<QueueEventHook>,
+    /// The plan-state reader (design: re-injected at each turn boundary
+    /// and after compaction); `None` = no plan wiring (test kits, seams).
+    plan_hook: Option<PlanStateHook>,
     /// The parent-side supervisor (ticket #23): present on non-child
     /// sessions only — the depth cap (a child cannot spawn) is structural.
     subagents: Option<Arc<crate::subagent::Supervisor>>,
     /// The child-side link (ticket #23): present on child sessions only;
     /// routes `parent_notify` to the child's supervisor.
     child: Option<Arc<crate::subagent::ChildLink>>,
-    /// The parent's session (child sessions only, ticket: shared task
-    /// model): the child's task tools route here, so the task never
-    /// leaves the parent's file. `Weak` — the supervisor's `Arc` already
-    /// links parent and child; this adds no new strong cycle.
-    parent_task_store: Option<Weak<AgentSession>>,
 }
 
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
@@ -180,6 +190,11 @@ pub(crate) struct SessionParams {
     pub provider: TurnProviderRef,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
+    /// The completion gate (spec §5.3); `None` = no gate.
+    pub gates: Option<crate::config::Gates>,
+    /// The gate state resumed from the session's record on re-open (spec
+    /// §5.3); fresh sessions pass `false`.
+    pub gate_failed: bool,
     /// The OM integration state (ticket #22); `None` = OM disabled and the
     /// loop behaves as before.
     pub om: Option<crate::om_integration::OmState>,
@@ -219,6 +234,8 @@ impl AgentSession {
                 tool_batch_on_force: p.tool_batch_on_force,
                 turn: p.turn,
                 queue: VecDeque::new(),
+                gates: p.gates,
+                gate_failed: p.gate_failed,
                 om: p.om,
                 om_inflight: None,
                 om_buffer_boundary: 0,
@@ -226,9 +243,9 @@ impl AgentSession {
                 om_status_hook: None,
                 entry_upsert_hook: None,
                 queue_event_hook: None,
+                plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
-                parent_task_store: None,
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -252,7 +269,7 @@ impl AgentSession {
             lane,
             source: None,
             skill,
-            in_file: false,
+            entry_id: None,
         };
         if lane == Lane::Force {
             self.kill.store(true, Ordering::SeqCst);
@@ -299,28 +316,36 @@ impl AgentSession {
         self.stop.store(false, Ordering::SeqCst);
         let text = text.into();
         let steering = matches!(lane, Lane::Steering);
-        // A steering report is appended to the file the moment it is queued, so
-        // the EntryUpsert event fires now and the GUI shows the report immediately
-        // (not at the next LLM-call boundary, which for an idle parent may be a
-        // long way off). The in_file flag tells the turn loop's dequeue to skip
-        // the second append.
-        if steering {
-            let _ = inner.store.append(
+        // The report's entry is minted now and its upsert fires now — the
+        // GUI shows it while the parent's turn is in flight — but the file
+        // line is NOT written here: a queue-time write would land ahead of
+        // the in-flight assistant entry's line (minted earlier, written when
+        // the call returns), inverting file order against id order (#148).
+        // The turn loop's dequeue writes the line under the same id, after
+        // that line has landed.
+        let entry_id = if steering {
+            let id = inner.store.mint_id();
+            inner.store.upsert_event(
+                &id,
                 KIND_USER,
-                serde_json::json!({
-                    "text": text,
-                    "lane": "steering",
-                    "source": source,
-                }),
-                None,
+                tau_protocol::payload::UserPayload {
+                    text: text.clone(),
+                    lane: "steering".to_owned(),
+                    source: Some(source.clone()),
+                    skill: None,
+                }
+                .to_value(),
             );
-        }
+            Some(id)
+        } else {
+            None
+        };
         inner.queue.push_back(Queued {
             text,
             lane,
             source: Some(source),
             skill: None,
-            in_file: steering,
+            entry_id,
         });
     }
 
@@ -410,7 +435,7 @@ impl AgentSession {
     /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
     /// the parent session's raw history (a compacted child's frozen prefix
     /// points there); everything else is this session's own log.
-    pub(crate) fn recall_scoped(&self, args: &Value) -> String {
+    pub(crate) fn recall_scoped(&self, args: &Value) -> Result<String, String> {
         if args.get("scope").and_then(Value::as_str) == Some("parent") {
             let (link, cwd) = {
                 let inner = self
@@ -425,14 +450,20 @@ impl AgentSession {
                     // is opaque, never parsed.
                     let mut store = SessionStore::for_workspace(&cwd, link.parent_session());
                     match store.open() {
-                        Ok(()) => match crate::om_integration::OmState::load_record(&mut store) {
-                            Ok(record) => crate::om_integration::recall(&mut store, &record, args),
-                            Err(e) => format!("recall: parent record: {e}"),
-                        },
-                        Err(e) => format!("recall: parent session: {e}"),
+                        Ok(()) => {
+                            let record =
+                                match crate::om_integration::OmState::load_record(&mut store) {
+                                    Ok(r) => r,
+                                    Err(e) => return Err(format!("recall: parent record: {e}")),
+                                };
+                            crate::om_integration::recall(&mut store, &record, args)
+                        }
+                        Err(e) => Err(format!("recall: parent session: {e}")),
                     }
                 }
-                None => "recall: scope \"parent\" needs a parent link (compacted child)".into(),
+                None => {
+                    Err("recall: scope \"parent\" needs a parent link (compacted child)".into())
+                }
             }
         } else {
             let mut inner = self
@@ -448,45 +479,6 @@ impl AgentSession {
         }
     }
 
-    /// The parent's task-routing target (child sessions only): set at
-    /// spawn from the supervisor's attached parent.
-    pub(crate) fn set_parent_task_store(&self, parent: Option<Weak<AgentSession>>) {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .parent_task_store = parent;
-    }
-
-    /// The task tools (spec §5.3/§5.4). A child session's worker tools
-    /// route to the parent's store — the task never leaves the parent's
-    /// file (one store, one lock); the child's pane is a projection.
-    /// The child's `inner` is read and released before the parent's lock
-    /// is taken: no child-lock → parent-lock nesting (the deadlock guard).
-    fn task_tool_dispatch(&self, name: &str, args: &Value) -> String {
-        let (is_child, parent) = {
-            let inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            (
-                inner.child.is_some(),
-                inner.parent_task_store.as_ref().and_then(Weak::upgrade),
-            )
-        };
-        if let Some(r) = tools::surface::task_child_refusal(is_child, name) {
-            return r;
-        }
-        if let Some(parent) = parent {
-            parent.with_task_store(|store| crate::task::tool_call(store, name, args))
-        } else {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            crate::task::tool_call(&mut inner.store, name, args)
-        }
-    }
-
     /// The session store's header timestamp (epoch ms).
     pub(crate) fn store_created(&self) -> u64 {
         self.inner
@@ -497,20 +489,13 @@ impl AgentSession {
     }
 
     /// Run one operation against this session's own store — the
-    /// single-writer surface for other components (the sub-agent task
-    /// gate, the app's task commands; review B3).
-    pub(crate) fn with_task_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
+    /// single-writer surface for other components (review B3).
+    pub(crate) fn with_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
         let mut inner = self
             .inner
             .lock()
             .expect("agent inner: no panic while the lock is held");
         f(&mut inner.store)
-    }
-
-    /// The seven task tools (the app's task commands; the model's dispatch
-    /// routes them through the surface) — both share the child→parent routing.
-    pub(crate) fn task_tool_call(&self, name: &str, args: &Value) -> String {
-        self.task_tool_dispatch(name, args)
     }
 
     #[cfg(test)]
@@ -535,6 +520,15 @@ impl AgentSession {
             .lock()
             .expect("agent inner: no panic while the lock is held")
             .queue_event_hook = hook;
+    }
+
+    /// The plan-state reader (design: the plan file is the source of
+    /// truth); `None` clears it.
+    pub(crate) fn set_plan_hook(&self, hook: Option<PlanStateHook>) {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .plan_hook = hook;
     }
 
     /// The live entry sink, set on this session's store (the append choke
@@ -613,11 +607,44 @@ impl AgentSession {
             .om
             .clone()
     }
+
+    /// The live gate state (spec §5.3): `true` when the most recent
+    /// gate-qualified turn failed after exhausting `max_retries` repairs.
+    #[must_use]
+    pub(crate) fn gate_failed(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .gate_failed
+    }
+
+    /// The final assistant text on the active branch (spec §5.2: the
+    /// observed `QUESTION:` marker lives in the child's final output).
+    /// `None` when the branch has no assistant entry or the read fails.
+    #[must_use]
+    pub(crate) fn last_assistant_text(&self) -> Option<String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        let entries = inner.store.entries_range(0, usize::MAX).ok()?;
+        let leaf = inner.store.leaf().ok().flatten().map(|e| e.id);
+        crate::om_integration::branch_entries(&entries, leaf.as_deref())
+            .iter()
+            .rev()
+            .find(|e| e.kind == KIND_ASSISTANT)
+            .and_then(|e| e.payload.get("text"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
 }
+mod gate_hook;
 mod turn;
 
 #[cfg(test)]
 pub(crate) mod testkit;
+#[cfg(test)]
+mod tests_gate;
 #[cfg(test)]
 mod tests_om;
 #[cfg(test)]

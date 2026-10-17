@@ -258,6 +258,33 @@ impl Default for SubAgents {
     }
 }
 
+/// The completion gate (spec §5.3, design "The mechanical completion gate
+/// is the oracle"): a global, mechanical, user-configured check the core
+/// runs at every qualifying turn-end. Enforce-always: the section's
+/// presence turns the gate on — there is no `off`/`advisory`/`enforce` dial
+/// (ADR-0007 Supplement: a deliberate transparency strengthening). The
+/// user's only control is *what* the command is.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Gates {
+    /// The check command (a shell line), run with the user's privileges.
+    pub command: String,
+    /// The check's deadline in seconds.
+    pub timeout_secs: u64,
+    /// Failed repair turns before the session is marked `gate_failed`.
+    pub max_retries: u32,
+}
+
+impl Default for Gates {
+    fn default() -> Self {
+        Self {
+            command: String::new(),
+            timeout_secs: 300,
+            max_retries: 2,
+        }
+    }
+}
+
 /// Image-read caps (spec §12, #35): the home for #34's enforcement.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -301,6 +328,8 @@ pub struct Config {
     pub om: Om,
     pub subagents: SubAgents,
     pub limits: Limits,
+    /// The completion gate; `None` (no `[gates]` section) = no gate.
+    pub gates: Option<Gates>,
 }
 
 /// On-disk file shape: every section optional so a partial file layers cleanly.
@@ -315,6 +344,7 @@ struct ConfigFile {
     om: Option<Om>,
     subagents: Option<SubAgents>,
     limits: Option<Limits>,
+    gates: Option<Gates>,
 }
 
 impl ConfigFile {
@@ -351,6 +381,16 @@ impl ConfigFile {
         }
         if let Some(limits) = &self.limits {
             config.limits = limits.clone();
+        }
+        if let Some(gates) = &self.gates {
+            // A bare `[gates]` (blank `command`) is a no-gate, not a silent
+            // no-op gate: `bash -c ""` exits 0, which would pass every
+            // qualifying turn while the prompt claims verification.
+            config.gates = if gates.command.trim().is_empty() {
+                None
+            } else {
+                Some(gates.clone())
+            };
         }
     }
 }

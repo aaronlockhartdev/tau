@@ -1,23 +1,9 @@
 use super::{
-    AgentError, AgentSession, Arc, AtomicBool, CallOutput, Entry, EntryEventHook, FunctionCall,
-    FunctionCallInput, FunctionCallOutputInput, Inner, InputEntry, InputMessage, KIND_ASSISTANT,
-    KIND_TOOL, KIND_USER, Lane, Ordering, Queued, ResponseRequest, SessionStore, ToolBatchPolicy,
-    TurnConfig, TurnEvent, TurnProviderRef, TurnResult, TurnSink, Value, lane_name, tools,
+    AgentError, AgentSession, KIND_ASSISTANT, KIND_USER, Lane, Ordering, Queued, ResponseRequest,
+    ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
 };
-use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::time::{Duration, Instant};
-
-/// The OM model to use: the configured OM model, or the session's model when
-/// it is empty (spec §4).
-fn resolve_om_model(om_model: &str, model: &str) -> String {
-    if om_model.is_empty() {
-        model.to_owned()
-    } else {
-        om_model.to_owned()
-    }
-}
+use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
+use sink::StreamEntrySink;
 
 impl AgentSession {
     /// Run turns until the queue is empty.
@@ -37,6 +23,18 @@ impl AgentSession {
         }
     }
 
+    /// The child's quiescence (ADR-0001, spec §5.2): a stop, or a
+    /// `parent_notify` rest request pending the turn's end. Checked at
+    /// every loop exit that would otherwise start another provider call.
+    fn child_quiesced(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .child
+            .as_ref()
+            .is_some_and(|c| !c.is_running() || c.rest_requested())
+    }
+
     #[allow(clippy::too_many_lines)] // one turn loop; splitting is refactoring
     async fn run_turn(&self) -> Result<(), AgentError> {
         // A force send or stop that targeted this turn is captured before the
@@ -46,6 +44,16 @@ impl AgentSession {
         // A force/stop that landed before the turn applies to the first call
         // only; later calls in the turn are fresh.
         let mut first_call = true;
+        // The turn's tool-call count (the gate's qualification: a turn-end
+        // is gated only if the turn used ≥1 tool, spec §5.3) and the gate
+        // repair attempts (bounded by `max_retries`).
+        let mut tool_calls = 0usize;
+        let mut gate_retries = 0u32;
+        // The plan state (design: re-injected at turn boundaries and after
+        // compaction only): captured once here and reused for every assembly
+        // in the turn, so a mid-turn plan-file edit can't churn the provider
+        // prefix cache; a mid-turn compaction re-captures it.
+        let mut plan_state = self.plan_state();
         loop {
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
@@ -94,44 +102,28 @@ impl AgentSession {
                     .leaf()
                     .map_err(AgentError::Session)?
                     .map(|e| e.id);
-                // The active tasks' resume contracts (spec §5.3): re-injected
-                // into every assembly while active, so a compaction can
-                // never make a session lose sight of them. All active tasks
-                // ride (bounded) — a session may work several (review N4).
-                let contracts = crate::task::active_tasks(&crate::task::fold_entries(&entries))
-                    .iter()
-                    .take(5)
-                    .map(|t| {
-                        serde_json::to_string(&crate::task::resume_contract(t)).unwrap_or_default()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let contract = if contracts.is_empty() {
-                    None
-                } else {
-                    Some(contracts)
-                };
                 // Assembly runs on the persistent state, not a clone: it is
                 // pure over the record, and the one-shot continuation-hint
                 // flip must stick (a clone's flip would be dropped, and the
                 // om_turn_end write-back would re-set `changed`, so the hint
                 // would re-inject on every assembly).
                 if let Some(om) = inner.om.as_mut() {
-                    let assembled = om.assemble_context(&base, contract.as_deref());
+                    let assembled = om.assemble_context(&base);
                     let raw = om.raw_window_from(&entries, leaf_id.as_deref());
                     let input = assembled
                         .om_input_items
                         .into_iter()
                         .chain(input_items(&raw))
                         .collect();
-                    (assembled.instructions, input)
+                    (
+                        with_plan_state(assembled.instructions, plan_state.as_deref()),
+                        input,
+                    )
                 } else {
-                    let mut instructions = base;
-                    if let Some(contract) = &contract {
-                        instructions.push_str("\n\n# Task (resume contract)\n");
-                        instructions.push_str(contract);
-                    }
-                    (instructions, input_items(&entries))
+                    (
+                        with_plan_state(base, plan_state.as_deref()),
+                        input_items(&entries),
+                    )
                 }
             };
             let turn = self.turn_config();
@@ -218,7 +210,17 @@ impl AgentSession {
                     && !result.calls.is_empty()
                 {
                     self.run_tools(&result.calls).await?;
+                    tool_calls += result.calls.len();
                     self.om_mid_loop();
+                    // A mid-turn compaction is a re-injection point (design).
+                    plan_state = self.plan_state();
+                    // Quiescence (ADR-0001, spec §5.2): a rest request or
+                    // a stop that landed with the tool batch ends the turn
+                    // here — the fast path burns no final call for a child
+                    // that already declared its rest.
+                    if self.child_quiesced() {
+                        break;
+                    }
                     continue;
                 }
                 break;
@@ -227,21 +229,33 @@ impl AgentSession {
                 // The model ended the turn: the synchronous OM pass runs
                 // before any follow-up starts the next one (spec §4).
                 self.om_turn_end().await?;
-                break;
+                // The completion gate (spec §5.3): a qualifying turn-end
+                // (≥1 tool call, no QUESTION: marker) runs the check. A
+                // pass stands the turn; a fail records a system entry,
+                // bounces a steering-lane repair turn, and — after
+                // max_retries — marks the session gate_failed.
+                let end = self
+                    .gate_turn_end(&result.text, tool_calls, &mut gate_retries)
+                    .await?;
+                if end {
+                    break;
+                }
+                // A failed check bounced a repair: continue the loop so the
+                // injected steering message rides the next LLM call.
+                continue;
             }
             self.run_tools(&result.calls).await?;
+            tool_calls += result.calls.len();
             self.om_mid_loop();
-            if self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held")
-                .child
-                .as_ref()
-                .is_some_and(|c| !c.is_running())
-            {
-                // Quiescence (ADR-0001): the child's notify ended it, so the
-                // core auto-terminates its loop — a done child never burns
-                // another provider call.
+            // A mid-turn compaction is a re-injection point (design): the
+            // next assembly carries the refreshed state.
+            plan_state = self.plan_state();
+            if self.child_quiesced() {
+                // Quiescence (ADR-0001): a stop, or a `parent_notify`
+                // `done` declaration (the fast path — spec §5.2), ends the
+                // turn here, so the core auto-terminates the loop and the
+                // observed rest at the turn end settles the state without
+                // burning another provider call.
                 break;
             }
         }
@@ -251,303 +265,21 @@ impl AgentSession {
         Ok(())
     }
 
-    async fn run_tools(&self, calls: &[FunctionCall]) -> Result<(), AgentError> {
-        for call in calls {
-            // ticket #70: keep the parse result so an unparseable call below
-            // becomes a clear error, not a silent null.
-            let parsed = serde_json::from_str::<Value>(&call.arguments);
-            let args = parsed.as_ref().map_or(Value::Null, Value::clone);
-            let tc = tools::ToolCall {
-                id: call.id.clone(),
-                name: call.name.clone(),
-                args: args.clone(),
-            };
-            // One id per call (ADR-0008): the call phase re-emits the entry
-            // wire-only (empty output); the result persists the same id, so
-            // the file keeps one line for the call.
-            let (entry_id, parent, timestamp, upsert) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
-                let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
-                (
-                    inner.store.mint_id(),
-                    parent,
-                    inner.store.now(),
-                    inner.entry_upsert_hook.clone(),
-                )
-            };
-            if let Some(hook) = &upsert {
-                hook(&Entry {
-                    id: entry_id.clone(),
-                    parent,
-                    kind: KIND_TOOL.to_owned(),
-                    timestamp,
-                    payload: tau_protocol::payload::ToolPayload {
-                        call_id: call.call_id.clone(),
-                        name: call.name.clone(),
-                        args: args.clone(),
-                        output: tau_protocol::payload::ToolOutput::Text(String::new()),
-                    }
-                    .to_value(),
-                    blob: None,
-                    first_kept_entry_id: None,
-                    crc: None,
-                });
-            }
-            // The surface routes the call (R1): the loop matches no tool
-            // names — the table in tools::surface owns the mapping. The
-            // links are cloned under the lock and invoked outside it: the
-            // routes re-lock this session's `inner` (a child notify
-            // records a state entry; a spawn reads the parent's OM
-            // record), and the lock is not reentrant.
-            let (sup, link, cwd, image_max) = {
-                let inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
-                (
-                    inner.subagents.clone(),
-                    inner.child.clone(),
-                    inner.cwd.clone(),
-                    inner.turn.image_max_bytes,
-                )
-            };
-            // ticket #70: an unparseable call is a parse error, never a silent
-            // null-args dispatch — the model reads the error and self-corrects.
-            let output = match &parsed {
-                Ok(_) => tools::surface::dispatch(self, &cwd, image_max, sup, link, &tc).await,
-                Err(e) => tau_protocol::payload::ToolOutput::Text(format!(
-                    "error: arguments are not valid JSON: {e}"
-                )),
-            };
-            self.append_id(
-                &entry_id,
-                KIND_TOOL,
-                tau_protocol::payload::ToolPayload {
-                    call_id: call.call_id.clone(),
-                    name: call.name.clone(),
-                    args,
-                    output,
-                }
-                .to_value(),
-            )?;
-        }
-        Ok(())
-    }
-
-    /// The OM provider: a forwarding provider's inner (the registry-backed
-    /// one the OM pass calls), or the provider itself when it has none.
-    fn om_provider(&self) -> TurnProviderRef {
-        self.provider
-            .forwarding_inner()
-            .unwrap_or_else(|| self.provider.clone())
-    }
-
-    /// The turn-end OM pass (ticket #22, R4): one call — `settle_turn`
-    /// owns the whole sequence (the unobserved read, activation, the plan,
-    /// the observe/reflect round-trips, the commit). The state runs on a
-    /// clone and is written back at the end; the store is handed to it
-    /// phase by phase through the re-lock, so the session lock is never
-    /// held across a provider call (a std guard cannot cross an await in a
-    /// spawned future).
-    async fn om_turn_end(&self) -> Result<(), AgentError> {
-        // The OM model (global config, spec §4); empty = the session's
-        // model. Resolved with the state clone, before the pass.
-        let (state, model, hook) = {
-            let inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            (
-                inner.om.clone(),
-                resolve_om_model(&inner.om_model, &inner.model),
-                inner.om_status_hook.clone(),
-            )
-        };
-        let Some(mut state) = state else {
-            return Ok(());
-        };
-        // D13.1: join the in-flight buffer cycle BEFORE the pass — the
-        // pass's activation (promote) reads the buffer the cycle writes.
-        // 60s bound: a cycle outliving it is fine, the write-back merge
-        // below picks up its commit (D13.2) and the turn doesn't hang.
-        let handle = {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            inner.om_inflight.take()
-        };
-        if let Some(handle) = handle {
-            let timed_out = tokio::time::timeout(std::time::Duration::from_secs(60), handle)
-                .await
-                .is_err();
-            if timed_out {
-                tracing::warn!(
-                    "om: buffer cycle outlived the 60s join; the turn-end merge picks up its commit"
-                );
-            }
-        }
-        // The re-lock: each sync store phase takes the session lock and
-        // releases it before the next provider call.
-        let mut with_store =
-            |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), crate::om_integration::OmError>| {
-                let mut guard = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
-                f(&mut guard.store)
-            };
-        // The pass goes through the session's inner provider, not the
-        // forwarding seam (ticket #86): OM calls are not user-facing
-        // streams, and keeping them out of the forwarding call registry
-        // means a failed pass cannot surface as an interrupted `StreamEnd`
-        // in the post-turn reconciliation (the #82 class). A plain
-        // (non-forwarding) provider has no registry — use it as-is.
-        let om_provider = self.om_provider();
-        // A failed pass (a provider error that survived its retries, a
-        // storage error) must not kill the turn (ticket #86): the entries
-        // stay unobserved and the next turn-end retries; the partial state
-        // is written back as-is.
-        if let Err(e) = state
-            .settle_turn(&mut with_store, &om_provider, &model, hook.as_ref())
-            .await
-        {
-            tracing::warn!("om: turn-end pass failed: {e}");
-            // Close the status gauge: a failed pass never reaches the
-            // loop's `Done` arm, the only place it goes idle.
-            if let Some(hook) = &hook {
-                hook("idle");
-            }
-        }
-        // D13.2: the write-back is a field-split merge, not a clobber — a
-        // cycle that committed during the pass's LLM round-trip (the
-        // join timed out) keeps its chunks; the pass's observation
-        // fields win.
-        {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            match crate::om_integration::OmState::load_record(&mut inner.store) {
-                Ok(fresh) => {
-                    state.merge_turn_end(&fresh);
-                    // Persist only when the merge changed the DURABLE chunk state — a
-                    // racing cycle's commit (the join timed out) or a
-                    // sync-buffered chunk. Compare the chunk fields, not
-                    // the whole record: the pass refreshes
-                    // `pending_tokens` on every run, so a full equality
-                    // would re-save (append an `om` entry) on every turn
-                    // of any session with unobserved entries.
-                    let chunk_delta = state.record.buffered_chunks != fresh.buffered_chunks
-                        || state.record.last_buffered_at_tokens > fresh.last_buffered_at_tokens;
-                    if !chunk_delta {
-                        // The common case: the merge is a no-op over the
-                        // file's chunk state, so nothing is re-saved.
-                    } else if let Err(e) = state.save(&mut inner.store) {
-                        tracing::warn!("om: write-back merge save failed: {e}");
-                    }
-                    inner.om = Some(state);
-                }
-                Err(e) => {
-                    tracing::warn!("om: record load for the write-back merge failed: {e}");
-                    inner.om = Some(state);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// The mid-episode interval-boundary trigger (ticket #86 P2, D3/D4):
-    /// runs after each tool round — the moment new unobserved tokens
-    /// exist. At the observe threshold it promotes buffered chunks
-    /// (activation, no LLM call); below it, it spawns the background
-    /// buffer cycle when an interval boundary was crossed. The spawn
-    /// happens INSIDE the lock section: the in-flight flag is set before
-    /// the task can re-acquire the lock (D14), so the cycle and the
-    /// trigger never race on it. With `buffer_tokens = 0` (kill switch)
-    /// this is a no-op and the pass keeps today's sync behavior.
-    fn om_mid_loop(&self) {
-        let mut guard = self
-            .inner
+    /// The watcher-parsed plan state (design: the plan file is the source of
+    /// truth), read under the session lock. Captured once per turn and
+    /// re-captured after a mid-turn compaction — the re-injection points —
+    /// not on every assembly, so a mid-turn plan-file edit can't churn the
+    /// provider prefix cache for the rest of the turn.
+    fn plan_state(&self) -> Option<String> {
+        self.inner
             .lock()
-            .expect("agent inner: no panic while the lock is held");
-        let Inner {
-            store,
-            om,
-            om_inflight,
-            om_buffer_boundary,
-            om_model,
-            model,
-            ..
-        } = &mut *guard;
-        let Some(om) = om.as_mut() else {
-            return;
-        };
-        if om.config.buffer_tokens == 0 {
-            return;
-        }
-        let Ok(unobserved) = om.unobserved(store) else {
-            // A store read failure degrades: keep the last known pending,
-            // no trigger this round (the turn-end pass retries the read).
-            return;
-        };
-        om.record.pending_tokens = om.pending_tokens(&unobserved);
-        let spawn_pending = if om.activation_reached(om.record.pending_tokens) {
-            // Activation: promote the buffered chunks into the log (no LLM
-            // call); the sync turn-end pass owns the at/above-threshold
-            // range from here (the mastra partition).
-            match om.promote(store) {
-                Ok(_) => None,
-                Err(e) => {
-                    tracing::warn!("om: mid-loop activation failed: {e}");
-                    None
-                }
-            }
-        } else if crate::om_integration::background::boundary_crossed(
-            u64::from(om.record.pending_tokens),
-            &om.config,
-            om.record.last_buffered_at_tokens,
-            *om_buffer_boundary,
-        ) {
-            Some(om.record.pending_tokens)
-        } else {
-            None
-        };
-        let Some(pending) = spawn_pending else {
-            return;
-        };
-        if om_inflight.is_some() {
-            // A cycle is already running: it owns the interval; the next
-            // crossing (one more interval of material) triggers again.
-            return;
-        }
-        // The in-process boundary advances at TRIGGER time (D6); the
-        // persisted one only at the cycle's successful commit.
-        *om_buffer_boundary = u64::from(pending);
-        let inner = std::sync::Arc::clone(&self.inner);
-        let config = om.config.clone();
-        let provider = self.om_provider();
-        let model_owned = resolve_om_model(om_model, model);
-        *om_inflight = Some(tokio::spawn(
-            crate::om_integration::background::buffer_cycle(
-                inner,
-                config,
-                provider,
-                model_owned,
-                u64::from(pending),
-            ),
-        ));
+            .expect("agent inner: no panic while the lock is held")
+            .plan_hook
+            .as_ref()
+            .and_then(|h| h())
     }
-    #[allow(clippy::too_many_lines)] // one append pass; splitting is refactoring
+
     fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
-        // A steering report was already appended at queue time (so the GUI
-        // showed it immediately); don't append it a second time here.
-        if msg.in_file {
-            return Ok(());
-        }
         let skill = msg
             .skill
             .as_ref()
@@ -555,16 +287,20 @@ impl AgentSession {
                 name: name.clone(),
                 location: location.clone(),
             });
-        self.append(
-            KIND_USER,
-            tau_protocol::payload::UserPayload {
-                text: msg.text,
-                lane: lane_name(msg.lane).to_owned(),
-                source: msg.source,
-                skill,
-            }
-            .to_value(),
-        )
+        let payload = tau_protocol::payload::UserPayload {
+            text: msg.text,
+            lane: lane_name(msg.lane).to_owned(),
+            source: msg.source,
+            skill,
+        }
+        .to_value();
+        // A notified steering's id was minted at queue time (its upsert
+        // already fired): the line lands now, under that id, after the
+        // in-flight entry it was queued behind (#148).
+        match msg.entry_id {
+            Some(id) => self.append_id(&id, KIND_USER, payload),
+            None => self.append(KIND_USER, payload),
+        }
     }
 
     fn append_assistant(
@@ -644,350 +380,10 @@ impl AgentSession {
     }
 }
 
-/// The sink the loop gives the provider: the per-call kill flag (force)
-/// or the persistent stop flag (ticket #23) stops the stream (spec §7).
-/// It also accumulates the streamed text and re-emits it as the growing
-/// assistant entry (ADR-0008's wire-only snapshots), at most one per
-/// display frame.
-struct StreamEntrySink {
-    kill: Arc<AtomicBool>,
-    stop: Arc<AtomicBool>,
-    id: String,
-    parent: Option<String>,
-    timestamp: u64,
-    upsert: Option<EntryEventHook>,
-    text: String,
-    reasoning: String,
-    last: Option<Instant>,
-}
-
-/// The snapshot cadence: one re-emission per display frame (ADR-0008).
-const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(16);
-
-impl TurnSink for StreamEntrySink {
-    fn event(&mut self, event: TurnEvent) -> bool {
-        if self.kill.load(Ordering::SeqCst) || self.stop.load(Ordering::SeqCst) {
-            return false;
-        }
-        match &event {
-            TurnEvent::Text(t) => {
-                self.text.push_str(t);
-                self.emit_snapshot();
-            }
-            TurnEvent::Reasoning(t) => {
-                self.reasoning.push_str(t);
-                self.emit_snapshot();
-            }
-            // Completed carries no content; the final append's upsert is
-            // the stream's last emission.
-            TurnEvent::Completed(_) => {}
-        }
-        true
-    }
-    fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
-        Box::pin(stop_flags(&self.kill, &self.stop))
-    }
-}
-
-impl StreamEntrySink {
-    /// The frame-aligned re-emission: at most one snapshot per window, the
-    /// first token opening the card.
-    fn emit_snapshot(&mut self) {
-        let Some(hook) = &self.upsert else {
-            return;
-        };
-        let now = Instant::now();
-        if self
-            .last
-            .is_some_and(|t| now.duration_since(t) < SNAPSHOT_INTERVAL)
-        {
-            return;
-        }
-        self.last = Some(now);
-        let entry = Entry {
-            id: self.id.clone(),
-            parent: self.parent.clone(),
-            kind: KIND_ASSISTANT.to_owned(),
-            timestamp: self.timestamp,
-            payload: tau_protocol::payload::AssistantPayload {
-                text: self.text.clone(),
-                reasoning: self.reasoning.clone(),
-                interrupted: false,
-                usage: None,
-                calls: vec![],
-            }
-            .to_value(),
-            blob: None,
-            first_kept_entry_id: None,
-            crc: None,
-        };
-        hook(&entry);
-    }
-}
-/// The stop-flag poll cadence: a human clicking stop, not a tight race.
-const STOP_POLL_MS: u64 = 50;
-
-/// The prefill half of a kill/stop (spec §7): a poll over the flags so the
-/// provider tears the in-flight request down before the first stream
-/// event arrives.
-async fn stop_flags(kill: &AtomicBool, stop: &AtomicBool) {
-    loop {
-        if kill.load(Ordering::SeqCst) || stop.load(Ordering::SeqCst) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(STOP_POLL_MS)).await;
-    }
-}
-
-/// ticket #70: repair malformed tool-call arguments at receipt. A call whose
-/// arguments fail a strict parse is run through `jsonrepair`; if that yields
-/// valid JSON, the repaired string replaces the raw one, so the stored entry
-/// and the echoed history are valid (and vLLM stops coercing the argument to
-/// `{}`). Valid arguments are never altered. Unrepairable arguments are left
-/// as-is — `run_tools` turns those into a parse-error result, never a silent
-/// null.
-fn repair_tool_call_arguments(result: &mut TurnResult) {
-    for call in &mut result.calls {
-        if serde_json::from_str::<Value>(&call.arguments).is_ok() {
-            continue;
-        }
-        match jsonrepair_rs::jsonrepair(&call.arguments) {
-            Ok(repaired) if serde_json::from_str::<Value>(&repaired).is_ok() => {
-                tracing::info!(
-                    tool = %call.name,
-                    raw_len = call.arguments.len(),
-                    repaired_len = repaired.len(),
-                    "repaired malformed tool-call arguments"
-                );
-                call.arguments = repaired;
-            }
-            _ => {}
-        }
-    }
-}
-
-/// The session's entries (file order) mapped to responses-API input items:
-/// user messages, assistant text + calls, and tool results (spec §5.4).
-fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
-    // Two-phase tool recording writes a call-phase entry (empty output)
-    // before its result-phase entry, so the last tool entry per call_id in
-    // file order is the result. Emit exactly that one — a per-call_id
-    // last-wins dedupe (ticket #37) — so a tool that returns "" still pairs
-    // its function_call with an output and the Responses API never 400s on
-    // a missing output.
-    let last_tool = entries
-        .iter()
-        .enumerate()
-        .filter_map(|(i, e)| {
-            let cid = e.payload.get("call_id").and_then(Value::as_str)?;
-            e.payload
-                .get("output")
-                .and_then(CallOutput::from_payload)
-                .is_some()
-                .then(|| (cid.to_owned(), i))
-        })
-        .collect::<HashMap<_, _>>();
-    let mut out = Vec::new();
-    for (i, entry) in entries.iter().enumerate() {
-        match entry.kind.as_str() {
-            KIND_USER => {
-                if let Some(text) = entry.payload.get("text").and_then(Value::as_str) {
-                    // A wake message from a child (ticket #23) is stored as a
-                    // user entry with its source: the prefix keeps the parent
-                    // from reading the child's words as the user's.
-                    let content = match entry.payload.get("source").and_then(Value::as_str) {
-                        Some(source) => format!("Sub-agent {source}: {text}"),
-                        None => text.to_owned(),
-                    };
-                    out.push(InputEntry::Message(InputMessage {
-                        role: "user".into(),
-                        content,
-                    }));
-                }
-            }
-            KIND_ASSISTANT => {
-                if let Some(text) = entry
-                    .payload
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .filter(|t| !t.is_empty())
-                {
-                    out.push(InputEntry::Message(InputMessage {
-                        role: "assistant".into(),
-                        content: text.to_owned(),
-                    }));
-                }
-                if let Some(calls) = entry.payload.get("calls").and_then(Value::as_array) {
-                    for call in calls {
-                        out.push(InputEntry::Call(FunctionCallInput {
-                            kind: "function_call",
-                            id: call
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            call_id: call
-                                .get("call_id")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            name: call
-                                .get("name")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            arguments: call
-                                .get("arguments")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                        }));
-                    }
-                }
-            }
-            KIND_TOOL => {
-                let (Some(call_id), Some(output)) = (
-                    entry.payload.get("call_id").and_then(Value::as_str),
-                    entry
-                        .payload
-                        .get("output")
-                        .and_then(CallOutput::from_payload),
-                ) else {
-                    continue;
-                };
-                // Only the last recorded phase per call_id is an input item
-                // (the result); an earlier phase for the same call_id is the
-                // call, not a second result.
-                if last_tool.get(call_id) != Some(&i) {
-                    continue;
-                }
-                out.push(InputEntry::CallOutput(FunctionCallOutputInput {
-                    kind: "function_call_output",
-                    call_id: call_id.to_owned(),
-                    output,
-                }));
-            }
-            _ => {}
-        }
-    }
-    out
-}
+mod assemble;
+mod om_pass;
+mod sink;
+mod tools;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
-        Entry {
-            id: id.to_owned(),
-            parent: None,
-            timestamp: 0,
-            kind: KIND_TOOL.to_owned(),
-            payload: tau_protocol::payload::ToolPayload {
-                call_id: call_id.to_owned(),
-                name: "bash".to_owned(),
-                args: Value::Null,
-                output: tau_protocol::payload::ToolOutput::Text(output.to_owned()),
-            }
-            .to_value(),
-            blob: None,
-            first_kept_entry_id: None,
-            crc: None,
-        }
-    }
-
-    fn turn_result_with_call(args: &str) -> TurnResult {
-        let mut r = TurnResult::default();
-        r.calls.push(FunctionCall {
-            id: "id-1".into(),
-            call_id: "call-1".into(),
-            name: "edit".into(),
-            arguments: args.into(),
-        });
-        r
-    }
-
-    #[test]
-    fn valid_tool_args_pass_through_unchanged() {
-        let mut r = turn_result_with_call(r#"{"file": "a.txt"}"#);
-        repair_tool_call_arguments(&mut r);
-        assert_eq!(r.calls[0].arguments, r#"{"file": "a.txt"}"#);
-    }
-
-    #[test]
-    fn single_quote_tool_args_repair_to_intended() {
-        let mut r = turn_result_with_call("{'file': 'a.txt'}");
-        repair_tool_call_arguments(&mut r);
-        let v: Value =
-            serde_json::from_str(&r.calls[0].arguments).expect("repaired args must be valid JSON");
-        assert_eq!(v, serde_json::json!({"file": "a.txt"}));
-    }
-
-    #[test]
-    fn trailing_comma_tool_args_repair_to_intended() {
-        let mut r = turn_result_with_call(r#"{"a": 1,}"#);
-        repair_tool_call_arguments(&mut r);
-        let v: Value =
-            serde_json::from_str(&r.calls[0].arguments).expect("repaired args must be valid JSON");
-        assert_eq!(v, serde_json::json!({"a": 1}));
-    }
-
-    #[test]
-    fn raw_newline_in_value_is_repaired() {
-        // The observed production breakage class: a raw control character
-        // (newline) inside a string value is invalid JSON.
-        let mut r = turn_result_with_call("{\"content\": \"line1\nline2\"}");
-        repair_tool_call_arguments(&mut r);
-        let v: Value =
-            serde_json::from_str(&r.calls[0].arguments).expect("repaired args must be valid JSON");
-        assert!(
-            v["content"].is_string(),
-            "content should stay a string: {v:?}"
-        );
-    }
-
-    #[test]
-    fn unrepairable_args_are_left_untouched() {
-        // If the repair cannot produce valid JSON, the raw string is kept
-        // verbatim (run_tools then emits the parse error) — never corrupted.
-        let raw = "definitely not json {[";
-        let mut r = turn_result_with_call(raw);
-        repair_tool_call_arguments(&mut r);
-        if serde_json::from_str::<Value>(&r.calls[0].arguments).is_err() {
-            assert_eq!(r.calls[0].arguments, raw);
-        }
-    }
-
-    #[test]
-    fn empty_tool_result_is_emitted_as_call_output() {
-        // A tool that returns "" still pairs its call: the result phase is
-        // emitted even though its text is empty (ticket #37). The old
-        // skip-empties rule dropped it and 400'd the next request.
-        let entries = vec![tool_entry("e1", "call-1", "")];
-        let items = input_items(&entries);
-        assert!(
-            matches!(&items[..], [InputEntry::CallOutput(o)] if o.call_id == "call-1"),
-            "expected one call output for the empty result, got {items:?}"
-        );
-    }
-
-    #[test]
-    fn dedupe_keeps_only_the_last_phase_per_call_id() {
-        // Two entries share a call_id (the call phase and its result): the
-        // dedupe keeps only the last (the result), not both (ticket #37).
-        let entries = vec![
-            tool_entry("e1", "call-1", ""),
-            tool_entry("e2", "call-1", "done"),
-        ];
-        let items = input_items(&entries);
-        assert!(
-            matches!(
-                &items[..],
-                [InputEntry::CallOutput(o)]
-                    if o.call_id == "call-1"
-                        && matches!(&o.output, CallOutput::Text(t) if t == "done")
-            ),
-            "expected exactly the result phase, got {items:?}"
-        );
-    }
-}
+mod tests;

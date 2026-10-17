@@ -16,7 +16,6 @@ import {
   type SessionMeta,
   type SkillInfo,
   type SubagentInfo,
-  type Task,
   type Usage,
   type ViewEntry,
   type Workspace
@@ -64,7 +63,7 @@ function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Parti
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], tasks: [], ...extra.live },
+      live: { queue: [], turn: 'idle', gate_failed: false, plan: { steps: [], criteria: '', notes: '' }, subagents: [], ...extra.live },
       cursor: ''
     }
   };
@@ -96,7 +95,6 @@ function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
     waiting_on: null,
     last_message: null,
     usage: null,
-    task: null,
     resume_contract: null,
     ...extra
   };
@@ -135,11 +133,6 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     subagent_spawn: () => ({ kind: 'none' }),
     subagent_message: () => ({ kind: 'none' }),
     subagent_stop: () => ({ kind: 'none' }),
-    task_create: () => ({ kind: 'none' }),
-    task_update: () => ({ kind: 'none' }),
-    task_assign: () => ({ kind: 'none' }),
-    task_evidence: () => ({ kind: 'none' }),
-    task_cancel: () => ({ kind: 'none' }),
     skill_list: () => ({ kind: 'skills', skills: [] }),
     provider_list: () => ({ kind: 'providers', providers: [] }),
     provider_add: () => ({ kind: 'none' }),
@@ -147,7 +140,9 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     provider_delete: () => ({ kind: 'none' }),
     file_read: () => ({ kind: 'file', file: { text: '', truncated: false } }),
     file_list: () => ({ kind: 'files', files: [] }),
-    file_unlist: () => ({ kind: 'none' })
+    file_unlist: () => ({ kind: 'none' }),
+    git_status: () => ({ kind: 'git_status', status: { branch: 'main', modified: [], untracked: [], deleted: [] } }),
+    git_show: () => ({ kind: 'git_show', text: '' })
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
 }
@@ -697,31 +692,6 @@ describe('guards', () => {
     expect(store.skills['w1']).toEqual(b);
   });
 
-  it('task_changed: an unchanged re-emit is a no-op, a change replaces', () => {
-    store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    const tasks: Task[] = [];
-    store.sessions['s1']!.tasks = tasks;
-    const beforeRef = store.sessions['s1']!.tasks;
-    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 's1', tasks }]);
-    expect(store.sessions['s1']!.tasks).toBe(beforeRef);
-    const other: Task[] = [
-      {
-        id: 't1',
-        title: 'x',
-        status: 'pending',
-        steps: [],
-        criteria: [],
-        evidence: [],
-        blockers: [],
-        decisions: [],
-        notes: [],
-        updated: 1
-      }
-    ];
-    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 's1', tasks: other }]);
-    expect(store.sessions['s1']!.tasks).not.toBe(beforeRef);
-    expect(store.sessions['s1']!.tasks).toEqual(other);
-  });
 
   it('om_status drives the gauge kind; system errors surface', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
@@ -808,45 +778,56 @@ describe('subagent_event', () => {
     expect(store.sessions['c']!.state).toBe('stopped');
   });
 
-  it('task_changed: a child-targeted emission fills the child pane (the projection)', () => {
-    store.sessions = openSession({}, 'p', snap('p').snapshot);
+});
+
+describe('plan_changed (the plan pane, spec §5.3)', () => {
+  it('a snapshot hydrates the session plan and gate state', () => {
+    const s = openSession(
+      {},
+      's1',
+      snap('s1', {
+        live: { plan: { steps: [{ text: 'fix the parser', done: true }], criteria: 'build passes', notes: '' } }
+      }).snapshot
+    );
+    expect(s['s1']!.plan.steps).toHaveLength(1);
+    expect(s['s1']!.gate_failed).toBe(false);
+  });
+
+  it('replaces the session plan: the watcher parse is the pane data', () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
     applyEvents([
       {
-        type: 'subagent_event',
+        type: 'plan_changed',
         workspace: WS.id,
-        session: 'p',
-        kind: {
-          kind: 'spawned',
-          handle: 'h1',
-          child: 'c',
-          agent_type: 'general',
-          context_mode: 'fresh',
-          title: 'worker'
+        session: 's1',
+        plan: {
+          steps: [{ text: 'fix the parser', done: false }],
+          criteria: 'build passes',
+          notes: ''
         }
       }
     ]);
-    const projected: Task[] = [
+    expect(store.sessions['s1']!.plan.steps).toHaveLength(1);
+    expect(store.sessions['s1']!.plan.steps[0]!.done).toBe(false);
+  });
+
+  it('an event for an unknown session is a no-op', () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    const before = store.sessions['s1']!.plan;
+    applyEvents([
       {
-        id: 't1',
-        title: 'x',
-        status: 'in_progress',
-        steps: [],
-        criteria: [],
-        evidence: [],
-        blockers: [],
-        decisions: [],
-        notes: [],
-        worker: { session: 'c', status: 'in_progress' },
-        updated: 1
+        type: 'plan_changed',
+        workspace: WS.id,
+        session: 'ghost',
+        plan: { steps: [{ text: 'x', done: false }], criteria: '', notes: '' }
       }
-    ];
-    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 'c', tasks: projected }]);
-    expect(store.sessions['c']!.tasks).toEqual(projected);
+    ]);
+    expect(store.sessions['s1']!.plan).toBe(before);
   });
 });
 
 describe('files pane', () => {
-  const f = { name: 'x', path: 'x', dir: false, size: 1 };
+  const f = { name: 'x', path: 'x', dir: false, size: 1, ignored: false, git: null };
 
   it('expand fetches on first expand; collapse drops the listing', async () => {
     store.files = { w1: {} };

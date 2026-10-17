@@ -19,7 +19,9 @@ build:
     set -eu
     cd "{{justfile_directory()}}"
     cargo build --workspace --release
-    (cd app && npm ci && npm run build)
+    # npm ci only — tauri's beforeBuildCommand (tauri.conf.json) runs the
+    # frontend build; building here too ran vite twice per `just build`.
+    (cd app && npm ci)
     if [ "$(uname)" = "Darwin" ]; then
       (cd app && npx tauri build --bundles app,dmg)
     else
@@ -37,7 +39,7 @@ test:
 # The accept-* suites run against the deterministic mock LLM only (ADR-0010):
 # red = a code problem, never a network/model problem; real-model runs live
 # in the eval rig's live leg, not here.
-acceptance *suites = 'launch accept-tools accept-subagent accept-om core e2e':
+acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate core e2e':
     #!/bin/sh
     set -u
     cd "{{justfile_directory()}}"
@@ -171,7 +173,7 @@ acceptance *suites = 'launch accept-tools accept-subagent accept-om core e2e':
             report launch FAIL "just build failed (see /tmp/tau-test-build.log)"
           fi
           ;;
-        accept-tools|accept-subagent|accept-om)
+        accept-tools|accept-subagent|accept-om|accept-gate)
           run_driver "$suite"
           ;;
         core)

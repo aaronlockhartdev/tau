@@ -3,7 +3,8 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicU64, BTreeMap, ChildProviderFactory, Config, Duration,
     Event, ForwardingProvider, HashMap, Lane, MessageLane, Mutex, Ordering, Path, PathBuf,
-    ProtocolError, SessionMeta, SkillInfo, SystemEventKind, Watcher, Weak, Workspace, config, mpsc,
+    ProtocolError, SessionMeta, SkillInfo, SystemEventKind, TurnProviderRef, Watcher, Weak,
+    Workspace, config, mpsc,
 };
 
 /// The watcher's debounce window (design #30): a save burst (a temp-write
@@ -65,6 +66,19 @@ pub struct Core {
     /// second consumer of the shared `Watcher` plumbing, visibility-driven
     /// (it watches the dirs the pane has expanded, #115).
     pub(crate) tree_watchers: Mutex<HashMap<String, Watcher>>,
+    /// The watcher-parsed plan state per session (design: the plan file is
+    /// the source of truth; this is its parse, kept fresh by the
+    /// per-workspace plan watcher). Dropped on session close — the file on
+    /// disk is the record, the cache is not.
+    pub(crate) plans: Mutex<HashMap<String, crate::plan::Plan>>,
+    /// The per-workspace plan watcher (the `.tau/plans` root): a batch
+    /// re-reads the changed plan files into the state cache.
+    pub(crate) plan_watchers: Mutex<HashMap<String, Watcher>>,
+    /// The per-workspace git snapshot cache (file-tree plan, phase 2): one
+    /// entry per open workspace, `None` = not a git repo (negative results
+    /// cached too, so a non-git workspace costs three spawns, not three per
+    /// listing). Invalidated on `file_tree_changed` and workspace close.
+    pub(crate) git_snapshots: Mutex<HashMap<String, Option<super::git::GitSnapshot>>>,
     pub(crate) system_dir: Option<PathBuf>,
     /// The user's home dir (the home-level `.agents/skills/` root; the
     /// `system_dir` seam's sibling for tests).
@@ -83,6 +97,11 @@ pub struct Core {
     pub(crate) events_rx: Mutex<Option<mpsc::Receiver<Event>>>,
     /// The test-seam child provider factory (None in production builds).
     pub(crate) child_factory: Option<Arc<dyn ChildProviderFactory>>,
+    /// The test-seam root provider: when set, the `SessionNew`/reopen path
+    /// binds this to the root session instead of the config's first provider
+    /// (None in production builds), so a test can capture the re-injected
+    /// instructions through the production wiring.
+    pub(crate) root_provider: Option<TurnProviderRef>,
     /// Child handle → parent session (the spawn's record, R3): the handle
     /// is opaque — a command carrying it resolves the parent from here,
     /// never from the handle's format.
@@ -102,6 +121,10 @@ pub struct CoreBuilder {
     /// A test seam: the child provider factory replaces the production
     /// one (tests script child turns).
     child_factory: Option<Arc<dyn ChildProviderFactory>>,
+    /// A test seam: the root provider the `SessionNew`/reopen path binds to
+    /// the root session (tests capture the re-injected instructions through
+    /// the production wiring).
+    root_provider: Option<TurnProviderRef>,
 }
 
 impl CoreBuilder {
@@ -116,6 +139,7 @@ impl CoreBuilder {
             custom: false,
             providers: BTreeMap::new(),
             child_factory: None,
+            root_provider: None,
         }
     }
 
@@ -128,6 +152,7 @@ impl CoreBuilder {
             custom: true,
             providers,
             child_factory: None,
+            root_provider: None,
         }
     }
 
@@ -145,6 +170,14 @@ impl CoreBuilder {
     #[must_use]
     pub fn with_child_factory(mut self, f: Arc<dyn ChildProviderFactory>) -> Self {
         self.child_factory = Some(f);
+        self
+    }
+    /// A test seam: the root session (the `SessionNew`/reopen path) binds
+    /// this provider instead of the config's first provider, so a test can
+    /// capture the re-injected instructions through the production wiring.
+    #[must_use]
+    pub fn with_root_provider(mut self, p: TurnProviderRef) -> Self {
+        self.root_provider = Some(p);
         self
     }
 
@@ -178,6 +211,9 @@ impl CoreBuilder {
             home_watcher: Mutex::new(None),
             project_watchers: Mutex::new(HashMap::new()),
             tree_watchers: Mutex::new(HashMap::new()),
+            plans: Mutex::new(HashMap::new()),
+            plan_watchers: Mutex::new(HashMap::new()),
+            git_snapshots: Mutex::new(HashMap::new()),
             system_dir: self.system_dir.clone(),
             home: self.home.clone(),
             custom: self.custom,
@@ -199,6 +235,7 @@ impl CoreBuilder {
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             child_factory: self.child_factory.clone(),
+            root_provider: self.root_provider.clone(),
             child_handles: Mutex::new(HashMap::new()),
         });
         core.self_weak
@@ -324,7 +361,7 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         | Event::SubagentEvent {
             workspace, session, ..
         }
-        | Event::TaskChanged {
+        | Event::PlanChanged {
             workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
     }
@@ -433,6 +470,7 @@ impl Core {
         self.set_workspace_open(&workspace, true);
         self.start_project_watcher(&workspace);
         self.start_tree_watcher(&workspace);
+        self.start_plan_watcher(&workspace);
         workspace
     }
 
@@ -520,7 +558,69 @@ impl Core {
             .lock()
             .expect("tree watchers: no panic while the lock is held")
             .remove(id);
+        self.plan_watchers
+            .lock()
+            .expect("plan watchers: no panic while the lock is held")
+            .remove(id);
+        self.git_snapshots
+            .lock()
+            .expect("git snapshots: no panic while the lock is held")
+            .remove(id);
         Ok(())
+    }
+
+    /// The session's current plan state, rendered for injection (the
+    /// watcher-parsed state of the plan file); `None` until the first
+    /// observation.
+    pub(crate) fn plan_state(&self, session: &str) -> Option<String> {
+        self.plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
+            .get(session)
+            .map(crate::plan::render)
+    }
+
+    /// Re-read and parse the session's plan file into the state cache: the
+    /// plan watcher's consumer, and the session-start seed. A failed read
+    /// (a torn write, a delete) degrades to an empty plan — the parser is
+    /// total, so nothing here can fail a turn. The parse is also emitted as
+    /// a `plan_changed` (the GUI's plan pane, spec §5.3) when the cwd names
+    /// an open workspace.
+    pub(crate) fn refresh_plan(&self, workspace: &Path, session_id: &str) {
+        let raw =
+            std::fs::read_to_string(crate::plan::path(workspace, session_id)).unwrap_or_default();
+        let plan = crate::plan::parse(&raw);
+        let done = plan.done_count();
+        let total = plan.steps.len();
+        self.plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
+            .insert(session_id.to_owned(), plan.clone());
+        tracing::info!(
+            session = %session_id,
+            done,
+            total,
+            "plan state observed"
+        );
+        if let Some(id) = self.workspace_id_for_cwd(workspace) {
+            self.emit(Event::PlanChanged {
+                workspace: id,
+                session: session_id.to_owned(),
+                plan: plan.into(),
+            });
+        }
+    }
+
+    /// The open workspace whose cwd is `path` (the plan event's routing);
+    /// `None` when the cwd names no open workspace (a close racing the
+    /// watcher) — the parse is cached either way.
+    fn workspace_id_for_cwd(&self, cwd: &Path) -> Option<String> {
+        self.workspaces
+            .lock()
+            .expect("workspaces map: no panic while the lock is held")
+            .values()
+            .find(|w| Path::new(&w.cwd) == cwd)
+            .map(|w| w.id.clone())
     }
 
     pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {

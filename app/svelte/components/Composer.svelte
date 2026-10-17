@@ -16,9 +16,14 @@
   // expansion happens at the message_send boundary, not here.
   import { store, send, stop, currentSession, type PendingMsg } from '../lib/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
+  import { Archive, ArrowUp, Bot, ChevronDown, Square, Zap } from '@lucide/svelte';
   import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';
 
   let text = $state('');
+  // This WebKit build does not match :focus-within (verified: an ancestor
+  // of the focused textarea reports matches(':focus-within') === false), so
+  // the focus ring is driven from focusin/focusout instead.
+  let focused = $state(false);
   let lane = $state<PendingMsg['lane']>('steering');
 
   const lanes: Array<{ id: PendingMsg['lane']; label: string; title: string }> = [
@@ -165,10 +170,17 @@
   }
 </script>
 
-<div class="composer">
+<div
+  class="composer"
+  class:focus={focused}
+  onfocusin={() => (focused = true)}
+  onfocusout={(e) => {
+    if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) focused = false;
+  }}
+>
   {#if archived}
     <div class="crow archived">
-      <svg class="ai" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-archive" /></svg>
+      <Archive class="ai" size={14} aria-hidden="true" />
       <span>archived — restore to continue</span>
     </div>
   {:else}
@@ -221,9 +233,9 @@
           title="switch model"
           onclick={() => (store.modelMenuOpen = !store.modelMenuOpen)}
         >
-          <svg class="mi" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-bot" /></svg>
+          <Bot class="mi" size={12} aria-hidden="true" />
           <span class="mname">{cur?.meta.model ? cur.meta.model.split('/').pop() : 'no model'}</span>
-          <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chev" /></svg>
+          <ChevronDown class="chev" size={10} aria-hidden="true" />
         </button>
         <span class="chint">enter send · shift+enter newline · / commands</span>
       </div>
@@ -246,7 +258,13 @@
         title={asStop ? 'stop the in-flight turn' : 'send'}
         onclick={asStop ? () => void stop() : submit}
       >
-        {asStop ? '■' : running ? (lane === 'force' ? '⚡' : '↑') : '↑'}
+        {#if asStop}
+          <Square class="si" size={14} fill="currentColor" color="none" aria-hidden="true" />
+        {:else if running && lane === 'force'}
+          <Zap class="si" size={14} fill="currentColor" color="none" aria-hidden="true" />
+        {:else}
+          <ArrowUp class="si" size={14} aria-hidden="true" />
+        {/if}
       </button>
     </div>
   {/if}
@@ -258,23 +276,24 @@
     flex: none;
     margin: 0 16px 12px;
     border: 1px solid var(--line2);
-    border-radius: 10px;
+    border-radius: 12px;
     background: var(--panel);
+  }
+  .composer.focus {
+    border-color: rgba(76, 141, 255, 0.5);
   }
   .crow {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 11px 14px 6px;
   }
   .crow.archived {
     font: 12px var(--mono);
     color: var(--faint);
     gap: 8px;
   }
-  .crow.archived .ai {
-    width: 14px;
-    height: 14px;
+  .crow.archived :global(.ai) {
     flex: none;
   }
   .cin {
@@ -320,15 +339,14 @@
     color: var(--acc);
   }
   .send {
-    width: 26px;
+    width: 30px;
     height: 26px;
-    border-radius: 7px;
+    border-radius: 8px;
     background: var(--acc);
     color: #060a10;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 13px;
     flex: none;
     border: none;
     cursor: pointer;
@@ -344,13 +362,17 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 12px 9px;
+    padding: 0 14px 10px;
   }
   .cmeta {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-right: auto;
+    /* flex:1 + min-width:0 (not margin-right:auto): an auto-margin item
+       sized to its content will not shrink, and the nowrap hint would push
+       the lane selector out of the box. */
+    flex: 1;
+    min-width: 0;
   }
   /* The model chip is minimal: no border, no fill — dim text, a faint
      icon, a small chevron; hover lifts the text to primary. */
@@ -364,23 +386,14 @@
     cursor: pointer;
     background: none;
     border: none;
+    white-space: nowrap;
   }
   .mchip:hover {
     color: var(--dim);
   }
-  .mchip .mi {
-    width: 11px;
-    height: 11px;
+  .mchip :global(.mi) {
     stroke: var(--faint);
-    fill: none;
-    stroke-width: 2;
-  }
-  .mchip .chev {
-    width: 8px;
-    height: 8px;
-    stroke: var(--faint);
-    fill: none;
-    stroke-width: 2;
+    flex: none;
   }
   .mchip .mname {
     color: var(--dim);
@@ -391,6 +404,11 @@
   .chint {
     font: 10px var(--mono);
     color: var(--faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
   }
   .dropdown {
     position: absolute;

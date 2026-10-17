@@ -1,6 +1,6 @@
 <script lang="ts">
   // Two-section vertical queue above the composer (spec §9):
-  // steering ("next opportunity") on top, follow-up ("after work
+  // steering ("next tool boundary") on top, follow-up ("after work
   // completes") below. Child reports (a sub-agent's wake) carry a source
   // and get their own section, distinct from the user's own messages.
   // Items are deletable; the core's queue events are the source of truth,
@@ -34,7 +34,7 @@
       {/each}
     {/snippet}
     {@render queueSection('subagent reports', reports, true)}
-    {@render queueSection('next opportunity', steering, false)}
+    {@render queueSection('next tool boundary', steering, false)}
     {@render queueSection('after work completes', followUp, false)}
   </div>
 {/if}
@@ -42,16 +42,16 @@
 <style>
   .queue {
     flex: none;
-    margin: 0 16px 10px;
-    padding: 8px 12px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--panel);
+    margin: 0 8px 10px;
+    padding: 4px 8px;
   }
   .qlabel {
-    font: 10.5px var(--mono);
-    color: var(--dim);
-    margin: 4px 0;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 8px 0 2px;
   }
   .qrow {
     display: flex;
@@ -75,6 +75,7 @@
   }
   .qtext {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

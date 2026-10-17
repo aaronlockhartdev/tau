@@ -1,8 +1,8 @@
-//! The message, sub-agent, and task arms.
+//! The message and sub-agent arms.
 
 use super::{
     AgentType, Arc, Command, CommandOutput, ContextMode, Core, Lane, MessageLane, Ordering, Path,
-    ProtocolError, StoppedBy, info_to_protocol, json, lane_to_lane, run_turn,
+    ProtocolError, StoppedBy, info_to_protocol, lane_to_lane, run_turn,
 };
 
 impl Core {
@@ -78,14 +78,11 @@ impl Core {
             }
             Command::MessageStop { session } => {
                 let live = self.live(&session)?;
-                // A child session stops through its supervisor: the
-                // terminal Stopped state, the freed slot, the parent's
-                // wake. A bare stream cut would leave the child running —
-                // the nudge path resumes it.
-                // A child session stops through its link (R3): the
-                // terminal Stopped state, the freed slot, the parent's
-                // wake. A bare stream cut would leave the child running —
-                // the nudge path resumes it. The parent must be live.
+                // A child session stops through its link (R3) into the
+                // parent's supervisor: the terminal Stopped state, the
+                // freed slot, the state event (no parent wake — spec
+                // §5.2). A bare stream cut would leave the child running:
+                // its drive ends the turn and rests. The parent must be live.
                 if let Some(link) = live.agent.child_link() {
                     self.live(link.parent_session())?;
                     link.stop()
@@ -166,7 +163,6 @@ impl Core {
                         ContextMode::Compacted => crate::subagent::ContextMode::Compacted,
                         ContextMode::Fork => crate::subagent::ContextMode::Fork,
                     }),
-                    None,
                     "gui",
                 );
                 match spawned {
@@ -224,91 +220,6 @@ impl Core {
                 Ok(CommandOutput::Subagent {
                     subagent: info_to_protocol(&info),
                 })
-            }
-            Command::TaskCreate { session, title } => {
-                let live = self.live_unarchived(&session)?;
-                // Routed through the session's own store (one writer per
-                // session, review B3); the id rule lives in the tool path.
-                let out = live
-                    .agent
-                    .task_tool_call("task_create", &json!({ "title": title }));
-                if out.starts_with("task_create:") {
-                    return Err(ProtocolError::Other { message: out });
-                }
-                self.emit_task_changed(&live, &session);
-                Ok(CommandOutput::None)
-            }
-            Command::TaskUpdate {
-                session,
-                task,
-                note,
-            } => {
-                let live = self.live_unarchived(&session)?;
-                live.agent
-                    .with_task_store(|store| crate::task::note(store, &task, &note))
-                    .map_err(|e| ProtocolError::Other { message: e })?;
-                self.emit_task_changed(&live, &session);
-                Ok(CommandOutput::None)
-            }
-            Command::TaskAssign {
-                session,
-                task,
-                worker,
-            } => {
-                let live = self.live_unarchived(&session)?;
-                // The worker is a child handle: resolve it to a session.
-                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
-                    message: "session has no supervisor (it is a child itself)".into(),
-                })?;
-                let info = sup
-                    .state_info(&worker)
-                    .ok_or_else(|| ProtocolError::NotFound {
-                        what: format!("subagent {worker}"),
-                    })?;
-                let worker_session = info.child;
-                // One writer per session (review B3): the supervisor runs
-                // both sides on the sessions' own stores.
-                sup.assign_task(&task, &worker_session)
-                    .map_err(|e| ProtocolError::Other { message: e })?;
-                // The assign already delivered the "Assigned {id}: {title}"
-                // message to the worker (a running child takes it as a
-                // steering round, a parked one resumes with it).
-                self.emit_task_changed(&live, &session);
-                Ok(CommandOutput::None)
-            }
-            Command::TaskEvidence {
-                session,
-                task,
-                criterion,
-                summary,
-                passed,
-            } => {
-                let live = self.live_unarchived(&session)?;
-                let out = live.agent.task_tool_call(
-                    "task_evidence",
-                    &json!({
-                        "task": task,
-                        "criterion": criterion,
-                        "summary": summary,
-                        "passed": passed,
-                    }),
-                );
-                if out.starts_with("task_evidence:") {
-                    return Err(ProtocolError::Other { message: out });
-                }
-                self.emit_task_changed(&live, &session);
-                Ok(CommandOutput::None)
-            }
-            Command::TaskCancel { session, task } => {
-                let live = self.live_unarchived(&session)?;
-                let out = live
-                    .agent
-                    .task_tool_call("task_cancel", &json!({ "task": task }));
-                if out.starts_with("task_cancel:") {
-                    return Err(ProtocolError::Other { message: out });
-                }
-                self.emit_task_changed(&live, &session);
-                Ok(CommandOutput::None)
             }
 
             _ => unreachable!("dispatch routes the arm"),

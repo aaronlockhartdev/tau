@@ -3,7 +3,7 @@
 //! the module, previously only reachable by running a whole turn.
 
 use super::surface;
-use super::{ToolCall, ToolOutput};
+use super::{ToolCall, ToolOutput, ToolResult};
 use crate::agent::{AgentSession, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
@@ -12,7 +12,7 @@ use crate::om::OmRecord;
 use crate::provider::ToolSpec;
 use crate::session::SessionStore;
 use crate::subagent::testkit::{CannedFactory, TestBridge, TestDriver};
-use crate::subagent::{Supervisor, SupervisorParams};
+use crate::subagent::{ChildLink, Supervisor, SupervisorParams};
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
@@ -27,10 +27,27 @@ fn fresh_store(cwd: &std::path::Path, id: &str) -> SessionStore {
 }
 
 /// The tool output's text: an image block on these paths is a bug.
-fn text(out: ToolOutput) -> String {
-    match out {
+fn text(out: ToolResult) -> String {
+    match out.output {
         ToolOutput::Text(t) => t,
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
+    }
+}
+
+/// A dispatch context for a test session: the image cap is `None`; the
+/// surface tests vary only session / supervisor / child.
+fn ctx<'a>(
+    session: &'a AgentSession,
+    cwd: &'a std::path::Path,
+    supervisor: Option<Arc<Supervisor>>,
+    child: Option<Arc<ChildLink>>,
+) -> surface::DispatchCtx<'a> {
+    surface::DispatchCtx {
+        session,
+        cwd,
+        image_max_bytes: None,
+        supervisor,
+        child,
     }
 }
 
@@ -54,6 +71,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             tool_batch_on_force: ToolBatchPolicy::Complete,
             om: None,
             om_model: String::new(),
+            gates: None,
         },
     )
     .unwrap();
@@ -67,6 +85,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
+            instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
@@ -74,18 +93,19 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
         bridge,
         driver: Arc::new(TestDriver),
+        core: None,
     });
 
     let child = AgentSession::launch(
         fresh_store(dir, "child"),
         SessionRole::Child {
             supervisor: Arc::clone(&sup),
-            parent: Arc::downgrade(&parent),
             provider: canned_provider(),
             system_prompt: "be terse".into(),
             model: "test-model".into(),
@@ -104,7 +124,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
 #[test]
 fn the_role_specs_table_is_exact() {
     let dir = tempfile::tempdir().unwrap();
-    let (parent, sup, _child) = parent_child(dir.path());
+    let (_parent, sup, _child) = parent_child(dir.path());
 
     let root = SessionRole::Root {
         core: None,
@@ -127,20 +147,12 @@ fn the_role_specs_table_is_exact() {
             "subagent_spawn",
             "subagent_message",
             "subagent_stop",
-            "subagent_state",
-            "task_create",
-            "task_assign",
-            "task_start",
-            "task_evidence",
-            "task_block",
-            "task_finish",
-            "task_cancel"
+            "subagent_state"
         ]
     );
 
     let child = SessionRole::Child {
         supervisor: sup,
-        parent: Arc::downgrade(&parent),
         provider: canned_provider(),
         system_prompt: "be terse".into(),
         model: "test-model".into(),
@@ -151,18 +163,7 @@ fn the_role_specs_table_is_exact() {
     let child_names = names(surface::specs_for(&child, None));
     assert_eq!(
         child_names,
-        vec![
-            "read",
-            "write",
-            "edit",
-            "bash",
-            "recall",
-            "parent_notify",
-            "task_start",
-            "task_evidence",
-            "task_block",
-            "task_finish"
-        ]
+        vec!["read", "write", "edit", "bash", "recall", "parent_notify"]
     );
 
     let bare = SessionRole::Bare {
@@ -175,6 +176,7 @@ fn the_role_specs_table_is_exact() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         om: None,
         om_model: String::new(),
+        gates: None,
     };
     assert_eq!(
         names(surface::specs_for(&bare, None)),
@@ -187,9 +189,6 @@ fn the_role_specs_table_is_exact() {
         "subagent_message",
         "subagent_stop",
         "subagent_state",
-        "task_create",
-        "task_assign",
-        "task_cancel",
     ] {
         assert!(
             !child_names.contains(&foreign.to_owned()),
@@ -230,21 +229,9 @@ async fn a_child_refuses_supervisor_tools_through_the_surface() {
         name: "subagent_spawn".into(),
         args: serde_json::json!({ "type": "general", "brief": "x" }),
     };
-    let out = surface::dispatch(&child, &cwd, None, None, child.child_link(), &call).await;
+    let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
     assert_eq!(text(out), "subagent_spawn: not available in this session");
-
-    let call = ToolCall {
-        id: "c2".into(),
-        name: "task_create".into(),
-        args: serde_json::json!({ "title": "t" }),
-    };
-    let out = surface::dispatch(&child, &cwd, None, None, child.child_link(), &call).await;
-    assert_eq!(
-        text(out),
-        "task_create: not available in a child session — work the task your parent assigned"
-    );
 }
-
 /// A top-level session dispatching `parent_notify` gets the specific
 /// refusal — through the surface, without a turn.
 #[tokio::test]
@@ -258,7 +245,7 @@ async fn a_parent_refuses_parent_notify_through_the_surface() {
         name: "parent_notify".into(),
         args: serde_json::json!({ "text": "hi" }),
     };
-    let out = surface::dispatch(&parent, &cwd, None, Some(sup), None, &call).await;
+    let out = surface::dispatch(ctx(parent.as_ref(), &cwd, Some(sup), None), &call).await;
     assert_eq!(
         text(out),
         "parent_notify: not available in a top-level session"
@@ -278,7 +265,7 @@ async fn a_child_core_tool_is_not_swallowed_by_the_link() {
         name: "bash".into(),
         args: serde_json::json!({ "command": "echo surface" }),
     };
-    let out = surface::dispatch(&child, &cwd, None, None, child.child_link(), &call).await;
+    let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
     let t = text(out);
     assert!(t.starts_with("exit 0"), "{t}");
     assert!(t.contains("surface"), "{t}");

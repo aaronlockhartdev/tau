@@ -4,11 +4,13 @@
 // kind touches this module only, and the mapping is testable without
 // mounting a component.
 
+import type { LucideIcon } from '@lucide/svelte';
 import type {
   AnyEntry,
   Entry,
   SkillRef
 } from './protocol';
+import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, md, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
 import { fmtK } from './format';
@@ -22,7 +24,7 @@ export interface KvRow {
 
 // The expansion slots the card persists in the store (one per interactive
 // region).
-export type ExpandSlot = 'tool' | 'task' | 'output' | 'skill' | 'obs' | 'think';
+export type ExpandSlot = 'tool' | 'output' | 'skill' | 'obs' | 'think';
 
 // One block of a card body (or of the tool's expanded area).
 export type Section =
@@ -32,14 +34,13 @@ export type Section =
   | { type: 'pre'; text: string; label?: string };
 
 export interface Header {
-  icon: string;
+  icon: LucideIcon;
   label: string;
   cls: 'sub' | 'par' | 'skill' | 'obs' | 'sys';
   meta: string | null;
   // The slot the header toggles; null = a static header.
   open: ExpandSlot | null;
-  // An expandable header opens on a single click (task) or a double
-  // click (skill, observation).
+  // An expandable header opens on a single click (observation) or a double
   singleClick: boolean;
   caret: boolean;
 }
@@ -48,16 +49,20 @@ export interface Header {
 // the thinking line, the tool chip, or the card shell.
 export type Shell =
   | { kind: 'bubble'; text: string }
-  | { kind: 'stline'; icon: string; label: string }
+  | { kind: 'divider'; label: string; tint: 'drain' | 'compact' }
+  | { kind: 'stline'; icon: LucideIcon; label: string }
   | { kind: 'think'; label: string; meta: string | null; openKey: 'think'; body: string }
   | {
     kind: 'tool';
-    icon: string;
+    icon: LucideIcon;
     label: string;
     summary: string;
     status?: 'ok' | 'running' | 'error';
     openKey: 'tool';
     kv: KvRow[];
+    // The file path arg (read/write/edit): names the grammar for the output
+    // renderer's syntax highlighting.
+    path?: string;
     output: { text: string; closed: string; long: boolean } | null;
   }
   | {
@@ -65,7 +70,7 @@ export type Shell =
     header: Header | null;
     cls: 'obs' | 'interrupted' | null;
     openKey: ExpandSlot | null;
-    // The body is hidden while the slot is closed (the task card).
+    // The body is hidden while the slot is closed (the observation card).
     collapseWhenClosed: boolean;
     sections: Section[];
     // The body revealed when the slot opens; `group` wraps it in the
@@ -83,7 +88,6 @@ export interface Presentation {
 // (AnyEntry.kind is a free-form string), so the helpers take the union.
 type ToolEntry = Extract<Entry, { kind: 'tool' }> | AnyEntry;
 type SubagentEntry = Extract<Entry, { kind: 'subagent' }> | AnyEntry;
-type TaskEntry = Extract<Entry, { kind: 'task' }> | AnyEntry;
 type OmEntry = Extract<Entry, { kind: 'om' }> | AnyEntry;
 
 
@@ -95,21 +99,33 @@ function toolOutput(e: ToolEntry): string {
   return [command, e.output ?? ''].filter(Boolean).join('\n\n');
 }
 
+// The tools whose result the reader cares about at the END (a file's tail,
+// a command's final lines) collapse to the TAIL; everything else keeps the
+// head.
+const TAIL_TOOLS = ['edit', 'read', 'write', 'bash'];
+function closedPreview(out: string, name: string): string {
+  if (out.length <= 200) return out;
+  return TAIL_TOOLS.includes(name) ? ' …' + out.slice(-200) : out.slice(0, 200) + ' …';
+}
+
 // The chip's one-line summary: the argument that names the operation.
+function toolUnavailable(e: ToolEntry): boolean {
+  return (e as { unavailable?: boolean }).unavailable === true;
+}
 function toolSummary(e: ToolEntry): string {
+  if (toolUnavailable(e)) return 'content unavailable — sidecar blob missing';
   const a = e.args;
   if (!a) return e.text ?? '';
-  const v = a.command ?? a.file_path ?? a.task ?? a.query ?? a.task_id ?? a.title ?? a.message;
+  const v = a.command ?? a.path ?? a.query ?? a.title ?? a.message;
   const s = typeof v === 'string' ? v : '';
   return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
 }
 
-function toolIcon(name: string | undefined): string {
-  if (['read', 'write', 'edit'].includes(name ?? '')) return 'i-file';
-  if (name?.startsWith('subagent_') || name === 'parent_notify') return 'i-bot';
-  if (name === 'recall') return 'i-search';
-  if (name?.startsWith('task_')) return 'i-check';
-  return 'i-term';
+function toolIcon(name: string | undefined): LucideIcon {
+  if (['read', 'write', 'edit'].includes(name ?? '')) return File;
+  if (name?.startsWith('subagent_') || name === 'parent_notify') return Bot;
+  if (name === 'recall') return Search;
+  return Terminal;
 }
 
 function toolShell(e: ToolEntry, out: string): Shell {
@@ -123,13 +139,14 @@ function toolShell(e: ToolEntry, out: string): Shell {
     icon: toolIcon(e.name),
     label: e.name ?? '',
     summary: toolSummary(e),
-    status: e.status,
+    status: toolUnavailable(e) ? 'error' : e.status,
     openKey: 'tool',
     kv,
+    path: typeof e.args?.path === 'string' ? e.args.path : undefined,
     output: out
       ? {
         text: out,
-        closed: out.length > 200 ? out.slice(0, 200) + ' …' : out,
+        closed: closedPreview(out, e.name ?? ''),
         long: out.length > 200
       }
       : null
@@ -172,7 +189,7 @@ function skillCard(skill: SkillRef, text: string): Shell {
   const long = text.length > 200;
   return card({
     header: {
-      icon: 'i-book',
+      icon: Book,
       label: `skill · ${skill.name}`,
       cls: 'skill',
       meta: null,
@@ -211,7 +228,7 @@ function subagentStateLabel(p: SubagentEntry['payload']): string {
 function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
   const p = e.payload;
   if (p && p.event === 'state') {
-    return { kind: 'stline', icon: 'i-bot', label: subagentStateLabel(p) };
+    return { kind: 'stline', icon: Bot, label: subagentStateLabel(p) };
   }
   // The spawn/notify label is the parent's view of a child; the child's
   // own transcript resolves the parent label too (it renders the
@@ -231,7 +248,7 @@ function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
       : [];
   return card({
     header: {
-      icon: 'i-bot',
+      icon: Bot,
       label,
       cls: parentLabel ? 'sys' : 'sub',
       meta: null,
@@ -243,53 +260,8 @@ function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
   });
 }
 
-function taskLabel(p: NonNullable<TaskEntry['payload']>): string {
-  switch (p.event) {
-    case 'created':
-      return `task: ${p.title}`;
-    case 'started':
-      return `task started · ${p.id}`;
-    case 'evidence':
-      return `evidence · ${p.evidence.criterion}`;
-    case 'finished':
-      return `task done · ${p.id}`;
-    case 'blocked':
-      return `task blocked · ${p.id}`;
-    case 'assigned':
-      return `task assigned · ${p.id}`;
-    default:
-      return p.event;
-  }
-}
-
-function taskShell(e: TaskEntry, text: string): Shell {
-  const p = e.payload;
-  const kv: KvRow[] = p
-    ? Object.entries(p)
-      .filter(([k]) => k !== 'event')
-      .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }))
-    : text
-      ? [{ k: '', lines: [text] }]
-      : [];
-  return card({
-    header: {
-      icon: 'i-check',
-      label: p ? taskLabel(p) : 'task',
-      cls: 'sys',
-      meta: null,
-      open: 'task',
-      singleClick: true,
-      caret: true
-    },
-    openKey: 'task',
-    collapseWhenClosed: true,
-    sections: [],
-    reveal: { sections: [{ type: 'kv', rows: kv }], group: false }
-  });
-}
-
 function observationShell(e: OmEntry, text: string): Shell {
-  // Collapsible like the task card: the body (observation text + details)
+  // Collapsible: the body (observation text + details)
   // lives in the reveal, so a closed card is just its header.
   const body: Section[] = [{ type: 'md', html: md(text.trim()), dim: true }];
   if (e.suggestedResponse)
@@ -299,7 +271,7 @@ function observationShell(e: OmEntry, text: string): Shell {
   if (e.input) body.push({ type: 'pre', text: e.input, label: 'input' });
   return card({
     header: {
-      icon: 'i-book',
+      icon: Book,
       label: 'observation',
       cls: 'obs',
       meta: e.model ?? null,
@@ -331,7 +303,7 @@ export function present(
           shells: [
             card({
               header: {
-                icon: 'i-bot',
+                icon: Bot,
                 label: ctx.sourceLabel ? `sub-agent · ${ctx.sourceLabel}` : 'sub-agent',
                 cls: 'sub',
                 meta: null,
@@ -353,7 +325,7 @@ export function present(
           shells: [
             card({
               header: {
-                icon: 'i-user',
+                icon: User,
                 label: `parent · ${ctx.parentLabel}`,
                 cls: 'par',
                 meta: null,
@@ -366,7 +338,15 @@ export function present(
           ]
         };
       }
-      return { shells: [{ kind: 'bubble', text }] };
+      const shells: Shell[] = [];
+      // A queued message that has delivered: the one-line record of WHEN it
+      // landed (steering at the next tool boundary, follow-up at the end).
+      if (entry.lane === 'steering')
+        shells.push({ kind: 'divider', label: 'steering · next tool boundary', tint: 'drain' });
+      else if (entry.lane === 'follow_up')
+        shells.push({ kind: 'divider', label: 'follow-up · after work completes', tint: 'drain' });
+      shells.push({ kind: 'bubble', text });
+      return { shells };
     }
     case 'message':
     case 'interrupted': {
@@ -402,17 +382,23 @@ export function present(
     }
     case 'om':
       if (!text.trim()) return null;
-      return { shells: [observationShell(entry, text)] };
+      // The one-line marker above the collapsible record.
+      return {
+        shells: [
+          { kind: 'divider', label: 'compaction · observation log updated', tint: 'compact' },
+          observationShell(entry, text)
+        ]
+      };
     case 'system': {
       if (!text.trim()) return null;
       if (text.startsWith('model: ')) {
-        return { shells: [{ kind: 'stline', icon: 'i-bot', label: text }] };
+        return { shells: [{ kind: 'stline', icon: Bot, label: text }] };
       }
       return {
         shells: [
           card({
             header: {
-              icon: 'i-term',
+              icon: Terminal,
               label: 'system',
               cls: 'sys',
               meta: null,
@@ -431,7 +417,7 @@ export function present(
         shells: [
           card({
             header: {
-              icon: 'i-bot',
+              icon: Bot,
               label: 'spawn snapshot',
               cls: 'sub',
               meta: null,
@@ -446,9 +432,6 @@ export function present(
     case 'subagent':
       if (!text.trim()) return null;
       return { shells: [subagentShell(entry, ctx.parentLabel)] };
-    case 'task':
-      if (!text.trim()) return null;
-      return { shells: [taskShell(entry, text)] };
     default:
       // An unknown kind renders as a plain text block (no payload
       // interpretation).

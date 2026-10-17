@@ -31,6 +31,31 @@ pub(crate) struct ForwardingProvider {
     pub(crate) completed: Arc<Mutex<HashMap<String, bool>>>,
 }
 
+impl ForwardingProvider {
+    /// The six live dependencies, named; the per-provider call bookkeeping
+    /// (seq, call ids, completion map) is always fresh.
+    pub(crate) fn new(
+        inner: TurnProviderRef,
+        tx: mpsc::Sender<Event>,
+        pipe: PipeCounters,
+        workspace: String,
+        session: String,
+        stop: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner,
+            tx,
+            pipe,
+            workspace,
+            session,
+            stop,
+            call_seq: AtomicU64::new(0),
+            calls: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+}
+
 impl TurnProvider for ForwardingProvider {
     fn forwarding_inner(&self) -> Option<TurnProviderRef> {
         Some(self.inner.clone())
@@ -158,13 +183,7 @@ pub(crate) const fn mode_to_protocol(m: crate::subagent::ContextMode) -> Context
 /// The core's child record as the protocol's (the protocol crate is
 /// independent of the core — ADR-0002 — so the mapping lives here).
 pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInfo {
-    let state = match &i.state {
-        crate::subagent::ChildState::Running => "running",
-        crate::subagent::ChildState::Idle { .. } => "idle",
-        crate::subagent::ChildState::Done { .. } => "done",
-        crate::subagent::ChildState::Failed { .. } => "failed",
-        crate::subagent::ChildState::Stopped { .. } => "stopped",
-    };
+    let state = i.state.kind();
     SubagentInfo {
         handle: i.handle.clone(),
         child: i.child.clone(),
@@ -182,7 +201,6 @@ pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInf
                 .as_ref()
                 .map_or(0, |d| d.cached_tokens),
         }),
-        task: i.task.clone(),
         resume_contract: i.resume_contract.clone(),
     }
 }
@@ -211,17 +229,14 @@ pub(crate) struct ForwardingChildFactory {
 }
 impl ChildProviderFactory for ForwardingChildFactory {
     fn create(&self, child: &str) -> TurnProviderRef {
-        Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &self.provider, &self.requests),
-            tx: self.tx.clone(),
-            pipe: self.pipe.clone(),
-            workspace: self.workspace.clone(),
-            session: child.to_owned(),
-            stop: Arc::new(AtomicBool::new(false)),
-            call_seq: AtomicU64::new(0),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            completed: Arc::new(Mutex::new(HashMap::new())),
-        })
+        Arc::new(ForwardingProvider::new(
+            session_inner(&self.client, &self.provider, &self.requests),
+            self.tx.clone(),
+            self.pipe.clone(),
+            self.workspace.clone(),
+            child.to_owned(),
+            Arc::new(AtomicBool::new(false)),
+        ))
     }
 }
 
@@ -307,17 +322,14 @@ impl SubagentBridge for SessionSubagentBridge {
                 title,
             },
         });
-        let provider = Arc::new(ForwardingProvider {
-            inner: session_inner(&self.client, &self.provider, &self.requests),
-            tx: self.core.events_tx.clone(),
-            pipe: self.core.pipe.clone(),
-            workspace: self.workspace.clone(),
-            session: n.child.clone(),
-            stop: agent.stop_flag(),
-            call_seq: AtomicU64::new(0),
-            calls: Arc::new(Mutex::new(Vec::new())),
-            completed: Arc::new(Mutex::new(HashMap::new())),
-        });
+        let provider = Arc::new(ForwardingProvider::new(
+            session_inner(&self.client, &self.provider, &self.requests),
+            self.core.events_tx.clone(),
+            self.core.pipe.clone(),
+            self.workspace.clone(),
+            n.child.clone(),
+            agent.stop_flag(),
+        ));
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),
@@ -356,6 +368,8 @@ impl SubagentBridge for SessionSubagentBridge {
             crate::subagent::ChildState::Idle { waiting_on } => {
                 Some(json!({ "waiting_on": waiting_on.as_str() }))
             }
+            // `awaiting` is self-describing in its state string.
+            crate::subagent::ChildState::Awaiting | crate::subagent::ChildState::Running => None,
             crate::subagent::ChildState::Stopped { by } => {
                 let mut d = json!({ "by": by });
                 if let Some(rc) = &n.resume_contract {
@@ -364,7 +378,6 @@ impl SubagentBridge for SessionSubagentBridge {
                 }
                 Some(d)
             }
-            crate::subagent::ChildState::Running => None,
         };
         self.core.emit(Event::SubagentEvent {
             workspace: self.workspace.clone(),
@@ -372,14 +385,7 @@ impl SubagentBridge for SessionSubagentBridge {
             kind: SubagentEventKind::State {
                 handle: n.handle.clone(),
                 child: n.child.clone(),
-                state: match &n.state {
-                    crate::subagent::ChildState::Running => "running",
-                    crate::subagent::ChildState::Idle { .. } => "idle",
-                    crate::subagent::ChildState::Done { .. } => "done",
-                    crate::subagent::ChildState::Failed { .. } => "failed",
-                    crate::subagent::ChildState::Stopped { .. } => "stopped",
-                }
-                .to_owned(),
+                state: n.state.kind().to_owned(),
                 detail,
                 note: n.note.clone(),
             },

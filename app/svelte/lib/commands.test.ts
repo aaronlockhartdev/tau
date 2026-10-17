@@ -45,7 +45,7 @@ function snap(
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], tasks: [] },
+      live: { queue: [], turn: 'idle', gate_failed: false, plan: { steps: [], criteria: '', notes: '' }, subagents: [] },
       cursor: ''
     }
   };
@@ -89,10 +89,10 @@ describe('newSession / renameSession', () => {
   it('newSession opens the fresh session and drops into inline rename', async () => {
     defaultIPC();
     store.pane[WS.id] = {
+      center: 'chat',
       ltab: 'sessions',
-      rtab: 'tasks',
+      rtab: 'subs',
       historyOpen: false,
-      expandedTasks: [],
       openGroups: null,
       renamingId: null,
       archOpen: false,

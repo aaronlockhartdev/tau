@@ -5,6 +5,7 @@
   // the recursion stays with each tree.
   import type { Snippet } from 'svelte';
   import { isActivateKey } from '../lib/ui';
+  import { ChevronDown } from '@lucide/svelte';
 
   let {
     depth = 0,
@@ -12,6 +13,7 @@
     selected = false,
     multi = false,
     dimmed = false,
+    att = false,
     label,
     onRow,
     onRowDbl,
@@ -29,6 +31,8 @@
     // dimmed — the row still takes selection clicks and the context
     // menu.
     dimmed?: boolean;
+    // A needs-you row (P5): red left edge so the tree points at it.
+    att?: boolean;
     label: Snippet;
     onRow?: (e: MouseEvent) => void;
     onRowDbl?: () => void;
@@ -53,6 +57,7 @@
     class:sel={selected}
     class:multi={multi}
     class:dimmed={dimmed}
+    class:att={att}
     role="button"
     tabindex={0}
     aria-expanded={expanded === null ? undefined : expanded}
@@ -73,7 +78,7 @@
       }}
     >
       {#if expanded !== null}
-        <svg class="ci" width="11" height="11"><use href="#i-chev"/></svg>
+        <ChevronDown class="ci" size={11} />
       {/if}
     </button>
     {@render label()}
@@ -84,18 +89,25 @@
   .trow {
     display: flex;
     align-items: center;
-    gap: 7px;
-    padding: 4.5px 8px 4.5px calc(var(--indent, 0px) + 8px);
+    gap: 8px;
+    padding: 3px 8px 3px calc(var(--indent, 0px) + 8px);
+    border-radius: 8px;
+    border: 1px solid transparent;
     cursor: pointer;
     font-size: 12.5px;
-    line-height: 1;
+    line-height: 1.3;
   }
   .trow:hover {
-    background: var(--panel2);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .trow.att {
+    border-left: 2px solid var(--red);
+    background: rgba(240, 85, 63, 0.06);
   }
   .trow.sel,
   .trow.multi {
-    background: color-mix(in srgb, var(--acc) 8%, transparent);
+    background: var(--raised);
+    border-color: var(--line2);
   }
   .trow.dimmed {
     cursor: default;
@@ -109,11 +121,11 @@
     flex: none;
     color: var(--dim);
   }
-  .trow .chev .ci {
+  .trow .chev :global(.ci) {
     display: block;
     transition: transform 0.12s;
   }
-  .trow .chev:not(.open) .ci {
+  .trow .chev:not(.open) :global(.ci) {
     transform: rotate(-90deg);
   }
   .trow .chev:not(.has) {

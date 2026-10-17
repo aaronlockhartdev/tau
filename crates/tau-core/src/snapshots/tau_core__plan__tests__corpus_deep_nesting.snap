@@ -1,0 +1,26 @@
+---
+source: crates/tau-core/src/plan.rs
+expression: "parse(&corpus_raw(\"deep_nesting\"))"
+---
+{
+  "steps": [
+    {
+      "text": "top",
+      "done": false
+    },
+    {
+      "text": "mid",
+      "done": false
+    },
+    {
+      "text": "leaf",
+      "done": true
+    },
+    {
+      "text": "deeper",
+      "done": false
+    }
+  ],
+  "criteria": "",
+  "notes": ""
+}

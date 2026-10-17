@@ -4,6 +4,8 @@
   // and its toggles stay in EntryCard (the store map is the persistence
   // layer); this child is a stateless renderer over them.
   import type { ExpandSlot, KvRow, Section, Shell } from '../lib/presentation';
+  import { Zap } from '@lucide/svelte';
+  import ToolOutput from './ToolOutput.svelte';
 
   type CardShellShell = Extract<Shell, { kind: 'tool' | 'card' }>;
 
@@ -58,6 +60,7 @@
   {/if}
 {/snippet}
 {#if shell.kind === 'tool'}
+  {@const Icon = shell.icon}
   <div class="tool" class:open={open.tool}>
     <div
       class="chip"
@@ -70,7 +73,7 @@
       }}
       onkeydown={onKey(() => setOpen('tool'))}
     >
-      <svg class="ic" width="13" height="13"><use href={`#${shell.icon}`}/></svg>
+      <Icon class="ic" size={13} />
       <span class="nm">{shell.label}</span>
       <span class="sum">{shell.summary}</span>
       <span class="st {shell.status === 'ok' ? 'ok' : shell.status === 'error' ? 'err' : 'pend'}">
@@ -86,7 +89,13 @@
       <div class="x">
         {@render kvRows(shell.kv)}
         {#if shell.output}
-          <div class="out"><pre>{open.output ? shell.output.text : shell.output.closed}</pre></div>
+          <div class="out">
+            {#if open.output || !shell.output.long}
+              <ToolOutput text={shell.output.text} name={shell.label} path={shell.path} />
+            {:else}
+              <pre>{shell.output.closed}</pre>
+            {/if}
+          </div>
           {#if shell.output.long}
             <button class="expando" onclick={() => setOpen('output')}>
               {open.output ? '▾ hide output' : `▸ full output (${shell.output.text.length} chars)`}
@@ -107,6 +116,7 @@
     {#if shell.header}
       {@const h = shell.header}
       {@const hopen = h.open}
+      {@const Icon = h.icon}
       {#if hopen !== null}
         <div
           class="hd {h.cls}"
@@ -120,7 +130,7 @@
           }}
           onkeydown={onKey(() => setOpen(hopen))}
         >
-          <svg class="ic" width="13" height="13"><use href={`#${h.icon}`}/></svg>{h.label}
+          <Icon class="ic" size={13} />{h.label}
           {#if h.meta}
             <span class="meta">{h.meta}</span>
           {/if}
@@ -130,7 +140,7 @@
         </div>
       {:else}
         <div class="hd {h.cls}">
-          <svg class="ic" width="13" height="13"><use href={`#${h.icon}`}/></svg>{h.label}
+          <Icon class="ic" size={13} />{h.label}
           {#if h.meta}
             <span class="meta">{h.meta}</span>
           {/if}
@@ -163,7 +173,7 @@
       </button>
     {/if}
     {#if shell.intmark}
-      <div class="intmark">⚡ interrupted</div>
+      <div class="intmark"><Zap class="im" size={14} fill="currentColor" color="none" />interrupted</div>
     {/if}
   </div>
 {/if}
@@ -190,17 +200,17 @@
   .card2.collapsed .hd {
     margin-bottom: 0;
   }
-  .hd .ic {
+  .hd :global(.ic) {
     color: var(--purple);
   }
-  .hd.sub .ic {
+  .hd.sub :global(.ic) {
     color: var(--amber);
   }
-  .hd.par .ic {
+  .hd.par :global(.ic) {
     color: var(--acc);
   }
-  .hd.skill .ic,
-  .hd.obs .ic {
+  .hd.skill :global(.ic),
+  .hd.obs :global(.ic) {
     color: var(--green);
   }
   .txt2 {
@@ -249,19 +259,23 @@
     font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
     word-break: break-word;
-    color: var(--dim);
+    color: var(--code-fg);
   }
   .tool .chip {
     display: flex;
     align-items: center;
     gap: 8px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 7px 10px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--line);
+    border-radius: 0;
+    padding: 6px 4px;
     cursor: pointer;
   }
-  .tool .chip .ic {
+  .tool .chip:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .tool .chip :global(.ic) {
     color: var(--dim);
   }
   .tool .chip .nm {
@@ -278,7 +292,9 @@
     white-space: nowrap;
   }
   .tool .chip .st {
-    font-size: 12px;
+    font: 10px var(--mono);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
     color: var(--faint);
   }
   .tool .chip .st.ok {
@@ -347,7 +363,7 @@
     font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-    color: var(--dim);
+    color: var(--code-fg);
   }
   .expando {
     display: inline-block;
@@ -359,9 +375,15 @@
     color: var(--tx);
   }
   .intmark {
+    display: flex;
+    align-items: center;
+    gap: 4px;
     font: 11px var(--mono);
     color: var(--amber);
     margin-top: 6px;
+  }
+  .intmark :global(.im) {
+    flex: none;
   }
   .hd .caret {
     margin-left: auto;

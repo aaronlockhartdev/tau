@@ -47,6 +47,7 @@ mod dispatch;
 mod dispatch_commands;
 mod dispatch_sessions;
 mod forwarding;
+mod git;
 mod launch;
 pub mod pump;
 mod sessions;
@@ -79,11 +80,15 @@ mod tests_archive_edges;
 #[cfg(test)]
 mod tests_dispatch;
 #[cfg(test)]
+mod tests_git;
+#[cfg(test)]
 mod tests_launch;
 #[cfg(test)]
 mod tests_model;
 #[cfg(test)]
 mod tests_om_async;
+#[cfg(test)]
+mod tests_plan;
 #[cfg(test)]
 mod tests_skills;
 #[cfg(test)]
@@ -96,6 +101,8 @@ mod tests_turn_config;
 mod tests_turn_guards;
 #[cfg(test)]
 mod tests_turns;
+#[cfg(test)]
+mod tests_turns_status;
 #[cfg(test)]
 mod tests_watcher;
 #[cfg(test)]

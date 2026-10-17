@@ -6,10 +6,11 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, type PaneState } from '../lib/store.svelte';
   import { onActivate } from '../lib/ui';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';
+  import { ChevronDown, Plus } from '@lucide/svelte';
   import FileNode from './FileNode.svelte';
 
   const ws = $derived(currentSession()?.meta.workspace ?? null);
@@ -27,6 +28,8 @@
   // archives the children with the parent), so listing children here would
   // show them twice — once top-level, once under their parent.
   const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.mru - a.mru));
+  // The red-edge tint (P5): the shared attention fold, keyed by session.
+  const attSessions = $derived(new Set(attention().map((i) => i.session)));
 
   // The visible row order of the sessions tab (live list, then the
   // archive folder's open groups) — the flat sequence a shift range
@@ -73,8 +76,15 @@
 
 <div class="pane">
   <div class="tabs" role="tablist">
+  <div class="seg">
     <button class="tab" class:on={p?.ltab === 'files'} disabled={!p} onclick={() => { if (p) setLtab('files'); }}>files</button>
     <button class="tab" class:on={p?.ltab === 'sessions'} disabled={!p} onclick={() => { if (p) setLtab('sessions'); }}>sessions</button>
+  </div>
+  {#if p && ws && p.ltab === 'sessions'}
+    <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
+      <Plus class="ci" size={13} />
+    </button>
+  {/if}
   </div>
   {#if p && ws}
     {#if p.ltab === 'files'}
@@ -101,25 +111,22 @@
     {:else}
       <div class="sec">
         <div class="tree">
-          <button class="new" type="button" title="new session — ⌘N" onclick={() => void newSession(ws)}>
-            <svg class="ci" width="10" height="10"><use href="#i-plus" /></svg> new session
-          </button>
           {#if top.length === 0}
             <div class="empty"><span class="big">No sessions yet</span></div>
           {:else}
             {#each top as s (s.meta.id)}
-              <SessionNode session={s} ws={ws} sessions={sessions} visibleIds={visibleIds} />
+              <SessionNode session={s} ws={ws} sessions={sessions} visibleIds={visibleIds} att={attSessions.has(s.meta.id)} />
             {/each}
           {/if}
         </div>
         {#if archived.length}
         <div class="arch">
           <button class="arch-h" type="button" onclick={() => { const q = pane(ws); if (q) q.archOpen = !q.archOpen; }}>
-            <svg class="ci" width="10" height="10" style:transform={p.archOpen ? 'rotate(0deg)' : 'rotate(-90deg)'}><use href="#i-chev" /></svg> archive · {archived.length}
+            <ChevronDown class="ci {p.archOpen ? 'open' : ''}" size={10} /> archive · {archived.length}
           </button>
           {#if p.archOpen}
             {#each archived as s (s.meta.id)}
-              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} visibleIds={visibleIds} />
+              <SessionNode session={s} depth={1} ws={ws} sessions={sessions} visibleIds={visibleIds} att={attSessions.has(s.meta.id)} />
             {/each}
           {/if}
         </div>
@@ -138,21 +145,32 @@
   }
   .tabs {
     display: flex;
-    border-bottom: 1px solid var(--line);
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px 8px;
     flex: none;
   }
+  .seg {
+    display: flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--panel2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
   .tab {
-    flex: 1;
-    text-align: center;
-    padding: 8px;
-    font: 11px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--faint);
+    border-radius: 6px;
+  }
+  .tab:hover {
     color: var(--dim);
   }
   .tab.on {
-    color: var(--acc);
-    box-shadow: inset 0 -2px 0 var(--acc);
+    color: var(--tx);
+    background: var(--raised);
   }
   .sec {
     flex: 1;
@@ -173,26 +191,24 @@
     padding-top: 4px;
   }
   .new {
+    margin-left: auto;
+    width: 26px;
+    height: 26px;
     display: flex;
     align-items: center;
-    gap: 7px;
-    width: 100%;
-    padding: 4.5px 8px;
-    font-size: 12.5px;
-    line-height: 1;
-    color: var(--faint);
-    background: none;
-    border: none;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--line2);
+    border-radius: 7px;
+    color: var(--dim);
     cursor: pointer;
-    text-align: left;
   }
   .new:hover {
-    color: var(--text);
-    background: var(--panel2);
+    color: var(--tx);
+    border-color: var(--acc);
   }
-  .new .ci {
+  .new :global(.ci) {
     display: block;
-    flex: none;
   }
   .arch {
     border-top: 1px solid var(--line);
@@ -205,14 +221,20 @@
     gap: 6px;
     width: 100%;
     text-align: left;
-    padding: 8px 12px 4px;
-    font: 10px var(--mono);
-    letter-spacing: 0.08em;
+    padding: 10px 8px 5px;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--faint);
   }
-  .arch-h .ci {
+  .arch-h :global(.ci) {
     display: block;
+    transform: rotate(-90deg);
     transition: transform 0.12s;
+  }
+  .arch-h :global(.ci.open) {
+    transform: rotate(0deg);
   }
   .empty {
     padding: 24px;

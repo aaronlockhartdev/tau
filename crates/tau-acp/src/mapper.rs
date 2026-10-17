@@ -38,7 +38,7 @@ impl Mapper {
             // episode loop's continuation prompts are user entries and the
             // benchmark forensics (acp-events.jsonl) must see them.
             "user" => Self::on_user(entry),
-            // system/subagent/task entries: no ACP v0 surface.
+            // system/subagent entries: no ACP v0 surface.
             _ => Vec::new(),
         }
     }
@@ -173,7 +173,7 @@ fn tool_kind(name: &str) -> &'static str {
         "write" | "edit" => "edit",
         "bash" => "execute",
         "recall" => "search",
-        n if n.starts_with("subagent_") || n.starts_with("task_") => "think",
+        n if n.starts_with("subagent_") => "think",
         _ => "other",
     }
 }
@@ -303,7 +303,6 @@ mod tests {
             ("edit", "edit"),
             ("recall", "search"),
             ("subagent_spawn", "think"),
-            ("task_create", "think"),
             ("mystery", "other"),
         ] {
             let out = m.on_entry(&entry(

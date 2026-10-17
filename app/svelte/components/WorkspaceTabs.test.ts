@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
+import { tick } from 'svelte';
 import type { SessionMeta, Workspace } from '../lib/protocol';
 import type { SessionState } from '../lib/sessions';
 import WorkspaceTabs from './WorkspaceTabs.svelte';
@@ -67,6 +68,15 @@ describe('WorkspaceTabs', () => {
     render(WorkspaceTabs);
     expect(screen.getByText('alpha')).toBeInTheDocument();
     expect(screen.getByText('beta')).toBeInTheDocument();
+  });
+
+  it('drops the traffic-light inset only when the window is fullscreen', async () => {
+    render(WorkspaceTabs);
+    const bar = document.querySelector('.bar')!;
+    expect(bar).not.toHaveClass('fs');
+    mockStore.fullscreen = true;
+    await tick();
+    expect(bar).toHaveClass('fs');
   });
 
   it('marks the current session’s workspace active', () => {
