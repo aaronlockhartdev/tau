@@ -59,7 +59,7 @@ function snap(
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], ...extra.live },
+      live: { queue: [], turn: 'idle', gate_failed: false, subagents: [], ...extra.live },
       cursor: ''
     }
   };

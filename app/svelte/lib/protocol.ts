@@ -244,6 +244,8 @@ export type SubagentEventKind =
 export interface LiveState {
   queue: QueuedItem[];
   turn: TurnState;
+  // Completion gate failed after max_retries (T2) — the status-bar badge.
+  gate_failed: boolean;
   subagents: SubagentInfo[];
 }
 
