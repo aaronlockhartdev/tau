@@ -149,9 +149,8 @@ async fn a_stop_before_the_first_event_still_ends_the_stream() {
     assert!(interrupted, "the aborted call's end was not interrupted");
 }
 
-/// A task command emits a `task_changed` event carrying the file's
-/// folded task list — the GUI's tasks tab is event-driven (spec §8),
-/// never polled; the payload is a projection of the file.
+/// The entry event pipe carries a canned turn's tool events to the sink —
+/// the GUI's tool cards are event-driven (spec §8), never polled.
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one end-to-end turn flow; splitting is refactoring
 async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {

@@ -37,7 +37,6 @@ function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
-
 const sub = (handle: string, child: string, over: Partial<SubagentInfo> = {}): SubagentInfo => ({
   handle,
   child,
@@ -205,7 +204,6 @@ describe('RightPane', () => {
     await user.dblClick(screen.getByRole('button', { name: /worker one/ }));
     expect(switchSession).toHaveBeenCalledWith('c1');
   });
-
 
   it('renders a nested grandchild row under its parent', async () => {
     seed({

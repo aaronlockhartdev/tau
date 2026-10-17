@@ -69,8 +69,7 @@ impl Supervisor {
     /// The child-side `parent_notify` (routed here from the child's loop).
     pub(super) fn notify(&self, handle: &str, args: &Value) -> String {
         // Shape-only validation (v0, review N9): the keys and their types
-        // are checked, not a full schema — a semantic schema would be
-        // speculative until the task gate lands. A malformed call is
+        // are checked, not a full schema. A malformed call is
         // rejected before the child lookup, even for an unknown handle.
         let Some(text) = args.get("text").and_then(Value::as_str) else {
             return "parent_notify: missing \"text\"".into();

@@ -51,7 +51,6 @@ export interface SessionState {
   mru: number;
   // The session's children (the parent's view — the sub-agent panel).
   subagents: SubagentInfo[];
-
 }
 
 export type SessionMap = Record<string, SessionState>;

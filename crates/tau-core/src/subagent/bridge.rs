@@ -23,7 +23,7 @@ pub struct StateNotice {
     pub child: String,
     pub state: ChildState,
     pub note: Option<String>,
-    /// A stopped child's assigned task rides its resume contract (spec
+    /// A stopped child's resume contract (the plan's next action, spec
     /// §5.2); None for every other transition.
     pub resume_contract: Option<ResumeContract>,
 }

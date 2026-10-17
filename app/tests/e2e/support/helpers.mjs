@@ -125,7 +125,7 @@ const panesState = () => {
     leftTabs: left ? q(left, '.tab') : [],
     leftRows: left ? q(left, '.trow') : [],
     rightTabs: right ? q(right, '.tab') : [],
-    rightTasks: right ? q(right, '.lrow') : [],
+    rightRows: right ? q(right, '.lrow') : [],
     rightEmpty: right ? right.querySelector('.emptyc')?.textContent ?? '' : '',
     bar: barEl ? barEl.textContent.replace(/\s+/g, ' ').trim() : ''
   };

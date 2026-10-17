@@ -8,7 +8,6 @@
           "arguments": {
             "type": "general",
             "context_mode": "fresh",
-            "task": "task-1",
             "brief": "Add passing evidence for the criterion, then call parent_notify with done true and output {\"status\": \"ok\"}. e2e-workbench-child-a"
           }
         }
@@ -21,7 +20,6 @@
           "arguments": {
             "type": "general",
             "context_mode": "fresh",
-            "task": "task-2",
             "brief": "You are blocked: call parent_notify with done false, waiting_on \"user\", and a text that asks the user for the missing api key. e2e-workbench-child-b"
           }
         }

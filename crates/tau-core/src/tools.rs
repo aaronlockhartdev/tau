@@ -156,14 +156,13 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             name: "subagent_spawn".into(),
-            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its name — how you address it in the other sub-agent tools. If the work is already a task, pass task — the child starts with it assigned; a separate assign costs an extra round trip. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
+            description: "Spawn a sub-agent that works the brief in its own session and reports back via parent_notify. Returns its name — how you address it in the other sub-agent tools. context_mode: fresh (default) = no parent history; compacted = the parent's observation log as a frozen context prefix; fork = a branched copy of the parent session.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "type": {"type": "string", "enum": ["general"]},
                     "brief": {"type": "string"},
-                    "context_mode": {"type": "string", "enum": ["fresh", "compacted", "fork"]},
-                    "task": {"type": "string"}
+                    "context_mode": {"type": "string", "enum": ["fresh", "compacted", "fork"]}
                 },
                 "required": ["type", "brief"]
             }),

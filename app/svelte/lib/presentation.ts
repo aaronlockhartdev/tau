@@ -116,7 +116,7 @@ function toolSummary(e: ToolEntry): string {
   if (toolUnavailable(e)) return 'content unavailable — sidecar blob missing';
   const a = e.args;
   if (!a) return e.text ?? '';
-  const v = a.command ?? a.path ?? a.query ?? a.task_id ?? a.title ?? a.message;
+  const v = a.command ?? a.path ?? a.query ?? a.title ?? a.message;
   const s = typeof v === 'string' ? v : '';
   return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
 }

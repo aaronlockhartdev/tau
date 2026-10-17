@@ -33,8 +33,8 @@ impl Core {
     }
 
     /// Re-run discovery for `ws`, replace its registry slot, and emit the
-    /// full-state `SkillListChanged` (ticket #31; the `task_changed`
-    /// pattern — idempotent by construction, a lost batch self-heals on
+    /// full-state `SkillListChanged` (ticket #31 — idempotent by
+    /// construction, a lost batch self-heals on
     /// the next `skill_list`). Shared by the watcher's consumer and
     /// `build_live`: the slot is the one the dropdown and the `/skill:`
     /// lookup read. A running session's prompt is not touched (frozen at

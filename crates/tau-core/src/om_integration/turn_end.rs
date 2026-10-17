@@ -435,9 +435,8 @@ impl OmState {
     }
 
     /// The assembled main-turn context (spec §4). `instructions` is the stable
-    /// system prompt: the base prompt, the observation framing, and the active
-    /// task's resume contract (ticket #24 fills the slot; the loop passes `None`
-    /// today). The volatile observation content is NOT in `instructions` — each
+    /// system prompt: the base prompt and the observation framing. The
+    /// volatile observation content is NOT in `instructions` — each
     /// observation group rides as its own `role: system` item in
     /// `om_input_items` (#96), so the prompt stays byte-stable across appends and
     /// reflector rewrites. The one-shot continuation hint is the trailing
