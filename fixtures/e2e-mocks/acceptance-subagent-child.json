@@ -9,7 +9,11 @@
             "path": "{{plan_path}}",
             "content": "# Plan\n\n## Steps\n\n- [x] the child reports ok\n"
           }
-        },
+        }
+      ]
+    },
+    {
+      "calls": [
         {
           "name": "parent_notify",
           "arguments": { "text": "ok", "done": true, "output": { "status": "ok" } }
