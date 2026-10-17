@@ -266,7 +266,15 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
         .id
         .clone();
     assert_eq!(chunk.range.1, tool_id);
-    assert_eq!(record.last_buffered_at_tokens, 822);
+    // Below the observe threshold (1000), so no observe fires. Assert the
+    // relationship, not the exact count: the plan section carries the
+    // session's plan path, whose length varies by OS, so the count is
+    // path-dependent.
+    assert!(
+        record.last_buffered_at_tokens < 1000,
+        "expected below the observe threshold (1000), got {}",
+        record.last_buffered_at_tokens
+    );
     // A fresh process sees the same chunk (the record is the store).
     let mut store = crate::session::SessionStore::for_workspace(
         std::path::Path::new(&rig.cwd),
