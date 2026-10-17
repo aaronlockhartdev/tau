@@ -267,6 +267,39 @@ async fn a_plan_file_change_emits_plan_changed() {
     }
 }
 
+/// N4: the session-start seed emits `plan_changed` (the empty skeleton), so
+/// a client that connects mid-session still receives the plan pane's data.
+#[tokio::test]
+async fn a_new_session_emits_plan_changed_for_the_seed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let events = collect_events(&core);
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    // The session-start refresh emits the seeded skeleton (no steps).
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
+            Event::PlanChanged {
+                workspace: ws,
+                session,
+                plan,
+            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
+            _ => None,
+        });
+        if got.as_ref().is_some_and(|p| p.steps.is_empty()) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no seed plan_changed within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 async fn the_plan_state_is_reinjected_into_the_assembly() {
     let tmp = tempfile::tempdir().unwrap();

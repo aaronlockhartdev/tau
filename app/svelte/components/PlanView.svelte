@@ -15,6 +15,7 @@
 
   const progress = $derived(planProgress(plan));
   const criteria = $derived(plan.criteria.trim());
+  const notes = $derived(plan.notes.trim());
 </script>
 
 {#if progress.total === 0}
@@ -35,6 +36,10 @@
   {#if criteria}
     <div class="ghead">criteria</div>
     <div class="crit">{criteria}</div>
+  {/if}
+  {#if notes}
+    <div class="ghead">notes</div>
+    <div class="notes">{notes}</div>
   {/if}
 {/if}
 
@@ -114,7 +119,7 @@
     text-transform: uppercase;
     color: var(--faint);
   }
-  .crit {
+  .crit, .notes {
     padding: 0 12px 12px;
     font-size: 12px;
     color: var(--dim);

@@ -45,6 +45,11 @@ describe('PlanView', () => {
     expect(screen.getByText('build passes')).toBeInTheDocument();
   });
 
+  it('renders the notes section when present', () => {
+    render(PlanView, { props: { plan: plan({ steps: STEPS.steps, notes: 'still debugging' }), gateFailed: false } });
+    expect(screen.getByText('still debugging')).toBeInTheDocument();
+  });
+
   it('shows the empty state for a plan with no steps', () => {
     render(PlanView, { props: { plan: plan(), gateFailed: false } });
     expect(screen.getByText('No plan yet — the agent writes it as it works')).toBeInTheDocument();

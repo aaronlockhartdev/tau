@@ -104,7 +104,6 @@ A child's state is **read**, not declared:
   diff + spec + plan, **returns an advisory value** (non-blocking, cheap model, in-band).
   Uniform + advisory. Distinct from the out-of-band PR review.
 - **Staleness nudge** — N tool-bearing turns with no plan edit → a `<system-reminder>`.
-- **Fleet projection** — compact child plans in the parent's view.
 - **Two-agent contract/impl split** — high-stakes features only (stronger test-independence,
   at the cost of invasiveness).
 
@@ -113,7 +112,7 @@ A child's state is **read**, not declared:
   PRs; core verification is the plan file + the mechanical gate.
 
 ## Sequencing
-- **v0**: the core (§1–4) + the plan pane. **This alone resolves all three original
+- **v0**: the core (§1–4) + the plan pane (including the parent's fleet projection of child plans). **This alone resolves all three original
   problems** — the deadlock (no task store to write across a lock), the fragile declared
   completion (completion is *observed*; the nudge is gone), and the 7-tool state machine
   (replaced by file + gate).
