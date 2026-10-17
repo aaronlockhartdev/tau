@@ -32,12 +32,7 @@ export function spawnRefsOf(entries: readonly ToolLike[]): SpawnRef[] {
     const a = e.args;
     const type = typeof a.type === 'string' ? a.type : '';
     const mode = typeof a.context_mode === 'string' ? a.context_mode : 'fresh';
-    const brief =
-      typeof a.task === 'string' && a.task
-        ? a.task
-        : typeof a.brief === 'string'
-          ? a.brief
-          : null;
+    const brief = (typeof a.brief === 'string' ? a.brief : null);
     refs.push({ entryId: e.id, agentType: type, contextMode: mode, brief });
   }
   return refs;

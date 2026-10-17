@@ -75,7 +75,6 @@ describe('paletteItems', () => {
                 waiting_on: null,
                 last_message: null,
                 usage: null,
-                task: null,
                 resume_contract: null
               }
             ]

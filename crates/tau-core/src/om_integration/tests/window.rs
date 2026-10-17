@@ -264,7 +264,7 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
         },
     );
     state.changed = true;
-    let first = state.assemble_context("base prompt", None);
+    let first = state.assemble_context("base prompt");
     assert!(first.instructions.starts_with("base prompt"));
     // The observation content rides as `role: system` items, not in
     // `instructions` (#96): the framing stays in the prompt, the volatile
@@ -279,12 +279,8 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     );
     assert!(om_user_content(&first.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
     // The one-shot flip: a second assembly carries no hint.
-    let second = state.assemble_context("base prompt", None);
+    let second = state.assemble_context("base prompt");
     assert!(!om_user_content(&second.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
-    // The task-resume-contract slot (ticket #24 fills it).
-    let with_task = state.assemble_context("base prompt", Some("do the thing"));
-    assert!(with_task.instructions.contains("# Task (resume contract)"));
-    assert!(with_task.instructions.contains("do the thing"));
     // A demoted prefix drops out of the live context.
     let mut state3 = OmState::from_config(
         &cfg,
@@ -297,7 +293,7 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     );
     assert!(
         !state3
-            .assemble_context("base", None)
+            .assemble_context("base")
             .instructions
             .contains("demoted prefix")
     );
@@ -339,7 +335,7 @@ fn the_main_agent_view_has_no_boundary_markers() {
     // And the assembled main-agent context is clean end-to-end.
     let mut state = OmState::from_config(&cfg, record);
     state.changed = true;
-    let ctx = state.assemble_context("base prompt", None);
+    let ctx = state.assemble_context("base prompt");
     assert!(
         !ctx.instructions.contains("--- message boundary ("),
         "{ctx:?}"
@@ -370,7 +366,7 @@ fn the_suggested_response_is_injected_once_then_cleared() {
         },
     );
     state.changed = true;
-    let first = state.assemble_context("base prompt", None);
+    let first = state.assemble_context("base prompt");
     // The steering signal is handed to the model alongside the hint...
     let first_om = om_user_content(&first.om_input_items);
     // The steering signal is handed to the model alongside the hint...
@@ -379,7 +375,7 @@ fn the_suggested_response_is_injected_once_then_cleared() {
     // ...and consumed: a later log change re-fires the hint but must not
     // re-inject the now-stale signal.
     state.changed = true;
-    let second = state.assemble_context("base prompt", None);
+    let second = state.assemble_context("base prompt");
     let second_om = om_user_content(&second.om_input_items);
     assert!(second_om.contains(om::OBSERVATION_CONTINUATION_HINT));
     assert!(

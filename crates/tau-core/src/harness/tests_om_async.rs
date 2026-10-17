@@ -112,11 +112,15 @@ fn om_config(
     }
 }
 
-/// One tool round of known size: `task_create` echoes its title verbatim
-/// (a 3200-char title is ~800 tool-result tokens).
-fn tool_round(call_id: &str, title: &str) -> String {
-    let args = serde_json::json!({ "title": title }).to_string();
-    crate::agent::testkit::sse("", &[("task_create".to_owned(), call_id.to_owned(), args)])
+/// Two tool rounds of known size: the turn `write`s a file, then `read`s
+/// it back (a 3200-char body is ~800 tool-result tokens).
+fn read_round(call_id: &str, body: &str) -> Vec<String> {
+    let write_args = serde_json::json!({ "path": "big.txt", "content": body }).to_string();
+    let read_args = serde_json::json!({ "path": "big.txt" }).to_string();
+    vec![
+        crate::agent::testkit::sse("", &[("write".to_owned(), "w0".to_owned(), write_args)]),
+        crate::agent::testkit::sse("", &[("read".to_owned(), call_id.to_owned(), read_args)]),
+    ]
 }
 
 struct Rig {
@@ -219,7 +223,7 @@ impl Rig {
 
 /// T3: one tool round below the observe threshold crosses the 200-token
 /// buffer boundary; the background cycle commits ONE durable chunk and
-/// the turn settles with no observe (809 < 1000) and no sync buffer
+/// the turn settles with no observe (822 < 1000) and no sync buffer
 /// (the arm is gated while `buffer_tokens > 0`).
 #[tokio::test]
 async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
@@ -228,15 +232,10 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
         &om_config(1000, 10_000, 400, 200, 0, 0),
         crate::om::OmRecord::default(),
     );
-    let (p, served, _seen) = scripted_om(
-        vec![
-            tool_round("c1", &title),
-            crate::agent::testkit::sse("done", &[]),
-        ],
-        "<observations>the work</observations>",
-        false,
-        50,
-    );
+    let mut scripts = read_round("c1", &title);
+    scripts.push(crate::agent::testkit::sse("done", &[]));
+    let (p, served, _seen) =
+        scripted_om(scripts, "<observations>the work</observations>", false, 50);
     let rig = rig(om, p);
     rig.run_turn("go").await;
     let events = rig.events();
@@ -244,7 +243,7 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
 
     // Three provider calls: the two main-turn calls and the one cycle
     // call — no turn-end observe, no turn-end sync buffer.
-    assert_eq!(served.load(Ordering::SeqCst), 3);
+    assert_eq!(served.load(Ordering::SeqCst), 4);
 
     // The chunk is durable in the session file, spanning the first entry
     // to the tool entry.
@@ -261,12 +260,13 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     assert_eq!(chunk.range.0, entries[0].id);
     let tool_id = entries
         .iter()
+        .rev()
         .find(|e| e.kind == "tool")
         .expect("the tool entry")
         .id
         .clone();
     assert_eq!(chunk.range.1, tool_id);
-    assert_eq!(record.last_buffered_at_tokens, 809);
+    assert_eq!(record.last_buffered_at_tokens, 822);
     // A fresh process sees the same chunk (the record is the store).
     let mut store = crate::session::SessionStore::for_workspace(
         std::path::Path::new(&rig.cwd),
@@ -292,11 +292,10 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
         &om_config(1000, 10_000, 400, 200, 0, 1),
         crate::om::OmRecord::default(),
     );
+    let mut scripts = read_round("c1", &title);
+    scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) = scripted_om(
-        vec![
-            tool_round("c1", &title),
-            crate::agent::testkit::sse("done", &[]),
-        ],
+        scripts,
         "<observations>unreachable</observations>",
         true,
         50,
@@ -306,9 +305,9 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
     let events = rig.events();
     Rig::settled_cleanly(&events);
 
-    // Main 2 + the cycle's 2 attempts (1 configured retry); the turn-end
+    // Main 3 + the cycle's 2 attempts (1 configured retry); the turn-end
     // pass does NOT add a sync-buffer attempt of its own.
-    assert_eq!(served.load(Ordering::SeqCst), 4);
+    assert_eq!(served.load(Ordering::SeqCst), 5);
 
     // The failed cycle committed nothing and the Done pass saves nothing: any
     // om entry in the file must be chunk-less and cursor-less.
@@ -337,11 +336,10 @@ async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
         &om_config(1000, 10_000, 400, 200, 0, 0),
         crate::om::OmRecord::default(),
     );
+    let mut scripts = read_round("c1", &title);
+    scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) = scripted_om(
-        vec![
-            tool_round("c1", &title),
-            crate::agent::testkit::sse("done", &[]),
-        ],
+        scripts,
         "<observations>unreachable</observations>",
         true,
         50,
@@ -351,9 +349,9 @@ async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
     let events = rig.events();
     Rig::settled_cleanly(&events);
 
-    // Main 2 + exactly one cycle attempt (zero retries). A sync buffer at
-    // the turn end would make this 4.
-    assert_eq!(served.load(Ordering::SeqCst), 3);
+    // Main 3 + exactly one cycle attempt (zero retries). A sync buffer at
+    // the turn end would make this 5.
+    assert_eq!(served.load(Ordering::SeqCst), 4);
 
     let entries = rig.entries();
     let om_records: Vec<crate::om::OmRecord> = entries
@@ -372,7 +370,7 @@ async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
 /// T5: three tool rounds (~580 tokens each) with a 1000-token observe
 /// threshold: after round 1 the background cycle buffers; at round 2 the
 /// pending (~1.2k) reaches the threshold and the mid-loop ACTIVATION
-/// promotes the chunk (no LLM call) — so the 4th provider call's
+/// promotes the chunk (no LLM call) — so the final provider call's
 /// assembled context carries the promoted observation, and the record
 /// shows the cursor parked at round 1's tool entry.
 #[tokio::test]
@@ -384,13 +382,12 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
         &om_config(1000, 10_000, 400, 200, 0, 0),
         crate::om::OmRecord::default(),
     );
+    let mut scripts = read_round("c1", &a);
+    scripts.extend(read_round("c2", &b));
+    scripts.extend(read_round("c3", &c));
+    scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, seen) = scripted_om(
-        vec![
-            tool_round("c1", &a),
-            tool_round("c2", &b),
-            tool_round("c3", &c),
-            crate::agent::testkit::sse("done", &[]),
-        ],
+        scripts,
         "<observations>observed the work</observations>",
         false,
         100,
@@ -400,11 +397,11 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     let events = rig.events();
     Rig::settled_cleanly(&events);
 
-    // Main 4 + the cycle + the turn-end observe sweep (all three rounds
-    // are unobserved at the end: 2.4k ≥ 1k).
-    assert_eq!(served.load(Ordering::SeqCst), 6);
+    // Main 7 + the cycle + the turn-end observe sweep (all rounds are
+    // unobserved at the end: 2.4k ≥ 1k).
+    assert_eq!(served.load(Ordering::SeqCst), 9);
 
-    // The 4th main-turn call's input carries the PROMOTED observation (a
+    // The final main-turn call's input carries the PROMOTED observation (a
     // `role: system` item, #96) — the mid-loop activation ran before it
     // assembled.
     let all = seen.lock().unwrap().clone();
@@ -412,10 +409,10 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
         .iter()
         .filter(|(ins, _)| ins.as_deref() != Some(crate::om::observer_system_prompt().as_str()))
         .collect();
-    assert_eq!(main_calls.len(), 4, "four main-turn calls");
+    assert_eq!(main_calls.len(), 7, "seven main-turn calls");
     assert!(
-        main_calls[3].1.contains("observed the work"),
-        "the 4th call's context lacks the promoted observation"
+        main_calls[6].1.contains("observed the work"),
+        "the final call's context lacks the promoted observation"
     );
 
     // The promotion committed a record with the cursor at round 1's tool
@@ -426,15 +423,15 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
         .filter(|e| e.kind == "tool")
         .map(|e| e.id.as_str())
         .collect();
-    assert_eq!(tool_ids.len(), 3);
+    assert_eq!(tool_ids.len(), 6);
     let promoted = entries
         .iter()
         .filter(|e| e.kind == "om")
         .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
-        .find(|r| r.cursor.as_ref().is_some_and(|c| c.entry_id == tool_ids[0]));
+        .find(|r| r.cursor.as_ref().is_some_and(|c| c.entry_id == tool_ids[1]));
     assert!(
         promoted.is_some(),
-        "no record with the cursor at round 1's tool entry: {entries:?}"
+        "no record with the cursor at round 1's read entry: {entries:?}"
     );
     assert!(
         promoted
@@ -495,15 +492,9 @@ async fn a_promoting_turn_end_writes_one_record_not_two() {
     // One ~1150-token round crosses the observe threshold at turn end, so the
     // turn-end activation promotes the two pre-buffered chunks.
     let a = "A".repeat(4600);
-    let (p, _served, _seen) = scripted_om(
-        vec![
-            tool_round("c1", &a),
-            crate::agent::testkit::sse("done", &[]),
-        ],
-        "",
-        false,
-        10,
-    );
+    let mut scripts = read_round("c1", &a);
+    scripts.push(crate::agent::testkit::sse("done", &[]));
+    let (p, _served, _seen) = scripted_om(scripts, "", false, 10);
     let rig = rig(om, p);
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());

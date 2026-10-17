@@ -15,7 +15,6 @@ use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
 use crate::session::Entry;
-use std::sync::Weak;
 
 /// The session's role: the wiring defaults `launch` applies.
 #[derive(Clone)]
@@ -42,12 +41,11 @@ pub enum SessionRole {
         /// and bridge take it — no second resolution (ticket #43).
         first_provider: Option<(String, crate::config::Provider)>,
     },
-    /// A sub-agent session: the child's link plus the parent's task store;
-    /// no supervisor, no events. The values the child inherits (cwd, turn
-    /// config, OM) come from the supervisor.
+    /// A sub-agent session: the child's link; no supervisor, no events. The
+    /// values the child inherits (cwd, turn config, OM) come from the
+    /// supervisor.
     Child {
         supervisor: Arc<Supervisor>,
-        parent: Weak<AgentSession>,
         provider: TurnProviderRef,
         system_prompt: String,
         model: String,
@@ -123,7 +121,6 @@ impl AgentSession {
             }
             SessionRole::Child {
                 supervisor,
-                parent,
                 provider,
                 system_prompt,
                 model,
@@ -152,9 +149,6 @@ impl AgentSession {
                     subagents: None,
                     child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
                 });
-                // The child's task tools route to the parent's store (the
-                // shared task model); the `Weak` upgrades per call.
-                agent.set_parent_task_store(Some(parent));
                 // The plan-state re-injection (design: turn boundaries and
                 // post-compaction): the core's watcher-parsed state.
                 wire_plan_hook(&agent, core, &sid);

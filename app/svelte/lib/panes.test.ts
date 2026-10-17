@@ -9,7 +9,7 @@ describe('defaultPane', () => {
   it('defaults to the sessions tab, unexpanded, no selection', () => {
     const p = defaultPane();
     expect(p.ltab).toBe('sessions');
-    expect(p.rtab).toBe('tasks');
+    expect(p.rtab).toBe('subs');
     expect(p.historyOpen).toBe(false);
     expect(p.openGroups).toBeNull();
     expect(p.selected).toEqual([]);

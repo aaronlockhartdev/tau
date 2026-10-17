@@ -57,7 +57,7 @@
   const sourceLabelFor = (e: Entry): string =>
     e.kind === 'user' ? (e.source ? store.sessions[e.source]?.meta.title ?? '' : '') : '';
   // The parent → child direction: a user entry inside a child session is
-  // the parent's message (task assignment, steering, follow-up).
+  // the parent's message (steering, follow-up).
   const parentLabel = $derived.by(() => {
     const p = curSession?.meta.parent ?? null;
     return p ? store.sessions[p]?.meta.title ?? '' : '';

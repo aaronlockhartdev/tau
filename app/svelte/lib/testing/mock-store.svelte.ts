@@ -19,9 +19,8 @@ export function paneDefault(): PaneState {
   return {
     center: 'chat',
     ltab: 'sessions',
-    rtab: 'tasks',
+    rtab: 'subs',
     historyOpen: false,
-    expandedTasks: [],
     openGroups: null,
     renamingId: null,
     archOpen: false,

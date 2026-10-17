@@ -20,7 +20,7 @@ impl Core {
         // no file re-open per snapshot — one open serves it all.
         let (sized, leaf) = live
             .agent
-            .with_task_store(|store: &mut SessionStore| {
+            .with_store(|store: &mut SessionStore| {
                 // An external writer (the 10k fixture) grows the file out
                 // from under the log: one re-open keeps the view current.
                 store.refresh_if_grown()?;
@@ -43,13 +43,6 @@ impl Core {
             .lock()
             .expect("session meta: no panic while the lock is held")
             .clone();
-        // A child's task pane is a projection of the parent's store (the
-        // shared task model): the link owns the projection (R3) — the
-        // snapshot no longer re-opens the parent's store.
-        let tasks = match live.agent.child_link() {
-            Some(link) => link.task_view(&live.cwd),
-            None => crate::task::fold_entries(&entries),
-        };
         let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
         Ok(Snapshot {
             workspace,
@@ -84,9 +77,6 @@ impl Core {
                             .collect()
                     })
                     .unwrap_or_default(),
-                // The session's tasks (per-session store, spec §5.3): the
-                // GUI's tasks panel; active ones ride their resume contract.
-                tasks,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -102,7 +92,7 @@ impl Core {
         // whole-file re-open per read.
         let entries: Vec<Entry> = live
             .agent
-            .with_task_store(|store| {
+            .with_store(|store| {
                 // An external writer grows the file out from under the log:
                 // one re-open keeps the view current.
                 store.refresh_if_grown()?;
@@ -165,7 +155,6 @@ impl Core {
                 turn: TurnState::Idle,
                 gate_failed: false,
                 subagents: vec![],
-                tasks: crate::task::fold_entries(&entries),
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })

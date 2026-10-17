@@ -360,9 +360,6 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         }
         | Event::SubagentEvent {
             workspace, session, ..
-        }
-        | Event::TaskChanged {
-            workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
     }
 }

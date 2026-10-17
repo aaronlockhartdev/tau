@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use tau_protocol::payload::{ResumeContract, Task};
+use tau_protocol::payload::ResumeContract;
 
 pub use bridge::{
     BoxedDrive, ChildDriver, ChildProviderFactory, SpawnNotice, StateNotice, SubagentBridge,
@@ -280,32 +280,6 @@ impl Supervisor {
             .get(handle)
             .map(|c| c.session_id.clone())
     }
-
-    /// Every child's session id (the child-targeted `TaskChanged` routing).
-    pub fn child_sessions(&self) -> Vec<String> {
-        self.children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .values()
-            .map(|c| c.session_id.clone())
-            .collect()
-    }
-
-    /// The child's assigned task from the single source of truth (the
-    /// parent's file — the task never leaves it; the child's file carries
-    /// no task entries).
-    pub(super) fn child_task(&self, child: &Child) -> Option<Task> {
-        let mut store = SessionStore::for_workspace(&self.cwd, &self.parent_session);
-        let Ok(()) = store.open() else {
-            return None;
-        };
-        let entries = store.entries_range(0, usize::MAX).ok()?;
-        crate::task::fold_entries(&entries).into_iter().find(|t| {
-            t.worker
-                .as_ref()
-                .is_some_and(|w| w.session == child.session_id)
-        })
-    }
 }
 
 /// One child's structured state (the protocol carries its own mirror; the
@@ -321,7 +295,6 @@ pub struct SubagentInfo {
     pub waiting_on: Option<WaitingOn>,
     pub last_message: Option<String>,
     pub usage: Option<Usage>,
-    pub task: Option<Task>,
     pub resume_contract: Option<ResumeContract>,
 }
 

@@ -36,13 +36,7 @@ async fn a_compacted_spawn_seeds_the_frozen_prefix() {
         },
     )));
     let s = sup
-        .spawn(
-            "general",
-            "compact me",
-            Some(ContextMode::Compacted),
-            None,
-            "c0",
-        )
+        .spawn("general", "compact me", Some(ContextMode::Compacted), "c0")
         .unwrap();
     // Quiesce the child before reading its file from a second store:
     // it rests (observed `idle`), a stop ends its drive, and the file
@@ -136,13 +130,7 @@ async fn a_compacted_child_recalls_the_parent_session() {
         .unwrap();
     parent.set_om(Some(OmState::from_config(&Om::default(), record)));
     let s = sup
-        .spawn(
-            "general",
-            "compact me",
-            Some(ContextMode::Compacted),
-            None,
-            "c0",
-        )
+        .spawn("general", "compact me", Some(ContextMode::Compacted), "c0")
         .unwrap();
     // The child rests (observed `idle`); a stop ends its drive so the
     // test's handles are all quiescent.
@@ -204,7 +192,7 @@ async fn a_fork_copies_the_tree_and_inherits_the_record() {
         },
     )));
     let s = sup
-        .spawn("general", "fork me", Some(ContextMode::Fork), None, "c0")
+        .spawn("general", "fork me", Some(ContextMode::Fork), "c0")
         .unwrap();
     // Quiesce the child before reading its file from a second store
     // (review B1, same as the compacted test): it rests (observed

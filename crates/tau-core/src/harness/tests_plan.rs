@@ -333,7 +333,7 @@ async fn a_spawned_child_prompt_names_its_own_plan_file() {
 
     let parent_plan = crate::plan::path(&cwd, &meta.id);
     let spawned = sup
-        .spawn("general", "do the thing", None, None, "call-1")
+        .spawn("general", "do the thing", None, "call-1")
         .unwrap();
     let child_plan = crate::plan::path(Path::new(&spawned.cwd), &spawned.session_id);
 
@@ -387,7 +387,7 @@ async fn a_spawned_child_keeps_the_inherited_skills_catalog() {
         .expect("the root session carries a supervisor");
 
     let spawned = sup
-        .spawn("general", "do the thing", None, None, "call-1")
+        .spawn("general", "do the thing", None, "call-1")
         .unwrap();
     let prompt = spawned.agent.system_prompt();
     // The child's prompt names its own plan file (the inherited section

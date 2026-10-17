@@ -4,7 +4,6 @@
 //! demand by the core (app launch, tab open, reconnect); never a file.
 
 use crate::MessageLane;
-use crate::payload::Task;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -143,9 +142,6 @@ pub struct LiveState {
     /// The session's children (structured state — the GUI's sub-agent
     /// panel); empty for child sessions (the depth cap is structural).
     pub subagents: Vec<crate::SubagentInfo>,
-    /// The session's tasks (per-session store, spec §5.3) — the GUI's
-    /// tasks panel.
-    pub tasks: Vec<Task>,
 }
 
 /// The session's OM gauge (ticket #22): observation tokens against the
@@ -312,10 +308,8 @@ mod tests {
                 waiting_on: None,
                 last_message: None,
                 usage: None,
-                task: None,
                 resume_contract: None,
             }],
-            tasks: vec![],
         };
         let live_back: LiveState =
             serde_json::from_str(&serde_json::to_string(&live).unwrap()).unwrap();
@@ -399,7 +393,6 @@ mod tests {
                 turn: TurnState::Idle,
                 gate_failed: false,
                 subagents: vec![],
-                tasks: vec![],
             },
             cursor: "e1".into(),
         })

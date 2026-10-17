@@ -1,5 +1,5 @@
 // Mock leg, feature 4: a scripted subagent spawn through the real core —
-// the parent session creates a task, spawns a child, and the child runs
+// the parent session plans the work in its plan file, spawns a child, and the child runs
 // its scripted turns against the mock. The GUI-side contract (what the
 // retired replay leg's dogfood pair covered): the child session appears
 // in the left-pane tree linked to the parent, the parent transcript
@@ -81,8 +81,8 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
     await selectModel('mock/mock-model-2');
   });
 
-  it('the send walks the scripted spawn: task, subagent_spawn, text', async () => {
-    // One Composer send runs the whole scripted turn (task_create,
+  it('the send walks the scripted spawn: plan, subagent_spawn, text', async () => {
+    // One Composer send runs the whole scripted turn (plan write,
     // subagent_spawn, then the text reply); the poll is the deadline, not
     // a one-shot read.
     // Pin focus to the session this spec created before sending: the mock
@@ -145,7 +145,7 @@ describe('mock E2E: a scripted subagent spawn renders parent and child', () => {
       JSON.stringify(c.entryKinds)
     );
     check('the spawn record names the parent session', c.spawnParent === sid, `spawnParent=${c.spawnParent}`);
-    // The child runs its scripted turns (task_evidence, parent_notify,
+    // The child runs its scripted turns (plan write, parent_notify,
     // then the closing text) against the mock; the tool entry is the proof
     // the routing
     // reached the child scenario, not the server's fallback.

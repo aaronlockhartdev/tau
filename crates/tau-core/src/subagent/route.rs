@@ -27,8 +27,7 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> Result<Strin
                         "fork" => ContextMode::Fork,
                         _ => ContextMode::Fresh,
                     });
-            let task = tc.args.get("task").and_then(Value::as_str);
-            match sup.spawn(agent_type, brief, context_mode, task, &tc.id) {
+            match sup.spawn(agent_type, brief, context_mode, &tc.id) {
                 Ok(s) => {
                     // The spawn reports the child's name: the model refers
                     // to it by name in the sub-agent tools that follow

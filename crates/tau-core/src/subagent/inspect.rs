@@ -39,11 +39,11 @@ impl Supervisor {
                         .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok())
                 })
         };
-        // The child's assigned task + its resume contract (spec §5.1):
-        // read from the parent's file — the single source of truth (the
-        // child's file carries no task entries).
-        let task = self.child_task(&child);
-        let resume_contract = task.as_ref().map(crate::task::resume_contract);
+        // The child's plan file (spec §5.3): its open-step resume contract.
+        let resume_contract =
+            std::fs::read_to_string(crate::plan::path(&self.cwd, &child.session_id))
+                .ok()
+                .and_then(|raw| crate::plan::resume_contract(&crate::plan::parse(&raw)));
         Some(SubagentInfo {
             handle: child.handle.clone(),
             child: child.session_id.clone(),
@@ -57,7 +57,6 @@ impl Supervisor {
                 .expect("child last message: no panic while the lock is held")
                 .clone(),
             usage,
-            task,
             resume_contract,
         })
     }

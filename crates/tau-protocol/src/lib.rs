@@ -5,8 +5,8 @@
 //!
 //! v0 narrowing (map #14, §14 U4): the command surface is the full §8 list;
 //! the event list carries only what the built core can produce — turn,
-//! queue, session, and system groups. Sub-agent, task, and om event groups
-//! are absent until tickets #22/#23/#24 wire their producers; the document
+//! queue, session, and system groups; the sub-agent and om event groups
+//! are absent until their producer tickets land. The document
 //! narrows as features finalize (ADR-0006).
 #![cfg_attr(test, allow(clippy::unwrap_used), allow(clippy::panic))]
 
@@ -118,8 +118,7 @@ pub struct GitStatus {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProtocolError {
     /// The command is part of the v0 surface but its producer ticket has not
-    /// landed yet (subagents: #23, tasks: #24, dynamic providers: v0 is
-    /// config-file-driven).
+    /// landed yet (dynamic providers: v0 is config-file-driven).
     Unsupported {
         message: String,
     },
@@ -339,32 +338,6 @@ pub enum Command {
         handle: String,
     },
 
-    TaskCreate {
-        session: String,
-        title: String,
-    },
-    TaskUpdate {
-        session: String,
-        task: String,
-        note: String,
-    },
-    TaskAssign {
-        session: String,
-        task: String,
-        worker: String,
-    },
-    TaskEvidence {
-        session: String,
-        task: String,
-        criterion: String,
-        summary: String,
-        passed: Option<bool>,
-    },
-    TaskCancel {
-        session: String,
-        task: String,
-    },
-
     /// The workspace's skill registry (discovery at command time; the GUI
     /// fetches on workspace open/switch and caches per workspace).
     SkillList {
@@ -551,31 +524,6 @@ mod tests {
             Command::SubagentStop {
                 handle: "h1".into(),
             },
-            Command::TaskCreate {
-                session: "s1".into(),
-                title: "t".into(),
-            },
-            Command::TaskUpdate {
-                session: "s1".into(),
-                task: "t1".into(),
-                note: "n".into(),
-            },
-            Command::TaskAssign {
-                session: "s1".into(),
-                task: "t1".into(),
-                worker: "h1".into(),
-            },
-            Command::TaskEvidence {
-                session: "s1".into(),
-                task: "t1".into(),
-                criterion: "c1".into(),
-                summary: "s".into(),
-                passed: Some(true),
-            },
-            Command::TaskCancel {
-                session: "s1".into(),
-                task: "t1".into(),
-            },
             Command::SkillList {
                 workspace: "w1".into(),
             },
@@ -677,7 +625,6 @@ mod tests {
                 turn: snapshot::TurnState::Idle,
                 gate_failed: false,
                 subagents: vec![],
-                tasks: vec![],
             },
             cursor: "e1".into(),
         };
@@ -700,7 +647,6 @@ mod tests {
             waiting_on: None,
             last_message: None,
             usage: None,
-            task: None,
             resume_contract: None,
         };
         let file = FileText {

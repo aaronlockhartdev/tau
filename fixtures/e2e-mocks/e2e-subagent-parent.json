@@ -3,7 +3,13 @@
   "turns": [
     {
       "calls": [
-        { "name": "task_create", "arguments": { "title": "e2e child ping", "criteria": ["the child reports ok"] } }
+        {
+          "name": "write",
+          "arguments": {
+            "path": "{{plan_path}}",
+            "content": "# Plan\n\n## Steps\n\n- [ ] the child reports ok\n"
+          }
+        }
       ]
     },
     {
@@ -13,13 +19,12 @@
           "arguments": {
             "type": "general",
             "context_mode": "fresh",
-            "task": "task-1",
-            "brief": "Satisfy the task's criterion by adding passing evidence, finish the task, then call parent_notify with done true and output {\"status\": \"ok\"}. e2e-subagent-child"
+            "brief": "Work your plan file: when done, check the step off, then call parent_notify with done true and output {\"status\": \"ok\"}. e2e-subagent-child"
           }
         }
       ]
     },
-    { "text": "Spawned the child with task-1 assigned." },
+    { "text": "Spawned the child with the brief." },
     { "text": "child done" }
   ],
   "usage": { "input_tokens": 260, "output_tokens": 88, "total_tokens": 348 }

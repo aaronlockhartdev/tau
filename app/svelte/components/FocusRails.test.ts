@@ -44,7 +44,7 @@ describe('FocusRails', () => {
   it('shows one drawer handle per edge', () => {
     render(FocusRails);
     expect(screen.getByTitle('show files & sessions')).toBeTruthy();
-    expect(screen.getByTitle('show tasks & sub-agents')).toBeTruthy();
+    expect(screen.getByTitle('show sub-agents')).toBeTruthy();
   });
 
   it('a handle opens its side\'s inspector with the real pane', async () => {
@@ -59,7 +59,7 @@ describe('FocusRails', () => {
   it('the right handle opens the right inspector', async () => {
     const user = userEvent.setup();
     render(FocusRails);
-    await user.click(screen.getByTitle('show tasks & sub-agents'));
+    await user.click(screen.getByTitle('show sub-agents'));
     expect(store.focusInspector).toBe('right');
   });
 

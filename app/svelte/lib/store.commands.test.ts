@@ -59,7 +59,7 @@ function snap(
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], tasks: [], ...extra.live },
+      live: { queue: [], turn: 'idle', subagents: [], ...extra.live },
       cursor: ''
     }
   };
@@ -96,11 +96,6 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     subagent_spawn: () => ({ kind: 'none' }),
     subagent_message: () => ({ kind: 'none' }),
     subagent_stop: () => ({ kind: 'none' }),
-    task_create: () => ({ kind: 'none' }),
-    task_update: () => ({ kind: 'none' }),
-    task_assign: () => ({ kind: 'none' }),
-    task_evidence: () => ({ kind: 'none' }),
-    task_cancel: () => ({ kind: 'none' }),
     skill_list: () => ({ kind: 'skills', skills: [] }),
     provider_list: () => ({ kind: 'providers', providers: [] }),
     provider_add: () => ({ kind: 'none' }),

@@ -208,32 +208,6 @@ describe('EntryCard', () => {
     expect(screen.getByText('do the thing')).toBeInTheDocument();
   });
 
-  it('a task card labels the event and expands to its payload', async () => {
-    mount({
-      id: 'e1',
-      kind: 'task',
-      text: JSON.stringify({
-        event: 'created',
-        id: 't1',
-        title: 'Ship the report',
-        steps: [],
-        criteria: []
-      }),
-      payload: {
-        event: 'created',
-        id: 't1',
-        title: 'Ship the report',
-        steps: [],
-        criteria: []
-      }
-    });
-    const head = screen.getByRole('button', { name: /task: Ship the report/ });
-    expect(head).toHaveTextContent('▸');
-    await user.click(head);
-    expect(screen.getByText('id:')).toBeInTheDocument();
-    expect(screen.getByText('t1')).toBeInTheDocument();
-  });
-
   it('a model system entry renders as a quiet state line', () => {
     mount({ id: 'e1', kind: 'system', text: 'model: acme/x-1' });
     expect(screen.getByText('model: acme/x-1')).toBeInTheDocument();

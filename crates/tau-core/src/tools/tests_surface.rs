@@ -106,7 +106,6 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         fresh_store(dir, "child"),
         SessionRole::Child {
             supervisor: Arc::clone(&sup),
-            parent: Arc::downgrade(&parent),
             provider: canned_provider(),
             system_prompt: "be terse".into(),
             model: "test-model".into(),
@@ -125,7 +124,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
 #[test]
 fn the_role_specs_table_is_exact() {
     let dir = tempfile::tempdir().unwrap();
-    let (parent, sup, _child) = parent_child(dir.path());
+    let (_parent, sup, _child) = parent_child(dir.path());
 
     let root = SessionRole::Root {
         core: None,
@@ -148,20 +147,12 @@ fn the_role_specs_table_is_exact() {
             "subagent_spawn",
             "subagent_message",
             "subagent_stop",
-            "subagent_state",
-            "task_create",
-            "task_assign",
-            "task_start",
-            "task_evidence",
-            "task_block",
-            "task_finish",
-            "task_cancel"
+            "subagent_state"
         ]
     );
 
     let child = SessionRole::Child {
         supervisor: sup,
-        parent: Arc::downgrade(&parent),
         provider: canned_provider(),
         system_prompt: "be terse".into(),
         model: "test-model".into(),
@@ -172,18 +163,7 @@ fn the_role_specs_table_is_exact() {
     let child_names = names(surface::specs_for(&child, None));
     assert_eq!(
         child_names,
-        vec![
-            "read",
-            "write",
-            "edit",
-            "bash",
-            "recall",
-            "parent_notify",
-            "task_start",
-            "task_evidence",
-            "task_block",
-            "task_finish"
-        ]
+        vec!["read", "write", "edit", "bash", "recall", "parent_notify"]
     );
 
     let bare = SessionRole::Bare {
@@ -209,9 +189,6 @@ fn the_role_specs_table_is_exact() {
         "subagent_message",
         "subagent_stop",
         "subagent_state",
-        "task_create",
-        "task_assign",
-        "task_cancel",
     ] {
         assert!(
             !child_names.contains(&foreign.to_owned()),
@@ -254,19 +231,7 @@ async fn a_child_refuses_supervisor_tools_through_the_surface() {
     };
     let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
     assert_eq!(text(out), "subagent_spawn: not available in this session");
-
-    let call = ToolCall {
-        id: "c2".into(),
-        name: "task_create".into(),
-        args: serde_json::json!({ "title": "t" }),
-    };
-    let out = surface::dispatch(ctx(child.as_ref(), &cwd, None, child.child_link()), &call).await;
-    assert_eq!(
-        text(out),
-        "task_create: not available in a child session — work the task your parent assigned"
-    );
 }
-
 /// A top-level session dispatching `parent_notify` gets the specific
 /// refusal — through the surface, without a turn.
 #[tokio::test]

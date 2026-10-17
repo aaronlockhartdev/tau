@@ -1,29 +1,6 @@
 {
-  "match": "You are a child sub-agent on an assigned task",
+  "match": "You are a child sub-agent",
   "turns": [
-    {
-      "calls": [
-        { "name": "task_start", "arguments": { "task": "task-1" } }
-      ]
-    },
-    {
-      "calls": [
-        {
-          "name": "task_evidence",
-          "arguments": {
-            "task": "task-1",
-            "criterion": "the child reports ok",
-            "summary": "child reports ok",
-            "passed": true
-          }
-        }
-      ]
-    },
-    {
-      "calls": [
-        { "name": "task_finish", "arguments": { "task": "task-1" } }
-      ]
-    },
     {
       "calls": [
         {

@@ -143,7 +143,7 @@
   });
 
   // Advance the wall clock on a slow tick so relative-age labels (session mru,
-  // attention "since", task "modified") stay current without session activity.
+  // attention "since") stay current without session activity.
   setInterval(() => {
     store.now = Date.now();
   }, 30_000);
@@ -861,8 +861,8 @@
           if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
         }
         if (ev.type === 'skill_list_changed') {
-          // Full-state replacement (ticket #31, the task_changed pattern):
-          // the change guard keeps an unchanged re-emit a no-op.
+          // Full-state replacement (ticket #31): the change guard keeps an
+          // unchanged re-emit a no-op.
           if (JSON.stringify(store.skills[ev.workspace] ?? []) !== JSON.stringify(ev.skills)) {
             store.skills[ev.workspace] = ev.skills;
           }
@@ -916,12 +916,6 @@
             lane: laneOf(q.lane),
             source: q.source ?? undefined
           }));
-          break;
-        }
-        case 'task_changed': {
-          // Full-state replacement (idempotent, spec §8): one event covers
-          // both the model's task tools and the app's task commands.
-          if (JSON.stringify(s.tasks) !== JSON.stringify(ev.tasks)) s.tasks = ev.tasks;
           break;
         }
         case 'session_event': {

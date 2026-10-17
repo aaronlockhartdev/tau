@@ -5,7 +5,6 @@
 import type {
   Entry,
   SubagentPayload,
-  TaskPayload,
   Usage,
   ViewEntry
 } from './protocol';
@@ -139,8 +138,6 @@ export function decodeEntry(v: ViewEntry): Entry {
       return { id: v.id, kind: 'spawn-snapshot', text: typeof p.log === 'string' ? p.log : '' };
     case 'subagent':
       return { id: v.id, kind: 'subagent', text: JSON.stringify(p ?? v.id), payload: p as SubagentPayload };
-    case 'task':
-      return { id: v.id, kind: 'task', text: JSON.stringify(p ?? v.id), payload: p as TaskPayload };
     default:
       return { id: v.id, kind: v.kind, text: JSON.stringify(p ?? v.id) };
   }
@@ -189,7 +186,7 @@ export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'e
     return 'ok';
   }
   if (s.startsWith(`${name}: `)) return 'error';
-  if (/^(error:|unknown tool:|unknown task tool)/.test(s)) return 'error';
+  if (/^(error:|unknown tool:)/.test(s)) return 'error';
   return 'ok';
 }
 

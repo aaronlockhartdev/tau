@@ -45,7 +45,7 @@ function snap(
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], tasks: [] },
+      live: { queue: [], turn: 'idle', subagents: [] },
       cursor: ''
     }
   };
@@ -91,9 +91,8 @@ describe('newSession / renameSession', () => {
     store.pane[WS.id] = {
       center: 'chat',
       ltab: 'sessions',
-      rtab: 'tasks',
+      rtab: 'subs',
       historyOpen: false,
-      expandedTasks: [],
       openGroups: null,
       renamingId: null,
       archOpen: false,

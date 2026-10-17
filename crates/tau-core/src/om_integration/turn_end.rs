@@ -444,11 +444,7 @@ impl OmState {
     /// `role: user` item (#97). Pure over the record (no store access), so the
     /// one-shot `changed` flip sticks when the loop runs it on the persistent
     /// state under the lock.
-    pub fn assemble_context(
-        &mut self,
-        base: &str,
-        task_contract: Option<&str>,
-    ) -> AssembledContext {
+    pub fn assemble_context(&mut self, base: &str) -> AssembledContext {
         let mut instructions = base.to_owned();
         let observations = self.record.agent_observations();
         if !observations.is_empty() {
@@ -456,10 +452,6 @@ impl OmState {
             instructions.push_str(om::OBSERVATION_CONTEXT_PROMPT);
             instructions.push('\n');
             instructions.push_str(om::OBSERVATION_CONTEXT_INSTRUCTIONS);
-        }
-        if let Some(contract) = task_contract {
-            instructions.push_str("\n\n# Task (resume contract)\n");
-            instructions.push_str(contract);
         }
         // One `role: system` message per observation group (mastra parity,
         // #96), pushed before the one-shot hint so its "messages following are

@@ -35,7 +35,7 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
         SubAgents::default(),
     );
     let s = sup
-        .spawn("general", "slow work", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "slow work", Some(ContextMode::Fresh), "c0")
         .unwrap();
     let drive = s.drive;
     // Let the slow stream start (past the 200 ms pre-delay), then stop
@@ -132,7 +132,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
         },
     );
     let first = sup
-        .spawn("general", "slow", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "slow", Some(ContextMode::Fresh), "c0")
         .unwrap();
     let drive = first.drive;
     // Let the slow stream start (past the 200 ms pre-delay), then stop
@@ -164,7 +164,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
     // is the ordering margin), so its declared done is observed `done` —
     // the drive ends.
     let second = sup
-        .spawn("general", "second", Some(ContextMode::Fresh), None, "c1")
+        .spawn("general", "second", Some(ContextMode::Fresh), "c1")
         .unwrap();
     std::fs::write(
         crate::plan::path(dir.path(), &second.session_id),
@@ -223,7 +223,7 @@ async fn a_non_running_child_refuses_a_second_stop() {
         SubAgents::default(),
     );
     let done_child = sup
-        .spawn("general", "one", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "one", Some(ContextMode::Fresh), "c0")
         .unwrap();
     // The model keeps its plan complete: the declared done is observed.
     std::fs::write(
@@ -240,7 +240,7 @@ async fn a_non_running_child_refuses_a_second_stop() {
     let out = sup.stop(&done_child.handle, StoppedBy::User).unwrap();
     assert!(out.contains("already done"), "{out}");
     let parked = sup
-        .spawn("general", "two", Some(ContextMode::Fresh), None, "c1")
+        .spawn("general", "two", Some(ContextMode::Fresh), "c1")
         .unwrap();
     wait_for(|| {
         matches!(

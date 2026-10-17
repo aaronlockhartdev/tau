@@ -38,7 +38,6 @@
   const okey = (slot: string) => `${heightKey}:${slot}`;
   let open = $state({
     tool: !!store.entryOpen.get(okey('tool')),
-    task: !!store.entryOpen.get(okey('task')),
     output: !!store.entryOpen.get(okey('output')),
     skill: !!store.entryOpen.get(okey('skill')),
     obs: !!store.entryOpen.get(okey('obs')),

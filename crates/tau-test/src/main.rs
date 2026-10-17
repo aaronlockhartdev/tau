@@ -2,7 +2,7 @@
 //!
 //! Suites: `accept-tools` multi-turn with the four core tools,
 //! `accept-subagent` a sub-agent spawned by the scripted model plus its
-//! task pointer, `accept-om` OM compaction on a synthesized long session
+//! plan files, `accept-om` OM compaction on a synthesized long session
 //! (mock observe/reflect), `core` branching + manual archive round-trip
 //! (offline). All suites run against the deterministic mock LLM only
 //! (ADR-0010): `TAU_ENDPOINT` is the mock's address (the justfile sets it;
@@ -27,7 +27,6 @@ use tau_core::subagent::{
     BoxedDrive, ChildDriver, ChildProviderFactory, KIND_SUBAGENT, SpawnNotice, StateNotice,
     SubagentBridge, Supervisor, SupervisorParams, WakeNotice,
 };
-use tau_core::task::KIND_TASK;
 use tau_core::tools;
 use tau_mock_llm::server::MODEL_ID;
 
@@ -100,8 +99,8 @@ fn session_files(cwd: &Path) -> Vec<PathBuf> {
 // models need the tool list spelled out in the system prompt to use them.
 const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use them as instructed; edit takes the 3-char anchors from read output.";
 
-/// accept-subagent's parent gets the sub-agent + task tools named too.
-const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, the task tools (task_create, task_assign, task_start, task_evidence, task_block, task_finish, task_cancel), and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
+/// accept-subagent's parent gets the sub-agent tools named too.
+const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";
 async fn accept_tools(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
     std::fs::write(ws.path().join("notes.txt"), "line1\nline2\nline3\n").unwrap();
@@ -332,7 +331,7 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
         }),
         model: ctx.model.clone(),
         system_prompt: format!(
-            "{SUBAGENT_PROMPT}\n\nYou are a child sub-agent on an assigned task; report to the parent when done."
+            "{SUBAGENT_PROMPT}\n\nYou are a child sub-agent; keep your own plan file current and report to the parent when done."
         ),
         om: Om::default(),
         om_model: String::new(),
@@ -369,7 +368,7 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
 
     agent
         .send(
-            "First create one task with task_create (title 'child ping', a single acceptance criterion 'the child reports ok'). Then use subagent_spawn to spawn one sub-agent (type 'general', context_mode 'fresh') and assign it that task. Its brief: 'Satisfy the task's criterion by adding passing evidence, finish the task, then call parent_notify with done true and output {\"status\": \"ok\"}.' When the sub-agent reports back, reply exactly: child done.",
+            "Write your plan file with one unchecked step, 'the child reports ok'. Then use subagent_spawn to spawn one sub-agent (type 'general', context_mode 'fresh') with the brief: 'Work your plan file: when done, check the step off, then call parent_notify with done true and output {\"status\": \"ok\"}.' When the sub-agent reports back, check your plan step off and reply exactly: child done.",
             Lane::Steering,
         );
     agent.process().await.map_err(|e| e.to_string())?;
@@ -454,48 +453,25 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
         .find(|e| e.kind == KIND_SUBAGENT)
         .and_then(|e| e.payload.get("state").and_then(Value::as_str))
         .unwrap_or("");
-    // Task linkage, when the parent assigned one: the record never leaves
-    // the parent file (single source of truth — Supervisor::child_task),
-    // the child's file carries no task entries, the parent's Assigned event
-    // points at the child's session, and a terminal child forces a terminal
-    // pointer — no task dangles in_progress after a done/failed child.
-    let tasks: Vec<&Entry> = pentries.iter().filter(|e| e.kind == KIND_TASK).collect();
-    let assigned = tasks
-        .iter()
-        .any(|e| e.payload.get("event").and_then(Value::as_str) == Some("assigned"));
-    if assigned {
-        let linked = tasks.iter().any(|e| {
-            e.payload.get("event").and_then(Value::as_str) == Some("assigned")
-                && e.payload.get("worker").and_then(Value::as_str) == Some(child_id.as_str())
-        });
-        if !linked {
-            return Err(
-                "accept-subagent: the parent's Assigned event does not point at the child session"
-                    .into(),
-            );
+    // Plan-file linkage (spec §5.3): the child's `done` is observed from
+    // its own plan file — a terminal child must have a complete plan
+    // (every step checked), and the parent's plan is complete after the
+    // child's report.
+    if matches!(child_state, "done" | "failed") {
+        let raw = std::fs::read_to_string(tau_core::plan::path(ws.path(), &child_id))
+            .map_err(|e| format!("accept-subagent: the child's plan file is unreadable: {e}"))?;
+        if !tau_core::plan::parse(&raw).complete() {
+            return Err(format!(
+                "accept-subagent: the child ended {child_state} but its plan is not complete"
+            ));
         }
-        if centries.iter().any(|e| e.kind == KIND_TASK) {
-            return Err(
-                "accept-subagent: the child's session carries task entries (the record must stay in the parent file)"
-                    .into(),
-            );
-        }
-        if matches!(child_state, "done" | "failed") {
-            // The child's own `task_finish` resolves the task on the
-            // parent's file: all criteria satisfied -> finished,
-            // otherwise handed_off (the terminal markers; a `pointer` event
-            let terminal = tasks.iter().any(|e| {
-                matches!(
-                    e.payload.get("event").and_then(Value::as_str).unwrap_or(""),
-                    "finished" | "handed_off" | "cancelled"
-                )
-            });
-            if !terminal {
-                return Err(format!(
-                    "accept-subagent: the child ended {child_state} but the task pointer has no terminal state (dangling)"
-                ));
-            }
-        }
+    }
+    let parent_raw = std::fs::read_to_string(tau_core::plan::path(ws.path(), &id))
+        .map_err(|e| format!("accept-subagent: the parent's plan file is unreadable: {e}"))?;
+    if !tau_core::plan::parse(&parent_raw).complete() {
+        return Err(
+            "accept-subagent: the parent's plan is not complete after the child's report".into(),
+        );
     }
     Ok(())
 }

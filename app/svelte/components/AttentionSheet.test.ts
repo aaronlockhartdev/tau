@@ -42,18 +42,17 @@ describe('AttentionSheet', () => {
       sessions: {
         s1: seedState(meta('s1', { title: 'hero' }), {
           over: {
-            tasks: [
+            subagents: [
               {
-                id: 't1',
-                title: 'Ship the report',
-                status: 'blocked',
-                steps: [],
-                criteria: [],
-                evidence: [],
-                blockers: [{ reason: 'needs api key', needs: 'user' }],
-                decisions: [],
-                notes: [],
-                updated: 4000
+                handle: 'h1',
+                child: 'c1',
+                agent_type: 'researcher',
+                context_mode: 'fresh',
+                state: 'idle',
+                waiting_on: 'user',
+                last_message: null,
+                usage: null,
+                resume_contract: null
               }
             ]
           }
@@ -65,7 +64,7 @@ describe('AttentionSheet', () => {
     render(AttentionSheet);
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect(screen.getByText('hero')).toBeTruthy();
-    expect(screen.getByText('Ship the report — needs api key')).toBeTruthy();
+    expect(screen.getByText('researcher is waiting on you')).toBeTruthy();
   });
 
   it('jump opens the session and closes the sheet', async () => {
@@ -84,7 +83,6 @@ describe('AttentionSheet', () => {
                 waiting_on: 'user',
                 last_message: null,
                 usage: null,
-                task: null,
                 resume_contract: null
               }
             ]

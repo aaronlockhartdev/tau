@@ -27,7 +27,6 @@ function info(over: Partial<SubagentInfo> = {}): SubagentInfo {
     waiting_on: null,
     last_message: null,
     usage: null,
-    task: null,
     resume_contract: null,
     ...over
   };

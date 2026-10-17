@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { md } from './markdown';
 import { present, type Shell } from './presentation';
-import { Bot, Check, File, Search, Terminal } from '@lucide/svelte';
+import { Bot, File, Search, Terminal } from '@lucide/svelte';
 import type { Entry, MessageEntry } from './protocol';
 
 const ctx = { sourceLabel: '', parentLabel: '' };
@@ -175,35 +175,9 @@ describe('present', () => {
     expect(icon('subagent_spawn')).toBe(Bot);
     expect(icon('parent_notify')).toBe(Bot);
     expect(icon('recall')).toBe(Search);
-    expect(icon('task_create')).toBe(Check);
     expect(icon('bash')).toBe(Terminal);
   });
 
-  it('a task card labels the event and reveals the payload rows without the event key', () => {
-    const c = cardOf({
-      id: 'e1',
-      kind: 'task',
-      text: 'x',
-      payload: { event: 'created', id: 't1', title: 'Ship the report', steps: [], criteria: [] }
-    });
-    expect(c.header?.label).toBe('task: Ship the report');
-    expect(c.header?.open).toBe('task');
-    expect(c.header?.singleClick).toBe(true);
-    expect(c.collapseWhenClosed).toBe(true);
-    const reveal = c.reveal;
-    expect(reveal?.group).toBe(false);
-    expect(reveal?.sections).toEqual([
-      {
-        type: 'kv',
-        rows: [
-          { k: 'id', lines: ['t1'] },
-          { k: 'title', lines: ['Ship the report'] },
-          { k: 'steps', lines: [] },
-          { k: 'criteria', lines: [] }
-        ]
-      }
-    ]);
-  });
 
   it('an observation card is collapsible with its body in the reveal', () => {
     const c = cardOf({

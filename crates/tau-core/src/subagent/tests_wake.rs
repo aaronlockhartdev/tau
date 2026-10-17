@@ -67,19 +67,19 @@ async fn wake_kinds_follow_the_observed_state() {
         SubAgents::default(),
     );
     let a = sup
-        .spawn("general", "a", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "a", Some(ContextMode::Fresh), "c0")
         .unwrap();
     let b = sup
-        .spawn("general", "b", Some(ContextMode::Fresh), None, "c1")
+        .spawn("general", "b", Some(ContextMode::Fresh), "c1")
         .unwrap();
     let c = sup
-        .spawn("general", "c", Some(ContextMode::Fresh), None, "c2")
+        .spawn("general", "c", Some(ContextMode::Fresh), "c2")
         .unwrap();
     let d = sup
-        .spawn("general", "d", Some(ContextMode::Fresh), None, "c3")
+        .spawn("general", "d", Some(ContextMode::Fresh), "c3")
         .unwrap();
     let e = sup
-        .spawn("general", "e", Some(ContextMode::Fresh), None, "c4")
+        .spawn("general", "e", Some(ContextMode::Fresh), "c4")
         .unwrap();
     // A's done is observed: its plan file is complete before the
     // declaration lands (the test plays the model's file edit; the
@@ -167,7 +167,7 @@ async fn a_message_origin_rest_is_silent_to_the_parent() {
         SubAgents::default(),
     );
     let s = sup
-        .spawn("general", "go", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "go", Some(ContextMode::Fresh), "c0")
         .unwrap();
     // The spawn-origin rest: the parent is informed.
     wait_for(|| {
@@ -240,7 +240,7 @@ async fn a_done_rest_wakes_regardless_of_origin() {
         SubAgents::default(),
     );
     let s = sup
-        .spawn("general", "go", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "go", Some(ContextMode::Fresh), "c0")
         .unwrap();
     // The spawn-origin rest (idle): informs the parent.
     wait_for(|| {

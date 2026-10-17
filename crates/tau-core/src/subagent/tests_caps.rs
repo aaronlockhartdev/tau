@@ -50,11 +50,11 @@ async fn the_caps() {
         },
     );
     let first = sup
-        .spawn("general", "one", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "one", Some(ContextMode::Fresh), "c0")
         .unwrap();
     // Second spawn while the first holds its slot: refused.
     let err = sup
-        .spawn("general", "two", Some(ContextMode::Fresh), None, "c1")
+        .spawn("general", "two", Some(ContextMode::Fresh), "c1")
         .expect_err("second spawn while the first holds its slot");
     assert!(err.contains("concurrency cap"), "{err}");
     // The child's tool set: parent_notify in, subagent_spawn out.
@@ -88,7 +88,7 @@ async fn the_caps() {
             ChildState::Done { .. }
         )
     });
-    let second = sup.spawn("general", "two", Some(ContextMode::Fresh), None, "c1");
+    let second = sup.spawn("general", "two", Some(ContextMode::Fresh), "c1");
     assert!(
         second.is_ok(),
         "a done child frees its slot: {:?}",
@@ -96,7 +96,7 @@ async fn the_caps() {
     );
     // Unknown agent types are refused, naming what is available.
     let err = sup
-        .spawn("planner", "x", Some(ContextMode::Fresh), None, "c2")
+        .spawn("planner", "x", Some(ContextMode::Fresh), "c2")
         .expect_err("an unknown type is refused");
     assert!(err.contains("unknown agent type \"planner\""), "{err}");
     assert!(err.contains("general"), "{err}");
@@ -163,7 +163,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
     }));
     sup.attach_parent(&parent);
     let spawned = sup
-        .spawn("reviewer", "look", None, None, "c0")
+        .spawn("reviewer", "look", None, "c0")
         .expect("the discovered type spawns");
     // The type's body, not the session's prompt (plus the child's own
     // plan-file section, plan_wiring); the type's model, not the
@@ -244,7 +244,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
     }));
     sup.attach_parent(&parent);
     let spawned = sup
-        .spawn("general", "look", None, None, "c0")
+        .spawn("general", "look", None, "c0")
         .expect("general always spawns");
     // The session's prompt verbatim — the catalog rides along with it —
     // plus the child's own plan-file section (plan_wiring names the
@@ -306,20 +306,20 @@ async fn the_depth_cap() {
     // At the cap: refused with a clear diagnostic.
     let at_cap = sup(1, 1);
     let err = at_cap
-        .spawn("general", "x", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "x", Some(ContextMode::Fresh), "c0")
         .expect_err("a session at the depth cap cannot spawn");
     assert!(err.contains("depth cap"), "{err}");
     // max_depth 0 disables spawning for a top-level session.
     let zero = sup(0, 0);
     let err = zero
-        .spawn("general", "x", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "x", Some(ContextMode::Fresh), "c0")
         .expect_err("max_depth 0 disables spawning");
     assert!(err.contains("depth cap"), "{err}");
     // Below the cap the depth check passes (spawn then fails only on
     // the missing parent attachment, not on depth).
     let below = sup(0, 1);
     let err = below
-        .spawn("general", "x", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "x", Some(ContextMode::Fresh), "c0")
         .expect_err("no parent attached in this bare harness");
     assert!(!err.contains("depth cap"), "{err}");
 }
@@ -405,7 +405,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
     // is in flight too — the window opens when the notify releases
     // both rounds at once.
     let spawned = sup
-        .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "work", Some(ContextMode::Fresh), "c0")
         .unwrap();
     wait_for(|| driver.calls.load(Ordering::SeqCst) == 1);
     sup.stop(&spawned.handle, StoppedBy::User).unwrap();

@@ -51,11 +51,9 @@ expression: output
           "waiting_on": null,
           "last_message": null,
           "usage": null,
-          "task": null,
           "resume_contract": null
         }
-      ],
-      "tasks": []
+      ]
     },
     "cursor": "00000042"
   }

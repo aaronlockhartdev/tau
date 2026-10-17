@@ -8,11 +8,10 @@ export interface PaneState {
   // ('files'). Open files are separate state, so 'chat' keeps them alive.
   center: 'chat' | 'files';
   ltab: 'files' | 'sessions';
-  rtab: 'tasks' | 'subs';
+  rtab: 'subs';
   // F3: the right-pane history section (done/failed/stopped rows) starts
   // collapsed; per-row badges carry the exact state, so no filter exists.
   historyOpen: boolean;
-  expandedTasks: string[];
   // null = the default view (the group containing the active session
   // expanded); an array = the explicit set the user has toggled.
   openGroups: string[] | null;
@@ -25,15 +24,13 @@ export interface PaneState {
   selAnchor: string | null;
 }
 
-// The filters default to 'all': a done sub-agent or task that the user
-// just watched finish is what they expect to see, not an empty tab.
+// The filters default to 'all': a done sub-agent that the user
 export function defaultPane(): PaneState {
   return {
     center: 'chat',
     ltab: 'sessions',
-    rtab: 'tasks',
+    rtab: 'subs',
     historyOpen: false,
-    expandedTasks: [],
     openGroups: null,
     renamingId: null,
     archOpen: false,

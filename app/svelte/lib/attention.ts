@@ -1,6 +1,6 @@
 // The attention fold (workbench P5): a GUI-side projection over state the
 // core already tracks — no protocol change. A session needs you when a
-// child is parked on the user, or a task is blocked on the user.
+// child is parked on the user.
 
 import type { SessionState } from './sessions';
 
@@ -29,19 +29,6 @@ export function attentionOf(sessions: Record<string, SessionState>): AttentionIt
           title,
           reason: `${who} is waiting on you`,
           since: 0
-        });
-      }
-    }
-    // A task blocked on the user (spec §5.3).
-    for (const t of s.tasks) {
-      const onUser = t.blockers.find((b) => b.needs === 'user');
-      if (t.status === 'blocked' && onUser) {
-        items.push({
-          session: s.meta.id,
-          workspace: ws,
-          title,
-          reason: `${t.title} — ${onUser.reason}`,
-          since: t.updated
         });
       }
     }

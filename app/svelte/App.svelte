@@ -3,7 +3,7 @@
   // ALWAYS central — focus mode collapses both side panes (the prototype's
   // grid fix: the center keeps its explicit track when the panes hide).
   // The side panes are ticket #26: left = files | sessions tree, right =
-  // tasks | sub-agents (both tabbed, per the #11 verdict).
+  // sub-agents.
 
   import WorkspaceTabs from './components/WorkspaceTabs.svelte';
   import Transcript from './components/Transcript.svelte';

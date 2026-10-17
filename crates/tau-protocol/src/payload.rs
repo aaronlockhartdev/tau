@@ -5,7 +5,7 @@
 //! `LiveState` shapes are built from them, never from raw maps).
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 /// A function call the model emitted on a turn (spec §5.4).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -17,96 +17,12 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StepStatus {
-    Pending,
-    Active,
-    Done,
-    Skipped,
-}
-
-impl StepStatus {
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            StepStatus::Pending => "pending",
-            StepStatus::Active => "active",
-            StepStatus::Done => "done",
-            StepStatus::Skipped => "skipped",
-        }
-    }
-}
-
+/// The resume contract (spec §5.3, ADR-0001 revision): the plan's next
+/// action — the handoff a resumed session continues from. The session's
+/// plan file is the record; this points at where it left off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Step {
-    pub text: String,
-    pub expected_output: String,
-    pub status: StepStatus,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CriterionStatus {
-    Pending,
-    Satisfied,
-    Failed,
-    Skipped,
-}
-
-impl CriterionStatus {
-    #[must_use]
-    pub const fn as_str(&self) -> &'static str {
-        match self {
-            CriterionStatus::Pending => "pending",
-            CriterionStatus::Satisfied => "satisfied",
-            CriterionStatus::Failed => "failed",
-            CriterionStatus::Skipped => "skipped",
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Criterion {
-    pub text: String,
-    pub status: CriterionStatus,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Evidence {
-    pub criterion: String,
-    pub summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub artifact: Option<String>,
-    pub passed: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub step: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Blocker {
-    pub reason: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub needs: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Decision {
-    pub question: String,
-    pub decision: String,
-    pub decided_by: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rationale: Option<String>,
-}
-
-/// The creator's copy of an assigned task (spec §5.3): a pointer, not a
-/// record — the worker's session is the live one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WorkerPointer {
-    pub session: String,
-    pub status: String,
+pub struct ResumeContract {
+    pub next_action: String,
 }
 
 /// The user entry's payload (spec §5): the message text and its routing
@@ -259,6 +175,7 @@ impl TurnUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// #34: text stays a bare JSON string (the common, cheap path); an
     /// image is the tagged block.
@@ -288,18 +205,6 @@ mod tests {
             image.to_value()["output"],
             json!({"type": "image", "media_type": "image/png", "data_base64": "AAAA"})
         );
-    }
-
-    #[test]
-    fn step_and_criterion_status_strings() {
-        assert_eq!(StepStatus::Pending.as_str(), "pending");
-        assert_eq!(StepStatus::Active.as_str(), "active");
-        assert_eq!(StepStatus::Done.as_str(), "done");
-        assert_eq!(StepStatus::Skipped.as_str(), "skipped");
-        assert_eq!(CriterionStatus::Pending.as_str(), "pending");
-        assert_eq!(CriterionStatus::Satisfied.as_str(), "satisfied");
-        assert_eq!(CriterionStatus::Failed.as_str(), "failed");
-        assert_eq!(CriterionStatus::Skipped.as_str(), "skipped");
     }
 
     #[test]
@@ -350,7 +255,3 @@ mod tests {
         assert_eq!(TurnUsage::default().reasoning_tokens(), 0);
     }
 }
-
-mod task;
-
-pub use task::*;

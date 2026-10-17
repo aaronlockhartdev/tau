@@ -17,7 +17,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 
 /// A message lane (spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -171,11 +171,6 @@ pub(crate) struct Inner {
     /// The child-side link (ticket #23): present on child sessions only;
     /// routes `parent_notify` to the child's supervisor.
     child: Option<Arc<crate::subagent::ChildLink>>,
-    /// The parent's session (child sessions only, ticket: shared task
-    /// model): the child's task tools route here, so the task never
-    /// leaves the parent's file. `Weak` — the supervisor's `Arc` already
-    /// links parent and child; this adds no new strong cycle.
-    parent_task_store: Option<Weak<AgentSession>>,
 }
 
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
@@ -251,7 +246,6 @@ impl AgentSession {
                 plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
-                parent_task_store: None,
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -485,57 +479,6 @@ impl AgentSession {
         }
     }
 
-    /// The parent's task-routing target (child sessions only): set at
-    /// spawn from the supervisor's attached parent.
-    pub(crate) fn set_parent_task_store(&self, parent: Option<Weak<AgentSession>>) {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .parent_task_store = parent;
-    }
-
-    /// The task tools (spec §5.3/§5.4). A child session's worker tools
-    /// route to the parent's store — the task never leaves the parent's
-    /// file (one store, one lock); the child's pane is a projection.
-    /// The child's `inner` is read and released before the parent's lock
-    /// is taken: no child-lock → parent-lock nesting (the deadlock guard).
-    fn task_tool_dispatch(&self, name: &str, args: &Value, defer: bool) -> Result<String, String> {
-        let (is_child, parent) = {
-            let inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            (
-                inner.child.is_some(),
-                inner.parent_task_store.as_ref().and_then(Weak::upgrade),
-            )
-        };
-        if let Some(r) = tools::surface::task_child_refusal(is_child, name) {
-            return Err(r);
-        }
-        // #149: a turn-loop task dispatch defers the record's file write (it
-        // lands behind the in-flight tool entry); a command writes at once.
-        // The flag is set on the owner's store — where the write goes — for
-        // the duration of the call only.
-        if let Some(parent) = parent {
-            parent.with_task_store(|store| {
-                store.set_defer_side_appends(defer);
-                let out = crate::task::tool_call(store, name, args);
-                store.set_defer_side_appends(false);
-                out
-            })
-        } else {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
-            inner.store.set_defer_side_appends(defer);
-            let out = crate::task::tool_call(&mut inner.store, name, args);
-            inner.store.set_defer_side_appends(false);
-            out
-        }
-    }
-
     /// The session store's header timestamp (epoch ms).
     pub(crate) fn store_created(&self) -> u64 {
         self.inner
@@ -546,25 +489,13 @@ impl AgentSession {
     }
 
     /// Run one operation against this session's own store — the
-    /// single-writer surface for other components (the sub-agent task
-    /// gate, the app's task commands; review B3).
-    pub(crate) fn with_task_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
+    /// single-writer surface for other components (review B3).
+    pub(crate) fn with_store<R>(&self, f: impl FnOnce(&mut SessionStore) -> R) -> R {
         let mut inner = self
             .inner
             .lock()
             .expect("agent inner: no panic while the lock is held");
         f(&mut inner.store)
-    }
-
-    /// The seven task tools (the app's task commands; the model's dispatch
-    /// routes them through the surface) — both share the child→parent routing.
-    pub(crate) fn task_tool_call(
-        &self,
-        name: &str,
-        args: &Value,
-        defer: bool,
-    ) -> Result<String, String> {
-        self.task_tool_dispatch(name, args, defer)
     }
 
     #[cfg(test)]

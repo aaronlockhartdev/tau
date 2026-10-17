@@ -86,17 +86,6 @@ mod commands {
     }
 
     #[test]
-    fn task_evidence() {
-        assert_json_snapshot!(Command::TaskEvidence {
-            session: "s1".into(),
-            task: "t-1".into(),
-            criterion: "fast".into(),
-            summary: "bench attached".into(),
-            passed: Some(true),
-        });
-    }
-
-    #[test]
     fn provider_add() {
         assert_json_snapshot!(Command::ProviderAdd {
             name: "vllm".into(),
@@ -129,7 +118,6 @@ mod commands {
 mod events {
     use crate::view_entry;
     use insta::assert_json_snapshot;
-    use tau_protocol::payload::Task;
     use tau_protocol::snapshot::QueuedItem;
     use tau_protocol::{Event, Usage};
 
@@ -187,28 +175,6 @@ mod events {
     }
 
     #[test]
-    fn task_changed() {
-        assert_json_snapshot!(Event::TaskChanged {
-            workspace: "w1".into(),
-            session: "s1".into(),
-            tasks: vec![Task {
-                id: "t-1".into(),
-                title: "do it".into(),
-                status: "pending".into(),
-                steps: vec![],
-                criteria: vec![],
-                evidence: vec![],
-                blockers: vec![],
-                decisions: vec![],
-                notes: vec![],
-                worker: None,
-                created_in: None,
-                updated: 0,
-            }],
-        });
-    }
-
-    #[test]
     fn file_tree_changed() {
         assert_json_snapshot!(Event::FileTreeChanged {
             workspace: "w1".into(),
@@ -259,10 +225,8 @@ mod outputs {
                         waiting_on: None,
                         last_message: None,
                         usage: None,
-                        task: None,
                         resume_contract: None,
                     }],
-                    tasks: vec![],
                 },
                 cursor: "00000042".into(),
             },
@@ -293,47 +257,8 @@ mod outputs {
 mod payloads {
     use insta::assert_json_snapshot;
     use tau_protocol::payload::{
-        AssistantPayload, FunctionCall, ImageBlock, Step, StepStatus, Task, TaskEvent, ToolPayload,
+        AssistantPayload, FunctionCall, ImageBlock, ResumeContract, ToolPayload,
     };
-
-    fn task() -> Task {
-        Task {
-            id: "t-1".into(),
-            title: "ship the parser".into(),
-            status: "active".into(),
-            steps: vec![Step {
-                text: "write the parser".into(),
-                expected_output: "tests pass".into(),
-                status: StepStatus::Active,
-            }],
-            criteria: vec![],
-            evidence: vec![],
-            blockers: vec![],
-            decisions: vec![],
-            notes: vec!["started".into()],
-            worker: None,
-            created_in: Some("s1".into()),
-            updated: 1_700_000_000_000,
-        }
-    }
-
-    #[test]
-    fn task_snapshot() {
-        assert_json_snapshot!(task());
-    }
-
-    #[test]
-    fn task_event_created() {
-        assert_json_snapshot!(TaskEvent::Created {
-            title: "ship the parser".into(),
-            steps: vec![Step {
-                text: "write the parser".into(),
-                expected_output: "tests pass".into(),
-                status: StepStatus::Pending,
-            }],
-            criteria: vec![],
-        });
-    }
 
     #[test]
     fn assistant_payload() {
@@ -370,7 +295,9 @@ mod payloads {
 
     #[test]
     fn resume_contract() {
-        let c = tau_protocol::payload::resume_contract(&task());
+        let c = ResumeContract {
+            next_action: "fix the parser".into(),
+        };
         assert_json_snapshot!(c);
     }
 }

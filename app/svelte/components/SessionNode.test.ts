@@ -115,7 +115,6 @@ describe('SessionNode', () => {
       waiting_on: 'parent',
       last_message: null,
       usage: null,
-      task: null,
       resume_contract: null
     };
     s.subagents = [info];

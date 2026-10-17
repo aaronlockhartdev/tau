@@ -1,18 +1,15 @@
 <script lang="ts">
-  // Right pane (spec §9, the #11 verdict): tabbed tasks | sub-agents.
-  // F3: no filter chips — each tab groups rows by lifecycle (active/live
-  // on top, history collapsed behind a count header; the per-row badge
-  // already carries the exact state). Last-modified sorted.
-  // The tasks panel shows only the currently opened session's tasks
-  // (per-session tasks, spec §5.3); a task row expands into labeled
-  // detail sections. The sub-agents panel renders a tree (nesting
-  // supported) — double-click opens the sub-agent's session, which is an
-  // ordinary session (a tab opens for it).
+  // Right pane (spec §9): the sub-agents panel. F3: no filter chips — the
+  // panel groups rows by lifecycle (live on top, history collapsed behind a
+  // count header; the per-row badge already carries the exact state).
+  // Last-modified sorted. The panel renders a tree (nesting supported) —
+  // double-click opens the sub-agent's session, which is an ordinary session
+  // (a tab opens for it).
   import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store.svelte';
-  import { fmtAgo, fmtK } from '../lib/format';
+  import { fmtK } from '../lib/format';
   import { onActivate } from '../lib/ui';
-  import { ChevronDown, CircleSlash } from '@lucide/svelte';
-  import type { Task, SubagentInfo } from '../lib/protocol';
+  import { ChevronDown } from '@lucide/svelte';
+  import type { SubagentInfo } from '../lib/protocol';
 
   const cur = $derived(currentSession());
   const ws = $derived(cur?.meta.workspace ?? null);
@@ -21,15 +18,6 @@
     if (ws) ensurePane(ws);
   });
 
-  const tasks = $derived(cur ? cur.tasks : []);
-  // F3 grouping: active = not done; history = done. The history section
-  // collapses behind its count header (p.historyOpen).
-  const byUpdated = (a: Task, b: Task) => b.updated - a.updated;
-  // Terminal = done OR cancelled: both leave the active list, and a canceled
-  // task is history (its work is over), not live.
-  const isTerminal = (t: Task) => t.status === 'done' || t.status === 'cancelled';
-  const liveTasks = $derived(tasks.filter((t) => !isTerminal(t)).sort(byUpdated));
-  const histTasks = $derived(tasks.filter(isTerminal).sort(byUpdated));
 
   const subs = $derived(cur ? cur.subagents : []);
   const isLive = (i: SubagentInfo) => i.state === 'running' || i.state === 'idle';
@@ -58,18 +46,9 @@
   function titleOf(i: SubagentInfo): string {
     return store.sessions[i.child]?.meta.title ?? i.child;
   }
-  function setRtab(t: PaneState['rtab']): void {
-    const q = pane(ws);
-    if (q) q.rtab = t;
-  }
   function toggleHist(): void {
     const q = pane(ws);
     if (q) q.historyOpen = !q.historyOpen;
-  }
-  function toggleTask(id: string): void {
-    const q = pane(ws);
-    if (!q) return;
-    q.expandedTasks = q.expandedTasks.includes(id) ? q.expandedTasks.filter((x) => x !== id) : [...q.expandedTasks, id];
   }
   function selectSub(h: string): void {
     const q = pane(ws);
@@ -80,90 +59,10 @@
 <div class="pane">
   <div class="tabs" role="tablist">
     <div class="seg">
-      <button class="tab" class:on={p?.rtab === 'tasks'} disabled={!p} onclick={() => { if (p) setRtab('tasks'); }}>tasks</button>
-      <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p} onclick={() => { if (p) setRtab('subs'); }}>sub-agents</button>
+      <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p}>sub-agents</button>
     </div>
   </div>
   {#if p}
-  {#if p.rtab === 'tasks'}
-    <div class="list">
-      {#if liveTasks.length === 0 && histTasks.length === 0}
-        <div class="emptyc">No tasks — ask the agent to make one</div>
-      {:else}
-        {#snippet taskRow(t: Task)}
-          <div
-            class="lrow"
-            class:open={p?.expandedTasks.includes(t.id)}
-            role="button"
-            tabindex="0"
-            onclick={() => toggleTask(t.id)}
-            onkeydown={onActivate(() => toggleTask(t.id))}
-          >
-            <div class="lh">
-              <ChevronDown class="chev {p?.expandedTasks.includes(t.id) ? 'open' : ''}" size={10} />
-              <span class="badge {t.status === 'in_progress' ? 'in-progress' : t.status}">
-                <span class="dot"></span>{t.status}
-              </span>
-              <span class="ln">{t.title}</span>
-              <span class="lm">{t.worker?.session ?? ''}</span>
-            </div>
-            {#if p?.expandedTasks.includes(t.id)}
-              <div class="ld">
-                {#if t.steps.length > 0}
-                  <div class="dl">steps — {t.steps.filter((s) => s.status === 'done').length}/{t.steps.length} done</div>
-                  {#each t.steps as s (s.text)}
-                    <div class="step {s.status}">
-                      <span class="mk">{s.status === 'done' ? '✓' : s.status === 'active' ? '▸' : '○'}</span>{s.text}
-                      {#if s.expected_output}<span class="eo">→ {s.expected_output}</span>{/if}
-                    </div>
-                  {/each}
-                {/if}
-                {#if t.criteria.length > 0}
-                  <div class="dl">acceptance criteria</div>
-                  {#each t.criteria as c (c.text)}
-                    {@const sat = c.status === 'satisfied'}
-                    <div class="ev"><span class:ok={sat} class:pend={!sat}>{sat ? '✓' : '…'}</span> {c.text}</div>
-                  {/each}
-                {/if}
-                {#if t.evidence.length > 0}
-                  <div class="dl">evidence</div>
-                  {#each t.evidence as e (e.summary)}
-                    <div class="ev"><span class:ok={e.passed} class:pend={!e.passed}>{e.passed ? '✓' : '…'}</span>
-                      {e.summary}{e.command ? ` — ${e.command}` : ''}</div>
-                  {/each}
-                {/if}
-                {#if t.blockers.length > 0}
-                  <div class="dl">blocker</div>
-                  <div class="block">
-                    <span class="bmark"><CircleSlash class="bi" size={12} aria-hidden="true" /></span>{t.blockers.map((b) => `${b.reason}${b.needs ? ` — ${b.needs}` : ''}`).join(' · ')}
-                  </div>
-                {/if}
-                <div class="a">
-                  {t.worker ? `assigned: ${t.worker.session} (${t.worker.status})` : 'unassigned'} · modified {fmtAgo(t.updated, store.now)}
-                </div>
-              </div>
-            {/if}
-          </div>
-        {/snippet}
-        {#if liveTasks.length > 0}
-          <div class="ghead">active · {liveTasks.length}</div>
-        {/if}
-        {#each liveTasks as t (t.id)}
-          {@render taskRow(t)}
-        {/each}
-        {#if histTasks.length > 0}
-          <div class="ghead" class:open={p.historyOpen} role="button" tabindex="0" onclick={toggleHist} onkeydown={onActivate(toggleHist)}>
-            <ChevronDown class="chev" size={10} />history · {histTasks.length}
-          </div>
-          {#if p.historyOpen}
-            {#each histTasks as t (t.id)}
-              {@render taskRow(t)}
-            {/each}
-          {/if}
-        {/if}
-      {/if}
-    </div>
-  {:else}
     <div class="list">
       {#if liveSubs.length === 0 && histSubs.length === 0}
         <div class="emptyc">No sub-agents — ask the agent to spawn one</div>
@@ -236,7 +135,6 @@
         {/if}
       {/if}
     </div>
-  {/if}
   {/if}
 </div>
 
@@ -314,99 +212,6 @@
     color: var(--faint);
     text-align: center;
     padding: 0 16px;
-  }
-  .lrow {
-    padding: 6px 8px;
-    cursor: pointer;
-  }
-  .lrow:hover {
-    background: rgba(255, 255, 255, 0.04);
-  }
-  .lrow .lh {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .lrow .ln {
-    flex: 1;
-    font-size: 12.5px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .lrow .lm {
-    font: 9.5px var(--mono);
-    color: var(--faint);
-  }
-  .lrow :global(.chev) {
-    flex: none;
-    color: var(--dim);
-    transition: transform 0.12s;
-  }
-  .lrow :global(.chev.open) {
-    transform: rotate(90deg);
-  }
-  .lrow .ld {
-    margin-top: 8px;
-  }
-  .ld .dl {
-    font: 9.5px var(--mono);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    color: var(--faint);
-    margin: 6px 0 2px;
-  }
-  .ld .dl:first-child {
-    margin-top: 0;
-  }
-  .ld .step {
-    display: flex;
-    gap: 8px;
-    font-size: 12px;
-    padding: 1px 0;
-    color: var(--dim);
-  }
-  .ld .step .mk {
-    font-family: var(--mono);
-  }
-  .ld .step.active {
-    color: var(--tx);
-  }
-  .ld .step.active .mk {
-    color: var(--acc);
-  }
-  .ld .step.done .mk {
-    color: var(--green);
-  }
-  .ld .step .eo {
-    color: var(--faint);
-  }
-  .ld .ev {
-    font: 10.5px var(--mono);
-    color: var(--dim);
-    padding: 1px 0;
-  }
-  .ld .ev .ok {
-    color: var(--green);
-  }
-  .ld .ev .pend {
-    color: var(--amber);
-  }
-  .ld .block {
-    color: var(--red);
-    font-size: 12px;
-  }
-  .ld .block .bmark {
-    display: inline-flex;
-    margin-right: 4px;
-  }
-  .ld .block :global(.bi) {
-    flex: none;
-  }
-  .ld .a {
-    margin-top: 6px;
-    font: 10.5px var(--mono);
-    color: var(--faint);
   }
   .srow2 {
     padding: 6px 8px;
@@ -513,16 +318,6 @@
     border-radius: 50%;
     background: var(--dim);
   }
-  .badge.running,
-  .badge.in-progress {
-    color: var(--acc);
-    border-color: color-mix(in srgb, var(--acc) 40%, transparent);
-  }
-  .badge.running .dot,
-  .badge.in-progress .dot {
-    background: var(--acc);
-    animation: pulse 1.2s infinite;
-  }
   .badge.done {
     color: var(--green);
     border-color: color-mix(in srgb, var(--green) 40%, transparent);
@@ -537,26 +332,10 @@
   .badge.idle .dot {
     background: var(--amber);
   }
-  .badge.failed,
-  .badge.blocked {
-    color: var(--red);
-    border-color: color-mix(in srgb, var(--red) 45%, transparent);
-  }
-  .badge.failed .dot {
-    background: var(--red);
-    animation: pulse 0.8s infinite;
-  }
-  .badge.blocked .dot {
-    background: var(--red);
-  }
-  .badge.stopped,
-  .badge.pending,
-  .badge.cancelled {
+  .badge.stopped {
     color: var(--dim);
   }
-  .badge.stopped .dot,
-  .badge.pending .dot,
-  .badge.cancelled .dot {
+  .badge.stopped .dot {
     background: var(--dim);
   }
   @keyframes pulse {

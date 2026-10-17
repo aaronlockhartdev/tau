@@ -159,6 +159,30 @@ async fn wait_state(rig: &Rig, handle: &str, want: &str) {
     }
 }
 
+/// Bounded poll for the session's first entry (a hung turn is a test
+/// failure, not a wait). Async on purpose: the turn recording the send
+/// runs on this same current-thread runtime, so a blocking sleep would
+/// starve it.
+async fn wait_entries(core: &Arc<Core>, session: &str) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let out = core
+            .dispatch(tau_protocol::Command::SessionSnapshot {
+                session: session.into(),
+            })
+            .unwrap();
+        if let CommandOutput::Snapshot { snapshot } = out
+            && !snapshot.entries.is_empty()
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the session never recorded an entry"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
 #[tokio::test]
 async fn subagent_types_lists_the_builtin_general() {
     let rig = rig(done_body(), 0);
@@ -390,207 +414,6 @@ async fn a_stop_of_a_child_session_goes_through_the_supervisor() {
     wait_state(&rig, &info.handle, "stopped").await;
 }
 
-fn task_in(rig: &Rig, session: &str) -> tau_protocol::payload::Task {
-    let out = rig
-        .core
-        .dispatch(tau_protocol::Command::SessionSnapshot {
-            session: session.into(),
-        })
-        .unwrap();
-    match out {
-        CommandOutput::Snapshot { snapshot } => snapshot
-            .live
-            .tasks
-            .into_iter()
-            .next()
-            .expect("the snapshot carries the session's task"),
-        other => panic!("expected a snapshot: {other:?}"),
-    }
-}
-
-#[tokio::test]
-async fn task_create_via_dispatch_lands_in_the_snapshot() {
-    let rig = rig(done_body(), 0);
-    rig.core
-        .dispatch(Command::TaskCreate {
-            session: rig.parent.clone(),
-            title: "Ship it".into(),
-        })
-        .unwrap();
-    let task = task_in(&rig, &rig.parent);
-    assert_eq!(task.title, "Ship it");
-    assert_eq!(task.id, "task-1");
-}
-
-#[tokio::test]
-async fn task_update_of_an_unknown_task_is_rejected() {
-    let rig = rig(done_body(), 0);
-    let err = rig
-        .core
-        .dispatch(Command::TaskUpdate {
-            session: rig.parent,
-            task: "task-1".into(),
-            note: "a note".into(),
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, tau_protocol::ProtocolError::Other { .. }),
-        "a note on a task that was never created is a clean error: {err:?}"
-    );
-}
-
-#[tokio::test]
-async fn task_update_records_the_note() {
-    let rig = rig(done_body(), 0);
-    rig.core
-        .dispatch(Command::TaskCreate {
-            session: rig.parent.clone(),
-            title: "Ship it".into(),
-        })
-        .unwrap();
-    rig.core
-        .dispatch(Command::TaskUpdate {
-            session: rig.parent.clone(),
-            task: "task-1".into(),
-            note: "blocked on review".into(),
-        })
-        .unwrap();
-    let task = task_in(&rig, &rig.parent);
-    assert_eq!(task.notes, vec!["blocked on review"]);
-}
-
-#[tokio::test]
-async fn task_assign_to_an_unknown_worker_is_not_found() {
-    let rig = rig(done_body(), 0);
-    rig.core
-        .dispatch(Command::TaskCreate {
-            session: rig.parent.clone(),
-            title: "Ship it".into(),
-        })
-        .unwrap();
-    let err = rig
-        .core
-        .dispatch(Command::TaskAssign {
-            session: rig.parent.clone(),
-            task: "task-1".into(),
-            worker: format!("{}-9", rig.parent),
-        })
-        .unwrap_err();
-    assert!(matches!(err, tau_protocol::ProtocolError::NotFound { .. }));
-}
-
-#[tokio::test]
-async fn task_assign_to_a_child_sets_the_worker_pointer() {
-    let rig = rig(done_body(), 100);
-    rig.core
-        .dispatch(Command::TaskCreate {
-            session: rig.parent.clone(),
-            title: "Ship it".into(),
-        })
-        .unwrap();
-    let info = spawn(&rig);
-    // The observed lifecycle derives `done` from the child's plan file
-    // (spec §5.2): seed a complete plan while the slow first call is in
-    // flight, so the done-declaration is confirmed as `done`.
-    std::fs::write(
-        tau_core::plan::path(rig.cwd.path(), &info.child),
-        "# Plan\n\n## Steps\n\n- [x] the work\n",
-    )
-    .unwrap();
-    wait_state(&rig, &info.handle, "done").await;
-    rig.core
-        .dispatch(Command::TaskAssign {
-            session: rig.parent.clone(),
-            task: "task-1".into(),
-            worker: info.handle,
-        })
-        .unwrap();
-    let task = task_in(&rig, &rig.parent);
-    assert!(task.worker.is_some(), "the assignment points at the worker");
-}
-
-#[tokio::test]
-async fn task_evidence_of_an_unknown_task_is_rejected() {
-    let rig = rig(done_body(), 0);
-    let err = rig
-        .core
-        .dispatch(Command::TaskEvidence {
-            session: rig.parent,
-            task: "task-1".into(),
-            criterion: "it builds".into(),
-            summary: "green".into(),
-            passed: Some(true),
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, tau_protocol::ProtocolError::Other { .. }),
-        "evidence for a task that was never created is a clean error: {err:?}"
-    );
-}
-
-#[tokio::test]
-async fn task_evidence_on_a_pending_task_is_rejected() {
-    let rig = rig(done_body(), 0);
-    rig.core
-        .dispatch(Command::TaskCreate {
-            session: rig.parent.clone(),
-            title: "Ship it".into(),
-        })
-        .unwrap();
-    // A dispatch-created task has no start path (there is no TaskStart
-    // command — the model's task_start tool is the only transition), so
-    // evidence through dispatch surfaces the store's state refusal.
-    let err = rig
-        .core
-        .dispatch(Command::TaskEvidence {
-            session: rig.parent.clone(),
-            task: "task-1".into(),
-            criterion: "it builds".into(),
-            summary: "green".into(),
-            passed: Some(true),
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, tau_protocol::ProtocolError::Other { .. }),
-        "a state refusal is an Other error: {err:?}"
-    );
-}
-
-#[tokio::test]
-async fn task_cancel_of_an_unknown_task_is_rejected() {
-    let rig = rig(done_body(), 0);
-    let err = rig
-        .core
-        .dispatch(Command::TaskCancel {
-            session: rig.parent,
-            task: "task-1".into(),
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, tau_protocol::ProtocolError::Other { .. }),
-        "cancelling a task that was never created is a clean error: {err:?}"
-    );
-}
-
-#[tokio::test]
-async fn task_cancel_via_dispatch_terminates_the_task() {
-    let rig = rig(done_body(), 0);
-    rig.core
-        .dispatch(Command::TaskCreate {
-            session: rig.parent.clone(),
-            title: "Ship it".into(),
-        })
-        .unwrap();
-    rig.core
-        .dispatch(Command::TaskCancel {
-            session: rig.parent.clone(),
-            task: "task-1".into(),
-        })
-        .unwrap();
-    let task = task_in(&rig, &rig.parent);
-    assert_eq!(task.status, "cancelled");
-}
-
 #[tokio::test]
 async fn provider_list_is_served_sorted_by_name() {
     let rig = rig(done_body(), 0);
@@ -705,13 +528,15 @@ async fn a_stop_of_a_plain_session_is_accepted() {
 #[tokio::test]
 async fn a_fork_spawn_copies_the_parent_file() {
     let rig = rig(done_body(), 0);
-    // Give the parent an entry to fork: a task record in its file.
+    // Give the parent an entry to fork: a delivered user message.
     rig.core
-        .dispatch(Command::TaskCreate {
+        .dispatch(Command::MessageSend {
             session: rig.parent.clone(),
-            title: "the parent's work".into(),
+            text: "the parent's work".into(),
+            lane: MessageLane::FollowUp,
         })
         .unwrap();
+    wait_entries(&rig.core, &rig.parent).await;
     let info = match rig
         .core
         .dispatch(Command::SubagentSpawn {
@@ -739,7 +564,7 @@ async fn a_fork_spawn_copies_the_parent_file() {
         "the fork carries the parent's entries ({} lines): {content}",
         lines.len()
     );
-    assert!(content.contains("\"type\":\"task\""), "{content}");
+    assert!(content.contains("the parent's work"), "{content}");
 }
 
 #[tokio::test]
@@ -767,13 +592,17 @@ async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
         CommandOutput::Session { session } => session,
         other => panic!("expected a session: {other:?}"),
     };
-    // One real entry, so the disk projection has something to show.
+    // One real entry, so the disk projection has something to show: the
+    // user's message is recorded before the (dead) provider call fails
+    // the turn.
     seeded
-        .dispatch(Command::TaskCreate {
+        .dispatch(Command::MessageSend {
             session: session.id.clone(),
-            title: "on file".into(),
+            text: "on file".into(),
+            lane: MessageLane::FollowUp,
         })
         .unwrap();
+    wait_entries(&seeded, &session.id).await;
     drop(seeded);
 
     // Phase 2: a provider-less core on the same directory cannot build a
@@ -795,7 +624,7 @@ async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
         CommandOutput::Snapshot { snapshot } => {
             assert_eq!(snapshot.session.id, session.id);
             assert_eq!(snapshot.entries.len(), 1);
-            assert_eq!(snapshot.entries[0].kind, "task");
+            assert_eq!(snapshot.entries[0].kind, "user");
         }
         other => panic!("expected a snapshot: {other:?}"),
     }
@@ -810,11 +639,13 @@ async fn entries_of_a_closed_session_are_served_from_disk() {
     let session = rig.parent.clone();
     // Give the session a real entry: a header-only file has no entries.
     rig.core
-        .dispatch(Command::TaskCreate {
+        .dispatch(Command::MessageSend {
             session: session.clone(),
-            title: "on file".into(),
+            text: "on file".into(),
+            lane: MessageLane::FollowUp,
         })
         .unwrap();
+    wait_entries(&rig.core, &session).await;
     rig.core
         .dispatch(Command::SessionClose {
             session: session.clone(),

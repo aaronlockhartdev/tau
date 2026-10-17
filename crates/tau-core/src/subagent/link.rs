@@ -1,11 +1,8 @@
 use super::Supervisor;
 use super::states::StoppedBy;
 use crate::agent::Lane;
-use crate::session::SessionStore;
 use serde_json::Value;
-use std::path::Path;
 use std::sync::Arc;
-use tau_protocol::payload::Task;
 
 /// The child-side link a child's loop carries: routes `parent_notify` to
 /// the child's supervisor.
@@ -67,38 +64,5 @@ impl ChildLink {
             .expect("children map: no panic while the lock is held")
             .get(&self.handle)
             .is_some_and(|c| c.rest_requested())
-    }
-
-    /// This child's view of the parent's tasks (ADR-0001: the child's
-    /// pane is a projection of the creator's record): folded from the
-    /// parent's file, filtered to worker == this child. Empty when the
-    /// parent's file is unreadable.
-    #[must_use]
-    pub fn task_view(&self, cwd: &Path) -> Vec<Task> {
-        let Some(worker) = self.supervisor.child_session_id(&self.handle) else {
-            return Vec::new();
-        };
-        let mut store = SessionStore::for_workspace(cwd, self.supervisor.parent_session());
-        let Ok(()) = store.open() else {
-            return Vec::new();
-        };
-        let Ok(entries) = store.entries_range(0, usize::MAX) else {
-            return Vec::new();
-        };
-        crate::task::fold_entries(&entries)
-            .into_iter()
-            .filter(|t| t.worker.as_ref().is_some_and(|w| w.session == worker))
-            .collect()
-    }
-
-    /// The parent's full task list, folded from its file (the single
-    /// source of truth); `None` when the file can't be read — a failed
-    /// read must not emit an authoritative empty list.
-    #[must_use]
-    pub fn parent_tasks(&self, cwd: &Path) -> Option<Vec<Task>> {
-        let mut store = SessionStore::for_workspace(cwd, self.supervisor.parent_session());
-        store.open().ok()?;
-        let entries = store.entries_range(0, usize::MAX).ok()?;
-        Some(crate::task::fold_entries(&entries))
     }
 }

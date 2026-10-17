@@ -91,9 +91,7 @@ async fn a_md_type_child_prompt_carries_the_gate_section() {
         vec![vec![sse("", &[])]],
     );
 
-    let s = sup
-        .spawn("reviewer", "review this", None, None, "c0")
-        .unwrap();
+    let s = sup.spawn("reviewer", "review this", None, "c0").unwrap();
     // The child's one scripted turn lands (the first call's prompt is
     // captured), and it rests (observed `idle`); stop_handle then ends
     // the resting drive so the test's handles quiesce.
@@ -156,7 +154,7 @@ async fn a_gate_failed_child_rests_failed_not_idle() {
     let (sup, bridge, _factory, _parent) =
         harness_with_gate(dir.path(), gates, vec![builtin_general()], vec![script]);
     let s = sup
-        .spawn("general", "work", Some(ContextMode::Fresh), None, "c0")
+        .spawn("general", "work", Some(ContextMode::Fresh), "c0")
         .unwrap();
     wait_for(|| {
         matches!(

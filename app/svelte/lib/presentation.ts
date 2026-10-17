@@ -10,7 +10,7 @@ import type {
   Entry,
   SkillRef
 } from './protocol';
-import { Book, Bot, Check, File, Search, Terminal, User } from '@lucide/svelte';
+import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, md, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
 import { fmtK } from './format';
@@ -24,7 +24,7 @@ export interface KvRow {
 
 // The expansion slots the card persists in the store (one per interactive
 // region).
-export type ExpandSlot = 'tool' | 'task' | 'output' | 'skill' | 'obs' | 'think';
+export type ExpandSlot = 'tool' | 'output' | 'skill' | 'obs' | 'think';
 
 // One block of a card body (or of the tool's expanded area).
 export type Section =
@@ -40,8 +40,7 @@ export interface Header {
   meta: string | null;
   // The slot the header toggles; null = a static header.
   open: ExpandSlot | null;
-  // An expandable header opens on a single click (task) or a double
-  // click (skill, observation).
+  // An expandable header opens on a single click (observation) or a double
   singleClick: boolean;
   caret: boolean;
 }
@@ -71,7 +70,7 @@ export type Shell =
     header: Header | null;
     cls: 'obs' | 'interrupted' | null;
     openKey: ExpandSlot | null;
-    // The body is hidden while the slot is closed (the task card).
+    // The body is hidden while the slot is closed (the observation card).
     collapseWhenClosed: boolean;
     sections: Section[];
     // The body revealed when the slot opens; `group` wraps it in the
@@ -89,7 +88,6 @@ export interface Presentation {
 // (AnyEntry.kind is a free-form string), so the helpers take the union.
 type ToolEntry = Extract<Entry, { kind: 'tool' }> | AnyEntry;
 type SubagentEntry = Extract<Entry, { kind: 'subagent' }> | AnyEntry;
-type TaskEntry = Extract<Entry, { kind: 'task' }> | AnyEntry;
 type OmEntry = Extract<Entry, { kind: 'om' }> | AnyEntry;
 
 
@@ -118,7 +116,7 @@ function toolSummary(e: ToolEntry): string {
   if (toolUnavailable(e)) return 'content unavailable — sidecar blob missing';
   const a = e.args;
   if (!a) return e.text ?? '';
-  const v = a.command ?? a.path ?? a.task ?? a.query ?? a.task_id ?? a.title ?? a.message;
+  const v = a.command ?? a.path ?? a.query ?? a.task_id ?? a.title ?? a.message;
   const s = typeof v === 'string' ? v : '';
   return s ? (s.length > 80 ? s.slice(0, 80) + '…' : s) : JSON.stringify(a);
 }
@@ -127,7 +125,6 @@ function toolIcon(name: string | undefined): LucideIcon {
   if (['read', 'write', 'edit'].includes(name ?? '')) return File;
   if (name?.startsWith('subagent_') || name === 'parent_notify') return Bot;
   if (name === 'recall') return Search;
-  if (name?.startsWith('task_')) return Check;
   return Terminal;
 }
 
@@ -263,53 +260,8 @@ function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
   });
 }
 
-function taskLabel(p: NonNullable<TaskEntry['payload']>): string {
-  switch (p.event) {
-    case 'created':
-      return `task: ${p.title}`;
-    case 'started':
-      return `task started · ${p.id}`;
-    case 'evidence':
-      return `evidence · ${p.evidence.criterion}`;
-    case 'finished':
-      return `task done · ${p.id}`;
-    case 'blocked':
-      return `task blocked · ${p.id}`;
-    case 'assigned':
-      return `task assigned · ${p.id}`;
-    default:
-      return p.event;
-  }
-}
-
-function taskShell(e: TaskEntry, text: string): Shell {
-  const p = e.payload;
-  const kv: KvRow[] = p
-    ? Object.entries(p)
-      .filter(([k]) => k !== 'event')
-      .map(([k, v]) => ({ k, lines: valueLinesOf(v, 1) }))
-    : text
-      ? [{ k: '', lines: [text] }]
-      : [];
-  return card({
-    header: {
-      icon: Check,
-      label: p ? taskLabel(p) : 'task',
-      cls: 'sys',
-      meta: null,
-      open: 'task',
-      singleClick: true,
-      caret: true
-    },
-    openKey: 'task',
-    collapseWhenClosed: true,
-    sections: [],
-    reveal: { sections: [{ type: 'kv', rows: kv }], group: false }
-  });
-}
-
 function observationShell(e: OmEntry, text: string): Shell {
-  // Collapsible like the task card: the body (observation text + details)
+  // Collapsible: the body (observation text + details)
   // lives in the reveal, so a closed card is just its header.
   const body: Section[] = [{ type: 'md', html: md(text.trim()), dim: true }];
   if (e.suggestedResponse)
@@ -480,9 +432,6 @@ export function present(
     case 'subagent':
       if (!text.trim()) return null;
       return { shells: [subagentShell(entry, ctx.parentLabel)] };
-    case 'task':
-      if (!text.trim()) return null;
-      return { shells: [taskShell(entry, text)] };
     default:
       // An unknown kind renders as a plain text block (no payload
       // interpretation).

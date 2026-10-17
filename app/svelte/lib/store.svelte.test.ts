@@ -16,7 +16,6 @@ import {
   type SessionMeta,
   type SkillInfo,
   type SubagentInfo,
-  type Task,
   type Usage,
   type ViewEntry,
   type Workspace
@@ -64,7 +63,7 @@ function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Parti
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', subagents: [], tasks: [], ...extra.live },
+      live: { queue: [], turn: 'idle', subagents: [], ...extra.live },
       cursor: ''
     }
   };
@@ -96,7 +95,6 @@ function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
     waiting_on: null,
     last_message: null,
     usage: null,
-    task: null,
     resume_contract: null,
     ...extra
   };
@@ -135,11 +133,6 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     subagent_spawn: () => ({ kind: 'none' }),
     subagent_message: () => ({ kind: 'none' }),
     subagent_stop: () => ({ kind: 'none' }),
-    task_create: () => ({ kind: 'none' }),
-    task_update: () => ({ kind: 'none' }),
-    task_assign: () => ({ kind: 'none' }),
-    task_evidence: () => ({ kind: 'none' }),
-    task_cancel: () => ({ kind: 'none' }),
     skill_list: () => ({ kind: 'skills', skills: [] }),
     provider_list: () => ({ kind: 'providers', providers: [] }),
     provider_add: () => ({ kind: 'none' }),
@@ -699,31 +692,6 @@ describe('guards', () => {
     expect(store.skills['w1']).toEqual(b);
   });
 
-  it('task_changed: an unchanged re-emit is a no-op, a change replaces', () => {
-    store.sessions = openSession({}, 's1', snap('s1').snapshot);
-    const tasks: Task[] = [];
-    store.sessions['s1']!.tasks = tasks;
-    const beforeRef = store.sessions['s1']!.tasks;
-    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 's1', tasks }]);
-    expect(store.sessions['s1']!.tasks).toBe(beforeRef);
-    const other: Task[] = [
-      {
-        id: 't1',
-        title: 'x',
-        status: 'pending',
-        steps: [],
-        criteria: [],
-        evidence: [],
-        blockers: [],
-        decisions: [],
-        notes: [],
-        updated: 1
-      }
-    ];
-    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 's1', tasks: other }]);
-    expect(store.sessions['s1']!.tasks).not.toBe(beforeRef);
-    expect(store.sessions['s1']!.tasks).toEqual(other);
-  });
 
   it('om_status drives the gauge kind; system errors surface', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
@@ -810,41 +778,6 @@ describe('subagent_event', () => {
     expect(store.sessions['c']!.state).toBe('stopped');
   });
 
-  it('task_changed: a child-targeted emission fills the child pane (the projection)', () => {
-    store.sessions = openSession({}, 'p', snap('p').snapshot);
-    applyEvents([
-      {
-        type: 'subagent_event',
-        workspace: WS.id,
-        session: 'p',
-        kind: {
-          kind: 'spawned',
-          handle: 'h1',
-          child: 'c',
-          agent_type: 'general',
-          context_mode: 'fresh',
-          title: 'worker'
-        }
-      }
-    ]);
-    const projected: Task[] = [
-      {
-        id: 't1',
-        title: 'x',
-        status: 'in_progress',
-        steps: [],
-        criteria: [],
-        evidence: [],
-        blockers: [],
-        decisions: [],
-        notes: [],
-        worker: { session: 'c', status: 'in_progress' },
-        updated: 1
-      }
-    ];
-    applyEvents([{ type: 'task_changed', workspace: WS.id, session: 'c', tasks: projected }]);
-    expect(store.sessions['c']!.tasks).toEqual(projected);
-  });
 });
 
 describe('files pane', () => {

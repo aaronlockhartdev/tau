@@ -17,5 +17,4 @@ pub mod provider;
 pub mod session;
 pub mod skills;
 pub mod subagent;
-pub mod task;
 pub mod tools;

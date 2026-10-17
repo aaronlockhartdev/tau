@@ -1,13 +1,11 @@
 // @vitest-environment jsdom
-// The right pane: the tasks | sub-agents tabs. Tasks group into active and
-// a collapsed history; a task row expands to its detail sections. The
-// sub-agents panel groups live/history rows, selects on click, and opens
-// the child's session on double-click.
+// The right pane: the sub-agents panel groups live/history rows, selects
+// on click, and opens the child's session on double-click.
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SessionMeta, SubagentInfo, Task } from '../lib/protocol';
+import type { SessionMeta, SubagentInfo } from '../lib/protocol';
 import type { SessionState } from '../lib/sessions';
 import RightPane from './RightPane.svelte';
 import {
@@ -39,19 +37,6 @@ function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
-const task = (id: string, over: Partial<Task> = {}): Task => ({
-  id,
-  title: `task ${id}`,
-  status: 'in_progress',
-  steps: [],
-  criteria: [],
-  evidence: [],
-  blockers: [],
-  decisions: [],
-  notes: [],
-  updated: 1000,
-  ...over
-});
 
 const sub = (handle: string, child: string, over: Partial<SubagentInfo> = {}): SubagentInfo => ({
   handle,
@@ -62,7 +47,6 @@ const sub = (handle: string, child: string, over: Partial<SubagentInfo> = {}): S
   waiting_on: null,
   last_message: null,
   usage: null,
-  task: null,
   resume_contract: null,
   ...over
 });
@@ -70,14 +54,13 @@ const sub = (handle: string, child: string, over: Partial<SubagentInfo> = {}): S
 type SeedOver = Partial<{
   current: string | null;
   sessions: Record<string, SessionState>;
-  tasks: Task[];
   subagents: SubagentInfo[];
 }>;
 
 function seed(over: SeedOver = {}): void {
   const sessions: Record<string, SessionState> = {
     s1: seedState(meta('s1'), {
-      over: { tasks: over.tasks ?? [], subagents: over.subagents ?? [] }
+      over: { subagents: over.subagents ?? [] }
     }),
     ...(over.sessions ?? {})
   };
@@ -100,78 +83,10 @@ beforeEach(() => {
 const user = userEvent.setup();
 
 describe('RightPane', () => {
-  it('disables the tabs without a current session', async () => {
+  it('disables the tab without a current session', async () => {
     seed({ current: null });
     await mount();
-    expect(screen.getByRole('button', { name: 'tasks' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'sub-agents' })).toBeDisabled();
-  });
-
-  it('shows the empty hint with no tasks', async () => {
-    await mount();
-    expect(screen.getByText('No tasks — ask the agent to make one')).toBeInTheDocument();
-  });
-
-  it('groups tasks into active and a collapsed history', async () => {
-    seed({
-      tasks: [task('t1'), task('t2', { status: 'done', updated: 999 })]
-    });
-    await mount();
-    expect(screen.getByText('active · 1')).toBeInTheDocument();
-    expect(screen.getByText('history · 1')).toBeInTheDocument();
-    expect(screen.getByText('task t1')).toBeInTheDocument();
-    expect(screen.queryByText('task t2')).toBeNull();
-    await user.click(screen.getByRole('button', { name: /history · 1/ }));
-    expect(mockStore.pane[WS]?.historyOpen).toBe(true);
-    expect(screen.getByText('task t2')).toBeInTheDocument();
-  });
-
-  it('a task row expands to its detail sections', async () => {
-    seed({
-      tasks: [
-        task('t1', {
-          title: 'Ship the report',
-          steps: [
-            { text: 'draft', expected_output: '', status: 'done' },
-            { text: 'review', expected_output: 'approved', status: 'active' }
-          ],
-          criteria: [{ text: 'report ships', status: 'satisfied' }],
-          evidence: [
-            {
-              criterion: 'report ships',
-              summary: 'shipped it',
-              command: 'git push',
-              passed: true
-            }
-          ],
-          worker: { session: 's2', status: 'running' },
-          updated: Date.now()
-        })
-      ]
-    });
-    await mount();
-    await user.click(screen.getByRole('button', { name: /Ship the report/ }));
-    expect(screen.getByText('steps — 1/2 done')).toBeInTheDocument();
-    expect(screen.getByText('draft')).toBeInTheDocument();
-    expect(screen.getByText('→ approved')).toBeInTheDocument();
-    expect(screen.getByText('acceptance criteria')).toBeInTheDocument();
-    expect(screen.getByText('evidence')).toBeInTheDocument();
-    expect(screen.getByText('shipped it — git push')).toBeInTheDocument();
-    expect(screen.getByText('assigned: s2 (running) · modified just now')).toBeInTheDocument();
-  });
-
-  it('a blocked task shows its blocker', async () => {
-    seed({
-      tasks: [
-        task('t1', {
-          status: 'blocked',
-          blockers: [{ reason: 'waiting on api key', needs: 'user' }]
-        })
-      ]
-    });
-    await mount();
-    await user.click(screen.getByRole('button', { name: /task t1/ }));
-    expect(screen.getByText(/waiting on api key — user/)).toBeInTheDocument();
   });
 
   it('shows the empty hint with no sub-agents', async () => {
@@ -291,19 +206,6 @@ describe('RightPane', () => {
     expect(switchSession).toHaveBeenCalledWith('c1');
   });
 
-  it('switching tabs moves the pane tab and the on marker', async () => {
-    seed({
-      subagents: [sub('h1', 'c1')],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
-    });
-    await mount();
-    const subsTab = screen.getByRole('button', { name: 'sub-agents' });
-    expect(screen.getByRole('button', { name: 'tasks' })).toHaveClass('on');
-    await user.click(subsTab);
-    expect(mockStore.pane[WS]?.rtab).toBe('subs');
-    expect(subsTab).toHaveClass('on');
-    expect(screen.queryByText('No tasks — ask the agent to make one')).toBeNull();
-  });
 
   it('renders a nested grandchild row under its parent', async () => {
     seed({

@@ -25,7 +25,6 @@ function info(over: Partial<SubagentInfo> = {}): SubagentInfo {
     waiting_on: null,
     last_message: null,
     usage: null,
-    task: null,
     resume_contract: null,
     ...over
   };
@@ -41,12 +40,12 @@ describe('spawnRefsOf', () => {
         id: 'd',
         kind: 'tool',
         name: 'subagent_spawn',
-        args: { type: 'reviewer', brief: 'two', context_mode: 'compacted', task: 'T-1' }
+        args: { type: 'reviewer', brief: 'two', context_mode: 'compacted' }
       }
     ]);
     expect(refs).toEqual([
       { entryId: 'b', agentType: 'general', contextMode: 'fresh', brief: 'one' },
-      { entryId: 'd', agentType: 'reviewer', contextMode: 'compacted', brief: 'T-1' }
+      { entryId: 'd', agentType: 'reviewer', contextMode: 'compacted', brief: 'two' }
     ]);
   });
 

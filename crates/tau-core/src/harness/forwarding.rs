@@ -201,7 +201,6 @@ pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInf
                 .as_ref()
                 .map_or(0, |d| d.cached_tokens),
         }),
-        task: i.task.clone(),
         resume_contract: i.resume_contract.clone(),
     }
 }

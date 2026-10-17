@@ -229,12 +229,6 @@ fn script_plain() -> String {
         .to_string()
 }
 
-#[cfg(debug_assertions)]
-fn script_task_create() -> String {
-    "data: {\"type\":\"response.output_item.done\",\"item\":{\"id\":\"c1\",\"type\":\"function_call\",\"name\":\"task_create\",\"call_id\":\"c1\",\"arguments\":\"{\\\"title\\\":\\\"the task\\\"}\"}}\n\ndata: [DONE]\n\n"
-        .to_string()
-}
-
 /// `canned://slow-first` — #148's in-flight window: the first call hangs in
 /// prefill for 2 s (a queue-time event lands while it is in flight), the
 /// later calls answer immediately.
@@ -260,47 +254,6 @@ impl TurnProvider for SlowFirstProvider {
                 fold_event(event, &mut result);
             }
             result.completed = true;
-            Ok(result)
-        })
-    }
-}
-
-/// `canned://task-create` — #149's ordering seam: the first call is a
-/// `task_create` tool call (its side entry mints while the assistant entry is
-/// in flight), the later calls answer plain text and end the turn.
-#[cfg(debug_assertions)]
-struct TaskCreateProvider {
-    index: AtomicUsize,
-}
-
-#[cfg(debug_assertions)]
-impl TurnProvider for TaskCreateProvider {
-    fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
-        let first = self.index.fetch_add(1, Ordering::SeqCst) == 0;
-        let script = if first {
-            script_task_create()
-        } else {
-            script_plain()
-        };
-        let (events, calls) = decode_stream(&script).expect("script decodes");
-        Box::pin(async move {
-            let mut result = TurnResult::default();
-            let mut accepted = 0usize;
-            for event in &events {
-                if !sink.event(event.clone()) {
-                    break;
-                }
-                fold_event(event, &mut result);
-                accepted += 1;
-            }
-            result.completed = true;
-            // The tool call rides the decode's calls, not the fold — this is
-            // what makes run_tools dispatch it.
-            result.calls = calls
-                .iter()
-                .filter(|(i, _)| *i <= accepted)
-                .map(|(_, c)| c.clone())
-                .collect();
             Ok(result)
         })
     }
@@ -359,11 +312,6 @@ pub fn canned_dev(provider: &Provider) -> Option<TurnProviderRef> {
         let script = provider.base_url.strip_prefix(CANNED_SCHEME)?;
         if script == "slow-first" {
             return Some(Arc::new(SlowFirstProvider {
-                index: AtomicUsize::new(0),
-            }));
-        }
-        if script == "task-create" {
-            return Some(Arc::new(TaskCreateProvider {
                 index: AtomicUsize::new(0),
             }));
         }

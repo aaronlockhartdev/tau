@@ -30,7 +30,7 @@
   <button
     class="handle right"
     class:on={side === 'right'}
-    title="show tasks & sub-agents"
+    title="show sub-agents"
     onclick={() => toggle('right')}
   >
     <ChevronDown size={14} />

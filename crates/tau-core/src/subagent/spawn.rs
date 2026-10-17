@@ -19,7 +19,6 @@ impl Supervisor {
         agent_type: &str,
         brief: &str,
         context_mode: Option<ContextMode>,
-        task: Option<&str>,
         call_id: &str,
     ) -> Result<Spawned, String> {
         // Resolve the type (spec §5.5): an unknown name is an error that
@@ -90,27 +89,11 @@ impl Supervisor {
                     "context_mode": context_mode,
                     "parent": self.parent_session,
                     "call": call_id,
-                    "task": task,
                 }),
                 leaf.as_deref(),
             )
             .map_err(|e| format!("subagent_spawn: {e}"))?;
 
-        // A spawn with a task is an assignment (spec §5.3): the record
-        // stays in the parent's file with the child set as worker — the
-        // parent is the single source of truth, the child's pane a
-        // projection of it.
-        if let Some(task) = task
-            && let Some(parent) = self
-                .parent
-                .lock()
-                .expect("supervisor parent: no panic while the lock is held")
-                .as_ref()
-                .and_then(Weak::upgrade)
-        {
-            let _ = parent.with_task_store(|cstore| crate::task::assign(cstore, task, &session_id));
-        }
-        // The child's OM record (spec §5.1, ADR-0004): fresh = an empty
         // prefix; compacted = the parent's log verbatim as the frozen
         // prefix; fork = the parent's record copied wholesale (a fork owns
         // its copy outright).
@@ -178,7 +161,6 @@ impl Supervisor {
             store,
             SessionRole::Child {
                 supervisor: Arc::clone(self),
-                parent: Arc::downgrade(&parent_agent),
                 provider: provider.clone(),
                 system_prompt: child_prompt,
                 model: child_model.clone(),

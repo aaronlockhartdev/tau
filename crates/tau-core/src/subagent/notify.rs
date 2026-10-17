@@ -1,64 +1,10 @@
 use super::{
     Arc, Child, ChildState, KIND_SUBAGENT, ResumeContract, StateNotice, Supervisor, Value,
-    WaitingOn, WakeKind, WakeNotice, Weak,
+    WaitingOn, WakeKind, WakeNotice,
 };
-use crate::agent::Lane;
 use serde_json::json;
 
 impl Supervisor {
-    /// Assign one of this session's tasks to a child (spec §5.3): the
-    /// record stays in this session's file with the child set as worker —
-    /// the single source of truth; the child's pane is a projection. The
-    /// write runs through this session's own store (one writer per
-    /// session, review B3). The assignment is then delivered through the
-    /// child's message path: a running child takes it as a steering round
-    /// on its next call, a non-running child resumes with it (ADR-0001)
-    /// — a bare write races a running loop.
-    pub fn assign_task(
-        self: &Arc<Self>,
-        task_id: &str,
-        worker_session: &str,
-    ) -> Result<(), String> {
-        if task_id.is_empty() {
-            return Err("task_assign: missing \"task\"".into());
-        }
-        let child = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .values()
-            .find(|c| c.session_id == worker_session)
-            .cloned()
-            .ok_or_else(|| {
-                format!("task_assign: {worker_session} is not a sub-agent of this session")
-            })?;
-        let parent = self
-            .parent
-            .lock()
-            .expect("supervisor parent: no panic while the lock is held")
-            .as_ref()
-            .and_then(Weak::upgrade)
-            .ok_or("task_assign: no parent attached".to_owned())?;
-        parent
-            .with_task_store(|cstore| crate::task::assign(cstore, task_id, worker_session))
-            .map(|_| ())?;
-        let title = parent
-            .with_task_store(|store| {
-                crate::task::fold_entries(&store.entries_range(0, usize::MAX).unwrap_or_default())
-                    .into_iter()
-                    .find(|t| t.id == task_id)
-                    .map(|t| t.title)
-            })
-            .unwrap_or_default();
-        let note = if title.is_empty() {
-            format!("Assigned task {task_id}")
-        } else {
-            format!("Assigned {task_id}: {title}")
-        };
-        self.message(&child.handle, Some(note), Lane::Steering)
-            .map(|_| ())
-    }
-
     /// Emit a child state transition: the identity (parent, handle, child)
     /// comes from the supervisor + the child; the caller supplies the new
     /// state and its note / resume contract.

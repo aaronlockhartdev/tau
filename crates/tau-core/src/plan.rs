@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use tau_protocol::payload::ResumeContract;
 
 /// One plan step (a checkbox line).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -44,6 +45,15 @@ impl Plan {
     }
 }
 
+/// The plan's resume contract (spec §5.3, ADR-0001 revision: the task
+/// record's resume contract re-homed to the plan file): the first unchecked
+/// step is the next action. `None` when the plan is complete — or empty.
+#[must_use]
+pub fn resume_contract(plan: &Plan) -> Option<ResumeContract> {
+    plan.steps.iter().find(|s| !s.done).map(|s| ResumeContract {
+        next_action: s.text.clone(),
+    })
+}
 /// The session's plan file: `{workspace}/.tau/plans/{session-id}.md`.
 #[must_use]
 pub fn path(workspace: &Path, session_id: &str) -> PathBuf {

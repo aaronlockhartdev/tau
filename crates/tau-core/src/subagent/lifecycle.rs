@@ -107,16 +107,10 @@ impl Supervisor {
         // The drive ends at its loop head (running: after the interrupted
         // entry lands; parked: it wakes from its sleep and exits).
         child.wake.notify_one();
-        // A stopped child with an assigned task carries the task's resume
-        // contract in the stop event (spec §5.2) — the task lives in the
-        // parent's file (the single source of truth).
-        let resume_contract = self
-            .child_task(child)
-            .filter(|t| {
-                t.status == crate::task::STATUS_IN_PROGRESS
-                    || t.status == crate::task::STATUS_BLOCKED
-            })
-            .map(|t| crate::task::resume_contract(&t));
+        // A stopped child with an open plan carries the plan's resume
+        // contract in the stop event (spec §5.2): the child's plan file —
+        // the single source of truth for what remains.
+        let resume_contract = crate::plan::resume_contract(&self.child_plan(child));
         self.emit_state(
             child,
             ChildState::Stopped { by },
@@ -125,7 +119,7 @@ impl Supervisor {
         );
         match resume_contract {
             Some(rc) => Ok(format!(
-                "stopped sub-agent {name}; its assigned task stays live (resume contract: {})",
+                "stopped sub-agent {name}; its plan stays open (resume contract: {})",
                 serde_json::to_string(&rc).unwrap_or_default()
             )),
             None => Ok(format!("stopped sub-agent {name}")),

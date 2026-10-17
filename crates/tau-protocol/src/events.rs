@@ -1,5 +1,5 @@
 use super::{ContextMode, Deserialize, Serialize, SkillInfo, Usage, snapshot};
-use crate::payload::{ResumeContract, Task};
+use crate::payload::ResumeContract;
 use crate::snapshot::ViewEntry;
 use serde_json::Value;
 
@@ -26,7 +26,7 @@ pub enum Event {
     /// log holds (or will hold when finalized). The GUI sets `map[id] = entry`
     /// — the only live transcript op (ADR-0008). Carries the streaming
     /// assistant entry (re-emitted frame-aligned as it grows), tool entries
-    /// (one id, call→result), and every discrete card (subagent/task/om/
+    /// (one id, call→result), and every discrete card (subagent/om/
     /// steering). The GUI renders a card on first sight and updates it in
     /// place; transcript order is fixed by the id.
     EntryUpsert {
@@ -65,16 +65,6 @@ pub enum Event {
         /// The parent session (the child is identified inside `kind`).
         session: String,
         kind: SubagentEventKind,
-    },
-    /// The session's task records changed (spec §8): full-state
-    /// replacement of the task list — idempotent by construction, a lost
-    /// batch self-heals on the next snapshot. Emitted on every task
-    /// mutation (the model's tools and the app's task commands), so the
-    /// GUI's tasks tab is event-driven, never polled.
-    TaskChanged {
-        workspace: String,
-        session: String,
-        tasks: Vec<Task>,
     },
     /// The workspace's skill registry changed (the file watcher, ticket
     /// #31): full-state replacement, idempotent by construction; a lost
@@ -146,7 +136,6 @@ pub struct SubagentInfo {
     pub waiting_on: Option<String>,
     pub last_message: Option<String>,
     pub usage: Option<Usage>,
-    pub task: Option<Task>,
     pub resume_contract: Option<ResumeContract>,
 }
 
@@ -191,7 +180,7 @@ pub enum SystemEventKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{MessageLane, payload};
+    use crate::MessageLane;
     use serde_json::json;
 
     /// Every event variant round-trips; the multiplexed-channel envelope
@@ -311,24 +300,6 @@ mod tests {
                     text: "finished".into(),
                     output: Some(json!({ "result": "ok" })),
                 },
-            },
-            Event::TaskChanged {
-                workspace: "w1".into(),
-                session: "s1".into(),
-                tasks: vec![payload::Task {
-                    id: "t-1".into(),
-                    title: "do it".into(),
-                    status: "pending".into(),
-                    steps: vec![],
-                    criteria: vec![],
-                    evidence: vec![],
-                    blockers: vec![],
-                    decisions: vec![],
-                    notes: vec![],
-                    worker: None,
-                    created_in: None,
-                    updated: 0,
-                }],
             },
             Event::SkillListChanged {
                 workspace: "w1".into(),
