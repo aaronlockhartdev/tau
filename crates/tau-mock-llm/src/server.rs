@@ -5,7 +5,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-use crate::scenario::{ScenarioSet, WireRequest, render_frames};
+use crate::scenario::{ScenarioSet, WireRequest, plan_path, render_frames};
 
 /// Frame pacing: the GUI coalesces stream deltas at 25 ms (spec §8), so
 /// the mock streams at the same cadence — the E2E measures incremental
@@ -110,7 +110,8 @@ async fn stream_response(sock: &mut TcpStream, set: &ScenarioSet, body: &[u8]) {
     // One line per request: the e2e log carries the routing, so a spec
     // failure shows which scenario answered and with which turn.
     tracing::debug!("[route] {} turn {}", scenario.pattern, seq);
-    let frames = render_frames(turn, &scenario.usage, seq);
+    let plan = plan_path(&req.instructions);
+    let frames = render_frames(turn, &scenario.usage, seq, plan.as_deref());
     let _ = reply_headers(sock).await;
     for frame in frames {
         let _ = sock

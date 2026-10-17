@@ -1,4 +1,4 @@
-use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, om_integration};
+use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, WaitingOn, om_integration};
 
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).
@@ -17,6 +17,8 @@ impl Supervisor {
         let child = self.resolve(name_or_id)?.clone();
         let (state, waiting_on) = match child.state() {
             ChildState::Idle { waiting_on } => (ChildState::Idle { waiting_on }, Some(waiting_on)),
+            // The `QUESTION:` marker: the child is asking the user.
+            ChildState::Awaiting => (ChildState::Awaiting, Some(WaitingOn::User)),
             other => (other, None),
         };
         let usage = {

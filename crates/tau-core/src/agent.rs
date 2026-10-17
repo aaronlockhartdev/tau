@@ -686,6 +686,26 @@ impl AgentSession {
             .expect("agent inner: no panic while the lock is held")
             .gate_failed
     }
+
+    /// The final assistant text on the active branch (spec §5.2: the
+    /// observed `QUESTION:` marker lives in the child's final output).
+    /// `None` when the branch has no assistant entry or the read fails.
+    #[must_use]
+    pub(crate) fn last_assistant_text(&self) -> Option<String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        let entries = inner.store.entries_range(0, usize::MAX).ok()?;
+        let leaf = inner.store.leaf().ok().flatten().map(|e| e.id);
+        crate::om_integration::branch_entries(&entries, leaf.as_deref())
+            .iter()
+            .rev()
+            .find(|e| e.kind == KIND_ASSISTANT)
+            .and_then(|e| e.payload.get("text"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
 }
 mod gate_hook;
 mod turn;

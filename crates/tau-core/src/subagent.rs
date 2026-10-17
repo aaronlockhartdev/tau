@@ -1,9 +1,12 @@
 //! Sub-agent machinery (spec §5, ADR-0001): in-process concurrent
 //! agent-loop instances, each working its own session file linked to the
-//! parent. The 5-state lifecycle (running / idle / done / failed /
-//! stopped — all non-running states deliberately resumable, nothing
-//! auto-resumes), the parent tool surface, the child's `parent_notify`,
-//! the one-shot nudge with its three-way fork, and the wake rules.
+//! parent. The 6-state lifecycle is machine-observed (spec §5.2): the
+//! states are *read* from observed signals — a turn that ended with a
+//! `QUESTION:` marker is `awaiting`, a complete plan (gate passed) is
+//! `done`, `gate_failed` is `failed` — with `parent_notify` a secondary
+//! hint the observation confirms or overrides. The one-shot nudge is
+//! gone: an undeclared stop is `idle`. A child holds no lock on its
+//! parent: every child→parent effect is a value the parent ingests.
 //!
 //! Every transition is a `subagent` entry in the child's session file —
 //! the child's file is the record; the in-memory state is its live view.
@@ -29,15 +32,9 @@ use tau_protocol::payload::{ResumeContract, Task};
 /// transitions, notifies) — the child's session file is the record.
 pub const KIND_SUBAGENT: &str = "subagent";
 
-/// The one-shot nudge (ADR-0001): a child whose turn ends without
-/// `parent_notify` gets exactly one injected system turn.
-pub const NUDGE: &str = "Your turn ended without parent_notify. If you are done, call \
-     parent_notify with done:true and your structured output now. If you are parking, \
-     call parent_notify stating what you are waiting for (waiting_on: parent | user | \
-     subagent).";
-
-/// A parked child's declared wait target (ADR-0001: an explicit
-/// `waiting_on` declaration, not a free-text inference).
+/// A parked child's declared wait target (spec §5.2: a secondary hint —
+/// the observed rest is the driver; the declaration rides the `idle`
+/// state as the GUI's badge).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WaitingOn {
@@ -46,6 +43,18 @@ pub enum WaitingOn {
     Subagent,
 }
 
+/// The turn origin (spec §5.2 wake rules): a per-drive property, not a
+/// sticky mode. A rest after *autonomous* (spawn-origin) work wakes the
+/// delegating parent; a rest that replies to a *direct message* (user in
+/// the tab, a parent `subagent_message`, a resume) is silent to the
+/// parent — the sender is engaged, and the state event is the GUI badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnOrigin {
+    /// The spawn's brief, or its continuation — autonomous work.
+    Spawn,
+    /// A direct message (user chat, a parent `subagent_message`, a resume).
+    Message,
+}
 impl WaitingOn {
     #[must_use]
     pub const fn as_str(&self) -> &'static str {
@@ -75,16 +84,29 @@ impl StoppedBy {
     }
 }
 
-/// The 5-state lifecycle (spec §5; ADR-0001 supplement: all non-running
-/// states are deliberately resumable — nothing auto-resumes anything).
+/// The 6-state lifecycle (spec §5.2, 2026-10-15 plan-file revision):
+/// machine-observed — the states are read from observed signals, not
+/// declared. All non-running states are deliberately resumable; nothing
+/// auto-resumes anything (ADR-0001 supplement).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ChildState {
     Running,
-    Idle { waiting_on: WaitingOn },
-    Done { output: Option<Value> },
-    Failed { reason: String },
-    Stopped { by: StoppedBy },
+    Idle {
+        waiting_on: WaitingOn,
+    },
+    /// A `QUESTION:` marker in the child's final output (spec §5.2): the
+    /// child is asking the user and rests for an answer.
+    Awaiting,
+    Done {
+        output: Option<Value>,
+    },
+    Failed {
+        reason: String,
+    },
+    Stopped {
+        by: StoppedBy,
+    },
 }
 
 impl ChildState {
@@ -93,6 +115,7 @@ impl ChildState {
         match self {
             Self::Running => "running",
             Self::Idle { .. } => "idle",
+            Self::Awaiting => "awaiting",
             Self::Done { .. } => "done",
             Self::Failed { .. } => "failed",
             Self::Stopped { .. } => "stopped",
@@ -191,7 +214,22 @@ pub struct Child {
     pub context_mode: ContextMode,
     pub agent: Arc<AgentSession>,
     state: Mutex<ChildState>,
-    nudge_sent: AtomicBool,
+    /// The turn origin (spec §5.2 wake rules): set at each drive start
+    /// (spawn = `Spawn`, a resume = `Message`); a rest's wake routing
+    /// reads it. Per-drive, not sticky.
+    origin: Mutex<TurnOrigin>,
+    /// A `parent_notify {done: true}` pending the observed rest (spec
+    /// §5.2): the fast path ends the turn after the declaring tool round
+    /// so the loop spends no further provider calls; the observation at
+    /// the turn end confirms or overrides. Cleared when consumed.
+    rest_requested: AtomicBool,
+    /// The declared `done` output (the `parent_notify` hint, spec §5.2):
+    /// the payload an observed `done` carries. Per-drive: reset at each
+    /// drive start so a stale declaration can't ride a later rest.
+    declared_output: Mutex<Option<Value>>,
+    /// The declared `waiting_on` of a resting note (the hint an observed
+    /// `idle` rides as its badge). Per-drive, like the output.
+    declared_waiting: Mutex<Option<WaitingOn>>,
     last_message: Mutex<Option<String>>,
     /// Drive generation: each drive spawn bumps it; a superseded drive's
     /// loop sees the mismatch and bails before running another round (the
@@ -232,6 +270,7 @@ impl Child {
                 "state": "idle",
                 "waiting_on": waiting_on.as_str(),
             }),
+            ChildState::Awaiting => json!({ "event": "state", "state": "awaiting" }),
             ChildState::Done { .. } => json!({ "event": "state", "state": "done" }),
             ChildState::Failed { reason } => json!({
                 "event": "state",
@@ -255,6 +294,85 @@ impl Child {
             .lock()
             .expect("child last message: no panic while the lock is held") = Some(text.to_owned());
     }
+
+    /// The turn origin (the wake routing's input, spec §5.2).
+    #[must_use]
+    pub(crate) fn origin(&self) -> TurnOrigin {
+        *self
+            .origin
+            .lock()
+            .expect("child origin: no panic while the lock is held")
+    }
+
+    /// Set the turn origin (each drive start: spawn or resume).
+    pub(crate) fn set_origin(&self, origin: TurnOrigin) {
+        *self
+            .origin
+            .lock()
+            .expect("child origin: no panic while the lock is held") = origin;
+    }
+
+    /// A `done` declaration requests the turn's end (the fast path, spec
+    /// §5.2): the loop breaks after the declaring tool round, and the
+    /// observed rest settles the state. `true` when a rest is pending.
+    #[must_use]
+    pub(crate) fn rest_requested(&self) -> bool {
+        self.rest_requested.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_rest_requested(&self, requested: bool) {
+        self.rest_requested.store(requested, Ordering::SeqCst);
+    }
+
+    /// Record the declared `done` output (the hint the observed rest
+    /// consumes).
+    pub(crate) fn declare_output(&self, output: Option<Value>) {
+        *self
+            .declared_output
+            .lock()
+            .expect("child declared output: no panic while the lock is held") = output;
+    }
+
+    /// Take the declared output (the observed `done`'s payload): `None`
+    /// when the rest is consumed or no declaration was made.
+    #[must_use]
+    pub(crate) fn take_declared_output(&self) -> Option<Value> {
+        self.declared_output
+            .lock()
+            .expect("child declared output: no panic while the lock is held")
+            .take()
+    }
+
+    /// Record the declared `waiting_on` of a resting note.
+    pub(crate) fn declare_waiting(&self, waiting_on: WaitingOn) {
+        *self
+            .declared_waiting
+            .lock()
+            .expect("child declared waiting: no panic while the lock is held") = Some(waiting_on);
+    }
+
+    /// Take the declared `waiting_on` (the observed `idle`'s badge hint).
+    #[must_use]
+    pub(crate) fn take_declared_waiting(&self) -> Option<WaitingOn> {
+        self.declared_waiting
+            .lock()
+            .expect("child declared waiting: no panic while the lock is held")
+            .take()
+    }
+
+    /// A fresh work period (each drive start): the prior period's hints
+    /// are gone — a stale declaration must not ride a later rest.
+    pub(crate) fn reset_hints(&self) {
+        self.rest_requested.store(false, Ordering::SeqCst);
+        *self
+            .declared_output
+            .lock()
+            .expect("child declared output: no panic while the lock is held") = None;
+        *self
+            .declared_waiting
+            .lock()
+            .expect("child declared waiting: no panic while the lock is held") = None;
+    }
 }
 
 /// The child-side link a child's loop carries: routes `parent_notify` to
@@ -277,10 +395,10 @@ impl ChildLink {
         self.supervisor.parent_session()
     }
 
-    /// The `parent_notify` tool handler (ticket #23): `done:true` requires
-    /// a structured output and ends the child; a note parks it. The
-    /// declared `waiting_on` (default: parent — it just messaged the
-    /// parent) is the nudge fork's "valid wait declaration".
+    /// The `parent_notify` tool handler (ticket #23): a secondary hint the
+    /// observed rest confirms or overrides (spec §5.2, ADR-0001 revision).
+    /// `done:true` requires a structured output and requests the turn's end;
+    /// a note records the declared wait target for the rest's badge.
     #[must_use]
     pub fn notify(&self, args: &Value) -> String {
         self.supervisor.notify(&self.handle, args)
@@ -305,6 +423,18 @@ impl ChildLink {
     #[must_use]
     pub fn is_running(&self) -> bool {
         self.supervisor.child_running(&self.handle)
+    }
+
+    /// A `parent_notify {done}` rest request pending the turn's end (the
+    /// loop's quiescence check, spec §5.2's fast path).
+    #[must_use]
+    pub fn rest_requested(&self) -> bool {
+        self.supervisor
+            .children
+            .lock()
+            .expect("children map: no panic while the lock is held")
+            .get(&self.handle)
+            .is_some_and(|c| c.rest_requested())
     }
 
     /// This child's view of the parent's tasks (ADR-0001: the child's
@@ -631,7 +761,8 @@ impl Supervisor {
     }
 }
 
-/// One child's structured state (the protocol carries its own mirror).
+/// One child's structured state (the protocol carries its own mirror; the
+/// state is the observed lifecycle, spec §5.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubagentInfo {
     pub handle: String,

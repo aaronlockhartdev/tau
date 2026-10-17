@@ -202,8 +202,35 @@ impl ScenarioSet {
 /// The `data:` payloads of one turn, in wire order: `response.created`,
 /// the text split into deltas, one complete `response.output_item.done`
 /// per function call, `response.completed` with usage, `[DONE]`.
+/// The system-prompt plan-file section's marker (the e2e workbench child
+/// templates its `write` call against `{{plan_path}}`): kept in sync with
+/// `tau_core::plan::PLAN_SECTION_ANCHOR` — the mock crate stays free of a
+/// tau-core dependency, so the text is mirrored, not imported.
+const PLAN_FILE_ANCHOR: &str = "Your plan lives at `";
+
+/// The request's plan-file path (the `{{plan_path}}` substitution
+/// target): `None` when the system prompt carries no plan-file section.
 #[must_use]
-pub fn render_frames(turn: &Turn, usage: &Usage, seq: usize) -> Vec<String> {
+pub fn plan_path(instructions: &Option<String>) -> Option<String> {
+    let ins = instructions.as_deref()?;
+    let start = ins.find(PLAN_FILE_ANCHOR)? + PLAN_FILE_ANCHOR.len();
+    let rest = ins.get(start..)?;
+    let end = rest.find('`')?;
+    Some(rest.get(..end)?.to_owned())
+}
+
+/// The `data:` payloads of one turn, in wire order: `response.created`,
+/// the text split into deltas, one complete `response.output_item.done`
+/// per function call, `response.completed` with usage, `[DONE]`.
+/// `{{plan_path}}` in a call's arguments is replaced with `plan_path`
+/// when given.
+#[must_use]
+pub fn render_frames(
+    turn: &Turn,
+    usage: &Usage,
+    seq: usize,
+    plan_path: Option<&str>,
+) -> Vec<String> {
     let id = format!("mock-resp-{seq}");
     let mut frames = vec![
         json!({
@@ -219,6 +246,14 @@ pub fn render_frames(turn: &Turn, usage: &Usage, seq: usize) -> Vec<String> {
         }
     }
     for (i, call) in turn.calls.iter().enumerate() {
+        // `{{plan_path}}` is the one scenario placeholder: the child's plan
+        // file path is request-specific (it embeds the session id), so the
+        // fixture templates it and the render substitutes it.
+        let args = call.arguments.to_string();
+        let arguments = match plan_path {
+            Some(p) => args.replace("{{plan_path}}", p),
+            None => args,
+        };
         frames.push(
             json!({
                 "type": "response.output_item.done",
@@ -227,7 +262,7 @@ pub fn render_frames(turn: &Turn, usage: &Usage, seq: usize) -> Vec<String> {
                     "id": format!("mock-item-{seq}-{i}"),
                     "call_id": format!("mock-call-{seq}-{i}"),
                     "name": call.name,
-                    "arguments": call.arguments.to_string(),
+                    "arguments": arguments,
                 }
             })
             .to_string(),
@@ -286,7 +321,7 @@ mod tests {
                 arguments: json!({ "path": "a.txt", "content": "hi" }),
             }],
         };
-        let frames = render_frames(&turn, &Usage::default(), 0);
+        let frames = render_frames(&turn, &Usage::default(), 0, None);
         let done = frames
             .iter()
             .find(|f| f.contains("\"type\":\"response.output_item.done\""))
@@ -302,6 +337,39 @@ mod tests {
             json!({ "path": "a.txt", "content": "hi" })
         );
         assert_eq!(frames.last().unwrap(), "[DONE]");
+    }
+
+    #[test]
+    fn plan_path_is_extracted_from_the_prompt_section() {
+        let ins = "be terse\n\n# Plan file\n\nYour plan lives at `/w/.tau/plans/abc123.md` — edit it as you go.\n".to_owned();
+        assert_eq!(
+            plan_path(&Some(ins)),
+            Some("/w/.tau/plans/abc123.md".to_owned())
+        );
+        // No plan-file section: nothing to substitute.
+        assert_eq!(plan_path(&Some("be terse".to_owned())), None);
+        assert_eq!(plan_path(&None), None);
+    }
+
+    #[test]
+    fn render_substitutes_the_plan_path_placeholder() {
+        let turn = Turn {
+            text: None,
+            calls: vec![Call {
+                name: "write".into(),
+                arguments: json!({ "path": "{{plan_path}}", "content": "# Plan" }),
+            }],
+        };
+        let frames = render_frames(&turn, &Usage::default(), 0, Some("/w/.tau/plans/abc.md"));
+        let done = frames
+            .iter()
+            .find(|f| f.contains("\"type\":\"response.output_item.done\""))
+            .expect("the output_item.done frame");
+        let v: Value = serde_json::from_str(done).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(v["item"]["arguments"].as_str().unwrap()).unwrap(),
+            json!({ "path": "/w/.tau/plans/abc.md", "content": "# Plan" })
+        );
     }
 
     #[test]

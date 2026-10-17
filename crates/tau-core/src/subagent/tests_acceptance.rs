@@ -2,12 +2,14 @@ use super::*;
 
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
+use std::time::Duration;
 
-/// The ticket's scripted acceptance: a parent spawns two children
-/// concurrently; one finishes (parent woken with the validated
-/// result), one is stopped then resumed by message, one
-/// nudge-exhausts to failed — and every transition is a session entry
-/// with a protocol (bridge) event.
+/// The ticket's scripted acceptance: a parent spawns three children
+/// concurrently; one is observed `done` (plan complete, parent woken
+/// with the declared result), one rests (observed `idle`) then is
+/// resumed by message to `done`, one rests undeclared (an observed
+/// `idle` — the nudge is gone) — and every transition is a session
+/// entry with a protocol (bridge) event.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[allow(clippy::too_many_lines)] // one end-to-end lifecycle flow; splitting is refactoring
 async fn the_lifecycle_acceptance_flow() {
@@ -71,12 +73,16 @@ async fn the_lifecycle_acceptance_flow() {
             ),
             sse("", &[]),
         ],
-        vec![sse("", &[]), sse("", &[])],
+        vec![sse("", &[])],
     ];
-    let (sup, bridge, _parent) = harness(
+    // A's 300 ms call pre-delay is the ordering margin: its plan file
+    // (written by the test right after the spawns) lands before its
+    // first call, so its declared done is confirmed by the observation.
+    let (sup, bridge, _factory, _parent) = harness_full(
         dir.path(),
         parent_bodies,
         child_scripts,
+        vec![Duration::from_millis(300), Duration::ZERO, Duration::ZERO],
         SubAgents::default(),
     );
 
@@ -87,7 +93,13 @@ async fn the_lifecycle_acceptance_flow() {
     let handle_b = "parent-2".to_owned();
     let handle_c = "parent-3".to_owned();
 
-    // A: done — the parent is woken with the schema-validated output.
+    // The model keeps A's plan current (the test plays the file edit):
+    // the observation then confirms A's declared done.
+    std::fs::write(
+        crate::plan::path(dir.path(), &sup.state_info(&handle_a).unwrap().child),
+        "# Plan\n\n## Steps\n\n- [x] do A\n",
+    )
+    .unwrap();
     wait_for(|| {
         matches!(
             sup.state_info(&handle_a).unwrap().state,
@@ -126,6 +138,13 @@ async fn the_lifecycle_acceptance_flow() {
             .iter()
             .any(|w| w.kind == WakeKind::Waiting)
     );
+    // The model completes B's plan before the resumed declaration, so
+    // it is confirmed by the observation.
+    std::fs::write(
+        crate::plan::path(dir.path(), &sup.state_info(&handle_b).unwrap().child),
+        "# Plan\n\n## Steps\n\n- [x] do B\n",
+    )
+    .unwrap();
     // Resumed by a message (the tool's non-running branch).
     sup.message(&handle_b, Some("proceed".into()), Lane::Steering)
         .unwrap();
@@ -136,11 +155,13 @@ async fn the_lifecycle_acceptance_flow() {
         )
     });
 
-    // C: nudge-exhausted → failed, and the parent is notified.
+    // C: an undeclared stop is an observed `idle` (the nudge is gone,
+    // spec §5.2) — the parent is informed, and no nudge ever lands in
+    // the child's file.
     wait_for(|| {
         matches!(
             sup.state_info(&handle_c).unwrap().state,
-            ChildState::Failed { .. }
+            ChildState::Idle { .. }
         )
     });
     assert!(
@@ -149,10 +170,10 @@ async fn the_lifecycle_acceptance_flow() {
             .lock()
             .unwrap()
             .iter()
-            .any(|w| w.kind == WakeKind::Failed),
-        "a failed child auto-notifies the parent"
+            .any(|w| w.kind == WakeKind::Waiting
+                && w.child == sup.state_info(&handle_c).unwrap().child),
+        "the spawn-origin rest informed the parent"
     );
-    // The nudge is a session entry (one-shot).
     let c_info = sup.state_info(&handle_c).unwrap();
     let mut cstore = SessionStore::for_workspace(dir.path(), &c_info.child);
     cstore.open().unwrap();
@@ -165,8 +186,7 @@ async fn the_lifecycle_acceptance_flow() {
                     == Some("Nudge: state what you are waiting for, or finish")
         })
         .collect();
-    assert_eq!(nudges.len(), 1, "one nudge per parked state, no loops");
-
+    assert_eq!(nudges.len(), 0, "the nudge is deleted: no nudge entry");
     // Every spawn produced a bridge event; the state stream saw the
     // full transition set.
     assert_eq!(bridge.spawns.lock().unwrap().len(), 3);
@@ -177,7 +197,7 @@ async fn the_lifecycle_acceptance_flow() {
         .iter()
         .map(|n| n.state.kind())
         .collect();
-    assert!(states.contains(&"done") && states.contains(&"idle") && states.contains(&"failed"));
+    assert!(states.contains(&"done") && states.contains(&"idle"));
 }
 
 /// Drive the parent's loop: it calls the spawn tools in its script.

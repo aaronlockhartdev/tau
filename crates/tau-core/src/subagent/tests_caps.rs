@@ -62,15 +62,22 @@ async fn the_caps() {
         .collect::<Vec<_>>();
     assert!(tools.contains(&"parent_notify".to_owned()));
     assert!(!tools.contains(&"subagent_spawn".to_owned()));
-    // Free the slot: the done child no longer counts. Wait for the
-    // park first so the resume is deterministic (a message delivered
-    // mid-brief-turn would be a steering, consumed by that turn).
+    // The first child rests (observed `idle`) before the resume, so the
+    // plan write and the resumed declaration are deterministic.
     wait_for(|| {
         matches!(
             sup.state_info(&first.handle).unwrap().state,
             ChildState::Idle { .. }
         )
     });
+    // Free the slot: the done child no longer counts. The model
+    // completes the plan before the resumed declaration, so the
+    // observation confirms it `done` (the slot frees).
+    std::fs::write(
+        crate::plan::path(dir.path(), &first.session_id),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     sup.message(&first.handle, Some("finish".into()), Lane::Steering)
         .unwrap();
     wait_for(|| {
@@ -156,9 +163,15 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
     let spawned = sup
         .spawn("reviewer", "look", None, None, "c0")
         .expect("the discovered type spawns");
-    // The type's body, not the session's prompt; the type's model, not
-    // the session's; the subset, not the full child set.
-    assert_eq!(spawned.agent.system_prompt(), "You are a strict reviewer.");
+    // The type's body, not the session's prompt (plus the child's own
+    // plan-file section, plan_wiring); the type's model, not the
+    // session's; the subset, not the full child set.
+    let child_prompt = spawned.agent.system_prompt();
+    assert!(
+        child_prompt.starts_with("You are a strict reviewer.")
+            && child_prompt.contains(crate::plan::PLAN_SECTION_HEADER),
+        "the type's body stands first: {child_prompt}"
+    );
     assert_eq!(spawned.model, "review-model");
     assert_eq!(spawned.agent.tools().len(), 1);
     assert_eq!(spawned.agent.tools()[0].name, "read");
@@ -231,8 +244,23 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
     let spawned = sup
         .spawn("general", "look", None, None, "c0")
         .expect("general always spawns");
-    // The session's prompt verbatim — the catalog rides along with it.
-    assert_eq!(spawned.agent.system_prompt(), prompt);
+    // The session's prompt verbatim — the catalog rides along with it —
+    // plus the child's own plan-file section (plan_wiring names the
+    // child's seeded file in the prompt, spec §5.2).
+    let child_prompt = spawned.agent.system_prompt();
+    assert!(
+        child_prompt.starts_with(&prompt),
+        "the inherited prompt stands verbatim: {child_prompt}"
+    );
+    assert!(
+        child_prompt.contains(crate::plan::PLAN_SECTION_HEADER)
+            && child_prompt.contains(
+                &crate::plan::path(dir.path(), &spawned.session_id)
+                    .display()
+                    .to_string()
+            ),
+        "the child's own plan file is named: {child_prompt}"
+    );
 }
 /// `max_depth` is enforced at spawn: a session at the cap refuses to
 /// spawn, and `max_depth: 0` disables spawning outright (the
@@ -295,14 +323,14 @@ async fn the_depth_cap() {
 }
 
 /// The drive-generation guard (review N1): stop + resume landing in the
-/// window after the in-flight `drive()` returns must not let the old
-/// drive consume the child's nudge budget and run rounds alongside the
-/// fresh drive. A notify-gated driver makes the window deterministic:
-/// both drives are in flight when the test releases them at once — the
-/// fresh drive legitimately consumes the nudge budget (its own turn);
-/// without the guard the superseded drive would race it for the budget
-/// and its loser marks the child `failed` (nudge exhausted).
+/// window after the in-flight `drive()` returns must not let the
+/// superseded drive settle the child a second time — the fresh drive owns
+/// the rest. A notify-gated driver makes the window deterministic: both
+/// drives are in flight when the test releases them at once; without the
+/// guard the superseded drive would race the fresh one to the observed
+/// rest and double-record it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one stop+resume window flow; splitting is refactoring
 async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
     /// Each `drive()` blocks until the test's notify fires.
     struct NotifyingDriver {
@@ -382,33 +410,59 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
     sup.message(&spawned.handle, Some("go".into()), Lane::Steering)
         .unwrap();
     wait_for(|| driver.calls.load(Ordering::SeqCst) == 2);
-    driver.notify.notify_waiters();
+    // One `notify_one` per in-flight drive: a drive not yet waiting
+    // consumes the stored permit, so neither release can be lost.
+    driver.notify.notify_one();
+    driver.notify.notify_one();
     // The superseded drive ends here, on the generation mismatch.
+    // (The stop that ends a possible re-resume comes after the fresh
+    // drive's settle — an earlier stop would turn the child `stopped`
+    // and the fresh drive would exit without settling.)
     spawned.drive.await.unwrap();
     assert!(
         !matches!(
             sup.state_info(&spawned.handle).unwrap().state,
             ChildState::Failed { .. }
         ),
-        "the superseded drive must not exhaust the nudge budget"
+        "the superseded drive must not mark the child failed"
     );
+    // The fresh drive settles the child exactly once: the superseded
+    // drive bailed on the generation mismatch before it could settle a
+    // second rest.
+    let idle_rests = || {
+        let mut store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        let Ok(()) = store.open() else {
+            return 0;
+        };
+        let Ok(es) = store.entries_range(0, usize::MAX) else {
+            return 0;
+        };
+        es.iter()
+            .filter(|e| {
+                e.kind == "subagent"
+                    && e.payload["event"] == json!("state")
+                    && e.payload["state"] == json!("idle")
+            })
+            .count()
+    };
+    wait_for(|| idle_rests() >= 1);
+    // Now the stop: the mock driver never consumes the resume message the
+    // queue holds, so the fresh drive may re-resume into a blocked third
+    // round after its settle — this ends that.
+    sup.stop(&spawned.handle, StoppedBy::User).unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
     store.open().unwrap();
     let entries = store.entries_range(0, usize::MAX).unwrap();
-    let nudges = entries
+    let rests = entries
         .iter()
         .filter(|e| {
-            e.kind == "system"
-                && e.payload
-                    .get("note")
-                    .and_then(|n| n.as_str())
-                    .is_some_and(|n| n.starts_with("Nudge"))
+            e.kind == "subagent"
+                && e.payload["event"] == json!("state")
+                && e.payload["state"] == json!("idle")
         })
         .count();
     assert_eq!(
-        nudges, 1,
-        "exactly the fresh drive's nudge; the superseded drive added none"
+        rests, 1,
+        "exactly the fresh drive's observed rest; the superseded drive settled none"
     );
-    // Cleanup: the fresh drive's next round is gated; stop the child.
-    sup.stop(&spawned.handle, StoppedBy::User).unwrap();
 }

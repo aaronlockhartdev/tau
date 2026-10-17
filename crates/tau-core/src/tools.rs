@@ -184,7 +184,7 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             name: "subagent_stop".into(),
-            description: "Stop a running sub-agent by name (its displayed title; its session id is accepted too): its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already parked/done/failed/stopped) and is left alone.".into(),
+            description: "Stop a running sub-agent by name (its displayed title; its session id is accepted too): its in-flight stream is cut (the partial is kept) and it ends in the stopped state — it stays resumable. A sub-agent that is not running returns its current state (already resting/done/failed/stopped) and is left alone.".into(),
             parameters: json!({
                 "type": "object",
                 "properties": {"name": {"type": "string"}},
@@ -204,16 +204,18 @@ pub fn subagent_tool_specs() -> Vec<ToolSpec> {
     ]
 }
 
-/// The child-side tool (spec §5.3): the only channel back to the parent.
-/// done:true requires a structured output and ends the child; a note keeps
-/// it parked. `waiting_on` declares what a parking child waits for (the nudge
-/// fork: done / a valid declaration / failed).
+/// The child-side tool (spec §5.2, ADR-0001 revision): the only channel
+/// back to the parent. `done:true` requires a structured output and records
+/// it as the result an observed `done` will carry (a secondary hint — the
+/// turn-end observation confirms it against the child's plan file, or
+/// overrides it); a note records a declared `waiting_on` the child's rest
+/// rides as its badge.
 #[must_use]
 pub fn parent_notify_spec() -> ToolSpec {
     ToolSpec {
         kind: "function".into(),
         name: "parent_notify".into(),
-        description: "Notify your parent. done:true with an object output finishes the task (the output is the result handed back). Without done, the note parks you; waiting_on declares what you wait for: parent | user | subagent.".into(),
+        description: "Notify your parent. done:true with an object output declares your result (recorded; the turn ends after this call) — your parent is woken with that output when your turn's observation confirms your plan is complete. Without done, the note is recorded; waiting_on declares what you are waiting for (parent | user | subagent) — it rides your rest as a hint.".into(),
         parameters: json!({
             "type": "object",
             "properties": {

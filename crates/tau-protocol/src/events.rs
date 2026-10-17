@@ -131,8 +131,9 @@ pub enum SubagentEventKind {
     },
 }
 
-/// The child's structured state (the protocol's mirror of the core's 5-state
-/// machine): full-state per handle, so any frame self-heals a lost batch.
+/// The child's structured state (the protocol's mirror of the core's 6-state
+/// observed machine, spec §5.2): full-state per handle, so any frame
+/// self-heals a lost batch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SubagentInfo {
     pub handle: String,
@@ -140,7 +141,7 @@ pub struct SubagentInfo {
     pub child: String,
     pub agent_type: String,
     pub context_mode: ContextMode,
-    /// running | idle | done | failed | stopped
+    /// running | idle | awaiting | done | failed | stopped
     pub state: String,
     pub waiting_on: Option<String>,
     pub last_message: Option<String>,

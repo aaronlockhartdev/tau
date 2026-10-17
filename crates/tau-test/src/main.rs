@@ -481,10 +481,9 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
             );
         }
         if matches!(child_state, "done" | "failed") {
-            // The completion gate (resolve_assigned_task) resolves the task
-            // on the parent's file: all criteria satisfied -> finished,
+            // The child's own `task_finish` resolves the task on the
+            // parent's file: all criteria satisfied -> finished,
             // otherwise handed_off (the terminal markers; a `pointer` event
-            // is never written in v0).
             let terminal = tasks.iter().any(|e| {
                 matches!(
                     e.payload.get("event").and_then(Value::as_str).unwrap_or(""),

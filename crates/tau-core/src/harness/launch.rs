@@ -281,15 +281,16 @@ fn plan_wiring(
     sid: &str,
 ) -> (String, Option<Arc<Core>>) {
     crate::plan::seed(cwd, sid);
+    // The section names the child's own plan file (seeded unconditionally
+    // above): it belongs in the prompt whether or not a core is attached —
+    // the core only adds the watcher's state cache on top.
+    let sectioned = crate::plan::with_path(prompt, &crate::plan::path(cwd, sid));
     match sup.core().and_then(|w| w.upgrade()) {
         Some(core) => {
             core.refresh_plan(cwd, sid);
-            (
-                crate::plan::with_path(prompt, &crate::plan::path(cwd, sid)),
-                Some(core),
-            )
+            (sectioned, Some(core))
         }
-        None => (prompt.to_owned(), None),
+        None => (sectioned, None),
     }
 }
 

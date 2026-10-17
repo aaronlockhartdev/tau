@@ -56,6 +56,18 @@ impl AgentSession {
         }
     }
 
+    /// The child's quiescence (ADR-0001, spec §5.2): a stop, or a
+    /// `parent_notify` rest request pending the turn's end. Checked at
+    /// every loop exit that would otherwise start another provider call.
+    fn child_quiesced(&self) -> bool {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .child
+            .as_ref()
+            .is_some_and(|c| !c.is_running() || c.rest_requested())
+    }
+
     #[allow(clippy::too_many_lines)] // one turn loop; splitting is refactoring
     async fn run_turn(&self) -> Result<(), AgentError> {
         // #149: settle the store on every exit path (a `?` error skips the
@@ -261,6 +273,13 @@ impl AgentSession {
                     self.om_mid_loop();
                     // A mid-turn compaction is a re-injection point (design).
                     plan_state = self.plan_state();
+                    // Quiescence (ADR-0001, spec §5.2): a rest request or
+                    // a stop that landed with the tool batch ends the turn
+                    // here — the fast path burns no final call for a child
+                    // that already declared its rest.
+                    if self.child_quiesced() {
+                        break;
+                    }
                     continue;
                 }
                 break;
@@ -290,17 +309,12 @@ impl AgentSession {
             // A mid-turn compaction is a re-injection point (design): the
             // next assembly carries the refreshed state.
             plan_state = self.plan_state();
-            if self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held")
-                .child
-                .as_ref()
-                .is_some_and(|c| !c.is_running())
-            {
-                // Quiescence (ADR-0001): the child's notify ended it, so the
-                // core auto-terminates its loop — a done child never burns
-                // another provider call.
+            if self.child_quiesced() {
+                // Quiescence (ADR-0001): a stop, or a `parent_notify`
+                // `done` declaration (the fast path — spec §5.2), ends the
+                // turn here, so the core auto-terminates the loop and the
+                // observed rest at the turn end settles the state without
+                // burning another provider call.
                 break;
             }
         }

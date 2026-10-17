@@ -99,11 +99,18 @@ impl provider::TurnProvider for CannedChildProvider {
                     .map(str::to_owned),
             );
         }
+        let first = self.index.load(Ordering::SeqCst) == 0;
         let body = self.next();
         self.calls.fetch_add(1, Ordering::SeqCst);
         let delay = self.pre_delay;
         let (events, calls) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
+            // The per-child pre-delay, once, before the first call (an
+            // ordering margin for test-side file writes). The mid-stream
+            // pause below stays for the stop-cut window.
+            if first && delay > Duration::ZERO {
+                tokio::time::sleep(delay).await;
+            }
             let mut result = provider::TurnResult::default();
             let mut accepted = 0usize;
             for (i, event) in events.iter().cloned().enumerate() {
@@ -315,4 +322,16 @@ pub(crate) fn wait_for(cond: impl Fn() -> bool) {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// Waits until the child is observed `done` and returns its state info
+/// (the observed output for assertions).
+pub(crate) fn wait_for_done(sup: &Supervisor, handle: &str) -> SubagentInfo {
+    wait_for(|| {
+        matches!(
+            sup.state_info(handle).unwrap().state,
+            ChildState::Done { .. }
+        )
+    });
+    sup.state_info(handle).unwrap()
 }

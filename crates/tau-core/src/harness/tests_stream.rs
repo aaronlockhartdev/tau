@@ -151,8 +151,9 @@ async fn a_task_assigned_to_a_child_is_emitted_for_the_child_session() {
     }
 }
 
-/// One scripted turn with no `parent_notify`: the child ends the turn
-/// (the nudge path), so a slow provider keeps it running.
+/// A spawned child's observed `done` wakes the parent: the Notified
+/// event reaches the stream, and the wake's message lands on the
+/// parent's branch tagged with the child's session id.
 #[tokio::test]
 async fn a_spawned_child_finishes_and_wakes_the_parent() {
     // One scripted turn: parent_notify done with a structured output.
@@ -208,6 +209,14 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
         CommandOutput::Subagent { subagent: i } => i,
         other => panic!("expected a subagent: {other:?}"),
     };
+    // The observed lifecycle derives `done` from the child's plan file
+    // (spec §5.2): seed a complete plan while the one-time pre-delay
+    // holds the child's first call, so the declaration is confirmed.
+    std::fs::write(
+        crate::plan::path(tmp.path(), &info.child),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     // The child's scripted done-notify must wake the parent: the
     // Notified event reaches the stream, and the wake's message lands
     // on the parent's branch tagged with the child's session id.

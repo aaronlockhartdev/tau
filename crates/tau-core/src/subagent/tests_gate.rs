@@ -63,7 +63,7 @@ fn harness_with_gate(
     (sup, factory, parent)
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_md_type_child_prompt_carries_the_gate_section() {
     let dir = tempfile::tempdir().unwrap();
     let gates = Gates {
@@ -84,6 +84,16 @@ async fn a_md_type_child_prompt_carries_the_gate_section() {
     let s = sup
         .spawn("reviewer", "review this", None, None, "c0")
         .unwrap();
+    // The child's one scripted turn lands (the first call's prompt is
+    // captured), and it rests (observed `idle`); stop_handle then ends
+    // the resting drive so the test's handles quiesce.
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Idle { .. }
+        )
+    });
+    sup.stop_handle(&s.handle, StoppedBy::User).unwrap();
     s.drive.await.unwrap();
 
     // The child's first LLM call carries the type's body plus the gate

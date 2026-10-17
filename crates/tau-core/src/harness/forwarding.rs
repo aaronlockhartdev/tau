@@ -369,6 +369,8 @@ impl SubagentBridge for SessionSubagentBridge {
             crate::subagent::ChildState::Idle { waiting_on } => {
                 Some(json!({ "waiting_on": waiting_on.as_str() }))
             }
+            // `awaiting` is self-describing in its state string.
+            crate::subagent::ChildState::Awaiting | crate::subagent::ChildState::Running => None,
             crate::subagent::ChildState::Stopped { by } => {
                 let mut d = json!({ "by": by });
                 if let Some(rc) = &n.resume_contract {
@@ -377,7 +379,6 @@ impl SubagentBridge for SessionSubagentBridge {
                 }
                 Some(d)
             }
-            crate::subagent::ChildState::Running => None,
         };
         self.core.emit(Event::SubagentEvent {
             workspace: self.workspace.clone(),

@@ -1,7 +1,7 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicUsize, Child, ChildState, ContextMode, KIND_SUBAGENT,
-    Lane, Mutex, NUDGE, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned,
-    Supervisor, Weak, json, om_integration, title_on_disk, tools,
+    Lane, Mutex, OmRecord, OmState, Ordering, SessionStore, SpawnNotice, Spawned, Supervisor,
+    TurnOrigin, Weak, json, om_integration, title_on_disk, tools,
 };
 use crate::harness::SessionRole;
 
@@ -195,7 +195,12 @@ impl Supervisor {
             context_mode,
             agent: agent.clone(),
             state: Mutex::new(ChildState::Running),
-            nudge_sent: AtomicBool::new(false),
+            // The spawn's brief is autonomous work: its rest wakes the
+            // delegating parent (spec §5.2 turn-origin wake routing).
+            origin: Mutex::new(TurnOrigin::Spawn),
+            rest_requested: AtomicBool::new(false),
+            declared_output: Mutex::new(None),
+            declared_waiting: Mutex::new(None),
             last_message: Mutex::new(Some(brief.to_owned())),
             drive_gen: AtomicUsize::new(0),
             last_ended_gen: AtomicUsize::new(0),
@@ -233,10 +238,10 @@ impl Supervisor {
     }
 
     /// The child's drive: it runs turns while the child is `Running` and
-    /// sleeps while the child rests in `idle`, so a resume — a message that
-    /// flips the child back to `Running` — is picked up by the same task;
-    /// there is no window in which a resume can race the drive's exit
-    /// (ADR-0001: everything non-running is resumable, nothing
+    /// sleeps while the child rests (`idle`/`awaiting`), so a resume — a
+    /// message that flips the child back to `Running` — is picked up by the
+    /// same task; there is no window in which a resume can race the drive's
+    /// exit (ADR-0001: everything non-running is resumable, nothing
     /// auto-resumes). `done`, `stopped`, and `failed` end the drive — a
     /// done child is quiescent (no polling task held for the session's
     /// life), and the resume path starts a fresh drive for each.
@@ -250,8 +255,15 @@ impl Supervisor {
             }
             match child.state() {
                 ChildState::Running => {}
-                ChildState::Idle { .. } => {
+                // `idle` and `awaiting` are resting states: the drive sleeps
+                // until a resume (a message, a nudge-free world — spec §5.2
+                // deletes the one-shot nudge) or a stop.
+                ChildState::Idle { .. } | ChildState::Awaiting => {
                     if child.agent.has_pending() {
+                        // A message landed while the child rested: a
+                        // message-origin resume (spec §5.2 turn origin).
+                        child.set_origin(TurnOrigin::Message);
+                        child.reset_hints();
                         if child.set_state(&ChildState::Running).is_err() {
                             sup.mark_failed(&child, "state entry failed".into());
                             break;
@@ -264,9 +276,9 @@ impl Supervisor {
                         );
                         continue;
                     }
-                    // No polling (review N8): a message, a nudge, or a
-                    // stop notifies the drive; the permit keeps an
-                    // out-of-order wake from being lost.
+                    // No polling (review N8): a message, or a stop, notifies
+                    // the drive; the permit keeps an out-of-order wake from
+                    // being lost.
                     child.wake.notified().await;
                     continue;
                 }
@@ -281,33 +293,27 @@ impl Supervisor {
                     break;
                 }
             }
-            // The drive drained the queue and the child moved into a rest
-            // state: the loop's head sleeps until a resume.
-            if !matches!(child.state(), ChildState::Running) {
-                continue;
-            }
-            // The nudge sits inside this iteration (after `drive()` returns,
-            // before the loop's head): a superseded drive must not burn the
-            // budget the fresh drive's work period just reset.
+            // A superseded drive bails before settling: the fresh drive owns
+            // the rest (two drives must never settle one child).
             if child.drive_gen.load(Ordering::SeqCst) != drive_gen {
                 break;
             }
-            // A turn ended without `parent_notify`: the one-shot nudge.
-            if !child.nudge_sent.swap(true, Ordering::SeqCst) {
-                let _ = child.agent.append_entry(
-                    crate::agent::KIND_SYSTEM,
-                    json!({ "note": "Nudge: state what you are waiting for, or finish" }),
-                );
-                child.agent.send(NUDGE, Lane::FollowUp);
+            // `parent_notify` (or a stop) already settled the child: the
+            // loop head sleeps until a resume.
+            if !matches!(child.state(), ChildState::Running) {
                 continue;
             }
-            // Nudge exhausted: the three-way fork's remaining arm.
-            sup.mark_failed(
-                &child,
-                "nudge exhausted: the child ended a turn without done or a valid wait declaration"
-                    .to_owned(),
-            );
-            break;
+            // Observed rest (spec §5.2): the turn ended and the child is
+            // still `Running` — the state is read from the observed signals
+            // (gate_failed, the `QUESTION:` marker, the plan file), never
+            // nudged. An undeclared stop is `idle`, never force-`failed`.
+            sup.settle_rest(&child);
+            match child.state() {
+                // done/failed are terminal: the drive ends (the resume path
+                // starts a fresh one); idle/awaiting sleep at the head.
+                ChildState::Done { .. } | ChildState::Failed { .. } => break,
+                _ => {}
+            }
         }
         // The loop exited by any arm: record this generation's end (a
         // superseded drive reporting after the fresh one is a no-op — the

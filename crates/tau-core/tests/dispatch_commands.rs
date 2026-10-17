@@ -220,8 +220,16 @@ async fn subagent_state_of_an_unknown_handle_is_not_found() {
 
 #[tokio::test]
 async fn a_spawned_child_reaches_done_and_lists_itself() {
-    let rig = rig(done_body(), 0);
+    let rig = rig(done_body(), 100);
     let info = spawn(&rig);
+    // The observed lifecycle derives `done` from the child's plan file
+    // (spec §5.2): seed a complete plan while the slow first call is in
+    // flight, so the done-declaration is confirmed as `done`.
+    std::fs::write(
+        tau_core::plan::path(rig.cwd.path(), &info.child),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     assert_eq!(info.handle, format!("{}-1", rig.parent));
     wait_state(&rig, &info.handle, "done").await;
     let out = rig
@@ -473,7 +481,7 @@ async fn task_assign_to_an_unknown_worker_is_not_found() {
 
 #[tokio::test]
 async fn task_assign_to_a_child_sets_the_worker_pointer() {
-    let rig = rig(done_body(), 0);
+    let rig = rig(done_body(), 100);
     rig.core
         .dispatch(Command::TaskCreate {
             session: rig.parent.clone(),
@@ -481,6 +489,14 @@ async fn task_assign_to_a_child_sets_the_worker_pointer() {
         })
         .unwrap();
     let info = spawn(&rig);
+    // The observed lifecycle derives `done` from the child's plan file
+    // (spec §5.2): seed a complete plan while the slow first call is in
+    // flight, so the done-declaration is confirmed as `done`.
+    std::fs::write(
+        tau_core::plan::path(rig.cwd.path(), &info.child),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     wait_state(&rig, &info.handle, "done").await;
     rig.core
         .dispatch(Command::TaskAssign {

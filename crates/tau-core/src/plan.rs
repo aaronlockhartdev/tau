@@ -34,6 +34,14 @@ impl Plan {
     pub fn done_count(&self) -> usize {
         self.steps.iter().filter(|s| s.done).count()
     }
+
+    /// The observed completion (spec §5.2: `done` = plan complete and gate
+    /// passed): every step checked. A plan with no steps is not complete —
+    /// absence of observation is not proof of completion.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        !self.steps.is_empty() && self.steps.iter().all(|s| s.done)
+    }
 }
 
 /// The session's plan file: `{workspace}/.tau/plans/{session-id}.md`.
@@ -473,5 +481,22 @@ the parser is the culprit
     fn done_count_counts_checked_steps() {
         assert_eq!(well_formed().done_count(), 1);
         assert_eq!(Plan::default().done_count(), 0);
+    }
+
+    /// The observed `done` signal (spec §5.2): complete only when there are
+    /// steps and every one is checked.
+    #[test]
+    fn complete_requires_steps_and_all_checked() {
+        // A partially checked plan is not complete.
+        assert!(!well_formed().complete());
+        // An empty plan (no steps) is not complete: absence of observation
+        // is not proof of completion.
+        assert!(!Plan::default().complete());
+        // All steps checked: complete.
+        let mut done = well_formed();
+        for step in &mut done.steps {
+            step.done = true;
+        }
+        assert!(done.complete());
     }
 }

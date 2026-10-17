@@ -137,13 +137,21 @@ impl TurnProvider for CannedChild {
     fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         // A real model stops calling tools: once the script is exhausted the
         // child ends its turn instead of repeating the body forever.
-        let body = if self.index.fetch_add(1, Ordering::SeqCst) == 0 {
+        let first = self.index.fetch_add(1, Ordering::SeqCst) == 0;
+        let body = if first {
             self.body.clone()
         } else {
             plain_body()
         };
         let (events, calls) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
+            // The one-time pre-delay on the first call opens the window a
+            // test needs to seed the child's state before its first turn
+            // settles (the observed lifecycle reads the plan file at
+            // settle, spec §5.2).
+            if first {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
             let mut result = provider::TurnResult::default();
             for event in &events {
                 if !sink.event(event.clone()) {
@@ -208,7 +216,8 @@ impl ChildProviderFactory for SlowChildFactory {
 }
 
 /// One scripted turn with no `parent_notify`: the child ends the turn
-/// (the nudge path), so a slow provider keeps it running.
+/// and rests (observed `idle`, spec §5.2), so a slow provider keeps
+/// it running long enough to observe.
 pub(crate) fn plain_body() -> String {
     let data = r#"data: {"type":"response.output_text.delta","delta":"working on it"}"#;
     format!("{data}\n\ndata: [DONE]\n\n")
@@ -251,6 +260,22 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
         CommandOutput::Subagent { subagent } => subagent,
         other => panic!("expected a subagent: {other:?}"),
     };
+    // The observed lifecycle derives `done` from the child's plan file
+    // (spec §5.2): seed a complete plan while the one-time pre-delay
+    // holds the child's first call, so the done-declaring child is
+    // observed `done` — the wake the archive flow under test needs.
+    let cwd = core
+        .sessions
+        .lock()
+        .unwrap()
+        .get(parent_id)
+        .map(|l| l.cwd.clone())
+        .expect("the parent session is live");
+    std::fs::write(
+        crate::plan::path(&cwd, &info.child),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut last: String;
     loop {
