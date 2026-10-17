@@ -44,6 +44,16 @@ impl Core {
             .expect("session meta: no panic while the lock is held")
             .clone();
         let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
+        // The plan pane's data (spec §5.3): the watcher-parsed state;
+        // a session with no observed plan renders empty.
+        let plan = self
+            .plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
+            .get(&meta.id)
+            .cloned()
+            .map(Into::into)
+            .unwrap_or_default();
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
@@ -67,6 +77,7 @@ impl Core {
                     TurnState::Idle
                 },
                 gate_failed: live.agent.gate_failed(),
+                plan,
                 subagents: live
                     .agent
                     .subagents()
@@ -145,6 +156,13 @@ impl Core {
         let leaf = store.leaf_cached().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        // The plan cache drops on close (the file is the record): a closed
+        // session's snapshot parses the file fresh.
+        let plan = std::fs::read_to_string(crate::plan::path(Path::new(&workspace.cwd), id))
+            .ok()
+            .map(|raw| crate::plan::parse(&raw))
+            .map(tau_protocol::snapshot::Plan::from)
+            .unwrap_or_default();
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
@@ -154,6 +172,7 @@ impl Core {
                 queue: vec![],
                 turn: TurnState::Idle,
                 gate_failed: false,
+                plan,
                 subagents: vec![],
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),

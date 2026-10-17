@@ -624,6 +624,7 @@ mod tests {
                 queue: vec![],
                 turn: snapshot::TurnState::Idle,
                 gate_failed: false,
+                plan: snapshot::Plan::default(),
                 subagents: vec![],
             },
             cursor: "e1".into(),

@@ -1,15 +1,19 @@
 <script lang="ts">
-  // Right pane (spec §9): the sub-agents panel. F3: no filter chips — the
+  // Right pane (spec §9): tabbed `sub-agents` | `plan`. The sub-agents
   // panel groups rows by lifecycle (live on top, history collapsed behind a
-  // count header; the per-row badge already carries the exact state).
-  // Last-modified sorted. The panel renders a tree (nesting supported) —
-  // double-click opens the sub-agent's session, which is an ordinary session
-  // (a tab opens for it).
+  // count header; the per-row badge already carries the exact state), and
+  // each row carries a compact projection of the child's plan — the fleet
+  // view (design: N/M + current step + gate verdict). The plan tab renders
+  // the session's own parsed plan file (spec §5.3). Last-modified sorted;
+  // the panel renders a tree (nesting supported) — double-click opens the
+  // sub-agent's session, which is an ordinary session (a tab opens for it).
   import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store.svelte';
   import { fmtK } from '../lib/format';
   import { onActivate } from '../lib/ui';
   import { ChevronDown } from '@lucide/svelte';
   import type { SubagentInfo } from '../lib/protocol';
+  import { fleetGate, planProgress } from '../lib/plan';
+  import PlanView from './PlanView.svelte';
 
   const cur = $derived(currentSession());
   const ws = $derived(cur?.meta.workspace ?? null);
@@ -54,15 +58,36 @@
     const q = pane(ws);
     if (q) q.selSub = h;
   }
+
+  // The session's plan (the plan tab): the store's `plan` field — the
+  // snapshot seeds it, plan_changed keeps it live.
+  const plan = $derived(cur?.plan ?? { steps: [], criteria: '', notes: '' });
+  const gateFailed = $derived(cur?.gate_failed ?? false);
+
+  // The fleet projection (design: a compact child plan in the parent's
+  // view): N/M + current step + the gate's verdict from the child's
+  // observed lifecycle. The child's full plan lives in the child's tab.
+  function planLine(r: SubagentInfo): string | null {
+    const child = store.sessions[r.child]?.plan;
+    if (!child || child.steps.length === 0) return null;
+    const { done, total, current } = planProgress(child);
+    const gate = fleetGate(r.state);
+    const gateLabel = gate === 'pass' ? 'gate ✓' : gate === 'fail' ? 'gate ✗' : 'gate …';
+    return current ? `${done}/${total} · ${current} · ${gateLabel}` : `${done}/${total} · ${gateLabel}`;
+  }
 </script>
 
 <div class="pane">
   <div class="tabs" role="tablist">
     <div class="seg">
-      <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p}>sub-agents</button>
+      <button class="tab" class:on={p?.rtab === 'subs'} disabled={!p} onclick={() => { if (p) p.rtab = 'subs'; }}>sub-agents</button>
+      <button class="tab" class:on={p?.rtab === 'plan'} disabled={!p} onclick={() => { if (p) p.rtab = 'plan'; }}>plan</button>
     </div>
   </div>
   {#if p}
+    {#if p.rtab === 'plan'}
+      <PlanView plan={plan} gateFailed={gateFailed} />
+    {:else}
     <div class="list">
       {#if liveSubs.length === 0 && histSubs.length === 0}
         <div class="emptyc">No sub-agents — ask the agent to spawn one</div>
@@ -109,6 +134,9 @@
             {#if r.last_message}
               <div class="l2">{r.last_message}</div>
             {/if}
+            {#if planLine(r)}
+              <div class="l3">{planLine(r)}</div>
+            {/if}
           </div>
         {/snippet}
         {#if liveSubs.length > 0}
@@ -135,6 +163,7 @@
         {/if}
       {/if}
     </div>
+    {/if}
   {/if}
 </div>
 
@@ -273,6 +302,15 @@
     margin: 2px 0 0 19px;
     font-size: 11px;
     color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The fleet projection: the child's plan, compact. */
+  .crewrow .l3 {
+    margin: 2px 0 0 19px;
+    font: 10px var(--mono);
+    color: var(--faint);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

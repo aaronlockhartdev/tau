@@ -119,6 +119,24 @@ pub struct QueuedItem {
     pub source: Option<String>,
 }
 
+/// One plan step (a checkbox line of the plan file, spec §5.3): the
+/// plan pane's row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanStep {
+    pub text: String,
+    pub done: bool,
+}
+
+/// The parsed state of a session's plan file (spec §5.3): the watcher
+/// keeps it fresh, the plan pane renders it. An empty plan (no steps) is
+/// a session with no plan file yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Plan {
+    pub steps: Vec<PlanStep>,
+    pub criteria: String,
+    pub notes: String,
+}
+
 /// The session's turn state (spec §8 live state).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -139,6 +157,10 @@ pub struct LiveState {
     /// written before the field existed decode.
     #[serde(default)]
     pub gate_failed: bool,
+    /// The session's parsed plan file (spec §5.3): the plan pane's data.
+    /// Defaulted so a snapshot written before the field existed decodes.
+    #[serde(default)]
+    pub plan: Plan,
     /// The session's children (structured state — the GUI's sub-agent
     /// panel); empty for child sessions (the depth cap is structural).
     pub subagents: Vec<crate::SubagentInfo>,
@@ -299,6 +321,14 @@ mod tests {
             }],
             turn: TurnState::Running,
             gate_failed: false,
+            plan: Plan {
+                steps: vec![PlanStep {
+                    text: "fix the parser".into(),
+                    done: true,
+                }],
+                criteria: "build passes".into(),
+                notes: String::new(),
+            },
             subagents: vec![crate::SubagentInfo {
                 handle: "h1".into(),
                 child: "s2".into(),
@@ -360,6 +390,17 @@ mod tests {
         assert_eq!(snap_back, snap);
     }
 
+    /// The plan field's serde default: a snapshot written before `plan`
+    /// existed decodes with an empty plan, not an error.
+    #[test]
+    fn live_state_without_a_plan_field_decodes_empty() {
+        let live: LiveState = serde_json::from_str(
+            r#"{"queue":[],"turn":"idle","gate_failed":false,"subagents":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(live.plan, Plan::default());
+    }
+
     #[test]
     fn snapshot_parse_negatives() {
         // An unknown turn state and a cursorless snapshot are data errors —
@@ -392,6 +433,7 @@ mod tests {
                 queue: vec![],
                 turn: TurnState::Idle,
                 gate_failed: false,
+                plan: Plan::default(),
                 subagents: vec![],
             },
             cursor: "e1".into(),

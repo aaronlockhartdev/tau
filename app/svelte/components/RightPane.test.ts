@@ -223,4 +223,83 @@ describe('RightPane', () => {
     expect(kids).toHaveLength(1);
     expect(kids[0]!.closest('.srow2')).toHaveClass('d2');
   });
+
+  it('the plan tab shows the session plan: steps, N/M, current step, gate', async () => {
+    seed({
+      sessions: {
+        s1: seedState(meta('s1'), {
+          over: {
+            plan: {
+              steps: [
+                { text: 'investigate', done: true },
+                { text: 'fix the parser', done: false }
+              ],
+              criteria: 'build passes',
+              notes: ''
+            },
+            gate_failed: true
+          }
+        })
+      }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'plan' }));
+    expect(screen.getByText('1/2')).toBeInTheDocument();
+    expect(screen.getByText('investigate')).toBeInTheDocument();
+    expect(screen.getByText('fix the parser')).toBeInTheDocument();
+    expect(screen.getByText('gate failed')).toBeInTheDocument();
+  });
+
+  it('the plan tab shows the empty state with no plan', async () => {
+    seed({});
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'plan' }));
+    expect(screen.getByText('No plan yet — the agent writes it as it works')).toBeInTheDocument();
+  });
+
+  it('sub-agent rows carry the fleet projection: N/M, current step, gate', async () => {
+    seed({
+      subagents: [sub('h1', 'c1'), sub('h2', 'c2', { state: 'done' })],
+      sessions: {
+        c1: seedState(meta('c1', { title: 'worker one' }), {
+          parent: 's1',
+          mru: 2,
+          over: {
+            plan: {
+              steps: [
+                { text: 'read the spec', done: true },
+                { text: 'write the fix', done: false }
+              ],
+              criteria: '',
+              notes: ''
+            }
+          }
+        }),
+        c2: seedState(meta('c2', { title: 'worker two' }), {
+          parent: 's1',
+          mru: 3,
+          over: {
+            plan: { steps: [{ text: 'the work', done: true }], criteria: '', notes: '' }
+          }
+        })
+      }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'sub-agents' }));
+    // The running child: progress + current step + the gate still pending.
+    expect(screen.getByText('1/2 · write the fix · gate …')).toBeInTheDocument();
+    // The done child (history): the gate verdict is settled — pass.
+    await user.click(screen.getByRole('button', { name: /history · 1/ }));
+    expect(screen.getByText('1/1 · gate ✓')).toBeInTheDocument();
+  });
+
+  it('a child without a plan shows no projection line', async () => {
+    seed({
+      subagents: [sub('h1', 'c1')],
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+    });
+    await mount();
+    await user.click(screen.getByRole('button', { name: 'sub-agents' }));
+    expect(document.querySelector('.l3')).toBeNull();
+  });
 });

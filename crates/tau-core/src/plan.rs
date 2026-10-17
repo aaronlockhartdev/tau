@@ -45,6 +45,26 @@ impl Plan {
     }
 }
 
+/// The wire mirror of the parsed plan (the snapshot's `LiveState.plan` and
+/// the `plan_changed` event; ADR-0006 keeps the wire type in the protocol
+/// crate): a field-for-field copy.
+impl From<Plan> for tau_protocol::snapshot::Plan {
+    fn from(plan: Plan) -> Self {
+        tau_protocol::snapshot::Plan {
+            steps: plan
+                .steps
+                .into_iter()
+                .map(|s| tau_protocol::snapshot::PlanStep {
+                    text: s.text,
+                    done: s.done,
+                })
+                .collect(),
+            criteria: plan.criteria,
+            notes: plan.notes,
+        }
+    }
+}
+
 /// The plan's resume contract (spec §5.3, ADR-0001 revision: the task
 /// record's resume contract re-homed to the plan file): the first unchecked
 /// step is the next action. `None` when the plan is complete — or empty.
@@ -491,6 +511,35 @@ the parser is the culprit
     fn done_count_counts_checked_steps() {
         assert_eq!(well_formed().done_count(), 1);
         assert_eq!(Plan::default().done_count(), 0);
+    }
+
+    /// The wire mirror is field-for-field (the protocol parity surface).
+    #[test]
+    fn the_wire_mirror_copies_every_field() {
+        let wire: tau_protocol::snapshot::Plan = well_formed().into();
+        assert_eq!(
+            wire,
+            tau_protocol::snapshot::Plan {
+                steps: vec![
+                    tau_protocol::snapshot::PlanStep {
+                        text: "investigate the failure".into(),
+                        done: true,
+                    },
+                    tau_protocol::snapshot::PlanStep {
+                        text: "fix the parser".into(),
+                        done: false,
+                    },
+                    tau_protocol::snapshot::PlanStep {
+                        text: "add tests".into(),
+                        done: false,
+                    },
+                ],
+                criteria: "- build passes\n".into(),
+                notes: "\n\nthe parser is the culprit".into(),
+            }
+        );
+        let empty: tau_protocol::snapshot::Plan = Plan::default().into();
+        assert_eq!(empty, tau_protocol::snapshot::Plan::default());
     }
 
     /// The observed `done` signal (spec §5.2): complete only when there are

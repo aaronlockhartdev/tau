@@ -66,6 +66,15 @@ pub enum Event {
         session: String,
         kind: SubagentEventKind,
     },
+    /// The session's plan file changed (the plan watcher, spec §5.3):
+    /// full-state replacement, idempotent by construction — the plan pane
+    /// renders `plan` in place; a lost batch self-heals on the next
+    /// snapshot.
+    PlanChanged {
+        workspace: String,
+        session: String,
+        plan: snapshot::Plan,
+    },
     /// The workspace's skill registry changed (the file watcher, ticket
     /// #31): full-state replacement, idempotent by construction; a lost
     /// batch self-heals on the next `skill_list`. Session-less: the
@@ -299,6 +308,18 @@ mod tests {
                     wake: "done".into(),
                     text: "finished".into(),
                     output: Some(json!({ "result": "ok" })),
+                },
+            },
+            Event::PlanChanged {
+                workspace: "w1".into(),
+                session: "s1".into(),
+                plan: snapshot::Plan {
+                    steps: vec![snapshot::PlanStep {
+                        text: "fix the parser".into(),
+                        done: true,
+                    }],
+                    criteria: "build passes".into(),
+                    notes: String::new(),
                 },
             },
             Event::SkillListChanged {

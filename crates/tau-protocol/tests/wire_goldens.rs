@@ -216,6 +216,20 @@ mod outputs {
                     queue: vec![],
                     turn: TurnState::Running,
                     gate_failed: false,
+                    plan: tau_protocol::snapshot::Plan {
+                        steps: vec![
+                            tau_protocol::snapshot::PlanStep {
+                                text: "investigate the failure".into(),
+                                done: true,
+                            },
+                            tau_protocol::snapshot::PlanStep {
+                                text: "fix the parser".into(),
+                                done: false,
+                            },
+                        ],
+                        criteria: "build passes".into(),
+                        notes: "the parser is the culprit".into(),
+                    },
                     subagents: vec![SubagentInfo {
                         handle: "s1-1".into(),
                         child: "s2".into(),

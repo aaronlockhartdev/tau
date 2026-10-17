@@ -63,7 +63,7 @@ function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Parti
       session: meta(sid, WS.id, extra.session),
       entries: [],
       om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', gate_failed: false, subagents: [], ...extra.live },
+      live: { queue: [], turn: 'idle', gate_failed: false, plan: { steps: [], criteria: '', notes: '' }, subagents: [], ...extra.live },
       cursor: ''
     }
   };
@@ -778,6 +778,52 @@ describe('subagent_event', () => {
     expect(store.sessions['c']!.state).toBe('stopped');
   });
 
+});
+
+describe('plan_changed (the plan pane, spec §5.3)', () => {
+  it('a snapshot hydrates the session plan and gate state', () => {
+    const s = openSession(
+      {},
+      's1',
+      snap('s1', {
+        live: { plan: { steps: [{ text: 'fix the parser', done: true }], criteria: 'build passes', notes: '' } }
+      }).snapshot
+    );
+    expect(s['s1']!.plan.steps).toHaveLength(1);
+    expect(s['s1']!.gate_failed).toBe(false);
+  });
+
+  it('replaces the session plan: the watcher parse is the pane data', () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    applyEvents([
+      {
+        type: 'plan_changed',
+        workspace: WS.id,
+        session: 's1',
+        plan: {
+          steps: [{ text: 'fix the parser', done: false }],
+          criteria: 'build passes',
+          notes: ''
+        }
+      }
+    ]);
+    expect(store.sessions['s1']!.plan.steps).toHaveLength(1);
+    expect(store.sessions['s1']!.plan.steps[0]!.done).toBe(false);
+  });
+
+  it('an event for an unknown session is a no-op', () => {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    const before = store.sessions['s1']!.plan;
+    applyEvents([
+      {
+        type: 'plan_changed',
+        workspace: WS.id,
+        session: 'ghost',
+        plan: { steps: [{ text: 'x', done: false }], criteria: '', notes: '' }
+      }
+    ]);
+    expect(store.sessions['s1']!.plan).toBe(before);
+  });
 });
 
 describe('files pane', () => {

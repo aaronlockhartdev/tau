@@ -360,6 +360,9 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         }
         | Event::SubagentEvent {
             workspace, session, ..
+        }
+        | Event::PlanChanged {
+            workspace, session, ..
         } => (workspace.clone(), Some(session.clone())),
     }
 }
@@ -580,7 +583,9 @@ impl Core {
     /// Re-read and parse the session's plan file into the state cache: the
     /// plan watcher's consumer, and the session-start seed. A failed read
     /// (a torn write, a delete) degrades to an empty plan — the parser is
-    /// total, so nothing here can fail a turn.
+    /// total, so nothing here can fail a turn. The parse is also emitted as
+    /// a `plan_changed` (the GUI's plan pane, spec §5.3) when the cwd names
+    /// an open workspace.
     pub(crate) fn refresh_plan(&self, workspace: &Path, session_id: &str) {
         let raw =
             std::fs::read_to_string(crate::plan::path(workspace, session_id)).unwrap_or_default();
@@ -590,13 +595,32 @@ impl Core {
         self.plans
             .lock()
             .expect("plan states: no panic while the lock is held")
-            .insert(session_id.to_owned(), plan);
+            .insert(session_id.to_owned(), plan.clone());
         tracing::info!(
             session = %session_id,
             done,
             total,
             "plan state observed"
         );
+        if let Some(id) = self.workspace_id_for_cwd(workspace) {
+            self.emit(Event::PlanChanged {
+                workspace: id,
+                session: session_id.to_owned(),
+                plan: plan.into(),
+            });
+        }
+    }
+
+    /// The open workspace whose cwd is `path` (the plan event's routing);
+    /// `None` when the cwd names no open workspace (a close racing the
+    /// watcher) — the parse is cached either way.
+    fn workspace_id_for_cwd(&self, cwd: &Path) -> Option<String> {
+        self.workspaces
+            .lock()
+            .expect("workspaces map: no panic while the lock is held")
+            .values()
+            .find(|w| Path::new(&w.cwd) == cwd)
+            .map(|w| w.id.clone())
     }
 
     pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {

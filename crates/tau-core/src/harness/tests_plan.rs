@@ -174,6 +174,99 @@ async fn a_plan_file_change_updates_the_plan_state() {
     }
 }
 
+/// T5: the snapshot carries the parsed plan (the plan pane's seed data):
+/// an unobserved session snapshots an empty plan, and the watcher's parse
+/// lands in `live.plan`.
+#[tokio::test]
+async fn the_snapshot_carries_the_parsed_plan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    // The seeded skeleton: no steps.
+    let snap = match core
+        .dispatch(tau_protocol::Command::SessionSnapshot {
+            session: meta.id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected a snapshot: {other:?}"),
+    };
+    assert!(snap.live.plan.steps.is_empty(), "seeded skeleton: no steps");
+
+    // The model edits the plan; the watcher's parse lands in the snapshot.
+    let plan_file = crate::plan::path(&cwd, &meta.id);
+    std::fs::write(
+        &plan_file,
+        "# Plan\n\n## Steps\n- [x] done step\n- [ ] open step\n\n## Criteria\nbuild passes\n",
+    )
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let snap = match core
+            .dispatch(tau_protocol::Command::SessionSnapshot {
+                session: meta.id.clone(),
+            })
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected a snapshot: {other:?}"),
+        };
+        if snap.live.plan.steps.len() == 2 {
+            assert!(snap.live.plan.steps[0].done);
+            assert!(!snap.live.plan.steps[1].done);
+            assert_eq!(snap.live.plan.criteria, "build passes");
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the snapshot never carried the parsed plan: {:?}",
+            snap.live.plan
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// T5: a plan-file change emits `plan_changed` (the plan pane's live
+/// update): the full parsed plan, the idempotent full-state replacement.
+#[tokio::test]
+async fn a_plan_file_change_emits_plan_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let events = collect_events(&core);
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    let plan_file = crate::plan::path(&cwd, &meta.id);
+    std::fs::write(&plan_file, "## Steps\n- [x] done step\n- [ ] open step\n").unwrap();
+
+    // The session-start refresh also emits (the empty skeleton); the
+    // assertion keys on the edited plan's two steps.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
+            Event::PlanChanged {
+                workspace: ws,
+                session,
+                plan,
+            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
+            _ => None,
+        });
+        if got.as_ref().is_some_and(|p| p.steps.len() == 2) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no plan_changed with the edited plan within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[tokio::test]
 async fn the_plan_state_is_reinjected_into_the_assembly() {
     let tmp = tempfile::tempdir().unwrap();

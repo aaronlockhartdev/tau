@@ -8,7 +8,9 @@ export interface PaneState {
   // ('files'). Open files are separate state, so 'chat' keeps them alive.
   center: 'chat' | 'files';
   ltab: 'files' | 'sessions';
-  rtab: 'subs';
+  // The right pane's tab: the sub-agents panel, or the session's plan
+  // (spec §5.3) — the plan pane that replaced the task panel.
+  rtab: 'subs' | 'plan';
   // F3: the right-pane history section (done/failed/stopped rows) starts
   // collapsed; per-row badges carry the exact state, so no filter exists.
   historyOpen: boolean;

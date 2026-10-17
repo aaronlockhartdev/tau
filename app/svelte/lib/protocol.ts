@@ -241,11 +241,28 @@ export type SubagentEventKind =
   | { kind: 'state'; handle: string; child: string; state: string; detail: unknown; note: string | null }
   | { kind: 'notified'; child: string; wake: string; text: string; output: unknown };
 
+// One plan step (a checkbox line of the plan file, spec §5.3): the plan
+// pane's row.
+export interface PlanStep {
+  text: string;
+  done: boolean;
+}
+
+// The parsed state of the session's plan file (spec §5.3): the plan pane's
+// data. An empty plan (no steps) is a session with no plan file yet.
+export interface Plan {
+  steps: PlanStep[];
+  criteria: string;
+  notes: string;
+}
+
 export interface LiveState {
   queue: QueuedItem[];
   turn: TurnState;
   // Completion gate failed after max_retries (T2) — the status-bar badge.
   gate_failed: boolean;
+  // The session's parsed plan file (spec §5.3) — the plan pane's data.
+  plan: Plan;
   subagents: SubagentInfo[];
 }
 
@@ -378,6 +395,9 @@ export type Event =
   | { type: 'om_status'; workspace: string; session: string; kind: 'observing' | 'reflecting' | 'idle' }
   | { type: 'system'; workspace: string; session: string | null; kind: SystemEventKind }
   | { type: 'subagent_event'; workspace: string; session: string; kind: SubagentEventKind }
+  // The session's plan file changed (the plan watcher, spec §5.3): full-
+  // state replacement, idempotent — the plan pane renders it in place.
+  | { type: 'plan_changed'; workspace: string; session: string; plan: Plan }
   // The workspace's skill registry changed (the file watcher, ticket #31):
   // full-state replacement, idempotent; session-less like the system group.
   | { type: 'skill_list_changed'; workspace: string; skills: SkillInfo[] }

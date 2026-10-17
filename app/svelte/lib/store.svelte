@@ -935,6 +935,12 @@
           s.om.kind = ev.kind;
           break;
         }
+        case 'plan_changed': {
+          // The plan pane's data (spec §5.3): full-state replacement — the
+          // watcher's parse renders in place; idempotent by construction.
+          s.plan = ev.plan;
+          break;
+        }
         case 'system': {
           // Only an error kind writes (S3): the next successful command
           // clears the banner, not an unrelated system event.

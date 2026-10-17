@@ -11,6 +11,7 @@ import type {
   Snapshot,
   SubagentEventKind,
   SubagentInfo,
+  Plan,
   Usage,
   Workspace
 } from './protocol';
@@ -51,6 +52,13 @@ export interface SessionState {
   mru: number;
   // The session's children (the parent's view — the sub-agent panel).
   subagents: SubagentInfo[];
+  // The session's parsed plan file (spec §5.3) — the plan pane's data:
+  // the snapshot seeds it, plan_changed keeps it live.
+  plan: Plan;
+  // The completion gate's live state (spec §5.3): the plan pane's gate
+  // badge. True when the most recent gate-qualified turn failed after
+  // exhausting max_retries.
+  gate_failed: boolean;
 }
 
 export type SessionMap = Record<string, SessionState>;
@@ -95,6 +103,8 @@ function snapshotToState(snap: Snapshot): SessionState {
     archived: meta.archived,
     mru: meta.created,
     subagents: snap.live.subagents,
+    plan: snap.live.plan,
+    gate_failed: snap.live.gate_failed,
   };
 }
 
@@ -121,6 +131,8 @@ export function makeStub(
     archived: meta.archived,
     mru,
     subagents: [],
+    plan: { steps: [], criteria: '', notes: '' },
+    gate_failed: false,
   };
 }
 
