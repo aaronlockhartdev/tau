@@ -352,6 +352,22 @@ mod tests {
     }
 
     #[test]
+    fn plan_file_anchor_stays_in_sync_with_core() {
+        // The mock mirrors the core's plan-section marker without a compile
+        // dependency (it is a standalone test server); if the core's wording
+        // drifts, `{{plan_path}}` substitution silently no-ops and the
+        // workbench e2e fails far from the cause. Read the core source as
+        // text so any drift fails here, next to the cause.
+        let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tau-core/src/plan.rs");
+        let src = std::fs::read_to_string(&core)
+            .unwrap_or_else(|e| panic!("read {}: {e}", core.display()));
+        assert!(
+            src.contains(PLAN_FILE_ANCHOR),
+            "PLAN_FILE_ANCHOR {PLAN_FILE_ANCHOR:?} no longer appears in plan.rs — the plan-section wording drifted, update the mock's mirrored anchor"
+        );
+    }
+
+    #[test]
     fn render_substitutes_the_plan_path_placeholder() {
         let turn = Turn {
             text: None,
