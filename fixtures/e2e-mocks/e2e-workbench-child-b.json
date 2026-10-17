@@ -1,0 +1,32 @@
+{
+  "match": "e2e-workbench-child-b",
+  "turns": [
+    {
+      "calls": [
+        {
+          "name": "parent_notify",
+          "arguments": {
+            "text": "I need the api key to continue task-2.",
+            "done": false,
+            "waiting_on": "user"
+          }
+        }
+      ]
+    },
+    { "text": "Waiting on the user for the api key. (e2e workbench child b)" },
+    {
+      "calls": [
+        {
+          "name": "parent_notify",
+          "arguments": {
+            "text": "Still blocked on the api key for task-2.",
+            "done": false,
+            "waiting_on": "user"
+          }
+        }
+      ]
+    },
+    { "text": "Thanks — continuing with the api key. (e2e workbench child b resumed)" }
+  ],
+  "usage": { "input_tokens": 140, "output_tokens": 55, "total_tokens": 195 }
+}

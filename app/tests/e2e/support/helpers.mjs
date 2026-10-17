@@ -69,6 +69,8 @@ const storeState = (sid) => {
     live: cur?.live ? cur.live.queue.length : 0,
     liveTexts: cur?.live ? cur.live.queue.map((l) => l.text.length) : [],
     turn: cur ? cur.turn ?? null : null,
+    subagents: cur ? cur.subagents.map((a) => ({ child: a.child, state: a.state, waiting_on: a.waiting_on })) : [],
+    attentionOpen: s.attentionOpen,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     renderRange: s.renderRange,
     lastText: entries.length ? entries[entries.length - 1].text : null
@@ -123,7 +125,7 @@ const panesState = () => {
     leftTabs: left ? q(left, '.tab') : [],
     leftRows: left ? q(left, '.trow') : [],
     rightTabs: right ? q(right, '.tab') : [],
-    rightTasks: right ? q(right, '.lrow') : [],
+    rightRows: right ? q(right, '.lrow') : [],
     rightEmpty: right ? right.querySelector('.emptyc')?.textContent ?? '' : '',
     bar: barEl ? barEl.textContent.replace(/\s+/g, ' ').trim() : ''
   };
@@ -251,6 +253,12 @@ export async function newSessionViaUI() {
 // (`provider/model`). Resolves once the store reflects the switch.
 export async function selectModel(qualified) {
   await browser.execute(() => {
+    // The specs share one app instance: a step-out overlay left open by a
+    // parallel spec dims the window and swallows the chip's click.
+    const s = window.__tau.store();
+    s.attentionOpen = false;
+    s.paletteOpen = false;
+    s.fleetOpen = false;
     document.querySelector('.mchip')?.click();
   });
   await waitUntil(

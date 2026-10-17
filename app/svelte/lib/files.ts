@@ -3,6 +3,8 @@
 // file_list command and hands results in; the wave rechecks listing state
 // at flush time so a dir collapsed inside the 300 ms window drops out.
 import type { FileEntry } from './protocol';
+import type { LucideIcon } from '@lucide/svelte';
+import { File, FileCog, FileCode, FileJson, FileText, Folder, GitBranch, Image } from '@lucide/svelte';
 
 export type FilesCache = Record<string, Record<string, FileEntry[]>>;
 
@@ -76,4 +78,65 @@ export function waveDirs(
     for (const d of dirs) if (cur?.[d]) out.push({ ws, path: d });
   }
   return out;
+}
+
+// File-type iconography (file-tree plan, phase 1): a curated kind set that
+// covers what this repo and a typical tau workspace show. The kind doubles
+// as the icon's tint class (k-<kind>); new kinds are one mapping line each.
+export type FileKind = 'dir' | 'code' | 'json' | 'doc' | 'conf' | 'img' | 'git' | 'gen';
+
+const CODE_EXTS = new Set([
+  'ts',
+  'tsx',
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'svelte',
+  'rs',
+  'go',
+  'py',
+  'css',
+  'scss',
+  'html',
+  'vue',
+  'sh'
+]);
+const CONF_EXTS = new Set(['toml', 'ini', 'yaml', 'yml', 'conf']);
+const IMG_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico', 'bmp']);
+
+export function fileKind(name: string, dir = false): FileKind {
+  if (dir) return 'dir';
+  const base = name.toLowerCase();
+  // Dotfile git metadata (.gitignore, .gitattributes) before the extension
+  // pass, so the leading dot is not mistaken for an extension separator.
+  if (base.startsWith('.') && base.includes('git')) return 'git';
+  const ext = base.includes('.') ? base.slice(base.lastIndexOf('.') + 1) : '';
+  if (CODE_EXTS.has(ext)) return 'code';
+  if (ext === 'json') return 'json';
+  if (ext === 'md') return 'doc';
+  if (CONF_EXTS.has(ext)) return 'conf';
+  if (IMG_EXTS.has(ext)) return 'img';
+  return 'gen';
+}
+
+export function fileIcon(name: string, dir = false): LucideIcon {
+  switch (fileKind(name, dir)) {
+    case 'dir':
+      return Folder;
+    case 'code':
+      return FileCode;
+    case 'json':
+      return FileJson;
+    case 'doc':
+      return FileText;
+    case 'conf':
+      return FileCog;
+    case 'img':
+      return Image;
+    case 'git':
+      return GitBranch;
+    default:
+      return File;
+  }
 }

@@ -208,32 +208,6 @@ describe('EntryCard', () => {
     expect(screen.getByText('do the thing')).toBeInTheDocument();
   });
 
-  it('a task card labels the event and expands to its payload', async () => {
-    mount({
-      id: 'e1',
-      kind: 'task',
-      text: JSON.stringify({
-        event: 'created',
-        id: 't1',
-        title: 'Ship the report',
-        steps: [],
-        criteria: []
-      }),
-      payload: {
-        event: 'created',
-        id: 't1',
-        title: 'Ship the report',
-        steps: [],
-        criteria: []
-      }
-    });
-    const head = screen.getByRole('button', { name: /task: Ship the report/ });
-    expect(head).toHaveTextContent('▸');
-    await user.click(head);
-    expect(screen.getByText('id:')).toBeInTheDocument();
-    expect(screen.getByText('t1')).toBeInTheDocument();
-  });
-
   it('a model system entry renders as a quiet state line', () => {
     mount({ id: 'e1', kind: 'system', text: 'model: acme/x-1' });
     expect(screen.getByText('model: acme/x-1')).toBeInTheDocument();
@@ -242,7 +216,7 @@ describe('EntryCard', () => {
   it('an interrupted entry carries the interrupted mark', () => {
     mount({ id: 'e1', kind: 'interrupted', text: 'partial' });
     expect(screen.getByText('partial')).toBeInTheDocument();
-    expect(screen.getByText('⚡ interrupted')).toBeInTheDocument();
+    expect(screen.getByText('interrupted')).toBeInTheDocument();
   });
 
   it('a skill user entry shows the preview and dblclick reveals the full text', async () => {
@@ -269,5 +243,24 @@ describe('EntryCard', () => {
   it('a fully empty entry renders nothing', () => {
     const { container } = mount({ id: 'e1', kind: 'message', text: '' });
     expect(container.querySelector('.wrap')).toBeNull();
+  });
+
+  it('a batched card carries the count mark and the batch-last flag', () => {
+    // A 1-card batch: index 0 is both first (carries the mark) and last.
+    const { container } = mount(
+      { id: 'e1', kind: 'tool', name: 'read', status: 'ok', output: 'x' },
+      { batch: { index: 0, size: 1 } }
+    );
+    expect(container.querySelector('.batch-mark')?.textContent).toContain('1 batched');
+    expect(container.querySelector('.wrap.batch')).toHaveClass('batch-last');
+  });
+
+  it('a non-final batched card is not flagged batch-last', () => {
+    const { container } = mount(
+      { id: 'e1', kind: 'tool', name: 'read', status: 'ok', output: 'x' },
+      { batch: { index: 0, size: 3 } }
+    );
+    expect(container.querySelector('.batch-mark')?.textContent).toContain('3 batched');
+    expect(container.querySelector('.wrap.batch')).not.toHaveClass('batch-last');
   });
 });

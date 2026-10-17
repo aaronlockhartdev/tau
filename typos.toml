@@ -23,8 +23,16 @@ FO = "FO"
 sigit = "sigit"
 # Prefix of pi-acp's ndJsonStream transport identifier (research doc).
 nd = "nd"
+# gix `index_worktree` field `rela_path` (git.rs + migration doc).
+rela = "rela"
 
 [default.extend-identifiers]
 # The npm virtual-scroller package (imports + component names).
 virtua = "virtua"
 Virtua = "Virtua"
+# gix `index_worktree` field (git.rs).
+rela_path = "rela_path"
+# `.schip` status-chip CSS class (workbench prototype).
+schip = "schip"
+# `thr` threshold property (workbench prototype).
+thr = "thr"

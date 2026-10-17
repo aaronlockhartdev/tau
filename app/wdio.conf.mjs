@@ -37,8 +37,8 @@ const MOCK_SCENARIOS = {
   'e2e-text-turn.json': '5c1643e3bf0086324282fc0f605d12f7b8b7fabdec9e0556309ca13df7ebb9a9',
   'e2e-tool-turn.json': '6aca5c25e849fbb2419c525251fd6987554c6ca8248e7dcd4f5627b8683b8479',
   'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115',
-  'e2e-subagent-parent.json': '9f1a0758f6a50aab5e2915cec8040e884d9157bbcb215c78364e44adde69612e',
-  'e2e-subagent-child.json': '15a27a7b228e3d610ab23709998753df8006cdea1f5a3c35ec1225f33c2fd9a4'
+  'e2e-subagent-parent.json': 'e1839a9c790fe02f753ac5a8561ab2ce299edec1e0621918bd1283e157936944',
+  'e2e-subagent-child.json': 'f713425e5d92c35eba3ef125539537d441a810ab17976b6985f0c58f7f3cae9c'
 };
 const VITE_URL = 'http://127.0.0.1:5173/';
 const OUTPUT_DIR = path.join(ROOT, 'target', 'e2e');
@@ -61,7 +61,8 @@ const LEG_SPECS = {
     'mock-text.spec.mjs',
     'mock-tool.spec.mjs',
     'mock-multi.spec.mjs',
-    'mock-subagent.spec.mjs'
+    'mock-subagent.spec.mjs',
+    'mock-workbench.spec.mjs'
   ]
 };
 // The isolated HOME keeps the run from touching the real ~/.config/tau; an

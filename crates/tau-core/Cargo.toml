@@ -23,9 +23,12 @@ names = { workspace = true }
 rand = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-full = { workspace = true }
+gix = { workspace = true }
+similar = { workspace = true }
 tau-protocol = { path = "../tau-protocol" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+insta = { workspace = true }
 proptest = { workspace = true }
 sha2 = { workspace = true }

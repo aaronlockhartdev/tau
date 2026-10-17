@@ -31,7 +31,10 @@
     <span class="sep">·</span>
     <span class="k">om</span>
     {#if s && s.om.kind === 'idle'}
-      <span class="om">{fmtK(s.om.observation_tokens)}/{fmtK(s.om.reflector_threshold)}</span>
+      <span class="om">
+        {fmtK(s.om.observation_tokens)}/{fmtK(s.om.reflector_threshold)}
+        {#if s.om.pending_tokens > 0}<span class="ompend">+{fmtK(s.om.pending_tokens)}</span>{/if}
+      </span>
     {:else if s}
       <span class="om busy">{s.om.kind}<span class="pulse">…</span></span>
     {/if}
@@ -62,7 +65,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: 26px;
+    height: 24px;
     flex: none;
     padding: 0 12px;
     background: var(--bg);
@@ -99,6 +102,7 @@
   .sdot.run {
     background: var(--green);
     box-shadow: 0 0 6px color-mix(in srgb, var(--green) 60%, transparent);
+    animation: pulse 1.4s infinite;
   }
   .stt {
     color: var(--tx);
@@ -110,6 +114,11 @@
   }
   .om {
     color: var(--faint);
+  }
+  .ompend {
+    color: var(--faint);
+    opacity: 0.7;
+    margin-left: 4px;
   }
   .om.busy {
     color: var(--acc);

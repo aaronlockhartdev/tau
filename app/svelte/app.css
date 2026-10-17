@@ -1,20 +1,32 @@
 :root {
-  --bg: #08090b;
-  --panel: #0c0d0f;
-  --panel2: #111215;
-  --panel3: #17181c;
-  --line: rgba(160, 166, 176, 0.16);
-  --line2: rgba(160, 166, 176, 0.28);
-  --tx: #dbdce0;
-  --dim: #7e838d;
-  --faint: #4b4f58;
-  --acc: #5f9de0;
-  --green: #4f9d6f;
-  --amber: #b98a3e;
-  --red: #d95c5c;
+  /* Workbench palette (map #139, P1 #140): values from
+     app/prototype-workbench.html; names keep the app's existing set so every
+     component picks the new language up without edits. */
+  --bg: #0d0e11;
+  --panel: #141519;
+  --panel2: #191b20;
+  --panel3: #1a1c21;
+  --raised: #1a1c21;
+  --line: #26282f;
+  --line2: #30323b;
+  --tx: #e8eaed;
+  --dim: #9ba0aa;
+  --faint: #6b7078;
+  --acc: #4c8dff;
+  --green: #3fb950;
+  --amber: #d9a03f;
+  --red: #f0553f;
   --purple: #9d8ae6;
-  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Code + diff semantics, shared by the transcript tool output
+     (ToolOutput) and the file viewer (ChangesView) so both draw from one
+     language; derived from the palette above so a token change propagates. */
+  --code-fg: #d4d4d4;
+  --diff-add-bg: color-mix(in srgb, var(--green) 15%, transparent);
+  --diff-add-fg: color-mix(in srgb, var(--green) 50%, var(--tx));
+  --diff-del-bg: color-mix(in srgb, var(--red) 15%, transparent);
+  --diff-del-fg: color-mix(in srgb, var(--red) 50%, var(--tx));
+  --mono: 'JetBrains Mono Variable', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, monospace;
+  --sans: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 * {
@@ -27,7 +39,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--tx);
-  font: 14px/1.45 var(--sans);
+  font: 13px/1.55 var(--sans);
 }
 
 /* Nothing in the app rubber-bands: the main-frame (whole-window) bounce and
@@ -50,20 +62,33 @@ input {
 }
 
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--line2);
+  background: #2c2e36;
   border-radius: 5px;
+  border: 2px solid var(--bg);
 }
 
-/* The icon sprite mounted in App.svelte: zero-size, out of layout. */
-.sprites {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
+::selection {
+  background: rgba(76, 141, 255, 0.22);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes rise {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* The right-click menu, shared by the tab strip and the session tree

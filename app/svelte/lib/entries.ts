@@ -5,7 +5,6 @@
 import type {
   Entry,
   SubagentPayload,
-  TaskPayload,
   Usage,
   ViewEntry
 } from './protocol';
@@ -56,12 +55,16 @@ export function decodeEntry(v: ViewEntry): Entry {
     case 'user': {
       const text = typeof p.text === 'string' ? p.text : '';
       const source = typeof p.source === 'string' ? p.source : undefined;
+      // The lane rides the payload (the queue-delivery divider's source).
+      const lane =
+        p.lane === 'force' || p.lane === 'steering' || p.lane === 'follow_up' ? p.lane : undefined;
       const sk = p.skill as { name?: unknown; location?: unknown } | undefined;
       return {
         id: v.id,
         kind: 'user',
         text,
         source,
+        lane,
         skill: sk ? { name: typeof sk.name === 'string' ? sk.name : '', location: typeof sk.location === 'string' ? sk.location : '' } : undefined,
         // The child → parent direction is payload-derived (source); the
         // parent → child case needs the session's parent link, so the
@@ -98,7 +101,10 @@ export function decodeEntry(v: ViewEntry): Entry {
         call_id: typeof p.call_id === 'string' ? p.call_id : undefined,
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: typeof p.output === 'string' ? p.output : undefined,
-        status: toolStatus(p.output)
+        status: decodeToolStatus(p),
+        // The sidecar's bytes are gone (blob deleted from disk): the record is
+        // what it is — say so, never fake a still-running call.
+        unavailable: v.payload == null && v.blob != null ? true : undefined
       };
     }
     case 'om': {
@@ -132,8 +138,6 @@ export function decodeEntry(v: ViewEntry): Entry {
       return { id: v.id, kind: 'spawn-snapshot', text: typeof p.log === 'string' ? p.log : '' };
     case 'subagent':
       return { id: v.id, kind: 'subagent', text: JSON.stringify(p ?? v.id), payload: p as SubagentPayload };
-    case 'task':
-      return { id: v.id, kind: 'task', text: JSON.stringify(p ?? v.id), payload: p as TaskPayload };
     default:
       return { id: v.id, kind: v.kind, text: JSON.stringify(p ?? v.id) };
   }
@@ -168,14 +172,31 @@ export function upsertEntry(entries: Record<string, Entry>, v: ViewEntry): void 
 }
 
 // The persisted tool output records a failure: the bash executor prefixes
-// "exit N" (non-zero N) or "bash: <error>" (spawn/timeout). All other tools
-// report free text — a failure there is content, not status.
-function toolStatus(output: unknown): 'running' | 'ok' | 'error' {
+// "exit N" (non-zero N) or "bash: <error>" (spawn/timeout). Every other tool
+// prefixes a failure with its own name ("read: cannot read ...") and the
+// dispatcher prefixes routing failures; a success never does, so the prefix
+// is a reliable failure discriminator.
+export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'error' {
   if (output === undefined || output === '') return 'running';
   const s = typeof output === 'string' ? output : '';
-  const m = /^exit (\d+)/.exec(s);
-  if (m) return m[1] === '0' ? 'ok' : 'error';
-  if (/^bash: /.test(s)) return 'error';
+  if (name === 'bash') {
+    const m = /^exit (\d+)/.exec(s);
+    if (m) return m[1] === '0' ? 'ok' : 'error';
+    if (/^bash: /.test(s)) return 'error';
+    return 'ok';
+  }
+  if (s.startsWith(`${name}: `)) return 'error';
+  if (/^(error:|unknown tool:)/.test(s)) return 'error';
   return 'ok';
+}
+
+// The core's explicit status (B5) wins when present; the prefix heuristic is
+// the back-compat fallback for records written before it existed. A running
+// call has neither an explicit status nor an output, so it falls through to
+// toolStatus's 'running'.
+function decodeToolStatus(p: Record<string, unknown>): 'ok' | 'running' | 'error' {
+  const s = p.status;
+  if (s === 'ok' || s === 'error') return s;
+  return toolStatus(typeof p.name === 'string' ? p.name : '', p.output);
 }
 

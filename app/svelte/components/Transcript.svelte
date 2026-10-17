@@ -7,7 +7,10 @@
   import { onDestroy } from 'svelte';
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
-  import { store, fetchWindow, currentSession } from '../lib/store.svelte';
+  import SubagentBlock from './SubagentBlock.svelte';
+  import { store, fetchWindow, currentSession, setFollow, switchSession } from '../lib/store.svelte';
+  import { claimCrew, crewView, spawnRefsOf } from '../lib/subagent-view';
+  import type { SubagentInfo } from '../lib/protocol';
   import {
     makeWindowingState,
     openFetches,
@@ -35,6 +38,8 @@
   const mountedFor = store.current;
 
   let el = $state<HTMLDivElement | null>(null);
+  // The virtualized content track: observed for in-place growth (below).
+  let trackEl = $state<HTMLDivElement | null>(null);
   // The --tsgo checker cannot infer the exported handle of virtua's generic
   // .svelte component from node_modules (it sees a plain SvelteComponent),
   // so the binding is cast at the site. `any` is the only form that passes:
@@ -52,7 +57,7 @@
   const sourceLabelFor = (e: Entry): string =>
     e.kind === 'user' ? (e.source ? store.sessions[e.source]?.meta.title ?? '' : '') : '';
   // The parent → child direction: a user entry inside a child session is
-  // the parent's message (task assignment, steering, follow-up).
+  // the parent's message (steering, follow-up).
   const parentLabel = $derived.by(() => {
     const p = curSession?.meta.parent ?? null;
     return p ? store.sessions[p]?.meta.title ?? '' : '';
@@ -80,9 +85,54 @@
       if (run.length >= 2) run.forEach((id, i) => m.set(id, { index: i, size: run.length }));
       run = [];
     };
-    for (const e of all) if (e.kind === 'tool') run.push(e.id); else flush();
+    for (const e of all) if (e.kind === 'tool' && !isSpawn(e)) run.push(e.id); else flush();
     flush();
     return m;
+  });
+
+  // A spawn tool entry is the transcript's crew row (P2): it renders as a
+  // SubagentBlock, never a batched tool chip, so a run of tools breaks at
+  // it (the batchOf flush above).
+  const isSpawn = (e: Row): boolean => e.kind === 'tool' && e.name === 'subagent_spawn';
+
+  // The crew correlation (P2): spawn points claimed to the live SubagentInfo
+  // list. Re-derived on any entry or subagent change; a cold session claims
+  // nothing (the blocks render their static spawn marker).
+  const spawnRefs = $derived(spawnRefsOf(all));
+  const spawnRefOf = $derived.by(() => new Map(spawnRefs.map((r) => [r.entryId, r])));
+  const crew = $derived.by(() =>
+    curSession ? claimCrew(spawnRefs, curSession.subagents) : new Map<string, SubagentInfo | null>()
+  );
+  // The follow filter: a live crew member of THIS session, or null.
+  const followInfo = $derived.by(() => {
+    const h = store.follow;
+    if (!h) return null;
+    return curSession?.subagents.find((i) => i.handle === h) ?? null;
+  });
+
+  // New-activity pill (P2): while the user is scrolled up, arriving activity
+  // (a new entry, or the tail entry's stream growing) counts up instead of
+  // yanking the scroll; reaching the bottom — or the pill — clears it.
+  let newCount = $state(0);
+  let lastSignal = 0;
+  let signalSession = '';
+  const lastLen = $derived.by(() => {
+    const e = all[all.length - 1];
+    return e && typeof e.text === 'string' ? e.text.length : 0;
+  });
+  const sig = $derived(all.length * 100000 + lastLen);
+  $effect(() => {
+    void sig;
+    void cur;
+    if (cur !== signalSession) {
+      signalSession = cur ?? '';
+      newCount = 0;
+    } else if (shouldStickToBottom) {
+      newCount = 0;
+    } else if (sig > lastSignal) {
+      newCount++;
+    }
+    lastSignal = sig;
   });
   // Pin (the Chat pattern): when the rendered set changes and the stick flag
   // is set, end-align the last item. A scrollTo to the current position is a
@@ -99,6 +149,24 @@
     if (el.scrollHeight > el.clientHeight) {
       ref.scrollToIndex(n - 1, { align: 'end' });
     }
+  });
+
+  // In-place growth (a streaming assistant, a tool result landing, a card
+  // expanding) leaves the entry count unchanged, so the count-driven pin
+  // above never re-fires and the view loses the bottom. A ResizeObserver on
+  // the track re-pins whenever the content grows while we are stuck.
+  $effect(() => {
+    if (!trackEl) return;
+    const ro = new ResizeObserver(() => {
+      if (!ref || !shouldStickToBottom) return;
+      // A list that fits needs no pin: pinning it leaves virtua's base offset
+      // stale — the same reason the count-pin guards on overflow.
+      if (!el || el.scrollHeight <= el.clientHeight) return;
+      const n = all.length;
+      if (n > 0) ref.scrollToIndex(n - 1, { align: 'end' });
+    });
+    ro.observe(trackEl);
+    return () => ro.disconnect();
   });
 
   // Paged read around the visible window (spec §8): virtua's range drives
@@ -215,7 +283,7 @@
         <div class="sub">send a message below to start the session</div>
       </div>
     {:else}
-      <div class="track">
+      <div class="track" bind:this={trackEl}>
         <Virtualizer
           bind:this={ref as any}
           scrollRef={el ?? undefined}
@@ -230,20 +298,59 @@
               <div class="waiting">
                 <span class="dots"><i></i><i></i><i></i></span>
               </div>
+            {:else if isSpawn(e)}
+              {@const info = crew.get(e.id) ?? null}
+              {@const sref = spawnRefOf.get(e.id) ?? { entryId: e.id, agentType: '', contextMode: 'fresh', brief: null }}
+              <div
+                class="rowitem"
+                class:dim={!!followInfo && info?.handle !== followInfo.handle}
+              >
+                <SubagentBlock
+                  view={crewView(sref, info)}
+                  name={
+                    info
+                      ? store.sessions[info.child]?.meta.title || sref.brief || sref.agentType
+                      : sref.brief ?? sref.agentType
+                  }
+                  followed={!!followInfo && info?.handle === followInfo.handle}
+                  onFollow={() =>
+                    info && setFollow(followInfo?.handle === info.handle ? null : info.handle)}
+                  onOpen={() => info && void switchSession(info.child)}
+                />
+              </div>
             {:else}
               {@const hk = cur ? `${cur}:${e.id}` : e.id}
-              <EntryCard
-                entry={e}
-                heightKey={hk}
-                sourceLabel={sourceLabelFor(e)}
-                parentLabel={parentLabel}
-                turn={turnLabel(idx)}
-                batch={e.kind === 'tool' ? batchOf.get(e.id) : undefined}
-              />
+              <div class="rowitem" class:dim={!!followInfo}>
+                <EntryCard
+                  entry={e}
+                  heightKey={hk}
+                  sourceLabel={sourceLabelFor(e)}
+                  parentLabel={parentLabel}
+                  turn={turnLabel(idx)}
+                  batch={e.kind === 'tool' ? batchOf.get(e.id) : undefined}
+                />
+              </div>
             {/if}
           {/snippet}
         </Virtualizer>
       </div>
+    {/if}
+    {#if followInfo}
+      <div class="fchip">
+        following · {store.sessions[followInfo.child]?.meta.title ?? 'sub-agent'}
+        <button type="button" aria-label="stop following" onclick={() => setFollow(null)}>✕</button>
+      </div>
+    {/if}
+    {#if newCount > 0 && ref && all.length > 0}
+      <button
+        class="pill"
+        type="button"
+        onclick={() => {
+          shouldStickToBottom = true;
+          newCount = 0;
+          if (ref) ref.scrollToIndex(all.length - 1, { align: 'end' });
+        }}
+      >↓ {newCount} new</button>
     {/if}
   </div>
 {/key}
@@ -318,5 +425,50 @@
       opacity: 1;
       transform: translateY(-3px);
     }
+  }
+  /* P2 item wrapper: the follow filter dims everything but the followed block. */
+  .rowitem.dim {
+    opacity: 0.38;
+  }
+  /* The follow chip: pinned at the transcript's top. */
+  .fchip {
+    position: absolute;
+    top: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    z-index: 5;
+    background: var(--raised);
+    border: 1px solid var(--line2);
+    border-radius: 8px;
+    padding: 3px 6px 3px 10px;
+    font: 11px var(--mono);
+    color: var(--acc);
+  }
+  .fchip button {
+    background: none;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    font: inherit;
+    padding: 0 2px;
+  }
+  /* The new-activity pill: floats at the bottom while scrolled up. */
+  .pill {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    background: var(--raised);
+    border: 1px solid var(--line2);
+    border-radius: 12px;
+    padding: 4px 12px;
+    font: 11.5px var(--mono);
+    color: var(--acc);
+    cursor: pointer;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   }
 </style>

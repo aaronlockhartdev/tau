@@ -89,16 +89,8 @@ impl Core {
                     }
                     Err(_) => (
                         None,
-                        self.workspaces
-                            .lock()
-                            .expect("workspaces map: no panic while the lock is held")
-                            .values()
-                            .find(|w| {
-                                Self::session_access(w)
-                                    .iter()
-                                    .any(|m| m.id == session && !m.archived)
-                            })
-                            .map(|w| PathBuf::from(w.cwd.clone()))
+                        self.owning_session(&session)
+                            .map(|(w, _)| PathBuf::from(w.cwd.clone()))
                             .ok_or_else(|| ProtocolError::NotFound {
                                 what: format!("session {session} is not open"),
                             })?,
@@ -181,16 +173,8 @@ impl Core {
                 // last `model:` note on the branch is the current one.
                 else {
                     let cwd = self
-                        .workspaces
-                        .lock()
-                        .expect("workspaces map: no panic while the lock is held")
-                        .values()
-                        .find(|w| {
-                            Self::session_access(w)
-                                .iter()
-                                .any(|m| m.id == session && !m.archived)
-                        })
-                        .map(|w| PathBuf::from(w.cwd.clone()))
+                        .owning_session(&session)
+                        .map(|(w, _)| PathBuf::from(w.cwd.clone()))
                         .ok_or_else(|| ProtocolError::NotFound {
                             what: format!("session {session} is not open"),
                         })?;
@@ -263,12 +247,18 @@ impl Core {
                     .lock()
                     .expect("sessions map: no panic while the lock is held")
                     .remove(&session);
+                // The plan state is a cache of the file (design): a closed
+                // session keeps no parallel state — the file is the record.
+                self.plans
+                    .lock()
+                    .expect("plan states: no panic while the lock is held")
+                    .remove(&session);
                 if let Some(live) = closed {
                     // Closing a running CHILD session routes through the
-                    // parent's supervisor (the terminal Stopped record, the
-                    // state event, the parent's wake) — a bare stop flag
-                    // would let the child's drive burn its one-shot nudge
-                    // into a bogus `failed`.
+                    // parent's supervisor (the terminal Stopped record and
+                    // the state event, no parent wake — spec §5.2): a bare
+                    // stop flag would leave the child's drive to end the
+                    // turn and rest on its own.
                     // The parent's id comes from the link (R3): the handle
                     // is opaque, never parsed.
                     if let Some(link) = live.agent.child_link()
@@ -545,7 +535,7 @@ impl Core {
                 // The live session's store is now the snapshot's source
                 // (its in-memory log): it must see the new leaf too, or the
                 // next snapshot's cursor would lag the branch move.
-                live.agent.with_task_store(|s| s.adopt_leaf(&at));
+                live.agent.with_store(|s| s.adopt_leaf(&at));
                 live.meta
                     .lock()
                     .expect("session meta: no panic while the lock is held")

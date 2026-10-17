@@ -14,23 +14,36 @@ pub struct AssembledContext {
     pub om_input_items: Vec<InputEntry>,
 }
 
+/// The session's active branch: every entry, then the leaf's branch.
+fn branch_of(store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
+    let all = store.entries_range(0, usize::MAX)?;
+    let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
+    Ok(branch_entries(&all, leaf.as_deref()))
+}
+
+/// The raw entries strictly after `cursor_id` in `branch` (all of them when the
+/// cursor is absent or not on the branch).
+fn raw_after(branch: &[Entry], cursor_id: Option<&str>) -> Vec<Entry> {
+    let after = match cursor_id {
+        Some(id) => match branch.iter().position(|e| e.id == id) {
+            Some(i) => &branch[i + 1..],
+            None => branch,
+        },
+        None => branch,
+    };
+    after.iter().filter(|e| is_raw(e)).cloned().collect()
+}
 impl OmState {
     /// The unobserved raw on the active branch: the entries after the
     /// cursor. A missing cursor means the whole branch; a cursor not on
     /// this branch (a branch switch) means the branch is unobserved —
     /// the cursor is path-scoped (spec §4).
     pub fn unobserved(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-        let all = store.entries_range(0, usize::MAX)?;
-        let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
-        let branch = branch_entries(&all, leaf.as_deref());
+        let branch = branch_of(store)?;
         let Some(cursor) = &self.record.cursor else {
             return Ok(branch);
         };
-        let unobserved = match branch.iter().position(|e| e.id == cursor.entry_id) {
-            Some(i) => &branch[i + 1..],
-            None => &branch[..],
-        };
-        Ok(unobserved.iter().filter(|e| is_raw(e)).cloned().collect())
+        Ok(raw_after(&branch, Some(cursor.entry_id.as_str())))
     }
 
     #[must_use]
@@ -404,17 +417,8 @@ impl OmState {
     /// cursor never lags the observation cursor — promotion advances the
     /// latter to the buffered material's end).
     pub(super) fn unbuffered(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-        let all = store.entries_range(0, usize::MAX)?;
-        let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
-        let branch = branch_entries(&all, leaf.as_deref());
-        let after = match &self.buffer_cursor {
-            Some(id) => match branch.iter().position(|e| e.id == *id) {
-                Some(i) => &branch[i + 1..],
-                None => &branch[..],
-            },
-            None => &branch[..],
-        };
-        Ok(after.iter().filter(|e| is_raw(e)).cloned().collect())
+        let branch = branch_of(store)?;
+        Ok(raw_after(&branch, self.buffer_cursor.as_deref()))
     }
 
     /// The Reflector prompt for a level (spec §4): the frozen variant
@@ -431,20 +435,15 @@ impl OmState {
     }
 
     /// The assembled main-turn context (spec §4). `instructions` is the stable
-    /// system prompt: the base prompt, the observation framing, and the active
-    /// task's resume contract (ticket #24 fills the slot; the loop passes `None`
-    /// today). The volatile observation content is NOT in `instructions` — each
+    /// system prompt: the base prompt and the observation framing. The
+    /// volatile observation content is NOT in `instructions` — each
     /// observation group rides as its own `role: system` item in
     /// `om_input_items` (#96), so the prompt stays byte-stable across appends and
     /// reflector rewrites. The one-shot continuation hint is the trailing
     /// `role: user` item (#97). Pure over the record (no store access), so the
     /// one-shot `changed` flip sticks when the loop runs it on the persistent
     /// state under the lock.
-    pub fn assemble_context(
-        &mut self,
-        base: &str,
-        task_contract: Option<&str>,
-    ) -> AssembledContext {
+    pub fn assemble_context(&mut self, base: &str) -> AssembledContext {
         let mut instructions = base.to_owned();
         let observations = self.record.agent_observations();
         if !observations.is_empty() {
@@ -452,10 +451,6 @@ impl OmState {
             instructions.push_str(om::OBSERVATION_CONTEXT_PROMPT);
             instructions.push('\n');
             instructions.push_str(om::OBSERVATION_CONTEXT_INSTRUCTIONS);
-        }
-        if let Some(contract) = task_contract {
-            instructions.push_str("\n\n# Task (resume contract)\n");
-            instructions.push_str(contract);
         }
         // One `role: system` message per observation group (mastra parity,
         // #96), pushed before the one-shot hint so its "messages following are

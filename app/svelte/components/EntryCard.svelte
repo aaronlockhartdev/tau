@@ -9,6 +9,7 @@
   import type { Entry } from '../lib/protocol';
   import CardShell from './CardShell.svelte';
   import { onActivate } from '../lib/ui';
+  import { Layers, Sparkles } from '@lucide/svelte';
 
   let {
     entry,
@@ -37,7 +38,6 @@
   const okey = (slot: string) => `${heightKey}:${slot}`;
   let open = $state({
     tool: !!store.entryOpen.get(okey('tool')),
-    task: !!store.entryOpen.get(okey('task')),
     output: !!store.entryOpen.get(okey('output')),
     skill: !!store.entryOpen.get(okey('skill')),
     obs: !!store.entryOpen.get(okey('obs')),
@@ -69,9 +69,14 @@
 {#snippet shellView(shell: Shell)}
   {#if shell.kind === 'bubble'}
     <div class="tuser"><span class="bubble">{shell.text}</span></div>
+  {:else if shell.kind === 'divider'}
+    <div class="divider t-{shell.tint}">
+      <span>{shell.label}</span>
+    </div>
   {:else if shell.kind === 'stline'}
+    {@const Icon = shell.icon}
     <div class="stline">
-      <svg class="ic" width="13" height="13"><use href={`#${shell.icon}`}/></svg>{shell.label}
+      <Icon class="ic" size={13} />{shell.label}
     </div>
   {:else if shell.kind === 'think'}
     <div
@@ -87,7 +92,7 @@
       }}
       onkeydown={onActivate(() => setOpen('think'))}
     >
-      <svg class="ic" width="13" height="13"><use href="#i-spark"/></svg>
+      <Sparkles class="ic" size={13} />
       <span>{shell.label}</span>
       {#if shell.meta}
         <span class="meta">{shell.meta}</span>
@@ -101,9 +106,14 @@
   {/if}
 {/snippet}
 {#if p}
-<div class="wrap" class:batch={!!batch} bind:this={el}>
+<div
+  class="wrap"
+  class:batch={!!batch}
+  class:batch-last={batch ? batch.index === batch.size - 1 : false}
+  bind:this={el}
+>
   {#if batch && batch.index === 0}
-    <div class="batch-mark">⊞ {batch.size} batched</div>
+    <div class="batch-mark"><Layers class="bich" size={12} /> {batch.size} batched</div>
   {/if}
   {#if turn}
     <div class="thd">{turn}</div>
@@ -116,49 +126,94 @@
 
 <style>
   .wrap {
-    margin: 0 16px 8px;
+    margin: 0 16px 10px;
   }
   /* A card in a parallel batch: a quiet connector line on the left ties the
      run together; the first card carries the count. */
   .wrap.batch {
     /* No margin-left override: the line sits at 16px, inline with the
-       other cards' left edge. The padding clears the content from it. */
+       other cards' left edge. The padding clears the content from it.
+       position:relative anchors the ::after that bridges the gap below. */
+    position: relative;
     padding-left: 10px;
     border-left: 2px solid var(--line);
   }
+  /* Bridge the 10px margin below each non-last card so the connector line
+     runs continuously down the batch (a dash per card reads as broken). */
+  .wrap.batch:not(.batch-last)::after {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 100%;
+    width: 2px;
+    height: 10px;
+    background: var(--line);
+  }
   .batch-mark {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font: 10px var(--mono);
     color: var(--muted);
-    /* Negative margin pulls the mark's left edge onto the line, so the
-       line runs straight down under it. */
+    /* A background cap so the mark sits cleanly on the connector line (the
+       line runs down beneath it) instead of showing through the text. */
+    background: var(--bg);
+    padding-right: 4px;
+    /* Negative margin pulls the mark's left edge onto the line. */
     margin: 0 0 3px -12px;
+  }
+  .batch-mark :global(.bich) {
+    color: var(--faint);
+    flex: none;
   }
   .thd {
     display: flex;
     align-items: center;
     gap: 8px;
-    font: 10px var(--mono);
-    letter-spacing: 0.08em;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--faint);
-    margin: 0 2px 8px;
+    margin: 10px 2px 6px;
   }
   .thd::after {
     content: '';
     flex: 1;
-    border-top: 1px solid var(--line);
-    opacity: 0.6;
   }
   .tuser {
     font-size: 13.5px;
   }
   .bubble {
-    display: inline-block;
-    background: var(--panel2);
-    border: 1px solid var(--line2);
-    border-radius: 10px;
-    padding: 8px 12px;
+    display: inline;
+    background: none;
+    border: none;
+    padding: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+  /* Queue-delivery and compaction markers: one quiet line, tinted by kind, */
+  .divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 2px 8px;
+    font: 10px var(--mono);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .divider::before,
+  .divider::after {
+    content: '';
+    flex: 1;
+    border-top: 1px solid var(--line);
+    opacity: 0.5;
+  }
+  .divider.t-drain {
+    color: var(--acc);
+  }
+  .divider.t-compact {
+    color: var(--amber);
   }
   .think {
     display: flex;
@@ -169,7 +224,7 @@
     color: var(--faint);
     cursor: pointer;
   }
-  .think .ic {
+  .think :global(.ic) {
     color: var(--purple);
     opacity: 0.7;
   }
@@ -187,7 +242,7 @@
     font: 12px var(--sans);
     color: var(--faint);
   }
-  .stline .ic {
+  .stline :global(.ic) {
     color: var(--purple);
     opacity: 0.7;
   }
@@ -205,11 +260,11 @@
   }
   /* The renderer's output arrives via @html, outside scoping. */
   :global(pre.code) {
-    padding: 10px;
+    padding: 8px;
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 6px;
-    font: 12px/1.5 var(--mono);
+    font: 11.5px/1.5 var(--mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     margin: 6px 0;
@@ -225,7 +280,7 @@
     color: var(--acc);
   }
   :global(.md strong) {
-    color: #fff;
+    color: var(--tx);
   }
   :global(.md em) {
     color: var(--dim);

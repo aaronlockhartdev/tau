@@ -46,7 +46,9 @@ const file = (name: string, path: string, dir = false): FileEntry => ({
   name,
   path,
   dir,
-  size: 1
+  size: 1,
+  ignored: false,
+  git: null
 });
 
 type SeedOver = Partial<{
@@ -140,6 +142,7 @@ describe('LeftPane', () => {
     await userEvent.click(screen.getByRole('button', { name: 'sessions' }));
     expect(mockStore.pane[WS]?.ltab).toBe('sessions');
   });
+
 
   it('a click away from the rows clears the selection', async () => {
     await mount();

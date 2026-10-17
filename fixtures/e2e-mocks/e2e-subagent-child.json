@@ -4,12 +4,10 @@
     {
       "calls": [
         {
-          "name": "task_evidence",
+          "name": "write",
           "arguments": {
-            "task": "task-1",
-            "criterion": "the child reports ok",
-            "summary": "child reports ok",
-            "passed": true
+            "path": "{{plan_path}}",
+            "content": "# Plan\n\n## Steps\n\n- [x] the child reports ok\n"
           }
         }
       ]
@@ -19,14 +17,14 @@
         {
           "name": "parent_notify",
           "arguments": {
-            "text": "task-1 criterion satisfied: evidence in place",
+            "text": "plan complete: step checked off",
             "done": true,
             "output": { "status": "ok" }
           }
         }
       ]
     },
-    { "text": "Task complete; parent notified. (e2e child turn done)" }
+    { "text": "Plan complete; parent notified. (e2e child turn done)" }
   ],
   "usage": { "input_tokens": 180, "output_tokens": 70, "total_tokens": 250 }
 }

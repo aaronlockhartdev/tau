@@ -38,15 +38,6 @@ async fn not_yet_landed_commands_fail_explicitly() {
         })
         .unwrap_err();
     assert!(matches!(err, ProtocolError::NotFound { .. }));
-    // The task commands are live (ticket #24): an unknown session's
-    // task is a NotFound, not an Unsupported.
-    let err = core
-        .dispatch(Command::TaskCreate {
-            session: "s".into(),
-            title: "t".into(),
-        })
-        .unwrap_err();
-    assert!(matches!(err, ProtocolError::NotFound { .. }));
 }
 
 #[tokio::test]
@@ -488,7 +479,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
     let session_id = live.meta.lock().unwrap().id.clone();
     // Five entries through the session's own store (the live writer's path).
     live.agent
-        .with_task_store(|store| {
+        .with_store(|store| {
             let mut parent: Option<String> = None;
             for i in 0..5u32 {
                 let e = store

@@ -6,7 +6,7 @@
 
 use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, Mutex,
-    OmStatusKind, PathBuf, ProtocolError, SessionParams, SessionStore, SessionSubagentBridge,
+    OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore, SessionSubagentBridge,
     SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver, TurnConfig, Workspace, context,
     derive_turn, entry_to_view, last_model_note, tools,
 };
@@ -15,7 +15,6 @@ use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
 use crate::session::Entry;
-use std::sync::Weak;
 
 /// The session's role: the wiring defaults `launch` applies.
 #[derive(Clone)]
@@ -42,12 +41,11 @@ pub enum SessionRole {
         /// and bridge take it — no second resolution (ticket #43).
         first_provider: Option<(String, crate::config::Provider)>,
     },
-    /// A sub-agent session: the child's link plus the parent's task store;
-    /// no supervisor, no events. The values the child inherits (cwd, turn
-    /// config, OM) come from the supervisor.
+    /// A sub-agent session: the child's link; no supervisor, no events. The
+    /// values the child inherits (cwd, turn config, OM) come from the
+    /// supervisor.
     Child {
         supervisor: Arc<Supervisor>,
-        parent: Weak<AgentSession>,
         provider: TurnProviderRef,
         system_prompt: String,
         model: String,
@@ -70,6 +68,8 @@ pub enum SessionRole {
         om: Option<OmState>,
         /// The OM model; empty = the session's model.
         om_model: String,
+        /// The completion gate (spec §5.3); `None` = no gate.
+        gates: Option<crate::config::Gates>,
     },
 }
 
@@ -79,6 +79,7 @@ impl AgentSession {
     /// link, event hooks — so no call site spreads the parameters. Returns
     /// the `Arc` because the call sites all keep an `Arc` (the root's
     /// queue hook captures a `Weak` self-reference, not a strong one).
+    #[allow(clippy::too_many_lines)] // one arm per session role; splitting is refactoring
     pub fn launch(
         store: SessionStore,
         role: SessionRole,
@@ -94,23 +95,32 @@ impl AgentSession {
                 tool_batch_on_force,
                 om,
                 om_model,
-            } => Ok(Arc::new(Self::new(SessionParams {
-                store,
-                system_prompt,
-                model,
-                tools,
-                cwd,
-                provider,
-                tool_batch_on_force,
-                turn,
-                om,
-                om_model,
-                subagents: None,
-                child: None,
-            }))),
+                gates,
+            } => {
+                // The plan file (design: session-scoped, the source of truth):
+                // seeded at start. The bare role (test kits) has no core to seed through.
+                crate::plan::seed(&cwd, store.id());
+                let mut system_prompt = system_prompt;
+                crate::gate::with_section(&mut system_prompt, &gates);
+                Ok(Arc::new(Self::new(SessionParams {
+                    store,
+                    system_prompt,
+                    model,
+                    tools,
+                    cwd,
+                    provider,
+                    tool_batch_on_force,
+                    turn,
+                    gates,
+                    gate_failed: false,
+                    om,
+                    om_model,
+                    subagents: None,
+                    child: None,
+                })))
+            }
             SessionRole::Child {
                 supervisor,
-                parent,
                 provider,
                 system_prompt,
                 model,
@@ -119,6 +129,10 @@ impl AgentSession {
                 handle,
             } => {
                 let d = supervisor.inherited();
+                // The plan file (design: session-scoped, the source of
+                // truth): the child's own file, replacing any inherited section.
+                let sid = store.id().to_owned();
+                let (system_prompt, core) = plan_wiring(&supervisor, &system_prompt, &d.cwd, &sid);
                 let agent = Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -128,14 +142,16 @@ impl AgentSession {
                     provider,
                     tool_batch_on_force: d.tool_batch_on_force,
                     turn: d.turn,
+                    gates: d.gates,
+                    gate_failed: false,
                     om: Some(OmState::from_config(&d.om, record)),
                     om_model: d.om_model,
                     subagents: None,
                     child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
                 });
-                // The child's task tools route to the parent's store (the
-                // shared task model); the `Weak` upgrades per call.
-                agent.set_parent_task_store(Some(parent));
+                // The plan-state re-injection (design: turn boundaries and
+                // post-compaction): the core's watcher-parsed state.
+                wire_plan_hook(&agent, core, &sid);
                 Ok(Arc::new(agent))
             }
             SessionRole::Root {
@@ -194,22 +210,81 @@ impl AgentSession {
         let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        // The plan file (design): the prompt's section and the state
+        // re-injection exist only when the caller passes a prompt and
+        // the supervisor carries a core (the test seams carry none).
+        let sid = store.id().to_owned();
+        let (system_prompt, core) = match system_prompt {
+            Some(prompt) => plan_wiring(sup, &prompt, &d.cwd, &sid),
+            None => (d.system_prompt.clone(), None),
+        };
+        let gate_failed = resume_gate_failed(&mut store)?;
         let agent = Arc::new(Self::new(SessionParams {
             store,
-            system_prompt: system_prompt.unwrap_or(d.system_prompt),
+            system_prompt,
             model: d.model,
             tools: tools::surface::root_specs(),
             cwd: d.cwd,
             provider,
             tool_batch_on_force: d.tool_batch_on_force,
             turn: d.turn,
+            gates: d.gates,
+            gate_failed,
             om: Some(OmState::from_config(&d.om, record)),
             om_model: d.om_model,
             subagents: Some(sup.clone()),
             child: None,
         }));
+        wire_plan_hook(&agent, core, &sid);
         sup.attach_parent(&agent);
         Ok(agent)
+    }
+}
+
+/// The plan-state re-injection hook (design: turn boundaries and
+/// post-compaction): the core's watcher-parsed state, upgraded per call.
+/// `None` (a core-less test seam) wires nothing.
+fn wire_plan_hook(agent: &AgentSession, core: Option<Arc<Core>>, sid: &str) {
+    if let Some(core) = core {
+        let core = Arc::downgrade(&core);
+        let sid = sid.to_owned();
+        agent.set_plan_hook(Some(Arc::new(move || {
+            core.upgrade().and_then(|core| core.plan_state(&sid))
+        })));
+    }
+}
+
+/// The gate state a reopened session resumes from the record (spec §5.3):
+/// the newest terminal gate outcome on the branch.
+fn resume_gate_failed(store: &mut SessionStore) -> Result<bool, ProtocolError> {
+    crate::gate::initial_gate_failed(store).map_err(|e| ProtocolError::Other {
+        message: e.to_string(),
+    })
+}
+
+/// The plan wiring the supervisor-linked roles share (design: the plan
+/// file is the source of truth): seed the session's file, and — when the
+/// supervisor carries a core — observe the file's current state and point
+/// the prompt at the session's own file (replacing any inherited
+/// section). A core-less supervisor (the test seams) passes the prompt
+/// through untouched.
+fn plan_wiring(
+    sup: &Supervisor,
+    prompt: &str,
+    cwd: &Path,
+    sid: &str,
+) -> (String, Option<Arc<Core>>) {
+    crate::plan::seed(cwd, sid);
+    // The section names the child's own plan file (seeded unconditionally
+    // above): it belongs in the prompt whether or not a core is attached —
+    // the core only adds the watcher's state cache on top.
+    let sectioned = crate::plan::with_path(prompt, &crate::plan::path(cwd, sid));
+    match sup.core().and_then(|w| w.upgrade()) {
+        Some(core) => {
+            core.refresh_plan(cwd, sid);
+            (sectioned, Some(core))
+        }
+        None => (sectioned, None),
     }
 }
 
@@ -256,14 +331,28 @@ fn root_session(
     let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
         message: e.to_string(),
     })?;
+    let gate_failed = resume_gate_failed(&mut store)?;
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
     let layers = context::discover(&cwd, &core.system_dir_of());
-    let mut system_prompt = context::assemble(
+    let system_prompt = context::assemble(
         base_prompt.unwrap_or("You are Tau, a coding agent."),
         &layers,
     );
+
+    // The plan file (design: the source of truth): seeded at session
+    // start (create-if-missing — a re-opened session keeps the model's
+    // plan), its exact path injected into the prompt, and the parsed
+    // state refreshed here so the first assembly carries it. The
+    // section lands in the supervisor's prompt too: a spawned child
+    // inherits it, then replaces it with its own path. It lands before
+    // the skills catalog: the catalog is the last layer (tests_skills).
+    let plan_path = crate::plan::path(&cwd, store.id());
+    crate::plan::seed(&cwd, store.id());
+    core.refresh_plan(&cwd, store.id());
+    let mut system_prompt = crate::plan::with_path(&system_prompt, &plan_path);
+    crate::gate::with_section(&mut system_prompt, &config.gates);
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen
     // — the catalog is frozen at that moment (a running session's prompt
@@ -308,6 +397,7 @@ fn root_session(
         om_model: config.om.om_model.clone(),
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
+        gates: config.gates.clone(),
         caps: config.subagents.clone(),
         types: crate::agent_type::discover(core.system_dir.as_deref(), &cwd),
         depth: 0,
@@ -315,6 +405,7 @@ fn root_session(
         driver: Arc::new(TurnChildDriver {
             core: Arc::downgrade(core),
         }),
+        core: Some(Arc::downgrade(core)),
     });
     bridge
         .sup
@@ -331,6 +422,8 @@ fn root_session(
         provider,
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn,
+        gates: config.gates.clone(),
+        gate_failed,
         om: Some(OmState::from_config(&config.om, record)),
         om_model: config.om.om_model.clone(),
         subagents: Some(sup.clone()),
@@ -344,7 +437,17 @@ fn root_session(
 /// The root's four event hooks: the `om_status` kind-string shaping, the
 /// queue projection, and the two entry tees (ADR-0008's file-line
 /// upserts).
-fn wire_events(core: &Core, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {
+fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {
+    // The plan-state hook (design: the plan file is the source of
+    // truth): the core's watcher-parsed state, re-injected at each
+    // assembly. A `Weak` keeps the hook from pinning the core.
+    {
+        let core_weak = Arc::downgrade(core);
+        let sid = sid.to_owned();
+        agent.set_plan_hook(Some(Arc::new(move || {
+            core_weak.upgrade().and_then(|core| core.plan_state(&sid))
+        })));
+    }
     // The core's om_status hook takes the kind string; this closure
     // shapes it into the protocol event on the shared channel.
     {

@@ -9,15 +9,17 @@
 
   import {
     store,
+    attention,
     currentSession,
     openWorkspace,
     closeWorkspace,
     closeWorkspaces,
     tabSelect
   } from '../lib/store.svelte';
+  import TauLogo from './TauLogo.svelte';
   import type { Workspace } from '../lib/protocol';
-  import { tick } from 'svelte';
-  import { ctxClamp } from '../lib/ui';
+  import { useContextMenu } from '../lib/useContextMenu.svelte';
+  import { Bell, Maximize2 } from '@lucide/svelte';
 
   // The right-click menu: its position plus the selection it acts on.
   let ctx = $state<{ x: number; y: number; ids: string[] } | null>(null);
@@ -56,38 +58,25 @@
     ctx = null;
     void closeWorkspaces(store.workspaces.filter((w) => ids.includes(w.id)));
   }
+  $effect(() =>
+    useContextMenu(ctx, menu, {
+      close: () => {
+        store.tabSelected = [];
+        store.tabSelAnchor = null;
+        ctx = null;
+      },
+      ignoreClick: (e) => {
+        const t = e.target as Element | null;
+        return !!(t?.closest?.('.tabs') || t?.closest?.('.ctxmenu'));
+      },
+      extraActive: () => store.tabSelected.length > 0
+    }),
+  );
 
-  $effect(() => {
-    if (!ctx && store.tabSelected.length === 0) return;
-    const clear = () => {
-      store.tabSelected = [];
-      store.tabSelAnchor = null;
-      ctx = null;
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') clear();
-    };
-    const close = (e: MouseEvent) => {
-      const t = e.target as Element | null;
-      if (t?.closest?.('.tabs') || t?.closest?.('.ctxmenu')) return;
-      clear();
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    void tick().then(() => {
-      const el = menu.el;
-      if (!ctx || !el) return;
-      menu.pos = ctxClamp(ctx, el);
-    });
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKey);
-    };
-  });
 </script>
 
-<div class="bar" data-tauri-drag-region>
-  <span class="logo">τ</span>
+<div class="bar" class:fs={store.fullscreen} data-tauri-drag-region>
+  <span class="logo" aria-hidden="true"><TauLogo size="0.75em" /></span>
   <div class="tabs">
     {#each store.workspaces as w (w.id)}
       <div
@@ -109,7 +98,18 @@
     title="Focus mode: hide side panes"
     onclick={() => (store.focus = !store.focus)}
   >
-    ⤢
+    <Maximize2 class="fi" size={15} aria-hidden="true" />
+  </button>
+  <button
+    class="bell"
+    class:on={store.attentionOpen}
+    title="Needs your attention"
+    onclick={() => (store.attentionOpen = !store.attentionOpen)}
+  >
+    <Bell class="bi" size={15} aria-hidden="true" />
+    {#if attention().length > 0}
+      <span class="count">{attention().length}</span>
+    {/if}
   </button>
 </div>
 
@@ -124,19 +124,25 @@
 <style>
   .bar {
     display: flex;
-    align-items: center;
-    gap: 4px;
-    height: 44px;
-    padding: 0 10px 0 96px;
-    background: var(--panel);
+    align-items: stretch;
+    gap: 1px;
+    height: 48px;
+    padding: 0 12px 0 90px;
+    background: var(--bg);
     border-bottom: 1px solid var(--line);
     user-select: none;
   }
+
+  /* Fullscreen: the traffic lights are gone, so drop the inset that cleared
+     them (the 90px left pad) back to the symmetric 12px. */
+  .bar.fs {
+    padding-left: 12px;
+  }
   .logo {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--acc);
-    padding: 0 8px 0 2px;
+    align-self: center;
+    font-size: 16px;
+    color: var(--tx);
+    padding: 0 14px 0 2px;
   }
   .tabs {
     display: flex;
@@ -144,33 +150,39 @@
     gap: 4px;
   }
   .tab {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 7px;
-    padding: 4px 6px 4px 10px;
+    /* A floating inset tab: a 30px pill centred in the 48px bar, all
+       corners rounded, a hairline border on the active one. The old
+       full-height slab with notched bottom corners read as a block, not
+       a tab. */
+    height: 30px;
+    padding: 0 8px 0 11px;
     border-radius: 8px;
-    font-size: 12px;
+    font-size: 12.5px;
+    font-weight: 500;
     color: var(--dim);
     border: 1px solid transparent;
   }
   .tab:hover {
+    background: rgba(255, 255, 255, 0.05);
     color: var(--tx);
-    background: var(--panel2);
   }
-  .tab.active {
-    color: var(--tx);
-    background: color-mix(in srgb, var(--acc) 10%, transparent);
-    border-color: color-mix(in srgb, var(--acc) 28%, transparent);
-  }
+  /* The active tab merges into the pane below it: panel fill plus the two
+     radial-gradient notches where its top corners meet the bar. */
+  .tab.active,
   .tab.multi {
     color: var(--tx);
-    background: color-mix(in srgb, var(--acc) 10%, transparent);
-    border-color: color-mix(in srgb, var(--acc) 28%, transparent);
+    font-weight: 600;
+    background: var(--panel);
+    border-color: var(--line);
   }
   .tab .tabname {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 7px;
   }
   .tab .dot {
     width: 6px;
@@ -180,6 +192,7 @@
   }
   .tab.active .dot {
     background: var(--green);
+    animation: pulse 1.4s infinite;
   }
   .x {
     width: 16px;
@@ -189,7 +202,7 @@
     align-items: center;
     justify-content: center;
     padding: 0;
-    color: var(--dim);
+    color: var(--faint);
     font-size: 12px;
     line-height: 1;
   }
@@ -201,18 +214,59 @@
     flex: 1;
   }
   .focus {
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
+    align-self: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
     color: var(--dim);
-    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .focus:hover {
     color: var(--tx);
-    background: var(--panel2);
+    background: rgba(255, 255, 255, 0.07);
   }
   .focus.on {
     color: var(--acc);
     background: color-mix(in srgb, var(--acc) 12%, transparent);
+  }
+  .bell {
+    position: relative;
+    align-self: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    background: none;
+    border: none;
+    color: var(--dim);
+    color: var(--dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  .focus :global(.fi),
+  .bell :global(.bi) {
+    flex: none;
+  }
+  .bell:hover {
+    color: var(--tx);
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .bell.on {
+    color: var(--red);
+  }
+  .bell .count {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 14px;
+    padding: 0 3px;
+    border-radius: 7px;
+    background: var(--red);
+    color: #fff;
+    font: 700 9px/14px var(--mono);
+    text-align: center;
   }
 </style>

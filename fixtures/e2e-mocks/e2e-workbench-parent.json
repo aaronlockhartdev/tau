@@ -1,0 +1,31 @@
+{
+  "match": "e2e-workbench-turn",
+  "turns": [
+    {
+      "calls": [
+        {
+          "name": "subagent_spawn",
+          "arguments": {
+            "type": "general",
+            "context_mode": "fresh",
+            "brief": "Add passing evidence for the criterion, then call parent_notify with done true and output {\"status\": \"ok\"}. e2e-workbench-child-a"
+          }
+        }
+      ]
+    },
+    {
+      "calls": [
+        {
+          "name": "subagent_spawn",
+          "arguments": {
+            "type": "general",
+            "context_mode": "fresh",
+            "brief": "You are blocked: call parent_notify with done false, waiting_on \"user\", and a text that asks the user for the missing api key. e2e-workbench-child-b"
+          }
+        }
+      ]
+    },
+    { "text": "Spawned two workers: one to finish the task, one that will park on you." }
+  ],
+  "usage": { "input_tokens": 300, "output_tokens": 110, "total_tokens": 410 }
+}

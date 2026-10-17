@@ -1,60 +1,48 @@
 use super::{
-    Arc, Child, ChildState, KIND_SUBAGENT, Lane, StateNotice, Supervisor, Value, WaitingOn,
-    WakeKind, WakeNotice, Weak, json,
+    Arc, Child, ChildState, KIND_SUBAGENT, ResumeContract, StateNotice, Supervisor, Value,
+    WaitingOn, WakeKind, WakeNotice,
 };
+use serde_json::json;
 
 impl Supervisor {
-    /// Assign one of this session's tasks to a child (spec §5.3): the
-    /// record stays in this session's file with the child set as worker —
-    /// the single source of truth; the child's pane is a projection. The
-    /// write runs through this session's own store (one writer per
-    /// session, review B3). The assignment is then delivered through the
-    /// child's message path: a running child takes it as a steering round
-    /// on its next call, a non-running child resumes with it (ADR-0001)
-    /// — a bare write races a running loop.
-    pub fn assign_task(
-        self: &Arc<Self>,
-        task_id: &str,
-        worker_session: &str,
-    ) -> Result<(), String> {
-        if task_id.is_empty() {
-            return Err("task_assign: missing \"task\"".into());
-        }
-        let child = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .values()
-            .find(|c| c.session_id == worker_session)
-            .cloned()
-            .ok_or_else(|| {
-                format!("task_assign: {worker_session} is not a sub-agent of this session")
-            })?;
-        let parent = self
-            .parent
-            .lock()
-            .expect("supervisor parent: no panic while the lock is held")
-            .as_ref()
-            .and_then(Weak::upgrade)
-            .ok_or("task_assign: no parent attached".to_owned())?;
-        parent
-            .with_task_store(|cstore| crate::task::assign(cstore, task_id, worker_session))
-            .map(|_| ())?;
-        let title = parent
-            .with_task_store(|store| {
-                crate::task::fold_entries(&store.entries_range(0, usize::MAX).unwrap_or_default())
-                    .into_iter()
-                    .find(|t| t.id == task_id)
-                    .map(|t| t.title)
-            })
-            .unwrap_or_default();
-        let note = if title.is_empty() {
-            format!("Assigned task {task_id}")
-        } else {
-            format!("Assigned {task_id}: {title}")
-        };
-        self.message(&child.handle, Some(note), Lane::Steering)
-            .map(|_| ())
+    /// Emit a child state transition: the identity (parent, handle, child)
+    /// comes from the supervisor + the child; the caller supplies the new
+    /// state and its note / resume contract.
+    pub(super) fn emit_state(
+        &self,
+        child: &Arc<Child>,
+        state: ChildState,
+        note: Option<String>,
+        resume_contract: Option<ResumeContract>,
+    ) {
+        self.bridge.state(&StateNotice {
+            parent: self.parent_session.clone(),
+            handle: child.handle.clone(),
+            child: child.session_id.clone(),
+            state,
+            note,
+            resume_contract,
+        });
+    }
+
+    /// Emit a parent wake: the identity (parent, child) comes from the
+    /// supervisor + the child; the caller supplies the wake kind + payload.
+    pub(super) fn emit_wake(
+        &self,
+        child: &Arc<Child>,
+        kind: WakeKind,
+        text: String,
+        waiting_on: Option<WaitingOn>,
+        output: Option<Value>,
+    ) {
+        self.bridge.wake(&WakeNotice {
+            parent: self.parent_session.clone(),
+            child: child.session_id.clone(),
+            kind,
+            text,
+            waiting_on,
+            output,
+        });
     }
 
     pub(super) fn mark_failed(&self, child: &Arc<Child>, reason: String) {
@@ -65,33 +53,23 @@ impl Supervisor {
         }) {
             tracing::warn!("subagent state entry failed: {e}");
         }
-        self.bridge.state(&StateNotice {
-            parent: self.parent_session.clone(),
-            handle: child.handle.clone(),
-            child: child.session_id.clone(),
-            state: ChildState::Failed {
+        self.emit_state(
+            child,
+            ChildState::Failed {
                 reason: reason.clone(),
             },
-            note: Some(reason.clone()),
-            resume_contract: None,
-        });
+            Some(reason.clone()),
+            None,
+        );
         // A failed child auto-notifies the parent to investigate (ADR-0001
         // wake rules: failed is always woken).
-        self.bridge.wake(&WakeNotice {
-            parent: self.parent_session.clone(),
-            child: child.session_id.clone(),
-            kind: WakeKind::Failed,
-            text: reason,
-            waiting_on: None,
-            output: None,
-        });
+        self.emit_wake(child, WakeKind::Failed, reason, None, None);
     }
 
     /// The child-side `parent_notify` (routed here from the child's loop).
     pub(super) fn notify(&self, handle: &str, args: &Value) -> String {
         // Shape-only validation (v0, review N9): the keys and their types
-        // are checked, not a full schema — a semantic schema would be
-        // speculative until the task gate lands. A malformed call is
+        // are checked, not a full schema. A malformed call is
         // rejected before the child lookup, even for an unknown handle.
         let Some(text) = args.get("text").and_then(Value::as_str) else {
             return "parent_notify: missing \"text\"".into();
@@ -128,11 +106,6 @@ impl Supervisor {
         else {
             return format!("parent_notify: unknown child {handle}");
         };
-        // A repeated `done` is a no-op (ADR-0001 quiescence): the child has
-        // already terminated — no second state entry, no second wake.
-        if matches!(child.state(), ChildState::Done { .. }) {
-            return "already done: the parent has your result".into();
-        }
 
         let mut payload = json!({ "event": "notify", "text": text, "done": done });
         if let Some(output) = &output {
@@ -147,113 +120,25 @@ impl Supervisor {
         child.set_last_message(text);
 
         if done {
-            // The task gate (spec §5.3): a done child cannot leave its
-            // assigned task dangling in_progress — the resolution is
-            // forced (completed / handed_off / blocked), and the
-            // creator's pointer is mirrored. Runs before the state set so
-            // the Done record and the wake see the final task state.
-            self.resolve_assigned_task(&child, output.as_ref());
-            // Quiescence, not death (ADR-0001): the loop ends, the
-            // concurrency slot frees, and the parent is woken always.
-            if let Err(e) = child.set_state(&ChildState::Done {
-                output: output.clone(),
-            }) {
-                return e;
-            }
-            self.bridge.state(&StateNotice {
-                parent: self.parent_session.clone(),
-                handle: child.handle.clone(),
-                child: child.session_id.clone(),
-                state: ChildState::Done {
-                    output: output.clone(),
-                },
-                note: None,
-                resume_contract: None,
-            });
-            self.bridge.wake(&WakeNotice {
-                parent: self.parent_session.clone(),
-                child: child.session_id.clone(),
-                kind: WakeKind::Done,
-                text: text.to_owned(),
-                waiting_on: None,
-                output,
-            });
-            "done: the parent has your result".into()
+            // Demoted to a secondary hint (spec §5.2, ADR-0001 revision):
+            // the declaration no longer drives the state. It records the
+            // output an observed `done` will carry, and requests the turn's
+            // end (the loop's quiescence check) so no further provider
+            // calls are spent — the observation at the turn end confirms a
+            // complete plan (gate passed) as `done`, or overrides it.
+            // No state change and no wake here: the child→parent effect is
+            // the observed rest's value, applied by the parent.
+            child.declare_output(output.clone());
+            child.set_rest_requested(true);
+            "noted: your result is recorded; finish the turn".into()
         } else {
-            // A note parks the child. The declared (or default) wait
-            // target decides the wake (ADR-0001 wake rules).
-            let waiting_on = waiting_on.unwrap_or(WaitingOn::Parent);
-            if let Err(e) = child.set_state(&ChildState::Idle { waiting_on }) {
-                return e;
+            // A note: the declared wait target (when given) rides the
+            // observed rest as the `idle` state's badge. The `QUESTION:`
+            // marker in the final output is what makes it `awaiting`.
+            if let Some(w) = waiting_on {
+                child.declare_waiting(w);
             }
-            self.bridge.state(&StateNotice {
-                parent: self.parent_session.clone(),
-                handle: child.handle.clone(),
-                child: child.session_id.clone(),
-                state: ChildState::Idle { waiting_on },
-                note: Some(text.to_owned()),
-                resume_contract: None,
-            });
-            if waiting_on == WaitingOn::Parent {
-                // A parked parent (including a user-stopped one) is woken
-                // with the child's stated need; user/subagent waits are
-                // GUI-badge only.
-                self.bridge.wake(&WakeNotice {
-                    parent: self.parent_session.clone(),
-                    child: child.session_id.clone(),
-                    kind: WakeKind::Waiting,
-                    text: text.to_owned(),
-                    waiting_on: Some(WaitingOn::Parent),
-                    output: None,
-                });
-            }
-            "noted: you are parked".into()
+            "noted".into()
         }
-    }
-
-    /// The child's assigned task, resolved on done (spec §5.3): the
-    /// completion gate runs on the parent's file — the single source of
-    /// truth; the child's file carries no task entries.
-    ///
-    /// - all criteria satisfied → `done`
-    /// - not satisfied, not blocked → `handed_off` (stays `in_progress`;
-    ///   the output becomes the resume contract, the parent decides)
-    /// - already blocked (the child called `task_block`) → stays blocked
-    #[allow(clippy::too_many_lines)] // one task-resolution gate; splitting is refactoring
-    fn resolve_assigned_task(&self, child: &Child, output: Option<&Value>) {
-        let Some(parent) = self
-            .parent
-            .lock()
-            .expect("supervisor parent: no panic while the lock is held")
-            .as_ref()
-            .and_then(Weak::upgrade)
-        else {
-            return;
-        };
-        let _ = parent.with_task_store(|store| {
-            let entries = store.entries_range(0, usize::MAX).ok()?;
-            let tasks = crate::task::fold_entries(&entries);
-            // The single record: this session's task with the child set as
-            // worker (in v0 a child carries at most one assigned task).
-            let task = tasks.into_iter().find(|t| {
-                t.worker
-                    .as_ref()
-                    .is_some_and(|w| w.session == child.session_id)
-            })?;
-            let output = output.unwrap_or(&Value::Null);
-            if task.status == crate::task::STATUS_IN_PROGRESS {
-                let gate = task
-                    .criteria
-                    .iter()
-                    .all(|c| c.status == crate::task::CriterionStatus::Satisfied);
-                if gate {
-                    crate::task::finish(store, &task.id, false, None)
-                } else {
-                    crate::task::handoff(store, &task.id, output)
-                }
-                .ok();
-            }
-            Some(())
-        });
     }
 }

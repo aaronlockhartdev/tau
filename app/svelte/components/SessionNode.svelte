@@ -18,7 +18,8 @@
   import { groupIsOpen } from '../lib/sessions';
   import { nextSelection } from '../lib/selection';
   import { tick } from 'svelte';
-  import { ctxClamp } from '../lib/ui';
+  import { Archive } from '@lucide/svelte';
+  import { useContextMenu } from '../lib/useContextMenu.svelte';
   import { fmtAgo } from '../lib/format';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
@@ -28,7 +29,8 @@
     depth = 0,
     ws,
     sessions,
-    visibleIds
+    visibleIds,
+    att = false
   }: {
     session: SessionState;
     depth?: number;
@@ -37,6 +39,7 @@
     // The visible row order (the left pane owns the flat order a shift
     // range spans).
     visibleIds: string[];
+    att?: boolean;
   } = $props();
 
   const active = $derived(currentSession());
@@ -178,24 +181,7 @@
     ctx = { x: e.clientX, y: e.clientY };
     menu.pos = { x: e.clientX, y: e.clientY };
   }
-  $effect(() => {
-    if (!ctx) return;
-    const close = () => (ctx = null);
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
-    };
-    document.addEventListener('click', close);
-    document.addEventListener('keydown', onKey);
-    void tick().then(() => {
-      const el = menu.el;
-      if (!ctx || !el) return;
-      menu.pos = ctxClamp(ctx, el);
-    });
-    return () => {
-      document.removeEventListener('click', close);
-      document.removeEventListener('keydown', onKey);
-    };
-  });
+  $effect(() => useContextMenu(ctx, menu, { close: () => (ctx = null) }));
   function sessionRunning(s: SessionState): boolean {
     return (
       s.turn === 'running' ||
@@ -236,7 +222,7 @@
   {:else if !session.archived}
     <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
   {/if}
-  <span class="mru">{fmtAgo(session.mru)}</span>
+  <span class="mru">{fmtAgo(session.mru, store.now)}</span>
   {#if !session.archived && !session.parent}
     <button
       class="arch-b"
@@ -249,7 +235,7 @@
         void archiveSession(session.meta.id);
       }}
     >
-      <svg class="ci" width="11" height="11"><use href="#i-archive" /></svg>
+      <Archive class="ci" size={11} />
     </button>
   {/if}
 {/snippet}
@@ -258,6 +244,7 @@
   expanded={kids.length > 0 ? groupOpen(session.meta.id) : null}
   selected={store.current === session.meta.id}
   multi={isSelected}
+  att={att}
   dimmed={session.archived}
   onRow={(e) => onRowClick(e)}
   onRowDbl={

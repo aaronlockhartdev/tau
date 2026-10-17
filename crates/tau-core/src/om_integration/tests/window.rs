@@ -54,12 +54,12 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
         ..Default::default()
     };
     // Simple range: exactly its two entries.
-    let out = recall(&mut store, &record, &json!({ "group": "a" }));
+    let out = recall(&mut store, &record, &json!({ "group": "a" })).unwrap();
     assert!(out.contains("00000001"), "{out}");
     assert!(out.contains("00000002"), "{out}");
     assert!(!out.contains("00000003"), "{out}");
     // Merged span: first segment's start to the last segment's end.
-    let out = recall(&mut store, &record, &json!({ "group": "b" }));
+    let out = recall(&mut store, &record, &json!({ "group": "b" })).unwrap();
     for id in ["00000003", "00000004", "00000005", "00000006"] {
         assert!(out.contains(id), "{out}");
     }
@@ -69,16 +69,26 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
     assert!(!out.contains(&"l".repeat(201)), "{out}");
     // Not-found paths: no arg, unknown group, rangeless group, and a
     // range pointing outside this session (a parent-scoped group).
-    assert!(recall(&mut store, &record, &json!({})).contains("missing"));
     assert!(
-        recall(&mut store, &record, &json!({ "group": "nope" })).contains("no observation group")
+        recall(&mut store, &record, &json!({}))
+            .unwrap_err()
+            .contains("missing")
+    );
+    assert!(
+        recall(&mut store, &record, &json!({ "group": "nope" }))
+            .unwrap_err()
+            .contains("no observation group")
     );
     let no_range = OmRecord {
         active_observations: "<observation-group id=\"c\" range=\",\">orphan</observation-group>"
             .into(),
         ..Default::default()
     };
-    assert!(recall(&mut store, &no_range, &json!({ "group": "c" })).contains("no range"));
+    assert!(
+        recall(&mut store, &no_range, &json!({ "group": "c" }))
+            .unwrap_err()
+            .contains("no range")
+    );
     let foreign = OmRecord {
         active_observations: om::wrap_in_observation_group(
             "foreign",
@@ -88,7 +98,11 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
         ),
         ..Default::default()
     };
-    assert!(recall(&mut store, &foreign, &json!({ "group": "d" })).contains("not in this session"));
+    assert!(
+        recall(&mut store, &foreign, &json!({ "group": "d" }))
+            .unwrap_err()
+            .contains("not in this session")
+    );
 }
 
 #[test]
@@ -250,7 +264,7 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
         },
     );
     state.changed = true;
-    let first = state.assemble_context("base prompt", None);
+    let first = state.assemble_context("base prompt");
     assert!(first.instructions.starts_with("base prompt"));
     // The observation content rides as `role: system` items, not in
     // `instructions` (#96): the framing stays in the prompt, the volatile
@@ -265,12 +279,8 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     );
     assert!(om_user_content(&first.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
     // The one-shot flip: a second assembly carries no hint.
-    let second = state.assemble_context("base prompt", None);
+    let second = state.assemble_context("base prompt");
     assert!(!om_user_content(&second.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
-    // The task-resume-contract slot (ticket #24 fills it).
-    let with_task = state.assemble_context("base prompt", Some("do the thing"));
-    assert!(with_task.instructions.contains("# Task (resume contract)"));
-    assert!(with_task.instructions.contains("do the thing"));
     // A demoted prefix drops out of the live context.
     let mut state3 = OmState::from_config(
         &cfg,
@@ -283,7 +293,7 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
     );
     assert!(
         !state3
-            .assemble_context("base", None)
+            .assemble_context("base")
             .instructions
             .contains("demoted prefix")
     );
@@ -325,7 +335,7 @@ fn the_main_agent_view_has_no_boundary_markers() {
     // And the assembled main-agent context is clean end-to-end.
     let mut state = OmState::from_config(&cfg, record);
     state.changed = true;
-    let ctx = state.assemble_context("base prompt", None);
+    let ctx = state.assemble_context("base prompt");
     assert!(
         !ctx.instructions.contains("--- message boundary ("),
         "{ctx:?}"
@@ -356,7 +366,7 @@ fn the_suggested_response_is_injected_once_then_cleared() {
         },
     );
     state.changed = true;
-    let first = state.assemble_context("base prompt", None);
+    let first = state.assemble_context("base prompt");
     // The steering signal is handed to the model alongside the hint...
     let first_om = om_user_content(&first.om_input_items);
     // The steering signal is handed to the model alongside the hint...
@@ -365,7 +375,7 @@ fn the_suggested_response_is_injected_once_then_cleared() {
     // ...and consumed: a later log change re-fires the hint but must not
     // re-inject the now-stale signal.
     state.changed = true;
-    let second = state.assemble_context("base prompt", None);
+    let second = state.assemble_context("base prompt");
     let second_om = om_user_content(&second.om_input_items);
     assert!(second_om.contains(om::OBSERVATION_CONTINUATION_HINT));
     assert!(

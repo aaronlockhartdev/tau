@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The queue above the composer: sub-agent reports on top, then steering
-// ("next opportunity"), then follow-up ("after work completes"); each
+// ("next tool boundary"), then follow-up ("after work completes"); each
 // deletable row issues deleteQueueItem with its section index.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
@@ -46,7 +46,7 @@ describe('Queue', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('lists steering items under "next opportunity"', () => {
+  it('lists steering items under "next tool boundary"', () => {
     mockStore.sessions = {
       s1: seedState(meta('s1'), {
         over: { pending: [{ text: 'steer me', lane: 'steering' }] }
@@ -54,7 +54,7 @@ describe('Queue', () => {
     };
     mockStore.current = 's1';
     render(Queue);
-    expect(screen.getByText('next opportunity')).toBeInTheDocument();
+    expect(screen.getByText('next tool boundary')).toBeInTheDocument();
     expect(screen.getByText('steer me')).toBeInTheDocument();
   });
 
@@ -122,8 +122,8 @@ describe('Queue', () => {
     mockStore.current = 's1';
     render(Queue);
     const labels = screen
-      .getAllByText(/reports|opportunity|completes/)
+      .getAllByText(/reports|boundary|completes/)
       .map((el) => el.textContent);
-    expect(labels).toEqual(['subagent reports', 'next opportunity', 'after work completes']);
+    expect(labels).toEqual(['subagent reports', 'next tool boundary', 'after work completes']);
   });
 });

@@ -20,7 +20,7 @@ impl Core {
         // no file re-open per snapshot — one open serves it all.
         let (sized, leaf) = live
             .agent
-            .with_task_store(|store: &mut SessionStore| {
+            .with_store(|store: &mut SessionStore| {
                 // An external writer (the 10k fixture) grows the file out
                 // from under the log: one re-open keeps the view current.
                 store.refresh_if_grown()?;
@@ -43,14 +43,17 @@ impl Core {
             .lock()
             .expect("session meta: no panic while the lock is held")
             .clone();
-        // A child's task pane is a projection of the parent's store (the
-        // shared task model): the link owns the projection (R3) — the
-        // snapshot no longer re-opens the parent's store.
-        let tasks = match live.agent.child_link() {
-            Some(link) => link.task_view(&live.cwd),
-            None => crate::task::fold_entries(&entries),
-        };
         let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
+        // The plan pane's data (spec §5.3): the watcher-parsed state;
+        // a session with no observed plan renders empty.
+        let plan = self
+            .plans
+            .lock()
+            .expect("plan states: no panic while the lock is held")
+            .get(&meta.id)
+            .cloned()
+            .map(Into::into)
+            .unwrap_or_default();
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
@@ -73,6 +76,8 @@ impl Core {
                 } else {
                     TurnState::Idle
                 },
+                gate_failed: live.agent.gate_failed(),
+                plan,
                 subagents: live
                     .agent
                     .subagents()
@@ -83,9 +88,6 @@ impl Core {
                             .collect()
                     })
                     .unwrap_or_default(),
-                // The session's tasks (per-session store, spec §5.3): the
-                // GUI's tasks panel; active ones ride their resume contract.
-                tasks,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -101,7 +103,7 @@ impl Core {
         // whole-file re-open per read.
         let entries: Vec<Entry> = live
             .agent
-            .with_task_store(|store| {
+            .with_store(|store| {
                 // An external writer grows the file out from under the log:
                 // one re-open keeps the view current.
                 store.refresh_if_grown()?;
@@ -128,16 +130,7 @@ impl Core {
     /// a live session is (idle live state, no OM, no queue).
     pub(crate) fn snapshot_from_disk(&self, id: &str) -> Result<Snapshot, ProtocolError> {
         let (workspace, meta) = self
-            .workspaces
-            .lock()
-            .expect("workspaces map: no panic while the lock is held")
-            .values()
-            .find_map(|w| {
-                Self::session_access(w)
-                    .into_iter()
-                    .find(|m| m.id == id && !m.archived)
-                    .map(|m| (w.clone(), m))
-            })
+            .owning_session(id)
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("session {id} is not open"),
             })?;
@@ -163,6 +156,13 @@ impl Core {
         let leaf = store.leaf_cached().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        // The plan cache drops on close (the file is the record): a closed
+        // session's snapshot parses the file fresh.
+        let plan = std::fs::read_to_string(crate::plan::path(Path::new(&workspace.cwd), id))
+            .ok()
+            .map(|raw| crate::plan::parse(&raw))
+            .map(tau_protocol::snapshot::Plan::from)
+            .unwrap_or_default();
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
@@ -171,8 +171,9 @@ impl Core {
             live: LiveState {
                 queue: vec![],
                 turn: TurnState::Idle,
+                gate_failed: false,
+                plan,
                 subagents: vec![],
-                tasks: crate::task::fold_entries(&entries),
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -187,16 +188,8 @@ impl Core {
         range: Option<tau_protocol::snapshot::EntryRange>,
     ) -> Result<Vec<ViewEntry>, ProtocolError> {
         let cwd = self
-            .workspaces
-            .lock()
-            .expect("workspaces map: no panic while the lock is held")
-            .values()
-            .find(|w| {
-                Self::session_access(w)
-                    .iter()
-                    .any(|m| m.id == id && !m.archived)
-            })
-            .map(|w| w.cwd.clone())
+            .owning_session(id)
+            .map(|(w, _)| w.cwd.clone())
             .ok_or_else(|| ProtocolError::NotFound {
                 what: format!("session {id} is not open"),
             })?;

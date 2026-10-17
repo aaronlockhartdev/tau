@@ -9,7 +9,7 @@
 //   it is parity with any TS type — the C9 typed layer sits on top of it.
 // - Rust `String` is parity with a TS union of string literals, named or
 //   inline (the mirror names the known values; the wire stays a string —
-//   TaskStatus, MessageLane).
+//   MessageLane).
 // - A Rust struct referenced by name is parity with a TS inline object of
 //   the same normalized fields (CommandOutput.file mirrors FileText inline).
 // - `#[serde(default)]` makes a field wire-optional; the TS mirror may carry
@@ -44,11 +44,8 @@ const LOOSE_ALIASES = { TurnUsage: 'Usage' };
 // The crate carries types the TS mirror never names: each skip's reason.
 const SKIP_NOTES = {
   OmStatusKind: 'mirrored inline in the Event om_status kind',
-  TaskEvent: 'mirrored as TaskPayload (the wire shape to_value serves, with the task id)',
-  TaskPayload: 'the wire shape TaskEvent.to_value serves (the task id plus the variant)',
   FileText: 'mirrored inline in the CommandOutput file variant',
   OmSnapshot: 'mirrored inline in the Snapshot om field',
-  TaskRecord: 'mirrored inline in the TaskPayload assigned variant',
   TurnUsage: 'name parity with the TS Usage (the field diff runs on lib.rs Usage)',
   PromptTokensDetails: 'nested in TurnUsage; the TS Usage flattens it',
   OutputTokensDetails: 'nested in TurnUsage; the TS Usage flattens it',
@@ -63,7 +60,12 @@ function snake(name) {
 function stripComments(src) {
   return src
     .split('\n')
-    .filter((l) => !l.trimStart().startsWith('///') && !l.trimStart().startsWith('//'))
+    .filter(
+      (l) =>
+        !l.trimStart().startsWith('///') &&
+        !l.trimStart().startsWith('//') &&
+        !l.trimStart().startsWith('/*'),
+    )
     .join('\n');
 }
 function bodyAfter(src, from) {
@@ -317,7 +319,7 @@ function sameType(a, b) {
   if (a === b) return true;
   if (a === 'unknown' || a === 'unknown[]' || b === 'unknown' || b === 'unknown[]') return true;
   if (a === 'string' && isLiteralUnion(b)) return true;
-  // A TS named string-literal-union alias (TaskStatus, MessageLane) is a
+  // A TS named string-literal-union alias (MessageLane) is a
   // Rust String field's parity (the mirror names the known values; the
   // wire stays a string).
   if (a === 'string' && tsK[b]?.kind === 'enum') return true;

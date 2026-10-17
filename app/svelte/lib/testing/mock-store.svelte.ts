@@ -9,16 +9,18 @@
 // exports; it needs `allowImportingTsExtensions` in tsconfig.json.
 import { vi } from 'vitest';
 import type { FilesCache } from '../files';
+import type { OpenFiles } from '../openfiles';
 import type { PaneState } from '../panes';
-import type { FileEntry, SkillInfo, SessionMeta, Workspace } from '../protocol';
+import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../protocol';
+import { attentionOf, type AttentionItem } from '../attention';
 import { makeStub, type SessionState } from '../sessions';
 
 export function paneDefault(): PaneState {
   return {
+    center: 'chat',
     ltab: 'sessions',
-    rtab: 'tasks',
+    rtab: 'subs',
     historyOpen: false,
-    expandedTasks: [],
     openGroups: null,
     renamingId: null,
     archOpen: false,
@@ -31,6 +33,8 @@ export function paneDefault(): PaneState {
 export function freshDefaults() {
   return {
     focus: false,
+    fullscreen: false,
+    follow: null as string | null,
     modelMenuOpen: false,
     reasoningOpen: true,
     entryOpen: new Map(),
@@ -45,6 +49,16 @@ export function freshDefaults() {
     skills: {} as Record<string, SkillInfo[]>,
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,
+    gitStatus: {} as Record<string, GitStatus | null>,
+    openFiles: {} as OpenFiles,
+    activeFile: null as { workspace: string; path: string } | null,
+    activeFileNew: null as string | null,
+    activeFileBase: null as string | null,
+    activeFileError: null as string | null,
+    attentionOpen: false,
+    paletteOpen: false,
+    fleetOpen: false,
+    focusInspector: null as 'left' | 'right' | null,
     pane: {} as Record<string, PaneState>,
     tabSelected: [] as string[],
     tabSelAnchor: null as string | null
@@ -52,6 +66,9 @@ export function freshDefaults() {
 }
 
 const store = $state(freshDefaults());
+export function attention(): AttentionItem[] {
+  return attentionOf(store.sessions);
+}
 
 export const mockStore = store;
 
@@ -66,6 +83,13 @@ export const closeWorkspaces = vi.fn(async () => {});
 export const tabSelect = vi.fn();
 export const newSession = vi.fn(() => Promise.resolve(null));
 export const switchSession = vi.fn(async () => {});
+export const setFollow = vi.fn((h: string | null) => {
+  store.follow = h;
+});
+export const openFile = vi.fn();
+export const closeFile = vi.fn();
+export const selectFile = vi.fn();
+export const setCenterMode = vi.fn();
 export const renameSession = vi.fn(async () => {});
 export const archiveSession = vi.fn(async () => {});
 export const restoreSession = vi.fn(async () => {});
@@ -112,6 +136,10 @@ const commandFns = [
   tabSelect,
   newSession,
   switchSession,
+  openFile,
+  closeFile,
+  selectFile,
+  setCenterMode,
   renameSession,
   archiveSession,
   restoreSession,

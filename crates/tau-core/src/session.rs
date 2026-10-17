@@ -79,7 +79,7 @@ pub struct SessionStore {
     /// A live entry sink (the app maps each appended entry to a protocol
     /// event). Set by the owning session; `None` for stores with no live
     /// surface. Fired at the append choke point so every write path — the
-    /// turn loop, the task tools, the OM — emits.
+    /// turn loop and the OM — emits.
     entry_event_hook: Option<EntryEventHook>,
 }
 

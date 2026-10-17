@@ -1,5 +1,6 @@
 ---
 source: crates/tau-protocol/tests/wire_goldens.rs
+assertion_line: 246
 expression: output
 ---
 {
@@ -40,6 +41,21 @@ expression: output
     "live": {
       "queue": [],
       "turn": "running",
+      "gate_failed": false,
+      "plan": {
+        "steps": [
+          {
+            "text": "investigate the failure",
+            "done": true
+          },
+          {
+            "text": "fix the parser",
+            "done": false
+          }
+        ],
+        "criteria": "build passes",
+        "notes": "the parser is the culprit"
+      },
       "subagents": [
         {
           "handle": "s1-1",
@@ -50,11 +66,9 @@ expression: output
           "waiting_on": null,
           "last_message": null,
           "usage": null,
-          "task": null,
           "resume_contract": null
         }
-      ],
-      "tasks": []
+      ]
     },
     "cursor": "00000042"
   }

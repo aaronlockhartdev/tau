@@ -4,6 +4,7 @@ use super::*;
 use crate::harness::SessionRole;
 use crate::provider::{self, ResponseRequest, TurnSink};
 use crate::session::SessionStore;
+use serde_json::json;
 use std::time::Duration;
 
 #[derive(Default)]
@@ -42,6 +43,9 @@ pub(crate) struct CannedFactory {
     pub(crate) created: AtomicUsize,
     /// Provider calls across every child (the quiescence test's oracle).
     pub(crate) calls: Arc<AtomicUsize>,
+    /// The instructions (system prompt) of each child's first LLM call —
+    /// the prompt-assembly oracle.
+    pub(crate) instructions: Arc<Mutex<Vec<Option<String>>>>,
 }
 
 impl ChildProviderFactory for CannedFactory {
@@ -59,6 +63,7 @@ impl ChildProviderFactory for CannedFactory {
             index: AtomicUsize::new(0),
             pre_delay,
             calls: self.calls.clone(),
+            instructions: self.instructions.clone(),
         })
     }
 }
@@ -68,6 +73,7 @@ pub(crate) struct CannedChildProvider {
     index: AtomicUsize,
     pre_delay: Duration,
     calls: Arc<AtomicUsize>,
+    instructions: Arc<Mutex<Vec<Option<String>>>>,
 }
 impl CannedChildProvider {
     fn next(&self) -> String {
@@ -80,14 +86,32 @@ impl CannedChildProvider {
 impl provider::TurnProvider for CannedChildProvider {
     fn call<'a>(
         &self,
-        _req: &ResponseRequest,
+        req: &ResponseRequest,
         sink: &'a mut dyn TurnSink,
     ) -> provider::ProviderTurn<'a> {
+        if self.index.load(Ordering::SeqCst) == 0 {
+            // The request's `instructions` is private: capture it the way
+            // the wire encodes it (the struct's Serialize).
+            let captured = serde_json::to_value(req).unwrap();
+            self.instructions.lock().unwrap().push(
+                captured
+                    .get("instructions")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+        let first = self.index.load(Ordering::SeqCst) == 0;
         let body = self.next();
         self.calls.fetch_add(1, Ordering::SeqCst);
         let delay = self.pre_delay;
         let (events, calls) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
+            // The per-child pre-delay, once, before the first call (an
+            // ordering margin for test-side file writes). The mid-stream
+            // pause below stays for the stop-cut window.
+            if first && delay > Duration::ZERO {
+                tokio::time::sleep(delay).await;
+            }
             let mut result = provider::TurnResult::default();
             let mut accepted = 0usize;
             for (i, event) in events.iter().cloned().enumerate() {
@@ -194,6 +218,7 @@ pub(crate) fn harness_full(
         delays,
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
+        instructions: Arc::new(Mutex::new(Vec::new())),
     });
     let provider: Arc<dyn ChildProviderFactory> = factory.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -206,11 +231,13 @@ pub(crate) fn harness_full(
         om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
+        gates: None,
         caps,
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],
         bridge: bridge.clone(),
         driver: Arc::new(TestDriver),
+        core: None,
     });
     // A scripted parent loop (the parent is a full session): the
     // constructor adopts the pre-built supervisor (the test seam).
@@ -296,4 +323,16 @@ pub(crate) fn wait_for(cond: impl Fn() -> bool) {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+/// Waits until the child is observed `done` and returns its state info
+/// (the observed output for assertions).
+pub(crate) fn wait_for_done(sup: &Supervisor, handle: &str) -> SubagentInfo {
+    wait_for(|| {
+        matches!(
+            sup.state_info(handle).unwrap().state,
+            ChildState::Done { .. }
+        )
+    });
+    sup.state_info(handle).unwrap()
 }

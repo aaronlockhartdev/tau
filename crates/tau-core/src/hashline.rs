@@ -190,6 +190,9 @@ pub struct Edited {
     /// 1-based line numbers of the changed region in the new file.
     pub first_changed: usize,
     pub last_changed: usize,
+    /// The old content of the replaced range — the removed lines, for the
+    /// bounded before/after diff the edit tool returns.
+    pub removed_lines: Vec<String>,
 }
 
 /// Re-derive anchors after an edit: survivors keep their anchors, fresh
@@ -370,6 +373,7 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
         new_content.push('\n');
     }
     let removed: Vec<String> = hashes[start..=end].to_vec();
+    let removed_lines: Vec<String> = lines[start..=end].to_vec();
     let new_hashes =
         stable_hashes(content, hashes, &new_content, &removed).map_err(|_| EditError::TooLarge)?;
     // The changed region, measured against the old lines from both ends.
@@ -387,6 +391,7 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
         hashes: new_hashes,
         first_changed: lo + 1,
         last_changed: new_lines.len().saturating_sub(hi),
+        removed_lines,
     })
 }
 

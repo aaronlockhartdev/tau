@@ -6,7 +6,7 @@
 import { command, type Command, type CommandOutput, type SessionMeta } from './protocol';
 import { applySessionList, openSession, setArchived } from './sessions';
 import { errText } from './errors';
-import { pane, store } from './store.svelte';
+import { pane, reconcileActiveFile, store } from './store.svelte';
 
 // Session-command convergence (F5): the clear-banner → invoke → on-failure
 // banner core, spelled once. The per-command follow-up (reapply, and for the
@@ -131,6 +131,7 @@ export async function deleteSession(ws: string, sid: string): Promise<void> {
 export async function switchSession(sid: string): Promise<void> {
   const prev = store.current;
   store.current = sid;
+  reconcileActiveFile(store.sessions[sid]?.meta.workspace ?? '');
   // A failed open must not leave current dangling at an unhydrated stub:
   // roll back to the previous session (the onFail hook).
   await runSessionCommand(

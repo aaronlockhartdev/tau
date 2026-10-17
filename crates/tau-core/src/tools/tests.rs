@@ -1,12 +1,12 @@
-use super::impls::image_media_type;
+use super::impls::{bash, edit, image_media_type, read, write};
 use super::*;
 use base64::Engine;
 use std::fmt::Write as _;
 
 /// The text of a tool output: these tests assert on text, and an image
 /// block on these paths is a bug.
-fn text(out: ToolOutput) -> String {
-    match out {
+fn text(out: ToolResult) -> String {
+    match out.output {
         ToolOutput::Text(t) => t,
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
     }
@@ -182,7 +182,10 @@ async fn read_returns_an_image_block_for_a_png() {
     let dir = tempfile::tempdir().unwrap();
     let png = b"\x89PNG\r\n\x1a\nfake-png-pixels";
     std::fs::write(dir.path().join("shot.png"), png).unwrap();
-    match read(dir.path(), &json!({"path": "shot.png"}), None).await {
+    match read(dir.path(), &json!({"path": "shot.png"}), None)
+        .await
+        .output
+    {
         ToolOutput::Image(img) => {
             assert_eq!(img.kind, "image");
             assert_eq!(img.media_type, "image/png");
@@ -203,7 +206,10 @@ async fn read_returns_an_image_block_for_a_jpeg() {
     let dir = tempfile::tempdir().unwrap();
     let jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF";
     std::fs::write(dir.path().join("shot.jpg"), jpeg).unwrap();
-    match read(dir.path(), &json!({"path": "shot.jpg"}), None).await {
+    match read(dir.path(), &json!({"path": "shot.jpg"}), None)
+        .await
+        .output
+    {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/jpeg"),
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
     }
@@ -226,8 +232,74 @@ async fn an_oversized_image_is_refused_loudly() {
         Some(u64::try_from(png.len()).expect("fixture size, well under u64::MAX")),
     )
     .await
+    .output
     {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/png"),
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
     }
+}
+
+#[tokio::test]
+async fn edit_output_is_a_bounded_before_after_diff() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "d.txt", "content": "alpha\nbeta\ngamma\ndelta\n"}),
+    )
+    .await;
+    let read_out = text(read(dir.path(), &json!({"path": "d.txt"}), None).await);
+    let lines: Vec<&str> = read_out.lines().collect();
+    let from = lines[1].split('│').next().unwrap().to_string();
+    let to = lines[2].split('│').next().unwrap().to_string();
+    let out = text(
+        edit(
+            dir.path(),
+            &json!({"path": "d.txt", "from": from, "to": to, "content": "BETA'\nGAMMA'"}),
+        )
+        .await,
+    );
+    // The one-line summary, then a bounded body of marked lines.
+    assert!(
+        out.starts_with("edited ") && out.contains("(lines 2–3 of 4)"),
+        "summary: {out}"
+    );
+    let body: Vec<&str> = out.lines().skip(1).collect();
+    // Removed lines are '-'-prefixed (no anchor — they are gone).
+    assert!(body.contains(&"-beta"), "missing -beta: {out}");
+    assert!(body.contains(&"-gamma"), "missing -gamma: {out}");
+    // Added lines are '+ <fresh-anchor> <line>'.
+    assert!(
+        body.iter()
+            .any(|l| l.starts_with("+ ") && l.ends_with(" BETA'")),
+        "added line missing its fresh anchor: {out}"
+    );
+    assert!(
+        body.iter()
+            .any(|l| l.starts_with("+ ") && l.ends_with(" GAMMA'")),
+        "added line missing its fresh anchor: {out}"
+    );
+    // Unchanged neighbours are ' <line>' context.
+    assert!(body.contains(&" alpha"), "missing context: {out}");
+    assert!(body.contains(&" delta"), "missing context: {out}");
+    assert!(body.len() <= 8, "diff not bounded to the region: {out}");
+}
+
+#[tokio::test]
+async fn core_tools_carry_a_typed_verdict() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path();
+    // bash: the exit code is the verdict.
+    let ok = bash(cwd, &json!({"command": "true"})).await;
+    assert_eq!(ok.status(), "ok");
+    let err = bash(cwd, &json!({"command": "false"})).await;
+    assert_eq!(err.status(), "error");
+    // read: a missing file is an error; a present one is ok.
+    let err = read(cwd, &json!({"path": "missing.txt"}), None).await;
+    assert_eq!(err.status(), "error");
+    std::fs::write(cwd.join("a.txt"), "hi\n").unwrap();
+    let ok = read(cwd, &json!({"path": "a.txt"}), None).await;
+    assert_eq!(ok.status(), "ok");
+    // write: a clean write is ok.
+    let ok = write(cwd, &json!({"path": "b.txt", "content": "x"})).await;
+    assert_eq!(ok.status(), "ok");
 }

@@ -1,4 +1,4 @@
-use super::{Path, PathBuf, ToolOutput, hashline};
+use super::{Path, PathBuf, ToolOutput, ToolResult, hashline};
 use base64::Engine;
 use std::fmt::Write as _;
 #[cfg(unix)]
@@ -17,14 +17,16 @@ pub(super) async fn read(
     cwd: &Path,
     args: &serde_json::Value,
     image_max_bytes: Option<u64>,
-) -> ToolOutput {
+) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
-        return "read: missing \"path\"".into();
+        return ToolResult::err("read: missing \"path\"".into());
     };
     let path = resolve(cwd, path);
     let bytes = match std::fs::read(&path) {
         Ok(b) => b,
-        Err(e) => return format!("read: cannot read {}: {e}", path.display()).into(),
+        Err(e) => {
+            return ToolResult::err(format!("read: cannot read {}: {e}", path.display()).into());
+        }
     };
     // #34: an image is content for a vision endpoint, not UTF-8 text.
     if let Some(media_type) = image_media_type(&bytes) {
@@ -33,34 +35,36 @@ pub(super) async fn read(
         if let Some(cap) = image_max_bytes
             && u64::try_from(bytes.len()).expect("byte length, well under u64::MAX") > cap
         {
-            return format!(
+            return ToolResult::err(format!(
                 "read: {} is a {media_type} image of {} bytes, over the {cap}-byte cap — not returned",
                 path.display(),
                 bytes.len()
             )
-            .into();
+            .into());
         }
-        return ToolOutput::Image(tau_protocol::payload::ImageBlock {
+        return ToolResult::ok(ToolOutput::Image(tau_protocol::payload::ImageBlock {
             kind: "image".into(),
             media_type: media_type.to_owned(),
             data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
-        });
+        }));
     }
     let content = match std::str::from_utf8(&bytes) {
         Ok(c) => hashline::normalize(c),
         // The same diagnostic `read_to_string` produced: the text path stays
         // byte-for-byte (#34).
         Err(_) => {
-            return format!(
-                "read: cannot read {}: stream did not contain valid UTF-8",
-                path.display()
-            )
-            .into();
+            return ToolResult::err(
+                format!(
+                    "read: cannot read {}: stream did not contain valid UTF-8",
+                    path.display()
+                )
+                .into(),
+            );
         }
     };
     let rows = match hashline::render(&content) {
         Ok(rows) => rows,
-        Err(e) => return e.to_string().into(),
+        Err(e) => return ToolResult::err(format!("read: {e}").into()),
     };
     let offset = usize::try_from(
         args.get("offset")
@@ -90,7 +94,7 @@ pub(super) async fn read(
             total
         );
     }
-    out.into()
+    ToolResult::ok(out.into())
 }
 
 /// The image type by magic bytes (#34): the extension is not authoritative —
@@ -113,24 +117,27 @@ pub(super) fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
+pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
-        return "write: missing \"path\"".into();
+        return ToolResult::err("write: missing \"path\"".into());
     };
     let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
-        return "write: missing \"content\"".into();
+        return ToolResult::err("write: missing \"content\"".into());
     };
     let path = resolve(cwd, path);
     if let Some(parent) = path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
     {
-        return format!("write: cannot create {}: {e}", parent.display()).into();
+        return ToolResult::err(format!("write: cannot create {}: {e}", parent.display()).into());
     }
     match write_atomic(&path, content) {
-        Ok(()) => format!("wrote {} ({} bytes)", path.display(), content.len()).into(),
-        Err(e) => format!("write: {e}").into(),
+        Ok(()) => {
+            ToolResult::ok(format!("wrote {} ({} bytes)", path.display(), content.len()).into())
+        }
+        Err(e) => ToolResult::err(format!("write: {e}").into()),
     }
 }
+
 /// Overwrite a file without a torn intermediate state: unique temp file in
 /// the target directory + fsync + rename (+ best-effort directory sync),
 /// preserving an existing file's mode — the reference scheme's `writeAtomic`
@@ -190,21 +197,24 @@ fn write_atomic_inner(
     result
 }
 
-pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
+pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
+    const CAP: usize = 200;
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
-        return "edit: missing \"path\"".into();
+        return ToolResult::err("edit: missing \"path\"".into());
     };
     let (Some(from), Some(to), Some(content)) = (
         args.get("from").and_then(|v| v.as_str()),
         args.get("to").and_then(|v| v.as_str()),
         args.get("content").and_then(|v| v.as_str()),
     ) else {
-        return "edit: \"from\", \"to\", and \"content\" are required".into();
+        return ToolResult::err("edit: \"from\", \"to\", and \"content\" are required".into());
     };
     let path = resolve(cwd, path);
     let original = match std::fs::read_to_string(&path) {
         Ok(c) => hashline::normalize(&c),
-        Err(e) => return format!("edit: cannot read {}: {e}", path.display()).into(),
+        Err(e) => {
+            return ToolResult::err(format!("edit: cannot read {}: {e}", path.display()).into());
+        }
     };
     let edited = match hashline::apply_edit(
         &original,
@@ -215,34 +225,71 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         },
     ) {
         Ok(e) => e,
-        Err(e) => return e.to_string().into(),
+        Err(e) => return ToolResult::err(format!("edit: {e}").into()),
     };
     if let Err(e) = write_atomic(&path, &edited.content) {
-        return format!("edit: cannot write {}: {e}", path.display()).into();
+        return ToolResult::err(format!("edit: cannot write {}: {e}", path.display()).into());
     }
-    // Bounded output (the reference returns the changed region, not the
-    // whole file): the changed lines plus two context lines per side, with
-    // their fresh anchors, plus the result line count.
+    // Bounded before/after diff (the reference returns the changed region,
+    // not the whole file): removed lines, added lines with their fresh
+    // anchors, a little unchanged context — capped so a huge edit stays small.
     if edited.first_changed > edited.last_changed {
-        return format!("edited {} (no change)", path.display()).into();
+        return ToolResult::ok(format!("edited {} (no change)", path.display()).into());
     }
-    let rows = hashline::render(&edited.content).unwrap_or_default();
-    let lo = edited.first_changed.saturating_sub(1).saturating_sub(2);
-    let hi = (edited.last_changed + 2).min(rows.len());
-    (format!(
+    let new_lines: Vec<String> = edited.content.lines().map(str::to_owned).collect();
+    let total = new_lines.len();
+    // The changed region in the new file, 0-based.
+    let lo = edited.first_changed.saturating_sub(1);
+    let hi = edited.last_changed.min(total);
+    // Change lines: removed (old) then added (new, carrying the fresh anchor).
+    let mut change: Vec<String> = Vec::with_capacity(edited.removed_lines.len() + (hi - lo));
+    for line in &edited.removed_lines {
+        change.push(format!("-{line}"));
+    }
+    for (line, hash) in new_lines[lo..hi].iter().zip(edited.hashes[lo..hi].iter()) {
+        change.push(format!("+ {hash} {line}"));
+    }
+    // Cap the body at ~200 lines; a larger change shows its head + a count.
+    let mut body: Vec<String> = Vec::new();
+    let mut notice: Option<String> = None;
+    if change.len() > CAP {
+        body.extend(change.iter().take(CAP).cloned());
+        notice = Some(format!("… {} more lines changed", change.len() - CAP));
+    } else {
+        body.extend(change);
+        // A little unchanged context for orientation, kept within the cap.
+        let budget = CAP - body.len();
+        let mut ctx = Vec::new();
+        for line in new_lines.iter().take(lo).rev().take(2) {
+            ctx.push(format!(" {line}"));
+        }
+        for line in new_lines.iter().skip(hi).take(2) {
+            if ctx.len() >= 2 {
+                break;
+            }
+            ctx.push(format!(" {line}"));
+        }
+        body.extend(ctx.into_iter().take(budget));
+    }
+    let summary = format!(
         "edited {} (lines {}–{} of {})",
         path.display(),
         edited.first_changed,
         edited.last_changed,
-        rows.len()
-    ) + "\n"
-        + &rows[lo..hi].join("\n"))
-        .into()
+        total
+    );
+    let mut out = summary + "\n";
+    out.push_str(&body.join("\n"));
+    if let Some(n) = notice {
+        out.push('\n');
+        out.push_str(&n);
+    }
+    ToolResult::ok(out.into())
 }
 
-pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
+pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
-        return "bash: missing \"command\"".into();
+        return ToolResult::err("bash: missing \"command\"".into());
     };
     let timeout_secs = args
         .get("timeout_secs")
@@ -266,14 +313,17 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         .await
         {
             Ok(Ok(output)) => output,
-            Ok(Err(e)) => return format!("bash: {e}").into(),
+            Ok(Err(e)) => return ToolResult::err(format!("bash: {e}").into()),
             // The timeout dropped the (now owned) child; kill_on_drop fired,
             // so a timed-out command cannot keep running and mutate files.
-            Err(_) => return format!("bash: timed out after {timeout_secs}s").into(),
+            Err(_) => {
+                return ToolResult::err(format!("bash: timed out after {timeout_secs}s").into());
+            }
         },
-        Err(e) => return format!("bash: {e}").into(),
+        Err(e) => return ToolResult::err(format!("bash: {e}").into()),
     };
-    let mut out = format!("exit {}", output.status.code().unwrap_or(-1));
+    let code = output.status.code().unwrap_or(-1);
+    let mut out = format!("exit {code}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     if !stdout.is_empty() {
@@ -284,5 +334,8 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolOutput {
         out.push_str("\n--- stderr ---\n");
         out.push_str(&stderr);
     }
-    out.into()
+    ToolResult {
+        output: out.into(),
+        ok: code == 0,
+    }
 }

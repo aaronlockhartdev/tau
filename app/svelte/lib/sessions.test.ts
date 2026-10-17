@@ -39,7 +39,6 @@ function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
     waiting_on: null,
     last_message: null,
     usage: null,
-    task: null,
     resume_contract: null,
     ...extra
   };

@@ -2,6 +2,8 @@
 // window.wdioTauri seam before the app's module graph runs.
 import '@wdio/tauri-plugin';
 import './app.css';
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { init, applyEvents } from './lib/store.svelte';

@@ -137,7 +137,7 @@ describe('mock E2E: tool calls the app executes and renders', () => {
         browser.execute(() => {
           const tools = [...document.querySelectorAll('.tool')];
           const t = tools.find((x) => x.querySelector('.nm')?.textContent.trim() === 'read');
-          return t?.querySelector('.out pre')?.textContent ?? null;
+          return t?.querySelector('.out .to-code')?.textContent ?? null;
         }),
       (o) => o !== null && o.length > 0,
       15000,
