@@ -362,15 +362,19 @@ pub fn append_observation(existing: &str, iso_timestamp: &str, new_observation: 
     out
 }
 
+mod datetime;
 mod groups;
 mod observer;
 mod reflector;
+pub use datetime::*;
 pub use groups::*;
 pub use observer::*;
 pub use reflector::*;
 
 #[cfg(test)]
 mod tests_core;
+#[cfg(test)]
+mod tests_datetime;
 #[cfg(test)]
 mod tests_groups;
 #[cfg(test)]
