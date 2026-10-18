@@ -240,6 +240,11 @@
   // Per-call clock (ms epoch) by call_id: TPS = a call's output tokens over
   // its own stream duration, shown in the status bar.
   let callStartMs = new Map<string, number>();
+  // The most recent stream_start's clock (ms epoch): the base for the live
+  // (estimated) TPS while a call is in flight. The exact output token count
+  // lands only at stream_end, so the status bar's gauge runs on a text-length
+  // estimate in the meantime.
+  let streamStartMs = 0;
 
   function sessionOf(sid: string): SessionState {
     const s = store.sessions[sid];
@@ -885,7 +890,9 @@
       if (!s) continue;
       switch (ev.type) {
         case 'stream_start': {
-          callStartMs.set(ev.call_id, Date.now());
+          const startedAt = Date.now();
+          callStartMs.set(ev.call_id, startedAt);
+          streamStartMs = startedAt;
           s.tps = 0;
           s.turn = 'running';
           break;
@@ -908,6 +915,19 @@
           upsertEntry(s.entries, ev.entry);
           // A tool call is the model's first output: leave 'starting'.
           if (s.turn === 'starting' && ev.entry.kind === 'tool') s.turn = 'running';
+          // Live TPS: the exact output count lands only at stream_end, so
+          // while the assistant streams, track a text-length estimate over
+          // the elapsed stream time (the precise value replaces it at
+          // stream_end).
+          if (
+            ev.entry.kind === 'assistant' &&
+            (s.turn === 'running' || s.turn === 'starting') &&
+            streamStartMs > 0
+          ) {
+            const secs = (Date.now() - streamStartMs) / 1000;
+            const text = ((ev.entry.payload as { text?: string } | null) ?? {}).text ?? '';
+            if (secs > 0.2) s.tps = Math.max(1, Math.round(text.length / 4)) / secs;
+          }
           break;
         }
         case 'queue': {
