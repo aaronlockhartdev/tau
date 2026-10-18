@@ -226,17 +226,36 @@ pub(crate) struct ForwardingChildFactory {
     pub(crate) tx: mpsc::Sender<Event>,
     pub(crate) pipe: PipeCounters,
     pub(crate) workspace: String,
+    pub(crate) providers: Mutex<HashMap<String, Arc<ForwardingProvider>>>,
 }
 impl ChildProviderFactory for ForwardingChildFactory {
     fn create(&self, child: &str) -> TurnProviderRef {
-        Arc::new(ForwardingProvider::new(
+        let provider = Arc::new(ForwardingProvider::new(
             session_inner(&self.client, &self.provider, &self.requests),
             self.tx.clone(),
             self.pipe.clone(),
             self.workspace.clone(),
             child.to_owned(),
             Arc::new(AtomicBool::new(false)),
-        ))
+        ));
+        // Stash it so the bridge's spawned reuses this exact provider for the
+        // child's LiveSession (one per child, as the root has).
+        self.providers
+            .lock()
+            .expect("child provider registry: no panic while the lock is held")
+            .insert(child.to_owned(), provider.clone());
+        provider
+    }
+}
+
+impl ForwardingChildFactory {
+    /// The concrete provider `create` made for a child, so the bridge's
+    /// `LiveSession` shares it with the child's agent (one provider, #175).
+    fn take_provider(&self, child: &str) -> Option<Arc<ForwardingProvider>> {
+        self.providers
+            .lock()
+            .expect("child provider registry: no panic while the lock is held")
+            .remove(child)
     }
 }
 
@@ -275,6 +294,7 @@ pub(crate) struct SessionSubagentBridge {
     pub(crate) provider: crate::config::Provider,
     pub(crate) requests: crate::config::Requests,
     pub(crate) sup: Mutex<Option<Weak<Supervisor>>>,
+    pub(crate) factory: Option<Arc<ForwardingChildFactory>>,
 }
 impl SubagentBridge for SessionSubagentBridge {
     fn spawned(&self, n: &SpawnNotice) {
@@ -322,14 +342,26 @@ impl SubagentBridge for SessionSubagentBridge {
                 title,
             },
         });
-        let provider = Arc::new(ForwardingProvider::new(
-            session_inner(&self.client, &self.provider, &self.requests),
-            self.core.events_tx.clone(),
-            self.core.pipe.clone(),
-            self.workspace.clone(),
-            n.child.clone(),
-            agent.stop_flag(),
-        ));
+        // Reuse the child's own provider (the one its agent runs through) so
+        // the post-turn reconciliation emits StreamEnd (#175); a non-forwarding
+        // test factory falls back to a fresh one.
+        let provider = self
+            .factory
+            .as_ref()
+            .and_then(|f| f.take_provider(&n.child))
+            .unwrap_or_else(|| {
+                Arc::new(ForwardingProvider::new(
+                    session_inner(&self.client, &self.provider, &self.requests),
+                    self.core.events_tx.clone(),
+                    self.core.pipe.clone(),
+                    self.workspace.clone(),
+                    n.child.clone(),
+                    agent.stop_flag(),
+                ))
+            });
+        // Wire the child's event hooks (#173): the child launch path only wires
+        // the plan hook, so its streaming entries never reached the GUI.
+        super::launch::wire_events(&self.core, &self.workspace, &n.child, &agent);
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),

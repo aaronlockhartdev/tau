@@ -4,7 +4,7 @@
 //! names; the spawn-time agent-type filter lives here, not smeared across
 //! the loop, the spawn, and the agent.
 
-use super::impls::{bash, edit, read, write};
+use super::impls::{bash_inner, edit, read, write};
 use super::{ToolCall, ToolResult};
 use crate::agent::AgentSession;
 use crate::harness::SessionRole;
@@ -89,7 +89,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
         "read" => read(ctx.cwd, &call.args, ctx.image_max_bytes).await,
         "write" => write(ctx.cwd, &call.args).await,
         "edit" => edit(ctx.cwd, &call.args).await,
-        "bash" => bash(ctx.cwd, &call.args).await,
+        "bash" => bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag()).await,
         other => ToolResult::err(format!("unknown tool: {other}").into()),
     }
 }

@@ -5,10 +5,10 @@
 //! (kind-string → event shaping) all live here, not at the call sites.
 
 use super::{
-    AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, Mutex,
-    OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore, SessionSubagentBridge,
-    SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver, TurnConfig, Workspace, context,
-    derive_turn, entry_to_view, last_model_note, tools,
+    AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
+    Mutex, OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
+    SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
+    TurnConfig, Workspace, context, derive_turn, entry_to_view, last_model_note, tools,
 };
 use crate::config::ToolBatchPolicy;
 use crate::om::OmRecord;
@@ -292,6 +292,7 @@ fn plan_wiring(
 /// bridge↔supervisor cycle, the session, and the four event hooks. The
 /// first provider arrives pre-resolved — the caller already resolved it
 /// (ticket #43).
+#[allow(clippy::too_many_lines)] // one root-assembly path; splitting is refactoring
 fn root_session(
     core: &Arc<Core>,
     workspace: &Workspace,
@@ -368,6 +369,26 @@ fn root_session(
 
     // The bridge and the supervisor reference each other: build the
     // bridge with an empty weak and patch it in after construction.
+    // The child factory: a custom (test) one, or the default forwarding one.
+    // The default is kept concrete so the bridge can share its per-child
+    // provider with the child's agent (one provider, as the root has — #175).
+    let (bridge_factory, factory): (
+        Option<Arc<ForwardingChildFactory>>,
+        Arc<dyn ChildProviderFactory>,
+    ) = if let Some(custom) = core.child_factory.clone() {
+        (None, custom)
+    } else {
+        let forwarding = Arc::new(ForwardingChildFactory {
+            client: core.client.clone(),
+            provider: first.clone(),
+            requests: config.requests.clone(),
+            tx: core.events_tx.clone(),
+            pipe: core.pipe.clone(),
+            workspace: workspace.id.clone(),
+            providers: Mutex::new(HashMap::new()),
+        });
+        (Some(Arc::clone(&forwarding)), forwarding)
+    };
     let bridge = Arc::new(SessionSubagentBridge {
         core: Arc::clone(core),
         workspace: workspace.id.clone(),
@@ -375,16 +396,7 @@ fn root_session(
         provider: first.clone(),
         requests: config.requests.clone(),
         sup: Mutex::new(None),
-    });
-    let factory: Arc<dyn ChildProviderFactory> = core.child_factory.clone().unwrap_or_else(|| {
-        Arc::new(ForwardingChildFactory {
-            client: core.client.clone(),
-            provider: first.clone(),
-            requests: config.requests.clone(),
-            tx: core.events_tx.clone(),
-            pipe: core.pipe.clone(),
-            workspace: workspace.id.clone(),
-        })
+        factory: bridge_factory,
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -429,7 +441,7 @@ fn root_session(
         subagents: Some(sup.clone()),
         child: None,
     }));
-    wire_events(core, workspace, &sid, &agent);
+    wire_events(core, &workspace.id, &sid, &agent);
     sup.attach_parent(&agent);
     Ok(agent)
 }
@@ -437,7 +449,12 @@ fn root_session(
 /// The root's four event hooks: the `om_status` kind-string shaping, the
 /// queue projection, and the two entry tees (ADR-0008's file-line
 /// upserts).
-fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {
+pub(super) fn wire_events(
+    core: &Arc<Core>,
+    workspace_id: &str,
+    sid: &str,
+    agent: &Arc<AgentSession>,
+) {
     // The plan-state hook (design: the plan file is the source of
     // truth): the core's watcher-parsed state, re-injected at each
     // assembly. A `Weak` keeps the hook from pinning the core.
@@ -452,7 +469,7 @@ fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<A
     // shapes it into the protocol event on the shared channel.
     {
         let tx = core.events_tx.clone();
-        let ws = workspace.id.clone();
+        let ws = workspace_id.to_owned();
         let sid = sid.to_owned();
         agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
             let _ = tx.try_send(Event::OmStatus {
@@ -468,7 +485,7 @@ fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<A
     }
     {
         let tx = core.events_tx.clone();
-        let ws = workspace.id.clone();
+        let ws = workspace_id.to_owned();
         let sid = sid.to_owned();
         // The queue and upsert hooks get their own clones (the entry
         // hook moves these).

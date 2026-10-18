@@ -1,4 +1,4 @@
-use super::impls::{bash, edit, image_media_type, read, write};
+use super::impls::{bash, bash_inner, edit, image_media_type, read, write};
 use super::*;
 use base64::Engine;
 use std::fmt::Write as _;
@@ -154,6 +154,37 @@ async fn bash_captures_output_and_exit_code() {
     let out = text(bash(dir.path(), &json!({"command": "echo oops >&2; exit 3"})).await);
     assert!(out.starts_with("exit 3"), "{out}");
     assert!(out.contains("oops"), "{out}");
+}
+
+#[tokio::test]
+async fn bash_child_path_includes_common_tool_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = text(bash(dir.path(), &json!({"command": "echo $PATH"})).await);
+    // bash_path() augments the GUI-minimal inherited PATH with the common
+    // per-user tool dirs, so bare commands resolve (#172).
+    assert!(out.contains("/usr/local/bin"), "{out}");
+    assert!(out.contains("/opt/homebrew/bin"), "{out}");
+}
+
+#[tokio::test]
+async fn bash_stop_interrupts_a_running_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopper = std::sync::Arc::clone(&stop);
+    let setter = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        stopper.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let started = std::time::Instant::now();
+    let out = text(bash_inner(dir.path(), &json!({"command": "sleep 10"}), &stop).await);
+    let elapsed = started.elapsed();
+    // The stop cut the command short, not the sleep running to completion (#174).
+    assert!(out.contains("interrupted by user stop"), "{out}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "stop did not interrupt in time: {elapsed:?}"
+    );
+    setter.await.unwrap();
 }
 
 #[test]
