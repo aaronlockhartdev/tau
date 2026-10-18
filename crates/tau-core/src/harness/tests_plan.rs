@@ -71,6 +71,18 @@ fn new_root_session(core: &Arc<Core>, ws: &Workspace) -> tau_protocol::snapshot:
     }
 }
 
+/// The newest `plan_changed` event for the session, if any.
+fn plan_changed(events: &[Event], ws: &str, sid: &str) -> Option<tau_protocol::snapshot::Plan> {
+    events.iter().rev().find_map(|e| match e {
+        Event::PlanChanged {
+            workspace,
+            session,
+            plan,
+        } if workspace == ws && session == sid => Some(plan.clone()),
+        _ => None,
+    })
+}
+
 #[tokio::test]
 async fn session_new_seeds_the_plan_file_and_injects_its_path() {
     let tmp = tempfile::tempdir().unwrap();
@@ -250,18 +262,10 @@ async fn a_plan_file_change_emits_plan_changed() {
     // The session-start refresh also emits (the empty skeleton); the
     // assertion keys on the edited plan's two steps.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
-            Event::PlanChanged {
-                workspace: ws,
-                session,
-                plan,
-            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
-            _ => None,
-        });
-        if got.as_ref().is_some_and(|p| p.steps.len() == 2) {
-            break;
-        }
+    while plan_changed(&events.lock().unwrap(), &workspace.id, &meta.id)
+        .as_ref()
+        .is_none_or(|p| p.steps.len() != 2)
+    {
         assert!(
             tokio::time::Instant::now() < deadline,
             "no plan_changed with the edited plan within 5 s"
@@ -288,18 +292,10 @@ async fn an_unchanged_plan_file_emits_no_plan_changed() {
     // The session-start refresh emits the seeded skeleton first: the
     // baseline count includes it.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
-            Event::PlanChanged {
-                workspace: ws,
-                session,
-                plan,
-            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
-            _ => None,
-        });
-        if got.as_ref().is_some_and(|p| p.steps.is_empty()) {
-            break;
-        }
+    while plan_changed(&events.lock().unwrap(), &workspace.id, &meta.id)
+        .as_ref()
+        .is_none_or(|p| !p.steps.is_empty())
+    {
         assert!(
             tokio::time::Instant::now() < deadline,
             "no seed plan_changed within 5 s"
@@ -322,18 +318,10 @@ async fn an_unchanged_plan_file_emits_no_plan_changed() {
     // The real change arrives (the positive half of the pair).
     std::fs::write(&plan_file, "## Steps\n- [x] done step\n- [ ] open step\n").unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
-            Event::PlanChanged {
-                workspace: ws,
-                session,
-                plan,
-            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
-            _ => None,
-        });
-        if got.as_ref().is_some_and(|p| p.steps.len() == 2) {
-            break;
-        }
+    while plan_changed(&events.lock().unwrap(), &workspace.id, &meta.id)
+        .as_ref()
+        .is_none_or(|p| p.steps.len() != 2)
+    {
         assert!(
             tokio::time::Instant::now() < deadline,
             "no plan_changed with the edited plan within 5 s"
@@ -370,24 +358,73 @@ async fn a_new_session_emits_plan_changed_for_the_seed() {
 
     // The session-start refresh emits the seeded skeleton (no steps).
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    loop {
-        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
-            Event::PlanChanged {
-                workspace: ws,
-                session,
-                plan,
-            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
-            _ => None,
-        });
-        if got.as_ref().is_some_and(|p| p.steps.is_empty()) {
-            break;
-        }
+    while plan_changed(&events.lock().unwrap(), &workspace.id, &meta.id)
+        .as_ref()
+        .is_none_or(|p| !p.steps.is_empty())
+    {
         assert!(
             tokio::time::Instant::now() < deadline,
             "no seed plan_changed within 5 s"
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// #177's guard at its own level: a re-read of an unchanged file is a
+/// no-op — the diff against the cache decides, so a watcher fire on
+/// identical bytes emits nothing.
+#[tokio::test]
+async fn an_unchanged_refresh_emits_no_plan_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let events = collect_events(&core);
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    let count = || {
+        let events = events.lock().unwrap();
+        events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::PlanChanged { workspace: ws, session, .. }
+                        if ws == &workspace.id && session == &meta.id
+                )
+            })
+            .count()
+    };
+    // The session-start observation emits the seeded skeleton — it can
+    // land a tick after the dispatch returns, so poll for it.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while count() == 0 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no seed plan_changed within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(count(), 1, "the session-start observation emits");
+
+    // A new state emits — poll until the watcher (or our refresh below)
+    // has observed it.
+    std::fs::write(crate::plan::path(&cwd, &meta.id), "## Steps\n- [ ] a\n").unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while count() < 2 {
+        core.refresh_plan(Path::new(&cwd), &meta.id);
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the changed state was never observed"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(count(), 2, "a changed re-read emits");
+
+    // ...and an identical re-read (a watcher fire on unchanged bytes)
+    // is a no-op.
+    core.refresh_plan(Path::new(&cwd), &meta.id);
+    assert_eq!(count(), 2, "an unchanged re-read emits nothing");
 }
 
 #[tokio::test]

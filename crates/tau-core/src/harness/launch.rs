@@ -354,8 +354,7 @@ fn root_session(
     // then replaces it with its own path. It lands before the skills
     // catalog: the catalog is the last layer (tests_skills).
     let sid = store.id().to_owned();
-    let (system_prompt, _) = plan_wiring(Some(core), &system_prompt, &cwd, &sid);
-    let mut system_prompt = system_prompt;
+    let (mut system_prompt, _) = plan_wiring(Some(core), &system_prompt, &cwd, &sid);
     crate::gate::with_section(&mut system_prompt, &config.gates);
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen

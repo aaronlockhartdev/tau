@@ -229,13 +229,14 @@ pub fn section(file: &Path) -> String {
     format!(
         "{PLAN_SECTION_HEADER}\n\n\
          Your plan lives at `{}`. For multi-step work, list the steps in \
-         the file before substantive work begins; simple one-shot tasks \
-         need no plan. Keep steps to 5–7 imperative words, and check a \
-         step off immediately when it is done — never batch check-offs to \
-         the end. When the direction changes, edit the steps rather than \
-         abandoning them, and keep the criteria and notes current. The \
-         current state, with the next unchecked step, is re-injected into \
-         your context at every turn.",
+         the file before substantive work begins; tasks with fewer than two \
+         steps need no plan. Keep steps to 5–7 imperative words, and check \
+         a step off immediately when it is done — `- [ ]` becomes `- [x]` \
+         the moment the step finishes, never batched to the end. When the \
+         direction changes, edit the steps rather than abandoning them, and \
+         keep the criteria and notes current. The current state, with the \
+         next unchecked step, is re-injected into your context at every \
+         turn.",
         file.display()
     )
 }
