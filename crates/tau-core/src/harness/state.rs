@@ -585,23 +585,29 @@ impl Core {
     /// (a torn write, a delete) degrades to an empty plan — the parser is
     /// total, so nothing here can fail a turn. The parse is also emitted as
     /// a `plan_changed` (the GUI's plan pane, spec §5.3) when the cwd names
-    /// an open workspace.
+    /// an open workspace — and only when the parse actually changed: an
+    /// editor saving unchanged content must not churn the UI (#177).
     pub(crate) fn refresh_plan(&self, workspace: &Path, session_id: &str) {
         let raw =
             std::fs::read_to_string(crate::plan::path(workspace, session_id)).unwrap_or_default();
         let plan = crate::plan::parse(&raw);
         let done = plan.done_count();
         let total = plan.steps.len();
-        self.plans
+        let changed = self
+            .plans
             .lock()
             .expect("plan states: no panic while the lock is held")
-            .insert(session_id.to_owned(), plan.clone());
+            .insert(session_id.to_owned(), plan.clone())
+            .is_none_or(|prev| prev != plan);
         tracing::info!(
             session = %session_id,
             done,
             total,
             "plan state observed"
         );
+        if !changed {
+            return;
+        }
         if let Some(id) = self.workspace_id_for_cwd(workspace) {
             self.emit(Event::PlanChanged {
                 workspace: id,

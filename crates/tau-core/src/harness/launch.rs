@@ -132,7 +132,9 @@ impl AgentSession {
                 // The plan file (design: session-scoped, the source of
                 // truth): the child's own file, replacing any inherited section.
                 let sid = store.id().to_owned();
-                let (system_prompt, core) = plan_wiring(&supervisor, &system_prompt, &d.cwd, &sid);
+                let core = supervisor.core().and_then(|w| w.upgrade());
+                let (system_prompt, core) =
+                    plan_wiring(core.as_ref(), &system_prompt, &d.cwd, &sid);
                 let agent = Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -215,7 +217,10 @@ impl AgentSession {
         // the supervisor carries a core (the test seams carry none).
         let sid = store.id().to_owned();
         let (system_prompt, core) = match system_prompt {
-            Some(prompt) => plan_wiring(sup, &prompt, &d.cwd, &sid),
+            Some(prompt) => {
+                let core = sup.core().and_then(|w| w.upgrade());
+                plan_wiring(core.as_ref(), &prompt, &d.cwd, &sid)
+            }
             None => (d.system_prompt.clone(), None),
         };
         let gate_failed = resume_gate_failed(&mut store)?;
@@ -263,29 +268,28 @@ fn resume_gate_failed(store: &mut SessionStore) -> Result<bool, ProtocolError> {
 }
 
 /// The plan wiring the supervisor-linked roles share (design: the plan
-/// file is the source of truth): seed the session's file, and — when the
-/// supervisor carries a core — observe the file's current state and point
-/// the prompt at the session's own file (replacing any inherited
-/// section). A core-less supervisor (the test seams) passes the prompt
-/// through untouched.
+/// The plan wiring every session role shares (design: the plan file is
+/// the source of truth): seed the session's file, point the prompt at the
+/// session's own file (replacing any inherited section), and — when a
+/// core is attached — observe the file's current state so the cache is
+/// warm for the first assembly. A core-less seam (the test kits) passes
+/// the prompt through with only the path section.
 fn plan_wiring(
-    sup: &Supervisor,
+    core: Option<&Arc<Core>>,
     prompt: &str,
     cwd: &Path,
     sid: &str,
 ) -> (String, Option<Arc<Core>>) {
     crate::plan::seed(cwd, sid);
-    // The section names the child's own plan file (seeded unconditionally
-    // above): it belongs in the prompt whether or not a core is attached —
-    // the core only adds the watcher's state cache on top.
+    // The section names the session's own plan file (seeded
+    // unconditionally above): it belongs in the prompt whether or not a
+    // core is attached — the core only adds the state cache on top.
     let sectioned = crate::plan::with_path(prompt, &crate::plan::path(cwd, sid));
-    match sup.core().and_then(|w| w.upgrade()) {
-        Some(core) => {
-            core.refresh_plan(cwd, sid);
-            (sectioned, Some(core))
-        }
-        None => (sectioned, None),
+    let core = core.cloned();
+    if let Some(core) = &core {
+        core.refresh_plan(cwd, sid);
     }
+    (sectioned, core)
 }
 
 /// The root assembly: the model resolution, the prompt, the
@@ -345,14 +349,13 @@ fn root_session(
     // The plan file (design: the source of truth): seeded at session
     // start (create-if-missing — a re-opened session keeps the model's
     // plan), its exact path injected into the prompt, and the parsed
-    // state refreshed here so the first assembly carries it. The
-    // section lands in the supervisor's prompt too: a spawned child
-    // inherits it, then replaces it with its own path. It lands before
-    // the skills catalog: the catalog is the last layer (tests_skills).
-    let plan_path = crate::plan::path(&cwd, store.id());
-    crate::plan::seed(&cwd, store.id());
-    core.refresh_plan(&cwd, store.id());
-    let mut system_prompt = crate::plan::with_path(&system_prompt, &plan_path);
+    // state refreshed so the first assembly carries it. The section
+    // lands in the supervisor's prompt too: a spawned child inherits it,
+    // then replaces it with its own path. It lands before the skills
+    // catalog: the catalog is the last layer (tests_skills).
+    let sid = store.id().to_owned();
+    let (system_prompt, _) = plan_wiring(Some(core), &system_prompt, &cwd, &sid);
+    let mut system_prompt = system_prompt;
     crate::gate::with_section(&mut system_prompt, &config.gates);
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen

@@ -92,10 +92,13 @@ async fn session_new_seeds_the_plan_file_and_injects_its_path() {
         prompt.contains(&plan_file.display().to_string()),
         "the prompt names the plan file: {prompt}"
     );
-    // The initial state is the parsed skeleton: no steps yet.
+    // The initial state is the parsed skeleton: no steps yet, the invite
+    // line folded into notes.
     assert_eq!(
         core.plan_state(&meta.id).as_deref(),
-        Some("# Current plan state")
+        Some(
+            "# Current plan state\n\n## Notes\nMulti-step work: list its steps here before starting."
+        )
     );
 }
 /// N2: the production wiring path — `SessionNew` wires the plan-state hook
@@ -265,6 +268,93 @@ async fn a_plan_file_change_emits_plan_changed() {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+/// #177: an unchanged file emits no second `plan_changed` — an editor
+/// saving identical content must not churn the plan pane. The positive
+/// sibling above already proved a real change emits; this is the negative:
+/// the watcher's re-read of identical bytes produces zero new events.
+#[tokio::test]
+async fn an_unchanged_plan_file_emits_no_plan_changed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cwd = tmp.path().canonicalize().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let events = collect_events(&core);
+    let workspace = open_ws(&core, &cwd).await;
+    let meta = new_root_session(&core, &workspace);
+
+    let plan_file = crate::plan::path(&cwd, &meta.id);
+
+    // The session-start refresh emits the seeded skeleton first: the
+    // baseline count includes it.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
+            Event::PlanChanged {
+                workspace: ws,
+                session,
+                plan,
+            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
+            _ => None,
+        });
+        if got.as_ref().is_some_and(|p| p.steps.is_empty()) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no seed plan_changed within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let count_for = |events: &Vec<Event>| {
+        events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    Event::PlanChanged { workspace: ws, session, .. }
+                        if ws == &workspace.id && session == &meta.id
+                )
+            })
+            .count()
+    };
+
+    // The real change arrives (the positive half of the pair).
+    std::fs::write(&plan_file, "## Steps\n- [x] done step\n- [ ] open step\n").unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let got = events.lock().unwrap().iter().rev().find_map(|e| match e {
+            Event::PlanChanged {
+                workspace: ws,
+                session,
+                plan,
+            } if ws == &workspace.id && session == &meta.id => Some(plan.clone()),
+            _ => None,
+        });
+        if got.as_ref().is_some_and(|p| p.steps.len() == 2) {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no plan_changed with the edited plan within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let before = count_for(&events.lock().unwrap());
+
+    // Re-write the identical bytes: the watcher fires, the parse is
+    // unchanged, and no event follows.
+    std::fs::write(&plan_file, "## Steps\n- [x] done step\n- [ ] open step\n").unwrap();
+
+    let quiet = tokio::time::Instant::now() + Duration::from_secs(1);
+    while tokio::time::Instant::now() < quiet {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let after = count_for(&events.lock().unwrap());
+    assert_eq!(
+        after, before,
+        "a byte-identical rewrite must not emit a second plan_changed"
+    );
 }
 
 /// N4: the session-start seed emits `plan_changed` (the empty skeleton), so
