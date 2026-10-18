@@ -64,10 +64,9 @@ impl AgentSession {
         )?;
         // Bounce a repair turn: the steering message lands at the head of
         // the next LLM call in this same turn (spec §7).
-        self.enqueue(
+        self.send(
             crate::gate::repair_message(&gates, &result, *retries, gates.max_retries),
             Lane::Steering,
-            None,
         );
         Ok(false) // continue the loop for the repair
     }
