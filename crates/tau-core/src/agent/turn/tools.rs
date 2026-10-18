@@ -1,8 +1,69 @@
 use crate::agent::{AgentError, AgentSession, Entry, FunctionCall, KIND_TOOL, Value, tools};
+use std::collections::{HashMap, HashSet};
+
+/// #186: the batch indices of `edit` calls whose target file is also
+/// targeted by another `edit` call in the same batch. They would share one
+/// stale anchor snapshot, so every one of them is refused pre-write (batch
+/// them into a single call instead) — the file stays untouched.
+fn same_file_edit_conflicts(calls: &[FunctionCall]) -> HashSet<usize> {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for c in calls.iter().filter(|c| c.name == "edit") {
+        if let Some(path) = serde_json::from_str::<Value>(&c.arguments)
+            .ok()
+            .and_then(|v| v.get("path").and_then(Value::as_str).map(str::to_owned))
+        {
+            *counts.entry(path).or_insert(0) += 1;
+        }
+    }
+    let mut conflicts = HashSet::new();
+    for (i, c) in calls.iter().enumerate() {
+        if c.name != "edit" {
+            continue;
+        }
+        let Some(path) = serde_json::from_str::<Value>(&c.arguments)
+            .ok()
+            .and_then(|v| v.get("path").and_then(Value::as_str).map(str::to_owned))
+        else {
+            continue;
+        };
+        if counts.get(&path).is_some_and(|&n| n > 1) {
+            conflicts.insert(i);
+        }
+    }
+    conflicts
+}
 
 impl AgentSession {
+    #[allow(clippy::too_many_lines)] // one dispatch pass per call; splitting is refactoring
     pub(super) async fn run_tools(&self, calls: &[FunctionCall]) -> Result<(), AgentError> {
-        for call in calls {
+        let bad_edits = same_file_edit_conflicts(calls);
+        for (ci, call) in calls.iter().enumerate() {
+            if bad_edits.contains(&ci) {
+                // Same file already edited earlier in this batch: refuse
+                // before dispatch — the file is left untouched.
+                let entry_id = self
+                    .inner
+                    .lock()
+                    .expect("agent inner: no panic while the lock is held")
+                    .store
+                    .mint_id();
+                self.append_id(
+                    &entry_id,
+                    KIND_TOOL,
+                    tau_protocol::payload::ToolPayload {
+                        call_id: call.call_id.clone(),
+                        name: call.name.clone(),
+                        args: Value::Null,
+                        output: tau_protocol::payload::ToolOutput::Text(
+                            "edit: file already edited in this batch; batch it into one edit call"
+                                .into(),
+                        ),
+                        status: Some("error".to_owned()),
+                    }
+                    .to_value(),
+                )?;
+                continue;
+            }
             // ticket #70: keep the parse result so an unparseable call below
             // becomes a clear error, not a silent null.
             let parsed = serde_json::from_str::<Value>(&call.arguments);

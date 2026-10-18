@@ -203,13 +203,29 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
         return ToolResult::err("edit: missing \"path\"".into());
     };
-    let (Some(from), Some(to), Some(content)) = (
-        args.get("from").and_then(|v| v.as_str()),
-        args.get("to").and_then(|v| v.as_str()),
-        args.get("content").and_then(|v| v.as_str()),
-    ) else {
-        return ToolResult::err("edit: \"from\", \"to\", and \"content\" are required".into());
+    let Some(edits_json) = args.get("edits").and_then(|v| v.as_array()) else {
+        return ToolResult::err("edit: \"edits\" array is required".into());
     };
+    if edits_json.is_empty() {
+        return ToolResult::err("edit: \"edits\" must contain at least one edit".into());
+    }
+    let mut edits = Vec::with_capacity(edits_json.len());
+    for (i, item) in edits_json.iter().enumerate() {
+        let (Some(from), Some(to), Some(content)) = (
+            item.get("from").and_then(|v| v.as_str()),
+            item.get("to").and_then(|v| v.as_str()),
+            item.get("content").and_then(|v| v.as_str()),
+        ) else {
+            return ToolResult::err(
+                format!("edit: edits[{i}] requires \"from\", \"to\", and \"content\"").into(),
+            );
+        };
+        edits.push(hashline::Edit {
+            from: from.to_owned(),
+            to: to.to_owned(),
+            content: content.to_owned(),
+        });
+    }
     let path = resolve(cwd, path);
     let original = match std::fs::read_to_string(&path) {
         Ok(c) => hashline::normalize(&c),
@@ -217,14 +233,7 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
             return ToolResult::err(format!("edit: cannot read {}: {e}", path.display()).into());
         }
     };
-    let edited = match hashline::apply_edit(
-        &original,
-        &hashline::Edit {
-            from: from.to_owned(),
-            to: to.to_owned(),
-            content: content.to_owned(),
-        },
-    ) {
+    let edited = match hashline::apply_edits(&original, &edits) {
         Ok(e) => e,
         Err(e) => return ToolResult::err(format!("edit: {e}").into()),
     };
