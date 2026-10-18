@@ -95,61 +95,6 @@ export interface ViewEntry {
 // at the ADR-0005 storage level; these types own the shapes the GUI decodes.
 export type SkillRef = { name: string; location: string };
 
-export interface UserPayload {
-  text: string;
-  lane: MessageLane;
-  source?: string;
-  skill?: SkillRef;
-}
-
-// One tool call an assistant message issued (the provider's shape, spec §6).
-export interface FunctionCall {
-  id: string;
-  call_id: string;
-  name: string;
-  arguments: string;
-}
-
-export interface AssistantPayload {
-  text: string;
-  reasoning: string;
-  interrupted: boolean;
-  usage?: Usage;
-  calls: FunctionCall[];
-}
-
-export interface ToolPayload {
-  call_id: string;
-  name: string;
-  args: Record<string, unknown>;
-  output: unknown;
-  // Explicit completion status the core emits (B5): the string-prefix
-  // heuristic in entries.ts is only the fallback for older records.
-  status?: 'ok' | 'error';
-}
-
-// The OM record (crates/tau-core/src/om.rs OmRecord) as the `om` entry's
-// payload: the newest entry wins, so the decoder shows what it added.
-export interface OmPayload {
-  frozen_prefix: string;
-  active_observations: string;
-  cursor?: { entry_id: string; timestamp: number };
-  generation: number;
-  observation_tokens: number;
-  pending_tokens: number;
-  prefix_demoted?: boolean;
-}
-
-export interface SystemPayload {
-  note: string;
-}
-
-export interface SpawnSnapshotPayload {
-  parentSession: string;
-  range: string;
-  log: string;
-}
-
 export type SubagentPayload =
   | { event: 'spawn'; type: string; brief: string; context_mode: string; parent: string; call: string }
   | { event: 'state'; state: 'running' }
