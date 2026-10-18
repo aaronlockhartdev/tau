@@ -907,6 +907,7 @@
             }
             callStartMs.delete(ev.call_id);
           }
+          streamStartMs.delete(ev.session);
           // No tail re-read: the finalized lines already landed as upserts.
           s.turn = 'idle';
           break;
