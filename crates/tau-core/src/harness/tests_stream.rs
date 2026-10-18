@@ -210,3 +210,109 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
     );
     drop(core);
 }
+
+/// #175/#173: a child reuses the SAME `ForwardingProvider` its agent runs
+/// through, so `run_turn` derives the child's `StreamEnd` `call_id` from
+/// `live.provider.calls` and emits it (plus the child's assistant
+/// `EntryUpsert`). This drives the *default* `ForwardingChildFactory` (no
+/// `with_child_factory`) — the stash-reuse path every other spawn test
+/// bypasses with a canned child factory. `canned://text` keeps the child's
+/// turn deterministic.
+#[tokio::test]
+async fn a_child_reuses_its_agents_provider_and_emits_its_stream_end() {
+    let mut providers = BTreeMap::new();
+    providers.insert(
+        "dev".into(),
+        crate::config::Provider::with_model("canned://text", "model"),
+    );
+    // No `with_child_factory`: the core uses the default forwarding factory,
+    // whose stash-reuse of the child's provider is the fix under test.
+    let core = CoreBuilder::custom(providers).build();
+    let collected = collect_events(&core);
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let info = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "do the thing".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let child = info.child.clone();
+
+    // Bounded wait for the child's StreamEnd (its turn settles on its own).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut stream_end: Option<(String, Option<u64>)> = None;
+    let mut assistant_upserted = false;
+    while tokio::time::Instant::now() < deadline {
+        let snap = collected.lock().unwrap().clone();
+        assistant_upserted = snap.iter().any(|e| {
+            matches!(
+                e,
+                Event::EntryUpsert { session, entry, .. }
+                    if *session == child && entry.kind == crate::agent::KIND_ASSISTANT
+            )
+        });
+        if let Some(found) = snap.iter().find_map(|e| match e {
+            Event::StreamEnd {
+                session,
+                call_id,
+                usage,
+                ..
+            } if *session == child => {
+                Some((call_id.clone(), usage.as_ref().map(|u| u.total_tokens)))
+            }
+            _ => None,
+        }) {
+            stream_end = Some(found);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+
+    // Positive: the child's assistant entry reached the stream (its transcript
+    // is live in the GUI, #173) — this needs the child's event hooks wired.
+    assert!(
+        assistant_upserted,
+        "the child's assistant entry never reached the stream"
+    );
+    // The fix (#175): a StreamEnd is emitted for the child at all. A
+    // mismatched LiveSession provider leaves live.provider.calls empty, so
+    // run_turn derives no call_id and emits nothing.
+    let (call_id, total_tokens) = stream_end.expect(
+        "the child emitted no StreamEnd: its LiveSession provider does not match its agent's",
+    );
+    // Negative: the call_id is a real derived id ({child_session}-{seq}), not
+    // the empty id a provider mismatch would leave behind.
+    assert!(
+        !call_id.is_empty(),
+        "the child's StreamEnd call_id is empty"
+    );
+    assert!(
+        call_id.starts_with(&child),
+        "the StreamEnd call_id {call_id:?} is not derived from the child's provider"
+    );
+    // The completion's usage rides the StreamEnd (canned text reports 140 total).
+    assert_eq!(
+        total_tokens,
+        Some(140),
+        "the child's StreamEnd lost its usage"
+    );
+    drop(core);
+}
