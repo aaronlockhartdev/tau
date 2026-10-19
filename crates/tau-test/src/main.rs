@@ -476,6 +476,152 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // the suite is one flat driver flow; splitting is refactoring
+async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
+    let ws = temp_ws();
+    // The mock (started by the justfile with TAU_MOCK_CAPTURE set) appends
+    // every request it answers to that directory; the suite reads it to
+    // assert what the child's model was assembled with (ticket #188).
+    let capture = std::env::var("TAU_MOCK_CAPTURE")
+        .map(std::path::PathBuf::from)
+        .map_err(|e| format!("accept-sender-labels: TAU_MOCK_CAPTURE is not set: {e}"))?;
+    let (id, store) = new_session(ws.path());
+    let (p, prov) = production(ctx);
+
+    let bridge = Arc::new(AcceptanceBridge {
+        parent: Mutex::new(Weak::new()),
+    });
+    let sup = Supervisor::new(SupervisorParams {
+        parent_session: id.clone(),
+        cwd: ws.path().into(),
+        provider: Arc::new(AcceptanceFactory {
+            client: client(),
+            provider: p,
+            requests: Requests::default(),
+        }),
+        model: ctx.model.clone(),
+        // The child's prompt: the mock scenario matches it, and it is what
+        // the `general` type inherits.
+        system_prompt: "sender-labels child: you are the child sub-agent; keep your own plan file current and report to the parent when done.".into(),
+        om: Om::default(),
+        om_model: String::new(),
+        tool_batch_on_force: ToolBatchPolicy::default(),
+        turn: capped(),
+        gates: None,
+        caps: SubAgents::default(),
+        depth: 0,
+        types: vec![builtin_general()],
+        bridge: bridge.clone(),
+        driver: Arc::new(AcceptanceDriver),
+        core: None,
+    });
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider: prov,
+            supervisor: Some(sup.clone()),
+            // The parent's own prompt, explicitly: the supervisor's is the
+            // child's (the mock scenario matches on it).
+            system_prompt: Some(
+                "sender-labels parent: you are the parent; delegate with the sub-agent tools."
+                    .into(),
+            ),
+            base_prompt: None,
+            first_provider: None,
+        },
+    )
+    .map_err(|e| format!("launch failed: {e:?}"))?;
+    {
+        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+    }
+
+    // The parent spawns the child (the mock's `subagent_spawn` turn).
+    agent.send(
+        "sender-labels parent: spawn one sub-agent (type general, context_mode fresh) with the brief 'stand by'.",
+        Lane::Steering,
+    );
+    agent.process().await.map_err(|e| e.to_string())?;
+
+    // Find the child's session (the file that is not the parent's).
+    let child_file = session_files(ws.path())
+        .into_iter()
+        .find(|f| f.file_stem().and_then(|n| n.to_str()) != Some(id.as_str()))
+        .ok_or("accept-sender-labels: no child session file")?;
+    let child_id = child_file
+        .file_stem()
+        .and_then(|n| n.to_str())
+        .map(std::string::ToString::to_string)
+        .ok_or("accept-sender-labels: child file has no name")?;
+
+    // Steer the child from BOTH senders through the public supervisor
+    // boundary (the `subagent_message` tool and the GUI child send both
+    // route here, ticket #187): the first stamped with the parent's session
+    // id, the second with "user". A running child takes both on its steering
+    // lane; a resting child is resumed by the first and steered by the
+    // second — either way both ride the child's next LLM call.
+    sup.message(
+        &child_id,
+        Some("tighten the scope".into()),
+        Lane::Steering,
+        Some(id.clone()),
+    )
+    .map_err(|e| format!("accept-sender-labels: parent steer failed: {e}"))?;
+    sup.message(
+        &child_id,
+        Some("also check the logs".into()),
+        Lane::Steering,
+        Some("user".into()),
+    )
+    .map_err(|e| format!("accept-sender-labels: user steer failed: {e}"))?;
+
+    // The child's drive runs its turn; the mock captures the request it is
+    // given. Poll the capture until a child request carries both stamped
+    // senders, labeled (the assembly-time decoration, ticket #188).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let mut last = String::new();
+    loop {
+        let requests = std::fs::read_to_string(capture.join("requests.jsonl")).unwrap_or_default();
+        for line in requests
+            .lines()
+            .filter(|l| l.contains("sender-labels child"))
+        {
+            last = line.to_owned();
+        }
+        if last.contains("Parent: tighten the scope") && last.contains("User: also check the logs")
+        {
+            break;
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!(
+                "accept-sender-labels: no child request carried both stamped senders (last: {last})"
+            ));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    // The child's scripted reply distinguished the two senders (the mock's
+    // turn, driven by the labeled context it was given); it is recorded in
+    // the child's own session file.
+    let centries = all_entries(&SessionStore::for_workspace(ws.path(), &child_id));
+    if !centries.iter().any(|e| {
+        e.payload
+            .get("text")
+            .and_then(Value::as_str)
+            .is_some_and(|t| {
+                t.contains("Parent tightened the scope")
+                    && t.contains("User asked me to also check the logs")
+            })
+    }) {
+        return Err(
+            "accept-sender-labels: the child's reply did not distinguish the senders".into(),
+        );
+    }
+    Ok(())
+}
+
 fn prose(i: usize) -> String {
     let mut s = String::new();
     for j in 0..24 {
@@ -670,7 +816,12 @@ fn main() {
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
-            "accept-tools" | "accept-subagent" | "accept-om" | "accept-gate" | "core" => {
+            "accept-tools"
+            | "accept-subagent"
+            | "accept-om"
+            | "accept-gate"
+            | "accept-sender-labels"
+            | "core" => {
                 suite = args[i].as_str();
             }
             _ => {}
@@ -678,7 +829,9 @@ fn main() {
         i += 1;
     }
     if suite.is_empty() {
-        eprintln!("usage: tau-test <accept-tools|accept-subagent|accept-om|accept-gate|core>");
+        eprintln!(
+            "usage: tau-test <accept-tools|accept-subagent|accept-om|accept-gate|accept-sender-labels|core>"
+        );
         std::process::exit(2);
     }
     let ctx = Ctx { endpoint, model };
@@ -692,6 +845,7 @@ fn main() {
         "accept-subagent" => rt.block_on(accept_subagent(&ctx)),
         "accept-om" => rt.block_on(accept_om(&ctx)),
         "accept-gate" => rt.block_on(accept_gate(&ctx)),
+        "accept-sender-labels" => rt.block_on(accept_sender_labels(&ctx)),
         _ => rt.block_on(async { core_offline() }),
     };
     match result {

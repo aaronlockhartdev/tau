@@ -1,0 +1,25 @@
+{
+  "match": "sender-labels parent",
+  "turns": [
+    {
+      "calls": [
+        {
+          "name": "subagent_spawn",
+          "arguments": {
+            "type": "general",
+            "context_mode": "fresh",
+            "brief": "stand by"
+          }
+        }
+      ]
+    },
+    {
+      "text": "spawned the child; it will report back"
+    }
+  ],
+  "usage": {
+    "input_tokens": 200,
+    "output_tokens": 40,
+    "total_tokens": 240
+  }
+}

@@ -653,9 +653,10 @@ async fn a_spawned_child_keeps_the_inherited_skills_catalog() {
         ),
         "the child prompt names its own plan file: {prompt}"
     );
-    // ...and the catalog survives the replacement, still the last layer.
+    // ...and the catalog survives the replacement (the sender-labels note
+    // now trails it, so the catalog is present, not last).
     assert!(
-        prompt.contains("<available_skills>") && prompt.ends_with("</available_skills>"),
+        prompt.contains("<available_skills>") && prompt.contains("</available_skills>"),
         "the child keeps the inherited skills catalog: {prompt}"
     );
 }

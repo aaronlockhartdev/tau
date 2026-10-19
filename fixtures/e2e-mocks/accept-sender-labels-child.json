@@ -1,0 +1,16 @@
+{
+  "match": "sender-labels child",
+  "turns": [
+    {
+      "text": "standing by"
+    },
+    {
+      "text": "Acknowledging the parent's direction separately from the human's request: Parent tightened the scope; User asked me to also check the logs."
+    }
+  ],
+  "usage": {
+    "input_tokens": 220,
+    "output_tokens": 50,
+    "total_tokens": 270
+  }
+}

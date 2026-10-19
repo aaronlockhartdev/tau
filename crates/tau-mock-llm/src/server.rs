@@ -105,6 +105,7 @@ async fn read_request(sock: &mut TcpStream) -> Option<(String, String, Vec<u8>)>
 /// Select the scenario, advance its turn, and stream the frames.
 async fn stream_response(sock: &mut TcpStream, set: &ScenarioSet, body: &[u8]) {
     let req: WireRequest = serde_json::from_slice(body).unwrap_or_default();
+    set.capture_request(&req);
     let scenario = set.select(&req);
     let (seq, turn) = scenario.next_turn();
     // One line per request: the e2e log carries the routing, so a spec

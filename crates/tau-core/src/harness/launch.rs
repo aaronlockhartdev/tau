@@ -135,6 +135,16 @@ impl AgentSession {
                 let core = supervisor.core().and_then(|w| w.upgrade());
                 let (system_prompt, core) =
                     plan_wiring(core.as_ref(), &system_prompt, &d.cwd, &sid);
+                // Sender labels (ADR-0001 supplement): the child's model
+                // context decorates user entries with `Parent:` / `User:`
+                // at assembly time; the prompt names the convention.
+                let system_prompt = format!(
+                    "{system_prompt}\n\n\
+                     Messages you receive are labeled by sender: \
+                     `Parent:` is the parent model directing you, `User:` \
+                     is a human, and an unlabeled message is your own task \
+                     (the spawn brief).",
+                );
                 let agent = Self::new(SessionParams {
                     store,
                     system_prompt,

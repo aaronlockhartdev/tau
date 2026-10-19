@@ -39,7 +39,7 @@ test:
 # The accept-* suites run against the deterministic mock LLM only (ADR-0010):
 # red = a code problem, never a network/model problem; real-model runs live
 # in the eval rig's live leg, not here.
-acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate core e2e':
+acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate accept-sender-labels core e2e':
     #!/bin/sh
     set -u
     cd "{{justfile_directory()}}"
@@ -87,7 +87,11 @@ acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate 
         cargo build --release -p tau-mock-llm > /tmp/tau-mock-build.log 2>&1 || return 1
       fi
       : > /tmp/tau-mock-llm.log
-      ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios fixtures/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
+      # The sender-labels suite reads the mock's request capture (ticket #188);
+      # a fresh dir per run so a stale capture can never mask a red.
+      TAU_MOCK_CAPTURE="$(mktemp -d /tmp/tau-mock-capture.XXXXXX)"
+      TAU_MOCK_CAPTURE="$TAU_MOCK_CAPTURE" \
+        ./target/release/tau-mock-llm --port "$MOCK_PORT" --scenarios fixtures/e2e-mocks > /tmp/tau-mock-llm.log 2>&1 &
       mock_pid=$!
       i=0
       while [ $i -lt 100 ]; do
@@ -112,7 +116,7 @@ acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate 
           return 1
         }
       fi
-      out=$(TAU_ENDPOINT="$TAU_ENDPOINT" \
+      out=$(TAU_ENDPOINT="$TAU_ENDPOINT" TAU_MOCK_CAPTURE="${TAU_MOCK_CAPTURE:-}" \
         ./target/release/tau-test "$suite" "$@" 2>&1)
       status=$?
       if [ $status -eq 0 ]; then
@@ -173,7 +177,7 @@ acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate 
             report launch FAIL "just build failed (see /tmp/tau-test-build.log)"
           fi
           ;;
-        accept-tools|accept-subagent|accept-om|accept-gate)
+        accept-tools|accept-subagent|accept-om|accept-gate|accept-sender-labels)
           run_driver "$suite"
           ;;
         core)
