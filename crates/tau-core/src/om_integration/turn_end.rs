@@ -191,7 +191,7 @@ impl OmState {
                         Some(system.as_str()),
                         vec![InputEntry::Message(InputMessage {
                             role: "user".into(),
-                            content: transcript.clone(),
+                            content: om::dated_user_content(transcript, jiff::Timestamp::now()),
                         })],
                     );
                     // Per-trigger-point retry counts (ticket #86): observe
@@ -211,7 +211,7 @@ impl OmState {
                         Some(system.as_str()),
                         vec![InputEntry::Message(InputMessage {
                             role: "user".into(),
-                            content: prompt,
+                            content: om::dated_user_content(&prompt, jiff::Timestamp::now()),
                         })],
                     );
                     super::retry::call_with_retry(
