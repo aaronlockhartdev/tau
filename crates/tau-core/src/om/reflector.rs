@@ -149,18 +149,18 @@ When observations contain <thread id="..."> sections:
 
 Example input:
 <thread id="thread-1">
-Date: Dec 4, 2025
+Date: 2025-12-04
 * 🔴 (14:30) Working on auth feature
 * 🟡 (14:35) Debugging login endpoint
 </thread>
 <thread id="thread-2">
-Date: Dec 4, 2025
+Date: 2025-12-04
 * 🔴 (15:00) Working on auth feature
 * 🟡 (15:05) Debugging API endpoint
 </thread>
 
 Example output (consolidated):
-Date: Dec 4, 2025
+Date: 2025-12-04
 * 🔴 (14:30) Working on auth feature
 <thread id="thread-1">
 * 🟡 (14:35) Debugging login endpoint

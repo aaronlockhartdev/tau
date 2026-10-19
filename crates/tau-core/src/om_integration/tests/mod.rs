@@ -37,4 +37,5 @@ mod plan;
 mod promote;
 mod record;
 mod settle;
+mod transcript;
 mod window;
