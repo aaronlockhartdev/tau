@@ -412,3 +412,106 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
     assert!(found, "no Queue event was emitted for the child's session");
     drop(core);
 }
+
+/// #147: a force-laned `MessageSend` to a running child must still let the
+/// turn's `StreamEnd` reach the event stream — it is what flips the GUI's
+/// child turn flag off (a missing end left the store stuck at `running`).
+/// Delivery is the bar here; the force's cut-vs-clean shape is a separate
+/// defect (filed from this investigation).
+///
+/// Seam: NO `with_child_factory`, so the child runs through the default
+/// `ForwardingChildFactory` (the production path a real GUI child uses) with
+/// a slow `canned://` parent model — the same shape
+/// `a_child_reuses_its_agents_provider_and_emits_its_stream_end` pins,
+/// but with a force send into the in-flight window.
+#[tokio::test]
+async fn a_force_send_to_a_running_child_still_emits_its_stream_end() {
+    // Slow parent model: the child's ForwardingProvider wraps this, so its
+    // stream is in flight when the force send lands.
+    let mut providers = BTreeMap::new();
+    providers.insert(
+        "dev".into(),
+        crate::config::Provider::with_model("canned://text", "model"),
+    );
+    // No `with_child_factory`: the default forwarding factory is the fix's
+    // path (stop flag shared, stream cut at the next delta).
+    let core = CoreBuilder::custom(providers).build();
+    let collected = collect_events(&core);
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session: m } => m,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let sub = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "do it".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let child = sub.child.clone();
+
+    // The cut only interrupts a call that is in flight: wait for the child's
+    // first assistant entry (first delta recorded) before force-sending.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut in_flight = false;
+    while !in_flight && tokio::time::Instant::now() < deadline {
+        in_flight = collected.lock().unwrap().iter().any(|e| {
+            matches!(
+                e,
+                Event::EntryUpsert {
+                    session,
+                    entry,
+                    ..
+                } if *session == child && entry.kind == crate::agent::KIND_ASSISTANT
+            )
+        });
+        if !in_flight {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(in_flight, "the child's turn never went in flight");
+
+    // The force lane takes the child through stop+send (R3).
+    core.dispatch(Command::MessageSend {
+        session: child.clone(),
+        text: "stop and do this instead".into(),
+        lane: MessageLane::Force,
+    })
+    .unwrap();
+
+    // The interrupted end is the first StreamEnd for the child.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut first_end: Option<bool> = None;
+    while first_end.is_none() && tokio::time::Instant::now() < deadline {
+        first_end = collected.lock().unwrap().iter().find_map(|e| match e {
+            Event::StreamEnd {
+                session,
+                interrupted,
+                ..
+            } if *session == child => Some(*interrupted),
+            _ => None,
+        });
+        if first_end.is_none() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+    assert!(
+        first_end.is_some(),
+        "no StreamEnd reached the stream for the child (the GUI's turn flag would stick at running). The force send's cut-vs-clean shape is a separate concern (#147's delivery is the bar here)."
+    );
+    drop(core);
+}
