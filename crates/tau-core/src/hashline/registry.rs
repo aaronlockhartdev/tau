@@ -13,8 +13,8 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use crate::hashline::pin_store::{self, FilePins, Pin, PinStore};
 use crate::hashline::{hash_to_idx, idx_to_hash, line_checksum, split_lines};
-
 /// The warning code the model sees when the registry had to free anchors to
 /// make room for a read.
 pub const ANCHOR_RECLAIM_WARNING: &str = "[W_ANCHOR_RECLAIMED]";
@@ -37,7 +37,6 @@ struct FileState {
     checksums: Vec<String>,
 }
 
-#[derive(Default)]
 /// The registry state, held behind the session's lock.
 pub struct Registry {
     /// Every anchor this session owns, and what it points at.
@@ -54,6 +53,10 @@ pub struct Registry {
     probe: usize,
     /// Anchors reclaimed most recently, drained by `take_reclaimed`.
     reclaimed: VecDeque<String>,
+    /// The persistent pin store: seeds a file's first read with its pinned
+    /// anchors (cross-session stability, #207) and persists refreshed pins
+    /// after an edit. `None` in tests and the ACP path (no workspace root).
+    store: Option<PinStore>,
 }
 
 #[allow(clippy::missing_fields_in_debug)]
@@ -65,6 +68,20 @@ impl std::fmt::Debug for Registry {
             .finish()
     }
 }
+impl Default for Registry {
+    fn default() -> Self {
+        Self {
+            owned: HashMap::new(),
+            file_state: HashMap::new(),
+            served: HashMap::new(),
+            last_used: HashMap::new(),
+            usage_clock: 0,
+            probe: 0,
+            reclaimed: VecDeque::new(),
+            store: None,
+        }
+    }
+}
 
 impl Registry {
     #[must_use]
@@ -72,6 +89,16 @@ impl Registry {
         Self::default()
     }
 
+    /// A registry backed by a persistent pin store (cross-session anchor
+    /// stability, #207). The store is consulted on a file's first read in the
+    /// session and persisted after each edit.
+    #[must_use]
+    pub fn with_store(store: PinStore) -> Self {
+        Self {
+            store: Some(store),
+            ..Self::default()
+        }
+    }
     fn touch(&mut self, path: &str) {
         self.usage_clock += 1;
         self.last_used.insert(path.to_owned(), self.usage_clock);
@@ -98,7 +125,8 @@ impl Registry {
         let prev = self
             .file_state
             .get(path)
-            .map(|fs| (fs.anchors.clone(), fs.checksums.clone()));
+            .map(|fs| (fs.anchors.clone(), fs.checksums.clone()))
+            .or_else(|| self.seed_from_store(path, &checksums));
         let matched = match &prev {
             Some((_anchors, checksums_prev)) => match_anchors(checksums_prev, &checksums),
             None => vec![None; lines.len()],
@@ -199,15 +227,58 @@ impl Registry {
             path.to_owned(),
             FileState {
                 anchors: hashes.to_vec(),
-                checksums,
+                checksums: checksums.clone(),
             },
         );
         self.touch(path);
+        self.persist_pins(path, hashes, &checksums);
     }
 
-    /// Free a file's anchors (after a `write`, which voids every anchor).
+    /// Persist the file's refreshed pins to the store after a successful edit
+    /// (#207): a line unchanged since the previous allocation keeps its exact
+    /// anchor, a changed/new line takes the freshly served anchor, and a
+    /// deleted line's slot is tombstoned (kept, not recycled). No-op without
+    /// a store; a load/save failure is best-effort (the in-memory state is the
+    /// source of truth for this session).
+    fn persist_pins(&mut self, path: &str, hashes: &[String], checksums: &[String]) {
+        let Some(store) = self.store.as_mut() else {
+            return
+        };
+        let prev = match store.load(path) {
+            Some(p) => p,
+            None => {
+                // First edit this store has seen: record the current pins.
+                let _ = store.save(&FilePins {
+                    path: path.to_owned(),
+                    checksum: pin_store::file_checksum(checksums),
+                    line_count: checksums.len(),
+                    pins: hashes
+                        .iter()
+                        .zip(checksums.iter())
+                        .map(|(a, s)| Pin {
+                            anchor: a.clone(),
+                            checksum: s.clone(),
+                            tombstone: false,
+                        })
+                        .collect(),
+                    crc: None,
+                });
+                return
+            }
+        };
+        let (matched, _fresh) = pin_store::reanchor(&prev, checksums);
+        let next = pin_store::next_pins(&prev, &matched, hashes, checksums);
+        let _ = store.save(&next);
+    }
+
+    /// Free a file's anchors (after a `write`, which voids every anchor): the
+    /// in-memory set is evicted and the store's record for the file is dropped
+    /// (its pins no longer point at anything).
     pub fn free(&mut self, path: &str) {
         self.evict_path(path);
+        if let Some(store) = self.store.as_mut() {
+            store.remove(path);
+        }
     }
 
     fn mint(&mut self, protect: &str) -> Result<String, crate::hashline::TooManyLines> {
@@ -226,6 +297,24 @@ impl Registry {
             }
             return Err(crate::hashline::TooManyLines);
         }
+    }
+
+    /// Seed a file's anchors from the persistent pin store on its first read
+    /// in this session (#207): the store's pinned anchors are the `prev`
+    /// allocation the LCS re-anchor matches against, so a line unchanged since
+    /// a previous session keeps its exact anchor. `None` when there is no
+    /// store, no record, or a corrupt record (the caller then mints fresh).
+    fn seed_from_store(
+        &mut self,
+        path: &str,
+        checksums: &[String],
+    ) -> Option<(Vec<String>, Vec<String>)> {
+        let prev = self.store.as_ref()?.load(path)?;
+        // Reuse only pins whose checksum matches a current line; the caller's
+        // LCS decides which in-order. A drifted file (checksum mismatch) seeds
+        // nothing — its pins are stale.
+        (prev.checksum == pin_store::file_checksum(checksums))
+            .then_some((prev.anchors(), prev.checksums()))
     }
 
     fn reclaim(&mut self, protect: &str) -> Option<String> {

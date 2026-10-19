@@ -228,6 +228,14 @@ pub struct AgentSession {
 impl AgentSession {
     #[must_use]
     pub(crate) fn new(p: SessionParams) -> Self {
+        // The registry is backed by the workspace's persistent pin store
+        // (#207): a file's anchors stay stable across sessions while its
+        // lines are unchanged. Built before the struct literal (which moves
+        // `p.cwd`) so it borrows the cwd without cloning.
+        let anchor_registry = {
+            let store = crate::hashline::pin_store::PinStore::new(&p.cwd.join(".tau"));
+            crate::hashline::registry::Registry::with_store(store)
+        };
         Self {
             inner: Arc::new(Mutex::new(Inner {
                 store: p.store,
@@ -250,9 +258,7 @@ impl AgentSession {
                 plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
-                anchors: Arc::new(std::sync::Mutex::new(
-                    crate::hashline::registry::Registry::new(),
-                )),
+                anchors: Arc::new(std::sync::Mutex::new(anchor_registry)),
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
