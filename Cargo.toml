@@ -16,7 +16,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 toml = "1"
 tempfile = "3"
 zstd = "0.14"
-xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32"] }
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
 names = { version = "0.14", default-features = false }
 rand = "0.10"
 proptest = "1.11"

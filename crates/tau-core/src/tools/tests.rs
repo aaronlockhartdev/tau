@@ -3,6 +3,17 @@ use super::*;
 use base64::Engine;
 use std::fmt::Write as _;
 
+/// A throwaway session registry for a test, locked for the call.
+#[allow(clippy::mut_mutex_lock)] // the leaked box is the only way to get a 'static guard
+fn fresh_registry() -> std::sync::MutexGuard<'static, hashline::registry::Registry> {
+    // A 'static guard is not possible; these tests own the registry for the
+    // duration of the call, so a leaked-once box is acceptable in test code.
+    let box_ = Box::leak(Box::new(std::sync::Mutex::new(
+        hashline::registry::Registry::new(),
+    )));
+    box_.lock().expect("test registry lock")
+}
+
 /// The text of a tool output: these tests assert on text, and an image
 /// block on these paths is a bug.
 fn text(out: ToolResult) -> String {
@@ -20,20 +31,25 @@ async fn write_then_read_roundtrip_with_anchors() {
         &json!({"path": "a.txt", "content": "one\ntwo\n"}),
     )
     .await;
-    let out = text(read(dir.path(), &json!({"path": "a.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
     let rows: Vec<&str> = out.lines().collect();
     assert_eq!(rows.len(), 2);
     assert!(rows[0].ends_with("one"));
     assert!(rows[1].ends_with("two"));
     let from = rows[0].split('│').next().unwrap().to_string();
     let to = rows[1].split('│').next().unwrap().to_string();
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": "ONE AND TWO"}]}),
-        )
-        .await,
-    );
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": "ONE AND TWO"}]}),
+        Some(&mut *reg),
+        false,
+    ));
     assert!(out.starts_with("edited"), "edit failed: {out}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
@@ -49,31 +65,68 @@ async fn read_pages_with_offset_and_limit() {
         &json!({"path": "p.txt", "content": "l1\nl2\nl3\nl4\n"}),
     )
     .await;
-    let out = text(
-        read(
-            dir.path(),
-            &json!({"path": "p.txt", "offset": 2, "limit": 2}),
-            None,
-        )
-        .await,
-    );
-    assert!(out.ends_with("lines 2–3 of 4)"), "{out}");
+    let mut reg = fresh_registry();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "p.txt", "offset": "2", "limit": 2}),
+        None,
+        Some(&mut *reg),
+    ));
+    assert!(out.contains("lines 2–3 of 4"), "{out}");
     assert!(out.contains("l2") && out.contains("l3"));
     assert!(!out.contains("l1") && !out.contains("l4"));
+}
+
+#[tokio::test]
+async fn read_offset_accepts_an_anchor() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "p.txt", "content": "l1\nl2\nl3\nl4\n"}),
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let first = text(read(
+        dir.path(),
+        &json!({"path": "p.txt", "limit": 2}),
+        None,
+        Some(&mut *reg),
+    ));
+    // The first shown line's anchor, used as the next page's offset.
+    let anchor = first
+        .lines()
+        .next()
+        .unwrap()
+        .split('│')
+        .next()
+        .unwrap()
+        .to_string();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "p.txt", "offset": anchor, "limit": 2}),
+        None,
+        Some(&mut *reg),
+    ));
+    // Resuming from the anchor shows that line and the one after.
+    assert!(out.contains("l1") && out.contains("l2"), "{out}");
+    assert!(!out.contains("l4"), "{out}");
 }
 
 #[tokio::test]
 async fn stale_anchor_diagnostic_does_not_touch_the_file() {
     let dir = tempfile::tempdir().unwrap();
     write(dir.path(), &json!({"path": "s.txt", "content": "keep\n"})).await;
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "s.txt", "edits": [{"from": "zzzz", "to": "zzzz", "content": "x"}]}),
-        )
-        .await,
+    let mut reg = fresh_registry();
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "s.txt", "edits": [{"from": "zzzz", "to": "zzzz", "content": "x"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(
+        out.contains("stale anchor") || out.contains("E_STALE_ANCHOR"),
+        "{out}"
     );
-    assert!(out.contains("stale anchor"), "{out}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("s.txt")).unwrap(),
         "keep\n"
@@ -81,22 +134,30 @@ async fn stale_anchor_diagnostic_does_not_touch_the_file() {
 }
 
 #[tokio::test]
-async fn crlf_files_are_normalized_through_read_and_edit() {
+async fn crlf_files_preserve_their_line_endings() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("w.txt"), "one\r\ntwo\r\nthree\r\n").unwrap();
-    let out = text(read(dir.path(), &json!({"path": "w.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "w.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    // The read normalizes for the model (no \r in the anchor rows).
     assert!(!out.contains('\r'), "{out}");
     let rows: Vec<&str> = out.lines().collect();
     let anchor = rows[0].split('│').next().unwrap().to_string();
     edit(
         dir.path(),
         &json!({"path": "w.txt", "edits": [{"from": anchor, "to": anchor, "content": "ONE"}]}),
-    )
-    .await;
-    // The written file is consistently LF — untouched lines included.
+        Some(&mut *reg),
+        false,
+    );
+    // The written file keeps its CRLF endings — untouched lines included.
     assert_eq!(
         std::fs::read_to_string(dir.path().join("w.txt")).unwrap(),
-        "ONE\ntwo\nthree\n"
+        "ONE\r\ntwo\r\nthree\r\n"
     );
 }
 
@@ -130,16 +191,21 @@ async fn edit_output_is_bounded_to_the_changed_region() {
         &json!({"path": "big.txt", "content": content.as_str()}),
     )
     .await;
-    let read_out = text(read(dir.path(), &json!({"path": "big.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "big.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
     let lines: Vec<&str> = read_out.lines().collect();
     let anchor = lines[24].split('│').next().unwrap().to_string();
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "big.txt", "edits": [{"from": anchor, "to": anchor, "content": "LINE25"}]}),
-        )
-        .await,
-    );
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "big.txt", "edits": [{"from": anchor, "to": anchor, "content": "LINE25"}]}),
+        Some(&mut *reg),
+        false,
+    ));
     // The changed region plus two context lines per side — never the 50-line file.
     let shown = out.lines().count() - 1;
     assert!(shown <= 7, "output had {shown} rows: {out}");
@@ -214,10 +280,7 @@ async fn read_returns_an_image_block_for_a_png() {
     let dir = tempfile::tempdir().unwrap();
     let png = b"\x89PNG\r\n\x1a\nfake-png-pixels";
     std::fs::write(dir.path().join("shot.png"), png).unwrap();
-    match read(dir.path(), &json!({"path": "shot.png"}), None)
-        .await
-        .output
-    {
+    match read(dir.path(), &json!({"path": "shot.png"}), None, None).output {
         ToolOutput::Image(img) => {
             assert_eq!(img.kind, "image");
             assert_eq!(img.media_type, "image/png");
@@ -238,10 +301,7 @@ async fn read_returns_an_image_block_for_a_jpeg() {
     let dir = tempfile::tempdir().unwrap();
     let jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF";
     std::fs::write(dir.path().join("shot.jpg"), jpeg).unwrap();
-    match read(dir.path(), &json!({"path": "shot.jpg"}), None)
-        .await
-        .output
-    {
+    match read(dir.path(), &json!({"path": "shot.jpg"}), None, None).output {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/jpeg"),
         ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
     }
@@ -255,15 +315,20 @@ async fn an_oversized_image_is_refused_loudly() {
     png.resize(png.len() + 200, 0);
     std::fs::write(dir.path().join("big.png"), &png).unwrap();
     // Over the cap: a loud text refusal, not an image block.
-    let out = text(read(dir.path(), &json!({"path": "big.png"}), Some(100)).await);
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "big.png"}),
+        Some(100),
+        None,
+    ));
     assert!(out.contains("over the 100-byte cap"), "{out}");
     // At the cap: the image block comes through.
     match read(
         dir.path(),
         &json!({"path": "big.png"}),
         Some(u64::try_from(png.len()).expect("fixture size, well under u64::MAX")),
+        None,
     )
-    .await
     .output
     {
         ToolOutput::Image(img) => assert_eq!(img.media_type, "image/png"),
@@ -279,17 +344,22 @@ async fn edit_output_is_a_bounded_before_after_diff() {
         &json!({"path": "d.txt", "content": "alpha\nbeta\ngamma\ndelta\n"}),
     )
     .await;
-    let read_out = text(read(dir.path(), &json!({"path": "d.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "d.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
     let lines: Vec<&str> = read_out.lines().collect();
     let from = lines[1].split('│').next().unwrap().to_string();
     let to = lines[2].split('│').next().unwrap().to_string();
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "d.txt", "edits": [{"from": from, "to": to, "content": "BETA'\nGAMMA'"}]}),
-        )
-        .await,
-    );
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "d.txt", "edits": [{"from": from, "to": to, "content": "BETA'\nGAMMA'"}]}),
+        Some(&mut *reg),
+        false,
+    ));
     // The one-line summary, then a bounded body of marked lines.
     assert!(
         out.starts_with("edited ") && out.contains("(lines 2–3 of 4)"),
@@ -299,15 +369,15 @@ async fn edit_output_is_a_bounded_before_after_diff() {
     // Removed lines are '-'-prefixed (no anchor — they are gone).
     assert!(body.contains(&"-beta"), "missing -beta: {out}");
     assert!(body.contains(&"-gamma"), "missing -gamma: {out}");
-    // Added lines are '+ <fresh-anchor> <line>'.
+    // Added lines are '+ <fresh-anchor>│<line>'.
     assert!(
         body.iter()
-            .any(|l| l.starts_with("+ ") && l.ends_with(" BETA'")),
+            .any(|l| l.starts_with("+ ") && l.ends_with("BETA'")),
         "added line missing its fresh anchor: {out}"
     );
     assert!(
         body.iter()
-            .any(|l| l.starts_with("+ ") && l.ends_with(" GAMMA'")),
+            .any(|l| l.starts_with("+ ") && l.ends_with("GAMMA'")),
         "added line missing its fresh anchor: {out}"
     );
     // Unchanged neighbours are ' <line>' context.
@@ -326,10 +396,10 @@ async fn core_tools_carry_a_typed_verdict() {
     let err = bash(cwd, &json!({"command": "false"})).await;
     assert_eq!(err.status(), "error");
     // read: a missing file is an error; a present one is ok.
-    let err = read(cwd, &json!({"path": "missing.txt"}), None).await;
+    let err = read(cwd, &json!({"path": "missing.txt"}), None, None);
     assert_eq!(err.status(), "error");
     std::fs::write(cwd.join("a.txt"), "hi\n").unwrap();
-    let ok = read(cwd, &json!({"path": "a.txt"}), None).await;
+    let ok = read(cwd, &json!({"path": "a.txt"}), None, None);
     assert_eq!(ok.status(), "ok");
     // write: a clean write is ok.
     let ok = write(cwd, &json!({"path": "b.txt", "content": "x"})).await;
@@ -344,20 +414,25 @@ async fn edit_array_form_applies_all_edits() {
         &json!({"path": "m.txt", "content": "one\ntwo\nthree\nfour\n"}),
     )
     .await;
-    let read_out = text(read(dir.path(), &json!({"path": "m.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "m.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
     let lines: Vec<&str> = read_out.lines().collect();
     let a0 = lines[0].split('│').next().unwrap().to_string();
     let a2 = lines[2].split('│').next().unwrap().to_string();
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "m.txt", "edits": [
-                {"from": a0, "to": a0, "content": "ONE"},
-                {"from": a2, "to": a2, "content": "THREE"}
-            ]}),
-        )
-        .await,
-    );
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "m.txt", "edits": [
+            {"from": a0, "to": a0, "content": "ONE"},
+            {"from": a2, "to": a2, "content": "THREE"}
+        ]}),
+        Some(&mut *reg),
+        false,
+    ));
     assert!(out.starts_with("edited"), "edit failed: {out}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("m.txt")).unwrap(),
@@ -373,25 +448,33 @@ async fn edit_overlapping_ranges_leaves_the_file_untouched() {
         &json!({"path": "o.txt", "content": "one\ntwo\nthree\nfour\n"}),
     )
     .await;
-    let read_out = text(read(dir.path(), &json!({"path": "o.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "o.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
     let lines: Vec<&str> = read_out.lines().collect();
     let a0 = lines[0].split('│').next().unwrap().to_string();
     let a1 = lines[1].split('│').next().unwrap().to_string();
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "o.txt", "edits": [
-                {"from": a0, "to": a1, "content": "A"},
-                {"from": a1, "to": a1, "content": "B"}
-            ]}),
-        )
-        .await,
-    );
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "o.txt", "edits": [
+            {"from": a0, "to": a1, "content": "A"},
+            {"from": a1, "to": a1, "content": "B"}
+        ]}),
+        Some(&mut *reg),
+        false,
+    ));
     assert!(
         !out.starts_with("edited"),
         "overlap must be rejected: {out}"
     );
-    assert!(out.contains("overlap"), "{out}");
+    assert!(
+        out.contains("overlap") || out.contains("E_OVERLAPPING"),
+        "{out}"
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("o.txt")).unwrap(),
         "one\ntwo\nthree\nfour\n"
@@ -399,33 +482,184 @@ async fn edit_overlapping_ranges_leaves_the_file_untouched() {
 }
 
 #[tokio::test]
-async fn edit_anchored_content_is_rejected_and_file_untouched() {
+async fn edit_anchored_content_is_stripped_in_lenient_mode() {
     let dir = tempfile::tempdir().unwrap();
     write(
         dir.path(),
         &json!({"path": "a.txt", "content": "one\ntwo\nthree\n"}),
     )
     .await;
-    let read_out = text(read(dir.path(), &json!({"path": "a.txt"}), None).await);
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
     let lines: Vec<&str> = read_out.lines().collect();
     let from = lines[0].split('│').next().unwrap().to_string();
     let to = lines[1].split('│').next().unwrap().to_string();
     // The model pasted the read output verbatim (HASH│ prefixes on every line).
     let anchored = format!("{from}│one\n{to}│two");
-    let out = text(
-        edit(
-            dir.path(),
-            &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": anchored}]}),
-        )
-        .await,
-    );
-    assert!(
-        !out.starts_with("edited"),
-        "anchored content must be rejected: {out}"
-    );
-    assert!(out.contains("unanchored"), "{out}");
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": anchored}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    // Lenient (the default): the prefixes are stripped, the edit applies.
+    assert!(out.starts_with("edited"), "lenient edit failed: {out}");
+    assert!(out.contains("W_BARE_HASH_PREFIX"), "{out}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
         "one\ntwo\nthree\n"
+    );
+}
+
+#[tokio::test]
+async fn edit_anchored_content_is_rejected_in_strict_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "a.txt", "content": "one\ntwo\nthree\n"}),
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let lines: Vec<&str> = read_out.lines().collect();
+    let from = lines[0].split('│').next().unwrap().to_string();
+    let to = lines[1].split('│').next().unwrap().to_string();
+    let anchored = format!("{from}│one\n{to}│two");
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": anchored}], "strict": true}),
+        Some(&mut *reg),
+        true,
+    ));
+    assert!(
+        !out.starts_with("edited"),
+        "strict edit must be rejected: {out}"
+    );
+    assert!(out.contains("E_ANCHORED_CONTENT"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[tokio::test]
+async fn reversed_range_is_swapped_in_lenient_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "r.txt", "content": "one\ntwo\nthree\n"}),
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "r.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let lines: Vec<&str> = read_out.lines().collect();
+    let a0 = lines[0].split('│').next().unwrap().to_string();
+    let a1 = lines[1].split('│').next().unwrap().to_string();
+    // from after to: lenient swaps the range, with a warning.
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "r.txt", "edits": [{"from": a1, "to": a0, "content": "TWO\nONE"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(out.starts_with("edited"), "lenient swap failed: {out}");
+    assert!(out.contains("W_RANGE_REVERSED"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
+        "TWO\nONE\nthree\n"
+    );
+}
+
+#[tokio::test]
+async fn reversed_range_is_rejected_in_strict_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "r.txt", "content": "one\ntwo\nthree\n"}),
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "r.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let lines: Vec<&str> = read_out.lines().collect();
+    let a0 = lines[0].split('│').next().unwrap().to_string();
+    let a1 = lines[1].split('│').next().unwrap().to_string();
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "r.txt", "edits": [{"from": a1, "to": a0, "content": "x"}], "strict": true}),
+        Some(&mut *reg),
+        true,
+    ));
+    assert!(
+        !out.starts_with("edited"),
+        "strict reversed range must be rejected: {out}"
+    );
+    assert!(out.contains("E_RANGE_REVERSED"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
+        "one\ntwo\nthree\n"
+    );
+}
+
+#[tokio::test]
+async fn range_stale_shows_fresh_anchors_and_retry_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "s.txt", "content": "one\ntwo\nthree\n"}),
+    )
+    .await;
+    let mut reg = fresh_registry();
+    // The session reads the file and is served the anchors.
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "s.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let lines: Vec<&str> = read_out.lines().collect();
+    let from = lines[0].split('│').next().unwrap().to_string();
+    let to = lines[2].split('│').next().unwrap().to_string();
+    // The file drifts out from under the session (a bash edit).
+    std::fs::write(dir.path().join("s.txt"), "one\nTWO-changed\nthree\n").unwrap();
+    // Now an edit against the served range is stale: the range's lines no
+    // longer match the checksums the session was shown.
+    let err = text(edit(
+        dir.path(),
+        &json!({"path": "s.txt", "edits": [{"from": from, "to": to, "content": "X"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(
+        err.contains("E_RANGE_STALE"),
+        "expected a range-stale diagnostic: {err}"
+    );
+    assert!(
+        err.contains("fresh anchors"),
+        "range-stale must show fresh anchors: {err}"
+    );
+    // The file is untouched.
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("s.txt")).unwrap(),
+        "one\nTWO-changed\nthree\n"
     );
 }
