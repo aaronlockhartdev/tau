@@ -10,7 +10,7 @@
       "calls": [
         {
           "name": "edit",
-          "arguments": { "path": "notes.txt", "from": "8rE", "to": "8rE", "content": "LINE2" }
+          "arguments": { "path": "notes.txt", "from": "BiOm", "to": "BiOm", "content": "LINE2" }
         }
       ]
     },

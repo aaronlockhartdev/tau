@@ -69,7 +69,7 @@ async fn stale_anchor_diagnostic_does_not_touch_the_file() {
     let out = text(
         edit(
             dir.path(),
-            &json!({"path": "s.txt", "edits": [{"from": "zzz", "to": "zzz", "content": "x"}]}),
+            &json!({"path": "s.txt", "edits": [{"from": "zzzz", "to": "zzzz", "content": "x"}]}),
         )
         .await,
     );

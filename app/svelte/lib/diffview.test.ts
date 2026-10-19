@@ -84,14 +84,14 @@ describe('parseEditDiff', () => {
     const text =
       'edited src/a.ts (lines 3–5 of 40)\n' +
       '-old one\n' +
-      '+ abc new one\n' +
+      '+ abcd new one\n' +
       ' ctx line\n' +
       '… 12 more lines changed';
     const d = parseEditDiff(text);
     expect(d?.header).toBe('edited src/a.ts (lines 3–5 of 40)');
     expect(d?.lines).toEqual([
       { kind: 'removed', text: 'old one' },
-      { kind: 'added', text: 'new one', anchor: 'abc' },
+      { kind: 'added', text: 'new one', anchor: 'abcd' },
       { kind: 'context', text: 'ctx line' }
     ]);
     expect(d?.truncated).toBe('… 12 more lines changed');
@@ -115,7 +115,7 @@ describe('parseEditDiff', () => {
 
 describe('editDiffToDiffLines', () => {
   it('indexes added/context lines and leaves removed unnumbered', () => {
-    const d = parseEditDiff('edited a.ts (lines 1–2 of 3)\n-old\n+ abc new\n ctx');
+    const d = parseEditDiff('edited a.ts (lines 1–2 of 3)\n-old\n+ abcd new\n ctx');
     expect(editDiffToDiffLines(d!)).toEqual([
       { kind: 'removed', text: 'old' },
       { kind: 'added', text: 'new', newIdx: 0 },
@@ -126,7 +126,7 @@ describe('editDiffToDiffLines', () => {
 
 describe('editDiffCode', () => {
   it('is the added+context fragment in order, without removed lines', () => {
-    const d = parseEditDiff('edited a.ts (lines 1–2 of 3)\n-old\n+ abc new\n ctx');
+    const d = parseEditDiff('edited a.ts (lines 1–2 of 3)\n-old\n+ abcd new\n ctx');
     expect(editDiffCode(d!)).toBe('new\nctx');
   });
 });

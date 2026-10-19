@@ -67,7 +67,7 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             name: "read".into(),
             description: "Read a file. Text files come back as hash-anchored lines: \
-                 each line is 'HASH│content' (HASH = 3 chars). The hash is the anchor \
+                 each line is 'HASH│content' (HASH = 4 letters). The hash is the anchor \
                  you pass to edit. Optional offset (1-based) and limit page long files. \
                  Image files (png, jpg, gif, webp, bmp, tiff) come back as an image you \
                  can see on vision-capable endpoints — use read to view an image."
@@ -99,8 +99,8 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             name: "edit".into(),
             description: "Replace one or more line ranges of a file in one call. \
-                 Each item in the edits array has from/to, the 3-char hash anchors \
-                 copied from read output (the 3 chars before │), bare, and content. \
+                 Each item in the edits array has from/to, the 4-letter hash anchors \
+                 copied from read output (the 4 letters before │), bare, and content. \
                  Stale or ambiguous anchors are rejected — re-read the file for \
                  fresh anchors. Pass empty content to delete a range. content is raw \
                  file content, unanchored — never paste read output (with its HASH│ \

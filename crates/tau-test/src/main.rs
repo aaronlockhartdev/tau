@@ -97,7 +97,7 @@ fn session_files(cwd: &Path) -> Vec<PathBuf> {
 
 // The proven #19 acceptance prompt: small
 // models need the tool list spelled out in the system prompt to use them.
-const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use them as instructed; edit takes the 3-char anchors from read output.";
+const TOOLS_PROMPT: &str = "You have the tools read, write, edit, and bash. Use them as instructed; edit takes the 4-letter anchors from read output.";
 
 /// accept-subagent's parent gets the sub-agent tools named too.
 const SUBAGENT_PROMPT: &str = "You have the tools read, write, edit, bash, and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.";

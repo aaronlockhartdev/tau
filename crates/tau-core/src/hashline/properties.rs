@@ -55,7 +55,7 @@ proptest! {
         }
     }
 
-    /// A fresh 3-char draw that misses the current set is stale: rejected,
+    /// A fresh 4-letter draw that misses the current set is stale: rejected,
     /// never fuzzy-matched.
     #[test]
     fn an_anchor_not_in_the_file_is_stale_not_fuzzy_matched(
