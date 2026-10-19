@@ -44,7 +44,16 @@ pub(super) fn with_plan_state(mut instructions: String, plan: Option<&str>) -> S
 
 /// The session's entries (file order) mapped to responses-API input items:
 /// user messages, assistant text + calls, and tool results (spec §5.4).
-pub(super) fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
+///
+/// `parent_session` marks a child session (the child's link names its
+/// parent): its user entries are decorated at assembly time with the
+/// sender's label — `Parent:` when the entry's source is the parent
+/// session (a `subagent_message` or resume), `User:` when it is the
+/// human (the GUI's child send), bare when unstamped (the spawn brief's
+/// handoff-in) — while a non-child session keeps the #23 `Sub-agent
+/// {source}:` prefix for child wake messages. Storage stays clean; only
+/// the assembled model context carries the labels (ADR-0001 supplement).
+pub(super) fn input_items(entries: &[Entry], parent_session: Option<&str>) -> Vec<InputEntry> {
     // Two-phase tool recording writes a call-phase entry (empty output)
     // before its result-phase entry, so the last tool entry per call_id in
     // file order is the result. Emit exactly that one — a per-call_id
@@ -68,12 +77,21 @@ pub(super) fn input_items(entries: &[Entry]) -> Vec<InputEntry> {
         match entry.kind.as_str() {
             KIND_USER => {
                 if let Some(text) = entry.payload.get("text").and_then(Value::as_str) {
-                    // A wake message from a child (ticket #23) is stored as a
-                    // user entry with its source: the prefix keeps the parent
-                    // from reading the child's words as the user's.
+                    // Sender attribution, applied at assembly time
+                    // (ADR-0001 supplement): a child session labels the
+                    // entry's source — its parent (Parent:), the user
+                    // (User:), or none (bare); a non-child session keeps
+                    // the #23 prefix for child wake messages.
+                    let is_child = parent_session.is_some();
                     let content = match entry.payload.get("source").and_then(Value::as_str) {
-                        Some(source) => format!("Sub-agent {source}: {text}"),
-                        None => text.to_owned(),
+                        Some(source) if is_child && Some(source) == parent_session => {
+                            format!("Parent: {text}")
+                        }
+                        Some("user") if is_child => format!("User: {text}"),
+                        Some(source) if !is_child => {
+                            format!("Sub-agent {source}: {text}")
+                        }
+                        _ => text.to_owned(),
                     };
                     out.push(InputEntry::Message(InputMessage {
                         role: "user".into(),

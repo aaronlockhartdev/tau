@@ -93,6 +93,9 @@ impl AgentSession {
                     .lock()
                     .expect("agent inner: no panic while the lock is held");
                 let base = inner.system_prompt.clone();
+                // A child session is labeled at assembly against its
+                // parent (the link names it); a plain session is not.
+                let parent_session = inner.child.as_ref().map(|c| c.parent_session().to_owned());
                 let entries = inner
                     .store
                     .entries_range(0, usize::MAX)
@@ -113,7 +116,7 @@ impl AgentSession {
                     let input = assembled
                         .om_input_items
                         .into_iter()
-                        .chain(input_items(&raw))
+                        .chain(input_items(&raw, parent_session.as_deref()))
                         .collect();
                     (
                         with_plan_state(assembled.instructions, plan_state.as_deref()),
@@ -122,7 +125,7 @@ impl AgentSession {
                 } else {
                     (
                         with_plan_state(base, plan_state.as_deref()),
-                        input_items(&entries),
+                        input_items(&entries, parent_session.as_deref()),
                     )
                 }
             };
