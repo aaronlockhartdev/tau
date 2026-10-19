@@ -40,8 +40,14 @@ impl Core {
                     } else {
                         lane_to_lane(lane)
                     };
-                    link.send(text.clone(), lane)
+                    link.send(text.clone(), lane, Some("user".to_owned()))
                         .map_err(|e| ProtocolError::Other { message: e })?;
+                    // The child's queue is projected like a top-level
+                    // session's: the send lands on the child's lane, and the
+                    // GUI's queue pane shows it (#187). The Force variant
+                    // took the head of the queue, so the projection covers
+                    // both.
+                    self.emit_queue(&live);
                     return Ok(CommandOutput::None);
                 }
                 match skill {
@@ -189,8 +195,14 @@ impl Core {
                 let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
                     message: "session has no children (it is a child itself)".into(),
                 })?;
-                sup.message(&handle, text.clone(), Lane::Steering)
-                    .map_err(|e| ProtocolError::Other { message: e })?;
+                // The GUI's send to a child: the user is the sender.
+                sup.message(
+                    &handle,
+                    text.clone(),
+                    Lane::Steering,
+                    Some("user".to_owned()),
+                )
+                .map_err(|e| ProtocolError::Other { message: e })?;
                 let info = sup
                     .state_info(&handle)
                     .ok_or_else(|| ProtocolError::NotFound {

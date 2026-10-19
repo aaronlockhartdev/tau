@@ -8,7 +8,7 @@ import { present, type Shell } from './presentation';
 import { Bot, File, Search, Terminal } from '@lucide/svelte';
 import type { Entry, MessageEntry } from './protocol';
 
-const ctx = { sourceLabel: '', parentLabel: '' };
+const ctx = { sourceLabel: '', parentLabel: '', parentId: '' };
 
 function shells(entry: Entry): Shell[] {
   const p = present(entry, ctx);
@@ -18,9 +18,13 @@ function shells(entry: Entry): Shell[] {
 
 function cardOf(
   entry: Entry,
-  over: { sourceLabel?: string; parentLabel?: string } = {}
+  over: { sourceLabel?: string; parentLabel?: string; parentId?: string } = {}
 ): Extract<Shell, { kind: 'card' }> {
-  const p = present(entry, { sourceLabel: over.sourceLabel ?? '', parentLabel: over.parentLabel ?? '' });
+  const p = present(entry, {
+    sourceLabel: over.sourceLabel ?? '',
+    parentLabel: over.parentLabel ?? '',
+    parentId: over.parentId ?? ''
+  });
   if (!p) throw new Error('expected a presentation');
   const s = p.shells.find((s) => s.kind === 'card');
   if (!s || s.kind !== 'card') throw new Error('expected a card shell');
@@ -293,6 +297,33 @@ describe('present', () => {
       { type: 'text', text: 'Done!', dim: true },
       { type: 'kv', rows: [{ k: 'files', lines: ['a.txt'] }], block: true }
     ]);
+  });
+
+  it('a user-sourced routed send renders a plain bubble, not a card', () => {
+    const p = present(
+      { id: 'e1', kind: 'user', text: 'steer me', source: 'user', lane: 'steering' },
+      { sourceLabel: '', parentLabel: 'p1', parentId: 'p1' }
+    );
+    // Not the parent card, not a sub-agent card: the plain drain divider + bubble.
+    expect(p?.shells.map((s) => s.kind)).toEqual(['divider', 'bubble']);
+  });
+
+  it('a sourced entry from the session parent renders as the parent', () => {
+    const c = cardOf(
+      { id: 'e1', kind: 'user', text: 'focus on edge cases', source: 'p1' },
+      { sourceLabel: 'p1', parentLabel: 'Parent Session', parentId: 'p1' }
+    );
+    expect(c.header?.label).toBe('parent · Parent Session');
+    expect(c.header?.cls).toBe('par');
+  });
+
+  it('a sourced entry from a non-parent renders as a sub-agent', () => {
+    const c = cardOf(
+      { id: 'e1', kind: 'user', text: 'report', source: 's2' },
+      { sourceLabel: 'worker 2', parentLabel: 'Parent Session', parentId: 'p1' }
+    );
+    expect(c.header?.label).toBe('sub-agent · worker 2');
+    expect(c.header?.cls).toBe('sub');
   });
 
   it('a parent-bound user entry splits the JSON payload here', () => {

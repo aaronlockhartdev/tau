@@ -148,7 +148,7 @@ async fn the_lifecycle_acceptance_flow() {
     )
     .unwrap();
     // Resumed by a message (the tool's non-running branch).
-    sup.message(&handle_b, Some("proceed".into()), Lane::Steering)
+    sup.message(&handle_b, Some("proceed".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(

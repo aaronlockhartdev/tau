@@ -47,7 +47,7 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
     // cut stream run on (the resume must come after the cut).
     drive.await.unwrap();
     // The resumed drive rests (observed `idle`: no plan file yet).
-    sup.message(&s.handle, Some("continue".into()), Lane::Steering)
+    sup.message(&s.handle, Some("continue".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(
@@ -62,7 +62,7 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
         "# Plan\n\n## Steps\n\n- [x] the work\n",
     )
     .unwrap();
-    sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+    sup.message(&s.handle, Some("finish".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(
@@ -264,7 +264,7 @@ async fn a_non_running_child_refuses_a_second_stop() {
         ChildState::Idle { .. }
     ));
     // A message resumes it; its next scripted turn finishes the child.
-    sup.message(&parked.handle, Some("go".into()), Lane::Steering)
+    sup.message(&parked.handle, Some("go".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(

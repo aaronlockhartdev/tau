@@ -291,21 +291,41 @@ function observationShell(e: OmEntry, text: string): Shell {
 // renders nothing so no shell margin gap is left behind.
 export function present(
   entry: Entry,
-  ctx: { sourceLabel: string; parentLabel: string }
+  ctx: { sourceLabel: string; parentLabel: string; parentId: string }
 ): Presentation | null {
   const text = entry.text ?? '';
   switch (entry.kind) {
     case 'user': {
       if (!text.trim()) return null;
       if (entry.skill) return { shells: [skillCard(entry.skill, text)] };
+      // A human's routed send to a child (source "user") is the user's own
+      // voice: it renders plain, exactly like a top-level send.
+      if (entry.source === 'user') {
+        const shells: Shell[] = [];
+        if (entry.lane === 'steering')
+          shells.push({ kind: 'divider', label: 'steering · next tool boundary', tint: 'drain' });
+        else if (entry.lane === 'follow_up')
+          shells.push({ kind: 'divider', label: 'follow-up · after work completes', tint: 'drain' });
+        shells.push({ kind: 'bubble', text });
+        return { shells };
+      }
       if (entry.source) {
+        // A sourced entry is a routed message. In the parent's transcript it
+        // is a child's report (a sub-agent); in the child's own transcript
+        // the source is its parent (the parent model's steering) — the
+        // session's parent link disambiguates (#187).
+        const fromParent = ctx.parentId !== '' && entry.source === ctx.parentId;
         return {
           shells: [
             card({
               header: {
-                icon: Bot,
-                label: ctx.sourceLabel ? `sub-agent · ${ctx.sourceLabel}` : 'sub-agent',
-                cls: 'sub',
+                icon: fromParent ? User : Bot,
+                label: fromParent
+                  ? `parent · ${ctx.parentLabel}`
+                  : ctx.sourceLabel
+                    ? `sub-agent · ${ctx.sourceLabel}`
+                    : 'sub-agent',
+                cls: fromParent ? 'par' : 'sub',
                 meta: null,
                 open: null,
                 singleClick: false,

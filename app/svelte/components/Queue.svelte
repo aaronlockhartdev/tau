@@ -10,9 +10,9 @@
   import type { PendingMsg } from '../lib/sessions';
 
   const s = $derived(currentSession());
-  const reports = $derived(s ? s.pending.filter((p) => p.source) : []);
-  const steering = $derived(s ? s.pending.filter((p) => p.lane === 'steering' && !p.source) : []);
-  const followUp = $derived(s ? s.pending.filter((p) => p.lane === 'follow-up' && !p.source) : []);
+  const reports = $derived(s ? s.pending.filter((p) => p.source && p.source !== 'user') : []);
+  const steering = $derived(s ? s.pending.filter((p) => p.lane === 'steering' && (!p.source || p.source === 'user')) : []);
+  const followUp = $derived(s ? s.pending.filter((p) => p.lane === 'follow-up' && (!p.source || p.source === 'user')) : []);
 </script>
 
 {#if s && s.pending.length > 0}

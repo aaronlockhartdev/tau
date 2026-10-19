@@ -49,7 +49,14 @@ pub fn route_parent(sup: &Arc<Supervisor>, tc: &tools::ToolCall) -> Result<Strin
                 .get("text")
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            match sup.message(name, text, Lane::Steering) {
+            match sup.message(
+                name,
+                text,
+                Lane::Steering,
+                // The parent model is the sender: stamp its session id so the
+                // child's entry is attributed to it, not the user (#187).
+                Some(sup.parent_session().to_owned()),
+            ) {
                 Ok(s) => Ok(s),
                 Err(e) => Err(e),
             }

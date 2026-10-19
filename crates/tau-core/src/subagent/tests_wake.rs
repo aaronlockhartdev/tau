@@ -179,7 +179,7 @@ async fn a_message_origin_rest_is_silent_to_the_parent() {
     let wakes_after_spawn_rest = { bridge.wakes.lock().unwrap().len() };
     // The direct message resumes the child; its next rest is a
     // message-origin rest: silent to the parent.
-    sup.message(&s.handle, Some("hi".into()), Lane::Steering)
+    sup.message(&s.handle, Some("hi".into()), Lane::Steering, None)
         .unwrap();
     // The child ran the resumed turn and rested again (two `idle`
     // records now — the spawn rest and the message rest).
@@ -256,7 +256,7 @@ async fn a_done_rest_wakes_regardless_of_origin() {
     )
     .unwrap();
     // The direct message resumes the child into its done declaration.
-    sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+    sup.message(&s.handle, Some("finish".into()), Lane::Steering, None)
         .unwrap();
     let info = wait_for_done(&sup, &s.handle);
     assert!(
@@ -313,7 +313,7 @@ async fn a_declared_done_wakes_without_plan_file() {
     });
     // The direct message resumes the child into its done declaration.
     // No plan file is written — the declaration alone must suffice.
-    sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+    sup.message(&s.handle, Some("finish".into()), Lane::Steering, None)
         .unwrap();
     let info = wait_for_done(&sup, &s.handle);
     assert!(

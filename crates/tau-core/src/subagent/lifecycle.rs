@@ -14,6 +14,7 @@ impl Supervisor {
         name_or_id: &str,
         text: Option<String>,
         lane: Lane,
+        source: Option<String>,
     ) -> Result<String, String> {
         let child = self.resolve(name_or_id).ok_or_else(|| {
             format!("subagent_message: no sub-agent {name_or_id} in this session")
@@ -21,7 +22,7 @@ impl Supervisor {
         if child.state() == ChildState::Running {
             match &text {
                 Some(text) => {
-                    child.agent.send(text.clone(), lane);
+                    child.agent.send_as(text.clone(), lane, source.clone());
                     child.set_last_message(text);
                     child.wake.notify_one();
                     Ok(format!("delivered to {}", child.name))
@@ -53,7 +54,7 @@ impl Supervisor {
             child.set_state(&ChildState::Running)?;
             child.wake.notify_one();
             self.emit_state(&child, ChildState::Running, Some("resumed".into()), None);
-            child.agent.send(text, Lane::FollowUp);
+            child.agent.send_as(text, Lane::FollowUp, source);
             // A drive ended by stop/failure/done is gone: this resume
             // starts a fresh one (only an idle/awaiting drive persists and
             // wakes on its own).

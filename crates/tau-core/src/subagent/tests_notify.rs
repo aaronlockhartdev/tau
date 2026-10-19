@@ -195,7 +195,7 @@ async fn state_records_carry_the_discriminant_and_variant_fields() {
     sup.stop(&s.handle, StoppedBy::User).unwrap();
     // Resumed → observed `idle`: the note's declared target rides the
     // record as the badge hint.
-    sup.message(&s.handle, Some("continue".into()), Lane::Steering)
+    sup.message(&s.handle, Some("continue".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(
@@ -211,7 +211,7 @@ async fn state_records_carry_the_discriminant_and_variant_fields() {
     )
     .unwrap();
     // Resumed → observed `done`: the done record is the discriminant alone.
-    sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+    sup.message(&s.handle, Some("finish".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(
@@ -320,7 +320,7 @@ async fn the_subagent_tools_address_a_child_by_name() {
     assert!(out.contains(&s.name), "{out}");
 
     // The session id is the machine key: accepted as a fallback.
-    sup.message(&s.session_id, Some("go".into()), Lane::Steering)
+    sup.message(&s.session_id, Some("go".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(
@@ -384,7 +384,7 @@ async fn the_subagent_tools_address_a_child_by_name() {
     let err = sup.stop("nobody", StoppedBy::Parent).unwrap_err();
     assert!(err.contains("no sub-agent nobody"), "{err}");
     let err = sup
-        .message("nobody", Some("hi".into()), Lane::Steering)
+        .message("nobody", Some("hi".into()), Lane::Steering, None)
         .unwrap_err();
     assert!(err.contains("no sub-agent nobody"), "{err}");
     assert!(sup.state_info("nobody").is_none());

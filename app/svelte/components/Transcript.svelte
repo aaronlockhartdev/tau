@@ -326,6 +326,7 @@
                   heightKey={hk}
                   sourceLabel={sourceLabelFor(e)}
                   parentLabel={parentLabel}
+                  parentId={curSession?.meta.parent ?? ''}
                   turn={turnLabel(idx)}
                   batch={e.kind === 'tool' ? batchOf.get(e.id) : undefined}
                 />
