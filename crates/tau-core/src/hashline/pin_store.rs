@@ -86,8 +86,7 @@ impl FilePins {
     fn signed_line(&self) -> String {
         let mut clone = self.clone();
         clone.crc = None;
-        let unsigned =
-            serde_json::to_string(&clone).expect("FilePins is always serializable");
+        let unsigned = serde_json::to_string(&clone).expect("FilePins is always serializable");
         clone.crc = Some(crc32_hex(unsigned.as_bytes()));
         serde_json::to_string(&clone).expect("FilePins is always serializable")
     }
@@ -97,8 +96,7 @@ impl FilePins {
         let mut clone = self.clone();
         let stored = clone.crc.clone();
         clone.crc = None;
-        let unsigned =
-            serde_json::to_string(&clone).expect("FilePins is always serializable");
+        let unsigned = serde_json::to_string(&clone).expect("FilePins is always serializable");
         stored.as_deref() == Some(crc32_hex(unsigned.as_bytes()).as_str())
     }
 
@@ -247,7 +245,10 @@ pub fn file_checksum(checksums: &[String]) -> String {
 /// crash mid-write never leaves a torn store record (the session store's
 /// `writeAtomic` scheme, spec §5.4).
 fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
@@ -358,9 +359,7 @@ mod tests {
     fn pins(path: &str, anchors: &[&str], sums: &[&str]) -> FilePins {
         FilePins {
             path: path.into(),
-            checksum: file_checksum(
-                &sums.iter().map(ToString::to_string).collect::<Vec<_>>(),
-            ),
+            checksum: file_checksum(&sums.iter().map(ToString::to_string).collect::<Vec<_>>()),
             line_count: sums.len(),
             pins: anchors
                 .iter()
@@ -459,13 +458,13 @@ mod tests {
         let live: Vec<&Pin> = next.pins.iter().filter(|p| !p.tombstone).collect();
         assert_eq!(live.len(), 2);
         assert!(live.iter().any(|p| p.anchor == "A" && p.checksum == "s1"));
-        assert!(live.iter().any(|p| p.anchor == "ZZZZ" && p.checksum == "s3"));
+        assert!(
+            live.iter()
+                .any(|p| p.anchor == "ZZZZ" && p.checksum == "s3")
+        );
         let tomb: Vec<&Pin> = next.pins.iter().filter(|p| p.tombstone).collect();
         assert_eq!(tomb.len(), 1);
-        assert_eq!(
-            tomb[0].anchor, "B",
-            "the deleted line's slot is tombstoned"
-        );
+        assert_eq!(tomb[0].anchor, "B", "the deleted line's slot is tombstoned");
     }
 
     #[test]

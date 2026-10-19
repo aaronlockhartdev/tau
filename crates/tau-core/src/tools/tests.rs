@@ -479,8 +479,14 @@ async fn edit_overlapping_ranges_demotes_the_colliding_member() {
     );
     // The first member's change is on disk; the demoted second is not.
     let on_disk = std::fs::read_to_string(dir.path().join("o.txt")).unwrap();
-    assert!(on_disk.contains('A'), "the valid member is written: {on_disk}");
-    assert!(!on_disk.contains("B\n"), "the demoted member is not: {on_disk}");
+    assert!(
+        on_disk.contains('A'),
+        "the valid member is written: {on_disk}"
+    );
+    assert!(
+        !on_disk.contains("B\n"),
+        "the demoted member is not: {on_disk}"
+    );
 }
 
 #[tokio::test]
@@ -519,7 +525,10 @@ async fn edit_batch_with_one_valid_and_one_invalid_demotes_the_invalid() {
     );
     let on_disk = std::fs::read_to_string(dir.path().join("d.txt")).unwrap();
     assert!(on_disk.contains("ONE!"), "valid change on disk: {on_disk}");
-    assert!(!on_disk.contains("nope"), "invalid change not on disk: {on_disk}");
+    assert!(
+        !on_disk.contains("nope"),
+        "invalid change not on disk: {on_disk}"
+    );
 }
 
 #[tokio::test]

@@ -62,7 +62,9 @@ pub(super) fn read(
     // BOM-less non-UTF-8 file is a loud refusal, as before.
     let raw = match hashline::encoding::sniff(&bytes) {
         Ok((text, _)) => text,
-        Err(e) => return ToolResult::err(format!("read: cannot read {}: {e}", path.display()).into()),
+        Err(e) => {
+            return ToolResult::err(format!("read: cannot read {}: {e}", path.display()).into());
+        }
     };
     let content = hashline::normalize(&raw);
     let path_str = path.display().to_string();

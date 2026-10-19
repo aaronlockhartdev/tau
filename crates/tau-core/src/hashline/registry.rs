@@ -228,7 +228,7 @@ impl Registry {
     /// source of truth for this session).
     fn persist_pins(&mut self, path: &str, hashes: &[String], checksums: &[String]) {
         let Some(store) = self.store.as_mut() else {
-            return
+            return;
         };
         if let Some(prev) = store.load(path) {
             let (matched, _fresh) = pin_store::reanchor(&prev, checksums);

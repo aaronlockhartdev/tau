@@ -32,27 +32,36 @@ pub fn sniff(bytes: &[u8]) -> Result<(String, Sniffed), String> {
         let text = std::str::from_utf8(rest)
             .map_err(|e| format!("not valid UTF-8 (after BOM): {e}"))?
             .to_owned();
-        return Ok((text, Sniffed {
-            encoding: Encoding::Utf8,
-            bom: true,
-        }));
+        return Ok((
+            text,
+            Sniffed {
+                encoding: Encoding::Utf8,
+                bom: true,
+            },
+        ));
     }
     // UTF-16 BOMs: FF FE (LE) / FE FF (BE).
     if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
-        let text = utf16_to_utf8(&bytes[2..], true)
-            .map_err(|e| format!("invalid UTF-16LE: {e}"))?;
-        return Ok((text, Sniffed {
-            encoding: Encoding::Utf16Le,
-            bom: true,
-        }));
+        let text =
+            utf16_to_utf8(&bytes[2..], true).map_err(|e| format!("invalid UTF-16LE: {e}"))?;
+        return Ok((
+            text,
+            Sniffed {
+                encoding: Encoding::Utf16Le,
+                bom: true,
+            },
+        ));
     }
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
-        let text = utf16_to_utf8(&bytes[2..], false)
-            .map_err(|e| format!("invalid UTF-16BE: {e}"))?;
-        return Ok((text, Sniffed {
-            encoding: Encoding::Utf16Be,
-            bom: true,
-        }));
+        let text =
+            utf16_to_utf8(&bytes[2..], false).map_err(|e| format!("invalid UTF-16BE: {e}"))?;
+        return Ok((
+            text,
+            Sniffed {
+                encoding: Encoding::Utf16Be,
+                bom: true,
+            },
+        ));
     }
     // No BOM: UTF-8 (the pipeline's native form).
     let text = std::str::from_utf8(bytes)
