@@ -39,6 +39,9 @@ tau-acp = { path = "../../crates/tau-acp" }
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
 tokio = { workspace = true }
+# Production GUI build compiles tracing out entirely (#100): the same
+# one-liner tau-acp carries as the #98 precedent.
+tracing = { version = "0.1", features = ["max_level_off"] }
 
 
 [dev-dependencies]

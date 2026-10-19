@@ -262,7 +262,20 @@ pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     }
     match write_atomic(&path, content) {
         Ok(()) => {
-            ToolResult::ok(format!("wrote {} ({} bytes)", path.display(), content.len()).into())
+            let lines = if content.is_empty() {
+                0
+            } else {
+                content.matches('\n').count() + 1
+            };
+            ToolResult::ok(
+                format!(
+                    "wrote {} ({} bytes, {} lines)",
+                    path.display(),
+                    content.len(),
+                    lines
+                )
+                .into(),
+            )
         }
         Err(e) => ToolResult::err(format!("write: {e}").into()),
     }
