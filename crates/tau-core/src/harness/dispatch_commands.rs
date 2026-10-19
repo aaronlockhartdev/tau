@@ -33,13 +33,17 @@ impl Core {
                 // be live — a closed parent has no routing surface.
                 if let Some(link) = live.agent.child_link() {
                     self.live(link.parent_session())?;
-                    let lane = if lane == MessageLane::Force {
+                    if lane == MessageLane::Force {
+                        // The supervisor's running branch routes Force to
+                        // `send_as`, whose kill+head-of-queue semantics cut
+                        // the in-flight turn. Stop explicitly first: the cut
+                        // is only reliable while the child is running, and
+                        // the force must win even if the child parked in the
+                        // window between the check and the send (#208).
                         link.stop()
                             .map_err(|e| ProtocolError::Other { message: e })?;
-                        Lane::Steering
-                    } else {
-                        lane_to_lane(lane)
-                    };
+                    }
+                    let lane = lane_to_lane(lane);
                     link.send(text.clone(), lane, Some("user".to_owned()))
                         .map_err(|e| ProtocolError::Other { message: e })?;
                     // The child's queue is projected like a top-level
