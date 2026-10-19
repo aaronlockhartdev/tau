@@ -5439,6 +5439,7 @@ dependencies = [
  "tauri-plugin-wdio-webdriver",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -5502,6 +5503,7 @@ dependencies = [
  "tau-mock-llm",
  "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

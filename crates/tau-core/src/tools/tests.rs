@@ -407,6 +407,52 @@ async fn core_tools_carry_a_typed_verdict() {
 }
 
 #[tokio::test]
+async fn write_ack_carries_byte_and_line_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    // 7 bytes, 2 lines (\n terminates the first).
+    let out = text(
+        write(
+            dir.path(),
+            &json!({"path": "counted.txt", "content": "one\ntwo"}),
+        )
+        .await,
+    );
+    assert_eq!(
+        out,
+        format!(
+            "wrote {} (7 bytes, 2 lines)",
+            dir.path().join("counted.txt").display()
+        )
+    );
+    // An empty write is 0 bytes and 0 lines.
+    let out = text(write(dir.path(), &json!({"path": "empty.txt", "content": ""})).await);
+    assert_eq!(
+        out,
+        format!(
+            "wrote {} (0 bytes, 0 lines)",
+            dir.path().join("empty.txt").display()
+        )
+    );
+}
+
+#[tokio::test]
+async fn write_missing_args_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let err = write(dir.path(), &json!({"content": "x"})).await;
+    assert_eq!(err.status(), "error");
+    assert!(
+        text(err).contains("missing \"path\""),
+        "wrong failure: expected missing path"
+    );
+    let err = write(dir.path(), &json!({"path": "x.txt"})).await;
+    assert_eq!(err.status(), "error");
+    assert!(
+        text(err).contains("missing \"content\""),
+        "wrong failure: expected missing content"
+    );
+}
+
+#[tokio::test]
 async fn edit_array_form_applies_all_edits() {
     let dir = tempfile::tempdir().unwrap();
     write(
