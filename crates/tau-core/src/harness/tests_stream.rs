@@ -323,7 +323,7 @@ async fn a_child_reuses_its_agents_provider_and_emits_its_stream_end() {
 /// (the in-flight message lands on the child's lane with the user as sender)
 /// and emits a `Queue` event for the child's session.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_gui_send_to_a_child_projects_the_childs_queue_with_a_sender() {
+async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(SlowChildFactory {
             body: plain_body(),
@@ -386,24 +386,10 @@ async fn a_gui_send_to_a_child_projects_the_childs_queue_with_a_sender() {
         lane: MessageLane::Steering,
     })
     .unwrap();
-
-    // The child's queue carries the item with the user as sender.
-    let child_agent = {
-        let sessions = core.sessions.lock().unwrap();
-        let child_live = sessions
-            .get(&sub.child)
-            .expect("the child is a live session");
-        child_live.agent.clone()
-    };
-    let items = child_agent.queued_items();
-    assert!(
-        items
-            .iter()
-            .any(|q| { q.text == "steer the child" && q.source.as_deref() == Some("user") }),
-        "the child's queue does not carry the stamped message: {items:?}"
-    );
-
-    // A Queue event was emitted for the child's session.
+    // The child's queue is projected like a top-level session's: a Queue
+    // event carries the item with the user as sender. (Assert on the
+    // event, not `queued_items()`: the child is running and drains its
+    // own queue, so a snapshot can race the drain on a slow runner.)
     let child = sub.child.clone();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut found = false;
@@ -413,7 +399,10 @@ async fn a_gui_send_to_a_child_projects_the_childs_queue_with_a_sender() {
                 e,
                 Event::Queue { session, items, .. }
                     if *session == child
-                        && items.iter().any(|q| q.text == "steer the child")
+                        && items.iter().any(|q| {
+                            q.text == "steer the child"
+                                && q.source.as_deref() == Some("user")
+                        })
             )
         });
         if !found {
