@@ -37,6 +37,7 @@ struct FileState {
     checksums: Vec<String>,
 }
 
+#[derive(Default)]
 /// The registry state, held behind the session's lock.
 pub struct Registry {
     /// Every anchor this session owns, and what it points at.
@@ -68,21 +69,6 @@ impl std::fmt::Debug for Registry {
             .finish()
     }
 }
-impl Default for Registry {
-    fn default() -> Self {
-        Self {
-            owned: HashMap::new(),
-            file_state: HashMap::new(),
-            served: HashMap::new(),
-            last_used: HashMap::new(),
-            usage_clock: 0,
-            probe: 0,
-            reclaimed: VecDeque::new(),
-            store: None,
-        }
-    }
-}
-
 impl Registry {
     #[must_use]
     pub fn new() -> Self {
@@ -244,31 +230,34 @@ impl Registry {
         let Some(store) = self.store.as_mut() else {
             return
         };
-        let prev = match store.load(path) {
-            Some(p) => p,
-            None => {
-                // First edit this store has seen: record the current pins.
-                let _ = store.save(&FilePins {
-                    path: path.to_owned(),
-                    checksum: pin_store::file_checksum(checksums),
-                    line_count: checksums.len(),
-                    pins: hashes
-                        .iter()
-                        .zip(checksums.iter())
-                        .map(|(a, s)| Pin {
-                            anchor: a.clone(),
-                            checksum: s.clone(),
-                            tombstone: false,
-                        })
-                        .collect(),
-                    crc: None,
-                });
-                return
-            }
-        };
-        let (matched, _fresh) = pin_store::reanchor(&prev, checksums);
-        let next = pin_store::next_pins(&prev, &matched, hashes, checksums);
-        let _ = store.save(&next);
+        if let Some(prev) = store.load(path) {
+            let (matched, _fresh) = pin_store::reanchor(&prev, checksums);
+            let next = pin_store::next_pins(&prev, &matched, hashes, checksums);
+            let _ = store.save(&next);
+        } else {
+            // First edit this store has seen: record the current pins.
+            let _ = store.save(&Self::current_pins(path, hashes, checksums));
+        }
+    }
+
+    /// The current pins for a file: every line pinned to the anchor it was
+    /// just served, no tombstones.
+    fn current_pins(path: &str, hashes: &[String], checksums: &[String]) -> FilePins {
+        FilePins {
+            path: path.to_owned(),
+            checksum: pin_store::file_checksum(checksums),
+            line_count: checksums.len(),
+            pins: hashes
+                .iter()
+                .zip(checksums.iter())
+                .map(|(a, s)| Pin {
+                    anchor: a.clone(),
+                    checksum: s.clone(),
+                    tombstone: false,
+                })
+                .collect(),
+            crc: None,
+        }
     }
 
     /// Free a file's anchors (after a `write`, which voids every anchor): the

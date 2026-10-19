@@ -358,7 +358,9 @@ mod tests {
     fn pins(path: &str, anchors: &[&str], sums: &[&str]) -> FilePins {
         FilePins {
             path: path.into(),
-            checksum: file_checksum(&sums.iter().map(|s| s.to_string()).collect::<Vec<_>>()),
+            checksum: file_checksum(
+                &sums.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ),
             line_count: sums.len(),
             pins: anchors
                 .iter()

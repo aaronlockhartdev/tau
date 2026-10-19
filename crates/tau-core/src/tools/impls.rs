@@ -58,19 +58,11 @@ pub(super) fn read(
             data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
         }));
     }
-    let raw = match std::str::from_utf8(&bytes) {
-        Ok(c) => c.to_owned(),
-        // The same diagnostic `read_to_string` produced: the text path stays
-        // byte-for-byte (#34).
-        Err(_) => {
-            return ToolResult::err(
-                format!(
-                    "read: cannot read {}: stream did not contain valid UTF-8",
-                    path.display()
-                )
-                .into(),
-            );
-        }
+    // #207 §6: sniff BOM / UTF-16 and decode to UTF-8 (BOM stripped); a
+    // BOM-less non-UTF-8 file is a loud refusal, as before.
+    let raw = match hashline::encoding::sniff(&bytes) {
+        Ok((text, _)) => text,
+        Err(e) => return ToolResult::err(format!("read: cannot read {}: {e}", path.display()).into()),
     };
     let content = hashline::normalize(&raw);
     let path_str = path.display().to_string();
@@ -272,21 +264,57 @@ pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolResult {
 /// the target directory + fsync + rename (+ best-effort directory sync),
 /// preserving an existing file's mode — the reference scheme's `writeAtomic`
 /// (spec §5.4): a crash mid-rewrite must never truncate a complete file.
+/// The file's current permission mode (`None` if it does not exist or the
+/// metadata read fails) — carried across an atomic rewrite so an `edit`
+/// does not reset a file's mode (#207 §6).
+fn current_mode(path: &Path) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path).ok().map(|m| m.permissions().mode())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 #[cfg(unix)]
 pub(super) fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let existing_mode = std::fs::metadata(path).ok().map(|m| m.permissions().mode());
-    write_atomic_inner(path, content, existing_mode)
+    write_atomic_bytes(path, content.as_bytes(), existing_mode)
+}
+
+/// Write raw bytes (a `write`/`edit` that must preserve a non-UTF-8 file's
+/// on-disk encoding, #207 §6): the atomic temp+rename path over a byte slice.
+#[cfg(unix)]
+pub(super) fn write_atomic_bytes(
+    path: &Path,
+    bytes: &[u8],
+    existing_mode: Option<u32>,
+) -> std::io::Result<()> {
+    write_atomic_bytes_inner(path, bytes, existing_mode)
 }
 
 #[cfg(not(unix))]
 pub(super) fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
-    write_atomic_inner(path, content, None)
+    write_atomic_bytes(path, content.as_bytes(), None)
 }
 
-fn write_atomic_inner(
+#[cfg(not(unix))]
+pub(super) fn write_atomic_bytes(
     path: &Path,
-    content: &str,
+    bytes: &[u8],
+    _existing_mode: Option<u32>,
+) -> std::io::Result<()> {
+    write_atomic_bytes_inner(path, bytes, None)
+}
+
+fn write_atomic_bytes_inner(
+    path: &Path,
+    bytes: &[u8],
     existing_mode: Option<u32>,
 ) -> std::io::Result<()> {
     let dir = path
@@ -306,7 +334,7 @@ fn write_atomic_inner(
         .open(&temp)?;
     let result = (|| {
         use std::io::Write;
-        file.write_all(content.as_bytes())?;
+        file.write_all(bytes)?;
         if let Some(mode) = existing_mode {
             let mut perm = file.metadata()?.permissions().clone();
             perm.set_mode(mode);
@@ -371,16 +399,14 @@ pub(super) fn edit(
     let path_str = path.display().to_string();
     // (3) Drift re-read at commit: the file is read twice — once to plan,
     // once to commit — and a change between the two aborts the write.
-    let raw = match std::fs::read(&path) {
-        Ok(b) => match std::str::from_utf8(&b) {
-            Ok(c) => c.to_owned(),
-            Err(_) => {
+    // #207 §6: sniff BOM / UTF-16 on the plan read; the sniffed encoding is
+    // re-applied on the commit write so the file round-trips its form.
+    let (raw, sniffed) = match std::fs::read(&path) {
+        Ok(b) => match hashline::encoding::sniff(&b) {
+            Ok(v) => v,
+            Err(e) => {
                 return ToolResult::err(
-                    format!(
-                        "edit: cannot read {}: stream did not contain valid UTF-8",
-                        path.display()
-                    )
-                    .into(),
+                    format!("edit: cannot read {}: {e}", path.display()).into(),
                 );
             }
         },
@@ -430,8 +456,8 @@ pub(super) fn edit(
     // the anchors (and the integrity baseline) are stale — abort, write
     // nothing.
     let raw2 = match std::fs::read(&path) {
-        Ok(b) => match std::str::from_utf8(&b) {
-            Ok(c) => c.to_owned(),
+        Ok(b) => match hashline::encoding::sniff(&b) {
+            Ok((text, _)) => text,
             Err(_) => {
                 return ToolResult::err(
                     format!(
@@ -462,8 +488,10 @@ pub(super) fn edit(
         );
     }
 
+    // #207 §6: re-encode to the file's sniffed form (BOM / UTF-16 preserved).
     let content = hashline::assemble(&planned);
-    if let Err(e) = write_atomic(&path, &content) {
+    let bytes = hashline::encoding::encode(&content, &sniffed);
+    if let Err(e) = write_atomic_bytes(&path, &bytes, current_mode(&path)) {
         return ToolResult::err(format!("edit: cannot write {}: {e}", path.display()).into());
     }
     // The write succeeded: the registry now owns the new anchor set, and the

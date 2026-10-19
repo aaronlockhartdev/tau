@@ -13,6 +13,7 @@
 //! [`plan_edits`] / [`apply_edits`] core stays registry-free (property tests,
 //! and a no-registry caller).
 
+pub mod encoding;
 pub mod line_endings;
 pub mod pin_store;
 pub mod registry;
