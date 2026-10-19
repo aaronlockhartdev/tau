@@ -2,39 +2,24 @@ use super::*;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 
-// (a) the jiff formatter is exact in a fixed zone — pins the spec + zone
-// handling (the axis the handrolled civil-from-days was fragile on).
+// The per-entry stamps (ticket #196) are exact in a fixed zone: the date is
+// "YYYY-MM-DD", the time "HH:MM", minute-granular, and a day rollover changes
+// the date exactly once. The system-zone seam itself is exercised through the
+// transcript tests in om_integration.
 #[test]
-fn format_utc_is_exact_for_known_epochs() {
-    let at = |secs: i64| format_in(TimeZone::UTC, Timestamp::from_second(secs).unwrap());
-    assert_eq!(at(0), "1970-01-01 00:00");
-    assert_eq!(at(86_400), "1970-01-02 00:00");
-    assert_eq!(at(1_700_000_000), "2023-11-14 22:13");
-    // leap day (the fragile axis) and pre-1970 (negative):
-    assert_eq!(at(1_709_164_800), "2024-02-29 00:00");
-    assert_eq!(at(-1), "1969-12-31 23:59");
-}
-
-// (b) the dated user message carries the injected date line — a 16-char
-// "YYYY-MM-DD HH:MM", independent of the machine's zone.
-#[test]
-fn dated_user_content_carries_the_date_line() {
-    let now = Timestamp::from_second(1_700_000_000).unwrap();
-    let out = dated_user_content("the raw transcript", now);
-    assert!(out.starts_with("Current date and time (local): "));
-    assert!(out.ends_with("the raw transcript"));
-    let line = out.lines().next().expect("the preamble is the first line");
-    let after = line
-        .strip_prefix("Current date and time (local): ")
-        .expect("the date prefix");
-    assert_eq!(after.len(), 16, "expected YYYY-MM-DD HH:MM, got {line:?}");
-}
-
-// negative: an empty body still gets the date line (the preamble is always
-// present, not conditional on there being content).
-#[test]
-fn dated_user_content_empty_body_still_has_the_date_line() {
-    let now = Timestamp::from_second(1_700_000_000).unwrap();
-    let out = dated_user_content("", now);
-    assert!(out.starts_with("Current date and time (local): "));
+fn entry_stamp_shapes_are_exact_in_a_fixed_zone() {
+    let at = |secs: i64| Timestamp::from_second(secs).unwrap();
+    // 2023-11-14 22:13:20 UTC
+    let (d, t) = entry_stamp_in(TimeZone::UTC, at(1_700_000_000));
+    assert_eq!((d.as_str(), t.as_str()), ("2023-11-14", "22:13"));
+    // day rollover: 23:59:59 -> 00:00:00 the next day (2023-11-15 00:00 UTC)
+    let (d, t) = entry_stamp_in(TimeZone::UTC, at(1_700_006_399));
+    assert_eq!((d.as_str(), t.as_str()), ("2023-11-14", "23:59"));
+    let (d, t) = entry_stamp_in(TimeZone::UTC, at(1_700_006_400));
+    assert_eq!((d.as_str(), t.as_str()), ("2023-11-15", "00:00"));
+    // leap day (the fragile civil axis) and pre-1970 (negative):
+    let (d, t) = entry_stamp_in(TimeZone::UTC, at(1_709_164_800));
+    assert_eq!((d.as_str(), t.as_str()), ("2024-02-29", "00:00"));
+    let (d, t) = entry_stamp_in(TimeZone::UTC, at(-1));
+    assert_eq!((d.as_str(), t.as_str()), ("1969-12-31", "23:59"));
 }

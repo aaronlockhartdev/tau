@@ -6,37 +6,21 @@ use jiff::Timestamp;
 use jiff::fmt::strtime;
 use jiff::tz::TimeZone;
 
-/// Format `now` in `tz` as "YYYY-MM-DD HH:MM" (jiff). Shared by the local
-/// production path and the fixed-zone (UTC) test path.
-pub(crate) fn format_in(tz: TimeZone, now: Timestamp) -> String {
-    let zoned = now.to_zoned(tz);
-    // A fixed "%Y-%m-%d %H:%M" spec cannot fail for a valid instant; the
+/// The entry's local stamp in `tz`: `(date, time)` as `("YYYY-MM-DD",
+/// "HH:MM")` (jiff). The zone parameter is a test seam — production calls
+/// [`entry_stamp`].
+pub(crate) fn entry_stamp_in(tz: TimeZone, ts: Timestamp) -> (String, String) {
+    let zoned = ts.to_zoned(tz);
+    // Fixed "%Y-%m-%d" / "%H:%M" specs cannot fail for a valid instant; the
     // fallback keeps this panic-free (AGENTS.md: no unwrap in production).
-    strtime::format("%Y-%m-%d %H:%M", &zoned).unwrap_or_else(|_| "unknown".to_owned())
+    let date = strtime::format("%Y-%m-%d", &zoned).unwrap_or_else(|_| "unknown".to_owned());
+    let time = strtime::format("%H:%M", &zoned).unwrap_or_else(|_| "--:--".to_owned());
+    (date, time)
 }
 
-/// The current local date/time as "YYYY-MM-DD HH:MM" — what the Observer and
-/// Reflector are told (ticket #183), so observations are stamped with the real
-/// date rather than a hallucinated one.
-#[must_use]
-pub fn format_local_datetime(now: Timestamp) -> String {
-    format_in(TimeZone::system(), now)
-}
-
-/// The line prepended to an Observer/Reflector user message (ticket #183).
-#[must_use]
-pub fn datetime_preamble(now: Timestamp) -> String {
-    format!(
-        "Current date and time (local): {}\n\n",
-        format_local_datetime(now)
-    )
-}
-
-/// The dated user message: [`datetime_preamble`] over the raw content. Used at
-/// every Observer/Reflector call site.
-#[must_use]
-pub fn dated_user_content(base: &str, now: Timestamp) -> String {
-    let mut out = datetime_preamble(now);
-    out.push_str(base);
-    out
+/// The entry's local `(date, time)` stamp (system zone) — what
+/// [`transcript`](super::super::om_integration) puts on each line and date
+/// rollover (ticket #196).
+pub(crate) fn entry_stamp(ts: Timestamp) -> (String, String) {
+    entry_stamp_in(TimeZone::system(), ts)
 }

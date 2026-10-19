@@ -288,14 +288,28 @@ fn entry_text(entry: &Entry) -> String {
     out
 }
 
+/// The transcript the Observer is shown: one line per entry, each stamped with
+/// the entry's own local time, a `Date:` header when the local date rolls over
+/// (ticket #196) — the observer copies these stamps into its observations
+/// instead of guessing times.
 fn transcript(entries: &[Entry]) -> String {
     let mut out = String::new();
+    let mut date: Option<String> = None;
     for entry in entries {
         let text = entry_text(entry);
         if text.trim().is_empty() {
             continue;
         }
-        let _ = writeln!(out, "[{}] {}", entry.kind, text);
+        let ts = jiff::Timestamp::from_second(
+            i64::try_from(entry.timestamp / 1000).unwrap_or(0i64), // epoch seconds always fit
+        )
+        .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+        let (entry_date, entry_time) = crate::om::entry_stamp(ts);
+        if date.as_deref() != Some(entry_date.as_str()) {
+            let _ = writeln!(out, "Date: {entry_date}");
+            date = Some(entry_date);
+        }
+        let _ = writeln!(out, "({entry_time}) [{kind}] {text}", kind = entry.kind);
     }
     out
 }

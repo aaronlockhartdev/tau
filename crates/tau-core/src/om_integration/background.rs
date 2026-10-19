@@ -7,7 +7,7 @@
 use std::sync::{Arc, Mutex};
 
 use crate::om::{
-    OmConfig, dated_user_content, generate_group_id, observer_system_prompt, parse_observer_output,
+    OmConfig, generate_group_id, observer_system_prompt, parse_observer_output,
     wrap_in_observation_group,
 };
 use crate::om_integration::{BufferedChunk, OmState};
@@ -81,7 +81,7 @@ pub(crate) async fn buffer_cycle(
         Some(system.as_str()),
         vec![InputEntry::Message(InputMessage {
             role: "user".into(),
-            content: dated_user_content(&super::transcript(&candidates), jiff::Timestamp::now()),
+            content: super::transcript(&candidates),
         })],
     );
     let result =

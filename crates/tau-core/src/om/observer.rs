@@ -44,7 +44,12 @@ exists) is authoritative. If a later step re-checks the same topic, the
 verified fact stands unless new evidence contradicts it.
 
 TEMPORAL ANCHORING:
-Each observation carries the (HH:MM) time it was made - ALWAYS include it.
+The transcript you are given is time-stamped: each line starts with the (HH:MM)
+time the entry was made, and a "Date: YYYY-MM-DD" header marks the day. Use
+THOSE timestamps: an observation's (HH:MM) is the stamp of the transcript line
+it came from, and the "Date:" headers in your output come from the transcript.
+Never invent a time; if a line has no stamp, omit the (HH:MM) for that fact.
+
 Only add a "(meaning DATE)" / "(estimated DATE)" suffix when the statement
 references a specific, different date you can resolve to an actual date
 ("tomorrow", "next week", "in March"). Do NOT add a date for present-moment
@@ -82,12 +87,12 @@ Group related observations (like tool sequences) by indenting:
 Group observations by date, then list each with 24-hour time.
 
 <observations>
-Date: Dec 4, 2025
+Date: 2025-12-04
 * 🔴 (14:30) User prefers direct answers
 * 🔴 (14:31) Working on feature X
 * 🟡 (14:32) User might prefer dark mode
 
-Date: Dec 5, 2025
+Date: 2025-12-05
 * 🔴 (09:15) Continued work on feature X
 </observations>
 
