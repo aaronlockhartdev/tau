@@ -151,11 +151,16 @@ impl Supervisor {
         // The declared target (a `parent_notify` hint) rides the observed
         // rest's wake as the badge — `None` when the child declared none.
         let declared_waiting = child.take_declared_waiting();
+        // A `parent_notify(done: true)` declaration is sufficient evidence
+        // of completion on its own: the child committed to a result, so
+        // the observed rest is `Done` whether or not the plan file is
+        // complete (issue #194).
+        let declared_output = child.take_declared_output();
         let state = if crate::gate::is_question(&final_text) {
             ChildState::Awaiting
-        } else if self.child_plan(child).complete() {
+        } else if self.child_plan(child).complete() || declared_output.is_some() {
             ChildState::Done {
-                output: child.take_declared_output(),
+                output: declared_output,
             }
         } else {
             ChildState::Idle {

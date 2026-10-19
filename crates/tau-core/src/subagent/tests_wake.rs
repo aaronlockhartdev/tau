@@ -272,3 +272,60 @@ async fn a_done_rest_wakes_regardless_of_origin() {
         "a done rest wakes the parent regardless of origin: {wakes:?}"
     );
 }
+
+/// A child that declares `done` via `parent_notify` wakes the parent even
+/// when its plan file is not complete — the declaration is sufficient
+/// evidence of completion (issue #194: the declared output was lost and
+/// the state settled to `Idle`, which suppresses the wake for
+/// message-origin rests).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_declared_done_wakes_without_plan_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sup, bridge, _factory, _parent) = harness_full(
+        dir.path(),
+        vec![sse("spawning", &[])],
+        vec![vec![
+            sse("kicking off", &[]),
+            sse(
+                "",
+                &[notify_call(
+                    "n1",
+                    "finished the work",
+                    true,
+                    Some(json!({ "result": "ok" })),
+                    None,
+                )],
+            ),
+            sse("", &[]),
+        ]],
+        vec![],
+        SubAgents::default(),
+    );
+    let s = sup
+        .spawn("general", "go", Some(ContextMode::Fresh), "c0")
+        .unwrap();
+    // The spawn-origin rest (idle): informs the parent.
+    wait_for(|| {
+        matches!(
+            sup.state_info(&s.handle).unwrap().state,
+            ChildState::Idle { .. }
+        )
+    });
+    // The direct message resumes the child into its done declaration.
+    // No plan file is written — the declaration alone must suffice.
+    sup.message(&s.handle, Some("finish".into()), Lane::Steering)
+        .unwrap();
+    let info = wait_for_done(&sup, &s.handle);
+    assert!(
+        matches!(info.state, ChildState::Done { output: Some(_) }),
+        "the declared done carries the output even without a plan file"
+    );
+    // The message-origin done woke the parent with its payload.
+    let wakes = bridge.wakes.lock().unwrap();
+    assert!(
+        wakes.iter().any(|w| w.kind == WakeKind::Done
+            && w.child == s.session_id
+            && w.output == Some(json!({ "result": "ok" }))),
+        "a declared done wakes the parent regardless of plan state: {wakes:?}"
+    );
+}
