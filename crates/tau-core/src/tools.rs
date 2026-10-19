@@ -61,6 +61,7 @@ impl ToolResult {
 
 /// The model-facing definitions of the four core tools.
 #[must_use]
+#[allow(clippy::too_many_lines)] // the tool table is data, not logic
 pub fn tool_specs() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -68,15 +69,17 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             name: "read".into(),
             description: "Read a file. Text files come back as hash-anchored lines: \
                  each line is 'HASH│content' (HASH = 4 letters). The hash is the anchor \
-                 you pass to edit. Optional offset (1-based) and limit page long files. \
-                 Image files (png, jpg, gif, webp, bmp, tiff) come back as an image you \
-                 can see on vision-capable endpoints — use read to view an image."
+                 you pass to edit. Optional offset and limit page long files: offset is a \
+                 1-based line number, or the anchor of the last line you were shown (the \
+                 read's truncation hint tells you which). Output is capped at 1 MiB per \
+                 page. Image files (png, jpg, gif, webp, bmp, tiff) come back as an image \
+                 you can see on vision-capable endpoints — use read to view an image."
                 .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
-                    "offset": {"type": "integer", "minimum": 1},
+                    "offset": {"type": "string", "description": "1-based line number, or a 4-letter anchor of a line in this file"},
                     "limit": {"type": "integer", "minimum": 1}
                 },
                 "required": ["path"]
@@ -101,16 +104,19 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             description: "Replace one or more line ranges of a file in one call. \
                  Each item in the edits array has from/to, the 4-letter hash anchors \
                  copied from read output (the 4 letters before │), bare, and content. \
-                 Stale or ambiguous anchors are rejected — re-read the file for \
-                 fresh anchors. Pass empty content to delete a range. content is raw \
-                 file content, unanchored — never paste read output (with its HASH│ \
-                 prefixes) into it. Ranges in one call must be disjoint, and a file \
-                 must appear in at most one edit call per turn."
+                 Stale anchors are rejected with the current range shown with fresh \
+                 anchors — retry with those, no re-read needed. A range whose bounds \
+                 resolve in the wrong order is swapped (with a warning); pasted HASH│ \
+                 prefixes in content are stripped (with a warning). Set strict to true \
+                 to reject those inputs instead of auto-fixing. Pass empty content to \
+                 delete a range. Ranges in one call must be disjoint, and a file must \
+                 appear in at most one edit call per turn."
                 .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
+                    "strict": {"type": "boolean", "default": false, "description": "reject auto-fixable inputs (reversed ranges, pasted anchors) instead of fixing them"},
                     "edits": {
                         "type": "array",
                         "minItems": 1,
@@ -258,6 +264,7 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
     v
 }
 
+mod edit_diff;
 mod impls;
 pub mod surface;
 

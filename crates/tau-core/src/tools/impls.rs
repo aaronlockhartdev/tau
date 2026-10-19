@@ -14,10 +14,19 @@ fn resolve(cwd: &Path, path: &str) -> PathBuf {
     }
 }
 
-pub(super) async fn read(
+/// The 1 MiB output cap on a `read` (item 8): a page that would exceed it
+/// is cut at the last whole row that fits, and the pagination hint carries
+/// the cap so the model knows why the page is short.
+const READ_MAX_BYTES: usize = 1024 * 1024;
+/// A line over 100 KiB is not shown (and not served): its anchor alone would
+/// not fit the model's useful context; the hint says how to inspect it.
+const READ_MAX_LINE_BYTES: usize = 100 * 1024;
+
+pub(super) fn read(
     cwd: &Path,
     args: &serde_json::Value,
     image_max_bytes: Option<u64>,
+    registry: Option<&mut hashline::registry::Registry>,
 ) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
         return ToolResult::err("read: missing \"path\"".into());
@@ -49,8 +58,8 @@ pub(super) async fn read(
             data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
         }));
     }
-    let content = match std::str::from_utf8(&bytes) {
-        Ok(c) => hashline::normalize(c),
+    let raw = match std::str::from_utf8(&bytes) {
+        Ok(c) => c.to_owned(),
         // The same diagnostic `read_to_string` produced: the text path stays
         // byte-for-byte (#34).
         Err(_) => {
@@ -63,39 +72,159 @@ pub(super) async fn read(
             );
         }
     };
-    let rows = match hashline::render(&content) {
-        Ok(rows) => rows,
-        Err(e) => return ToolResult::err(format!("read: {e}").into()),
+    let content = hashline::normalize(&raw);
+    let path_str = path.display().to_string();
+    let outcome = match read_page(&path_str, &content, &raw, args, registry) {
+        Ok(o) => o,
+        Err(e) => return ToolResult::err(e.into()),
     };
-    let offset = usize::try_from(
-        args.get("offset")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(1)
-            .max(1),
-    )
-    .expect("tool offset fits in usize on the supported 64-bit targets");
+    ToolResult::ok(outcome.text.into())
+}
+
+/// The text path of `read`: allocate the file's anchors (the registry
+/// reclaims LRU-cold files past the cap, item 2), resolve an anchor or
+/// numeric offset, page with a byte cap, and serve the shown rows
+/// (item 8: the pagination hint offers the last shown anchor as the next
+/// offset; >100 KiB lines are marked and not served).
+fn read_page(
+    path: &str,
+    content: &str,
+    _raw: &str,
+    args: &serde_json::Value,
+    mut registry: Option<&mut hashline::registry::Registry>,
+) -> Result<ReadPage, String> {
+    let offset_arg = args
+        .get("offset")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
     let limit = args
         .get("limit")
         .and_then(serde_json::Value::as_u64)
         .and_then(|v| usize::try_from(v).ok());
+
+    let (rows, reclaim) = match registry.as_deref_mut() {
+        Some(reg) => {
+            let (hashes, reclaim) = reg
+                .allocate(path, content)
+                .map_err(|e| format!("read: {e}"))?;
+            (hashes, reclaim)
+        }
+        None => (
+            hashline::line_hashes(content).map_err(|e| format!("read: {e}"))?,
+            None,
+        ),
+    };
     let total = rows.len();
-    let shown: Vec<String> = rows
-        .iter()
-        .skip(offset - 1)
-        .take(limit.unwrap_or(usize::MAX))
-        .cloned()
-        .collect();
-    let mut out = shown.join("\n");
-    if offset - 1 + shown.len() < total {
+
+    let start_line = match &offset_arg {
+        Some(s) if s.chars().all(|c| c.is_ascii_digit()) => {
+            s.parse::<usize>().map_or(1, |n| n.max(1))
+        }
+        Some(anchor) => match registry.as_deref_mut() {
+            Some(reg) => {
+                let zero = reg.resolve_offset(anchor, path, &rows)?;
+                zero + 1
+            }
+            None => (0..rows.len())
+                .find(|&i| rows[i] == *anchor)
+                .map_or(1, |i| i + 1),
+        },
+        None => 1,
+    };
+
+    if start_line > total {
+        return Ok(ReadPage {
+            text: format!(
+                "Offset {start_line} is beyond end of file ({total} lines total). Use offset=1 to read from the start, or offset={total} to read the last line."
+            ),
+        });
+    }
+
+    let lines: Vec<String> = content.split('\n').map(str::to_owned).collect();
+    let end_line = limit.map_or(total, |l| (start_line - 1 + l).min(total));
+    let selected = &rows[start_line - 1..end_line];
+    let shown_lines = &lines[start_line - 1..];
+
+    let (out, served, oversized, out_bytes) = render_page(path, selected, shown_lines, start_line);
+    let shown = out.len();
+    if let Some(reg) = registry {
+        let rows_to_serve = served.clone();
+        reg.serve(path, &rows_to_serve);
+    }
+
+    let mut text = out.join("\n");
+    let end_display = start_line + shown.saturating_sub(1);
+    if shown == 0 {
+        // The byte cap cut the page before any row fit.
+        let _ = write!(text, "\n… truncated (output cap 1 MiB)");
+    } else if end_display < total {
+        let last_anchor = served.last().map(|(h, _)| h.as_str()).unwrap_or_default();
         let _ = write!(
-            out,
-            "\n… truncated (showing lines {}–{} of {})",
-            offset,
-            offset - 1 + shown.len(),
-            total
+            text,
+            "\n… truncated (showing lines {start_line}–{end_display} of {total} — {out_bytes} bytes). Use offset={last_anchor} to continue.",
         );
     }
-    ToolResult::ok(out.into())
+    if !oversized.is_empty() {
+        let listed: Vec<String> = oversized
+            .iter()
+            .take(10)
+            .map(std::string::ToString::to_string)
+            .collect();
+        let _ = write!(
+            text,
+            "\n[{} oversized line(s) over 100 KiB not shown: lines {}]",
+            oversized.len(),
+            listed.join(", ")
+        );
+    }
+    let reclaim = reclaim.or(None);
+    if let Some(w) = reclaim {
+        text = format!("{w}\n{text}");
+    }
+    Ok(ReadPage { text })
+}
+/// The output of a rendered read page: the model-facing rows, the served
+/// (anchor, checksum) baseline, the oversized line numbers, and the byte
+/// count of the rendered output.
+type PageRender = (Vec<String>, Vec<(String, String)>, Vec<usize>, usize);
+
+/// Render a page of `rows` (the file's anchors for the selected range) into
+/// the model-facing lines: `HASH│content` per row, in file order. Rows over
+/// [`READ_MAX_LINE_BYTES`] are not shown (their anchor alone would burn
+/// context); they are listed in `oversized` so the caller can hint at them.
+/// `served` is the (anchor, line checksum) pair per *shown* row — the
+/// integrity baseline `read` registers (item 1). The 1 MiB page cap (item 8)
+/// drops rows from the end once the accumulated output would exceed it.
+fn render_page(
+    _path: &str,
+    selected: &[String],
+    lines: &[String],
+    start_line: usize,
+) -> PageRender {
+    let mut out: Vec<String> = Vec::new();
+    let mut served: Vec<(String, String)> = Vec::new();
+    let mut oversized: Vec<usize> = Vec::new();
+    let mut out_bytes = 0usize;
+    for (i, pair) in selected.iter().zip(lines.iter()).enumerate() {
+        let (hash, line) = pair;
+        if line.len() > READ_MAX_LINE_BYTES {
+            oversized.push(start_line + i);
+            continue;
+        }
+        let row = format!("{}{}{line}", hash, hashline::SEP);
+        if out_bytes.saturating_add(row.len()) > READ_MAX_BYTES {
+            break;
+        }
+        out_bytes += row.len();
+        out.push(row);
+        served.push((hash.clone(), hashline::line_checksum(line)));
+    }
+    (out, served, oversized, out_bytes)
+}
+/// A `read` page: the model-facing text.
+#[derive(Debug)]
+pub(super) struct ReadPage {
+    pub text: String,
 }
 
 /// The image type by magic bytes (#34): the extension is not authoritative —
@@ -197,17 +326,16 @@ fn write_atomic_inner(
     }
     result
 }
-
-pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
-    const CAP: usize = 200;
+/// Parse and validate the `path` + `edits` arguments of an `edit` call.
+fn parse_edit_args(args: &serde_json::Value) -> Result<(String, Vec<hashline::Edit>), String> {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
-        return ToolResult::err("edit: missing \"path\"".into());
+        return Err("edit: missing \"path\"".to_owned());
     };
     let Some(edits_json) = args.get("edits").and_then(|v| v.as_array()) else {
-        return ToolResult::err("edit: \"edits\" array is required".into());
+        return Err("edit: \"edits\" array is required".to_owned());
     };
     if edits_json.is_empty() {
-        return ToolResult::err("edit: \"edits\" must contain at least one edit".into());
+        return Err("edit: \"edits\" must contain at least one edit".to_owned());
     }
     let mut edits = Vec::with_capacity(edits_json.len());
     for (i, item) in edits_json.iter().enumerate() {
@@ -216,9 +344,9 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
             item.get("to").and_then(|v| v.as_str()),
             item.get("content").and_then(|v| v.as_str()),
         ) else {
-            return ToolResult::err(
-                format!("edit: edits[{i}] requires \"from\", \"to\", and \"content\"").into(),
-            );
+            return Err(format!(
+                "edit: edits[{i}] requires \"from\", \"to\", and \"content\""
+            ));
         };
         edits.push(hashline::Edit {
             from: from.to_owned(),
@@ -226,77 +354,133 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
             content: content.to_owned(),
         });
     }
-    let path = resolve(cwd, path);
-    let original = match std::fs::read_to_string(&path) {
-        Ok(c) => hashline::normalize(&c),
+    Ok((path.to_owned(), edits))
+}
+
+pub(super) fn edit(
+    cwd: &Path,
+    args: &serde_json::Value,
+    mut registry: Option<&mut hashline::registry::Registry>,
+    strict: bool,
+) -> ToolResult {
+    let (path, edits) = match parse_edit_args(args) {
+        Ok(v) => v,
+        Err(e) => return ToolResult::err(e.into()),
+    };
+    let path = resolve(cwd, &path);
+    let path_str = path.display().to_string();
+    // (3) Drift re-read at commit: the file is read twice — once to plan,
+    // once to commit — and a change between the two aborts the write.
+    let raw = match std::fs::read(&path) {
+        Ok(b) => match std::str::from_utf8(&b) {
+            Ok(c) => c.to_owned(),
+            Err(_) => {
+                return ToolResult::err(
+                    format!(
+                        "edit: cannot read {}: stream did not contain valid UTF-8",
+                        path.display()
+                    )
+                    .into(),
+                );
+            }
+        },
         Err(e) => {
             return ToolResult::err(format!("edit: cannot read {}: {e}", path.display()).into());
         }
     };
-    let edited = match hashline::apply_edits(&original, &edits) {
-        Ok(e) => e,
+    let original = hashline::normalize(&raw);
+    let ending = hashline::line_endings::detect(&raw);
+    let mut opts = hashline::PlanOptions {
+        strict,
+        ..Default::default()
+    };
+    if let Some(reg) = registry.as_ref() {
+        if let Some(served) = reg.served_map(&path_str) {
+            opts.served = Some(served.clone());
+        }
+        // Resolve against the registry's file anchors — the single source of
+        // truth — not a re-derived `line_hashes` (which would disagree).
+        if let Some(anchors) = reg.anchors_for(&path_str) {
+            opts.hashes = Some(anchors.to_vec());
+        }
+    }
+    let planned = match hashline::plan_edits(&original, ending, &edits, &opts) {
+        Ok(p) => p,
+        // A stale range: adopt the diagnostic's fresh anchors in place so the
+        // model can retry with them without a re-read.
+        Err(hashline::EditError::RangeStale {
+            fresh, ref rows, ..
+        }) => {
+            if let Some(reg) = registry.as_mut() {
+                reg.adopt(&path_str, &fresh);
+            }
+            // The full diagnostic (with the fresh anchor rows inline) plus a
+            // note that the anchors are now registered for a no-read retry.
+            let msg = format!(
+                "edit: [E_RANGE_STALE] the range no longer matches what was shown; the file changed after the read. Current range with fresh anchors:\n\n{}\n\nThe fresh anchors above are now registered — retry the edit with them, no re-read needed.",
+                rows.join("\n")
+            );
+            return ToolResult::err(msg.into());
+        }
         Err(e) => return ToolResult::err(format!("edit: {e}").into()),
     };
-    if let Err(e) = write_atomic(&path, &edited.content) {
+
+    // The drift re-read: the plan is only as good as the file it planned
+    // against. Re-read and compare the normalized content; a change means
+    // the anchors (and the integrity baseline) are stale — abort, write
+    // nothing.
+    let raw2 = match std::fs::read(&path) {
+        Ok(b) => match std::str::from_utf8(&b) {
+            Ok(c) => c.to_owned(),
+            Err(_) => {
+                return ToolResult::err(
+                    format!(
+                        "edit: cannot re-read {}: not valid UTF-8; the file changed between reads — aborted, nothing written",
+                        path.display()
+                    )
+                    .into(),
+                );
+            }
+        },
+        Err(_) => {
+            return ToolResult::err(
+                format!(
+                    "edit: [E_OP_ABORTED] the file at {} was deleted or became unreadable between the plan and the write; nothing was written",
+                    path.display()
+                )
+                .into(),
+            );
+        }
+    };
+    if hashline::normalize(&raw2) != original {
+        return ToolResult::err(
+            format!(
+                "edit: [E_OP_ABORTED] the file at {} changed between planning and writing the edit; nothing was written. Re-read the file for fresh anchors.",
+                path.display()
+            )
+            .into(),
+        );
+    }
+
+    let content = hashline::assemble(&planned);
+    if let Err(e) = write_atomic(&path, &content) {
         return ToolResult::err(format!("edit: cannot write {}: {e}", path.display()).into());
     }
-    // Bounded before/after diff (the reference returns the changed region,
-    // not the whole file): removed lines, added lines with their fresh
-    // anchors, a little unchanged context — capped so a huge edit stays small.
-    if edited.first_changed > edited.last_changed {
-        return ToolResult::ok(format!("edited {} (no change)", path.display()).into());
+    // The write succeeded: the registry now owns the new anchor set, and the
+    // shown baseline is refreshed to what the model was just told.
+    if let Some(reg) = registry {
+        reg.refresh_owned(&path_str, &hashline::normalize(&content), &planned.hashes);
+        let served_rows: Vec<(String, String)> = planned
+            .hashes
+            .iter()
+            .zip(planned.lines.iter())
+            .map(|(h, l)| (h.clone(), hashline::line_checksum(l)))
+            .collect();
+        reg.serve(&path_str, &served_rows);
     }
-    let new_lines: Vec<String> = edited.content.lines().map(str::to_owned).collect();
-    let total = new_lines.len();
-    // The changed region in the new file, 0-based.
-    let lo = edited.first_changed.saturating_sub(1);
-    let hi = edited.last_changed.min(total);
-    // Change lines: removed (old) then added (new, carrying the fresh anchor).
-    let mut change: Vec<String> = Vec::with_capacity(edited.removed_lines.len() + (hi - lo));
-    for line in &edited.removed_lines {
-        change.push(format!("-{line}"));
-    }
-    for (line, hash) in new_lines[lo..hi].iter().zip(edited.hashes[lo..hi].iter()) {
-        change.push(format!("+ {hash} {line}"));
-    }
-    // Cap the body at ~200 lines; a larger change shows its head + a count.
-    let mut body: Vec<String> = Vec::new();
-    let mut notice: Option<String> = None;
-    if change.len() > CAP {
-        body.extend(change.iter().take(CAP).cloned());
-        notice = Some(format!("… {} more lines changed", change.len() - CAP));
-    } else {
-        body.extend(change);
-        // A little unchanged context for orientation, kept within the cap.
-        let budget = CAP - body.len();
-        let mut ctx = Vec::new();
-        for line in new_lines.iter().take(lo).rev().take(2) {
-            ctx.push(format!(" {line}"));
-        }
-        for line in new_lines.iter().skip(hi).take(2) {
-            if ctx.len() >= 2 {
-                break;
-            }
-            ctx.push(format!(" {line}"));
-        }
-        body.extend(ctx.into_iter().take(budget));
-    }
-    let summary = format!(
-        "edited {} (lines {}–{} of {})",
-        path.display(),
-        edited.first_changed,
-        edited.last_changed,
-        total
-    );
-    let mut out = summary + "\n";
-    out.push_str(&body.join("\n"));
-    if let Some(n) = notice {
-        out.push('\n');
-        out.push_str(&n);
-    }
-    ToolResult::ok(out.into())
-}
 
+    ToolResult::ok(super::edit_diff::diff_output(&path_str, &original, &planned).into())
+}
 /// A sane PATH for a bash child (#172): the inherited PATH (if any) plus the
 /// common per-user tool dirs, de-duplicated. The app is launched from a GUI,
 /// so its ambient PATH is a minimal launchd set that misses `~/.cargo/bin`,

@@ -86,9 +86,38 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
             None => ToolResult::err("parent_notify: not available in a top-level session".into()),
         },
         // Core tools are stateless: they reach only the cwd.
-        "read" => read(ctx.cwd, &call.args, ctx.image_max_bytes).await,
-        "write" => write(ctx.cwd, &call.args).await,
-        "edit" => edit(ctx.cwd, &call.args).await,
+        // Core tools: the read/edit pair is stateful per session (the anchor
+        // registry, spec §5.4) — it borrows the session's registry for the
+        // call; write and bash are stateless.
+        "read" => {
+            let anchors = ctx.session.anchors();
+            let mut reg = anchors.lock().expect("anchor registry lock");
+            read(ctx.cwd, &call.args, ctx.image_max_bytes, Some(&mut *reg))
+        }
+        "write" => {
+            let path_arg = call.args.get("path").and_then(serde_json::Value::as_str);
+            let res = write(ctx.cwd, &call.args).await;
+            if res.ok
+                && let Some(path) = path_arg
+            {
+                // A write is a file drift: drop the served baseline so the
+                // next read re-anchors (item 3).
+                let anchors = ctx.session.anchors();
+                let mut reg = anchors.lock().expect("anchor registry lock");
+                reg.free(path);
+            }
+            res
+        }
+        "edit" => {
+            let strict = call
+                .args
+                .get("strict")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            let anchors = ctx.session.anchors();
+            let mut reg = anchors.lock().expect("anchor registry lock");
+            edit(ctx.cwd, &call.args, Some(&mut *reg), strict)
+        }
         "bash" => bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag()).await,
         other => ToolResult::err(format!("unknown tool: {other}").into()),
     }

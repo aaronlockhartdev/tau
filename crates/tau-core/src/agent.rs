@@ -171,8 +171,12 @@ pub(crate) struct Inner {
     /// The child-side link (ticket #23): present on child sessions only;
     /// routes `parent_notify` to the child's supervisor.
     child: Option<Arc<crate::subagent::ChildLink>>,
+    /// The session's anchor registry (spec §5.4, the #207 port remainder):
+    /// the per-session owner of the read/edit anchor state — which anchors
+    /// the session minted, and which it showed the model. In-memory for the
+    /// session's lifetime; shared across tool calls via Arc.
+    anchors: Arc<std::sync::Mutex<crate::hashline::registry::Registry>>,
 }
-
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
 /// (or a parent agent) drives it with `send` + `process`; the kill flag is
 /// the only cross-thread surface (a force from the GUI's thread).
@@ -246,6 +250,9 @@ impl AgentSession {
                 plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
+                anchors: Arc::new(std::sync::Mutex::new(
+                    crate::hashline::registry::Registry::new(),
+                )),
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -318,6 +325,16 @@ impl AgentSession {
                 .unwrap_or_default();
             crate::om_integration::recall(&mut inner.store, &record, args)
         }
+    }
+
+    /// The session's anchor registry handle (spec §5.4): the tool dispatch
+    /// locks it per read/edit call.
+    pub(crate) fn anchors(&self) -> Arc<std::sync::Mutex<crate::hashline::registry::Registry>> {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .anchors
+            .clone()
     }
 }
 mod config;
