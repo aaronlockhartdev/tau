@@ -36,8 +36,9 @@ impl ChildLink {
     /// A message to this child, routed through the parent's supervisor
     /// (the GUI's send to a child, ADR-0001): a running child takes it
     /// on its lane; a non-running one is resumed with it.
-    pub fn send(&self, text: String, lane: Lane) -> Result<String, String> {
-        self.supervisor.message(&self.handle, Some(text), lane)
+    pub fn send(&self, text: String, lane: Lane, source: Option<String>) -> Result<String, String> {
+        self.supervisor
+            .message(&self.handle, Some(text), lane, source)
     }
 
     /// Stop this child through the parent's supervisor (the GUI's stop):

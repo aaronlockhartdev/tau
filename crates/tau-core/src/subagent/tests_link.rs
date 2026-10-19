@@ -4,15 +4,16 @@
 //! format) resolves unambiguously.
 
 use super::testkit::{CannedFactory, ScriptedProvider, TestBridge, TestDriver, sse, wait_for};
-use super::{ContextMode, SubagentBridge, Supervisor, SupervisorParams};
+use super::{ContextMode, SubagentBridge, Supervisor, SupervisorParams, route_parent};
 use crate::agent::{AgentSession, Lane, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
 use crate::harness::SessionRole;
 use crate::session::SessionStore;
+use crate::tools;
+use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-
 /// A supervisor + attached parent whose session id is `parent_session`
 /// (the testkit's harness fixes it to "parent"; the hyphenated-id tests
 /// need the choice).
@@ -95,9 +96,11 @@ async fn a_handle_round_trips_with_a_hyphenated_parent_id() {
         Some(spawned.session_id.as_str())
     );
 
-    // Route a message through the link: it lands in the child's session
-    // (a steering round on its turn, or a resume — routing either way).
-    let out = link.send("hello".into(), Lane::Steering).unwrap();
+    // Route a message through the link with no sender stamp: it lands in the
+    // child's session (a steering round on its turn, or a resume — routing
+    // either way) and the entry carries no source (the unattributed default,
+    // distinct from a stamped routed send).
+    let out = link.send("hello".into(), Lane::Steering, None).unwrap();
     assert!(!out.is_empty(), "the link routed the message: {out}");
     wait_for(|| {
         let mut store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
@@ -110,6 +113,89 @@ async fn a_handle_round_trips_with_a_hyphenated_parent_id() {
                     e.kind == crate::agent::KIND_USER
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("hello")
+                        && e.payload.get("source").is_none()
+                })
+    });
+}
+
+/// #187: a `subagent_message` from the parent model stamps the child's
+/// entry with the parent's session id as the sender — the child's
+/// transcript attributes the steering to its parent, not to the user.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_subagent_message_stamps_the_parent_as_the_sender() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sup, _bridge, _parent) = sup_with_parent(dir.path(), "parent");
+
+    let spawned = sup
+        .spawn("general", "work", Some(ContextMode::Fresh), "c0")
+        .unwrap();
+
+    // While the child's first turn is in flight, the parent model messages
+    // it: the message queues on the child's lane, stamped with the parent.
+    let out = route_parent(
+        &sup,
+        &tools::ToolCall {
+            id: "c1".into(),
+            name: "subagent_message".into(),
+            args: json!({ "name": spawned.name, "text": "focus on the edge cases" }),
+        },
+    )
+    .unwrap();
+    assert!(out.contains(&spawned.name), "{out}");
+
+    // The entry settles on the child's file attributed to the parent.
+    wait_for(|| {
+        let mut store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        store.open().is_ok()
+            && store
+                .entries_range(0, usize::MAX)
+                .unwrap_or_default()
+                .iter()
+                .any(|e| {
+                    e.kind == crate::agent::KIND_USER
+                        && e.payload.get("text").and_then(serde_json::Value::as_str)
+                            == Some("focus on the edge cases")
+                        && e.payload.get("source") == Some(&json!("parent"))
+                })
+    });
+}
+
+/// #187: the GUI's send to a child (the `MessageSend` child arm) stamps the
+/// child's entry with the user as the sender — the routing boundary carries
+/// the sender through to storage.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_gui_send_to_a_child_stamps_the_user_as_the_sender() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sup, _bridge, _parent) = sup_with_parent(dir.path(), "parent");
+
+    let spawned = sup
+        .spawn("general", "work", Some(ContextMode::Fresh), "c0")
+        .unwrap();
+
+    let link = spawned
+        .agent
+        .child_link()
+        .expect("the child carries its link");
+
+    // The GUI stamps the user (the human is the sender).
+    let out = link
+        .send("steer me".into(), Lane::Steering, Some("user".into()))
+        .unwrap();
+    assert!(!out.is_empty(), "the link routed the message: {out}");
+
+    // The entry settles on the child's file attributed to the user.
+    wait_for(|| {
+        let mut store = SessionStore::for_workspace(dir.path(), &spawned.session_id);
+        store.open().is_ok()
+            && store
+                .entries_range(0, usize::MAX)
+                .unwrap_or_default()
+                .iter()
+                .any(|e| {
+                    e.kind == crate::agent::KIND_USER
+                        && e.payload.get("text").and_then(serde_json::Value::as_str)
+                            == Some("steer me")
+                        && e.payload.get("source") == Some(&json!("user"))
                 })
     });
 }

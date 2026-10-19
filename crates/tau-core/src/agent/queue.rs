@@ -7,7 +7,13 @@ impl AgentSession {
     /// prior stop (ticket #23) — a stop means "interrupt current work", not
     /// "never work again"; a Force lane also kills the stream and takes the
     /// head of the queue.
-    fn enqueue(&self, text: impl Into<String>, lane: Lane, skill: Option<(String, String)>) {
+    fn enqueue(
+        &self,
+        text: impl Into<String>,
+        lane: Lane,
+        skill: Option<(String, String)>,
+        source: Option<String>,
+    ) {
         let mut inner = self
             .inner
             .lock()
@@ -16,7 +22,7 @@ impl AgentSession {
         let msg = Queued {
             text: text.into(),
             lane,
-            source: None,
+            source,
             skill,
             entry_id: None,
         };
@@ -32,7 +38,14 @@ impl AgentSession {
     /// in-flight stream and jumps to the head of the queue; everything else
     /// keeps its position.
     pub fn send(&self, text: impl Into<String>, lane: Lane) {
-        self.enqueue(text, lane, None);
+        self.send_as(text, lane, None);
+    }
+
+    /// A send with a sender stamp (ticket #187): the `UserPayload.source`
+    /// the entry carries, for a message that arrived through a routing
+    /// boundary (the GUI's child send, the parent's `subagent_message`).
+    pub(crate) fn send_as(&self, text: impl Into<String>, lane: Lane, source: Option<String>) {
+        self.enqueue(text, lane, None, source);
     }
 
     /// A `/skill:` invocation expanded at the app's `message_send` boundary
@@ -45,7 +58,12 @@ impl AgentSession {
         name: &str,
         location: &str,
     ) {
-        self.enqueue(text, lane, Some((name.to_owned(), location.to_owned())));
+        self.enqueue(
+            text,
+            lane,
+            Some((name.to_owned(), location.to_owned())),
+            None,
+        );
     }
 
     /// A child that reports while

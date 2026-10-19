@@ -17,6 +17,7 @@
     heightKey,
     sourceLabel = '',
     parentLabel = '',
+    parentId = '',
     turn = ''
   }: {
     entry: Entry;
@@ -24,6 +25,7 @@
     heightKey: string;
     sourceLabel?: string;
     parentLabel?: string;
+    parentId?: string;
     turn?: 'you' | 'agent' | '';
   } = $props();
 
@@ -62,7 +64,7 @@
     }
   });
 
-  const p = $derived(present(entry, { sourceLabel, parentLabel }));
+  const p = $derived(present(entry, { sourceLabel, parentLabel, parentId }));
 
 </script>
 

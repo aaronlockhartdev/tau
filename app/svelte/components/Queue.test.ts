@@ -84,6 +84,25 @@ describe('Queue', () => {
     expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 
+  it('a user-sourced item stays in the plain steering section', () => {
+    mockStore.sessions = {
+      s1: seedState(meta('s1'), {
+        over: {
+          pending: [
+            { text: 'steer', lane: 'steering', source: 'user' },
+            { text: 'report', lane: 'steering', source: 's1-2' }
+          ]
+        }
+      })
+    };
+    mockStore.current = 's1';
+    render(Queue);
+    // The human's send is deletable (a plain row); the sub-agent's is not.
+    expect(screen.getByText('steer')).toBeInTheDocument();
+    expect(screen.getByText('subagent reports')).toBeInTheDocument();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
+
   it('delete issues deleteQueueItem with the item text, lane and section index', async () => {
     mockStore.sessions = {
       s1: seedState(meta('s1'), {

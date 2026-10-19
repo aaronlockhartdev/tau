@@ -80,7 +80,7 @@ async fn the_caps() {
         "# Plan\n\n## Steps\n\n- [x] the work\n",
     )
     .unwrap();
-    sup.message(&first.handle, Some("finish".into()), Lane::Steering)
+    sup.message(&first.handle, Some("finish".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| {
         matches!(
@@ -409,7 +409,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         .unwrap();
     wait_for(|| driver.calls.load(Ordering::SeqCst) == 1);
     sup.stop(&spawned.handle, StoppedBy::User).unwrap();
-    sup.message(&spawned.handle, Some("go".into()), Lane::Steering)
+    sup.message(&spawned.handle, Some("go".into()), Lane::Steering, None)
         .unwrap();
     wait_for(|| driver.calls.load(Ordering::SeqCst) == 2);
     // One `notify_one` per in-flight drive: a drive not yet waiting
