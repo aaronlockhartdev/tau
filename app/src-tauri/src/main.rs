@@ -132,6 +132,7 @@ fn main() {
     }
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(CoreState(CoreBuilder::default_system().build()))
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "open-folder" {

@@ -23,6 +23,8 @@
   import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setCenterMode, pane, switchSession } from './lib/store.svelte';
   import { FileText, TriangleAlert } from '@lucide/svelte';
   import { isTauri } from './lib/protocol';
+  // #195: markdown links open externally instead of navigating the webview.
+  import { attachExternalLinkHandler } from './lib/externalLinks';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
   $effect(() => {
@@ -129,6 +131,7 @@
   }
   onMount(() => window.addEventListener('keydown', onKeydown));
   onDestroy(() => window.removeEventListener('keydown', onKeydown));
+  onDestroy(attachExternalLinkHandler());
   const cur = $derived(currentSession());
   const loading = $derived(store.loading);
   const error = $derived(store.error);

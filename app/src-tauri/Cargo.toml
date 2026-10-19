@@ -25,6 +25,9 @@ e2e = [
 [dependencies]
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
+# Opens external (http/https) links from rendered markdown in the system
+# browser (#195).
+tauri-plugin-opener = "2.7"
 # E2E/dogfooding only (the `e2e` feature; registered in main.rs for debug
 # builds): the agent's window into the UI
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot", rev = "79f837ab965debf800282343811b5909a537284d", optional = true }
