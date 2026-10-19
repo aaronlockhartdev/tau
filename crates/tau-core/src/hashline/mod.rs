@@ -14,6 +14,7 @@
 //! and a no-registry caller).
 
 pub mod line_endings;
+pub mod pin_store;
 pub mod registry;
 
 use std::collections::HashMap;

@@ -304,11 +304,11 @@ impl Registry {
         }
     }
 }
-
 /// In-order LCS over line checksums: the indices of old lines that match new
 /// lines in order. Uses a standard DP table — a changed line in the middle
-/// does not prevent later unchanged lines from being matched.
-fn match_anchors(prev_checksums: &[String], checksums: &[String]) -> Vec<Option<usize>> {
+/// does not prevent later unchanged lines from being matched. Shared with the
+/// pin store (`pin_store::reanchor`) so both re-anchor identically.
+pub(crate) fn match_anchors(prev_checksums: &[String], checksums: &[String]) -> Vec<Option<usize>> {
     let n = prev_checksums.len();
     let m = checksums.len();
     if n == 0 || m == 0 {
