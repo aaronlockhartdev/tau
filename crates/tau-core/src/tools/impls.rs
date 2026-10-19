@@ -416,8 +416,12 @@ pub(super) fn edit(
     };
     let original = hashline::normalize(&raw);
     let ending = hashline::line_endings::detect(&raw);
+    // Demotion is the default posture (#207 §5): apply the valid members of a
+    // batch, report the rest. Strict mode opts back into the atomic-reject
+    // contract (a bad member rejects the whole batch).
     let mut opts = hashline::PlanOptions {
         strict,
+        demote: !strict,
         ..Default::default()
     };
     if let Some(reg) = registry.as_ref() {

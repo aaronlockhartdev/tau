@@ -83,7 +83,7 @@ impl fmt::Display for TooManyLines {
 /// A stale or invalid anchor: not found, ambiguous, reversed, malformed,
 /// a stale range, a plan/commit drift, or an attempt to empty a file via
 /// edit.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditError {
     /// The anchor is not in the file's current anchor set.
     Stale {
@@ -337,8 +337,12 @@ pub struct PlanOptions {
     /// present (the registry path) this is the single source of truth; when
     /// absent (the pure path) it is re-derived with `line_hashes`.
     pub hashes: Option<Vec<String>>,
+    /// Per-member demotion (#207 §5): a batch that is not fully valid applies
+    /// the valid members and reports the failed ones, instead of rejecting the
+    /// whole batch. Off by default — the pure path and the strict/lenient
+    /// posture keep their atomic-reject contract.
+    pub demote: bool,
 }
-
 /// A planned (not yet written) edit batch: the resolved ranges, the new file
 /// lines and anchors, and the warnings the lenient auto-fixes produced. The
 /// tool layer commits it after a drift re-check ([`EditError::OpAborted`]).
@@ -359,6 +363,10 @@ pub struct Planned {
     pub removed_lines: Vec<String>,
     /// The resolved ranges (edit index, start, end) in document order.
     pub ranges: Vec<(usize, usize, usize)>,
+    /// Members a demote-mode plan skipped, in original order: the edit index
+    /// and the reason it was not applied (#207 §5). Empty in the non-demotion
+    /// path (a fully valid batch, or a whole-batch reject).
+    pub demoted: Vec<(usize, EditError)>,
 }
 
 /// The stale-range diagnostic: the range's rows with fresh anchors and the
@@ -427,11 +435,17 @@ fn lenient_fixes(
 ) -> Result<Vec<String>, EditError> {
     let mut warnings = Vec::new();
     for (i, edit) in edits.iter_mut().enumerate() {
-        // Reversed range: swap, with a warning the model can audit.
-        let (from_line, to_line) = (
-            resolve_anchor(hashes, &edit.from)?,
-            resolve_anchor(hashes, &edit.to)?,
-        );
+        // Reversed range: swap, with a warning the model can audit. In demote
+        // mode a member with an unresolvable anchor is left for the resolution
+        // phase to demote — no reversed check, no hard reject here.
+        let (from_line, to_line) = match (
+            resolve_anchor(hashes, &edit.from),
+            resolve_anchor(hashes, &edit.to),
+        ) {
+            (Ok(f), Ok(t)) => (f, t),
+            _ if opts.demote => continue,
+            (Err(e), _) | (_, Err(e)) => return Err(e),
+        };
         if from_line > to_line {
             if opts.strict {
                 return Err(EditError::Reversed {
@@ -643,35 +657,60 @@ pub fn plan_edits(
     let mut fixed_edits = edits.to_vec();
     let warnings = lenient_fixes(&mut fixed_edits, &hashes, opts)?;
 
-    // Resolve all anchors against the same snapshot.
+    // Resolve each member's anchors against the same snapshot. In demote mode
+    // (#207 §5) a member that cannot resolve is *demoted* (recorded, skipped)
+    // and the rest proceed; otherwise the first failure rejects the whole
+    // batch (the atomic-reject contract).
     let mut ranges: Vec<(usize, usize, usize)> = Vec::with_capacity(edits.len());
+    let mut demoted: Vec<(usize, EditError)> = Vec::new();
     for (i, edit) in fixed_edits.iter().enumerate() {
-        let start = resolve_anchor_with_context(&hashes, &edit.to, &edit.from)?;
-        let end = resolve_anchor_with_context(&hashes, &edit.from, &edit.to)?;
-        ranges.push((i, start, end));
+        let start = resolve_anchor_with_context(&hashes, &edit.to, &edit.from);
+        let end = resolve_anchor_with_context(&hashes, &edit.from, &edit.to);
+        match (start, end) {
+            (Ok(start), Ok(end)) => ranges.push((i, start, end)),
+            (Err(e), _) | (_, Err(e)) => {
+                if opts.demote {
+                    demoted.push((i, e));
+                } else {
+                    return Err(e);
+                }
+            }
+        }
     }
 
     // Sort by start position; stable, so equal starts keep original order.
     ranges.sort_by_key(|&(_, start, _)| start);
 
-    // Reject overlapping or touching ranges (inclusive bounds).
-    for pair in ranges.windows(2) {
-        let (a, _a_start, a_end) = pair[0];
-        let (b, b_start, _) = pair[1];
-        if a_end + 1 >= b_start {
-            return Err(EditError::Overlapping {
+    // Reject overlapping or touching ranges (inclusive bounds). A new range
+    // can only overlap the most recent kept one (the set is start-sorted and
+    // non-overlapping), so a last-element check suffices. In demote mode the
+    // later member of a collision is demoted; otherwise the batch rejects.
+    let mut kept: Vec<(usize, usize, usize)> = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        if let Some(&(a, _, a_end)) = kept.last()
+            && a_end + 1 >= r.1
+        {
+            let err = EditError::Overlapping {
                 a,
-                b,
+                b: r.0,
                 from: a_end,
-                to: b_start,
-            });
+                to: r.1,
+            };
+            if opts.demote {
+                demoted.push((r.0, err));
+            } else {
+                return Err(err);
+            }
+            continue;
         }
+        kept.push(r);
     }
 
-    // The integrity check: the ranges must match what the session showed.
+    // The integrity check: the kept ranges must match what the session showed.
     if let Some(served) = &opts.served {
-        for &(i, start, end) in &ranges {
-            assert_range_served(
+        let mut checked = Vec::with_capacity(kept.len());
+        for &(i, start, end) in &kept {
+            match assert_range_served(
                 &lines,
                 &hashes,
                 served,
@@ -679,9 +718,20 @@ pub fn plan_edits(
                 start,
                 end,
                 fixed_edits[i].content.is_empty(),
-            )?;
+            ) {
+                Ok(()) => checked.push((i, start, end)),
+                Err(e) => {
+                    if opts.demote {
+                        demoted.push((i, e));
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         }
+        kept = checked;
     }
+    let ranges = kept;
 
     // Splice: walk the sorted ranges, carrying unchanged lines between them.
     let mut new_lines: Vec<String> = Vec::new();
@@ -708,6 +758,8 @@ pub fn plan_edits(
     new_lines.extend(lines[cursor..].iter().cloned());
 
     if !content.is_empty() && new_lines.is_empty() {
+        // An edit that empties a file is rejected in every mode — the
+        // resulting state is invalid, so there is no demotion to apply.
         return Err(EditError::EmptyFile);
     }
 
@@ -734,6 +786,7 @@ pub fn plan_edits(
         warnings,
         removed_lines,
         ranges,
+        demoted,
     })
 }
 

@@ -441,7 +441,7 @@ async fn edit_array_form_applies_all_edits() {
 }
 
 #[tokio::test]
-async fn edit_overlapping_ranges_leaves_the_file_untouched() {
+async fn edit_overlapping_ranges_demotes_the_colliding_member() {
     let dir = tempfile::tempdir().unwrap();
     write(
         dir.path(),
@@ -458,6 +458,8 @@ async fn edit_overlapping_ranges_leaves_the_file_untouched() {
     let lines: Vec<&str> = read_out.lines().collect();
     let a0 = lines[0].split('│').next().unwrap().to_string();
     let a1 = lines[1].split('│').next().unwrap().to_string();
+    // Demotion is the default posture (#207 §5): the non-overlapping member
+    // applies, the colliding one is demoted and reported with its reason.
     let out = text(edit(
         dir.path(),
         &json!({"path": "o.txt", "edits": [
@@ -468,17 +470,56 @@ async fn edit_overlapping_ranges_leaves_the_file_untouched() {
         false,
     ));
     assert!(
-        !out.starts_with("edited"),
-        "overlap must be rejected: {out}"
+        out.starts_with("edited"),
+        "the valid member applies under demotion: {out}"
     );
     assert!(
-        out.contains("overlap") || out.contains("E_OVERLAPPING"),
-        "{out}"
+        out.contains("[H_DEMOTED]") && (out.contains("overlap") || out.contains("E_OVERLAPPING")),
+        "the colliding member is demoted with its reason: {out}"
     );
-    assert_eq!(
-        std::fs::read_to_string(dir.path().join("o.txt")).unwrap(),
-        "one\ntwo\nthree\nfour\n"
+    // The first member's change is on disk; the demoted second is not.
+    let on_disk = std::fs::read_to_string(dir.path().join("o.txt")).unwrap();
+    assert!(on_disk.contains('A'), "the valid member is written: {on_disk}");
+    assert!(!on_disk.contains("B\n"), "the demoted member is not: {on_disk}");
+}
+
+#[tokio::test]
+async fn edit_batch_with_one_valid_and_one_invalid_demotes_the_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "d.txt", "content": "one\ntwo\nthree\n"}),
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "d.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let lines: Vec<&str> = read_out.lines().collect();
+    let a0 = lines[0].split('│').next().unwrap().to_string();
+    let a2 = lines[2].split('│').next().unwrap().to_string();
+    // One member targets a real anchor; the other targets a stale (unknown)
+    // anchor. Demotion applies the valid member and reports the invalid one.
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "d.txt", "edits": [
+            {"from": a0, "to": a0, "content": "ONE!"},
+            {"from": "Zzzz", "to": a2, "content": "nope"}
+        ]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(out.starts_with("edited"), "valid member applies: {out}");
+    assert!(
+        out.contains("[H_DEMOTED]") && out.contains("E_STALE_ANCHOR"),
+        "invalid member is demoted with a stale-anchor reason: {out}"
     );
+    let on_disk = std::fs::read_to_string(dir.path().join("d.txt")).unwrap();
+    assert!(on_disk.contains("ONE!"), "valid change on disk: {on_disk}");
+    assert!(!on_disk.contains("nope"), "invalid change not on disk: {on_disk}");
 }
 
 #[tokio::test]
@@ -641,8 +682,10 @@ async fn range_stale_shows_fresh_anchors_and_retry_succeeds() {
     let to = lines[2].split('│').next().unwrap().to_string();
     // The file drifts out from under the session (a bash edit).
     std::fs::write(dir.path().join("s.txt"), "one\nTWO-changed\nthree\n").unwrap();
-    // Now an edit against the served range is stale: the range's lines no
-    // longer match the checksums the session was shown.
+    // Now an edit against the served range is stale. Under demotion (#207 §5)
+    // the stale member is *demoted* — reported with its range-stale reason and
+    // fresh anchors inline — and the (empty) remainder of the batch is applied,
+    // leaving the file untouched.
     let err = text(edit(
         dir.path(),
         &json!({"path": "s.txt", "edits": [{"from": from, "to": to, "content": "X"}]}),
@@ -650,8 +693,8 @@ async fn range_stale_shows_fresh_anchors_and_retry_succeeds() {
         false,
     ));
     assert!(
-        err.contains("E_RANGE_STALE"),
-        "expected a range-stale diagnostic: {err}"
+        err.contains("[H_DEMOTED]") && err.contains("E_RANGE_STALE"),
+        "expected the demoted member to carry the range-stale reason: {err}"
     );
     assert!(
         err.contains("fresh anchors"),

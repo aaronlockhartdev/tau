@@ -2,8 +2,9 @@
 //! model sees the changed region — removed lines, added lines with their
 //! fresh anchors, a little unchanged context — never the whole file.
 
-use crate::hashline::{self, Planned};
+use std::fmt::Write as _;
 
+use crate::hashline::{self, Planned};
 /// A success output: a one-line summary plus the bounded diff of the changed
 /// region, lenient-fix warnings, and a truncation notice.
 pub(super) fn diff_output(path: &str, original: &str, planned: &Planned) -> String {
@@ -15,6 +16,10 @@ pub(super) fn diff_output(path: &str, original: &str, planned: &Planned) -> Stri
         for w in &planned.warnings {
             out.push('\n');
             out.push_str(w);
+        }
+        for (i, e) in &planned.demoted {
+            out.push('\n');
+            let _ = write!(out, "[H_DEMOTED] edits[{i}] not applied: {e}");
         }
         return out;
     }
@@ -60,6 +65,12 @@ pub(super) fn diff_output(path: &str, original: &str, planned: &Planned) -> Stri
     for w in &planned.warnings {
         out.push('\n');
         out.push_str(w);
+    }
+    // Demoted members (#207 §5): the batch applied its valid members; each
+    // skipped one is reported with its reason so the model can retry it.
+    for (i, e) in &planned.demoted {
+        out.push('\n');
+        let _ = write!(out, "[H_DEMOTED] edits[{i}] not applied: {e}");
     }
     if let Some(n) = notice {
         out.push('\n');
