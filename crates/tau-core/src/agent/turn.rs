@@ -1,9 +1,13 @@
 use super::{
-    AgentError, AgentSession, KIND_ASSISTANT, KIND_USER, Lane, Ordering, Queued, ResponseRequest,
-    ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
+    AgentError, AgentSession, InputEntry, KIND_ASSISTANT, KIND_USER, Lane, Ordering, Queued,
+    ResponseRequest, ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
 };
 use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
 use sink::StreamEntrySink;
+
+/// Headroom reserved for the system prompt and framing overhead when
+/// computing the context gate's safe budget (ticket #210, spec §4).
+const CONTEXT_GATE_MARGIN: u32 = 4096;
 
 impl AgentSession {
     /// Run turns until the queue is empty.
@@ -83,57 +87,38 @@ impl AgentSession {
                 self.append_user(msg)?;
             }
 
+            let turn = self.turn_config();
+            let tools = self.tools();
             // The context (spec §4): with OM enabled, the system prompt
             // carries the observation log and the raw window is the
             // unobserved entries; without it, the session's entries as-is.
-            // Everything is read under one lock, then assembled purely.
-            let (system_prompt, input) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
-                let base = inner.system_prompt.clone();
-                // A child session is labeled at assembly against its
-                // parent (the link names it); a plain session is not.
-                let parent_session = inner.child.as_ref().map(|c| c.parent_session().to_owned());
-                let entries = inner
-                    .store
-                    .entries_range(0, usize::MAX)
-                    .map_err(AgentError::Session)?;
-                let leaf_id = inner
-                    .store
-                    .leaf()
-                    .map_err(AgentError::Session)?
-                    .map(|e| e.id);
-                // Assembly runs on the persistent state, not a clone: it is
-                // pure over the record, and the one-shot continuation-hint
-                // flip must stick (a clone's flip would be dropped, and the
-                // om_turn_end write-back would re-set `changed`, so the hint
-                // would re-inject on every assembly).
-                if let Some(om) = inner.om.as_mut() {
-                    let assembled = om.assemble_context(&base);
-                    let raw = om.raw_window_from(&entries, leaf_id.as_deref());
-                    let input = assembled
-                        .om_input_items
-                        .into_iter()
-                        .chain(input_items(&raw, parent_session.as_deref()))
-                        .collect();
-                    (
-                        with_plan_state(assembled.instructions, plan_state.as_deref()),
-                        input,
-                    )
-                } else {
-                    (
-                        with_plan_state(base, plan_state.as_deref()),
-                        input_items(&entries, parent_session.as_deref()),
-                    )
+            let (mut system_prompt, mut input) = self.assemble(plan_state.as_deref())?;
+            let mut prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+            // The context gate (ticket #210, spec §4): when the assembled
+            // prompt would exceed the safe budget and there is unobserved
+            // material to compact, run the OM pass now so the call fits.
+            let budget = turn.context_window.and_then(|cw| {
+                let max_out = u32::try_from(turn.max_output_tokens?).ok()?;
+                cw.checked_sub(max_out)
+                    .and_then(|r| r.checked_sub(CONTEXT_GATE_MARGIN))
+            });
+            if let Some(budget) = budget
+                && prompt > budget
+                && self.om_pending_tokens() > 0
+            {
+                self.om_turn_end().await?;
+                // A mid-turn compaction is a re-injection point (design).
+                plan_state = self.plan_state();
+                (system_prompt, input) = self.assemble(plan_state.as_deref())?;
+                prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+                if prompt > budget {
+                    tracing::warn!(
+                        prompt,
+                        budget,
+                        "context gate: prompt still over budget after OM pass"
+                    );
                 }
-            };
-            let turn = self.turn_config();
-            let tools = self.tools();
-            // The soft prompt size for the output-cap clamp (spec §12, #35):
-            // estimated before `input` moves into the request.
-            let prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+            }
             let mut request =
                 ResponseRequest::new(self.model().clone(), Some(system_prompt.as_str()), input)
                     .with_tools(tools);
@@ -266,6 +251,51 @@ impl AgentSession {
         // into the next turn (the one a force send starts).
         self.kill.store(false, Ordering::SeqCst);
         Ok(())
+    }
+
+    /// Assemble the system prompt and input items for a provider call
+    /// (spec §4). With OM enabled the system prompt carries the observation
+    /// log and the input is the unobserved raw window; without it the
+    /// session's entries are used as-is. Everything is read under one lock,
+    /// then assembled purely.
+    fn assemble(&self, plan_state: Option<&str>) -> Result<(String, Vec<InputEntry>), AgentError> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        let base = inner.system_prompt.clone();
+        // A child session is labeled at assembly against its
+        // parent (the link names it); a plain session is not.
+        let parent_session = inner.child.as_ref().map(|c| c.parent_session().to_owned());
+        let entries = inner
+            .store
+            .entries_range(0, usize::MAX)
+            .map_err(AgentError::Session)?;
+        let leaf_id = inner
+            .store
+            .leaf()
+            .map_err(AgentError::Session)?
+            .map(|e| e.id);
+        // Assembly runs on the persistent state, not a clone: it is
+        // pure over the record, and the one-shot continuation-hint
+        // flip must stick (a clone's flip would be dropped, and the
+        // om_turn_end write-back would re-set `changed`, so the hint
+        // would re-inject on every assembly).
+        if let Some(om) = inner.om.as_mut() {
+            let assembled = om.assemble_context(&base);
+            let raw = om.raw_window_from(&entries, leaf_id.as_deref());
+            let input = assembled
+                .om_input_items
+                .into_iter()
+                .chain(input_items(&raw, parent_session.as_deref()))
+                .collect();
+            Ok((with_plan_state(assembled.instructions, plan_state), input))
+        } else {
+            Ok((
+                with_plan_state(base, plan_state),
+                input_items(&entries, parent_session.as_deref()),
+            ))
+        }
     }
 
     /// The watcher-parsed plan state (design: the plan file is the source of

@@ -1,5 +1,4 @@
 use crate::agent::{AgentError, AgentSession, Inner, SessionStore, TurnProviderRef};
-
 /// The OM model to use: the configured OM model, or the session's model when
 /// it is empty (spec §4).
 fn resolve_om_model(om_model: &str, model: &str) -> String {
@@ -17,6 +16,24 @@ impl AgentSession {
         self.provider
             .forwarding_inner()
             .unwrap_or_else(|| self.provider.clone())
+    }
+
+    /// The unobserved raw's token count, read under the session lock (the
+    /// context gate's qualification: fire only when there is material to
+    /// compact, spec §4, ticket #210).
+    pub(super) fn om_pending_tokens(&self) -> u32 {
+        let mut guard = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        let Inner { om, store, .. } = &mut *guard;
+        let Some(om) = om.as_mut() else {
+            return 0;
+        };
+        let Ok(unobserved) = om.unobserved(store) else {
+            return 0;
+        };
+        om.pending_tokens(&unobserved)
     }
 
     /// The turn-end OM pass (ticket #22, R4): one call — `settle_turn`
