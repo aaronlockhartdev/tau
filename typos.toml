@@ -25,6 +25,10 @@ sigit = "sigit"
 nd = "nd"
 # gix `index_worktree` field `rela_path` (git.rs + migration doc).
 rela = "rela"
+# The llm crate's GitHub org (research doc, rust-openai-compatible-client).
+graniet = "graniet"
+# Terminal UI crate in the llm crate's feature list (research doc).
+ratatui = "ratatui"
 
 [default.extend-identifiers]
 # The npm virtual-scroller package (imports + component names).
