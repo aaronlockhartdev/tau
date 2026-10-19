@@ -1,12 +1,17 @@
 <script lang="ts">
   // One unsplit bar: a left context group (state · workspace · session
   // name · the om gauge) and a right cost group (in · out · cache, and
-  // tps only while streaming).
+  // tps).
   import { store, currentSession } from '../lib/store.svelte';
   import { fmtK } from '../lib/format';
 
   const s = $derived(currentSession());
   const running = $derived(s?.turn === 'running' || s?.turn === 'starting');
+  // 1 dp under 10 so a slow call reads e.g. "3.4 tps" instead of rounding to 3;
+  // the integer form is noise at that scale.
+  const tpsDisplay = $derived(
+    (s?.tps ?? 0) < 10 ? (s?.tps ?? 0).toFixed(1) : String(Math.round(s?.tps ?? 0))
+  );
   const name = $derived(s?.meta.title ?? s?.meta.id ?? '—');
   const ws = $derived(
     s
@@ -53,10 +58,8 @@
       <span class="sep">·</span>
       <span>0% cache</span>
     {/if}
-    {#if running}
-      <span class="sep">·</span>
-      <span class="tpsv">{Math.round(s?.tps ?? 0)} tps</span>
-    {/if}
+    <span class="sep">·</span>
+    <span class="tpsv">{tpsDisplay} tps</span>
   </span>
 </div>
 

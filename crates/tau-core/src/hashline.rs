@@ -46,6 +46,15 @@ pub enum EditError {
     BadAnchor(String),
     /// A non-empty file cannot be emptied through edit; use write.
     EmptyFile,
+    /// Two edits in one call target intersecting or touching ranges.
+    Overlapping {
+        a: usize,
+        b: usize,
+        from: usize,
+        to: usize,
+    },
+    /// `content` carries HASH│ prefixes — the model pasted read output.
+    AnchoredContent { at: usize },
 }
 
 impl fmt::Display for EditError {
@@ -53,7 +62,7 @@ impl fmt::Display for EditError {
         match self {
             Self::Stale { anchor } => write!(
                 f,
-                "stale anchor \"{anchor}\": not in the file's current anchor set; re-read the file and copy the fresh 3-char anchors (the 3 chars before {SEP})"
+                "stale anchor \"{anchor}\": re-read the file for fresh anchors"
             ),
             Self::TooLarge => write!(f, "{TooManyLines}"),
             Self::Reversed { from, to } => write!(
@@ -62,9 +71,17 @@ impl fmt::Display for EditError {
             ),
             Self::BadAnchor(a) => write!(
                 f,
-                "invalid anchor \"{a}\": expected a bare 3-char alphanumeric (e.g. \"wUp\")"
+                "invalid anchor \"{a}\": expected a bare 3-char alphanumeric"
             ),
             Self::EmptyFile => write!(f, "cannot empty a non-empty file via edit; use write"),
+            Self::Overlapping { a, b, .. } => write!(
+                f,
+                "edits[{a}] and edits[{b}] overlap; make the ranges disjoint"
+            ),
+            Self::AnchoredContent { at } => write!(
+                f,
+                "edits[{at}].content must be unanchored: strip the HASH{SEP} prefixes"
+            ),
         }
     }
 }
@@ -316,66 +333,139 @@ fn stable_hashes(
         .collect())
 }
 
+/// Resolve `anchor` to a 0-based line position in `hashes`.
+fn resolve_anchor(hashes: &[String], anchor: &str) -> Result<usize, EditError> {
+    let positions: Vec<usize> = (0..hashes.len())
+        .filter(|&i| hashes[i] == *anchor)
+        .collect();
+    match positions.as_slice() {
+        [] => Err(EditError::Stale {
+            anchor: anchor.to_owned(),
+        }),
+        [pos] => Ok(*pos),
+        // Allocation makes every anchor unique in the file, so a repeat is
+        // structurally impossible; fail loudly if the invariant breaks
+        // rather than fuzzy-match.
+        _ => unreachable!("anchor set is unique by allocation"),
+    }
+}
+
 /// Apply one edit to `content`: resolve the anchors strictly (stale/ambiguous
 /// are rejected, never fuzzy-matched), replace the range, and return the new
 /// file with stable anchors.
 pub fn apply_edit(content: &str, edit: &Edit) -> Result<Edited, EditError> {
-    if content.is_empty() {
-        return do_edit(content, edit, &[]);
-    }
-    let hashes = line_hashes(content).map_err(|_| EditError::TooLarge)?;
-    do_edit(content, edit, &hashes)
+    apply_edits(content, std::slice::from_ref(edit))
 }
 
-fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, EditError> {
-    let resolve = |anchor: &str| -> Result<usize, EditError> {
-        let positions: Vec<usize> = (0..hashes.len())
-            .filter(|&i| hashes[i] == *anchor)
-            .collect();
-        match positions.as_slice() {
-            [] => Err(EditError::Stale {
-                anchor: anchor.to_owned(),
-            }),
-            [pos] => Ok(*pos),
-            // Allocation makes every anchor unique in the file, so a repeat is
-            // structurally impossible; fail loudly if the invariant breaks
-            // rather than fuzzy-match.
-            _ => unreachable!("anchor set is unique by allocation"),
-        }
+/// True when `content` is read output pasted verbatim: every line carries a
+/// `HASH│` prefix, the first line's anchor equals `from`, and the last line's
+/// equals `to`. Total, not heuristic — a single unanchored line (or a
+/// bookend mismatch) clears the check and the call proceeds to normal
+/// resolution.
+fn is_anchored_content(text: &str, from: &str, to: &str) -> bool {
+    let mut lines = text.lines();
+    let Some(first) = lines.next() else {
+        return false;
     };
-    let start = resolve(&edit.from)?;
-    let end = resolve(&edit.to)?;
-    if start > end {
-        return Err(EditError::Reversed {
-            from: edit.from.clone(),
-            to: edit.to.clone(),
-        });
+    let (first_anchor, _rest) = match first.split_once(SEP) {
+        Some((h, rest)) if h.len() == 3 => (h, rest),
+        _ => return false,
+    };
+    let mut last_anchor = first_anchor;
+    for line in lines {
+        let Some((h, _rest)) = line.split_once(SEP).filter(|(h, _)| h.len() == 3) else {
+            return false;
+        };
+        last_anchor = h;
     }
-    let lines = split_lines(content);
-    let was_nonempty = !content.is_empty();
-    let replacement = if edit.content.is_empty() {
+    first_anchor == from && last_anchor == to
+}
+
+/// Apply a batch of edits to `content`: all anchors resolve against one
+/// snapshot, overlapping or touching ranges are rejected, and the edits are
+/// applied in order of ascending start position.
+pub fn apply_edits(content: &str, edits: &[Edit]) -> Result<Edited, EditError> {
+    // Rejection before resolution: anchored content is a field confusion,
+    // rejected whole — never stripped.
+    for (i, edit) in edits.iter().enumerate() {
+        if is_anchored_content(&edit.content, &edit.from, &edit.to) {
+            return Err(EditError::AnchoredContent { at: i });
+        }
+    }
+    let hashes = if content.is_empty() {
         Vec::new()
     } else {
-        let mut r: Vec<String> = edit.content.split('\n').map(str::to_owned).collect();
-        if r.last().is_some_and(std::string::String::is_empty) {
-            r.pop();
-        }
-        r
+        line_hashes(content).map_err(|_| EditError::TooLarge)?
     };
-    if was_nonempty && start == 0 && end == lines.len() - 1 && replacement.is_empty() {
+
+    // Resolve all anchors against the same snapshot.
+    let mut ranges: Vec<(usize, usize, usize)> = Vec::with_capacity(edits.len());
+    for (i, edit) in edits.iter().enumerate() {
+        let start = resolve_anchor(&hashes, &edit.from)?;
+        let end = resolve_anchor(&hashes, &edit.to)?;
+        if start > end {
+            return Err(EditError::Reversed {
+                from: edit.from.clone(),
+                to: edit.to.clone(),
+            });
+        }
+        ranges.push((i, start, end));
+    }
+
+    // Sort by start position; stable, so equal starts keep original order.
+    ranges.sort_by_key(|&(_, start, _)| start);
+
+    // Reject overlapping or touching ranges (inclusive bounds).
+    for pair in ranges.windows(2) {
+        let (a, _a_start, a_end) = pair[0];
+        let (b, b_start, _) = pair[1];
+        if a_end + 1 >= b_start {
+            return Err(EditError::Overlapping {
+                a,
+                b,
+                from: a_end,
+                to: b_start,
+            });
+        }
+    }
+
+    let lines = split_lines(content);
+    let was_nonempty = !content.is_empty();
+
+    // Splice: walk the sorted ranges, carrying unchanged lines between them.
+    let mut new_lines: Vec<String> = Vec::new();
+    let mut removed_lines: Vec<String> = Vec::new();
+    let mut removed_hashes: Vec<String> = Vec::new();
+    let mut cursor = 0;
+    for &(orig, start, end) in &ranges {
+        new_lines.extend(lines[cursor..start].iter().cloned());
+        if !edits[orig].content.is_empty() {
+            let mut r: Vec<String> = edits[orig].content.split('\n').map(str::to_owned).collect();
+            if r.last().is_some_and(String::is_empty) {
+                r.pop();
+            }
+            new_lines.extend(r);
+        }
+        for li in start..=end {
+            removed_lines.push(lines[li].clone());
+            removed_hashes.push(hashes[li].clone());
+        }
+        cursor = end + 1;
+    }
+    new_lines.extend(lines[cursor..].iter().cloned());
+
+    if was_nonempty && new_lines.is_empty() {
         return Err(EditError::EmptyFile);
     }
-    let mut new_lines = lines[..start].to_vec();
-    new_lines.extend(replacement.iter().cloned());
-    new_lines.extend(lines[end + 1..].iter().cloned());
+
     let mut new_content = new_lines.join("\n");
     if content.ends_with('\n') && !new_lines.is_empty() {
         new_content.push('\n');
     }
-    let removed: Vec<String> = hashes[start..=end].to_vec();
-    let removed_lines: Vec<String> = lines[start..=end].to_vec();
-    let new_hashes =
-        stable_hashes(content, hashes, &new_content, &removed).map_err(|_| EditError::TooLarge)?;
+
+    let new_hashes = stable_hashes(content, &hashes, &new_content, &removed_hashes)
+        .map_err(|_| EditError::TooLarge)?;
+
     // The changed region, measured against the old lines from both ends.
     let min_len = new_lines.len().min(lines.len());
     let mut lo = 0;
@@ -386,6 +476,7 @@ fn do_edit(content: &str, edit: &Edit, hashes: &[String]) -> Result<Edited, Edit
     while hi < min_len - lo && new_lines[new_lines.len() - 1 - hi] == lines[lines.len() - 1 - hi] {
         hi += 1;
     }
+
     Ok(Edited {
         content: new_content,
         hashes: new_hashes,

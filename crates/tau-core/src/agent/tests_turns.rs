@@ -361,3 +361,55 @@ async fn unrepairable_tool_args_yield_a_parse_error_not_a_null() {
         "the tool result should carry the parse error, got: {output:?}"
     );
 }
+
+/// #186: two `edit` calls on the same file in one batch — both are refused
+/// pre-write (they would share one stale anchor snapshot); the file stays
+/// untouched.
+#[tokio::test]
+async fn parallel_edits_to_the_same_file_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("dup.txt"), "one\ntwo\n").unwrap();
+    let args1 =
+        "{\"path\":\"dup.txt\",\"edits\":[{\"from\":\"aaa\",\"to\":\"aaa\",\"content\":\"ONE\"}]}";
+    let args2 =
+        "{\"path\":\"dup.txt\",\"edits\":[{\"from\":\"bbb\",\"to\":\"bbb\",\"content\":\"TWO\"}]}";
+    let body = sse(
+        "",
+        &[
+            ("edit".into(), "c1".into(), args1.into()),
+            ("edit".into(), "c2".into(), args2.into()),
+        ],
+    );
+    let agent = make_agent(
+        dir.path(),
+        Arc::new(ScriptedProvider::new(vec![body, sse("done", &[])])),
+    );
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let tools: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e.kind == KIND_TOOL)
+        .map(|e| &e.payload)
+        .collect();
+    assert_eq!(tools.len(), 2, "one entry per call");
+    for call_id in ["c1", "c2"] {
+        let rejected = tools
+            .iter()
+            .copied()
+            .find(|p| p["call_id"] == call_id)
+            .unwrap_or(&Value::Null);
+        assert!(
+            rejected["output"]
+                .as_str()
+                .is_some_and(|o| o.contains("already edited in this batch")),
+            "{call_id} must be refused pre-write: {rejected:?}"
+        );
+        assert_eq!(rejected["status"], "error");
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("dup.txt")).unwrap(),
+        "one\ntwo\n",
+        "the file must be untouched"
+    );
+}

@@ -86,7 +86,7 @@ pub fn path(workspace: &Path, session_id: &str) -> PathBuf {
 /// The seed skeleton written at session start.
 #[must_use]
 pub fn skeleton() -> String {
-    "# Plan\n\n## Steps\n\n## Criteria\n\n## Notes\n".to_owned()
+    "# Plan\n\n## Steps\nMulti-step work: list its steps here before starting.\n\n## Criteria\n\n## Notes\n".to_owned()
 }
 
 /// Seed the session's plan file at session start (the design's
@@ -180,7 +180,9 @@ pub fn parse(raw: &str) -> Plan {
 
 /// The plan state as re-injected context (the design: re-injected at
 /// each turn boundary and after compaction): the file's own shape, so
-/// the model can map the state onto the file it edits.
+/// the model can map the state onto the file it edits — plus the next
+/// unchecked step, so the state dump doubles as the direction for the
+/// next action.
 #[must_use]
 pub fn render(plan: &Plan) -> String {
     let mut out = String::from("# Current plan state");
@@ -199,6 +201,10 @@ pub fn render(plan: &Plan) -> String {
         out.push_str("\n\n## Notes\n");
         out.push_str(plan.notes.trim());
     }
+    if let Some(next) = resume_contract(plan) {
+        out.push_str("\n\nNext: ");
+        out.push_str(&next.next_action);
+    }
     out
 }
 
@@ -215,15 +221,22 @@ pub const PLAN_SECTION_HEADER: &str = "# Plan file";
 pub const PLAN_SECTION_ANCHOR: &str = "# Plan file\n\nYour plan lives at `";
 
 /// The system-prompt plan-file section: the file's exact path plus the
-/// keep-current instruction (the model edits it with its ordinary
-/// tools; the core is its only machine reader).
+/// concrete usage rules (the model edits it with its ordinary tools; the
+/// core is its only machine reader). One paragraph: `with_path` bounds
+/// the section at the first blank line after the header.
 #[must_use]
 pub fn section(file: &Path) -> String {
     format!(
         "{PLAN_SECTION_HEADER}\n\n\
-         Your plan lives at `{}`. Keep it current as you work: check off \
-         steps as they are done, and update the criteria and notes. The \
-         current state is re-injected into your context at every turn.",
+         Your plan lives at `{}`. For multi-step work, list the steps in \
+         the file before substantive work begins; tasks with fewer than two \
+         steps need no plan. Keep steps to 5–7 imperative words, and check \
+         a step off immediately when it is done — `- [ ]` becomes `- [x]` \
+         the moment the step finishes, never batched to the end. When the \
+         direction changes, edit the steps rather than abandoning them, and \
+         keep the criteria and notes current. The current state, with the \
+         next unchecked step, is re-injected into your context at every \
+         turn.",
         file.display()
     )
 }
@@ -283,4 +296,5 @@ pub(crate) fn session_of(file: &Path, workspace: &Path) -> Option<String> {
 }
 
 #[cfg(test)]
+#[path = "plan/tests.rs"]
 mod tests;

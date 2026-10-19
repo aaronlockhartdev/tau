@@ -3,6 +3,7 @@ use base64::Engine;
 use std::fmt::Write as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn resolve(cwd: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
@@ -202,13 +203,29 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
         return ToolResult::err("edit: missing \"path\"".into());
     };
-    let (Some(from), Some(to), Some(content)) = (
-        args.get("from").and_then(|v| v.as_str()),
-        args.get("to").and_then(|v| v.as_str()),
-        args.get("content").and_then(|v| v.as_str()),
-    ) else {
-        return ToolResult::err("edit: \"from\", \"to\", and \"content\" are required".into());
+    let Some(edits_json) = args.get("edits").and_then(|v| v.as_array()) else {
+        return ToolResult::err("edit: \"edits\" array is required".into());
     };
+    if edits_json.is_empty() {
+        return ToolResult::err("edit: \"edits\" must contain at least one edit".into());
+    }
+    let mut edits = Vec::with_capacity(edits_json.len());
+    for (i, item) in edits_json.iter().enumerate() {
+        let (Some(from), Some(to), Some(content)) = (
+            item.get("from").and_then(|v| v.as_str()),
+            item.get("to").and_then(|v| v.as_str()),
+            item.get("content").and_then(|v| v.as_str()),
+        ) else {
+            return ToolResult::err(
+                format!("edit: edits[{i}] requires \"from\", \"to\", and \"content\"").into(),
+            );
+        };
+        edits.push(hashline::Edit {
+            from: from.to_owned(),
+            to: to.to_owned(),
+            content: content.to_owned(),
+        });
+    }
     let path = resolve(cwd, path);
     let original = match std::fs::read_to_string(&path) {
         Ok(c) => hashline::normalize(&c),
@@ -216,14 +233,7 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
             return ToolResult::err(format!("edit: cannot read {}: {e}", path.display()).into());
         }
     };
-    let edited = match hashline::apply_edit(
-        &original,
-        &hashline::Edit {
-            from: from.to_owned(),
-            to: to.to_owned(),
-            content: content.to_owned(),
-        },
-    ) {
+    let edited = match hashline::apply_edits(&original, &edits) {
         Ok(e) => e,
         Err(e) => return ToolResult::err(format!("edit: {e}").into()),
     };
@@ -287,7 +297,53 @@ pub(super) async fn edit(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     ToolResult::ok(out.into())
 }
 
-pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolResult {
+/// A sane PATH for a bash child (#172): the inherited PATH (if any) plus the
+/// common per-user tool dirs, de-duplicated. The app is launched from a GUI,
+/// so its ambient PATH is a minimal launchd set that misses `~/.cargo/bin`,
+/// Homebrew, nvm, and friends.
+fn bash_path() -> String {
+    let mut parts: Vec<String> = std::env::var("PATH")
+        .map(|p| {
+            p.split(':')
+                .map(str::to_owned)
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    for dir in ["/opt/homebrew/bin", "/usr/local/bin"] {
+        if !parts.contains(&dir.to_owned()) {
+            parts.push(dir.to_owned());
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        for sub in ["cargo/bin", "local/bin"] {
+            let dir = home.join(sub).to_string_lossy().into_owned();
+            if !parts.contains(&dir) {
+                parts.push(dir);
+            }
+        }
+    }
+    parts.join(":")
+}
+
+/// Resolve once `flag` is set. A stop is a plain `AtomicBool` (no channel),
+/// so this polls it; the interval is short enough to feel immediate (#174).
+async fn wait_for_flag(flag: &AtomicBool) {
+    loop {
+        if flag.load(Ordering::SeqCst) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// Run a bash command with a sane PATH (#172); `stop`, once set, kills the
+/// running child (#174).
+pub(super) async fn bash_inner(
+    cwd: &Path,
+    args: &serde_json::Value,
+    stop: &AtomicBool,
+) -> ToolResult {
     let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
         return ToolResult::err("bash: missing \"command\"".into());
     };
@@ -299,25 +355,32 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     let child = tokio::process::Command::new("bash")
         .arg("-c")
         .arg(command)
+        .env("PATH", bash_path())
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        // A timed-out (dropped) child is killed, not left behind.
+        // A dropped child (timeout or stop) is killed, not left behind.
         .kill_on_drop(true)
         .spawn();
     let output = match child {
-        Ok(child) => match tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs),
-            child.wait_with_output(),
-        )
-        .await
-        {
-            Ok(Ok(output)) => output,
-            Ok(Err(e)) => return ToolResult::err(format!("bash: {e}").into()),
-            // The timeout dropped the (now owned) child; kill_on_drop fired,
-            // so a timed-out command cannot keep running and mutate files.
-            Err(_) => {
-                return ToolResult::err(format!("bash: timed out after {timeout_secs}s").into());
+        Ok(child) => tokio::select! {
+            r = tokio::time::timeout(
+                std::time::Duration::from_secs(timeout_secs),
+                child.wait_with_output(),
+            ) => match r {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => return ToolResult::err(format!("bash: {e}").into()),
+                // The timeout dropped the (now owned) child; kill_on_drop fired,
+                // so a timed-out command cannot keep running and mutate files.
+                Err(_) => {
+                    return ToolResult::err(format!("bash: timed out after {timeout_secs}s").into());
+                }
+            },
+            // Stop: the wait future above is dropped, dropping the child and
+            // firing kill_on_drop — the running command is killed, not left
+            // behind.
+            () = wait_for_flag(stop) => {
+                return ToolResult::err("bash: interrupted by user stop".into());
             }
         },
         Err(e) => return ToolResult::err(format!("bash: {e}").into()),
@@ -338,4 +401,13 @@ pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolResult {
         output: out.into(),
         ok: code == 0,
     }
+}
+
+/// The `bash` tool as the tests see it: a command with no stop signal (a
+/// fresh, never-set flag). The live dispatch path (`surface.rs`) calls
+/// [`bash_inner`] with the session's real stop flag.
+#[cfg(test)]
+pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolResult {
+    let no_stop = AtomicBool::new(false);
+    bash_inner(cwd, args, &no_stop).await
 }

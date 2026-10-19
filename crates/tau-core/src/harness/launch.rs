@@ -5,10 +5,10 @@
 //! (kind-string → event shaping) all live here, not at the call sites.
 
 use super::{
-    AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, Mutex,
-    OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore, SessionSubagentBridge,
-    SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver, TurnConfig, Workspace, context,
-    derive_turn, entry_to_view, last_model_note, tools,
+    AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
+    Mutex, OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
+    SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
+    TurnConfig, Workspace, context, derive_turn, entry_to_view, last_model_note, tools,
 };
 use crate::config::ToolBatchPolicy;
 use crate::om::OmRecord;
@@ -132,7 +132,9 @@ impl AgentSession {
                 // The plan file (design: session-scoped, the source of
                 // truth): the child's own file, replacing any inherited section.
                 let sid = store.id().to_owned();
-                let (system_prompt, core) = plan_wiring(&supervisor, &system_prompt, &d.cwd, &sid);
+                let core = supervisor.core().and_then(|w| w.upgrade());
+                let (system_prompt, core) =
+                    plan_wiring(core.as_ref(), &system_prompt, &d.cwd, &sid);
                 let agent = Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -215,7 +217,10 @@ impl AgentSession {
         // the supervisor carries a core (the test seams carry none).
         let sid = store.id().to_owned();
         let (system_prompt, core) = match system_prompt {
-            Some(prompt) => plan_wiring(sup, &prompt, &d.cwd, &sid),
+            Some(prompt) => {
+                let core = sup.core().and_then(|w| w.upgrade());
+                plan_wiring(core.as_ref(), &prompt, &d.cwd, &sid)
+            }
             None => (d.system_prompt.clone(), None),
         };
         let gate_failed = resume_gate_failed(&mut store)?;
@@ -263,35 +268,35 @@ fn resume_gate_failed(store: &mut SessionStore) -> Result<bool, ProtocolError> {
 }
 
 /// The plan wiring the supervisor-linked roles share (design: the plan
-/// file is the source of truth): seed the session's file, and — when the
-/// supervisor carries a core — observe the file's current state and point
-/// the prompt at the session's own file (replacing any inherited
-/// section). A core-less supervisor (the test seams) passes the prompt
-/// through untouched.
+/// The plan wiring every session role shares (design: the plan file is
+/// the source of truth): seed the session's file, point the prompt at the
+/// session's own file (replacing any inherited section), and — when a
+/// core is attached — observe the file's current state so the cache is
+/// warm for the first assembly. A core-less seam (the test kits) passes
+/// the prompt through with only the path section.
 fn plan_wiring(
-    sup: &Supervisor,
+    core: Option<&Arc<Core>>,
     prompt: &str,
     cwd: &Path,
     sid: &str,
 ) -> (String, Option<Arc<Core>>) {
     crate::plan::seed(cwd, sid);
-    // The section names the child's own plan file (seeded unconditionally
-    // above): it belongs in the prompt whether or not a core is attached —
-    // the core only adds the watcher's state cache on top.
+    // The section names the session's own plan file (seeded
+    // unconditionally above): it belongs in the prompt whether or not a
+    // core is attached — the core only adds the state cache on top.
     let sectioned = crate::plan::with_path(prompt, &crate::plan::path(cwd, sid));
-    match sup.core().and_then(|w| w.upgrade()) {
-        Some(core) => {
-            core.refresh_plan(cwd, sid);
-            (sectioned, Some(core))
-        }
-        None => (sectioned, None),
+    let core = core.cloned();
+    if let Some(core) = &core {
+        core.refresh_plan(cwd, sid);
     }
+    (sectioned, core)
 }
 
 /// The root assembly: the model resolution, the prompt, the
 /// bridge↔supervisor cycle, the session, and the four event hooks. The
 /// first provider arrives pre-resolved — the caller already resolved it
 /// (ticket #43).
+#[allow(clippy::too_many_lines)] // one root-assembly path; splitting is refactoring
 fn root_session(
     core: &Arc<Core>,
     workspace: &Workspace,
@@ -344,14 +349,12 @@ fn root_session(
     // The plan file (design: the source of truth): seeded at session
     // start (create-if-missing — a re-opened session keeps the model's
     // plan), its exact path injected into the prompt, and the parsed
-    // state refreshed here so the first assembly carries it. The
-    // section lands in the supervisor's prompt too: a spawned child
-    // inherits it, then replaces it with its own path. It lands before
-    // the skills catalog: the catalog is the last layer (tests_skills).
-    let plan_path = crate::plan::path(&cwd, store.id());
-    crate::plan::seed(&cwd, store.id());
-    core.refresh_plan(&cwd, store.id());
-    let mut system_prompt = crate::plan::with_path(&system_prompt, &plan_path);
+    // state refreshed so the first assembly carries it. The section
+    // lands in the supervisor's prompt too: a spawned child inherits it,
+    // then replaces it with its own path. It lands before the skills
+    // catalog: the catalog is the last layer (tests_skills).
+    let sid = store.id().to_owned();
+    let (mut system_prompt, _) = plan_wiring(Some(core), &system_prompt, &cwd, &sid);
     crate::gate::with_section(&mut system_prompt, &config.gates);
 
     // Skills (tickets #28/#31): discovery runs at session open/reopen
@@ -368,6 +371,26 @@ fn root_session(
 
     // The bridge and the supervisor reference each other: build the
     // bridge with an empty weak and patch it in after construction.
+    // The child factory: a custom (test) one, or the default forwarding one.
+    // The default is kept concrete so the bridge can share its per-child
+    // provider with the child's agent (one provider, as the root has — #175).
+    let (bridge_factory, factory): (
+        Option<Arc<ForwardingChildFactory>>,
+        Arc<dyn ChildProviderFactory>,
+    ) = if let Some(custom) = core.child_factory.clone() {
+        (None, custom)
+    } else {
+        let forwarding = Arc::new(ForwardingChildFactory {
+            client: core.client.clone(),
+            provider: first.clone(),
+            requests: config.requests.clone(),
+            tx: core.events_tx.clone(),
+            pipe: core.pipe.clone(),
+            workspace: workspace.id.clone(),
+            providers: Mutex::new(HashMap::new()),
+        });
+        (Some(Arc::clone(&forwarding)), forwarding)
+    };
     let bridge = Arc::new(SessionSubagentBridge {
         core: Arc::clone(core),
         workspace: workspace.id.clone(),
@@ -375,16 +398,7 @@ fn root_session(
         provider: first.clone(),
         requests: config.requests.clone(),
         sup: Mutex::new(None),
-    });
-    let factory: Arc<dyn ChildProviderFactory> = core.child_factory.clone().unwrap_or_else(|| {
-        Arc::new(ForwardingChildFactory {
-            client: core.client.clone(),
-            provider: first.clone(),
-            requests: config.requests.clone(),
-            tx: core.events_tx.clone(),
-            pipe: core.pipe.clone(),
-            workspace: workspace.id.clone(),
-        })
+        factory: bridge_factory,
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -429,7 +443,7 @@ fn root_session(
         subagents: Some(sup.clone()),
         child: None,
     }));
-    wire_events(core, workspace, &sid, &agent);
+    wire_events(core, &workspace.id, &sid, &agent);
     sup.attach_parent(&agent);
     Ok(agent)
 }
@@ -437,7 +451,12 @@ fn root_session(
 /// The root's four event hooks: the `om_status` kind-string shaping, the
 /// queue projection, and the two entry tees (ADR-0008's file-line
 /// upserts).
-fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<AgentSession>) {
+pub(super) fn wire_events(
+    core: &Arc<Core>,
+    workspace_id: &str,
+    sid: &str,
+    agent: &Arc<AgentSession>,
+) {
     // The plan-state hook (design: the plan file is the source of
     // truth): the core's watcher-parsed state, re-injected at each
     // assembly. A `Weak` keeps the hook from pinning the core.
@@ -452,7 +471,7 @@ fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<A
     // shapes it into the protocol event on the shared channel.
     {
         let tx = core.events_tx.clone();
-        let ws = workspace.id.clone();
+        let ws = workspace_id.to_owned();
         let sid = sid.to_owned();
         agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
             let _ = tx.try_send(Event::OmStatus {
@@ -468,7 +487,7 @@ fn wire_events(core: &Arc<Core>, workspace: &Workspace, sid: &str, agent: &Arc<A
     }
     {
         let tx = core.events_tx.clone();
-        let ws = workspace.id.clone();
+        let ws = workspace_id.to_owned();
         let sid = sid.to_owned();
         // The queue and upsert hooks get their own clones (the entry
         // hook moves these).

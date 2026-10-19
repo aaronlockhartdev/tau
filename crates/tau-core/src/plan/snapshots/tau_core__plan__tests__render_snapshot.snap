@@ -1,0 +1,19 @@
+---
+source: crates/tau-core/src/plan/tests.rs
+assertion_line: 221
+expression: render(&well_formed())
+---
+# Current plan state
+
+## Steps
+- [x] investigate the failure
+- [ ] fix the parser
+- [ ] add tests
+
+## Criteria
+- build passes
+
+## Notes
+the parser is the culprit
+
+Next: fix the parser

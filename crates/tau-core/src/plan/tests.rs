@@ -1,3 +1,5 @@
+//! Tests for `crate::plan`.
+
 use super::*;
 
 const WELL_FORMED: &str = "\
@@ -211,6 +213,14 @@ fn with_path_does_not_truncate_user_content_named_like_the_section() {
     assert!(child.contains("/w/.tau/plans/child.md"));
     assert!(!child.contains("parent.md"));
 }
+
+/// The re-injected shape is a contract (the model maps it onto the file):
+/// the snapshot is the record.
+#[test]
+fn render_snapshot() {
+    insta::assert_snapshot!(render(&well_formed()));
+}
+
 #[test]
 fn render_omits_empty_sections() {
     assert_eq!(render(&Plan::default()), "# Current plan state");
@@ -219,6 +229,22 @@ fn render_omits_empty_sections() {
     assert!(full.contains("- [ ] fix the parser"));
     assert!(full.contains("## Criteria\n- build passes"));
     assert!(full.contains("## Notes"));
+}
+
+/// The re-injection carries the next unchecked step, and only one.
+#[test]
+fn render_names_next_step() {
+    let plan = parse("- [x] a\n- [ ] b\n- [ ] c");
+    let out = render(&plan);
+    assert!(out.contains("\n\nNext: b"), "got: {out}");
+    assert!(!out.contains("Next: c"));
+}
+
+/// A complete plan's re-injection has no nudge.
+#[test]
+fn render_complete_plan_has_no_next() {
+    let plan = parse("- [x] a");
+    assert!(!render(&plan).contains("Next:"));
 }
 
 #[test]
@@ -271,4 +297,75 @@ fn complete_requires_steps_and_all_checked() {
         step.done = true;
     }
     assert!(done.complete());
+}
+
+/// The seed invite line is prose: it folds into notes, never a step.
+#[test]
+fn skeleton_invite_is_notes() {
+    let plan = parse(&skeleton());
+    assert!(
+        plan.notes.contains("list its steps here"),
+        "invite folds into notes: {plan:?}"
+    );
+    assert!(plan.steps.is_empty(), "invite is not a step: {plan:?}");
+}
+
+#[test]
+fn parse_fuzzy_criteria_heading() {
+    let raw = "##Criteria\n\nc1\n\n# other\nc2";
+    let plan = parse(raw);
+    assert_eq!(plan.criteria.trim(), "c1");
+    assert_eq!(plan.notes.trim(), "c2");
+}
+
+#[test]
+fn parse_unrecognized_is_notes() {
+    let plan = parse("any prose at all\n**bold**\n`code`");
+    assert!(plan.steps.is_empty());
+    assert_eq!(plan.notes.trim(), "any prose at all\n**bold**\n`code`");
+}
+
+#[test]
+fn parse_garbage_does_not_panic() {
+    let _ = parse("");
+    let _ = parse("\n\n\n");
+    let _ = parse("- [x]"); // no text after box
+    let _ = parse("- [q] not a box");
+    let _ = parse("####\t###");
+}
+
+#[test]
+fn resume_contract_is_first_open_step() {
+    let plan = parse("- [x] a\n- [ ] b\n- [ ] c");
+    let rc = resume_contract(&plan).expect("open step");
+    assert_eq!(rc.next_action, "b");
+}
+
+#[test]
+fn resume_contract_none_when_complete_or_empty() {
+    assert!(resume_contract(&parse("- [x] a")).is_none());
+    assert!(resume_contract(&Plan::default()).is_none());
+}
+
+#[test]
+fn section_has_no_blank_line_inside() {
+    // `with_path`'s boundary detection needs a single-paragraph body.
+    let body = section(Path::new("/w/.tau/plans/s.md"));
+    let after_header = body.split("\n\n").nth(1).expect("body after header");
+    assert!(
+        !after_header.contains('\n'),
+        "body is one paragraph: {body}"
+    );
+}
+
+#[test]
+fn section_names_concrete_rules() {
+    let s = section(Path::new("/w/.tau/plans/s.md"));
+    assert!(s.contains("before substantive work begins"));
+    assert!(s.contains("fewer than two steps"));
+    assert!(s.contains("5–7 imperative words"));
+    // The worked example: a check-off is a box flip, immediate.
+    assert!(s.contains("`- [ ]` becomes `- [x]`"));
+    assert!(s.contains("immediately"));
+    assert!(s.contains("edit the steps"));
 }

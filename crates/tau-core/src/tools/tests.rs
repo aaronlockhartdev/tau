@@ -1,4 +1,4 @@
-use super::impls::{bash, edit, image_media_type, read, write};
+use super::impls::{bash, bash_inner, edit, image_media_type, read, write};
 use super::*;
 use base64::Engine;
 use std::fmt::Write as _;
@@ -11,6 +11,7 @@ fn text(out: ToolResult) -> String {
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
     }
 }
+
 #[tokio::test]
 async fn write_then_read_roundtrip_with_anchors() {
     let dir = tempfile::tempdir().unwrap();
@@ -29,7 +30,7 @@ async fn write_then_read_roundtrip_with_anchors() {
     let out = text(
         edit(
             dir.path(),
-            &json!({"path": "a.txt", "from": from, "to": to, "content": "ONE AND TWO"}),
+            &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": "ONE AND TWO"}]}),
         )
         .await,
     );
@@ -68,7 +69,7 @@ async fn stale_anchor_diagnostic_does_not_touch_the_file() {
     let out = text(
         edit(
             dir.path(),
-            &json!({"path": "s.txt", "from": "zzz", "to": "zzz", "content": "x"}),
+            &json!({"path": "s.txt", "edits": [{"from": "zzz", "to": "zzz", "content": "x"}]}),
         )
         .await,
     );
@@ -89,7 +90,7 @@ async fn crlf_files_are_normalized_through_read_and_edit() {
     let anchor = rows[0].split('│').next().unwrap().to_string();
     edit(
         dir.path(),
-        &json!({"path": "w.txt", "from": anchor, "to": anchor, "content": "ONE"}),
+        &json!({"path": "w.txt", "edits": [{"from": anchor, "to": anchor, "content": "ONE"}]}),
     )
     .await;
     // The written file is consistently LF — untouched lines included.
@@ -135,7 +136,7 @@ async fn edit_output_is_bounded_to_the_changed_region() {
     let out = text(
         edit(
             dir.path(),
-            &json!({"path": "big.txt", "from": anchor, "to": anchor, "content": "LINE25"}),
+            &json!({"path": "big.txt", "edits": [{"from": anchor, "to": anchor, "content": "LINE25"}]}),
         )
         .await,
     );
@@ -154,6 +155,37 @@ async fn bash_captures_output_and_exit_code() {
     let out = text(bash(dir.path(), &json!({"command": "echo oops >&2; exit 3"})).await);
     assert!(out.starts_with("exit 3"), "{out}");
     assert!(out.contains("oops"), "{out}");
+}
+
+#[tokio::test]
+async fn bash_child_path_includes_common_tool_dirs() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = text(bash(dir.path(), &json!({"command": "echo $PATH"})).await);
+    // bash_path() augments the GUI-minimal inherited PATH with the common
+    // per-user tool dirs, so bare commands resolve (#172).
+    assert!(out.contains("/usr/local/bin"), "{out}");
+    assert!(out.contains("/opt/homebrew/bin"), "{out}");
+}
+
+#[tokio::test]
+async fn bash_stop_interrupts_a_running_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopper = std::sync::Arc::clone(&stop);
+    let setter = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        stopper.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let started = std::time::Instant::now();
+    let out = text(bash_inner(dir.path(), &json!({"command": "sleep 10"}), &stop).await);
+    let elapsed = started.elapsed();
+    // The stop cut the command short, not the sleep running to completion (#174).
+    assert!(out.contains("interrupted by user stop"), "{out}");
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "stop did not interrupt in time: {elapsed:?}"
+    );
+    setter.await.unwrap();
 }
 
 #[test]
@@ -254,7 +286,7 @@ async fn edit_output_is_a_bounded_before_after_diff() {
     let out = text(
         edit(
             dir.path(),
-            &json!({"path": "d.txt", "from": from, "to": to, "content": "BETA'\nGAMMA'"}),
+            &json!({"path": "d.txt", "edits": [{"from": from, "to": to, "content": "BETA'\nGAMMA'"}]}),
         )
         .await,
     );
@@ -302,4 +334,98 @@ async fn core_tools_carry_a_typed_verdict() {
     // write: a clean write is ok.
     let ok = write(cwd, &json!({"path": "b.txt", "content": "x"})).await;
     assert_eq!(ok.status(), "ok");
+}
+
+#[tokio::test]
+async fn edit_array_form_applies_all_edits() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "m.txt", "content": "one\ntwo\nthree\nfour\n"}),
+    )
+    .await;
+    let read_out = text(read(dir.path(), &json!({"path": "m.txt"}), None).await);
+    let lines: Vec<&str> = read_out.lines().collect();
+    let a0 = lines[0].split('│').next().unwrap().to_string();
+    let a2 = lines[2].split('│').next().unwrap().to_string();
+    let out = text(
+        edit(
+            dir.path(),
+            &json!({"path": "m.txt", "edits": [
+                {"from": a0, "to": a0, "content": "ONE"},
+                {"from": a2, "to": a2, "content": "THREE"}
+            ]}),
+        )
+        .await,
+    );
+    assert!(out.starts_with("edited"), "edit failed: {out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("m.txt")).unwrap(),
+        "ONE\ntwo\nTHREE\nfour\n"
+    );
+}
+
+#[tokio::test]
+async fn edit_overlapping_ranges_leaves_the_file_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "o.txt", "content": "one\ntwo\nthree\nfour\n"}),
+    )
+    .await;
+    let read_out = text(read(dir.path(), &json!({"path": "o.txt"}), None).await);
+    let lines: Vec<&str> = read_out.lines().collect();
+    let a0 = lines[0].split('│').next().unwrap().to_string();
+    let a1 = lines[1].split('│').next().unwrap().to_string();
+    let out = text(
+        edit(
+            dir.path(),
+            &json!({"path": "o.txt", "edits": [
+                {"from": a0, "to": a1, "content": "A"},
+                {"from": a1, "to": a1, "content": "B"}
+            ]}),
+        )
+        .await,
+    );
+    assert!(
+        !out.starts_with("edited"),
+        "overlap must be rejected: {out}"
+    );
+    assert!(out.contains("overlap"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("o.txt")).unwrap(),
+        "one\ntwo\nthree\nfour\n"
+    );
+}
+
+#[tokio::test]
+async fn edit_anchored_content_is_rejected_and_file_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "a.txt", "content": "one\ntwo\nthree\n"}),
+    )
+    .await;
+    let read_out = text(read(dir.path(), &json!({"path": "a.txt"}), None).await);
+    let lines: Vec<&str> = read_out.lines().collect();
+    let from = lines[0].split('│').next().unwrap().to_string();
+    let to = lines[1].split('│').next().unwrap().to_string();
+    // The model pasted the read output verbatim (HASH│ prefixes on every line).
+    let anchored = format!("{from}│one\n{to}│two");
+    let out = text(
+        edit(
+            dir.path(),
+            &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": anchored}]}),
+        )
+        .await,
+    );
+    assert!(
+        !out.starts_with("edited"),
+        "anchored content must be rejected: {out}"
+    );
+    assert!(out.contains("unanchored"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "one\ntwo\nthree\n"
+    );
 }

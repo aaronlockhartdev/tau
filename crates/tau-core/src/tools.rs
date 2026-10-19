@@ -98,21 +98,34 @@ pub fn tool_specs() -> Vec<ToolSpec> {
         ToolSpec {
             kind: "function".into(),
             name: "edit".into(),
-            description: "Replace the line range [from, to] (inclusive) of a file \
-                 with content. from/to are the 3-char hash anchors copied from read \
-                 output (the 3 chars before │), bare. Stale or ambiguous anchors are \
-                 rejected — re-read the file for fresh anchors. Pass empty content to \
-                 delete the range."
+            description: "Replace one or more line ranges of a file in one call. \
+                 Each item in the edits array has from/to, the 3-char hash anchors \
+                 copied from read output (the 3 chars before │), bare, and content. \
+                 Stale or ambiguous anchors are rejected — re-read the file for \
+                 fresh anchors. Pass empty content to delete a range. content is raw \
+                 file content, unanchored — never paste read output (with its HASH│ \
+                 prefixes) into it. Ranges in one call must be disjoint, and a file \
+                 must appear in at most one edit call per turn."
                 .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
-                    "from": {"type": "string"},
-                    "to": {"type": "string"},
-                    "content": {"type": "string"}
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "from": {"type": "string"},
+                                "to": {"type": "string"},
+                                "content": {"type": "string"}
+                            },
+                            "required": ["from", "to", "content"]
+                        }
+                    }
                 },
-                "required": ["path", "from", "to", "content"]
+                "required": ["path", "edits"]
             }),
         },
         ToolSpec {
