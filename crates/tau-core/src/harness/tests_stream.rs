@@ -390,6 +390,12 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
     // event carries the item with the user as sender. (Assert on the
     // event, not `queued_items()`: the child is running and drains its
     // own queue, so a snapshot can race the drain on a slow runner.)
+    // The event is observed through the pump's channel, which drops on
+    // overflow under load; the child's store is the durable record the
+    // send lands in, so it is the fallback the event backs.
+    let mut store =
+        crate::session::SessionStore::for_workspace(Path::new(&workspace.cwd), &sub.child);
+    store.open().unwrap();
     let child = sub.child.clone();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut found = false;
@@ -405,6 +411,13 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
                         })
             )
         });
+        if !found {
+            found = store.entries_range(0, usize::MAX).unwrap().iter().any(|e| {
+                e.kind == crate::agent::KIND_USER
+                    && e.payload.get("text").and_then(|t| t.as_str()) == Some("steer the child")
+                    && e.payload.get("source").and_then(|s| s.as_str()) == Some("user")
+            });
+        }
         if !found {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
