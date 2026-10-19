@@ -1,7 +1,8 @@
+use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// One scripted turn: a streamed text, a batch of tool calls, or both.
@@ -83,7 +84,7 @@ impl Scenario {
 /// The request fields selection reads: the system instructions and the
 /// input items (messages carry `role`/`content`; the call/output item
 /// shapes are irrelevant to matching).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct WireRequest {
     #[serde(default)]
     pub instructions: Option<String>,
@@ -113,6 +114,10 @@ pub fn fallback() -> Scenario {
 pub struct ScenarioSet {
     pub scenarios: Vec<Scenario>,
     fallback: Scenario,
+    /// When set, every request's JSON (instructions + input) is appended as a
+    /// line to this file — the `accept-sender-labels` suite reads it to assert
+    /// the assembled child context (ticket #188).
+    capture_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for ScenarioSet {
@@ -120,6 +125,7 @@ impl Default for ScenarioSet {
         Self {
             scenarios: Vec::new(),
             fallback: fallback(),
+            capture_dir: None,
         }
     }
 }
@@ -152,6 +158,7 @@ impl ScenarioSet {
         Ok(ScenarioSet {
             scenarios,
             fallback: fallback(),
+            capture_dir: std::env::var_os("TAU_MOCK_CAPTURE").map(std::path::PathBuf::from),
         })
     }
 
@@ -196,6 +203,23 @@ impl ScenarioSet {
             }
         }
         &self.fallback
+    }
+    /// Append a request to the capture file named by `TAU_MOCK_CAPTURE` (the
+    /// `accept-sender-labels` suite reads it to assert the assembled child
+    /// context, ticket #188).
+    pub fn capture_request(&self, req: &WireRequest) {
+        if let Some(dir) = &self.capture_dir {
+            let _ = std::fs::create_dir_all(dir);
+            let line = serde_json::to_string(req).unwrap_or_default();
+            let path = dir.join("requests.jsonl");
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            {
+                let _ = writeln!(f, "{line}");
+            }
+        }
     }
 }
 
