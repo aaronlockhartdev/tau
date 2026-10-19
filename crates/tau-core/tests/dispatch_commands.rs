@@ -364,7 +364,7 @@ async fn a_send_to_a_child_session_routes_through_the_supervisor() {
 }
 
 #[tokio::test]
-async fn a_force_send_to_a_running_child_stops_it_first() {
+async fn a_force_send_to_a_running_child_cuts_its_in_flight_turn() {
     // 200ms per delta: the force send lands mid-stream, while the child is
     // running.
     let rig = rig(plain_body(8), 200);
@@ -377,11 +377,9 @@ async fn a_force_send_to_a_running_child_stops_it_first() {
             lane: MessageLane::Force,
         })
         .unwrap();
-    // The force arm stops the child first (a `stopped` state event), then
-    // the send resumes it (a `running` state event) with the message. That
-    // stop-then-resume pair, plus the delivered message, is the boundary's
-    // observable signature. (Note: the resume's `send` clears the stop
-    // flag — ticket #23 — so the in-flight turn is not cut.)
+    // The force send cuts the in-flight turn: the child's file shows an
+    // interrupted assistant entry (the partial stands), the stop-then-resume
+    // state pair, and the delivered force message.
     let path = rig
         .cwd
         .path()
@@ -390,7 +388,8 @@ async fn a_force_send_to_a_running_child_stops_it_first() {
     let mut content = String::new();
     for _ in 0..100 {
         content = std::fs::read_to_string(&path).unwrap_or_default();
-        if content.contains("\"state\":\"stopped\"")
+        if content.contains("\"interrupted\":true")
+            && content.contains("\"state\":\"stopped\"")
             && content.contains("\"state\":\"running\"")
             && content.contains("drop everything")
         {
@@ -398,7 +397,37 @@ async fn a_force_send_to_a_running_child_stops_it_first() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    panic!("the forced send left no stop-then-resume signature:\n{content}");
+    panic!("the forced send did not cut the in-flight turn (no interrupted entry):\n{content}");
+}
+
+#[tokio::test]
+async fn a_followup_send_to_a_parked_child_resumes_clean() {
+    let rig = rig(done_body(), 100);
+    let info = spawn(&rig);
+    std::fs::write(
+        tau_core::plan::path(rig.cwd.path(), &info.child),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
+    wait_state(&rig, &info.handle, "done").await;
+    rig.core
+        .dispatch(Command::MessageSend {
+            session: info.child.clone(),
+            text: "continue the work".into(),
+            lane: MessageLane::FollowUp,
+        })
+        .unwrap();
+    wait_state(&rig, &info.handle, "done").await;
+    let path = rig
+        .cwd
+        .path()
+        .join(".tau/sessions")
+        .join(format!("{}.jsonl", info.child));
+    let content = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !content.contains("\"interrupted\":true"),
+        "a non-force resume must not produce an interrupted entry:\n{content}"
+    );
 }
 
 #[tokio::test]

@@ -51,10 +51,13 @@ impl Supervisor {
             child.set_origin(TurnOrigin::Message);
             child.reset_hints();
             let text = text.unwrap_or_else(|| "Continue from where you stopped.".to_owned());
+            // A Force lane kills the stream it targets: queue it before the
+            // resume wakes the turn, so the turn loop starts already-killed
+            // and cuts immediately (#208).
+            child.agent.send_as(text, lane, source);
             child.set_state(&ChildState::Running)?;
             child.wake.notify_one();
             self.emit_state(&child, ChildState::Running, Some("resumed".into()), None);
-            child.agent.send_as(text, Lane::FollowUp, source);
             // A drive ended by stop/failure/done is gone: this resume
             // starts a fresh one (only an idle/awaiting drive persists and
             // wakes on its own).
