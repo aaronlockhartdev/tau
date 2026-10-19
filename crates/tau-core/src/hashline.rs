@@ -1,25 +1,44 @@
-//! Hash-anchored read/edit (spec §5.4, the pi-better-edit scheme): 3-char
-//! anchors from a 62-char alphabet where uniqueness is *allocated* (a
-//! per-file bitset with collision probing), canon = whitespace-stripped line,
+//! Hash-anchored read/edit (spec §5.4, the pi-better-edit scheme): 4-letter
+//! anchors from a 52-letter alphabet (52⁴ = 7,311,616 slots, ADR-0030) where
+//! uniqueness is *allocated* (a
+//! per-file bitset with collision probing), canon = whitespace-stripped line
+//! truncated to 500 bytes before hashing,
 //! survivor reuse across edits, and strict rejection of stale anchors —
 //! never fuzzy-matched.
 
 use std::collections::HashMap;
 use std::fmt;
 
-/// The 62-char anchor alphabet (A-Z, a-z, 0-9).
-const ALPHA: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+/// The 52-letter anchor alphabet (A-Z, a-z; no digits — tokenizer stability,
+/// ADR-0030).
+const ALPHA: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
-/// The full anchor space: 62³ = 238,328.
-pub const HASH_SPACE: usize = 62 * 62 * 62;
+/// The full anchor space: 52⁴ = 7,311,616.
+pub const HASH_SPACE: usize = 52 * 52 * 52 * 52;
 
-/// Collision-probing stride (62² + 62 + 1, coprime with the space).
-const STRIDE: usize = 62 * 62 + 62 + 1;
+/// Collision-probing stride (52⁴ - 3 ≡ -3 mod the space; coprime with it).
+const STRIDE: usize = HASH_SPACE - 3;
+
+/// The hash source is the canon truncated to this many bytes (minified lines
+/// are bounded; two lines sharing a 500-byte canon prefix share a base slot
+/// — allocation probing keeps anchors unique, ADR-0030).
+pub const MAX_HASH_SOURCE_BYTES: usize = 500;
+
+/// The 500-byte hash source, truncated at a UTF-8 char boundary.
+#[must_use]
+pub fn hash_source(line: &str) -> String {
+    let canon = canon(line);
+    let mut end = canon.len().min(MAX_HASH_SOURCE_BYTES);
+    while !canon.is_char_boundary(end) {
+        end -= 1;
+    }
+    canon.get(..end).expect("end is a char boundary").to_owned()
+}
 
 /// The line-separator between anchor and content in `read` output.
 pub const SEP: char = '│';
 
-/// The 238,328-line hard limit; beyond it the file falls back to `write`.
+/// The 7,311,616-line hard limit; beyond it the file falls back to `write`.
 #[derive(Debug)]
 pub struct TooManyLines;
 
@@ -38,11 +57,11 @@ impl fmt::Display for TooManyLines {
 pub enum EditError {
     /// The anchor is not in the file's current anchor set.
     Stale { anchor: String },
-    /// The file exceeds the 238,328-line anchor cap; fall back to `write`.
+    /// The file exceeds the 7,311,616-line anchor cap; fall back to `write`.
     TooLarge,
     /// `anchor_from` resolves after `anchor_to`.
     Reversed { from: String, to: String },
-    /// Not a bare 3-char anchor from the alphabet.
+    /// Not a bare 4-letter anchor from the alphabet.
     BadAnchor(String),
     /// A non-empty file cannot be emptied through edit; use write.
     EmptyFile,
@@ -71,7 +90,7 @@ impl fmt::Display for EditError {
             ),
             Self::BadAnchor(a) => write!(
                 f,
-                "invalid anchor \"{a}\": expected a bare 3-char alphanumeric"
+                "invalid anchor \"{a}\": expected a bare 4-letter alphabetic anchor"
             ),
             Self::EmptyFile => write!(f, "cannot empty a non-empty file via edit; use write"),
             Self::Overlapping { a, b, .. } => write!(
@@ -115,9 +134,9 @@ fn split_lines(content: &str) -> Vec<String> {
 }
 
 fn idx_to_hash(idx: usize) -> String {
-    let mut out = [0u8; 3];
+    let mut out = [0u8; 4];
     let mut i = idx;
-    for slot in (0..3).rev() {
+    for slot in (0..4).rev() {
         out[slot] = ALPHA.as_bytes()[i % ALPHA.len()];
         i /= ALPHA.len();
     }
@@ -125,7 +144,7 @@ fn idx_to_hash(idx: usize) -> String {
 }
 
 fn hash_to_idx(hash: &str) -> Option<usize> {
-    if hash.len() != 3 {
+    if hash.len() != 4 {
         return None;
     }
     let mut idx = 0usize;
@@ -148,8 +167,8 @@ fn next_zero(used: &mut [bool], start: usize) -> Result<usize, TooManyLines> {
 }
 
 /// Allocate a unique anchor per line: the line's base index
-/// (`xxh32(canon) >> 14 mod 62³`) when free, else a probe from the running
-/// hint — so every anchor is unique in the file by construction.
+/// (`xxh32(hash_source) >> 14 mod 52⁴`) when free, else a probe from the
+/// running hint — so every anchor is unique in the file by construction.
 pub fn line_hashes(content: &str) -> Result<Vec<String>, TooManyLines> {
     let lines = split_lines(content);
     if lines.len() > HASH_SPACE {
@@ -159,10 +178,11 @@ pub fn line_hashes(content: &str) -> Result<Vec<String>, TooManyLines> {
     let mut hint = 0usize;
     let mut out = Vec::with_capacity(lines.len());
     for line in &lines {
-        // 62^3 hash space: a u32 holds it, so the narrowing is safe.
-        let base = usize::try_from(xxhash_rust::xxh32::xxh32(canon(line).as_bytes(), 0) >> 14)
-            .expect("u32 fits in usize on the supported 64-bit targets")
-            % HASH_SPACE;
+        // 52^4 hash space: a u32 holds it, so the narrowing is safe.
+        let base =
+            usize::try_from(xxhash_rust::xxh32::xxh32(hash_source(line).as_bytes(), 0) >> 14)
+                .expect("u32 fits in usize on the supported 64-bit targets")
+                % HASH_SPACE;
         let idx = if used[base] {
             let idx = next_zero(&mut used, hint)?;
             used[idx] = true;
@@ -253,8 +273,8 @@ fn stable_hashes(
         0
     };
     // Survivors after the span shift by the net line-count change.
-    let shift = i64::try_from(new.len()).expect("line count is capped at 62^3")
-        - i64::try_from(old.len()).expect("line count is capped at 62^3")
+    let shift = i64::try_from(new.len()).expect("line count is capped at 52^4")
+        - i64::try_from(old.len()).expect("line count is capped at 52^4")
         + i64::try_from(span_len).expect("span length is at most the line count")
         - i64::try_from(span_len).expect("span length is at most the line count");
 
@@ -277,10 +297,10 @@ fn stable_hashes(
             continue;
         };
         let target = if i > span_end {
-            let t = i64::try_from(i).expect("line index is capped at 62^3") + shift;
+            let t = i64::try_from(i).expect("line index is capped at 52^4") + shift;
             let t = t.clamp(
                 0,
-                i64::try_from(new.len()).expect("line count is capped at 62^3"),
+                i64::try_from(new.len()).expect("line count is capped at 52^4"),
             );
             usize::try_from(t).expect("the clamp keeps the result in [0, new.len()]")
         } else {
@@ -311,10 +331,11 @@ fn stable_hashes(
         if new_hashes[i].is_some() {
             continue;
         }
-        // 62^3 hash space: a u32 holds it, so the narrowing is safe.
-        let base = usize::try_from(xxhash_rust::xxh32::xxh32(canon(&new[i]).as_bytes(), 0) >> 14)
-            .expect("u32 fits in usize on the supported 64-bit targets")
-            % HASH_SPACE;
+        // 52^4 hash space: a u32 holds it, so the narrowing is safe.
+        let base =
+            usize::try_from(xxhash_rust::xxh32::xxh32(hash_source(&new[i]).as_bytes(), 0) >> 14)
+                .expect("u32 fits in usize on the supported 64-bit targets")
+                % HASH_SPACE;
         let idx = if used[base] {
             let idx = next_zero(&mut used, hint)?;
             used[idx] = true;
@@ -368,12 +389,12 @@ fn is_anchored_content(text: &str, from: &str, to: &str) -> bool {
         return false;
     };
     let (first_anchor, _rest) = match first.split_once(SEP) {
-        Some((h, rest)) if h.len() == 3 => (h, rest),
+        Some((h, rest)) if h.len() == 4 => (h, rest),
         _ => return false,
     };
     let mut last_anchor = first_anchor;
     for line in lines {
-        let Some((h, _rest)) = line.split_once(SEP).filter(|(h, _)| h.len() == 3) else {
+        let Some((h, _rest)) = line.split_once(SEP).filter(|(h, _)| h.len() == 4) else {
             return false;
         };
         last_anchor = h;

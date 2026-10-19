@@ -24,6 +24,13 @@ path = "../crates/tau-core"
 path = "../crates/tau-protocol"
 
 [[bin]]
+name = "hashline"
+path = "fuzz_targets/hashline.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "parse_command"
 path = "fuzz_targets/parse_command.rs"
 test = false

@@ -1,6 +1,68 @@
 use super::*;
 
 #[test]
+fn encoding_is_a_bijection_over_the_full_space() {
+    // 52^4 slots, 4 letters: encode every slot and require a lossless decode.
+    for idx in 0..HASH_SPACE {
+        let h = idx_to_hash(idx);
+        assert_eq!(h.len(), 4);
+        assert!(
+            h.bytes().all(|b| ALPHA.as_bytes().contains(&b)),
+            "letters only: {h}"
+        );
+        assert_eq!(
+            hash_to_idx(&h),
+            Some(idx),
+            "round-trip failed at {idx} ({h})"
+        );
+    }
+    // A digit or a 3-char anchor is outside the alphabet.
+    assert_eq!(hash_to_idx("a1c4"), None);
+    assert_eq!(hash_to_idx("abc"), None);
+}
+
+#[test]
+fn stride_is_coprime_with_the_space() {
+    fn gcd(mut a: usize, mut b: usize) -> usize {
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a
+    }
+    assert_eq!(gcd(STRIDE, HASH_SPACE), 1);
+}
+
+#[test]
+fn hash_source_truncates_at_500_bytes_on_a_char_boundary() {
+    let long = "a".repeat(600);
+    assert_eq!(hash_source(&long), "a".repeat(500));
+    // A multibyte char straddling the 500-byte mark stays intact.
+    let straddling = "é".repeat(250); // 500 bytes exactly
+    assert_eq!(hash_source(&straddling), straddling);
+    let straddling_plus = format!("{straddling}é"); // 502 bytes
+    assert_eq!(hash_source(&straddling_plus).len(), 500);
+    // Short lines are unaffected.
+    assert_eq!(hash_source("x"), "x");
+}
+
+#[test]
+fn lines_sharing_a_500_byte_canon_prefix_share_a_base_slot() {
+    let prefix = "b".repeat(500);
+    let a = format!("{prefix}one");
+    let b = format!("{prefix}two");
+    // Same base slot, distinct allocated anchors.
+    let content = format!("{a}\n{b}\n");
+    let hashes = line_hashes(&content).unwrap();
+    assert_ne!(hashes[0], hashes[1]);
+    // A third line with the same prefix probes onward: still unique.
+    let c = format!("{prefix}three");
+    let hashes = line_hashes(&format!("{a}\n{b}\n{c}\n")).unwrap();
+    assert_ne!(hashes[0], hashes[1]);
+    assert_ne!(hashes[1], hashes[2]);
+    assert_ne!(hashes[0], hashes[2]);
+}
+
+#[test]
 fn canon_strips_all_whitespace() {
     assert_eq!(canon("  a \t b \r\n "), "ab");
     assert_eq!(canon(""), "");
@@ -54,19 +116,19 @@ fn survivor_anchors_stay_put_across_an_edit() {
 fn stale_anchor_is_rejected_not_fuzzy_matched() {
     let content = "one\ntwo\n";
     let edit = Edit {
-        from: "zzz".into(),
-        to: "zzz".into(),
+        from: "zzzz".into(),
+        to: "zzzz".into(),
         content: "x".into(),
     };
     match apply_edit(content, &edit) {
-        Err(EditError::Stale { anchor }) => assert_eq!(anchor, "zzz"),
+        Err(EditError::Stale { anchor }) => assert_eq!(anchor, "zzzz"),
         other => panic!("expected Stale, got {other:?}"),
     }
 }
 
 #[test]
 fn malformed_anchor_is_rejected() {
-    for bad in ["ab", "abcde", "ab│", ""] {
+    for bad in ["abc", "abcde", "ab│", "a1c4"] {
         let edit = Edit {
             from: bad.into(),
             to: bad.into(),
@@ -246,7 +308,7 @@ fn apply_edits_stale_anchor_in_one_of_many() {
             content: "A".into(),
         },
         Edit {
-            from: "zzz".into(),
+            from: "zzzz".into(),
             to: hashes[2].clone(),
             content: "B".into(),
         },
