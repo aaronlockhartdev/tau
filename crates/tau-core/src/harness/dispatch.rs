@@ -103,7 +103,8 @@ impl Core {
             | Command::SubagentState { .. }
             | Command::SubagentSpawn { .. }
             | Command::SubagentMessage { .. }
-            | Command::SubagentStop { .. } => self.dispatch_command(cmd),
+            | Command::SubagentStop { .. }
+            | Command::SubagentActivity { .. } => self.dispatch_command(cmd),
             Command::SkillList { .. }
             | Command::ProviderList
             | Command::ProviderAdd { .. }
