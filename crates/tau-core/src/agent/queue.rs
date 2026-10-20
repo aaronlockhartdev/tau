@@ -123,6 +123,22 @@ impl AgentSession {
         self.stop.store(true, Ordering::SeqCst);
     }
 
+    /// Delete a queued message by its position in the lane queue (the
+    /// global index the GUI's queue pane shows, ticket #223): the item
+    /// leaves the queue and never runs. Returns the deleted text; `None`
+    /// when the index is out of bounds (the item was consumed first).
+    #[must_use]
+    pub fn remove_queued(&self, index: usize) -> Option<String> {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held");
+        if index >= inner.queue.len() {
+            return None;
+        }
+        inner.queue.remove(index).map(|q| q.text)
+    }
+
     /// Mark the session closed: a one-way transition that interrupts the
     /// in-flight turn (set by `SessionClose`; unlike `stop`, a new send does
     /// not reset it).

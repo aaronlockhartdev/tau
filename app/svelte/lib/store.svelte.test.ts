@@ -127,6 +127,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     blob_read: () => ({ kind: 'blob', payload: null }),
     message_send: () => ({ kind: 'none' }),
     message_stop: () => ({ kind: 'none' }),
+    queue_item_remove: () => ({ kind: 'none' }),
     subagent_types: () => ({ kind: 'agents', agents: [] }),
     subagent_list: () => ({ kind: 'subagents', subagents: [] }),
     subagent_state: () => ({ kind: 'subagent', subagent: sub('c1') }),

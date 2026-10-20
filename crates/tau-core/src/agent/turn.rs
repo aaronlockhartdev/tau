@@ -10,9 +10,17 @@ use sink::StreamEntrySink;
 const CONTEXT_GATE_MARGIN: u32 = 4096;
 
 impl AgentSession {
-    /// Run turns until the queue is empty.
+    /// Run turns until the queue is empty. A stop (ticket #223) ends the
+    /// drain at the next turn boundary: the in-flight turn cuts, and the
+    /// remaining queued messages stay queued for the next explicit send —
+    /// they are not turned into interrupted one-call turns.
     pub async fn process(&self) -> Result<(), AgentError> {
         loop {
+            // A stop set while the previous turn ran (or before the first):
+            // drain nothing further.
+            if self.stop.load(Ordering::SeqCst) {
+                return Ok(());
+            }
             let Some(starter) = self
                 .inner
                 .lock()

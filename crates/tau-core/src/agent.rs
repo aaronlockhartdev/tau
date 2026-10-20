@@ -355,4 +355,6 @@ mod tests_gate;
 #[cfg(test)]
 mod tests_om;
 #[cfg(test)]
+mod tests_queue;
+#[cfg(test)]
 mod tests_turns;

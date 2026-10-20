@@ -322,6 +322,13 @@ pub enum Command {
     MessageStop {
         session: String,
     },
+    /// Delete a queued message by its position in the session's queue (the
+    /// global index the queue pane shows, ticket #223): the item leaves the
+    /// queue and never runs.
+    QueueItemRemove {
+        session: String,
+        index: usize,
+    },
 
     SubagentTypes,
     SubagentList {

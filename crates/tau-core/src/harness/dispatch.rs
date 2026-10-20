@@ -98,6 +98,7 @@ impl Core {
             | Command::BlobRead { .. } => self.dispatch_session(cmd),
             Command::MessageSend { .. }
             | Command::MessageStop { .. }
+            | Command::QueueItemRemove { .. }
             | Command::SubagentTypes
             | Command::SubagentList { .. }
             | Command::SubagentState { .. }
