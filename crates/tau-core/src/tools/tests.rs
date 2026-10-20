@@ -222,6 +222,47 @@ async fn edit_output_is_bounded_to_the_changed_region() {
 }
 
 #[tokio::test]
+async fn edit_pure_deletion_reports_the_removed_line_not_no_change() {
+    // #235: a deletion-only edit wrote the file correctly but reported
+    // "(no change)" — the diff was blank. It must show the removed line.
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "del.txt", "content": "alpha\nbeta\ngamma\ndelta\n"}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "del.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let lines: Vec<&str> = read_out.lines().collect();
+    // Delete "beta" (the second line).
+    let anchor = lines[1].split('│').next().unwrap().to_string();
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "del.txt", "edits": [{"from": anchor, "to": anchor, "content": ""}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(
+        !out.contains("(no change)"),
+        "a pure deletion must not report no change: {out}"
+    );
+    assert!(
+        out.contains("-beta"),
+        "removed line missing from the diff: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("del.txt")).unwrap(),
+        "alpha\ngamma\ndelta\n"
+    );
+}
+
+#[tokio::test]
 async fn bash_captures_output_and_exit_code() {
     let dir = tempfile::tempdir().unwrap();
     let out = text(bash(dir.path(), &json!({"command": "echo hello"})).await);
