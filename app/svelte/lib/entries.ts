@@ -197,8 +197,9 @@ export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'e
 // the back-compat fallback for records written before it existed. A running
 // call has neither an explicit status nor an output, so it falls through to
 // toolStatus's 'running'.
-function decodeToolStatus(p: Record<string, unknown>): 'ok' | 'running' | 'error' {
+function decodeToolStatus(p: Record<string, unknown>): 'ok' | 'running' | 'error' | 'cancelled' {
   const s = p.status;
+  if (s === 'ok' || s === 'error' || s === 'cancelled') return s;
   if (s === 'ok' || s === 'error') return s;
   return toolStatus(typeof p.name === 'string' ? p.name : '', p.output);
 }

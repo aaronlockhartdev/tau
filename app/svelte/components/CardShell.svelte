@@ -76,11 +76,11 @@
       <Icon class="ic" size={13} />
       <span class="nm">{shell.label}</span>
       <span class="sum">{shell.summary}</span>
-      <span class="st {shell.status === 'ok' ? 'ok' : shell.status === 'error' ? 'err' : 'pend'}">
+      <span class="st {shell.status === 'ok' ? 'ok' : shell.status === 'error' ? 'err' : shell.status === 'cancelled' ? 'cancelled' : 'pend'}">
         {#if shell.status === 'running'}
           <span class="spin"></span>
         {:else}
-          {shell.status === 'ok' ? '✓' : '✗'}
+          {shell.status === 'ok' ? '✓' : shell.status === 'cancelled' ? '–' : '✗'}
         {/if}
       </span>
       <span class="caret">▾</span>
@@ -302,6 +302,11 @@
   }
   .tool .chip .st.err {
     color: var(--red);
+  }
+  /* #222: a user-stop cancellation is not a failure — keep the muted base
+     tint, distinct from the red error. */
+  .tool .chip .st.cancelled {
+    color: var(--faint);
   }
   .tool .chip .st .spin {
     display: inline-block;
