@@ -333,6 +333,8 @@ mod tests_link;
 #[cfg(test)]
 mod tests_notify;
 #[cfg(test)]
+mod tests_spawn_handles;
+#[cfg(test)]
 mod tests_stop_resume;
 #[cfg(test)]
 mod tests_wake;
