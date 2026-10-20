@@ -750,10 +750,10 @@ async fn session_open_of_an_unowned_session_is_not_found() {
 }
 
 #[tokio::test]
-async fn a_restart_restores_a_childs_state_from_disk() {
-    // Ticket #221: on a restart the supervisor's in-memory child registry
-    // is empty, so the parent's snapshot restores the child's true state
-    // from disk (the child's own last `subagent` state entry). A done
+async fn a_restart_restores_a_child_state_from_disk() {
+    // Ticket #221: after a restart the supervisor's in-memory child
+    // registry is empty, so the parent's snapshot restores the child's true
+    // state from disk (the child's own last `subagent` state entry). A done
     // child reads `done`, not a uniform `idle`.
     let rig = rig(done_body(), 100);
     let info = spawn(&rig);
