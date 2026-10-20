@@ -232,6 +232,7 @@ pub(crate) fn harness_full(
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         caps,
         depth: 0,
         types: vec![crate::agent_type::builtin_general()],

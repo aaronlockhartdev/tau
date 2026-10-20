@@ -307,6 +307,7 @@ async fn kill_policy_completes_the_inflight_tool_batch() {
         turn: TurnConfig::default(),
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: None,
         om_model: String::new(),
         subagents: None,

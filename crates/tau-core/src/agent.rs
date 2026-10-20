@@ -204,6 +204,9 @@ pub(crate) struct SessionParams {
     pub om: Option<crate::om_integration::OmState>,
     /// The OM model (global config, spec §4); empty = the session's model.
     pub om_model: String,
+    /// The pin store's session-start GC policy (#225, the `[hashline]`
+    /// config section); defaults at the test seams.
+    pub hashline: crate::hashline::pin_store::GcPolicy,
     /// The parent-side sub-agent supervisor (ticket #23); `None` for child
     /// sessions (a child cannot spawn — the depth cap is structural).
     pub subagents: Option<Arc<crate::subagent::Supervisor>>,
@@ -233,7 +236,7 @@ impl AgentSession {
         // lines are unchanged. Built before the struct literal (which moves
         // `p.cwd`) so it borrows the cwd without cloning.
         let anchor_registry = {
-            let store = crate::hashline::pin_store::PinStore::new(&p.cwd.join(".tau"));
+            let store = crate::hashline::pin_store::PinStore::new(&p.cwd.join(".tau"), p.hashline);
             crate::hashline::registry::Registry::with_store(store)
         };
         Self {

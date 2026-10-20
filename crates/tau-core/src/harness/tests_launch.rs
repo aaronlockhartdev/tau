@@ -226,6 +226,7 @@ fn launch_seam_session_is_freed_when_dropped() {
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: crate::agent::TurnConfig::default(),
         gates: None,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
@@ -281,6 +282,7 @@ async fn a_reopened_session_resumes_gate_failed_from_the_record() {
             max_retries: 1,
             ..Gates::default()
         }),
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,

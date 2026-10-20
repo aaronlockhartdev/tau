@@ -95,6 +95,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,

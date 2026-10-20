@@ -41,6 +41,7 @@ fn harness_with_gate(
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: Some(gates),
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         caps: SubAgents::default(),
         depth: 0,
         types,
