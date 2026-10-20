@@ -5,12 +5,13 @@ import {
   groupIsOpen,
   laneOf,
   makeStub,
+  openSession,
   setArchived,
   touchChild,
   windowTitle,
   type SessionMap
 } from './sessions';
-import type { SessionMeta, SubagentInfo, Workspace } from './protocol';
+import type { SessionMeta, Snapshot, SubagentInfo, Workspace } from './protocol';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
 
@@ -41,6 +42,31 @@ function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
     usage: null,
     resume_contract: null,
     ...extra
+  };
+}
+
+// A minimal snapshot: the session meta + a live state. `own_state` and
+// `subagents` are the fields #221 exercises; the rest are inert defaults.
+function snap(
+  sid: string,
+  live: Partial<Snapshot['live']> = {},
+  metaExtra: Partial<SessionMeta> = {}
+): Snapshot {
+  return {
+    workspace: WS,
+    session: meta(sid, metaExtra),
+    entries: [],
+    om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
+    live: {
+      queue: [],
+      turn: 'idle',
+      gate_failed: false,
+      plan: { steps: [], criteria: '', notes: '' },
+      subagents: [],
+      own_state: null,
+      ...live
+    },
+    cursor: ''
   };
 }
 
@@ -232,5 +258,70 @@ describe('applySubagentEvent (lib level)', () => {
     // handle); the old child is no longer claimed by h1.
     const h1 = out['p']!.subagents.find((x) => x.handle === 'h1');
     expect(h1?.child).toBe('new');
+  });
+});
+
+describe('openSession (ticket #221 restart restore)', () => {
+  it('a snapshot state wins over a stale idle stub (no uniform idle on restart)', () => {
+    // A restart materializes every child as an idle stub. Opening the child
+    // with a snapshot that says `done` must converge the row on `done`, not
+    // preserve the stub's `idle` (the previous behavior).
+    const stubbed: SessionMap = { c: makeStub(meta('c', { parent: 'p' }), 'p', 'idle', null, 1) };
+    const out = openSession(stubbed, 'c', snap('c', { own_state: { state: 'done', waiting_on: null } }));
+    expect(out['c']!.state).toBe('done');
+  });
+
+  it('an idle stub with a declared user-wait is corrected by the snapshot', () => {
+    // A child parked on the user: the stub carries the wait, the snapshot
+    // confirms it — the row keeps both the idle state and the user wait.
+    const stubbed: SessionMap = {
+      c: makeStub(meta('c', { parent: 'p' }), 'p', 'idle', 'user', 1)
+    };
+    const out = openSession(
+      stubbed,
+      'c',
+      snap('c', { own_state: { state: 'idle', waiting_on: 'user' } })
+    );
+    expect(out['c']!.state).toBe('idle');
+    expect(out['c']!.waiting_on).toBe('user');
+  });
+
+  it('the row mru and parent survive the re-open (stable sort, link kept)', () => {
+    const stubbed: SessionMap = {
+      c: makeStub(meta('c', { parent: 'p' }), 'p', 'idle', null, 42)
+    };
+    const out = openSession(stubbed, 'c', snap('c', { own_state: { state: 'done', waiting_on: null } }));
+    expect(out['c']!.mru).toBe(42);
+    expect(out['c']!.parent).toBe('p');
+  });
+
+  it('a child with no own_state in the snapshot stays idle (no resurrection)', () => {
+    // The negative bar: a snapshot carrying no own_state (a child with no
+    // recorded state) falls back to the turn-derived state — an idle turn
+    // is `idle`, and a stale `done` stub is not resurrected to running.
+    const stubbed: SessionMap = { c: makeStub(meta('c', { parent: 'p' }), 'p', 'done', null, 1) };
+    const out = openSession(stubbed, 'c', snap('c', {}));
+    expect(out['c']!.state).toBe('idle');
+    expect(out['c']!.waiting_on).toBeNull();
+  });
+
+  it('a running snapshot state is not synthesized from a parked stub', () => {
+    // The reconcile takes state from the snapshot; a stub that was `running`
+    // before a restart (impossible in practice, but the rule is the point)
+    // is reset to the snapshot's truth, never kept as a ghost running state.
+    const stubbed: SessionMap = { c: makeStub(meta('c', { parent: 'p' }), 'p', 'running', null, 1) };
+    const out = openSession(
+      stubbed,
+      'c',
+      snap('c', { own_state: { state: 'idle', waiting_on: 'parent' } })
+    );
+    expect(out['c']!.state).toBe('idle');
+  });
+
+  it('a root session (no own_state) derives its state from the turn', () => {
+    const out = openSession({}, 's1', snap('s1', { turn: 'running' }));
+    expect(out['s1']!.state).toBe('running');
+    const idle = openSession({}, 's1', snap('s1', { turn: 'idle' }));
+    expect(idle['s1']!.state).toBe('idle');
   });
 });

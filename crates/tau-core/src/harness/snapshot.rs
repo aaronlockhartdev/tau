@@ -54,6 +54,9 @@ impl Core {
             .cloned()
             .map(Into::into)
             .unwrap_or_default();
+        // A child's own badge state (ticket #221): computed before the
+        // `meta` move below (the child flag is the header's `parent`).
+        let own_state = own_state_of(&meta, &sized);
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
@@ -78,21 +81,49 @@ impl Core {
                 },
                 gate_failed: live.agent.gate_failed(),
                 plan,
-                subagents: live
-                    .agent
-                    .subagents()
-                    .map(|sup| {
-                        sup.handles()
-                            .iter()
-                            .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                subagents: live_subagents(live),
+                own_state,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
     }
+}
 
+/// The live session's sub-agent list for the snapshot (ticket #221): the
+/// supervisor's in-memory registry, projected. When the registry is empty
+/// (a fresh restart drops it) the on-disk restore stands in — the child
+/// records are the ground truth then, and the restore is a pure
+/// projection (it mutates no registry, so a later spawn never conflicts).
+fn live_subagents(live: &LiveSession) -> Vec<tau_protocol::SubagentInfo> {
+    let Some(sup) = live.agent.subagents() else {
+        return vec![];
+    };
+    let handles = sup.handles();
+    if !handles.is_empty() {
+        return handles
+            .iter()
+            .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
+            .collect();
+    }
+    sup.restore_children()
+}
+
+/// A child session's own badge state (ticket #221): present only for a
+/// child (its header carries a `parent`), projected from the session's
+/// own in-memory log. A root session is `None` — it has no lifecycle
+/// state of its own; the badge is turn-derived.
+fn own_state_of(
+    meta: &SessionMeta,
+    sized: &[(crate::session::Entry, u64)],
+) -> Option<tau_protocol::snapshot::OwnState> {
+    // A root session has no lifecycle state of its own: skip the entry
+    // clone (a 10k-entry root must not pay for a projection it never uses).
+    meta.parent.as_ref()?;
+    let entries: Vec<crate::session::Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
+    crate::subagent::restore::own_state_for(&entries)
+}
+
+impl Core {
     pub(crate) fn entries(
         live: &LiveSession,
         since: Option<String>,
@@ -163,6 +194,16 @@ impl Core {
             .map(|raw| crate::plan::parse(&raw))
             .map(tau_protocol::snapshot::Plan::from)
             .unwrap_or_default();
+        // The restart restore (ticket #221): a closed session's children
+        // and a closed child's own state are projected from the file (the
+        // registry is empty and there is no live log to read).
+        let cwd = Path::new(&workspace.cwd);
+        let subagents = crate::subagent::restore::restore_children_from_disk(cwd, id);
+        let own_state = if meta.parent.is_some() {
+            crate::subagent::restore::own_state_for(&entries)
+        } else {
+            None
+        };
         Ok(Snapshot {
             workspace,
             session: SessionMeta { usage, ..meta },
@@ -173,7 +214,8 @@ impl Core {
                 turn: TurnState::Idle,
                 gate_failed: false,
                 plan,
-                subagents: vec![],
+                subagents,
+                own_state,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })

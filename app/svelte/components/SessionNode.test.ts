@@ -101,7 +101,7 @@ describe('SessionNode', () => {
     expect(badge.closest('.badge')).toHaveClass('running');
   });
 
-  it('a child row shows its lifecycle state and declared wait', async () => {
+  it('a child row parked on the parent reads the plain idle state', async () => {
     const s = seed();
     s.parent = 'p1';
     s.state = 'idle';
@@ -119,7 +119,32 @@ describe('SessionNode', () => {
     };
     s.subagents = [info];
     await mount(s, { depth: 1 });
-    expect(screen.getByText('idle · parent')).toBeInTheDocument();
+    // The rename (ticket #221): a child parked on the parent reads the plain
+    // `idle` state, not the compound `idle · parent`.
+    const badge = screen.getByText('idle');
+    expect(badge.closest('.badge')).toHaveClass('idle');
+  });
+
+  it('a child row parked on the user shows the user badge in its own color', async () => {
+    const s = seed();
+    s.parent = 'p1';
+    s.state = 'idle';
+    s.waiting_on = 'user';
+    const info: SubagentInfo = {
+      handle: 'h1',
+      child: 's1',
+      agent_type: 'worker',
+      context_mode: 'fresh',
+      state: 'idle',
+      waiting_on: 'user',
+      last_message: null,
+      usage: null,
+      resume_contract: null
+    };
+    s.subagents = [info];
+    await mount(s, { depth: 1 });
+    const badge = screen.getByText('user');
+    expect(badge.closest('.badge')).toHaveClass('user');
   });
 
   it('a plain click opens the session and sets the anchor', async () => {

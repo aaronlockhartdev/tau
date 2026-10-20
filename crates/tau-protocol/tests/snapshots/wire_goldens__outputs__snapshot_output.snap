@@ -68,7 +68,8 @@ expression: output
           "usage": null,
           "resume_contract": null
         }
-      ]
+      ],
+      "own_state": null
     },
     "cursor": "00000042"
   }

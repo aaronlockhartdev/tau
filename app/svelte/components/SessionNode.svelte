@@ -192,6 +192,15 @@
   function childInfo(c: SessionState) {
     return active?.subagents.find((x) => x.child === c.meta.id) ?? null;
   }
+  // The badge label (ticket #221): a child parked on the user reads `user`
+  // (its own color), a child parked on the parent reads plain `idle` —
+  // the waiting target is a display detail, not a compound state.
+  function badgeLabel(c: SessionState): string {
+    const w = childInfo(c)?.waiting_on;
+    if (c.state === 'idle') return w === 'user' ? 'user' : 'idle';
+    if (c.state === 'awaiting') return 'user';
+    return c.state;
+  }
 </script>
 
 {#snippet rowLabel()}
@@ -220,7 +229,7 @@
   {#if !session.archived && depth === 0}
     {#if sessionRunning(session)}<span class="badge running"><span class="dot"></span>running</span>{/if}
   {:else if !session.archived}
-    <span class="badge {session.state}"><span class="dot"></span>{session.state}{childInfo(session)?.waiting_on ? ` · ${childInfo(session)?.waiting_on}` : ''}</span>
+    <span class="badge {badgeLabel(session)}"><span class="dot"></span>{badgeLabel(session)}</span>
   {/if}
   <span class="mru">{fmtAgo(session.mru, store.now)}</span>
   {#if !session.archived && !session.parent}
@@ -345,6 +354,15 @@
   .badge.idle {
     color: var(--amber);
     border-color: color-mix(in srgb, var(--amber) 40%, transparent);
+  }
+  /* A child parked on the user (ticket #221): its own needs-you color, the
+     red the sub-agent block uses for waiting-user. */
+  .badge.user {
+    color: var(--red);
+    border-color: color-mix(in srgb, var(--red) 40%, transparent);
+  }
+  .badge.user .dot {
+    animation: pulse 1.2s ease-in-out infinite;
   }
   .badge.done {
     color: var(--green);

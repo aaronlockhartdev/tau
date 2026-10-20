@@ -44,7 +44,7 @@ export interface SessionState {
   // The session-tree row (ticket #26): a child session's parent link,
   // its lifecycle state, its archive flag, and its sort key.
   parent: string | null;
-  state: 'running' | 'idle' | 'done' | 'failed' | 'stopped';
+  state: 'running' | 'idle' | 'awaiting' | 'done' | 'failed' | 'stopped';
   // The child's declared wait (parent | user | subagent) — from the state
   // event's detail; annotated on the row and the child's own header.
   waiting_on: string | null;
@@ -71,6 +71,14 @@ export function laneOf(l: QueuedItem['lane']): PendingMsg['lane'] {
 
 function snapshotToState(snap: Snapshot): SessionState {
   const meta = snap.session;
+  // A child's own lifecycle state (ticket #221): the snapshot's own_state
+  // is authoritative for the child's tab (a restart's child is not running,
+  // so the turn-derived state would misbadge a done/failed child as idle).
+  // A root session (or a child with no recorded state) falls back to the
+  // turn-derived state.
+  const own = snap.live.own_state;
+  const state = own ? own.state : snap.live.turn === 'running' ? 'running' : 'idle';
+  const waitingOn = own ? own.waiting_on : null;
   return {
     meta,
     // metadata skeleton: the card shows the preview until a paged read
@@ -98,8 +106,8 @@ function snapshotToState(snap: Snapshot): SessionState {
     om: { ...snap.om, kind: 'idle' },
     pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane), source: q.source ?? undefined })),
     parent: null,
-    state: snap.live.turn === 'running' ? 'running' : 'idle',
-    waiting_on: null,
+    state,
+    waiting_on: waitingOn,
     archived: meta.archived,
     mru: meta.created,
     subagents: snap.live.subagents,
@@ -197,18 +205,19 @@ export function setArchived(sessions: SessionMap, sid: string, meta: SessionMeta
   return { ...sessions, [sid]: { ...s, meta, archived: meta.archived } };
 }
 
-// Session-open convergence: the snapshot replaces the stub/previous state;
-// a child's parent link is not in its own snapshot (it lives in the
-// parent's sub-agent list) so it survives re-opens, the archive flag stays
-// with the row (the list is its authority), and the row's mru survives too
-// — resetting it to creation time reshuffles the MRU tree away from the
-// row the user just clicked.
+// Session-open convergence: the snapshot replaces the stub/previous state —
+// the snapshot's sub-agent list is the supervisor's ground truth, so its
+// state wins over a stale stub (ticket #221: a restart must not reset a
+// child to `idle`). A child's parent link is not in its own snapshot (it
+// lives in the parent's sub-agent list) so it survives re-opens, the
+// archive flag stays with the row (the list is its authority), and the
+// row's mru survives too — resetting it to creation time reshuffles the
+// MRU tree away from the row the user just clicked.
 export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): SessionMap {
   const next = snapshotToState(snap);
   const prev = sessions[sid];
   if (prev) {
     next.parent = prev.parent;
-    next.state = prev.state;
     next.archived = prev.archived;
     next.mru = prev.mru;
   }

@@ -199,6 +199,7 @@ fn command_output_variants_roundtrip() {
             gate_failed: false,
             plan: snapshot::Plan::default(),
             subagents: vec![],
+            own_state: None,
         },
         cursor: "e1".into(),
     };
