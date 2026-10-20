@@ -397,6 +397,68 @@ async fn edit_output_is_a_bounded_before_after_diff() {
 }
 
 #[tokio::test]
+async fn edit_diff_over_the_cap_still_renders_the_head() {
+    // #220: a change over the diff cap shows the head plus a truncation
+    // marker — the diff is never blanked out.
+    let dir = tempfile::tempdir().unwrap();
+    let content: String = (0..300)
+        .map(|i| format!("old {i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    write(
+        dir.path(),
+        &json!({"path": "big.txt", "content": content}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "big.txt", "offset": "1", "limit": 220}),
+        None,
+        Some(&mut *reg),
+    ));
+    let rows: Vec<&str> = read_out.lines().collect();
+    let from = rows[0].split('│').next().unwrap().to_string();
+    let to = rows[219].split('│').next().unwrap().to_string();
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "big.txt", "edits": [{"from": from, "to": to, "content": "NEW"}]}),
+        Some(&mut *reg),
+        true,
+    ));
+    assert!(out.starts_with("edited "), "edit failed: {out}");
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(
+        lines.len() > 201,
+        "head of the diff missing: {} lines",
+        lines.len()
+    );
+    // The truncation marker names how much is hidden.
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("… ") && l.contains("more lines changed")),
+        "truncation notice missing: {out}"
+    );
+    // Every visible body line is a complete marked line (never partial).
+    assert!(
+        lines[1..].iter().all(|l| l.starts_with('+')
+            || l.starts_with('-')
+            || l.starts_with(' ')
+            || l.starts_with('…')),
+        "a partial line slipped in: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("big.txt"))
+            .unwrap()
+            .lines()
+            .count(),
+        81
+    );
+}
+#[tokio::test]
 async fn core_tools_carry_a_typed_verdict() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path();
@@ -786,4 +848,69 @@ async fn range_stale_shows_fresh_anchors_and_retry_succeeds() {
         std::fs::read_to_string(dir.path().join("s.txt")).unwrap(),
         "one\nTWO-changed\nthree\n"
     );
+}
+
+#[tokio::test]
+async fn an_edit_error_is_never_an_empty_result() {
+    // #220: every EditError surfaces its message — a tool result must never
+    // carry zero visible text (the transcript's blank code block).
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "e.txt", "content": "one\ntwo\n"}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    // Bad anchor (not in the file).
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "e.txt", "edits": [{"from": "1234", "to": "1234", "content": "x"}], "strict": true}),
+        Some(&mut *reg),
+        true,
+    ));
+    assert!(
+        !out.trim().is_empty(),
+        "an edit failure must carry its message"
+    );
+    assert!(out.contains("E_BAD_ANCHOR"), "{out}");
+    // Stale anchor: the file changed after the read.
+    let read_out = text(read(
+        dir.path(),
+        &json!({"path": "e.txt"}),
+        None,
+        Some(&mut *reg),
+    ));
+    let anchor = read_out
+        .lines()
+        .next()
+        .unwrap()
+        .split('│')
+        .next()
+        .unwrap()
+        .to_string();
+    std::fs::write(dir.path().join("e.txt"), "changed\n").unwrap();
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "e.txt", "edits": [{"from": anchor, "to": anchor, "content": "x"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(
+        !out.trim().is_empty(),
+        "a stale anchor must carry its message"
+    );
+    assert!(out.contains("E_STALE"), "{out}");
+    // Missing fields.
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "e.txt", "edits": [{"from": "aaaa"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(
+        !out.trim().is_empty(),
+        "a missing-field failure must carry its message"
+    );
+    assert!(out.contains("requires"), "{out}");
 }

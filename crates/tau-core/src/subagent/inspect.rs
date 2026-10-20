@@ -189,20 +189,28 @@ fn project_entry(entry: &Entry) -> ActivityEntry {
     }
 }
 
-/// A char-boundary-safe truncation: over-limit text is cut to the limit
-/// and marked with an ellipsis.
+/// A char-boundary-safe, line-boundary truncation (#219): over-limit text is
+/// cut to the last complete line that fits, with an ellipsis appended. A
+/// single line longer than the whole limit yields an empty prefix + ellipsis
+/// (the oversized-line case).
 fn truncate_at(text: &str, limit: usize) -> String {
     let trimmed = text.trim();
     if trimmed.len() <= limit {
         return trimmed.to_owned();
     }
-    let mut cut = 0;
-    for (i, _) in trimmed.char_indices().take(limit) {
-        cut = i;
+    let mut out = trimmed.to_owned();
+    let mut count = 0usize;
+    for (i, _) in out.char_indices() {
+        count += 1;
+        if count > limit {
+            let prefix = out.get(..i).expect("char_indices yields a boundary");
+            let cut = prefix.rfind('\n').map_or(0, |j| j + 1);
+            out.truncate(cut);
+            let _ = out.pop();
+            out.push('…');
+            break;
+        }
     }
-    let mut out: String = trimmed.chars().take(limit).collect();
-    out.truncate(cut);
-    out.push('…');
     out
 }
 
@@ -407,5 +415,34 @@ mod tests {
         let text = &activity.live[0].text;
         assert!(text.ends_with('…'));
         assert!(text.len() <= ACTIVITY_TEXT_LIMIT + 3);
+    }
+
+    #[test]
+    fn truncated_text_stops_at_a_line_boundary() {
+        // #219: the cut lands on a line boundary — the last visible line is
+        // complete, and the ellipsis follows on its own line.
+        let big = (0..100)
+            .map(|i| format!("line {i:03}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(big.len() > ACTIVITY_TEXT_LIMIT);
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(tmp.path(), "child-5");
+        store.create().unwrap();
+        store
+            .append("user", serde_json::json!({ "text": big }), None)
+            .unwrap();
+        let activity = read_activity(tmp.path(), "child-5", &crate::config::Om::default()).unwrap();
+        let text = &activity.live[0].text;
+        assert!(text.ends_with('…'), "got: {text:?}");
+        let body = text.strip_suffix('…').expect("the ellipsis");
+        assert!(!body.ends_with('\n'));
+        let last = body.lines().last().expect("a visible line");
+        let n: usize = last.trim_start_matches("line ").parse().unwrap();
+        assert_eq!(
+            last,
+            format!("line {n:03}"),
+            "last visible line must be complete"
+        );
     }
 }

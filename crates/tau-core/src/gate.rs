@@ -76,13 +76,26 @@ pub async fn run(gates: &Gates, cwd: &Path) -> GateResult {
     }
 }
 
-/// Truncate the check output to `MAX_OUTPUT` chars, marking the cut.
+/// Truncate the check output to `MAX_OUTPUT` chars, marking the cut (#219:
+/// on a line boundary — the last visible line is complete, and the marker
+/// rides the end of it).
 fn truncate(s: &str) -> String {
     if s.chars().count() <= MAX_OUTPUT {
         return s.to_owned();
     }
-    let mut out: String = s.chars().take(MAX_OUTPUT).collect();
-    out.push_str("… [truncated]");
+    let mut out = s.to_owned();
+    let mut count = 0;
+    for (i, _) in out.char_indices() {
+        count += 1;
+        if count > MAX_OUTPUT {
+            let prefix = out.get(..i).expect("char_indices yields a boundary");
+            let cut = prefix.rfind('\n').map_or(0, |j| j + 1);
+            out.truncate(cut);
+            let _ = out.pop();
+            out.push('…');
+            break;
+        }
+    }
     out
 }
 
@@ -244,9 +257,26 @@ mod tests {
         let big = "x".repeat(MAX_OUTPUT + 100);
         let out = truncate(&big);
         assert!(out.chars().count() <= MAX_OUTPUT + 20);
-        assert!(out.ends_with("… [truncated]"));
+        assert!(out.ends_with('…'));
         // Short output is untouched.
         assert_eq!(truncate("short"), "short");
+    }
+
+    #[test]
+    fn the_output_is_truncated_at_a_line_boundary() {
+        // #219: the cut lands on a line boundary — the last visible line is
+        // complete and the marker follows on its own line.
+        let big = (0..600)
+            .map(|i| format!("line {i:03}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(big.chars().count() > MAX_OUTPUT);
+        let out = truncate(&big);
+        assert!(out.ends_with('…'));
+        let body = out.strip_suffix('…').expect("the marker");
+        assert!(!body.ends_with('\n'));
+        assert!(body.ends_with("line 443"), "last visible line: {out:?}");
+        assert!(out.chars().count() <= MAX_OUTPUT + 20);
     }
 
     #[test]

@@ -38,7 +38,7 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
     store
         .append(
             "user",
-            json!({ "text": "l".repeat(300), "lane": "follow-up" }),
+            json!({ "text": (0..50).map(|i| format!("l: {i:04}")).collect::<Vec<_>>().join("\n"), "lane": "follow-up" }),
             Some("00000005"),
         )
         .unwrap();
@@ -64,10 +64,11 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
         assert!(out.contains(id), "{out}");
     }
     assert!(!out.contains("00000002"), "{out}");
-    // The 200-char preview.
-    assert!(out.contains(&"l".repeat(200)), "{out}");
-    assert!(!out.contains(&"l".repeat(201)), "{out}");
-    // Not-found paths: no arg, unknown group, rangeless group, and a
+    // The 200-char preview, cut on a line boundary: the partial last line is
+    // dropped and an ellipsis marks the cut.
+    assert!(out.contains("l: 0024"), "{out}");
+    assert!(!out.contains("l: 0025"), "no partial last line: {out}");
+    assert!(out.contains('…'), "marker: {out}");
     // range pointing outside this session (a parent-scoped group).
     assert!(
         recall(&mut store, &record, &json!({}))
@@ -103,8 +104,59 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
             .unwrap_err()
             .contains("not in this session")
     );
+    // range pointing outside this session (a parent-scoped group).
 }
 
+#[test]
+fn recall_previews_stop_at_a_line_boundary() {
+    // #219: a preview that must be cut stops at a line boundary, with an
+    // ellipsis marker — never a partial line.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s-recall");
+    store.create().unwrap();
+    let first = store
+        .append("user", serde_json::json!({ "text": "one" }), None)
+        .unwrap();
+    let big: String = (0..100)
+        .map(|i| format!("line {i:03}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let long = store
+        .append("user", serde_json::json!({ "text": big }), Some(&first.id))
+        .unwrap();
+    let g = om::wrap_in_observation_group("obs", &format!("{}:{}", first.id, long.id), "e", None);
+    let record = OmRecord {
+        active_observations: g,
+        ..Default::default()
+    };
+    let out = recall(&mut store, &record, &json!({ "group": "e" })).unwrap();
+    let entry_line = out
+        .lines()
+        .find(|l| l.starts_with(&long.id))
+        .expect("the long entry's line");
+    assert!(entry_line.contains('…'), "marker missing: {entry_line}");
+    // The preview is space-joined; the last `line NNN` in it is a complete
+    // line, and the next one is absent (cut at the boundary).
+    let body = entry_line.strip_suffix('…').expect("the ellipsis");
+    // All-digit tokens in the entry line: the 10-digit id first, then the
+    // `NNN` numbers of the `line NNN` preview tokens — so the last one is
+    // the last complete line in the preview.
+    let nums: Vec<String> = body
+        .split(' ')
+        .filter(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
+        .map(str::to_owned)
+        .collect();
+    let last = nums.last().expect("at least one line number");
+    let n: usize = last.parse().expect("a numeric line token");
+    assert!(
+        body.contains(&format!("line {n:03}")),
+        "last complete line missing: {body}"
+    );
+    assert!(
+        !nums.contains(&(n + 1).to_string()),
+        "no partial next line: {body}"
+    );
+}
 #[test]
 fn raw_window_is_the_full_unobserved_tail() {
     let dir = tempfile::tempdir().unwrap();

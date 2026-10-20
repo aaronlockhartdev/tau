@@ -403,7 +403,26 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Resu
     let mut out = String::new();
     for e in &entries[start_idx..end_idx] {
         let text = entry_text(e);
-        let preview: String = text.chars().take(200).collect();
+        // #219: the per-entry preview cuts on a line boundary (the last
+        // visible line is complete), with an ellipsis when it loses content.
+        let mut preview = String::new();
+        let mut count = 0usize;
+        let mut truncated = false;
+        for line in text.lines() {
+            let next = count + line.chars().count() + usize::from(!preview.is_empty());
+            if next > 200 {
+                truncated = true;
+                break;
+            }
+            if !preview.is_empty() {
+                preview.push(' ');
+            }
+            preview.push_str(line);
+            count = next;
+        }
+        if truncated {
+            preview.push('…');
+        }
         let _ = writeln!(out, "{} {} {}", e.id, e.kind, preview);
     }
     Ok(out)
