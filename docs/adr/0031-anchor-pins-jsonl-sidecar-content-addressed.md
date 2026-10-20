@@ -1,6 +1,6 @@
 # Anchor pins are persisted in a JSONL sidecar, content-addressed by line checksum
 
-**Status**: accepted (2026-10-19) — the pinning-store half of issue #207 (hashline v1).
+**Status**: **superseded by ADR-0032** (2026-10-20) — the pin store moved to a per-workspace SQLite file with session-start GC. Accepted 2026-10-19 (the pinning-store half of issue #207, hashline v1).
 
 The hashline anchor system (spec §5.4, ADR-0030) allocates anchors per read. The in-memory registry (the prerequisite cluster, landed) is session-scoped: a line's anchor is stable while the session is alive, but a new session re-mints from a global probe cursor, so the *same* line gets a *different* anchor in the next session. That is the last churn source: cross-session, a file's anchors are arbitrary even though its content is identical.
 

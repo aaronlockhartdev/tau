@@ -62,6 +62,9 @@ pub struct Supervisor {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     gates: Option<Gates>,
+    /// The pin store's GC policy (#225): children inherit it so their
+    /// session-start sweep matches the parent's config.
+    hashline: crate::hashline::pin_store::GcPolicy,
     bridge: Arc<dyn SubagentBridge>,
     driver: Arc<dyn ChildDriver>,
     core: Option<Weak<crate::harness::Core>>,
@@ -79,6 +82,9 @@ pub(crate) struct Inherited {
     pub(crate) om_model: String,
     pub(crate) tool_batch_on_force: ToolBatchPolicy,
     pub(crate) gates: Option<Gates>,
+    /// The pin store's GC policy (#225); inherited so children sweep like
+    /// the parent.
+    pub(crate) hashline: crate::hashline::pin_store::GcPolicy,
 }
 
 /// The supervisor's construction inputs (the dispatch assembles them from
@@ -94,6 +100,8 @@ pub struct SupervisorParams {
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
     pub gates: Option<Gates>,
+    /// The pin store's GC policy (#225); children inherit it.
+    pub hashline: crate::hashline::pin_store::GcPolicy,
     pub caps: SubAgents,
     /// The session's depth (top-level = 0); a spawn fails when the child's
     /// depth (depth + 1) would exceed `max_depth`.
@@ -157,6 +165,7 @@ impl Supervisor {
             tool_batch_on_force: p.tool_batch_on_force,
             turn: p.turn,
             gates: p.gates,
+            hashline: p.hashline,
             bridge: p.bridge,
             driver: p.driver,
             core: p.core,
@@ -174,6 +183,7 @@ impl Supervisor {
             om_model: self.om_model.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
             gates: self.gates.clone(),
+            hashline: self.hashline,
         }
     }
 

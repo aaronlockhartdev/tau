@@ -426,6 +426,7 @@ async fn a_live_om_run_emits_om_status_events() {
         turn: TurnConfig::default(),
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &om,
             crate::om::OmRecord::default(),

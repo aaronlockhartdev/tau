@@ -63,6 +63,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
         turn: TurnConfig::default(),
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),
@@ -161,6 +162,7 @@ async fn om_runs_notify_the_status_hook_in_order() {
         turn: TurnConfig::default(),
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),
@@ -240,6 +242,7 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
         turn: TurnConfig::default(),
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord {
@@ -332,6 +335,7 @@ async fn context_gate_fires_when_over_budget() {
         turn,
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),
@@ -421,6 +425,7 @@ async fn context_gate_noop_when_under_budget() {
         turn,
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),
@@ -491,6 +496,7 @@ async fn context_gate_degraded_when_still_over_budget() {
         turn,
         gates: None,
         gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(crate::om_integration::OmState::from_config(
             &cfg,
             crate::om::OmRecord::default(),

@@ -316,6 +316,26 @@ pub struct Limits {
     pub max_request_bytes: Option<u64>,
 }
 
+/// The hashline pin-store GC settings (#225); a `[hashline]` section.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Hashline {
+    /// Delete pin records not touched within this many days; 0 disables age
+    /// expiry (the missing-file sweep always runs).
+    pub retention_days: u32,
+    /// Run the session-start GC sweeps.
+    pub gc_on_start: bool,
+}
+
+impl Default for Hashline {
+    fn default() -> Self {
+        Self {
+            retention_days: 180,
+            gc_on_start: true,
+        }
+    }
+}
+
 /// The merged, fully-defaulted configuration the core operates on.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
@@ -330,6 +350,8 @@ pub struct Config {
     pub limits: Limits,
     /// The completion gate; `None` (no `[gates]` section) = no gate.
     pub gates: Option<Gates>,
+    /// The hashline pin-store GC settings (#225).
+    pub hashline: Hashline,
 }
 
 /// On-disk file shape: every section optional so a partial file layers cleanly.
@@ -345,6 +367,7 @@ struct ConfigFile {
     subagents: Option<SubAgents>,
     limits: Option<Limits>,
     gates: Option<Gates>,
+    hashline: Option<Hashline>,
 }
 
 impl ConfigFile {
@@ -391,6 +414,9 @@ impl ConfigFile {
             } else {
                 Some(gates.clone())
             };
+        }
+        if let Some(hashline) = &self.hashline {
+            config.hashline = hashline.clone();
         }
     }
 }

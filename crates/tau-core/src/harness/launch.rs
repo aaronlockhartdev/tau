@@ -115,6 +115,9 @@ impl AgentSession {
                     gate_failed: false,
                     om,
                     om_model,
+                    // No `Config` in scope for the bare role (test kits):
+                    // the default GC policy.
+                    hashline: crate::hashline::pin_store::GcPolicy::default(),
                     subagents: None,
                     child: None,
                 })))
@@ -158,6 +161,7 @@ impl AgentSession {
                     gate_failed: false,
                     om: Some(OmState::from_config(&d.om, record)),
                     om_model: d.om_model,
+                    hashline: d.hashline,
                     subagents: None,
                     child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
                 });
@@ -247,6 +251,7 @@ impl AgentSession {
             gate_failed,
             om: Some(OmState::from_config(&d.om, record)),
             om_model: d.om_model,
+            hashline: d.hashline,
             subagents: Some(sup.clone()),
             child: None,
         }));
@@ -422,6 +427,10 @@ fn root_session(
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
         gates: config.gates.clone(),
+        hashline: crate::hashline::pin_store::GcPolicy {
+            retention_days: config.hashline.retention_days,
+            gc_on_start: config.hashline.gc_on_start,
+        },
         caps: config.subagents.clone(),
         types: crate::agent_type::discover(core.system_dir.as_deref(), &cwd),
         depth: 0,
@@ -450,6 +459,10 @@ fn root_session(
         gate_failed,
         om: Some(OmState::from_config(&config.om, record)),
         om_model: config.om.om_model.clone(),
+        hashline: crate::hashline::pin_store::GcPolicy {
+            retention_days: config.hashline.retention_days,
+            gc_on_start: config.hashline.gc_on_start,
+        },
         subagents: Some(sup.clone()),
         child: None,
     }));

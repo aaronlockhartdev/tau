@@ -41,6 +41,7 @@ fn sup_with_parent(
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
         caps: SubAgents::default(),
         types: vec![builtin_general()],
         depth: 0,
