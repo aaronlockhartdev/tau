@@ -60,6 +60,10 @@ pub struct DispatchCtx<'a> {
     pub session: &'a AgentSession,
     pub cwd: &'a Path,
     pub image_max_bytes: Option<u64>,
+    /// The call's in-flight progress handle (issue #197): a streaming tool
+    /// (bash) reports its growing output through it. `None` for a call with
+    /// no live wire path (the direct test path).
+    pub progress: Option<&'a crate::tools::ToolProgress>,
     pub supervisor: Option<Arc<Supervisor>>,
     pub child: Option<Arc<ChildLink>>,
 }
@@ -96,7 +100,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
         }
         "write" => {
             let path_arg = call.args.get("path").and_then(serde_json::Value::as_str);
-            let res = write(ctx.cwd, &call.args).await;
+            let res = write(ctx.cwd, &call.args, ctx.progress).await;
             if res.ok
                 && let Some(path) = path_arg
             {
@@ -118,7 +122,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
             let mut reg = anchors.lock().expect("anchor registry lock");
             edit(ctx.cwd, &call.args, Some(&mut *reg), strict)
         }
-        "bash" => bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag()).await,
+        "bash" => bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag(), ctx.progress).await,
         other => ToolResult::err(format!("unknown tool: {other}").into()),
     }
 }

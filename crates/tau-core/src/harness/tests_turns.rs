@@ -300,6 +300,92 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     );
 }
 
+/// Issue #197: a bash call streams its in-flight output to the entry upsert
+/// hook before the final result lands — the card grows, then is replaced.
+#[tokio::test]
+async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = CoreBuilder::custom(providers()).build();
+    let workspace = match core
+        .dispatch(Command::WorkspaceOpen {
+            cwd: tmp.path().to_string_lossy().into_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Workspace { workspace: w } => w,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    // A bash command that produces output over ~300 ms: `echo hello` lands
+    // immediately, then a sleep, then `echo world`.
+    let body = crate::harness::testkit::canned_body_with_bash(
+        r#"{\"command\":\"echo hello; sleep 0.3; echo world\"}"#,
+    );
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned(&body),
+        TurnConfig::default(),
+    );
+    let collected = collect_events(&core);
+    let session_id = live.meta.lock().unwrap().id.clone();
+    core.dispatch(Command::MessageSend {
+        session: session_id.clone(),
+        text: "run it".into(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+
+    // Wait for the turn to settle (StreamEnd).
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !collected
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|e| matches!(e, Event::StreamEnd { .. }))
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no StreamEnd within 10 s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let events = collected.lock().unwrap().clone();
+
+    // Collect all tool upserts for this session.
+    let tools: Vec<&tau_protocol::snapshot::ViewEntry> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::EntryUpsert { entry, .. } if entry.kind == "tool" => Some(entry),
+            _ => None,
+        })
+        .collect();
+    assert!(!tools.is_empty(), "no tool upserts: {events:?}");
+    let tool_id = tools[0].id.clone();
+
+    // At least one in-flight upsert carries growing output ("hello") but not
+    // the final result ("exit 0"): the card was visible mid-flight.
+    let has_inflight = tools.iter().any(|t| {
+        t.id == tool_id
+            && t.payload["output"] != serde_json::json!("")
+            && !t.payload["output"]
+                .as_str()
+                .is_some_and(|s| s.contains("exit 0"))
+    });
+    assert!(
+        has_inflight,
+        "no in-flight output upsert (the card never grew before completion): {tools:?}"
+    );
+
+    // The final upsert carries the full result.
+    let has_final = tools.iter().any(|t| {
+        t.id == tool_id
+            && t.payload["output"]
+                .as_str()
+                .is_some_and(|s| s.contains("exit 0"))
+    });
+    assert!(has_final, "no final result upsert: {tools:?}");
+}
+
 /// A send that lands while a turn is in flight must not spawn a second
 /// concurrent `process()`: the message is queued and the in-flight turn
 /// absorbs it (spec §7/§8 single writer, review B1).

@@ -16,6 +16,7 @@ pub struct ToolCall {
     pub args: serde_json::Value,
 }
 
+pub use progress::ToolProgress;
 /// The tool's output, as the model will see it (errors are results, not
 /// panics — the model reads the diagnostic and recovers, spec §5.4). Plain
 /// text is the common shape; `read` can also return an image block a
@@ -266,8 +267,8 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
 
 mod edit_diff;
 mod impls;
+mod progress;
 pub mod surface;
-
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

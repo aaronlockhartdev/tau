@@ -92,7 +92,7 @@ impl AgentSession {
             if let Some(hook) = &upsert {
                 hook(&Entry {
                     id: entry_id.clone(),
-                    parent,
+                    parent: parent.clone(),
                     kind: KIND_TOOL.to_owned(),
                     timestamp,
                     payload: tau_protocol::payload::ToolPayload {
@@ -108,6 +108,21 @@ impl AgentSession {
                     crc: None,
                 });
             }
+            // Issue #197: build the in-flight progress handle for this call
+            // (streaming tools report their growing output through it; the
+            // coalesced upserts are wire-only, the final result wins).
+            // Boxed: the handle is ~250 bytes inline (an `Arc`, several `String`s,
+            // a `Value`, two `Mutex<String>`); a pointer keeps `run_tools`' future
+            // small (clippy `large_futures`).
+            let progress = Box::new(tools::ToolProgress::new(
+                upsert.clone(),
+                entry_id.clone(),
+                parent,
+                timestamp,
+                call.call_id.clone(),
+                call.name.clone(),
+                args.clone(),
+            ));
             // The surface routes the call (R1): the loop matches no tool
             // names — the table in tools::surface owns the mapping. The
             // links are cloned under the lock and invoked outside it: the
@@ -134,10 +149,13 @@ impl AgentSession {
                         session: self,
                         cwd: &cwd,
                         image_max_bytes: image_max,
+                        progress: Some(progress.as_ref()),
                         supervisor: sup,
                         child: link,
                     };
-                    tools::surface::dispatch(ctx, &tc).await
+                    // Boxed: the streaming `bash_inner` future is large; a `Pin<Box>`
+                    // keeps `run_tools`' future small (clippy `large_futures`).
+                    Box::pin(tools::surface::dispatch(ctx, &tc)).await
                 }
                 Err(e) => tools::ToolResult::err(tau_protocol::payload::ToolOutput::Text(format!(
                     "error: arguments are not valid JSON: {e}"

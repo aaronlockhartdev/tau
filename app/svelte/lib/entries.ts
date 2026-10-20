@@ -183,7 +183,10 @@ export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'e
     const m = /^exit (\d+)/.exec(s);
     if (m) return m[1] === '0' ? 'ok' : 'error';
     if (/^bash: /.test(s)) return 'error';
-    return 'ok';
+    // A completed bash result always leads with `exit N` (success or non-zero)
+    // or `bash: ` (spawn/timeout/stop). A non-empty output with neither prefix
+    // is in-flight streaming (#197): the command is still running, not done.
+    return 'running';
   }
   if (s.startsWith(`${name}: `)) return 'error';
   if (/^(error:|unknown tool:)/.test(s)) return 'error';

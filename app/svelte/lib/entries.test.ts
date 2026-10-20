@@ -163,4 +163,16 @@ describe('toolStatus', () => {
   it('a dispatch-level failure is an error', () => {
     expect(toolStatus('read', 'unknown tool: read')).toBe('error');
   });
+  it('bash exit 0 is ok and non-zero is error', () => {
+    expect(toolStatus('bash', 'exit 0\n--- stdout ---\nhello')).toBe('ok');
+    expect(toolStatus('bash', 'exit 3\n--- stderr ---\noops')).toBe('error');
+  });
+  it('a bash spawn/timeout/stop failure is an error', () => {
+    expect(toolStatus('bash', 'bash: timed out after 60s')).toBe('error');
+    expect(toolStatus('bash', 'bash: interrupted by user stop')).toBe('error');
+  });
+  it('in-flight bash streaming output (no exit/bash: prefix) is running, not ok (#197)', () => {
+    expect(toolStatus('bash', 'hello\n')).toBe('running');
+    expect(toolStatus('bash', 'hello\nworld\n')).toBe('running');
+  });
 });
