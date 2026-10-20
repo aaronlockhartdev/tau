@@ -337,15 +337,50 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     vi.useRealTimers();
   });
 
-  it('falls back to the wall clock when the server duration is absent', async () => {
+  it('measures wall-clock TPS from the first delta, excluding prefill', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const s = oneSession();
+    applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
+    // A 2 s prefill gap before the first token: it must not count.
+    await vi.advanceTimersByTimeAsync(2000);
+    applyEvents([upsert('00000001', 'assistant', { text: 'a', interrupted: false })]);
+    await vi.advanceTimersByTimeAsync(1000);
+    applyEvents([
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
+    ]);
+    // 10 tokens over the 1 s after the first delta — not 3.33 over the 3 s
+    // wall clock that a stream-start base would give.
+    expect(s.tps).toBeCloseTo(10);
+    vi.useRealTimers();
+  });
+
+  it('reports no TPS when the stream ends before any token', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const s = oneSession();
     applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
     await vi.advanceTimersByTimeAsync(1000);
+    // Usage arrived but no assistant delta ever did: no first-delta clock,
+    // so no TPS (and no divide by zero).
     applyEvents([
       { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
     ]);
+    expect(s.tps).toBe(0);
+    vi.useRealTimers();
+  });
+
+  it('runs the live TPS estimate from the first delta', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const s = oneSession();
+    applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
+    // 2 s prefill, then the first token opens the estimate's clock.
+    await vi.advanceTimersByTimeAsync(2000);
+    applyEvents([upsert('00000001', 'assistant', { text: 'a', interrupted: false })]);
+    await vi.advanceTimersByTimeAsync(2000);
+    // ~2 s after the first delta, 80 chars ≈ 20 tokens → 10 tps.
+    applyEvents([upsert('00000001', 'assistant', { text: 'x'.repeat(80), interrupted: false })]);
     expect(s.tps).toBeCloseTo(10);
     vi.useRealTimers();
   });

@@ -2,8 +2,11 @@
 
 Researched 2026-10-20. The goal: make the GUI's decode-rate stat reflect the
 model's true tokens-per-second instead of a wall-clock figure that counts
-prefill and network time. The candidate signal is the two `created_at` fields
-on the `response.created` and `response.completed` SSE frames.
+prefill and network time. The ticket's triage proposed a server-side signal:
+the two `created_at` fields on the `response.created` and `response.completed`
+SSE frames. **A live capture refutes that signal** — see the negative finding
+below. The fix that actually ships is a client-side one: measure the
+wall-clock window from the *first* assistant token, which excludes prefill.
 
 ## Method
 
@@ -51,26 +54,35 @@ wall-clock estimate it was meant to replace).
 
 ## What this means for the fix
 
-- The client *can* carry the two `created_at` values and compute their
-  difference — that is the change this ticket implements in
-  `tau-core`/`tau-protocol` (threaded through to `StreamEnd.duration_secs`).
-  It is future-proof: if a provider ever stamps a distinct completion time,
-  the number is already there.
-- For a compliant server today the difference is 0, so the client treats a
-  zero-length window as **absent** and the GUI falls back to its existing
-  wall-clock estimate. No regression, no divide-by-zero.
-- The wall-clock estimate (stream start → stream end) remains the v0
-  source of truth for the displayed TPS. It over-counts prefill + transport,
-  which is the inaccuracy the ticket wanted to fix — but that inaccuracy is a
-  property of the *provider protocol*, not of the client. It cannot be fixed
-  client-side without a server signal that the protocol does not provide.
+- **The real fix is client-side: measure from the first token, not the
+  stream start.** The `stream_start` event fires when the call begins — before
+  prefill. The first assistant `entry_upsert` fires when the first token
+  lands. Measuring `output_tokens / (now − first_delta)` (and the live
+  text-length estimate the same way) excludes the prefill gap, which is what
+  made the stat "read much lower" than the true decode rate. This is the
+  change `app/svelte/lib/store.svelte` makes: a per-session `firstDeltaMs`
+  clock, opened by the first assistant upsert, replaced the stream-start
+  clock as the TPS denominator.
+- **The server `duration_secs` plumbing stays as the integration surface.**
+  The client threads the two `created_at` values through
+  `tau-core`/`tau-protocol` to `StreamEnd.duration_secs` and *prefers* it in
+  the store when it is present and non-zero. Today a compliant server yields
+  a 0 window, so the number is treated as absent and the first-delta
+  wall-clock path runs. It is the only path to an *exact* server stat: a
+  user can extend their endpoint to emit a real completion clock, and the
+  client will pick it up with no further change. That is future-proofing an
+  integration seam, not speculative code — and a 0/absent window degrading
+  to the wall-clock path is the correct semantics either way.
+- **No delta → no TPS.** If the stream ends before any assistant token
+  (an early error), there is no first-delta clock and the guard reports no
+  TPS rather than dividing by zero.
 
-## Decision (fallback UI)
+## Decision
 
-Keep the wall-clock TPS estimate as the displayed value. Thread the
-server-derived `duration_secs` through the protocol and *prefer* it in the
-store when it is present and non-zero; when it is absent or zero (the common
-case for a compliant server), fall back to the wall-clock figure. This is the
-honest position: the stat is labelled as an estimate, and it is the best
-estimate the wire allows. A true decode TPS needs a server change (a
-completion timestamp) and is out of scope for this ticket.
+Display TPS is the wall-clock measurement **from the first assistant token**:
+`output_tokens / (stream_end − first_delta)`, with the live gauge running a
+text-length estimate over the same window. The server-derived `duration_secs`
+overrides it when a future endpoint provides a non-zero completion clock. The
+stat is labelled an estimate; it is the best the wire allows, and it no
+longer over-counts prefill. An exact server-side TPS needs an endpoint change
+(a completion timestamp) and is out of scope for this ticket.
