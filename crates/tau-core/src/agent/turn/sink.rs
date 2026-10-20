@@ -41,7 +41,7 @@ impl TurnSink for StreamEntrySink {
             }
             // Completed carries no content; the final append's upsert is
             // the stream's last emission.
-            TurnEvent::Completed(_) => {}
+            TurnEvent::Completed(_, _) => {}
         }
         true
     }
@@ -75,6 +75,7 @@ impl StreamEntrySink {
                 reasoning: self.reasoning.clone(),
                 interrupted: false,
                 usage: None,
+                duration_secs: None,
                 calls: vec![],
             }
             .to_value(),

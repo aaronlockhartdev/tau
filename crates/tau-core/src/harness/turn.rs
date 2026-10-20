@@ -144,6 +144,9 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
                 let usage = entry.payload.get("usage").and_then(usage_of);
+                // #224: the server's decode-window duration, recorded with the
+                // entry at turn settlement, rides the StreamEnd.
+                let duration_secs = entry.payload.get("duration_secs").and_then(Value::as_f64);
                 // A call's end is emitted here, at turn settlement — after
                 // the turn's om_turn_end pass — so `StreamEnd` means the
                 // turn is over and the session accepts a new turn (issue
@@ -157,6 +160,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                         call_id,
                         interrupted,
                         usage,
+                        duration_secs,
                     });
                 }
                 if let Some(u) = usage {
@@ -217,6 +221,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                 call_id,
                 interrupted: !completed,
                 usage: None,
+                duration_secs: None,
             });
         }
     }

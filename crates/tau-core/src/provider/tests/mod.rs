@@ -105,13 +105,15 @@ fn reasoning_dialects_normalize_into_one_field() {
             r#"{{"type":"response.output_text.delta","delta":"answer","{field}":"thought"}}"#
         );
         let mut result = TurnResult::default();
-        apply_frame(&mut Keep, &mut result, &payload);
+        let mut created_at: Option<i64> = None;
+        apply_frame(&mut Keep, &mut result, &mut created_at, &payload);
         assert_eq!(result.text, "answer", "dialect {field}");
         assert_eq!(result.reasoning, "thought", "dialect {field}");
     }
     let payload = r#"{"type":"response.output_text.delta","delta":"answer",
         "reasoning_details": [{"text": "thought-a"}, {"text": "thought-b"}]}"#;
     let mut result = TurnResult::default();
-    apply_frame(&mut Keep, &mut result, payload);
+    let mut created_at: Option<i64> = None;
+    apply_frame(&mut Keep, &mut result, &mut created_at, payload);
     assert_eq!(result.reasoning, "thought-athought-b");
 }

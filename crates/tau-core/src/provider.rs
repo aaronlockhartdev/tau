@@ -163,7 +163,10 @@ impl SseParser {
 #[serde(tag = "type")]
 enum Frame {
     #[serde(rename = "response.created")]
-    Created,
+    Created {
+        #[serde(default)]
+        created_at: Option<i64>,
+    },
     #[serde(rename = "response.in_progress")]
     InProgress,
     #[serde(rename = "response.completed")]
@@ -213,6 +216,10 @@ enum Frame {
 struct CompletedResponse {
     #[serde(default)]
     usage: Option<Usage>,
+    /// #224: the server's completion timestamp — pairs with `Frame::Created`
+    /// to yield the decode-window duration.
+    #[serde(default)]
+    created_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -264,6 +271,10 @@ pub struct TurnResult {
     pub text: String,
     pub reasoning: String,
     pub usage: Option<Usage>,
+    /// #224: the server's decode-window duration
+    /// (`completed.created_at − created.created_at`); `None` when the
+    /// server omits either timestamp.
+    pub duration: Option<Duration>,
     /// `response.completed` arrived; a kill or an early EOF leaves this
     /// false and the partial stands (spec §6/§7, #17 handoff gap b).
     pub completed: bool,
@@ -278,7 +289,7 @@ pub struct TurnResult {
 pub enum TurnEvent {
     Text(String),
     Reasoning(String),
-    Completed(Usage),
+    Completed(Usage, Option<Duration>),
 }
 
 /// A streaming sink: the force-kill point (spec §7).
@@ -300,7 +311,12 @@ pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
     match event {
         TurnEvent::Text(t) => result.text.push_str(t),
         TurnEvent::Reasoning(t) => result.reasoning.push_str(t),
-        TurnEvent::Completed(u) => result.usage = Some(u.clone()),
+        TurnEvent::Completed(u, d) => {
+            result.usage = Some(u.clone());
+            if let Some(d) = d {
+                result.duration = Some(*d);
+            }
+        }
     }
 }
 

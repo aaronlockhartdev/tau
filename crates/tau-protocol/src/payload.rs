@@ -53,6 +53,10 @@ pub struct AssistantPayload {
     pub interrupted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TurnUsage>,
+    /// #224: the server's decode-window duration (seconds);
+    /// `None` when the provider omitted the created/completed timestamps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_secs: Option<f64>,
     pub calls: Vec<FunctionCall>,
 }
 

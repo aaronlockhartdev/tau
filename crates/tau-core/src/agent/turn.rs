@@ -371,6 +371,7 @@ impl AgentSession {
                     || self.stop.load(Ordering::SeqCst)
                     || self.closed.load(Ordering::SeqCst),
                 usage: result.usage.clone(),
+                duration_secs: result.duration.map(|d| d.as_secs_f64()),
                 calls: result.calls.clone(),
             }
             .to_value(),

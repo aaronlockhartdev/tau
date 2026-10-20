@@ -129,7 +129,7 @@ impl provider::TurnProvider for CannedChildProvider {
             if accepted == events.len() {
                 result.completed = events
                     .iter()
-                    .any(|e| matches!(e, provider::TurnEvent::Completed(_)));
+                    .any(|e| matches!(e, provider::TurnEvent::Completed(_, _)));
             }
             result.calls = calls
                 .iter()

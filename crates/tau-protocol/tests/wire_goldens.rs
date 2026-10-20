@@ -134,6 +134,7 @@ mod events {
                 total_tokens: 120,
                 cached_prompt_tokens: 40,
             }),
+            duration_secs: Some(1.5),
         });
     }
 
@@ -281,6 +282,7 @@ mod payloads {
             reasoning: String::new(),
             interrupted: false,
             usage: None,
+            duration_secs: None,
             calls: vec![FunctionCall {
                 id: "f1".into(),
                 call_id: "c1".into(),

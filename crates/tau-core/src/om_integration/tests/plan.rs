@@ -42,6 +42,7 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
         text: "<observations>user set up a workbench</observations>\n<suggested-response>Walk through it.</suggested-response>".into(),
         reasoning: "deciding what is worth remembering".into(),
         usage: None,
+        duration: None,
         completed: true,
         calls: Vec::new(),
         mid_stream_errors: Vec::new(),

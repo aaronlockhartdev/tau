@@ -21,6 +21,10 @@ pub enum Event {
         call_id: String,
         interrupted: bool,
         usage: Option<Usage>,
+        /// #224: the server's decode-window duration (seconds); the GUI's
+        /// TPS prefers this over its wall-clock estimate when present.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        duration_secs: Option<f64>,
     },
     /// A transcript entry is upserted: the exact file-line view the session
     /// log holds (or will hold when finalized). The GUI sets `map[id] = entry`
@@ -215,6 +219,7 @@ mod tests {
                     total_tokens: 120,
                     cached_prompt_tokens: 0,
                 }),
+                duration_secs: None,
             },
             Event::EntryUpsert {
                 workspace: "w1".into(),
