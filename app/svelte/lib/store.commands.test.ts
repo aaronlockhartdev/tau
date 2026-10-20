@@ -93,6 +93,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     subagent_types: () => ({ kind: 'agents', agents: [] }),
     subagent_list: () => ({ kind: 'subagents', subagents: [] }),
     subagent_state: () => ({ kind: 'none' }),
+    subagent_activity: () => ({ kind: 'subagent_activity', activity: { observations: [], live: [], degraded: false } }),
     subagent_spawn: () => ({ kind: 'none' }),
     subagent_message: () => ({ kind: 'none' }),
     subagent_stop: () => ({ kind: 'none' }),

@@ -130,6 +130,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     subagent_types: () => ({ kind: 'agents', agents: [] }),
     subagent_list: () => ({ kind: 'subagents', subagents: [] }),
     subagent_state: () => ({ kind: 'subagent', subagent: sub('c1') }),
+    subagent_activity: () => ({ kind: 'subagent_activity', activity: { observations: [], live: [], degraded: false } }),
     subagent_spawn: () => ({ kind: 'none' }),
     subagent_message: () => ({ kind: 'none' }),
     subagent_stop: () => ({ kind: 'none' }),
@@ -340,7 +341,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
       upsert('00000001', 'assistant', { text: 'run ls', interrupted: false }),
       upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' } }),
-      upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' }, output: 'ok' }),
+      upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' }, output: 'exit 0\n--- stdout ---\nok' }),
       { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
     ]);
     const tools = Object.values(s.entries).filter((e) => e.kind === 'tool');
@@ -349,7 +350,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     if (tool.kind === 'tool') {
       expect(tool.name).toBe('bash');
       expect(tool.status).toBe('ok');
-      expect(tool.output).toBe('ok');
+      expect(tool.output).toBe('exit 0\n--- stdout ---\nok');
     }
   });
 
