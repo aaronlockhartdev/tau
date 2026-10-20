@@ -313,7 +313,11 @@ export function applySubagentEvent(
       d && typeof d === 'object' && typeof d.waiting_on === 'string' ? d.waiting_on : null;
     const prev = s.subagents.find((x) => x.handle === k.handle);
     if (!prev) return touchChild(sessions, sid, k.child, st, now, waitingOn);
-    const info: SubagentInfo = { ...prev, state: st };
+    // A handle is unique per child for the parent's life. If the row the
+    // handle claims names a different child, the handle was re-minted (a
+    // re-open): re-point the row at the event's child rather than writing
+    // the new child's state onto the old child's row (ticket #226).
+    const info: SubagentInfo = prev.child === k.child ? { ...prev, state: st } : { ...prev, child: k.child, state: st };
     if (waitingOn !== null) info.waiting_on = waitingOn;
     else if (st !== 'idle') info.waiting_on = null;
     if (k.note) info.last_message = k.note;
