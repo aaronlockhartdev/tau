@@ -278,7 +278,7 @@
     cursor: pointer;
   }
   .tool .chip:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--hover);
   }
   .tool .chip :global(.ic) {
     color: var(--dim);

@@ -67,7 +67,7 @@
     border-radius: 5px;
   }
   .x:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--hover);
     color: var(--tx);
   }
 </style>

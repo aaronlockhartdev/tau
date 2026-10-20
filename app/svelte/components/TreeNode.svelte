@@ -98,7 +98,7 @@
     line-height: 1.3;
   }
   .trow:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--hover);
   }
   .trow.att {
     border-left: 2px solid var(--red);
