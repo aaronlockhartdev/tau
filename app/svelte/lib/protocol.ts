@@ -181,6 +181,27 @@ export interface SubagentInfo {
   resume_contract: ResumeContract | null;
 }
 
+// A child's activity window (#203): its observation-log tail plus the
+// un-observed raw tail, projected compact and tail-capped by the core.
+export interface ChildActivity {
+  observations: ActivityGroup[];
+  live: ActivityEntry[];
+  degraded: boolean;
+}
+
+export interface ActivityGroup {
+  id: string;
+  range: string;
+  kind: string | null;
+  content: string;
+}
+
+export interface ActivityEntry {
+  role: string;
+  tool: string | null;
+  status: string | null;
+  text: string;
+}
 export type SubagentEventKind =
   | { kind: 'spawned'; handle: string; child: string; agent_type: string; context_mode: ContextMode; title: string }
   | { kind: 'state'; handle: string; child: string; state: string; detail: unknown; note: string | null }
@@ -285,6 +306,7 @@ export type Command =
   | { type: 'subagent_spawn'; session: string; agent_type: string; brief: string; context_mode: ContextMode }
   | { type: 'subagent_message'; handle: string; text: string | null }
   | { type: 'subagent_stop'; handle: string }
+  | { type: 'subagent_activity'; handle: string }
   | { type: 'skill_list'; workspace: string }
   | { type: 'provider_list' }
   | { type: 'provider_add'; name: string; base_url: string; key_env: string; models: string[] }
@@ -309,6 +331,7 @@ export type CommandOutput =
   | { kind: 'agents'; agents: AgentInfo[] }
   | { kind: 'skills'; skills: SkillInfo[] }
   | { kind: 'subagent'; subagent: SubagentInfo }
+  | { kind: 'subagent_activity'; activity: ChildActivity }
   | { kind: 'subagents'; subagents: SubagentInfo[] }
   | { kind: 'file'; file: { text: string; truncated: boolean } }
   | { kind: 'files'; files: FileEntry[] }

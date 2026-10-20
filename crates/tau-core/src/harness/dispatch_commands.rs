@@ -237,6 +237,23 @@ impl Core {
                     subagent: info_to_protocol(&info),
                 })
             }
+            Command::SubagentActivity { handle } => {
+                let session =
+                    self.child_parent(&handle)
+                        .ok_or_else(|| ProtocolError::NotFound {
+                            what: format!("subagent {handle}"),
+                        })?;
+                let live = self.live(&session)?;
+                let sup = live.agent.subagents().ok_or_else(|| ProtocolError::Other {
+                    message: "session has no children (it is a child itself)".into(),
+                })?;
+                let activity =
+                    sup.activity_window(&handle)
+                        .ok_or_else(|| ProtocolError::NotFound {
+                            what: format!("subagent {handle}"),
+                        })?;
+                Ok(CommandOutput::SubagentActivity { activity })
+            }
 
             _ => unreachable!("dispatch routes the arm"),
         }

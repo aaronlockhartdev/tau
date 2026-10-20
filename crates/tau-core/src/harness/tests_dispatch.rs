@@ -38,6 +38,13 @@ async fn not_yet_landed_commands_fail_explicitly() {
         })
         .unwrap_err();
     assert!(matches!(err, ProtocolError::NotFound { .. }));
+    // The activity window resolves its handle the same way (#203).
+    let err = core
+        .dispatch(Command::SubagentActivity {
+            handle: "h-1".into(),
+        })
+        .unwrap_err();
+    assert!(matches!(err, ProtocolError::NotFound { .. }));
 }
 
 #[tokio::test]

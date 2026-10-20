@@ -99,6 +99,55 @@ impl From<&str> for ToolOutput {
     }
 }
 
+/// A child's activity window (#203): the tail of its observation log (the
+/// distilled memory, up to the OM cursor) plus the un-observed raw tail,
+/// projected compact and tail-capped by the core. `degraded` marks the
+/// cursor-miss fallback (the window is the whole branch tail-capped) —
+/// a young child's empty observation log is NOT degraded.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChildActivity {
+    /// The newest N observation groups, newest last (the child's `recall`
+    /// handles: the 16-hex group ids).
+    pub observations: Vec<ActivityGroup>,
+    /// The un-observed raw tail since the cursor, projected compact.
+    pub live: Vec<ActivityEntry>,
+    /// True when the OM cursor was absent from the branch: the live tail
+    /// fell back to the (tail-capped) whole branch.
+    pub degraded: bool,
+}
+
+/// One observation group from the child's log (the `recall` handle is the
+/// group's 16-hex id; `kind` marks Reflector rewrites).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityGroup {
+    pub id: String,
+    pub range: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The group's bullets, truncated to the display limit.
+    pub content: String,
+}
+
+/// One raw tail entry, projected to what the GUI renders: role, the tool
+/// name and verdict for `tool` entries, and a truncated text/args slice.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivityEntry {
+    /// "user" | "assistant" | "tool" (the raw entry kinds).
+    pub role: String,
+    /// The tool call's name (tool entries only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool: Option<String>,
+    /// The core's success/failure verdict (tool entries, once returned).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    /// The entry's text (user/assistant) or the tool args/output (tool),
+    /// truncated to the display limit.
+    pub text: String,
+}
+
 /// The system entry's payload: a note the session records (a runaway
 /// stop, a model change, …).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

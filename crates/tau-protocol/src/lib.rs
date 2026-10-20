@@ -193,6 +193,12 @@ pub enum CommandOutput {
     Subagent {
         subagent: SubagentInfo,
     },
+    /// The child's activity window (#203): its observation-log tail and the
+    /// un-observed raw tail, projected compact and tail-capped. Renderer-only
+    /// (not an LLM tool) — zero model-context cost.
+    SubagentActivity {
+        activity: payload::ChildActivity,
+    },
     File {
         file: FileText,
     },
@@ -335,6 +341,11 @@ pub enum Command {
         text: Option<String>,
     },
     SubagentStop {
+        handle: String,
+    },
+    /// The child's activity window (#203), fetched by handle like the other
+    /// handle-scoped sub-agent commands. Renderer-only (not an LLM tool).
+    SubagentActivity {
         handle: String,
     },
 

@@ -281,7 +281,7 @@ const rustS = rustStructs(rustSrc);
 const tsK = tsKinds(tsSrc);
 
 function normRust(t) {
-  t = t.trim().replace(/^snapshot::/, '').replace(/^crate::/, '').replace(/\s+/g, ' ');
+  t = t.trim().replace(/^snapshot::/, '').replace(/^crate::/, '').replace(/^payload::/, '').replace(/\s+/g, ' ');
   if (t === 'String') return 'string';
   if (t === 'bool') return 'boolean';
   if (/^(u8|u16|u32|u64|i8|i16|i32|i64|usize|isize|f32|f64)$/.test(t)) return 'number';

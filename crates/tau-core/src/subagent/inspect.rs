@@ -1,5 +1,18 @@
 use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, WaitingOn};
-use crate::om_integration;
+use crate::om;
+use crate::om_integration::{self, OmState};
+use crate::session::Entry;
+use tau_protocol::payload::{ActivityEntry, ActivityGroup, ChildActivity};
+
+/// The activity window's tail cap: a 10k-entry child must stay cheap
+/// (#203) — the cap applies unconditionally, including on the cursor-miss
+/// and empty-record fallbacks (a miss otherwise falls back to the entire
+/// branch).
+const ACTIVITY_TAIL: usize = 20;
+/// The observation tail's group cap (the last N groups).
+const ACTIVITY_GROUPS: usize = 4;
+/// Per-item text truncation for the display projection.
+const ACTIVITY_TEXT_LIMIT: usize = 400;
 
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).
@@ -59,5 +72,340 @@ impl Supervisor {
             usage,
             resume_contract,
         })
+    }
+
+    /// The child's activity window (the `subagent_activity` command, #203):
+    /// a handle-scoped read of the free function below.
+    pub fn activity_window(&self, name_or_id: &str) -> Option<ChildActivity> {
+        let child = self.resolve(name_or_id)?.clone();
+        read_activity(&self.cwd, &child.session_id, &self.om)
+    }
+}
+
+/// One child's activity window: the tail of its observation log plus its
+/// un-observed raw tail, assembled on a **throwaway** `OmState` built from
+/// the child's record (research `subagent-transcript-sourcing.md`): the
+/// seam is pure, and the one-shot flips in `assemble_context` land on the
+/// throwaway, never the child's live state. Never mutates the child's
+/// persistent OM state.
+pub(crate) fn read_activity(
+    cwd: &std::path::Path,
+    session_id: &str,
+    om: &crate::config::Om,
+) -> Option<ChildActivity> {
+    let mut store = SessionStore::for_workspace(cwd, session_id);
+    store.open().ok()?;
+    // The entries are read BEFORE the record (research §3): a cursor newer
+    // than the entry list misses the position lookup and the raw window
+    // falls back to the entire branch. Reading the list first biases the
+    // mid-turn skew toward the harmless direction (a re-included fact).
+    let entries = store.entries_range(0, usize::MAX).ok()?;
+    let leaf = store.leaf().ok().and_then(|l| l)?;
+    let record = OmState::load_record(&mut store).ok()?;
+    // A cursor that is not on the branch means the entry list is older
+    // than the record (or the record is corrupt): the window is the whole
+    // branch, tail-capped. A missing cursor (young child, empty record)
+    // is by-design, not degraded.
+    let degraded = record
+        .cursor
+        .as_ref()
+        .is_some_and(|c| !entries.iter().any(|e| e.id == c.entry_id));
+    // The observation groups are the child's actual log text (boundary
+    // markers stripped) — the same source `assemble_context` projects them
+    // from, so the GUI's window stays byte-faithful to what the child's
+    // model sees. `assemble_context` itself is NOT run here: its one-shot
+    // flips must stay on the child's live state, and nothing downstream
+    // needs them.
+    let groups = om::parse_observation_groups(&record.agent_observations());
+    let state = OmState::from_config(om, record);
+    let observations: Vec<ActivityGroup> = groups
+        .iter()
+        .skip(groups.len().saturating_sub(ACTIVITY_GROUPS))
+        .map(|g| ActivityGroup {
+            id: g.id.clone(),
+            range: g.range.clone(),
+            kind: g.kind.clone(),
+            content: truncate_at(&g.content, ACTIVITY_TEXT_LIMIT),
+        })
+        .collect();
+    let window = state.raw_window_from(&entries, Some(&leaf.id));
+    // The window is in branch order (newest last): keep the last N.
+    let live: Vec<ActivityEntry> = window
+        .iter()
+        .rev()
+        .take(ACTIVITY_TAIL)
+        .map(project_entry)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    Some(ChildActivity {
+        observations,
+        live,
+        degraded,
+    })
+}
+
+/// The raw tail's compact projection: role, the tool's name and verdict,
+/// and a truncated text slice — the GUI renders exactly this.
+fn project_entry(entry: &Entry) -> ActivityEntry {
+    match entry.kind.as_str() {
+        "tool" => {
+            let text = entry
+                .payload
+                .get("output")
+                .or_else(|| entry.payload.get("args"))
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            ActivityEntry {
+                role: "tool".to_owned(),
+                tool: entry
+                    .payload
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned),
+                status: entry
+                    .payload
+                    .get("status")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned),
+                text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),
+            }
+        }
+        other => {
+            let text = entry
+                .payload
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_owned();
+            ActivityEntry {
+                role: other.to_owned(),
+                tool: None,
+                status: None,
+                text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),
+            }
+        }
+    }
+}
+
+/// A char-boundary-safe truncation: over-limit text is cut to the limit
+/// and marked with an ellipsis.
+fn truncate_at(text: &str, limit: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.len() <= limit {
+        return trimmed.to_owned();
+    }
+    let mut cut = 0;
+    for (i, _) in trimmed.char_indices().take(limit) {
+        cut = i;
+    }
+    let mut out: String = trimmed.chars().take(limit).collect();
+    out.truncate(cut);
+    out.push('…');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::Entry;
+    use crate::subagent::testkit::harness;
+
+    /// A user entry, an assistant entry, and a settled tool entry: the
+    /// three raw kinds the projection distinguishes.
+    fn seed_child_session(dir: &std::path::Path, session: &str) -> Entry {
+        let mut store = SessionStore::for_workspace(dir, session);
+        store.create().unwrap();
+        let user = store
+            .append(
+                "user",
+                serde_json::json!({ "text": "work the thing" }),
+                None,
+            )
+            .unwrap();
+        let assistant = store
+            .append(
+                "assistant",
+                serde_json::json!({ "text": "on it" }),
+                Some(&user.id),
+            )
+            .unwrap();
+        store
+            .append(
+                "tool",
+                serde_json::json!({
+                    "call_id": "c1",
+                    "name": "bash",
+                    "args": { "command": "ls" },
+                    "output": "ok",
+                    "status": "success",
+                }),
+                Some(&assistant.id),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn the_window_projects_the_raw_tail_and_is_not_degraded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (sup, _bridge, parent) = harness(
+            tmp.path(),
+            vec![],
+            vec![],
+            crate::subagent::SubAgents::default(),
+        );
+        seed_child_session(tmp.path(), "child-1");
+        // The supervisor's registry is empty here, so the read goes through
+        // the free function the method wraps — same code path.
+        drop(parent);
+        let activity = read_activity(tmp.path(), "child-1", &crate::config::Om::default())
+            .expect("a created session yields a window");
+        assert!(
+            !activity.degraded,
+            "no cursor: a young child is not degraded"
+        );
+        assert!(activity.observations.is_empty());
+        assert_eq!(activity.live.len(), 3);
+        // Newest first is not promised — the tail is the newest entries in
+        // branch order.
+        assert_eq!(activity.live[0].role, "user");
+        assert_eq!(activity.live[0].text, "work the thing");
+        assert_eq!(activity.live[1].role, "assistant");
+        assert_eq!(activity.live[1].text, "on it");
+        assert_eq!(activity.live[2].role, "tool");
+        assert_eq!(activity.live[2].tool.as_deref(), Some("bash"));
+        assert_eq!(activity.live[2].status.as_deref(), Some("success"));
+        assert_eq!(activity.live[2].text, "\"ok\"");
+        // The method resolves through the registry: an unknown handle is
+        // None, not a panic.
+        assert!(sup.activity_window("nope").is_none());
+    }
+
+    #[test]
+    fn a_missing_session_is_none_not_a_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(read_activity(tmp.path(), "ghost", &crate::config::Om::default()).is_none());
+    }
+
+    #[test]
+    fn a_cursor_miss_degrades_and_caps_the_whole_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(tmp.path(), "child-2");
+        store.create().unwrap();
+        let one = store
+            .append("user", serde_json::json!({ "text": "one" }), None)
+            .unwrap();
+        let two = store
+            .append("user", serde_json::json!({ "text": "two" }), Some(&one.id))
+            .unwrap();
+        // The record's cursor points at an entry the branch does not carry
+        // (the skew direction: the record read is newer than the entry
+        // list). The window falls back to the whole branch — and stays
+        // capped. The log's groups still project.
+        let record = crate::om::OmRecord {
+            cursor: Some(crate::om::Cursor {
+                entry_id: "0000000000000000".into(),
+                timestamp: 0,
+            }),
+            active_observations: "<observation-group id=\"1111111111111111\" range=\"a:b\">\n* 🔴 (14:30) a fact\n</observation-group>"
+                .into(),
+            ..Default::default()
+        };
+        let om_entry = store
+            .append("om", serde_json::to_value(&record).unwrap(), Some(&two.id))
+            .unwrap();
+        // A raw entry after the `om` record: the branch's leaf is past the
+        // record, so `load_record` walks to it and finds the record
+        // (the degraded path needs a leaf newer than the record).
+        store
+            .append(
+                "user",
+                serde_json::json!({ "text": "three" }),
+                Some(&om_entry.id),
+            )
+            .unwrap();
+        let activity = read_activity(tmp.path(), "child-2", &crate::config::Om::default())
+            .expect("a created session yields a window");
+        assert!(activity.degraded, "a cursor off the branch degrades");
+        assert_eq!(activity.live.len(), 3);
+        assert_eq!(activity.live[0].text, "one");
+        assert_eq!(activity.live[2].text, "three");
+        assert_eq!(activity.observations.len(), 1);
+        assert_eq!(activity.observations[0].id, "1111111111111111");
+        assert_eq!(activity.observations[0].content, "* 🔴 (14:30) a fact");
+    }
+
+    #[test]
+    fn the_caps_bound_a_long_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(tmp.path(), "child-3");
+        store.create().unwrap();
+        // 25 raw entries: the window is the newest ACTIVITY_TAIL of them,
+        // so it starts at entry {total - T}.
+        let total = ACTIVITY_TAIL + 5;
+        let mut parent_id: Option<String> = None;
+        for i in 0..total {
+            let e = store
+                .append(
+                    "user",
+                    serde_json::json!({ "text": format!("entry {i}") }),
+                    parent_id.as_deref(),
+                )
+                .unwrap();
+            parent_id = Some(e.id);
+        }
+        // Six groups: the newest four survive.
+        let record = crate::om::OmRecord {
+            active_observations: (0..6)
+                .map(|i| format!(
+                    "<observation-group id=\"{i:016x}\" range=\"{i:08x}:{i}\">\n* 🔴 (14:30) g{i}\n</observation-group>",
+                ))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            ..Default::default()
+        };
+        store
+            .append(
+                "om",
+                serde_json::to_value(&record).unwrap(),
+                parent_id.as_deref(),
+            )
+            .unwrap();
+        let activity = read_activity(tmp.path(), "child-3", &crate::config::Om::default())
+            .expect("a created session yields a window");
+        assert_eq!(activity.live.len(), ACTIVITY_TAIL);
+        // The window is the newest ACTIVITY_TAIL entries of the
+        // {total}-entry branch (the `om` record is not raw).
+        assert_eq!(
+            activity.live[0].text,
+            format!("entry {}", total - ACTIVITY_TAIL)
+        );
+        assert_eq!(activity.observations.len(), ACTIVITY_GROUPS);
+        // Newest group last.
+        assert_eq!(activity.observations[0].content, "* 🔴 (14:30) g2");
+        assert_eq!(
+            activity.observations[ACTIVITY_GROUPS - 1].content,
+            "* 🔴 (14:30) g5"
+        );
+    }
+
+    #[test]
+    fn long_text_is_truncated_with_an_ellipsis() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(tmp.path(), "child-4");
+        store.create().unwrap();
+        store
+            .append(
+                "user",
+                serde_json::json!({ "text": "x".repeat(ACTIVITY_TEXT_LIMIT + 10) }),
+                None,
+            )
+            .unwrap();
+        let activity = read_activity(tmp.path(), "child-4", &crate::config::Om::default()).unwrap();
+        assert_eq!(activity.live.len(), 1);
+        let text = &activity.live[0].text;
+        assert!(text.ends_with('…'));
+        assert!(text.len() <= ACTIVITY_TEXT_LIMIT + 3);
     }
 }
