@@ -211,4 +211,26 @@ describe('applySubagentEvent (lib level)', () => {
     expect(map['p']!.subagents).toHaveLength(1);
     expect(map['p']!.subagents[0]!.handle).toBe('h2');
   });
+
+
+  // #226: a re-minted handle (a re-opened parent re-issues "h1" to a NEW
+  // child) must not rewrite the row of the child that first owned the
+  // handle — the event carries the child's session id, so a handle
+  // match alone is not enough to claim a stale row.
+  it('a state event that reuses a handle for a new child does not rewrite the old child', () => {
+    let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
+    map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h1', child: 'old', agent_type: 'general', context_mode: 'fresh', title: 'one' }, 7);
+    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h1', child: 'old', state: 'done', detail: null, note: 'finished' }, 8);
+    // The re-opened life re-mints h1 for a new child session.
+    const out = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h1', child: 'new', state: 'running', detail: null, note: null }, 9);
+    // The old child's stub keeps its own identity — no sibling state
+    // lands on its card.
+    expect(out['old']!.state).toBe('done');
+    expect(out['old']!.meta.id).toBe('old');
+    expect(out['new']?.state).toBe('running');
+    // The roster's h1 row is the new child's (the spawn dedup replaces by
+    // handle); the old child is no longer claimed by h1.
+    const h1 = out['p']!.subagents.find((x) => x.handle === 'h1');
+    expect(h1?.child).toBe('new');
+  });
 });

@@ -149,10 +149,15 @@ impl Supervisor {
     #[must_use]
     pub fn new(p: SupervisorParams) -> Arc<Self> {
         Arc::new(Self {
-            parent_session: p.parent_session,
+            parent_session: p.parent_session.clone(),
             parent: Mutex::new(None),
             children: Mutex::new(HashMap::new()),
-            next: AtomicUsize::new(0),
+            // Seeded from the parent's durable spawn records (ticket
+            // #226): a re-opened session must not re-mint a handle an
+            // earlier life already used — the GUI keys its roster rows
+            // by handle, and a collision misattributes one child's
+            // state onto a sibling's card.
+            next: AtomicUsize::new(Self::minted_count(&p.cwd, &p.parent_session)),
             caps: p.caps,
             types: p.types,
             depth: p.depth,
@@ -169,6 +174,27 @@ impl Supervisor {
             bridge: p.bridge,
             driver: p.driver,
             core: p.core,
+        })
+    }
+
+    /// How many child handles this parent has minted across all its
+    /// lives: the count of `subagent_spawn` tool records in its session
+    /// file (one per spawn — a re-open re-reads the same file, so the
+    /// counter is monotonic across re-opens). A missing or unreadable
+    /// file seeds at zero (a fresh parent).
+    fn minted_count(cwd: &std::path::Path, parent_session: &str) -> usize {
+        let mut store = SessionStore::for_workspace(cwd, parent_session);
+        let Ok(()) = store.open() else {
+            return 0;
+        };
+        store.entries_range(0, usize::MAX).map_or(0, |entries| {
+            entries
+                .iter()
+                .filter(|e| {
+                    e.kind == crate::agent::KIND_TOOL
+                        && e.payload["name"] == serde_json::json!("subagent_spawn")
+                })
+                .count()
         })
     }
 
@@ -332,6 +358,8 @@ mod tests_gate;
 mod tests_link;
 #[cfg(test)]
 mod tests_notify;
+#[cfg(test)]
+mod tests_spawn_handles;
 #[cfg(test)]
 mod tests_stop_resume;
 #[cfg(test)]
