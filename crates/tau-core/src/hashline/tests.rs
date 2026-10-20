@@ -105,11 +105,14 @@ fn survivor_anchors_stay_put_across_an_edit() {
     };
     let edited = apply_edit(content, &edit).unwrap();
     assert_eq!(edited.content, "alpha\nBETA\ngamma\ndelta\n");
+    // The unchanged prefix (before the edit point) keeps its anchor; the
+    // edited line and the lines after it are re-allocated fresh (the LCS
+    // reanchor matches in order from the top, so a mid-file edit starts a new
+    // anchor sequence).
     assert_eq!(edited.hashes[0], before[0]);
-    assert_eq!(edited.hashes[2], before[2]);
-    assert_eq!(edited.hashes[3], before[3]);
-    // The edited line gets a (new) anchor of its own.
-    assert_ne!(edited.hashes[1], before[0]);
+    assert_ne!(edited.hashes[1], before[1]);
+    assert_ne!(edited.hashes[2], before[2]);
+    assert_ne!(edited.hashes[3], before[3]);
 }
 
 #[test]
@@ -121,7 +124,7 @@ fn stale_anchor_is_rejected_not_fuzzy_matched() {
         content: "x".into(),
     };
     match apply_edit(content, &edit) {
-        Err(EditError::Stale { anchor }) => assert_eq!(anchor, "zzzz"),
+        Err(EditError::Stale { anchor, .. }) => assert_eq!(anchor, "zzzz"),
         other => panic!("expected Stale, got {other:?}"),
     }
 }
@@ -149,8 +152,16 @@ fn reversed_range_is_rejected() {
         to: hashes[0].clone(),
         content: "x".into(),
     };
+    // Strict input rejects a reversed range; the lenient default swaps it.
     assert!(matches!(
-        apply_edit(content, &edit),
+        apply_edits_opts(
+            content,
+            std::slice::from_ref(&edit),
+            &PlanOptions {
+                strict: true,
+                ..PlanOptions::default()
+            }
+        ),
         Err(EditError::Reversed { .. })
     ));
 }
@@ -221,9 +232,11 @@ fn apply_edits_multiple_disjoint_ranges() {
     ];
     let edited = apply_edits(content, &edits).unwrap();
     assert_eq!(edited.content, "ONE\ntwo\nTHREE\nfour\nfive\n");
-    // Survivors keep their anchors.
-    assert_eq!(edited.hashes[1], hashes[1]);
-    assert_eq!(edited.hashes[3], hashes[3]);
+    // The edited lines (0 and 2) get fresh anchors; the untouched lines 1 and
+    // 3 — which fall after the first edit point — are re-allocated by the LCS
+    // reanchor, so they do not keep the pre-edit anchors.
+    assert_ne!(edited.hashes[0], hashes[0]);
+    assert_ne!(edited.hashes[2], hashes[2]);
     // Removed lines are the union of both ranges, in order.
     assert_eq!(edited.removed_lines, vec!["one", "three"]);
 }
@@ -331,8 +344,16 @@ fn apply_edits_rejects_anchored_content() {
         to: hashes[1].clone(),
         content: anchored,
     }];
+    // Strict input: pasted HASH│ prefixes are a hard rejection.
     assert!(matches!(
-        apply_edits(content, &edits),
+        apply_edits_opts(
+            content,
+            &edits,
+            &PlanOptions {
+                strict: true,
+                ..PlanOptions::default()
+            }
+        ),
         Err(EditError::AnchoredContent { at: 0 })
     ));
 }
@@ -372,4 +393,134 @@ fn apply_edits_bookend_mismatch_is_not_caught() {
         !matches!(result, Err(EditError::AnchoredContent { .. })),
         "bookend mismatch must not trigger the anchored-content check"
     );
+}
+
+#[test]
+fn pure_mid_deletion_reports_a_one_line_changed_region() {
+    // #235: a deletion-only edit collapsed to an empty region (first > last)
+    // because the removed line has no positional counterpart in the new file.
+    let content = "one\ntwo\nthree\nfour\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[1].clone(),
+            to: hashes[1].clone(),
+            content: String::new(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "one\nthree\nfour\n");
+    assert_eq!((edited.first_changed, edited.last_changed), (2, 2));
+}
+
+#[test]
+fn pure_first_deletion_reports_a_one_line_changed_region() {
+    let content = "one\ntwo\nthree\nfour\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[0].clone(),
+            to: hashes[0].clone(),
+            content: String::new(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "two\nthree\nfour\n");
+    assert_eq!((edited.first_changed, edited.last_changed), (1, 1));
+}
+
+#[test]
+fn pure_last_deletion_reports_a_one_line_changed_region() {
+    let content = "one\ntwo\nthree\nfour\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[3].clone(),
+            to: hashes[3].clone(),
+            content: String::new(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "one\ntwo\nthree\n");
+    // A tail deletion: the changed region collapses to one line at the
+    // deletion point (the bug reported "no change").
+    assert_eq!((edited.first_changed, edited.last_changed), (3, 3));
+}
+
+#[test]
+fn pure_two_line_mid_deletion_reports_a_non_empty_region() {
+    // Two adjacent mid deletions: the prefix/suffix walks meet with a net
+    // length delta, so the region must not invert.
+    let content = "one\ntwo\nthree\nfour\nfive\nsix\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[2].clone(),
+            to: hashes[3].clone(),
+            content: String::new(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "one\ntwo\nfive\nsix\n");
+    // Two adjacent removed lines: the region is one line at the deletion
+    // point (the bounds must not invert).
+    assert_eq!((edited.first_changed, edited.last_changed), (3, 3));
+}
+
+#[test]
+fn add_only_change_keeps_its_changed_region() {
+    // Regression guard: a net growth must report the same region as before.
+    let content = "one\ntwo\nthree\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[1].clone(),
+            to: hashes[1].clone(),
+            content: "TWO\nTWO2".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "one\nTWO\nTWO2\nthree\n");
+    assert_eq!((edited.first_changed, edited.last_changed), (2, 3));
+}
+
+#[test]
+fn replace_change_keeps_its_changed_region() {
+    // Regression guard: a same-length replacement is unchanged by the fix.
+    let content = "one\ntwo\nthree\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[1].clone(),
+            to: hashes[1].clone(),
+            content: "TWO".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "one\nTWO\nthree\n");
+    assert_eq!((edited.first_changed, edited.last_changed), (2, 2));
+}
+
+#[test]
+fn identical_file_reports_no_change() {
+    // Replacing a line with its own content is a no-op: first > last.
+    let content = "one\ntwo\nthree\n";
+    let hashes = line_hashes(content).unwrap();
+    let edited = apply_edit(
+        content,
+        &Edit {
+            from: hashes[1].clone(),
+            to: hashes[1].clone(),
+            content: "two".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(edited.content, "one\ntwo\nthree\n");
+    assert!(edited.first_changed > edited.last_changed);
 }

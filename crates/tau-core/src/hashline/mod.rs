@@ -18,6 +18,9 @@ pub mod line_endings;
 pub mod pin_store;
 pub mod registry;
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -605,7 +608,12 @@ fn resolve_anchor_with_context(
 }
 
 /// The changed region, measured against the old lines from both ends
-/// (1-based bounds in the new file).
+/// (1-based bounds in the new file). A net deletion shrinks `new`, so the
+/// suffix walk can consume the whole tail and invert the bounds (first >
+/// last) — which the tool layer reads as "no change" (#235). When that
+/// happens with a net length delta, the deletion has no positional
+/// counterpart, so anchor the region one line wide at the change point;
+/// adds and same-length replaces are untouched.
 fn changed_region(old: &[String], new: &[String]) -> (usize, usize) {
     let min_len = old.len().min(new.len());
     let mut lo = 0;
@@ -616,7 +624,15 @@ fn changed_region(old: &[String], new: &[String]) -> (usize, usize) {
     while hi < min_len.saturating_sub(lo) && new[new.len() - 1 - hi] == old[old.len() - 1 - hi] {
         hi += 1;
     }
-    (lo + 1, new.len().saturating_sub(hi))
+    let (first, last) = (lo + 1, new.len().saturating_sub(hi));
+    if first > last && old.len() != new.len() {
+        // #235: a pure deletion — the removed line has no positional
+        // counterpart, so report one line at the change point (clamped into
+        // the new file: a tail deletion leaves `lo` at the full length).
+        let pos = (lo + 1).min(new.len());
+        return (pos, pos);
+    }
+    (first, last)
 }
 
 /// The changed region of a batch, given the old file content (LF-normalized)
