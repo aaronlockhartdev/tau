@@ -54,6 +54,18 @@ pub fn hash_source(line: &str) -> String {
     canon.get(..end).expect("end is a char boundary").to_owned()
 }
 
+/// The line's base slot: `xxh32(hash_source) >> 14 mod 52´` (ADR-0030) —
+/// the allocation base for a line's content, shared by the pure allocator
+/// ([`line_hashes`]), the post-edit re-anchor, and the registry's
+/// [`registry::Registry::allocate`] mint.
+#[must_use]
+pub fn line_base_idx(line: &str) -> usize {
+    // 52^4 hash space: a u32 holds it, so the narrowing is safe.
+    usize::try_from(xxhash_rust::xxh32::xxh32(hash_source(line).as_bytes(), 0) >> 14)
+        .expect("u32 fits in usize on the supported 64-bit targets")
+        % HASH_SPACE
+}
+
 /// The integrity checksum of a line: xxh64 of the 500-byte hash source,
 /// hex. The registry records it at serve time and the integrity check
 /// recomputes it at edit time — a mismatch is file drift, not anchor drift.
@@ -270,11 +282,7 @@ pub fn line_hashes(content: &str) -> Result<Vec<String>, TooManyLines> {
     let mut hint = 0usize;
     let mut out = Vec::with_capacity(lines.len());
     for line in &lines {
-        // 52^4 hash space: a u32 holds it, so the narrowing is safe.
-        let base =
-            usize::try_from(xxhash_rust::xxh32::xxh32(hash_source(line).as_bytes(), 0) >> 14)
-                .expect("u32 fits in usize on the supported 64-bit targets")
-                % HASH_SPACE;
+        let base = line_base_idx(line);
         let idx = if used[base] {
             let idx = next_zero(&mut used, hint)?;
             used[idx] = true;
@@ -544,12 +552,7 @@ fn lcs_reanchor(
         if new_hashes[i].is_some() {
             continue;
         }
-        // 52^4 hash space: a u32 holds it, so the narrowing is safe.
-        let base = usize::try_from(
-            xxhash_rust::xxh32::xxh32(hash_source(&new_lines[i]).as_bytes(), 0) >> 14,
-        )
-        .expect("u32 fits in usize on the supported 64-bit targets")
-            % HASH_SPACE;
+        let base = line_base_idx(&new_lines[i]);
         let idx = if used[base] {
             let idx = next_zero(&mut used, hint)?;
             used[idx] = true;

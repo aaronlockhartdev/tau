@@ -11,7 +11,7 @@
 //! re-anchors by LCS over per-line checksums, so unchanged lines keep their
 //! exact anchors across reads and edits (item 6).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::hashline::pin_store::{self, FilePins, Pin, PinStore};
 use crate::hashline::{hash_to_idx, idx_to_hash, line_checksum, split_lines};
@@ -52,6 +52,12 @@ pub struct Registry {
     usage_clock: u64,
     /// The probe cursor for allocation (continues across files).
     probe: usize,
+    /// Per-file allocation hint: the next collision probe starts where this
+    /// file's last mint left off — the registry's mirror of the pure path's
+    /// running hint. It lives within a single read (the read's
+    /// `evict_path` drops it afterwards); across reads `probe` is the
+    /// fallback.
+    file_hint: HashMap<String, usize>,
     /// Anchors reclaimed most recently, drained by `take_reclaimed`.
     reclaimed: VecDeque<String>,
     /// The persistent pin store: seeds a file's first read with its pinned
@@ -102,6 +108,9 @@ impl Registry {
         content: &str,
     ) -> Result<(Vec<String>, Option<String>), crate::hashline::TooManyLines> {
         self.touch(path);
+        // #239: minting is content-addressed — a line's first anchor is its
+        // content-derived base slot (shared with the pure `line_hashes`), so
+        // two fresh sessions over identical content agree without the store.
         let lines = split_lines(content);
         if lines.len() > crate::hashline::HASH_SPACE {
             return Err(crate::hashline::TooManyLines);
@@ -118,16 +127,24 @@ impl Registry {
             None => vec![None; lines.len()],
         };
 
+        // The anchors minted for this read: the per-allocation collision
+        // domain. The registry's global `owned` set is only refreshed when
+        // the read commits, so a same-content pair in one read would mint
+        // the same anchor twice without it.
+        let mut fresh: HashSet<String> = HashSet::new();
         let mut new_anchors: Vec<String> = Vec::with_capacity(lines.len());
-        for m in matched {
-            match m {
-                Some(j) => new_anchors.push(
+        for (i, m) in matched.into_iter().enumerate() {
+            if let Some(j) = m {
+                new_anchors.push(
                     prev.as_ref()
                         .expect("a match implies a previous allocation")
                         .0[j]
                         .clone(),
-                ),
-                None => new_anchors.push(self.mint(path)?),
+                );
+            } else {
+                let anchor = self.mint(path, Some(lines[i].as_str()), &fresh)?;
+                fresh.insert(anchor.clone());
+                new_anchors.push(anchor);
             }
         }
 
@@ -270,12 +287,48 @@ impl Registry {
         }
     }
 
-    fn mint(&mut self, protect: &str) -> Result<String, crate::hashline::TooManyLines> {
+    /// Mint one free anchor. With a `line` (the usual path) the probe starts
+    /// at the line's content-derived base slot and walks forward by stride —
+    /// the same walk the pure allocator takes — against the registry's
+    /// global `owned` set plus this read's `fresh` mints (uniqueness is
+    /// session-wide and per-read, the base is content-local). Without a
+    /// `line` it falls back to the file's running hint, then the monotonic
+    /// probe cursor (slot 0 stays untouchable).
+    fn mint(
+        &mut self,
+        protect: &str,
+        line: Option<&str>,
+        fresh: &HashSet<String>,
+    ) -> Result<String, crate::hashline::TooManyLines> {
+        // The probe start, mirroring the pure allocator: the line's content
+        // base when free, the file's running hint when the base is owned
+        // (collisions continue where the file left off), else the global
+        // cursor (the no-line fallback).
+        let taken =
+            |this: &Self, anchor: &str| this.owned.contains_key(anchor) || fresh.contains(anchor);
+        let start = match line {
+            Some(l) => {
+                let base = crate::hashline::line_base_idx(l);
+                if taken(self, &idx_to_hash(base)) {
+                    self.file_hint.get(protect).copied().unwrap_or(self.probe)
+                } else {
+                    base
+                }
+            }
+            None => self.file_hint.get(protect).copied().unwrap_or(self.probe),
+        };
         loop {
-            for step in 1..=crate::hashline::HASH_SPACE {
-                let candidate = idx_to_hash((self.probe + step) % crate::hashline::HASH_SPACE);
-                if !self.owned.contains_key(&candidate) {
-                    self.probe = (self.probe + step) % crate::hashline::HASH_SPACE;
+            for step in 0..=crate::hashline::HASH_SPACE {
+                let idx = (start + step * (crate::hashline::HASH_SPACE - 3))
+                    % crate::hashline::HASH_SPACE;
+                let candidate = idx_to_hash(idx);
+                if !taken(self, &candidate) {
+                    let after =
+                        (idx + crate::hashline::HASH_SPACE - 3) % crate::hashline::HASH_SPACE;
+                    self.probe = after;
+                    if line.is_some() {
+                        self.file_hint.insert(protect.to_owned(), after);
+                    }
                     return Ok(candidate);
                 }
             }
@@ -321,6 +374,7 @@ impl Registry {
     fn evict_path(&mut self, path: &str) {
         self.owned.retain(|_, e| e.path != path);
         self.file_state.remove(path);
+        self.file_hint.remove(path);
         self.served.remove(path);
         self.last_used.remove(path);
     }
@@ -421,7 +475,7 @@ pub(crate) fn match_anchors(prev_checksums: &[String], checksums: &[String]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashline::line_hashes;
+    use crate::hashline::{HASH_SPACE, idx_to_hash, line_base_idx, line_hashes};
 
     #[test]
     fn allocate_is_idempotent_for_unchanged_content() {
@@ -505,5 +559,74 @@ mod tests {
                 .expect_err("stale")
                 .contains("no longer matches")
         );
+    }
+
+    #[test]
+    fn first_read_allocates_content_derived_anchors() {
+        // #239: the registry's first allocation for a line is the line's
+        // content-derived base slot when free — the same base the pure
+        // `line_hashes` takes, so a fresh session's anchors are a function
+        // of content, not of allocation history.
+        let (a, _) = Registry::new()
+            .allocate("f", "one\ntwo\n")
+            .expect("allocate");
+        assert_eq!(a[0], idx_to_hash(line_base_idx("one")));
+        assert_eq!(a[1], idx_to_hash(line_base_idx("two")));
+    }
+
+    #[test]
+    fn collision_probes_forward_from_the_content_base() {
+        // A free base takes the base; the next line's base being owned
+        // (identical content) makes the probe continue from the file's
+        // running hint — in lockstep with the pure path's allocation.
+        let (anchors, _) = Registry::new().allocate("f", "x\nx\n").expect("allocate");
+        let base = line_base_idx("x");
+        assert_eq!(anchors[0], idx_to_hash(base));
+        let stride = HASH_SPACE - 3;
+        assert_eq!(anchors[1], idx_to_hash((base + stride) % HASH_SPACE));
+        // The registry's allocation matches the pure path exactly.
+        assert_eq!(anchors, line_hashes("x\nx\n").expect("hashes"));
+    }
+
+    #[test]
+    fn two_fresh_registries_over_identical_content_agree() {
+        // #239's acceptance criterion: with no pin store, two fresh
+        // registries over identical content must allocate identical anchors
+        // (the monotonic cursor made this a coin flip).
+        let content = "one\ntwo\nthree\n";
+        let (a, _) = Registry::new().allocate("f", content).expect("allocate");
+        let (b, _) = Registry::new().allocate("f", content).expect("allocate");
+        assert_eq!(a, b, "fresh registries over identical content agree");
+        assert_eq!(a, line_hashes(content).expect("hashes"));
+    }
+
+    #[test]
+    fn cross_file_mint_probes_the_global_owned_set() {
+        // "two"'s content base is owned by file a (its line took the base
+        // slot); file b's identical line must probe forward from the base,
+        // not land on it — uniqueness is global, the base is content-local.
+        let mut reg = Registry::new();
+        let (a, _) = reg.allocate("a", "one\ntwo\n").expect("allocate");
+        let (b, _) = reg.allocate("b", "two\n").expect("allocate");
+        let base = line_base_idx("two");
+        assert_eq!(
+            idx_to_hash(base),
+            a[1],
+            "file a's line owns the content base"
+        );
+        assert_ne!(b[0], a[1], "the colliding line probes off the base");
+        assert!(reg.owned.contains_key(&b[0]));
+    }
+
+    #[test]
+    fn mint_advances_the_monotonic_cursor_past_the_base() {
+        // The no-content fallback path keeps stepping from the probe cursor
+        // (slot 0 stays untouchable); a content-based mint advances the
+        // cursor past the base so a later fallback mint does not collide.
+        let mut reg = Registry::new();
+        let (a, _) = reg.allocate("f", "one\n").expect("allocate");
+        assert_eq!(a[0], idx_to_hash(line_base_idx("one")));
+        let probe_after = (line_base_idx("one") + (HASH_SPACE - 3)) % HASH_SPACE;
+        assert_eq!(reg.probe, probe_after, "the cursor advances past the base");
     }
 }
