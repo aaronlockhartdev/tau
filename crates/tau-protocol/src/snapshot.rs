@@ -164,6 +164,24 @@ pub struct LiveState {
     /// The session's children (structured state — the GUI's sub-agent
     /// panel); empty for child sessions (the depth cap is structural).
     pub subagents: Vec<crate::SubagentInfo>,
+    /// The session's own sub-agent lifecycle state (ticket #221): present
+    /// only for a child session (its last observed state, restored from
+    /// its own file on a restart), so the GUI badges it by state, not by
+    /// turn. `None` for a root session and for a child with no state
+    /// recorded. Defaulted so older snapshots decode.
+    #[serde(default)]
+    pub own_state: Option<OwnState>,
+}
+
+/// A child session's own lifecycle state (the `subagent` state entry's
+/// projection): the badge state plus its declared wait target.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OwnState {
+    /// running | idle | awaiting | done | failed | stopped
+    pub state: String,
+    /// parent | user | subagent (an `idle` child's declared wait; `user`
+    /// for `awaiting`); `None` otherwise.
+    pub waiting_on: Option<String>,
 }
 
 /// The session's OM gauge (ticket #22): observation tokens against the
@@ -340,6 +358,7 @@ mod tests {
                 usage: None,
                 resume_contract: None,
             }],
+            own_state: None,
         };
         let live_back: LiveState =
             serde_json::from_str(&serde_json::to_string(&live).unwrap()).unwrap();
@@ -435,6 +454,7 @@ mod tests {
                 gate_failed: false,
                 plan: Plan::default(),
                 subagents: vec![],
+                own_state: None,
             },
             cursor: "e1".into(),
         })

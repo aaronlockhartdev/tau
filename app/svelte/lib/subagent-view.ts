@@ -107,6 +107,10 @@ export function crewView(ref: SpawnRef, info: SubagentInfo | null): CrewView {
   let phase: CrewPhase;
   if (info.state === 'idle') {
     phase = info.waiting_on === 'user' ? 'waiting-user' : 'waiting-parent';
+  } else if (info.state === 'awaiting') {
+    // Awaiting is the `QUESTION:` marker: the child is asking the user — the
+    // same red "needs you" case as an idle child parked on the user.
+    phase = 'waiting-user';
   } else {
     phase = info.state;
   }

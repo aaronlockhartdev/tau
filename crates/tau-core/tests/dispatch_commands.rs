@@ -748,3 +748,79 @@ async fn session_open_of_an_unowned_session_is_not_found() {
         "an unowned session is a NotFound, not an Other: {err:?}"
     );
 }
+
+#[tokio::test]
+async fn a_restart_restores_a_child_state_from_disk() {
+    // Ticket #221: after a restart the supervisor's in-memory child
+    // registry is empty, so the parent's snapshot restores the child's true
+    // state from disk (the child's own last `subagent` state entry). A done
+    // child reads `done`, not a uniform `idle`.
+    let rig = rig(done_body(), 100);
+    let info = spawn(&rig);
+    // The observed lifecycle derives `done` from the child's plan file
+    // (spec §5.2): seed a complete plan while the slow first call is in
+    // flight, so the done-declaration is confirmed as `done`.
+    std::fs::write(
+        tau_core::plan::path(rig.cwd.path(), &info.child),
+        "# Plan\n\n## Steps\n\n- [x] the work\n",
+    )
+    .unwrap();
+    wait_state(&rig, &info.handle, "done").await;
+
+    // The restart: a fresh core on the same directory, its child registry
+    // empty (the child process is gone). The parent's snapshot must restore
+    // the child from disk with its on-disk state.
+    let core2 = CoreBuilder::custom(dead_providers())
+        .with_child_factory(Arc::new(CannedChild {
+            body: done_body(),
+            slow_ms: 0,
+        }))
+        .build();
+    core2
+        .dispatch(Command::WorkspaceOpen {
+            cwd: rig.cwd.path().to_string_lossy().into_owned(),
+        })
+        .unwrap();
+    let snapshot = match core2
+        .dispatch(Command::SessionOpen {
+            session: rig.parent.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected a snapshot: {other:?}"),
+    };
+    let restored = snapshot
+        .live
+        .subagents
+        .iter()
+        .find(|s| s.child == info.child)
+        .expect("the child is restored from disk");
+    assert_eq!(
+        restored.state, "done",
+        "the on-disk state survives the restart"
+    );
+    // A root session has no lifecycle state of its own.
+    assert!(
+        snapshot.live.own_state.is_none(),
+        "a root session has no own_state"
+    );
+
+    // The child's own snapshot carries its own state (the GUI badges the
+    // child's tab by it, not by turn). A restart's child is not running,
+    // so a `done` child reads `done`, not the turn-derived `idle`.
+    let child_snap = match core2
+        .dispatch(Command::SessionOpen {
+            session: info.child.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected a snapshot: {other:?}"),
+    };
+    let own = child_snap
+        .live
+        .own_state
+        .expect("a child carries its own_state");
+    assert_eq!(own.state, "done");
+}

@@ -340,6 +340,7 @@ mod inspect;
 mod lifecycle;
 mod link;
 mod notify;
+pub(crate) mod restore;
 mod route;
 mod spawn;
 mod states;

@@ -242,6 +242,7 @@ mod outputs {
                         usage: None,
                         resume_contract: None,
                     }],
+                    own_state: None,
                 },
                 cursor: "00000042".into(),
             },
