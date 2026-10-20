@@ -13,7 +13,16 @@ fn emit(sink: &mut dyn TurnSink, result: &mut TurnResult, event: &TurnEvent) -> 
 
 /// Consume one `data:` payload: accumulate into the result and forward the
 /// stream-delta events to the sink (false = kill, spec §7).
-pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payload: &str) -> bool {
+/// `created_at` is the running `response.created` timestamp (#224), threaded
+/// by the caller: a per-payload function holds no cross-frame state, so the
+/// decode-window duration is computed here, at the `response.completed`
+/// frame, from the two server timestamps.
+pub(super) fn apply_frame(
+    sink: &mut dyn TurnSink,
+    result: &mut TurnResult,
+    created_at: &mut Option<i64>,
+    payload: &str,
+) -> bool {
     // Undecodable frames are skipped rather than failing the turn: servers
     // pad the stream with non-JSON frames (research #4, quirk 1).
     let frame: Frame = match serde_json::from_str(payload) {
@@ -21,10 +30,31 @@ pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payl
         Err(_) => return true,
     };
     match frame {
+        Frame::Created { created_at: ts } => {
+            if let Some(ts) = ts {
+                *created_at = Some(ts);
+            }
+            true
+        }
         Frame::Completed { response } => {
             result.completed = true;
+            // #224: the duration is the server's own measurement —
+            // completion minus creation. It is `None` when either timestamp
+            // is absent (the GUI then falls back to its wall-clock estimate).
+            let duration = response
+                .as_ref()
+                .and_then(|r| r.created_at)
+                .zip(*created_at)
+                .and_then(|(end, start)| {
+                    let secs = u64::try_from(end - start).ok()?;
+                    // A zero-length window means the server stamped created
+                    // and completed with the same second (vLLM does —
+                    // research/tps-server-timestamps.md); treat it as absent
+                    // so the GUI falls back to its wall-clock estimate.
+                    (secs > 0).then(|| Duration::from_secs(secs))
+                });
             match response.and_then(|r| r.usage) {
-                Some(usage) => emit(sink, result, &TurnEvent::Completed(usage)),
+                Some(usage) => emit(sink, result, &TurnEvent::Completed(usage, duration)),
                 None => true,
             }
         }
@@ -85,7 +115,7 @@ pub(super) fn apply_frame(sink: &mut dyn TurnSink, result: &mut TurnResult, payl
             );
             true
         }
-        Frame::Created | Frame::InProgress | Frame::Other => true,
+        Frame::InProgress | Frame::Other => true,
     }
 }
 
@@ -107,13 +137,14 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
     let payloads = parser.feed(body.as_bytes())?;
     let mut sink = RecordSink(Vec::new());
     let mut result = TurnResult::default();
+    let mut created_at: Option<i64> = None;
     let mut calls = Vec::new();
     let mut seen_calls = 0usize;
     for payload in payloads {
         if payload == "[DONE]" {
             break;
         }
-        apply_frame(&mut sink, &mut result, &payload);
+        apply_frame(&mut sink, &mut result, &mut created_at, &payload);
         while result.calls.len() > seen_calls {
             let call = result
                 .calls
@@ -129,8 +160,13 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
     // tool-call responses). Synthesize the completion so the canned replay
     // mirrors the live path's clean_end; a [DONE]-less cut body stays
     // incomplete, as before.
-    if parser.terminated && !sink.0.iter().any(|e| matches!(e, TurnEvent::Completed(_))) {
-        sink.0.push(TurnEvent::Completed(Usage::default()));
+    if parser.terminated
+        && !sink
+            .0
+            .iter()
+            .any(|e| matches!(e, TurnEvent::Completed(_, _)))
+    {
+        sink.0.push(TurnEvent::Completed(Usage::default(), None));
     }
     Ok((sink.0, calls))
 }
@@ -229,6 +265,7 @@ async fn attempt_one_turn(
     }
     let mut parser = SseParser::new();
     let mut result = TurnResult::default();
+    let mut created_at: Option<i64> = None;
     let mut stream = response;
     let mut idle_deadline = tokio::time::Instant::now() + idle;
     // A clean end (EOF / [DONE]) means the server finished the response: it
@@ -292,7 +329,7 @@ async fn attempt_one_turn(
                 clean_end = true;
                 break 'outer;
             }
-            if !apply_frame(sink, &mut result, &payload) {
+            if !apply_frame(sink, &mut result, &mut created_at, &payload) {
                 // Killed: the partial stands (spec §7 force).
                 return Ok(result);
             }

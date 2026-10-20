@@ -104,7 +104,9 @@ impl TurnProvider for CannedProvider {
                 accepted += 1;
             }
             if accepted == events.len() {
-                result.completed = events.iter().any(|e| matches!(e, TurnEvent::Completed(_)));
+                result.completed = events
+                    .iter()
+                    .any(|e| matches!(e, TurnEvent::Completed(_, _)));
             }
             result.calls = calls
                 .iter()
@@ -164,7 +166,9 @@ impl TurnProvider for SlowCannedProvider {
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
             if accepted == events.len() {
-                result.completed = events.iter().any(|e| matches!(e, TurnEvent::Completed(_)));
+                result.completed = events
+                    .iter()
+                    .any(|e| matches!(e, TurnEvent::Completed(_, _)));
             }
             Ok(result)
         })
@@ -216,7 +220,9 @@ impl TurnProvider for PrefillHangProvider {
                 accepted += 1;
             }
             if accepted == events.len() {
-                result.completed = events.iter().any(|e| matches!(e, TurnEvent::Completed(_)));
+                result.completed = events
+                    .iter()
+                    .any(|e| matches!(e, TurnEvent::Completed(_, _)));
             }
             Ok(result)
         })

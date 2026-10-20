@@ -127,7 +127,7 @@ impl TurnSink for ForwardSink<'_> {
         // the call was cut, so an entry-less one must read interrupted,
         // not completed, in the reconciliation.
         let stopped = self.stop.load(Ordering::SeqCst);
-        if let TurnEvent::Completed(_) = &event
+        if let TurnEvent::Completed(_, _) = &event
             && !stopped
         {
             self.completed

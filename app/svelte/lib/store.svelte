@@ -905,10 +905,11 @@
           if (ev.usage) {
             s.usage = ev.usage;
             const started = callStartMs.get(ev.call_id);
-            if (started !== undefined) {
-              const secs = (Date.now() - started) / 1000;
-              if (secs > 0.2) s.tps = ev.usage.output_tokens / secs;
-            }
+            // #224: prefer the server's decode-window duration (from the
+            // created/completed timestamps); it excludes prefill + transport,
+            // which the wall-clock estimate wrongly includes.
+            const secs = ev.duration_secs ?? (started !== undefined ? (Date.now() - started) / 1000 : null);
+            if (secs !== null && secs > 0.2) s.tps = ev.usage.output_tokens / secs;
             callStartMs.delete(ev.call_id);
           }
           streamStartMs.delete(ev.session);

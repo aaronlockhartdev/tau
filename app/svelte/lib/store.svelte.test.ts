@@ -289,7 +289,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
       upsert('00000001', 'assistant', { text: 'hel', reasoning: 'thinking', interrupted: false }),
       upsert('00000001', 'assistant', { text: 'hello', reasoning: 'thinking', interrupted: false }),
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
     ]);
     expect(s.turn).toBe('idle');
     expect(s.usage).toEqual(USAGE);
@@ -318,19 +318,33 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     applyEvents([
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
       upsert('00000001', 'assistant', { text: 'ab', interrupted: true }),
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: true, usage: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: true, usage: null, duration_secs: null }
     ]);
     expect(s.entries['00000001']?.kind).toBe('interrupted');
   });
 
-  it('computes TPS over the call duration', async () => {
+  it('prefers the server duration over the wall clock for TPS', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const s = oneSession();
+    applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
+    await vi.advanceTimersByTimeAsync(2000);
+    applyEvents([
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: 1 }
+    ]);
+    // 10 output tokens over the server's 1 s — not 5 over the 2 s wall clock.
+    expect(s.tps).toBeCloseTo(10);
+    vi.useRealTimers();
+  });
+
+  it('falls back to the wall clock when the server duration is absent', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const s = oneSession();
     applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
     await vi.advanceTimersByTimeAsync(1000);
     applyEvents([
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
     ]);
     expect(s.tps).toBeCloseTo(10);
     vi.useRealTimers();
@@ -343,7 +357,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
       upsert('00000001', 'assistant', { text: 'run ls', interrupted: false }),
       upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' } }),
       upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' }, output: 'exit 0\n--- stdout ---\nok' }),
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null, duration_secs: null }
     ]);
     const tools = Object.values(s.entries).filter((e) => e.kind === 'tool');
     expect(tools).toHaveLength(1);

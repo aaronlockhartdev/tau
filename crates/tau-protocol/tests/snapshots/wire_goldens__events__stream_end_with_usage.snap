@@ -1,6 +1,6 @@
 ---
 source: crates/tau-protocol/tests/wire_goldens.rs
-expression: "Event::StreamEnd\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), call_id: \"c1\".into(),\n    interrupted: false, usage:\n    Some(Usage\n    {\n        input_tokens: 100, output_tokens: 20, total_tokens: 120,\n        cached_prompt_tokens: 40,\n    }),\n}"
+expression: "Event::StreamEnd\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), call_id: \"c1\".into(),\n    interrupted: false, usage:\n    Some(Usage\n    {\n        input_tokens: 100, output_tokens: 20, total_tokens: 120,\n        cached_prompt_tokens: 40,\n    }), duration_secs: Some(1.5),\n}"
 ---
 {
   "type": "stream_end",
@@ -13,5 +13,6 @@ expression: "Event::StreamEnd\n{\n    workspace: \"w1\".into(), session: \"s1\".
     "output_tokens": 20,
     "total_tokens": 120,
     "cached_prompt_tokens": 40
-  }
+  },
+  "duration_secs": 1.5
 }

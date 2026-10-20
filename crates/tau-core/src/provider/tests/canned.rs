@@ -1,5 +1,6 @@
 use super::server::*;
 use super::*;
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
 #[test]
@@ -19,18 +20,118 @@ fn decode_stream_extracts_function_calls_and_reasoning_dialect() {
         vec![
             TurnEvent::Reasoning("thinking".into()),
             TurnEvent::Text("done".into()),
-            TurnEvent::Completed(Usage {
-                input_tokens: 2,
-                output_tokens: 3,
-                total_tokens: 5,
-                ..Default::default()
-            })
+            TurnEvent::Completed(
+                Usage {
+                    input_tokens: 2,
+                    output_tokens: 3,
+                    total_tokens: 5,
+                    ..Default::default()
+                },
+                None
+            )
         ]
     );
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].1.name, "bash");
     assert_eq!(calls[0].1.call_id, "c1");
     assert_eq!(calls[0].1.arguments, r#"{"command": "ls"}"#);
+}
+
+#[test]
+fn decode_stream_computes_duration_from_created_timestamps() {
+    // #224: the server's created_at on response.created and response.completed
+    // bracket the decode window; the duration is their difference.
+    let body = ok_body(&[
+        r#"{"type":"response.created","created_at":1700000000}"#,
+        r#"{"type":"response.output_text.delta","delta":"done"}"#,
+        r#"{"type":"response.completed","response":{"created_at":1700000002,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
+        "[DONE]",
+    ]);
+    let (events, _calls) = decode_stream(&body).unwrap();
+    assert_eq!(
+        events.last(),
+        Some(&TurnEvent::Completed(
+            Usage {
+                input_tokens: 2,
+                output_tokens: 3,
+                total_tokens: 5,
+                ..Default::default()
+            },
+            Some(Duration::from_secs(2))
+        ))
+    );
+}
+
+#[test]
+fn decode_stream_same_second_timestamps_yield_no_duration() {
+    // #224: a server that stamps created and completed in the same second
+    // (vLLM does) gives a zero-length window — treated as absent so the GUI
+    // falls back to its wall-clock estimate (no divide by zero).
+    let body = ok_body(&[
+        r#"{"type":"response.created","created_at":1700000000}"#,
+        r#"{"type":"response.output_text.delta","delta":"done"}"#,
+        r#"{"type":"response.completed","response":{"created_at":1700000000,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
+        "[DONE]",
+    ]);
+    let (events, _calls) = decode_stream(&body).unwrap();
+    assert_eq!(
+        events.last(),
+        Some(&TurnEvent::Completed(
+            Usage {
+                input_tokens: 2,
+                output_tokens: 3,
+                total_tokens: 5,
+                ..Default::default()
+            },
+            None
+        ))
+    );
+}
+
+#[test]
+fn decode_stream_missing_created_timestamps_yield_no_duration() {
+    // #224: a server that omits created_at (or only one of the two) gives no
+    // duration — the GUI falls back to its wall-clock estimate.
+    let body = ok_body(&[
+        r#"{"type":"response.created"}"#,
+        r#"{"type":"response.output_text.delta","delta":"done"}"#,
+        r#"{"type":"response.completed","response":{"created_at":1700000002,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
+        "[DONE]",
+    ]);
+    let (events, _calls) = decode_stream(&body).unwrap();
+    assert_eq!(
+        events.last(),
+        Some(&TurnEvent::Completed(
+            Usage {
+                input_tokens: 2,
+                output_tokens: 3,
+                total_tokens: 5,
+                ..Default::default()
+            },
+            None
+        ))
+    );
+}
+
+#[tokio::test]
+async fn canned_provider_surfaces_the_duration() {
+    // #224: the round-trip carries the server duration into TurnResult.
+    struct Keep;
+    impl TurnSink for Keep {
+        fn event(&mut self, _: TurnEvent) -> bool {
+            true
+        }
+    }
+    let body = ok_body(&[
+        r#"{"type":"response.created","created_at":1700000000}"#,
+        r#"{"type":"response.output_text.delta","delta":"done"}"#,
+        r#"{"type":"response.completed","response":{"created_at":1700000005,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
+        "[DONE]",
+    ]);
+    let provider = canned(&body);
+    let request = ResponseRequest::new("m", None, vec![]);
+    let result = provider.call(&request, &mut Keep).await.unwrap();
+    assert_eq!(result.duration, Some(Duration::from_secs(5)));
 }
 
 #[test]
