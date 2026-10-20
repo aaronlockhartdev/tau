@@ -57,7 +57,7 @@ export type Shell =
     icon: LucideIcon;
     label: string;
     summary: string;
-    status?: 'ok' | 'running' | 'error';
+    status?: 'ok' | 'running' | 'error' | 'cancelled';
     openKey: 'tool';
     kv: KvRow[];
     // The file path arg (read/write/edit): names the grammar for the output

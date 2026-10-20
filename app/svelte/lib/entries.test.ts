@@ -146,10 +146,26 @@ describe('decodeEntry (tool status, B5)', () => {
     expect(decoded(toolView('error', 'file contents'))).toBe('error');
   });
 
+  it('honors an explicit cancelled status (a user stop, #222)', () => {
+    // The heuristic would read the "bash: " prefix as an error; the core's
+    // explicit cancelled wins so the card renders neutral, not red.
+    const bashView = (status: unknown) =>
+      decodeEntry({ ...toolView(status, 'bash: cancelled by user stop'), payload: { name: 'bash', output: 'bash: cancelled by user stop', status } });
+    expect((bashView('cancelled') as { status?: string }).status).toBe('cancelled');
+  });
+
   it('falls back to the heuristic when no explicit status is present', () => {
     expect(decoded(toolView(undefined, 'read: cannot read /x'))).toBe('error');
     expect(decoded(toolView(undefined, 'file contents'))).toBe('ok');
     expect(decoded(toolView(undefined, undefined))).toBe('running');
+    // A bash cancellation record without the explicit status (pre-#222 shape)
+    // still reads as an error by the "bash: " prefix heuristic.
+    expect(
+      decoded({
+        ...toolView(undefined, 'bash: cancelled by user stop'),
+        payload: { name: 'bash', output: 'bash: cancelled by user stop' }
+      })
+    ).toBe('error');
   });
 });
 

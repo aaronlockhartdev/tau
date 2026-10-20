@@ -255,7 +255,7 @@ async fn bash_stop_interrupts_a_running_command() {
     let out = text(bash_inner(dir.path(), &json!({"command": "sleep 10"}), &stop, None).await);
     let elapsed = started.elapsed();
     // The stop cut the command short, not the sleep running to completion (#174).
-    assert!(out.contains("interrupted by user stop"), "{out}");
+    assert!(out.contains("cancelled by user stop"), "{out}");
     assert!(
         elapsed < std::time::Duration::from_secs(5),
         "stop did not interrupt in time: {elapsed:?}"
