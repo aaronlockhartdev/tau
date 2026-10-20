@@ -1,5 +1,21 @@
-import { describe, expect, it } from 'vitest';
-import { md, argsLines, valueLinesOf } from './markdown';
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { md, mdHighlight, argsLines, valueLinesOf } from './markdown';
+
+// The highlighter is the async shiki boundary; the markdown pass under test
+// is how the base render and the substitution interact, so the test names
+// tokens with a fake.
+const highlightHtml = vi.hoisted(() =>
+  vi.fn((code: string, lang: string) => Promise.resolve(`<i data-lang="${lang}">${code}</i>`))
+);
+vi.mock('./highlight', () => ({ highlightHtml }));
+
+beforeEach(() => {
+  highlightHtml.mockReset();
+  highlightHtml.mockImplementation(
+    (code: string, lang: string) => Promise.resolve(`<i data-lang="${lang}">${code}</i>`)
+  );
+});
 
 describe('md', () => {
   it('renders plain text as a paragraph', () => {
@@ -16,31 +32,24 @@ describe('md', () => {
     expect(out).toContain('&lt;script&gt;');
   });
 
-  it('renders a fenced code block through the highlighter, with the language label', () => {
+  it('renders a labeled fence as a plain escaped block with the language label', () => {
     const out = md('```rust\nlet x = 1;\n```');
-    expect(out).toContain('<pre class="code">');
-    expect(out).toContain('<span class="lang">rust</span>');
-    expect(out).toContain('<span class="k">let</span>');
-    expect(out).toContain('<span class="n">1</span>');
+    expect(out).toBe('<pre class="code">\n<span class="lang">rust</span>\nlet x = 1;\n</pre>\n');
   });
 
   it('renders a fence without a language (no lang span)', () => {
     const out = md('```\nplain\n```');
-    expect(out).toContain('<pre class="code">');
-    expect(out).not.toContain('class="lang"');
+    expect(out).toBe('<pre class="code">plain\n</pre>\n');
+  });
+
+  it('escapes html inside a fence', () => {
+    const out = md('```rust\nfn f() -> bool { true }\n```');
+    expect(out).toContain('fn f() -&gt; bool { true }');
   });
 
   it('protects inline code from markdown interpretation', () => {
     const out = md('use `let x` carefully');
     expect(out).toContain('<code>let x</code>');
-    expect(out).not.toContain('<span class="k">let</span>');
-  });
-
-  it('highlights comments, strings, capitalized identifiers and numbers', () => {
-    const out = md('```c\n// note "str"\nValue 42\n```');
-    expect(out).toContain('<span class="c">// note "str"</span>');
-    expect(out).toContain('<span class="t2">Value</span>');
-    expect(out).toContain('<span class="n">42</span>');
   });
 
   it('renders GFM tables', () => {
@@ -48,6 +57,51 @@ describe('md', () => {
     expect(out).toContain('<table>');
     expect(out).toContain('<th>a</th>');
     expect(out).toContain('<td>1</td>');
+  });
+});
+
+describe('mdHighlight (#231)', () => {
+  it('replaces a known-language fence with the highlighter output', async () => {
+    const out = await mdHighlight('```rust\nlet x = 1;\n```');
+    expect(out).toContain('<i data-lang="rust">let x = 1;</i>');
+    expect(out).not.toContain('class="code"');
+  });
+
+  it('maps common fence label aliases to grammar names', async () => {
+    const out = await mdHighlight('```js\nconst a = 1;\n```');
+    expect(highlightHtml).toHaveBeenCalledWith('const a = 1;', 'javascript');
+  });
+
+  it('passes an unknown label through (the highlighter degrades to plain)', async () => {
+    const out = await mdHighlight('```notalanguage\nx\n```');
+    expect(highlightHtml).toHaveBeenCalledWith('x', 'notalanguage');
+    expect(out).toContain('<i data-lang="notalanguage">x</i>');
+  });
+
+  it('leaves an unlabeled fence plain', async () => {
+    const out = await mdHighlight('```\nplain\n```');
+    expect(highlightHtml).not.toHaveBeenCalled();
+    expect(out).toBe('<pre class="code">plain\n</pre>\n');
+  });
+
+  it('highlights each labeled fence in a multi-fence body', async () => {
+    const out = await mdHighlight('```rust\nfn a() {}\n```\n\ntext\n\n```json\n{"a": 1}\n```');
+    expect(highlightHtml).toHaveBeenCalledTimes(2);
+    expect(out).toContain('<i data-lang="rust">fn a() {}</i>');
+    expect(out).toContain('<i data-lang="json">{"a": 1}</i>');
+    expect(out).toContain('<p>text</p>');
+  });
+
+  it('keeps a plain block when the highlighter yields nothing (init failure)', async () => {
+    highlightHtml.mockResolvedValueOnce('');
+    const out = await mdHighlight('```rust\nlet x = 1;\n```');
+    expect(out).toBe('<pre class="code">\n<span class="lang">rust</span>\nlet x = 1;\n</pre>\n');
+  });
+
+  it('leaves a body without fences untouched', async () => {
+    const out = await mdHighlight('hello **world**');
+    expect(highlightHtml).not.toHaveBeenCalled();
+    expect(out).toBe('<p>hello <strong>world</strong></p>\n');
   });
 });
 

@@ -11,6 +11,10 @@ const LANGS: string[] = Object.keys(bundledLanguages);
 type Token = { content: string; color?: string };
 let instance: Promise<Highlighter> | null = null;
 
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function hl(): Promise<Highlighter> {
   if (instance === null) {
     instance = createHighlighter({ themes: [THEME], langs: LANGS }).catch((e) => {
@@ -41,5 +45,28 @@ export async function highlightLines(code: string, lang: string): Promise<Token[
     // singleton has reset, so the next read retries. Highlighting is a
     // cosmetic concern, never an error a caller has to handle.
     return code.split('\n').map((line) => [{ content: line }]);
+  }
+}
+
+// HTML for one markdown fenced block: the theme's token spans, dropped into
+// the .code pre the base render left in place. shiki 4's codeToHtml returns
+// a full <pre> with its own chrome; the app styles its own pre, so the
+// spans are built from codeToTokens. Empty for plain text (unlabeled,
+// unknown, or init failed) so the caller keeps the base's plain block —
+// highlighting never changes what a fence says, only its colors.
+export async function highlightHtml(code: string, lang: string): Promise<string> {
+  if (lang === 'text' || !LANGS.includes(lang)) return '';
+  try {
+    const h = await hl();
+    const { tokens } = h.codeToTokens(code, { lang: lang as BundledLanguage, theme: THEME });
+    return tokens
+      .map((line) =>
+        line
+          .map((t) => (t.color ? `<span style="color:${t.color}">${esc(t.content)}</span>` : esc(t.content)))
+          .join('')
+      )
+      .join('\n');
+  } catch {
+    return '';
   }
 }

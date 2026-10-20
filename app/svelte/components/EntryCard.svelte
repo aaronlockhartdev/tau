@@ -8,6 +8,7 @@
   import { present, type ExpandSlot, type Shell } from '../lib/presentation';
   import type { Entry } from '../lib/protocol';
   import CardShell from './CardShell.svelte';
+  import Markdown from './Markdown.svelte';
   import { onActivate } from '../lib/ui';
   import { Layers, Sparkles } from '@lucide/svelte';
 
@@ -101,7 +102,9 @@
       {/if}
     </div>
     {#if open.think}
-      <div class="thinkbody md">{@html shell.body}</div>
+      <div class="thinkbody md">
+        <Markdown text={shell.body} />
+      </div>
     {/if}
   {:else}
     <CardShell shell={shell} open={open} setOpen={setOpen} onKey={onActivate} />

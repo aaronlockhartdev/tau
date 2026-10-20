@@ -19,7 +19,7 @@ function cardWithLink(): Extract<Shell, { kind: 'card' }> {
     cls: null,
     openKey: null,
     collapseWhenClosed: false,
-    sections: [{ type: 'md', html: '<p>see <a href="https://example.com/a">the docs</a></p>\n' }],
+    sections: [{ type: 'md', text: 'see [the docs](https://example.com/a)' }],
     reveal: null,
     expando: null,
     intmark: false
