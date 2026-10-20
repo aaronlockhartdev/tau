@@ -18,6 +18,13 @@
 
   const lang = $derived(langFor(path ?? ''));
 
+  // #220: an `edit` result that is not a parseable diff is a failure — its
+  // message must render (in a pre), never a blank code block.
+  const isEditError = $derived(name === 'edit' && !parseEditDiff(text));
+  const codeView = $derived(
+    name === 'read' || name === 'write' || (name === 'edit' && !isEditError)
+  );
+
   let header = $state('');
   let truncated = $state('');
   let lines = $state<RenderLine[]>([]);
@@ -60,7 +67,7 @@
   });
 </script>
 
-{#if name === 'edit' || name === 'read' || name === 'write'}
+{#if codeView}
   {#if header}
     <div class="to-hd">{header}</div>
   {/if}

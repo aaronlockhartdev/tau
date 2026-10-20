@@ -63,4 +63,24 @@ describe('ToolOutput', () => {
     expect(document.querySelector('pre')?.textContent).toBe('plain output');
     expect(document.querySelector('.to-code')).toBeNull();
   });
+
+  it('renders an edit error message, never a blank code block', async () => {
+    // #220: a failed edit is not a diff; the message must stay visible.
+    const err = 'edit: [E_BAD_ANCHOR] invalid anchor "zzzz": expected a bare 4-letter alphabetic anchor';
+    render(ToolOutput, { props: { text: err, name: 'edit', path: 'e.txt' } });
+    await vi.waitFor(() =>
+      expect(document.querySelector('pre')?.textContent).toBe(err)
+    );
+    // The code view must not render empty in its place.
+    expect(document.querySelector('.to-code')).toBeNull();
+  });
+
+  it('a truncated edit diff renders the head plus its marker, never empty', async () => {
+    // #220: a successful edit over the cap renders a (truncated) diff + marker.
+    const head = Array.from({ length: 200 }, (_, i) => `+ aa${i.toString(16).padStart(2, '0')}│line ${i}`).join('\n');
+    const text = `edited big.txt (lines 1–300 of 300)\n${head}\n… 100 more lines changed`;
+    render(ToolOutput, { props: { text, name: 'edit', path: 'big.txt' } });
+    await vi.waitFor(() => expect(codeLines().length).toBe(200));
+    expect(document.querySelector('.to-trunc')?.textContent).toBe('… 100 more lines changed');
+  });
 });
