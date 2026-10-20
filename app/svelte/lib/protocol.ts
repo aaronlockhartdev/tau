@@ -167,6 +167,12 @@ export interface ResumeContract {
   next_action: string;
 }
 
+// A child session's own lifecycle state (ticket #221): the `subagent` state
+// entry's projection — the badge state plus its declared wait target.
+export interface OwnState {
+  state: SubagentState;
+  waiting_on: string | null;
+}
 // The child's 6-state lifecycle (spec §5.2): the badge state, mirrored from
 // the core's `ChildState::kind`. A shared alias: `SubagentInfo.state` (the
 // parent's view) and `LiveState.own_state.state` (the child's own tab) are
@@ -245,10 +251,7 @@ export interface LiveState {
   // A child session's own lifecycle state (ticket #221): the badge state
   // plus its declared wait; null for a root session or a child with no
   // recorded state. The GUI badges a child's tab by it, not by turn.
-  own_state: {
-    state: SubagentState;
-    waiting_on: string | null;
-  } | null;
+  own_state: OwnState | null;
 }
 
 export interface Snapshot {

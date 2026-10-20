@@ -172,7 +172,7 @@ mod tests {
 
     /// A `subagent` state entry in the exact shape the live path writes
     /// (child.rs `set_state`): the `event` tag plus the `state` tag.
-    fn state_entry(state: &str, extra: serde_json::Value) -> Entry {
+    fn state_entry(state: &str, extra: &serde_json::Value) -> Entry {
         let mut payload = serde_json::json!({ "event": "state", "state": state });
         if let (Some(target), Some(obj)) = (extra.as_object(), payload.as_object_mut()) {
             for (k, v) in target {
@@ -194,9 +194,9 @@ mod tests {
     #[test]
     fn own_state_reads_the_last_recorded_state() {
         let entries = vec![
-            state_entry("running", serde_json::json!({})),
-            state_entry("idle", serde_json::json!({ "waiting_on": "user" })),
-            state_entry("done", serde_json::json!({})),
+            state_entry("running", &serde_json::json!({})),
+            state_entry("idle", &serde_json::json!({ "waiting_on": "user" })),
+            state_entry("done", &serde_json::json!({})),
         ];
         let own = own_state_for(&entries).expect("a state entry yields an own_state");
         assert_eq!(own.state, "done");
@@ -207,7 +207,7 @@ mod tests {
     fn an_idle_child_carries_its_declared_wait() {
         let entries = vec![state_entry(
             "idle",
-            serde_json::json!({ "waiting_on": "user" }),
+            &serde_json::json!({ "waiting_on": "user" }),
         )];
         let own = own_state_for(&entries).expect("an idle child has an own_state");
         assert_eq!(own.state, "idle");
@@ -237,7 +237,7 @@ mod tests {
         // Ticket #221's negative bar: a `running` record is a restart
         // artifact (the process is gone) — it reads back as a parked child,
         // never a resurrected live turn.
-        let entries = vec![state_entry("running", serde_json::json!({}))];
+        let entries = vec![state_entry("running", &serde_json::json!({}))];
         let own = own_state_for(&entries).expect("a running record settles");
         assert_eq!(own.state, "idle");
         assert_eq!(own.waiting_on.as_deref(), Some("parent"));
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn an_awaiting_child_reads_as_a_user_question() {
-        let entries = vec![state_entry("awaiting", serde_json::json!({}))];
+        let entries = vec![state_entry("awaiting", &serde_json::json!({}))];
         let own = own_state_for(&entries).expect("awaiting yields an own_state");
         assert_eq!(own.state, "awaiting");
         assert_eq!(own.waiting_on.as_deref(), Some("user"));
@@ -272,7 +272,7 @@ mod tests {
             }
             if let Some((state, extra)) = state {
                 store
-                    .append(KIND_SUBAGENT, state_entry(state, extra).payload, None)
+                    .append(KIND_SUBAGENT, state_entry(state, &extra).payload, None)
                     .unwrap();
             }
         }
