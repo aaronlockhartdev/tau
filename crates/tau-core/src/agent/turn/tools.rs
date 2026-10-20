@@ -1,4 +1,6 @@
-use crate::agent::{AgentError, AgentSession, Entry, FunctionCall, KIND_TOOL, Value, tools};
+use crate::agent::{
+    AgentError, AgentSession, Entry, FunctionCall, KIND_TOOL, Ordering, Value, tools,
+};
 use std::collections::{HashMap, HashSet};
 
 /// #186: the batch indices of `edit` calls whose target file is also
@@ -34,10 +36,47 @@ fn same_file_edit_conflicts(calls: &[FunctionCall]) -> HashSet<usize> {
 }
 
 impl AgentSession {
+    /// #222: a user stop cancels the in-flight tool batch. The call it
+    /// reaches is recorded as cancelled (its in-flight process, if any, is
+    /// already killed by the tool's own stop flag), and the rest of the
+    /// batch is not executed.
+    fn stop_requested(&self) -> bool {
+        self.stop.load(Ordering::SeqCst)
+    }
+
+    fn cancelled_tool_entry(&self, call: &FunctionCall) -> Result<(), AgentError> {
+        let entry_id = self
+            .inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .store
+            .mint_id();
+        self.append_id(
+            &entry_id,
+            KIND_TOOL,
+            tau_protocol::payload::ToolPayload {
+                call_id: call.call_id.clone(),
+                name: call.name.clone(),
+                args: Value::Null,
+                output: tau_protocol::payload::ToolOutput::Text(
+                    "cancelled by user stop".to_owned(),
+                ),
+                status: Some("cancelled".to_owned()),
+            }
+            .to_value(),
+        )
+    }
+
     #[allow(clippy::too_many_lines)] // one dispatch pass per call; splitting is refactoring
     pub(super) async fn run_tools(&self, calls: &[FunctionCall]) -> Result<(), AgentError> {
         let bad_edits = same_file_edit_conflicts(calls);
         for (ci, call) in calls.iter().enumerate() {
+            if self.stop_requested() {
+                // A stop landed before this call dispatched: record the
+                // cancellation and drop the rest of the batch (#222).
+                self.cancelled_tool_entry(call)?;
+                break;
+            }
             if bad_edits.contains(&ci) {
                 // Same file already edited earlier in this batch: refuse
                 // before dispatch — the file is left untouched.

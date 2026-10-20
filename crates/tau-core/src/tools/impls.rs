@@ -662,7 +662,10 @@ pub(super) async fn bash_inner(
     };
     match outcome {
         Some("stop") => {
-            return ToolResult::err("bash: interrupted by user stop".into());
+            // A user stop cancels the in-flight command (ticket #222): the
+            // child is killed on drop, the result is a cancellation, not a
+            // failure of the command itself.
+            return ToolResult::cancelled("bash: cancelled by user stop".into());
         }
         Some("timeout") => {
             return ToolResult::err(format!("bash: timed out after {timeout_secs}s").into());
@@ -691,6 +694,7 @@ pub(super) async fn bash_inner(
     ToolResult {
         output: out.into(),
         ok: code == 0,
+        cancelled: false,
     }
 }
 

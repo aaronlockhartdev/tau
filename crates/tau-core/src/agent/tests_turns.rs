@@ -413,3 +413,210 @@ async fn parallel_edits_to_the_same_file_are_rejected() {
         "the file must be untouched"
     );
 }
+
+// ticket #222: a stop during an in-flight tool batch cancels the tools.
+
+#[tokio::test]
+async fn stop_cancels_an_inflight_bash() {
+    let dir = tempfile::tempdir().unwrap();
+    // A 3 s bash: the stop lands mid-command, the process is killed within a
+    // bounded time, and the tool entry is marked cancelled (not a hung
+    // pending state, not a plain error).
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse(
+            "",
+            &[(
+                "bash".into(),
+                "c1".into(),
+                r#"{"command":"sleep 3"}"#.into(),
+            )],
+        ),
+        sse("done", &[]),
+    ]));
+    let agent = make_agent(dir.path(), provider);
+    agent.send("go", Lane::FollowUp);
+    let stopper = {
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            agent.stop();
+        })
+    };
+    let started = std::time::Instant::now();
+    agent.process().await.unwrap();
+    stopper.await.unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "stop did not bound the in-flight bash: {elapsed:?}"
+    );
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let tool = entries.iter().find(|e| e.kind == KIND_TOOL).unwrap();
+    assert_eq!(tool.payload["status"], "cancelled", "{tool:?}");
+    assert!(
+        tool.payload["output"]
+            .as_str()
+            .unwrap()
+            .contains("cancelled")
+    );
+    // The turn is cut after the cancelled batch: the second (scripted)
+    // provider call is killed by the sink before it can emit anything, so no
+    // further assistant segment follows the tool entry.
+    let kinds: Vec<&str> = entries.iter().map(|e| e.kind.as_str()).collect();
+    let tool_pos = kinds.iter().position(|k| *k == KIND_TOOL).unwrap();
+    assert!(
+        !kinds
+            .iter()
+            .skip(tool_pos + 1)
+            .any(|k| *k == KIND_ASSISTANT),
+        "no assistant segment after the cancelled tool: {kinds:?}"
+    );
+}
+
+#[tokio::test]
+async fn stop_cancels_the_rest_of_the_tool_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    // A batch of two bash calls: the first finishes (its marker file lands),
+    // the stop lands while the second runs — it is cancelled, not started.
+    let marker = dir.path().join("marker");
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse(
+            "",
+            &[
+                (
+                    "bash".into(),
+                    "c1".into(),
+                    format!(r#"{{"command":"echo a > {}"}}"#, marker.display()),
+                ),
+                (
+                    "bash".into(),
+                    "c2".into(),
+                    r#"{"command":"sleep 3"}"#.into(),
+                ),
+            ],
+        ),
+        sse("done", &[]),
+    ]));
+    let agent = make_agent(dir.path(), provider);
+    agent.send("go", Lane::FollowUp);
+    let stopper = {
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            // Poll for the first tool's marker: the stop lands once the
+            // second dispatch has begun, not in the gap between provider
+            // calls.
+            while !marker.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            agent.stop();
+        })
+    };
+    let started = std::time::Instant::now();
+    agent.process().await.unwrap();
+    stopper.await.unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "stop did not bound the batch: {elapsed:?}"
+    );
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let tools: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e.kind == KIND_TOOL)
+        .map(|e| &e.payload)
+        .collect();
+    assert_eq!(tools.len(), 2, "one entry per call");
+    // The first call ran to completion before the stop: it stands as ok.
+    let first = tools
+        .iter()
+        .copied()
+        .find(|p| p["call_id"] == "c1")
+        .expect("first call entry");
+    assert_eq!(first["status"], "ok", "{first:?}");
+    // The second call is cancelled without executing.
+    let second = tools
+        .iter()
+        .copied()
+        .find(|p| p["call_id"] == "c2")
+        .expect("second call entry");
+    assert_eq!(second["status"], "cancelled", "{second:?}");
+    assert!(second["output"].as_str().unwrap().contains("cancelled"));
+}
+
+#[tokio::test]
+async fn double_stop_is_a_no_op() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse(
+            "",
+            &[(
+                "bash".into(),
+                "c1".into(),
+                r#"{"command":"sleep 3"}"#.into(),
+            )],
+        ),
+        sse("done", &[]),
+    ]));
+    let agent = make_agent(dir.path(), provider);
+    agent.send("go", Lane::FollowUp);
+    let stopper = {
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            agent.stop();
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            agent.stop();
+        })
+    };
+    let started = std::time::Instant::now();
+    agent.process().await.unwrap();
+    stopper.await.unwrap();
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "double stop must not stall the turn: {elapsed:?}"
+    );
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let tools: Vec<&Value> = entries
+        .iter()
+        .filter(|e| e.kind == KIND_TOOL)
+        .map(|e| &e.payload)
+        .collect();
+    assert_eq!(tools.len(), 1, "exactly one tool entry");
+    assert_eq!(tools[0]["status"], "cancelled");
+}
+
+#[tokio::test]
+async fn a_stop_after_the_tool_finished_is_not_a_cancellation() {
+    let dir = tempfile::tempdir().unwrap();
+    // The tool runs to completion well before the stop arrives: the result
+    // stands as ok, not a spurious cancellation.
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse(
+            "",
+            &[("bash".into(), "c1".into(), r#"{"command":"true"}"#.into())],
+        ),
+        sse("done", &[]),
+    ]));
+    let agent = make_agent(dir.path(), provider);
+    agent.send("go", Lane::FollowUp);
+    let stopper = {
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            // Well after the ~100 ms turn has finished.
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            agent.stop();
+        })
+    };
+    agent.process().await.unwrap();
+    stopper.await.unwrap();
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let tool = entries.iter().find(|e| e.kind == KIND_TOOL).unwrap();
+    assert_eq!(tool.payload["status"], "ok", "{tool:?}");
+    assert!(
+        !tool.payload["output"]
+            .as_str()
+            .unwrap()
+            .contains("cancelled")
+    );
+}

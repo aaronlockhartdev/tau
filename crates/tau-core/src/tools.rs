@@ -25,28 +25,57 @@ pub use tau_protocol::payload::ToolOutput;
 
 /// A tool's result: the model-facing output plus an explicit ok/error verdict
 /// set by the tool itself (which knows whether it succeeded) — the source of
-/// truth for the GUI status indicator.
+/// truth for the GUI status indicator. A `cancelled` result is a tool that
+/// was interrupted by a user stop while in flight (ticket #222): it is
+/// neither an ok nor a plain error — the transcript shows the cancellation
+/// as such.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub output: ToolOutput,
     pub ok: bool,
+    pub cancelled: bool,
 }
 
 impl ToolResult {
     #[must_use]
     pub fn ok(output: ToolOutput) -> Self {
-        Self { output, ok: true }
+        Self {
+            output,
+            ok: true,
+            cancelled: false,
+        }
     }
 
     #[must_use]
     pub fn err(output: ToolOutput) -> Self {
-        Self { output, ok: false }
+        Self {
+            output,
+            ok: false,
+            cancelled: false,
+        }
+    }
+
+    /// A result produced by cancelling the tool mid-flight (a user stop,
+    /// ticket #222): the work was cut, not failed.
+    #[must_use]
+    pub fn cancelled(output: ToolOutput) -> Self {
+        Self {
+            output,
+            ok: false,
+            cancelled: true,
+        }
     }
 
     /// The wire status string for `ToolPayload.status`.
     #[must_use]
     pub fn status(&self) -> &'static str {
-        if self.ok { "ok" } else { "error" }
+        if self.cancelled {
+            "cancelled"
+        } else if self.ok {
+            "ok"
+        } else {
+            "error"
+        }
     }
 
     /// A typed verdict from a `Result<String, String>` source: `Ok` maps to a
