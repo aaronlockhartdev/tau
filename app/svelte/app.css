@@ -17,6 +17,9 @@
   --amber: #d9a03f;
   --red: #f0553f;
   --purple: #9d8ae6;
+  /* One transient pointer-hover highlight for all controls (#154);
+     5% white is the middle of the 4–8% values it replaced. */
+  --hover: rgba(255, 255, 255, 0.05);
   /* Code + diff semantics, shared by the transcript tool output
      (ToolOutput) and the file viewer (ChangesView) so both draw from one
      language; derived from the palette above so a token change propagates. */

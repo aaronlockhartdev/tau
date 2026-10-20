@@ -80,7 +80,7 @@
     cursor: pointer;
   }
   .row:hover {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--hover);
   }
   .dot {
     grid-row: 1;
