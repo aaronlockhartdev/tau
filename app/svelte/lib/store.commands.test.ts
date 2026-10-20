@@ -90,6 +90,7 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
     blob_read: () => ({ kind: 'blob', payload: null }),
     message_send: () => ({ kind: 'none' }),
     message_stop: () => ({ kind: 'none' }),
+    queue_item_remove: () => ({ kind: 'none' }),
     subagent_types: () => ({ kind: 'agents', agents: [] }),
     subagent_list: () => ({ kind: 'subagents', subagents: [] }),
     subagent_state: () => ({ kind: 'none' }),
@@ -228,7 +229,7 @@ describe('deleteQueueItem', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('deletes only the idx-th occurrence of the same (text, lane, source)', async () => {
+  it('deletes the idx-th occurrence by its global queue index', async () => {
     oneSession();
     applyEvents([
       {
@@ -242,46 +243,49 @@ describe('deleteQueueItem', () => {
         ]
       }
     ]);
-    defaultIPC({
-      session_open: () =>
-        snap('s1', {
-          live: {
-            queue: [{ text: 'dup', lane: 'steering' }, { text: 'dup', lane: 'follow_up' }]
-          }
-        })
-    });
+    defaultIPC();
+    // The section-local idx 1 of the steering 'dup's is global index 1
+    // (the items share the queue's global order).
     await deleteQueueItem('dup', 'steering', null, 1);
+    const call = mockInvoke.mock.calls.at(-1)![1] as { command: Command };
+    expect(call.command).toEqual({ type: 'queue_item_remove', session: 's1', index: 1 });
+    // The optimistic removal drops exactly that occurrence.
     const pending = store.sessions['s1']!.pending;
     expect(pending).toHaveLength(2);
     expect(pending.map((p) => `${p.text}:${p.lane}`)).toEqual(['dup:steering', 'dup:follow-up']);
   });
 
-  it('resyncs the queue from a fresh snapshot', async () => {
+  it('maps a section-local index of a later item to its global index', async () => {
     oneSession();
     applyEvents([
-      { type: 'queue', workspace: WS.id, session: 's1', items: [{ text: 'a', lane: 'steering' }] }
+      {
+        type: 'queue',
+        workspace: WS.id,
+        session: 's1',
+        items: [
+          { text: 'a', lane: 'steering' },
+          { text: 'dup', lane: 'steering' },
+          { text: 'dup', lane: 'follow_up' }
+        ]
+      }
     ]);
-    defaultIPC({
-      session_open: () =>
-        snap('s1', {
-          live: {
-            queue: [{ text: 'b', lane: 'force' }, { text: 'a', lane: 'steering', source: 's1-1' }]
-          }
-        })
-    });
-    await deleteQueueItem('a', 'steering', null, 0);
+    defaultIPC();
+    // The follow-up 'dup' is the first (and only) of its section: its
+    // global index is 2, behind the two steering items.
+    await deleteQueueItem('dup', 'follow-up', null, 0);
+    const call = mockInvoke.mock.calls.at(-1)![1] as { command: Command };
+    expect(call.command).toEqual({ type: 'queue_item_remove', session: 's1', index: 2 });
     const pending = store.sessions['s1']!.pending;
-    expect(pending).toHaveLength(2);
-    expect(pending[1]!.source).toBe('s1-1');
+    expect(pending.map((p) => `${p.text}:${p.lane}`)).toEqual(['a:steering', 'dup:steering']);
   });
 
-  it('a failed resync keeps the optimistic deletion (the queue event will resync)', async () => {
+  it('a failed command keeps the optimistic deletion (the queue event will resync)', async () => {
     oneSession();
     applyEvents([
       { type: 'queue', workspace: WS.id, session: 's1', items: [{ text: 'a', lane: 'steering' }] }
     ]);
     mockIPC((cmd) => {
-      if (cmd.type === 'session_open') throw new Error('core gone');
+      if (cmd.type === 'queue_item_remove') throw new Error('core gone');
       return { kind: 'none' };
     });
     await deleteQueueItem('a', 'steering', null, 0);

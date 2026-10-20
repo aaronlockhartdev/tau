@@ -107,6 +107,27 @@ impl Core {
                 live.agent.stop_flag().store(true, Ordering::SeqCst);
                 Ok(CommandOutput::None)
             }
+            Command::QueueItemRemove { session, index } => {
+                let live = self.live(&session)?;
+                // A child session's queue is the parent's projection: there
+                // is no top-level delete for a child (its items are the
+                // parent's), so refuse — the GUI only offers it for
+                // top-level sessions.
+                if live.agent.child_link().is_some() {
+                    return Err(ProtocolError::Other {
+                        message: "a child session's queue is managed by its parent".into(),
+                    });
+                }
+                // Out of bounds (the item was consumed first) is a clean,
+                // specific error — never a silent success.
+                if live.agent.remove_queued(index).is_none() {
+                    return Err(ProtocolError::Other {
+                        message: "queue index out of bounds".into(),
+                    });
+                }
+                self.emit_queue(&live);
+                Ok(CommandOutput::None)
+            }
 
             Command::SubagentTypes => Ok(CommandOutput::Agents {
                 agents: crate::agent_type::discover(

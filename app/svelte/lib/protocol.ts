@@ -300,6 +300,7 @@ export type Command =
   | { type: 'blob_read'; workspace: string; id: string; hash: string }
   | { type: 'message_send'; session: string; text: string; lane: MessageLane }
   | { type: 'message_stop'; session: string }
+  | { type: 'queue_item_remove'; session: string; index: number }
   | { type: 'subagent_types' }
   | { type: 'subagent_list'; session: string }
   | { type: 'subagent_state'; handle: string }

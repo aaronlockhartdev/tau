@@ -832,24 +832,28 @@
     if (sid === null) return;
     const s = sessionOf(sid);
     // Duplicates are keyed by occurrence (text + lane + source); delete only
-    // the idx-th of them.
+    // the idx-th of them. `pending` is the queue's global order, so the
+    // occurrence's position in it is the global index the core deletes by.
     let seen = 0;
-    s.pending = s.pending.filter((p) => {
-      if (p.text !== text || p.lane !== lane || (p.source ?? null) !== source) return true;
-      return seen++ !== idx;
-    });
+    let global = -1;
+    for (let i = 0; i < s.pending.length; i++) {
+      const p = s.pending[i]!;
+      if (p.text === text && p.lane === lane && (p.source ?? null) === source) {
+        if (seen === idx) {
+          global = i;
+          break;
+        }
+        seen++;
+      }
+    }
+    if (global === -1) return;
+    s.pending = s.pending.filter((_, i) => i !== global);
     try {
       clearError();
-      const out = await command({ type: 'session_open', session: sid });
-      if (out.kind === 'snapshot') {
-        s.pending = out.snapshot.live.queue.map((q) => ({
-          text: q.text,
-          lane: laneOf(q.lane),
-          source: q.source ?? undefined
-        }));
-      }
+      await command({ type: 'queue_item_remove', session: sid, index: global });
     } catch {
-      // optimistic: the queue event will resync
+      // optimistic: a queue event will resync (a concurrent turn boundary
+      // may have consumed the item, in which case the resync is the truth)
     }
   }
 
