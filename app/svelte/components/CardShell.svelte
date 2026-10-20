@@ -6,6 +6,7 @@
   import type { ExpandSlot, KvRow, Section, Shell } from '../lib/presentation';
   import { Zap } from '@lucide/svelte';
   import ToolOutput from './ToolOutput.svelte';
+  import Markdown from './Markdown.svelte';
 
   type CardShellShell = Extract<Shell, { kind: 'tool' | 'card' }>;
 
@@ -38,9 +39,13 @@
       <div class="obs-seclbl">{s.label}</div>
     {/if}
     {#if s.cls === 'thinkbody'}
-      <div class="thinkbody md">{@html s.html}</div>
+      <div class="thinkbody md">
+        <Markdown text={s.text} />
+      </div>
     {:else}
-      <div class="txt2 md" class:dim={s.dim === true}>{@html s.html}</div>
+      <div class="txt2 md" class:dim={s.dim === true}>
+        <Markdown text={s.text} />
+      </div>
     {/if}
   {:else if s.type === 'kv'}
     {#if s.block}

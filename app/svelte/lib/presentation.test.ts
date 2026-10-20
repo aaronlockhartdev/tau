@@ -3,7 +3,6 @@
 // component.
 
 import { describe, expect, it } from 'vitest';
-import { md } from './markdown';
 import { present, type Shell } from './presentation';
 import { Bot, File, Search, Terminal } from '@lucide/svelte';
 import type { Entry, MessageEntry } from './protocol';
@@ -57,7 +56,7 @@ describe('present', () => {
         label: 'thinking',
         meta: '1.2k in · 340 out',
         openKey: 'think',
-        body: md('pondering')
+        body: 'pondering'
       },
       {
         kind: 'card',
@@ -65,7 +64,7 @@ describe('present', () => {
         cls: null,
         openKey: null,
         collapseWhenClosed: false,
-        sections: [{ type: 'md', html: md('the answer') }],
+        sections: [{ type: 'md', text: 'the answer' }],
         reveal: null,
         expando: null,
         intmark: false
@@ -203,9 +202,9 @@ describe('present', () => {
     expect(c.sections).toEqual([]);
     expect(c.reveal?.group).toBe(false);
     expect(c.reveal?.sections).toEqual([
-      { type: 'md', html: md('the observation'), dim: true },
+      { type: 'md', text: 'the observation', dim: true },
       { type: 'kv', rows: [{ k: 'suggested', lines: ['do X'] }] },
-      { type: 'md', html: md('thought deeply'), cls: 'thinkbody', label: 'thinking' },
+      { type: 'md', text: 'thought deeply', cls: 'thinkbody', label: 'thinking' },
       { type: 'pre', text: 'some input', label: 'input' }
     ]);
   });
@@ -216,7 +215,7 @@ describe('present', () => {
     expect(c.collapseWhenClosed).toBe(true);
     expect(c.sections).toEqual([]);
     expect(c.reveal?.group).toBe(false);
-    expect(c.reveal?.sections).toEqual([{ type: 'md', html: md('plain'), dim: true }]);
+    expect(c.reveal?.sections).toEqual([{ type: 'md', text: 'plain', dim: true }]);
   });
 
   it('a plain user entry is a bubble', () => {
@@ -388,7 +387,7 @@ describe('present', () => {
   it('an unknown kind degrades to a plain text card, not a throw', () => {
     const c = cardOf({ id: 'e1', kind: 'mystery', text: 'hello' });
     expect(c.header).toBeNull();
-    expect(c.sections).toEqual([{ type: 'md', html: md('hello') }]);
+    expect(c.sections).toEqual([{ type: 'md', text: 'hello' }]);
   });
 
   it('an unknown kind without text renders nothing', () => {

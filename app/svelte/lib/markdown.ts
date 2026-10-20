@@ -1,49 +1,85 @@
 import MarkdownIt from 'markdown-it';
+import { highlightHtml } from './highlight';
 
-// Markdown + syntax highlighting, ported from the prototype's renderer:
-// code segments are PROTECTED from markdown
-// interpretation — fences are split out first and only non-code text gets
-// inline rules, with inline code placeholdered so it is never re-parsed.
+// Markdown rendering, ported from the prototype's renderer: code segments
+// are PROTECTED from markdown interpretation — fences are split out first
+// and only non-code text gets inline rules, with inline code
+// placeholdered so it is never re-parsed.
 
 function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// The prototype's highlighter: comments, strings, a keyword set, numbers,
-// capitalized identifiers. A small highlighter per the ticket's allowance
-// (zero-dependency, matching the prototype's behavior).
-function hl(code: string): string {
-  let s = esc(code);
-  s = s.replace(/(\/\/[^\n]*|#[^\n]*)/g, '<span class="c">$1</span>');
-  s = s.replace(/(&quot;[^&]*?&quot;|&apos;[^&]*?&apos;|'[^'\n]*')/g, '<span class="s">$1</span>');
-  const kw = ['let', 'fn', 'pub', 'struct', 'enum', 'impl', 'match', 'use', 'return', 'if', 'else', 'while', 'for', 'const', 'mod', 'move', 'mut', 'crate', 'self', 'Some', 'None', 'Ok'];
-  for (const k of kw) {
-    s = s.replace(new RegExp('(\\b' + k + '\\b)(?![^<]*</span>)', 'g'), '<span class="k">$1</span>');
-  }
-  s = s.replace(/\b(\d[\d_]*)\b/g, '<span class="n">$1</span>');
-  s = s.replace(/\b([A-Z][A-Za-z0-9]*)\b/g, '<span class="t2">$1</span>');
-  return s;
-}
-
-// A fenced code block: the highlighter's output wrapped in the app's .code
-// pre (markdownit's highlight hook returns the block verbatim).
+// A fenced code block: an escaped plain block in the app's .code pre
+// (markdownit's highlight hook returns the block verbatim). mdHighlight
+// replaces the block with shiki's colored spans after the render.
 function highlight(code: string, lang: string): string {
   return (
     '<pre class="code">' +
-    (lang ? '<span class="lang">' + lang + '</span>' : '') +
-    hl(code) +
+    (lang ? '\n<span class="lang">' + lang + '</span>\n' : '') +
+    esc(code) +
     '</pre>'
   );
 }
 
-// CommonMark + GFM tables; single newlines render as <br> (breaks); a fenced
-// block is the highlighter's .code pre. Raw HTML is off (bodies are model
-// output, not trusted markup).
+// CommonMark + GFM tables; single newlines render as <br> (breaks). Raw HTML
+// is off (bodies are model output, not trusted markup).
 const mdit = new MarkdownIt({ html: false, breaks: true, highlight });
 mdit.enable(['table']);
 
+// The synchronous base render: every fenced block is plain (escaped) text.
 export function md(t: string): string {
   return mdit.render(t);
+}
+
+// Fences the base render leaves in plain text: the .code pre with a language
+// label above the escaped code. $1 = label, $2 = escaped code.
+const PLAIN_FENCE = /<pre class="code">\n<span class="lang">([^<]+)<\/span>\n([\s\S]*?)<\/pre>/g;
+
+// Fence labels models emit, mapped onto the shiki grammar names the file
+// view already uses. A label outside this table (or an unlabeled fence) is
+// not guessed: it stays plain text. (#231)
+const LANG_ALIAS: Record<string, string> = {
+  js: 'javascript',
+  ts: 'typescript',
+  py: 'python',
+  rb: 'ruby',
+  yml: 'yaml',
+  sh: 'bash',
+  shell: 'bash',
+  zsh: 'bash',
+  'c++': 'cpp',
+  'c#': 'csharp',
+  golang: 'go'
+};
+
+// The async pass: every fenced block whose label names a known grammar gets
+// shiki's colored spans; unlabeled, unknown-language, and init-failure cases
+// keep the base's plain block. Highlighting is cosmetic — it must never
+// change what a fence says.
+export async function mdHighlight(t: string): Promise<string> {
+  const base = md(t);
+  const jobs: Array<{ block: string; lang: string; code: string }> = [];
+  const scanned = base.replace(PLAIN_FENCE, (block: string, lang: string, code: string) => {
+    jobs.push({ block, lang, code: unescapeHtml(code) });
+    return block;
+  });
+  const replacements: string[] = new Array(jobs.length).fill('');
+  await Promise.all(
+    jobs.map(async (j, i) => {
+      // The fence's trailing newline belongs to the block, not the code.
+      const code = j.code.replace(/\n$/, '');
+      const out = await highlightHtml(code, LANG_ALIAS[j.lang] ?? j.lang);
+      // Empty = plain text (init failure): keep the base's plain block.
+      replacements[i] = out ? out + '\n' : j.block;
+    })
+  );
+  let k = -1;
+  return scanned.replace(PLAIN_FENCE, () => replacements[++k] ?? '');
+}
+
+function unescapeHtml(s: string): string {
+  return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 // Structured lines for a tool's arguments: each field's name on its own

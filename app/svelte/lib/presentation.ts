@@ -11,7 +11,7 @@ import type {
   SkillRef
 } from './protocol';
 import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
-import { argsLines, md, valueLinesOf } from './markdown';
+import { argsLines, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
 import { fmtK } from './format';
 
@@ -28,7 +28,7 @@ export type ExpandSlot = 'tool' | 'output' | 'skill' | 'obs' | 'think';
 
 // One block of a card body (or of the tool's expanded area).
 export type Section =
-  | { type: 'md'; html: string; dim?: boolean; cls?: 'thinkbody'; label?: string }
+  | { type: 'md'; text: string; dim?: boolean; cls?: 'thinkbody'; label?: string }
   | { type: 'kv'; rows: KvRow[]; block?: boolean }
   | { type: 'text'; text: string; dim?: boolean; whenClosed?: string }
   | { type: 'pre'; text: string; label?: string };
@@ -51,7 +51,7 @@ export type Shell =
   | { kind: 'bubble'; text: string }
   | { kind: 'divider'; label: string; tint: 'drain' | 'compact' }
   | { kind: 'stline'; icon: LucideIcon; label: string }
-  | { kind: 'think'; label: string; meta: string | null; openKey: 'think'; body: string }
+  | { kind: 'think'; label: string; meta: string | null; openKey: 'think'; body: string } // raw markdown, rendered by the card
   | {
     kind: 'tool';
     icon: LucideIcon;
@@ -263,11 +263,11 @@ function subagentShell(e: SubagentEntry, parentLabel: string): Shell {
 function observationShell(e: OmEntry, text: string): Shell {
   // Collapsible: the body (observation text + details)
   // lives in the reveal, so a closed card is just its header.
-  const body: Section[] = [{ type: 'md', html: md(text.trim()), dim: true }];
+  const body: Section[] = [{ type: 'md', text: text.trim(), dim: true }];
   if (e.suggestedResponse)
     body.push({ type: 'kv', rows: [{ k: 'suggested', lines: [e.suggestedResponse] }] });
   if (e.thinking)
-    body.push({ type: 'md', html: md(e.thinking.trim()), cls: 'thinkbody', label: 'thinking' });
+    body.push({ type: 'md', text: e.thinking.trim(), cls: 'thinkbody', label: 'thinking' });
   if (e.input) body.push({ type: 'pre', text: e.input, label: 'input' });
   return card({
     header: {
@@ -379,14 +379,14 @@ export function present(
             ? `${fmtK(entry.usage.input_tokens)} in · ${fmtK(entry.usage.output_tokens)} out`
             : null,
           openKey: 'think',
-          body: md(entry.reasoning.trim())
+          body: entry.reasoning.trim()
         });
       }
       if (text.trim() || entry.kind === 'interrupted') {
         shells.push(
           card({
             cls: entry.kind === 'interrupted' ? 'interrupted' : null,
-            sections: [{ type: 'md', html: md(text.trim()) }],
+            sections: [{ type: 'md', text: text.trim() }],
             intmark: entry.kind === 'interrupted'
           })
         );
@@ -426,7 +426,7 @@ export function present(
               singleClick: false,
               caret: false
             },
-            sections: [{ type: 'md', html: md(text.trim()), dim: true }]
+            sections: [{ type: 'md', text: text.trim(), dim: true }]
           })
         ]
       };
@@ -445,7 +445,7 @@ export function present(
               singleClick: false,
               caret: false
             },
-            sections: [{ type: 'md', html: md(text.trim()) }]
+            sections: [{ type: 'md', text: text.trim() }]
           })
         ]
       };
@@ -456,6 +456,6 @@ export function present(
       // An unknown kind renders as a plain text block (no payload
       // interpretation).
       if (!text.trim()) return null;
-      return { shells: [card({ sections: [{ type: 'md', html: md(text.trim()) }] })] };
+      return { shells: [card({ sections: [{ type: 'md', text: text.trim() }] })] };
   }
 }
