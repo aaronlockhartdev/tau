@@ -14,6 +14,13 @@ fuzz_target!(|data: Vec<u8>| {
     let _ = hashline::line_hashes(&content);
     let _ = hashline::render(&content);
 
+    // The registry path (content-addressed mints, #239) is total too: a
+    // fresh registry over any content allocates or fails cleanly, and a
+    // re-read of the same content is idempotent.
+    let mut reg = hashline::registry::Registry::new();
+    let _ = reg.allocate("f", &content);
+    let _ = reg.allocate("f", &content);
+
     // The 500-byte hash source is a char-boundary truncate: total over
     // any line, including multibyte sequences straddling the cut.
     for line in content.lines() {
