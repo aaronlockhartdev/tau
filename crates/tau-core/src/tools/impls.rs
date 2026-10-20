@@ -241,13 +241,22 @@ pub(super) fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
     }
 }
 
-pub(super) async fn write(cwd: &Path, args: &serde_json::Value) -> ToolResult {
+pub(super) async fn write(
+    cwd: &Path,
+    args: &serde_json::Value,
+    progress: Option<&crate::tools::ToolProgress>,
+) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
         return ToolResult::err("write: missing \"path\"".into());
     };
     let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
         return ToolResult::err("write: missing \"content\"".into());
     };
+    // Issue #197: a large write streams its content in-flight (the final
+    // result — the confirmation line — replaces it on completion).
+    if let Some(p) = progress {
+        p.report(content);
+    }
     let path = resolve(cwd, path);
     if let Some(parent) = path.parent()
         && let Err(e) = std::fs::create_dir_all(parent)
@@ -568,12 +577,46 @@ async fn wait_for_flag(flag: &AtomicBool) {
     }
 }
 
+/// Read a child stream to EOF, reporting each chunk through `progress` as it
+/// arrives (issue #197) and returning the full text. Runs inside the caller's
+/// `join!` (not a spawned task) so it may borrow `progress`.
+async fn read_stream(
+    progress: Option<&crate::tools::ToolProgress>,
+    mut stream: impl tokio::io::AsyncRead + Unpin,
+) -> String {
+    use tokio::io::AsyncReadExt;
+    let mut full = Vec::new();
+    // A heap buffer (not a stack array): an 8 KiB `chunk` in the future would
+    // push the two reader futures — and every caller's — over clippy's 16 KiB
+    // `large_futures` threshold.
+    let mut chunk = vec![0u8; 8192];
+    loop {
+        match stream.read(&mut chunk).await {
+            Ok(0) => break,
+            Ok(n) => {
+                full.extend_from_slice(&chunk[..n]);
+                if let Some(p) = progress {
+                    p.report(&String::from_utf8_lossy(&chunk[..n]));
+                }
+            }
+            // The child was killed (stop/timeout) or the stream errored: stop
+            // draining and return what we have.
+            _ => break,
+        }
+    }
+    String::from_utf8_lossy(&full).into_owned()
+}
+
 /// Run a bash command with a sane PATH (#172); `stop`, once set, kills the
-/// running child (#174).
+/// running child (#174). `progress`, when present, streams stdout/stderr to
+/// the entry upsert hook as they arrive (issue #197); the coalesced in-flight
+/// upserts are wire-only, and the final result below replaces them.
+#[allow(clippy::too_many_lines)] // one streaming child: spawn, read, race stop
 pub(super) async fn bash_inner(
     cwd: &Path,
     args: &serde_json::Value,
     stop: &AtomicBool,
+    progress: Option<&crate::tools::ToolProgress>,
 ) -> ToolResult {
     let Some(command) = args.get("command").and_then(|v| v.as_str()) else {
         return ToolResult::err("bash: missing \"command\"".into());
@@ -593,33 +636,50 @@ pub(super) async fn bash_inner(
         // A dropped child (timeout or stop) is killed, not left behind.
         .kill_on_drop(true)
         .spawn();
-    let output = match child {
-        Ok(child) => tokio::select! {
-            r = tokio::time::timeout(
-                std::time::Duration::from_secs(timeout_secs),
-                child.wait_with_output(),
-            ) => match r {
-                Ok(Ok(output)) => output,
-                Ok(Err(e)) => return ToolResult::err(format!("bash: {e}").into()),
-                // The timeout dropped the (now owned) child; kill_on_drop fired,
-                // so a timed-out command cannot keep running and mutate files.
-                Err(_) => {
-                    return ToolResult::err(format!("bash: timed out after {timeout_secs}s").into());
-                }
-            },
-            // Stop: the wait future above is dropped, dropping the child and
-            // firing kill_on_drop — the running command is killed, not left
-            // behind.
-            () = wait_for_flag(stop) => {
-                return ToolResult::err("bash: interrupted by user stop".into());
-            }
-        },
+    let mut child = match child {
+        Ok(child) => child,
         Err(e) => return ToolResult::err(format!("bash: {e}").into()),
     };
-    let code = output.status.code().unwrap_or(-1);
+    // Take the owned pipes (leaving `child` for `wait`) and drain them while
+    // the child runs, reporting each chunk in-flight.
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
+    // Race: (a) both pipes hit EOF (child exited), (b) the timeout elapses
+    // (explicit `child.kill()` — the readers would otherwise block forever on
+    // live pipes), (c) the stop flag (the child drops → kill_on_drop).
+    let (streams, outcome) = tokio::select! {
+        r = async {
+            tokio::join!(
+                read_stream(progress, stdout),
+                read_stream(progress, stderr),
+            )
+        } => (Some(r), None),
+        () = async {
+            tokio::time::sleep(std::time::Duration::from_secs(timeout_secs)).await;
+            child.kill().await.ok();
+        } => (None, Some("timeout")),
+        () = wait_for_flag(stop) => (None, Some("stop")),
+    };
+    match outcome {
+        Some("stop") => {
+            return ToolResult::err("bash: interrupted by user stop".into());
+        }
+        Some("timeout") => {
+            return ToolResult::err(format!("bash: timed out after {timeout_secs}s").into());
+        }
+        None => {}
+        Some(_) => {
+            // `&str` is not an exhaustive set; a leg other than the two named
+            // above is an internal invariant break, surfaced, not a panic.
+            return ToolResult::err("bash: internal error: unknown outcome".into());
+        }
+    }
+    let (stdout, stderr) = streams.expect("the join leg always yields its pair");
+    let code = match child.wait().await {
+        Ok(status) => status.code().unwrap_or(-1),
+        Err(e) => return ToolResult::err(format!("bash: {e}").into()),
+    };
     let mut out = format!("exit {code}");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
     if !stdout.is_empty() {
         out.push_str("\n--- stdout ---\n");
         out.push_str(&stdout);
@@ -640,5 +700,5 @@ pub(super) async fn bash_inner(
 #[cfg(test)]
 pub(super) async fn bash(cwd: &Path, args: &serde_json::Value) -> ToolResult {
     let no_stop = AtomicBool::new(false);
-    bash_inner(cwd, args, &no_stop).await
+    bash_inner(cwd, args, &no_stop, None).await
 }

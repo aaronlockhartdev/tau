@@ -29,6 +29,7 @@ async fn write_then_read_roundtrip_with_anchors() {
     write(
         dir.path(),
         &json!({"path": "a.txt", "content": "one\ntwo\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -63,6 +64,7 @@ async fn read_pages_with_offset_and_limit() {
     write(
         dir.path(),
         &json!({"path": "p.txt", "content": "l1\nl2\nl3\nl4\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -83,6 +85,7 @@ async fn read_offset_accepts_an_anchor() {
     write(
         dir.path(),
         &json!({"path": "p.txt", "content": "l1\nl2\nl3\nl4\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -115,7 +118,12 @@ async fn read_offset_accepts_an_anchor() {
 #[tokio::test]
 async fn stale_anchor_diagnostic_does_not_touch_the_file() {
     let dir = tempfile::tempdir().unwrap();
-    write(dir.path(), &json!({"path": "s.txt", "content": "keep\n"})).await;
+    write(
+        dir.path(),
+        &json!({"path": "s.txt", "content": "keep\n"}),
+        None,
+    )
+    .await;
     let mut reg = fresh_registry();
     let out = text(edit(
         dir.path(),
@@ -189,6 +197,7 @@ async fn edit_output_is_bounded_to_the_changed_region() {
     write(
         dir.path(),
         &json!({"path": "big.txt", "content": content.as_str()}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -243,7 +252,7 @@ async fn bash_stop_interrupts_a_running_command() {
         stopper.store(true, std::sync::atomic::Ordering::SeqCst);
     });
     let started = std::time::Instant::now();
-    let out = text(bash_inner(dir.path(), &json!({"command": "sleep 10"}), &stop).await);
+    let out = text(bash_inner(dir.path(), &json!({"command": "sleep 10"}), &stop, None).await);
     let elapsed = started.elapsed();
     // The stop cut the command short, not the sleep running to completion (#174).
     assert!(out.contains("interrupted by user stop"), "{out}");
@@ -342,6 +351,7 @@ async fn edit_output_is_a_bounded_before_after_diff() {
     write(
         dir.path(),
         &json!({"path": "d.txt", "content": "alpha\nbeta\ngamma\ndelta\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -402,7 +412,7 @@ async fn core_tools_carry_a_typed_verdict() {
     let ok = read(cwd, &json!({"path": "a.txt"}), None, None);
     assert_eq!(ok.status(), "ok");
     // write: a clean write is ok.
-    let ok = write(cwd, &json!({"path": "b.txt", "content": "x"})).await;
+    let ok = write(cwd, &json!({"path": "b.txt", "content": "x"}), None).await;
     assert_eq!(ok.status(), "ok");
 }
 
@@ -414,6 +424,7 @@ async fn write_ack_carries_byte_and_line_counts() {
         write(
             dir.path(),
             &json!({"path": "counted.txt", "content": "one\ntwo"}),
+            None,
         )
         .await,
     );
@@ -425,7 +436,14 @@ async fn write_ack_carries_byte_and_line_counts() {
         )
     );
     // An empty write is 0 bytes and 0 lines.
-    let out = text(write(dir.path(), &json!({"path": "empty.txt", "content": ""})).await);
+    let out = text(
+        write(
+            dir.path(),
+            &json!({"path": "empty.txt", "content": ""}),
+            None,
+        )
+        .await,
+    );
     assert_eq!(
         out,
         format!(
@@ -438,13 +456,13 @@ async fn write_ack_carries_byte_and_line_counts() {
 #[tokio::test]
 async fn write_missing_args_is_an_error() {
     let dir = tempfile::tempdir().unwrap();
-    let err = write(dir.path(), &json!({"content": "x"})).await;
+    let err = write(dir.path(), &json!({"content": "x"}), None).await;
     assert_eq!(err.status(), "error");
     assert!(
         text(err).contains("missing \"path\""),
         "wrong failure: expected missing path"
     );
-    let err = write(dir.path(), &json!({"path": "x.txt"})).await;
+    let err = write(dir.path(), &json!({"path": "x.txt"}), None).await;
     assert_eq!(err.status(), "error");
     assert!(
         text(err).contains("missing \"content\""),
@@ -458,6 +476,7 @@ async fn edit_array_form_applies_all_edits() {
     write(
         dir.path(),
         &json!({"path": "m.txt", "content": "one\ntwo\nthree\nfour\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -492,6 +511,7 @@ async fn edit_overlapping_ranges_demotes_the_colliding_member() {
     write(
         dir.path(),
         &json!({"path": "o.txt", "content": "one\ntwo\nthree\nfour\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -541,6 +561,7 @@ async fn edit_batch_with_one_valid_and_one_invalid_demotes_the_invalid() {
     write(
         dir.path(),
         &json!({"path": "d.txt", "content": "one\ntwo\nthree\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -583,6 +604,7 @@ async fn edit_anchored_content_is_stripped_in_lenient_mode() {
     write(
         dir.path(),
         &json!({"path": "a.txt", "content": "one\ntwo\nthree\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -618,6 +640,7 @@ async fn edit_anchored_content_is_rejected_in_strict_mode() {
     write(
         dir.path(),
         &json!({"path": "a.txt", "content": "one\ntwo\nthree\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -654,6 +677,7 @@ async fn reversed_range_is_swapped_in_lenient_mode() {
     write(
         dir.path(),
         &json!({"path": "r.txt", "content": "one\ntwo\nthree\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -687,6 +711,7 @@ async fn reversed_range_is_rejected_in_strict_mode() {
     write(
         dir.path(),
         &json!({"path": "r.txt", "content": "one\ntwo\nthree\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();
@@ -722,6 +747,7 @@ async fn range_stale_shows_fresh_anchors_and_retry_succeeds() {
     write(
         dir.path(),
         &json!({"path": "s.txt", "content": "one\ntwo\nthree\n"}),
+        None,
     )
     .await;
     let mut reg = fresh_registry();

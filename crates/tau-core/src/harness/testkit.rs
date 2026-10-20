@@ -127,6 +127,21 @@ pub(crate) fn canned_body() -> String {
     body
 }
 
+/// A canned body with a bash call whose arguments are `args_json` (a raw
+/// JSON object): the streaming acceptance test's seam (issue #197).
+pub(crate) fn canned_body_with_bash(args_json: &str) -> String {
+    let frame = format!(
+        r#"{{"type":"response.output_item.done","item":{{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bash","arguments":"{args_json}"}}}}"#
+    );
+    let mut body = String::from("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n");
+    let _ = write!(body, "data: {frame}\n\n");
+    let _ = write!(
+        body,
+        r#"data: {{"type":"response.completed","response":{{"usage":{{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}}}}\n\n"#
+    );
+    body
+}
+
 /// A child provider that replays one canned body per call (the
 /// scripted sub-agent turns of the dispatch tests).
 pub(crate) struct CannedChild {

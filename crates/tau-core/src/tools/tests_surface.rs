@@ -46,6 +46,7 @@ fn ctx<'a>(
         session,
         cwd,
         image_max_bytes: None,
+        progress: None,
         supervisor,
         child,
     }
