@@ -382,7 +382,8 @@ mod tests {
         // drifts, `{{plan_path}}` substitution silently no-ops and the
         // workbench e2e fails far from the cause. Read the core source as
         // text so any drift fails here, next to the cause.
-        let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tau-core/src/plan.rs");
+        let core =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../tau-core/src/plan/mod.rs");
         let src = std::fs::read_to_string(&core)
             .unwrap_or_else(|e| panic!("read {}: {e}", core.display()));
         assert!(

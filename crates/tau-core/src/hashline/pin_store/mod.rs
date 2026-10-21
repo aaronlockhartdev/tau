@@ -531,5 +531,5 @@ pub fn next_pins(
 }
 
 #[cfg(test)]
-#[path = "pin_store/tests.rs"]
+#[path = "tests.rs"]
 mod tests;
