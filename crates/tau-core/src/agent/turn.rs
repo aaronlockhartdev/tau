@@ -1,7 +1,8 @@
 use super::{
-    AgentError, AgentSession, InputEntry, KIND_ASSISTANT, KIND_USER, Lane, Ordering, Queued,
-    ResponseRequest, ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
+    AgentError, AgentSession, InputEntry, KIND_ASSISTANT, KIND_SYSTEM, KIND_USER, Lane, Ordering,
+    Queued, ResponseRequest, ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
 };
+use crate::provider::ToolSpec;
 use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
 use sink::StreamEntrySink;
 
@@ -112,52 +113,33 @@ impl AgentSession {
             });
             if let Some(budget) = budget
                 && prompt > budget
-                && self.om_pending_tokens() > 0
             {
-                self.om_turn_end().await?;
-                // A mid-turn compaction is a re-injection point (design).
-                plan_state = self.plan_state();
-                (system_prompt, input) = self.assemble(plan_state.as_deref())?;
-                prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
-                if prompt > budget {
-                    tracing::warn!(
-                        prompt,
-                        budget,
-                        "context gate: prompt still over budget after OM pass"
-                    );
+                if self.om_pending_tokens() > 0 {
+                    self.om_turn_end().await?;
+                    // A mid-turn compaction is a re-injection point (design).
+                    plan_state = self.plan_state();
+                    (system_prompt, input) = self.assemble(plan_state.as_deref())?;
+                    prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+                    if prompt > budget {
+                        tracing::warn!(
+                            prompt,
+                            budget,
+                            "context gate: prompt still over budget after OM pass"
+                        );
+                    }
+                } else {
+                    // The gate's blind spot (#255): over budget with no
+                    // unobserved material to compact. Refuse loudly before
+                    // the wire instead of sending a doomed 400, and leave a
+                    // durable trace of the refusal.
+                    self.append(
+                        KIND_SYSTEM,
+                        serde_json::json!({ "prompt": prompt, "budget": budget }),
+                    )?;
+                    return Err(AgentError::ContextOverflow { prompt, budget });
                 }
             }
-            let mut request =
-                ResponseRequest::new(self.model().clone(), Some(system_prompt.as_str()), input)
-                    .with_tools(tools);
-            if let Some(n) = turn.max_output_tokens {
-                request = request.with_max_output_tokens(crate::provider::clamp_max_output(
-                    n,
-                    turn.context_window,
-                    prompt,
-                ));
-            }
-            if let Some(e) = turn.reasoning {
-                request = request.with_reasoning(e);
-                if turn.reasoning_summary {
-                    request = request.with_reasoning_summary();
-                }
-            }
-            if let Some(t) = turn.temperature {
-                request = request.with_temperature(t);
-            }
-            if let Some(p) = turn.top_p {
-                request = request.with_top_p(p);
-            }
-            if let Some(p) = turn.frequency_penalty {
-                request = request.with_frequency_penalty(p);
-            }
-            if let Some(p) = turn.presence_penalty {
-                request = request.with_presence_penalty(p);
-            }
-            if let Some((key, retention)) = &turn.prompt_cache {
-                request = request.with_prompt_cache(key.clone(), *retention);
-            }
+            let request = self.build_request(&system_prompt, &input, &tools, &turn, prompt, None);
 
             // A force has already killed the stream it targeted; every
             // fresh call starts un-killed (spec §7).
@@ -188,7 +170,23 @@ impl AgentSession {
                 reasoning: String::new(),
                 last: None,
             };
-            let mut result = self.provider.call(&request, &mut sink).await?;
+            let mut result = match self.provider.call(&request, &mut sink).await {
+                Ok(result) => result,
+                // A prefill rejection: the sink is untouched, so the same
+                // one may carry the retry's stream (the #256 recovery).
+                Err(e) => {
+                    self.recover_from_provider_error(
+                        e,
+                        &mut sink,
+                        &system_prompt,
+                        &input,
+                        &tools,
+                        &turn,
+                        prompt,
+                    )
+                    .await?
+                }
+            };
             // ticket #70: repair malformed tool-call arguments at receipt, so
             // the stored entry + echoed history are valid JSON.
             repair_tool_call_arguments(&mut result);
@@ -259,6 +257,99 @@ impl AgentSession {
         // into the next turn (the one a force send starts).
         self.kill.store(false, Ordering::SeqCst);
         Ok(())
+    }
+    /// One provider request, assembled from the turn's parts: the output cap
+    /// is clamped to the declared window (spec §12), and a
+    /// `max_output_override` stands in for the turn's cap — the one-shot
+    /// recovery path (#256).
+    fn build_request(
+        &self,
+        system_prompt: &str,
+        input: &[InputEntry],
+        tools: &[ToolSpec],
+        turn: &TurnConfig,
+        prompt: u32,
+        max_output_override: Option<u64>,
+    ) -> ResponseRequest {
+        let mut request =
+            ResponseRequest::new(self.model().clone(), Some(system_prompt), input.to_vec())
+                .with_tools(tools.to_vec());
+        if let Some(n) = max_output_override.or(turn.max_output_tokens) {
+            request = request.with_max_output_tokens(crate::provider::clamp_max_output(
+                n,
+                turn.context_window,
+                prompt,
+            ));
+        }
+        if let Some(e) = turn.reasoning {
+            request = request.with_reasoning(e);
+            if turn.reasoning_summary {
+                request = request.with_reasoning_summary();
+            }
+        }
+        if let Some(t) = turn.temperature {
+            request = request.with_temperature(t);
+        }
+        if let Some(p) = turn.top_p {
+            request = request.with_top_p(p);
+        }
+        if let Some(p) = turn.frequency_penalty {
+            request = request.with_frequency_penalty(p);
+        }
+        if let Some(p) = turn.presence_penalty {
+            request = request.with_presence_penalty(p);
+        }
+        if let Some((key, retention)) = &turn.prompt_cache {
+            request = request.with_prompt_cache(key.clone(), *retention);
+        }
+        request
+    }
+
+    /// A provider rejection at call time: a context-length 400 gets one
+    /// bounded retry at a halved `max_output_tokens` (#256) — the server
+    /// computes the window remainder from that cap. Anything else (and a
+    /// second context 400) is recorded as a system entry with the provider's
+    /// status and body, then propagates.
+    #[allow(clippy::too_many_arguments)] // the turn's parts, threaded once
+    async fn recover_from_provider_error(
+        &self,
+        e: crate::provider::ProviderError,
+        sink: &mut StreamEntrySink,
+        system_prompt: &str,
+        input: &[InputEntry],
+        tools: &[ToolSpec],
+        turn: &TurnConfig,
+        prompt: u32,
+    ) -> Result<TurnResult, AgentError> {
+        let mut fatal = e;
+        if let Some(cap) = turn.max_output_tokens
+            && fatal.is_context_length_error()
+        {
+            // One bounded retry (no loop) at a halved cap, floored so the
+            // recovery never degrades to a degenerate window.
+            let retry = (cap / 2).max(256);
+            let request =
+                self.build_request(system_prompt, input, tools, turn, prompt, Some(retry));
+            match self.provider.call(&request, sink).await {
+                Ok(result) => return Ok(result),
+                Err(retry_err) => fatal = retry_err,
+            }
+        }
+        self.record_rejection(&fatal)?;
+        Err(AgentError::Provider(fatal))
+    }
+
+    /// The durable trace of a rejected call (#256): a system entry carrying
+    /// the provider's status and body.
+    fn record_rejection(&self, e: &crate::provider::ProviderError) -> Result<(), AgentError> {
+        if let crate::provider::ProviderError::Status { status, body } = e {
+            self.append(
+                KIND_SYSTEM,
+                serde_json::json!({ "note": "provider rejection", "status": status, "body": body }),
+            )
+        } else {
+            Ok(())
+        }
     }
 
     /// Assemble the system prompt and input items for a provider call

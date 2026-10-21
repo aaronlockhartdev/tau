@@ -33,12 +33,20 @@ pub const KIND_ASSISTANT: &str = "assistant";
 pub const KIND_TOOL: &str = "tool";
 pub const KIND_SYSTEM: &str = "system";
 
-/// A loop-level failure: session storage or the provider.
+/// A loop-level failure: session storage, the provider, or a prompt the
+/// gate's budget math already knows is over the window (a refusal that
+/// never reaches the wire).
 #[derive(Debug)]
 pub enum AgentError {
     Session(crate::session::Error),
     Provider(crate::provider::ProviderError),
     Om(crate::om_integration::OmError),
+    /// The assembled prompt exceeds the context gate's safe budget with no
+    /// unobserved material left to compact (tickets #255/#256).
+    ContextOverflow {
+        prompt: u32,
+        budget: u32,
+    },
 }
 
 impl fmt::Display for AgentError {
@@ -47,6 +55,10 @@ impl fmt::Display for AgentError {
             Self::Session(e) => write!(f, "session: {e}"),
             Self::Provider(e) => write!(f, "provider: {e}"),
             Self::Om(e) => write!(f, "om: {e}"),
+            Self::ContextOverflow { prompt, budget } => write!(
+                f,
+                "context overflow: prompt ~{prompt} tokens exceeds the safe budget of {budget}; nothing left to compact"
+            ),
         }
     }
 }
@@ -361,6 +373,8 @@ pub(crate) mod testkit;
 mod tests_gate;
 #[cfg(test)]
 mod tests_om;
+#[cfg(test)]
+mod tests_overflow;
 #[cfg(test)]
 mod tests_queue;
 #[cfg(test)]

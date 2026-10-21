@@ -202,6 +202,13 @@ impl ResponseRequest {
     pub fn input(&self) -> &[InputEntry] {
         &self.input
     }
+
+    /// The request's output cap
+    /// capture it to assert the halving).
+    #[must_use]
+    pub fn max_output_tokens(&self) -> Option<u64> {
+        self.max_output_tokens
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -317,7 +324,16 @@ pub(crate) fn prompt_token_estimate(
             InputEntry::Call(c) => crate::om::token_count(&c.arguments),
             InputEntry::CallOutput(o) => match &o.output {
                 CallOutput::Text(s) => crate::om::token_count(s),
-                CallOutput::Image(_) => 0,
+                // #255: an image part's base64 data URL carries the payload
+                // (the #34 shape) — counting it keeps the gate's budget math
+                // honest, so an over-window image prompt is caught pre-wire.
+                CallOutput::Image(parts) => parts
+                    .iter()
+                    .map(|p| match p {
+                        InputCallPart::Text(t) => crate::om::token_count(t),
+                        InputCallPart::Image(img) => crate::om::token_count(&img.image_url),
+                    })
+                    .sum(),
             },
         };
     }
