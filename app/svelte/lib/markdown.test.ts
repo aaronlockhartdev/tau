@@ -68,7 +68,7 @@ describe('mdHighlight (#231)', () => {
   });
 
   it('maps common fence label aliases to grammar names', async () => {
-    const out = await mdHighlight('```js\nconst a = 1;\n```');
+    await mdHighlight('```js\nconst a = 1;\n```');
     expect(highlightHtml).toHaveBeenCalledWith('const a = 1;', 'javascript');
   });
 

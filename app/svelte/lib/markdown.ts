@@ -64,7 +64,7 @@ export async function mdHighlight(t: string): Promise<string> {
     jobs.push({ block, lang, code: unescapeHtml(code) });
     return block;
   });
-  const replacements: string[] = new Array(jobs.length).fill('');
+  const replacements: string[] = Array.from({ length: jobs.length }, () => '');
   await Promise.all(
     jobs.map(async (j, i) => {
       // The fence's trailing newline belongs to the block, not the code.
