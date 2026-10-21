@@ -87,6 +87,72 @@ async fn a_running_childs_snapshot_reports_turn_running() {
     drop(core);
 }
 
+/// #226 variant: with two same-type children, the parent snapshot's
+/// `subagents` must come back in SPAWN order — the frontend's `claimCrew`
+/// pairs the transcript's Nth spawn point to the Nth list entry by
+/// (agent_type, context_mode), so an arbitrary (HashMap) order pairs a
+/// spawn point to the wrong child's card.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_snapshot_lists_subagents_in_spawn_order() {
+    let core = CoreBuilder::custom(providers())
+        .with_child_factory(Arc::new(CannedChildFactory {
+            body: plain_body(),
+        }))
+        .build();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    // Two same-type children, spawned in sequence.
+    let first = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "first".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let second = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "second".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let snap = match core
+        .dispatch(Command::SessionSnapshot { session: session.id.clone() })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected a snapshot: {other:?}"),
+    };
+    let order: Vec<String> = snap.live.subagents.iter().map(|i| i.child.clone()).collect();
+    assert_eq!(
+        order,
+        vec![first.child.clone(), second.child.clone()],
+        "the snapshot's subagents are not in spawn order"
+    );
+    drop(core);
+}
+
 /// A spawned child's observed `done` wakes the parent: the Notified
 /// parent's branch tagged with the child's session id.
 #[tokio::test]

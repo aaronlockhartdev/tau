@@ -16,6 +16,9 @@ pub struct Child {
     pub agent_type: String,
     pub context_mode: ContextMode,
     pub agent: Arc<AgentSession>,
+    /// The child session's created timestamp (epoch ms): the snapshot's
+    /// spawn-order sort key (#226 variant).
+    pub created: u64,
     pub(super) state: Mutex<ChildState>,
     /// The turn origin (spec §5.2 wake rules): set at each drive start
     /// (spawn = `Spawn`, a resume = `Message`); a rest's wake routing

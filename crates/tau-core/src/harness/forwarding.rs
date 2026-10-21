@@ -192,6 +192,7 @@ pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInf
         state: state.to_owned(),
         waiting_on: i.waiting_on.map(|w| w.as_str().to_owned()),
         last_message: i.last_message.clone(),
+        created: i.created,
         usage: i.usage.as_ref().map(|u| Usage {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,

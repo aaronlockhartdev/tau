@@ -100,10 +100,15 @@ fn live_subagents(live: &LiveSession) -> Vec<tau_protocol::SubagentInfo> {
     };
     let handles = sup.handles();
     if !handles.is_empty() {
-        return handles
+        let mut out = handles
             .iter()
             .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
-            .collect();
+            .collect::<Vec<_>>();
+        // Spawn order (#226 variant): the transcript's Nth spawn point
+        // claims the Nth list entry, so the projection sorts by the child
+        // session's created timestamp (the handles map is unordered).
+        out.sort_by_key(|i| (i.created, i.child.clone()));
+        return out;
     }
     sup.restore_children()
 }

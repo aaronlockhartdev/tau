@@ -223,6 +223,7 @@ fn command_output_variants_roundtrip() {
         last_message: None,
         usage: None,
         resume_contract: None,
+        created: 1,
     };
     let file = FileText {
         text: "x".into(),
@@ -357,6 +358,17 @@ fn lane_and_context_mode_reject_unknown_tags() {
 
 /// `Usage` is #[serde(default)]: a partial usage object from a deviating
 /// server must decode with zeros, not fail the whole event.
+#[test]
+fn subagent_info_created_defaults_when_missing() {
+    // A pre-`created` wire payload (an older core's subagent event) must
+    // still deserialize: the field defaults to 0, which the spawn-order
+    // sort treats as "no timestamp" (all-defaults tie on the child id).
+    let json = r#"{"handle":"h1","child":"s2","agent_type":"general","context_mode":"fresh","state":"running","waiting_on":null,"last_message":null,"usage":null,"resume_contract":null}"#;
+    let i: SubagentInfo = serde_json::from_str(json).unwrap();
+    assert_eq!(i.created, 0);
+    assert_eq!(i.child, "s2");
+}
+
 #[test]
 fn usage_defaults_when_fields_missing() {
     let u: Usage = serde_json::from_str(r#"{"input_tokens":5}"#).unwrap();

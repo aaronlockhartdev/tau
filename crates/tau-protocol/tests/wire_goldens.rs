@@ -241,6 +241,7 @@ mod outputs {
                         last_message: None,
                         usage: None,
                         resume_contract: None,
+                        created: 1,
                     }],
                     own_state: None,
                 },

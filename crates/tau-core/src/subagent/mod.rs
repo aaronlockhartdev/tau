@@ -330,6 +330,9 @@ pub struct SubagentInfo {
     pub state: ChildState,
     pub waiting_on: Option<WaitingOn>,
     pub last_message: Option<String>,
+    /// The child session's created timestamp (epoch ms): the snapshot's
+    /// spawn-order sort key (#226 variant).
+    pub created: u64,
     pub usage: Option<Usage>,
     pub resume_contract: Option<ResumeContract>,
 }
