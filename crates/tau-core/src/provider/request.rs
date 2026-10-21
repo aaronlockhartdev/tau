@@ -203,8 +203,8 @@ impl ResponseRequest {
         &self.input
     }
 
-    /// The request's output cap
-    /// capture it to assert the halving).
+    /// The request's output cap (exposed for the recovery tests to capture
+    /// it and assert the halving).
     #[must_use]
     pub fn max_output_tokens(&self) -> Option<u64> {
         self.max_output_tokens
