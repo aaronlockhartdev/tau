@@ -317,8 +317,21 @@ describe('openSession (ticket #221 restart restore)', () => {
     expect(out['c']!.waiting_on).toBeNull();
   });
 
+  it('opening a running child keeps the badge running over a stale idle own_state (#261)', () => {
+    // The child's snapshot reports `turn: running` (the live truth) while its
+    // recorded own_state is still a stale `idle` from before the turn began.
+    // The open must not clobber the row back to `idle`: the running turn wins,
+    // and the badge (`state`) and the composer (`turn`) stay in agreement.
+    const out = openSession(
+      {},
+      'c',
+      snap('c', { turn: 'running', own_state: { state: 'idle', waiting_on: 'parent' } })
+    );
+    expect(out['c']!.state).toBe('running');
+    expect(out['c']!.turn).toBe('running');
+  });
+
   it('a running snapshot state is not synthesized from a parked stub', () => {
-    // The reconcile takes state from the snapshot; a stub that was `running`
     // before a restart (impossible in practice, but the rule is the point)
     // is reset to the snapshot's truth, never kept as a ghost running state.
     const stubbed: SessionMap = { c: makeStub(meta('c', { parent: 'p' }), 'p', 'running', null, 1) };

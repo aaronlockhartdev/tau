@@ -10,6 +10,14 @@ use super::{
 /// `process()` drained the queue.
 #[allow(clippy::too_many_lines)] // one reconciliation pass over the turn's record; splitting is refactoring
 pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
+    // #261: mark the turn running for every session here, not just the
+    // dispatch/wake paths that check-and-set before spawning. A child's turn
+    // is driven straight from the supervisor (`TurnChildDriver`) with no
+    // prior set, so its `turn` flag was never true and its snapshot always
+    // reported `Idle` — the GUI's `openSession` then clobbered a running
+    // child's badge. For a parent session the flag is already true from that
+    // check-and-set, so this is an idempotent no-op there.
+    live.turn.store(true, Ordering::SeqCst);
     let mut store = SessionStore::for_workspace(
         &live.cwd,
         &live
