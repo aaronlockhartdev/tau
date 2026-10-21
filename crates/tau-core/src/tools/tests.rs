@@ -916,3 +916,44 @@ async fn bash_and_errors_carry_no_ui_detail() {
         "an error is single-channel: {err:?}"
     );
 }
+
+#[cfg(unix)]
+mod stdbuf {
+    use super::impls::{bash_argv, stdbuf_on_path};
+
+    #[test]
+    fn stdbuf_wrap_produces_line_buffered_argv() {
+        // #249: when stdbuf is available the command runs under it so stdout/
+        // stderr are line-buffered, not block-buffered on a pipe.
+        let argv = bash_argv("echo hi", true);
+        assert_eq!(
+            argv,
+            vec![
+                "stdbuf".to_string(),
+                "-oL".to_string(),
+                "-eL".to_string(),
+                "bash".to_string(),
+                "-c".to_string(),
+                "echo hi".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn no_stdbuf_falls_back_to_plain_bash() {
+        // #249 negative: without stdbuf the command runs as plain bash (the
+        // pre-#249 argv) — silent degradation, not a failure.
+        let argv = bash_argv("echo hi", false);
+        assert_eq!(
+            argv,
+            vec!["bash".to_string(), "-c".to_string(), "echo hi".to_string()]
+        );
+    }
+
+    #[test]
+    fn stdbuf_probe_reports_presence() {
+        // #249: the probe resolves stdbuf on the augmented PATH; a macOS/Linux
+        // CI host ships it, so presence is the expected positive case.
+        assert!(stdbuf_on_path());
+    }
+}

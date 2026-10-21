@@ -161,7 +161,9 @@ export function touchChild(
   const ws = parent?.meta.workspace ?? '';
   const prev = sessions[childSid];
   if (prev) {
-    const next: SessionState = { ...prev, state, mru };
+    // #247: the child's turn mirrors its state — the composer's stop button
+    // reads turn, and a child has no stream_start/stream_end of its own.
+    const next: SessionState = { ...prev, state, mru, turn: state === 'running' ? 'running' : 'idle' };
     if (waitingOn !== null) next.waiting_on = waitingOn;
     if (title !== null && prev.meta.title === null) next.meta = { ...prev.meta, title };
     return { ...sessions, [childSid]: next };
@@ -255,6 +257,20 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
       usage: child.usage,
       resume_contract: null
     });
+  }
+  // Entry merge (#248): the snapshot lists the file-backed entries only, so
+  // an in-memory entry whose id is absent is wire-only (a streaming
+  // assistant, a live tool upsert) and survives the switch; an id the
+  // snapshot lists takes its decoded value (ADR-0008: the paged read fills
+  // the content).
+  const snapIds = new Set(snap.entries.map((e) => e.id));
+  if (prev && prev.entries) {
+    const merged: Record<string, Entry> = {};
+    for (const [id, e] of Object.entries(prev.entries)) {
+      if (!snapIds.has(id)) merged[id] = e;
+    }
+    Object.assign(merged, next.entries);
+    next.entries = merged;
   }
   return { ...out, [sid]: { ...next, subagents: synthesized } };
 }
@@ -353,9 +369,13 @@ export function applySubagentEvent(
   let out = sessions;
   const child = sessions[k.child];
   if (child) {
-    const next: SessionState = { ...child, mru: now, state: st };
-    if (st === 'idle' && next.waiting_on === null) next.waiting_on = 'parent';
-    if (st !== 'idle') next.waiting_on = null;
+    const next: SessionState = {
+      ...child,
+      mru: now,
+      state: st,
+      // A notified wake is terminal or an idle re-wait — never running.
+      turn: 'idle'
+    };
     out = { ...out, [k.child]: next };
   }
   const prev = s.subagents.find((x) => x.child === k.child);
