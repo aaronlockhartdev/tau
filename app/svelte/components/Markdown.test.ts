@@ -41,7 +41,9 @@ describe('Markdown', () => {
         gate.then(() => Promise.resolve(`<i data-lang="${lang}">${code}</i>`))
     );
     const { container, rerender } = render(Markdown, { props: { text: '```rust\nfn a() {}\n```' } });
-    rerender({ text: 'plain **body**' });
+    // Not awaited: the stale-text drop is proven by the final assertion, not
+    // by this render's completion.
+    void rerender({ text: 'plain **body**' });
     release?.();
     await vi.waitFor(() => expect(container.querySelector('p')).not.toBeNull());
     expect(container.querySelector('i[data-lang]')).toBeNull();
