@@ -101,6 +101,10 @@ pub struct ImageBlock {
     pub kind: String,
     pub media_type: String,
     pub data_base64: String,
+    /// #257: set when the image was downscaled to the pixel budget — the
+    /// coordinate-mapping note the model must see.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 impl From<String> for ToolOutput {
     fn from(s: String) -> Self {
@@ -263,6 +267,7 @@ mod tests {
                 kind: "image".into(),
                 media_type: "image/png".into(),
                 data_base64: "AAAA".into(),
+                note: None,
             }),
             ui_detail: None,
             status: None,

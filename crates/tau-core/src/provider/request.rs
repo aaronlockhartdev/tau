@@ -243,17 +243,19 @@ pub struct FunctionCallOutputInput {
 /// The tool result as the responses API carries it: a plain JSON string
 /// (the common path), or a content-parts array. The API accepts both for
 /// `function_call_output.output`; an image is an `input_image` part with
-/// the base64 payload as a data URL (#34).
+/// the base64 payload as a data URL (#34). A downscaled image (#257) adds
+/// its coordinate-mapping note as a leading `input_text` part.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum CallOutput {
     Text(String),
-    Image(Vec<InputImagePart>),
+    Image(Vec<InputCallPart>),
 }
 
 impl CallOutput {
     /// A stored tool output as wire content (#34): a string passes through;
-    /// an image block becomes one `input_image` data-URL part.
+    /// an image block becomes one `input_image` data-URL part, preceded by an
+    /// `input_text` part when the block carries a downscale note (#257).
     pub fn from_payload(v: &Value) -> Option<Self> {
         match v {
             Value::String(s) => Some(Self::Text(s.clone())),
@@ -266,17 +268,30 @@ impl CallOutput {
                     .get("data_base64")
                     .and_then(Value::as_str)
                     .unwrap_or_default();
-                Some(Self::Image(vec![InputImagePart {
+                let mut parts = Vec::new();
+                if let Some(note) = obj.get("note").and_then(Value::as_str) {
+                    parts.push(InputCallPart::Text(note.to_owned()));
+                }
+                parts.push(InputCallPart::Image(InputImagePart {
                     kind: "input_image",
                     image_url: format!("data:{media_type};base64,{data}"),
                     detail: "auto",
-                }]))
+                }));
+                Some(Self::Image(parts))
             }
             _ => None,
         }
     }
 }
 
+/// A content part of a `function_call_output.output` array: the image, or
+/// the downscale note that precedes it (#257).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum InputCallPart {
+    Text(String),
+    Image(InputImagePart),
+}
 /// An `input_image` content part (responses API): the base64 payload in a
 /// data URL; `detail` is always "auto" (vLLM's Responses model requires the
 /// field, `OpenAI`'s defaults it) (#79).

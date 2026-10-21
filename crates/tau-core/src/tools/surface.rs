@@ -60,6 +60,8 @@ pub struct DispatchCtx<'a> {
     pub session: &'a AgentSession,
     pub cwd: &'a Path,
     pub image_max_bytes: Option<u64>,
+    /// #257: the decode-area budget; above it, `read` downscales the image.
+    pub image_max_pixels: Option<u64>,
     /// The call's in-flight progress handle (issue #197): a streaming tool
     /// (bash) reports its growing output through it. `None` for a call with
     /// no live wire path (the direct test path).
@@ -96,7 +98,13 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
         "read" => {
             let anchors = ctx.session.anchors();
             let mut reg = anchors.lock().expect("anchor registry lock");
-            read(ctx.cwd, &call.args, ctx.image_max_bytes, Some(&mut *reg))
+            read(
+                ctx.cwd,
+                &call.args,
+                ctx.image_max_bytes,
+                ctx.image_max_pixels,
+                Some(&mut *reg),
+            )
         }
         "write" => {
             let path_arg = call.args.get("path").and_then(serde_json::Value::as_str);

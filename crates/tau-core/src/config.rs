@@ -292,6 +292,8 @@ pub struct ImageLimits {
     pub max_width: u32,
     pub max_height: u32,
     pub max_bytes: u64,
+    /// Decode-area cap: images above this many pixels are downscaled (#257).
+    pub max_pixels: u64,
     /// 1–100, when a read transcodes to JPEG.
     pub jpeg_quality: u8,
 }
@@ -302,6 +304,7 @@ impl Default for ImageLimits {
             max_width: 2048,
             max_height: 2048,
             max_bytes: 10 * 1024 * 1024,
+            max_pixels: 2_097_152,
             jpeg_quality: 80,
         }
     }
