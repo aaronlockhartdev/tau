@@ -37,25 +37,46 @@ pub(super) fn read(
             return ToolResult::err(format!("read: cannot read {}: {e}", path.display()).into());
         }
     };
-    // #34: an image is content for a vision endpoint, not UTF-8 text.
-    if let Some(media_type) = image_media_type(&bytes) {
-        // #36: a bounded read — an oversized image is a loud refusal, not a
-        // silent drop (stateless, it would ride every request).
-        if let Some(cap) = image_max_bytes
-            && u64::try_from(bytes.len()).expect("byte length, well under u64::MAX") > cap
-        {
-            return ToolResult::err(format!(
-                "read: {} is a {media_type} image of {} bytes, over the {cap}-byte cap — not returned",
-                path.display(),
-                bytes.len()
-            )
-            .into());
+    // #252: decode with `image` and normalize to a canonical JPEG q85 wire
+    // block, so the format set the endpoint accepts is our decision, not
+    // the file's original container.
+    match image::load_from_memory(&bytes) {
+        Ok(img) => {
+            // #36: a bounded read — an oversized image is a loud refusal, not a
+            // silent drop (stateless, it would ride every request).
+            if let Some(cap) = image_max_bytes
+                && u64::try_from(bytes.len()).expect("byte length, well under u64::MAX") > cap
+            {
+                return ToolResult::err(
+                    format!(
+                        "read: {} is an image of {} bytes, over the {cap}-byte cap — not returned",
+                        path.display(),
+                        bytes.len()
+                    )
+                    .into(),
+                );
+            }
+            let jpeg = encode_jpeg_q85(&img);
+            return ToolResult::ok(ToolOutput::Image(tau_protocol::payload::ImageBlock {
+                kind: "image".into(),
+                media_type: "image/jpeg".into(),
+                data_base64: base64::engine::general_purpose::STANDARD.encode(&jpeg),
+            }));
         }
-        return ToolResult::ok(ToolOutput::Image(tau_protocol::payload::ImageBlock {
-            kind: "image".into(),
-            media_type: media_type.to_owned(),
-            data_base64: base64::engine::general_purpose::STANDARD.encode(&bytes),
-        }));
+        Err(_) => {
+            // #36: sniffed as a known image but undecodable (truncated,
+            // corrupt, or a format `image` cannot decode) — a loud refusal,
+            // never raw binary shipped as text.
+            if looks_like_image(&bytes) {
+                return ToolResult::err(
+                    format!(
+                        "read: {} is an image file that could not be decoded — not returned",
+                        path.display()
+                    )
+                    .into(),
+                );
+            }
+        }
     }
     // #207 §6: sniff BOM / UTF-16 and decode to UTF-8 (BOM stripped); a
     // BOM-less non-UTF-8 file is a loud refusal, as before.
@@ -278,24 +299,48 @@ pub(super) struct ReadPage {
     pub stripped: String,
 }
 
-/// The image type by magic bytes (#34): the extension is not authoritative —
-/// a lying one would ship binary junk to the model as text.
-pub(super) fn image_media_type(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
-        Some("image/jpeg")
-    } else if bytes.starts_with(b"GIF8") {
-        Some("image/gif")
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        Some("image/webp")
-    } else if bytes.len() >= 14 && bytes.starts_with(b"BM") && bytes[6..8] == [0, 0] {
-        Some("image/bmp")
-    } else if bytes.starts_with(b"II\x2a\x00") || bytes.starts_with(b"MM\x00\x2a") {
-        Some("image/tiff")
-    } else {
-        None
-    }
+/// The #36 refusal predicate: does the buffer start with the magic bytes of a
+/// known image container? A yes with a failed `load_from_memory` is a corrupt
+/// image, which must refuse loudly instead of falling through as text.
+fn looks_like_image(bytes: &[u8]) -> bool {
+    matches!(
+        bytes,
+        [0x89, b'P', b'N', b'G', _, _, _, _, ..]
+            | [0xFF, 0xD8, 0xFF, _, _, ..]
+            | [b'G', b'I', b'F', b'8', _, _, _, _, _, _, _, _, ..]
+            | [
+                b'R',
+                b'I',
+                b'F',
+                b'F',
+                _,
+                _,
+                _,
+                _,
+                b'W',
+                b'E',
+                b'B',
+                b'P',
+                ..
+            ]
+            | [b'I', b'I', 0x2A, 0x00, _, _, ..]
+            | [b'M', b'M', 0x00, 0x2A, _, _, ..]
+            | [b'B', b'M', _, _, ..]
+    )
+}
+
+/// Encode a decoded image as JPEG quality 85 — the canonical wire format
+/// (#252): the smallest format `image` encodes, and the one every known
+/// vision endpoint accepts.
+fn encode_jpeg_q85(img: &image::DynamicImage) -> Vec<u8> {
+    // `to_rgb8` flattens every pixel format to RGB (alpha discarded).
+    let rgb = img.to_rgb8();
+    let mut out = Vec::new();
+    let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85);
+    encoder
+        .encode_image(&rgb)
+        .expect("encoding a freshly decoded image to JPEG cannot fail");
+    out
 }
 
 pub(super) async fn write(

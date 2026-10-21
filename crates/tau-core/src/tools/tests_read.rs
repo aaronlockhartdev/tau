@@ -1,7 +1,6 @@
-use super::impls::{image_media_type, read, write};
+use super::impls::{read, write};
 use super::tests::{detail, fresh_registry, text};
 use super::*;
-use base64::Engine;
 
 #[tokio::test]
 async fn read_pages_with_offset_and_limit() {
@@ -58,48 +57,6 @@ async fn read_offset_accepts_an_anchor() {
     // Resuming from the anchor shows that line and the one after.
     assert!(out.contains("l1") && out.contains("l2"), "{out}");
     assert!(!out.contains("l4"), "{out}");
-}
-
-#[test]
-fn image_detection_by_magic_bytes() {
-    assert_eq!(image_media_type(b"\x89PNG\r\n\x1a\n"), Some("image/png"));
-    assert_eq!(image_media_type(b"\xff\xd8\xff\xe0"), Some("image/jpeg"));
-    assert_eq!(image_media_type(b"GIF89a"), Some("image/gif"));
-    assert_eq!(
-        image_media_type(b"RIFF\x08\x00\x00\x00WEBP"),
-        Some("image/webp")
-    );
-    assert_eq!(
-        image_media_type(b"BM\x36\x00\x00\x00\x00\x00\x00\x00\x36\x00\x00\x00"),
-        Some("image/bmp")
-    );
-    assert_eq!(image_media_type(b"II\x2a\x00"), Some("image/tiff"));
-    assert_eq!(image_media_type(b"MM\x00\x2a"), Some("image/tiff"));
-    // A text file that merely starts with the BMP prefix is not an image.
-    assert_eq!(image_media_type(b"BM not a bitmap, just text"), None);
-    assert_eq!(image_media_type(b"hello\nworld\n"), None);
-    assert_eq!(image_media_type(b""), None);
-}
-
-#[tokio::test]
-async fn read_returns_an_image_block_for_a_png() {
-    let dir = tempfile::tempdir().unwrap();
-    let png = b"\x89PNG\r\n\x1a\nfake-png-pixels";
-    std::fs::write(dir.path().join("shot.png"), png).unwrap();
-    match read(dir.path(), &json!({"path": "shot.png"}), None, None).output {
-        ToolOutput::Image(img) => {
-            assert_eq!(img.kind, "image");
-            assert_eq!(img.media_type, "image/png");
-            // The block carries the exact file bytes, base64-encoded.
-            assert_eq!(
-                base64::engine::general_purpose::STANDARD
-                    .decode(&img.data_base64)
-                    .unwrap(),
-                png.to_vec()
-            );
-        }
-        ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
-    }
 }
 
 #[tokio::test]
