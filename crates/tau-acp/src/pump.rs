@@ -74,10 +74,6 @@ fn handle(ctx: &PumpCtx, event: &Event) {
                     // empty Queue is the settle signal).
                     s.mapper.on_stream_end();
                     s.saw_stream_end = true;
-                    // A cancel may rewrite this turn's outcome only if it
-                    // predates the stream end; one landing in the post-turn
-                    // window (settle pending) must not (ticket #78).
-                    s.cancel_active = s.cancel_requested;
                     if *interrupted {
                         s.saw_interrupted = true;
                     }
@@ -102,16 +98,23 @@ fn handle(ctx: &PumpCtx, event: &Event) {
             }
         }
         Event::Queue { session, items, .. } => {
-            let outcome = {
+            let (outcome, yolo) = {
                 let mut guard = registry
                     .lock()
                     .expect("session registry: no panic while the lock is held");
-                guard
-                    .get_mut(session)
-                    .and_then(|s| queue_settle(s, items.is_empty()))
+                guard.get_mut(session).map_or((None, false), |s| {
+                    (queue_settle(s, items.is_empty()), s.yolo)
+                })
             };
             if let Some(outcome) = outcome {
-                settle_headless(ctx, session, outcome);
+                if yolo {
+                    settle_headless(ctx, session, outcome);
+                } else {
+                    let mut guard = registry
+                        .lock()
+                        .expect("session registry: no panic while the lock is held");
+                    sessions::settle(&mut guard, session, outcome);
+                }
             }
         }
         // A session-scoped system error kills the turn: the prompt gets a
@@ -143,24 +146,17 @@ fn handle(ctx: &PumpCtx, event: &Event) {
     }
 }
 
-/// The `Queue` settle rule (extracted for the ticket #78 tests): after the
-/// first `StreamEnd`, an empty queue settles the turn; a cancel that
-/// predates the stream end — or an interrupted stream — answers `cancelled`
-/// (N3). A cancel that lands after the stream end (the post-turn window)
-/// must not rewrite a completed turn's outcome.
+/// The `Queue` settle rule (extracted for the ticket #78 tests), strict
+/// cancel (ticket #84): a cancel that landed for the turn — before the
+/// stream ended, in the post-turn window, or on a call aborted before its
+/// first event — answers `cancelled` (the spec MUSTs the response, N3);
+/// otherwise an ended stream with an empty queue ends the turn.
 fn queue_settle(s: &crate::sessions::SessionState, queue_empty: bool) -> Option<Outcome> {
+    if queue_empty && s.cancel_requested {
+        return Some(Outcome::Cancelled);
+    }
     if s.saw_stream_end && queue_empty {
-        Some(if s.saw_interrupted || s.cancel_active {
-            Outcome::Cancelled
-        } else {
-            Outcome::EndTurn
-        })
-    } else if queue_empty && s.cancel_requested {
-        // A cancel with an empty queue settles even without a `StreamEnd`:
-        // a call aborted before its first event leaves none behind (the
-        // core records calls at first event), and the spec MUSTs the
-        // `cancelled` answer.
-        Some(Outcome::Cancelled)
+        Some(Outcome::EndTurn)
     } else {
         None
     }
@@ -168,10 +164,8 @@ fn queue_settle(s: &crate::sessions::SessionState, queue_empty: bool) -> Option<
 
 /// The headless settle (ticket #73): an `EndTurn` without a completion
 /// declaration is not terminal — the episode loop answers it with a
-/// task-anchored continuation prompt. A client cancel that predates the
-/// turn's stream end, and errors, are terminal; a cancel landing in the
-/// post-turn window answers the completed outcome, not `cancelled`
-/// (ticket #78).
+/// task-anchored continuation prompt. A client cancel and errors are
+/// terminal (strict cancel, ticket #84).
 fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
     let PumpCtx {
         core,
@@ -219,7 +213,6 @@ fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
                     s.saw_stream_end = false;
                     s.saw_interrupted = false;
                     s.cancel_requested = false;
-                    s.cancel_active = false;
                     s.last_assistant = None;
                 }
                 cancelled
@@ -285,7 +278,7 @@ mod tests {
             saw_stream_end: true,
             saw_interrupted: false,
             cancel_requested: false,
-            cancel_active: false,
+            yolo: false,
             context_window: None,
             task: Some("task".into()),
             last_assistant: None,
@@ -293,13 +286,15 @@ mod tests {
         }
     }
 
-    // Ticket #78: a cancel that lands after the stream ended (the post-turn
-    // window) must not rewrite a completed turn's outcome.
+    // Ticket #84 (strict reading, ACP v1 prompt-turn Cancellation): a
+    // cancel that lands after the stream ended but before the prompt
+    // response is written answers `cancelled` — the settle reads the live
+    // `cancel_requested` flag, not a stream-end snapshot.
     #[test]
-    fn a_late_cancel_keeps_the_completed_outcome() {
+    fn a_late_cancel_answers_cancelled() {
         let mut s = settled_turn();
-        s.cancel_requested = true; // arrived after the StreamEnd snapshot
-        assert_eq!(queue_settle(&s, true), Some(Outcome::EndTurn));
+        s.cancel_requested = true; // arrived after the StreamEnd
+        assert_eq!(queue_settle(&s, true), Some(Outcome::Cancelled));
     }
 
     // A cancel that predates the stream end still answers `cancelled` (N3).
@@ -307,7 +302,6 @@ mod tests {
     fn an_early_cancel_still_answers_cancelled() {
         let mut s = settled_turn();
         s.cancel_requested = true;
-        s.cancel_active = true; // the StreamEnd snapshot saw it
         assert_eq!(queue_settle(&s, true), Some(Outcome::Cancelled));
     }
 

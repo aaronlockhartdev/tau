@@ -248,9 +248,9 @@ async fn prompt_usage_update_when_the_window_is_known() {
         .await
         .expect("binds the mock LLM");
     let addr = listener.local_addr().expect("bound addr");
-    // The headless run ends on a completion declaration: the scripted
-    // scenario declares it (episode 1), the confirmation round re-matches
-    // the clamped final turn (episode 2) — two provider calls.
+    // Interactive (no yolo flag, ticket #84): one `session/prompt` is one
+    // provider call — the scripted marker is just text in the response, not
+    // a headless run trigger.
     let mut set = tau_mock_llm::scenario::ScenarioSet::default();
     set.scenarios.push(tau_mock_llm::scenario::Scenario::new(
         "hello",
@@ -303,8 +303,8 @@ async fn prompt_usage_update_when_the_window_is_known() {
         .collect();
     assert_eq!(
         usage.len(),
-        2,
-        "one usage_update per provider call (declaration + confirmation): {updates:?}"
+        1,
+        "one usage_update for the single provider call: {updates:?}"
     );
     // The mock fallback's usage: 120 input + 48 output.
     assert_eq!(usage[0]["params"]["update"]["used"], 168);

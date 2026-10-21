@@ -84,6 +84,14 @@ impl Params {
     }
 }
 
+/// The opt-in flag for yolo (headless) runs (ticket #84): a `session/new`
+/// `_meta.headless` wins, else the process env var `TAU_ACP_HEADLESS=1`,
+/// else off. The env form covers Harbor's `launch-21.sh` (no meta on its
+/// `session/new`).
+#[must_use]
+pub fn yolo_from_env() -> bool {
+    std::env::var("TAU_ACP_HEADLESS").is_ok_and(|v| v == "1")
+}
 /// Per-session episode state; reset to a fresh run on each client prompt.
 #[derive(Debug, Clone, Default)]
 pub struct EpisodeState {

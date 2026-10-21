@@ -42,16 +42,26 @@ pub(super) async fn session_new(server: &Server, rpc: &Rpc) {
         Some(_) => unreachable!("dispatch routes the arm"),
         None => return,
     };
+    // Yolo (headless) opt-in (ticket #84): `_meta.headless` in the
+    // `session/new` params wins, else the `TAU_ACP_HEADLESS=1` env var,
+    // else off (the interactive default).
+    let meta_headless = rpc
+        .params
+        .as_ref()
+        .and_then(|p| p.get("_meta"))
+        .and_then(|m| m.get("headless"))
+        .and_then(Value::as_bool);
+    let yolo = meta_headless.unwrap_or_else(crate::headless::yolo_from_env);
     let session = match server
         .dispatch(
             id,
             Command::SessionNew {
                 workspace: workspace.id.clone(),
                 title: None,
-                // The ACP surface is the headless surface (ticket #73): the
-                // frame replaces the interactive product's base prompt; the
-                // context files and skills catalog still append after it.
-                base_prompt: Some(crate::headless::FRAME.to_owned()),
+                // Yolo sessions carry the headless base prompt (ticket #84
+                // change 2); interactive sessions keep the product default
+                // (no base prompt).
+                base_prompt: yolo.then(|| crate::headless::FRAME.to_owned()),
             },
         )
         .await
@@ -87,7 +97,7 @@ pub(super) async fn session_new(server: &Server, rpc: &Rpc) {
                 saw_stream_end: false,
                 saw_interrupted: false,
                 cancel_requested: false,
-                cancel_active: false,
+                yolo,
                 context_window,
                 task: None,
                 last_assistant: None,
@@ -205,12 +215,14 @@ pub(super) async fn session_prompt(server: &Server, rpc: &Rpc) {
             return;
         }
         state.in_flight = true;
-        // A new client prompt starts a fresh headless run (ticket #73).
-        begin_headless_run(state, &text);
+        // Yolo sessions start a fresh headless run (ticket #73); interactive
+        // sessions do not run the episode loop (ticket #84).
+        if state.yolo {
+            begin_headless_run(state, &text);
+        }
         state.saw_stream_end = false;
         state.saw_interrupted = false;
         state.cancel_requested = false;
-        state.cancel_active = false;
         state.pending = Some(tx);
     }
 

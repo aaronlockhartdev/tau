@@ -37,13 +37,13 @@ pub struct SessionState {
     pub saw_interrupted: bool,
     /// A `session/cancel` landed for this turn: the settle then answers the
     /// prompt `cancelled` even if the abort surfaced as a `System` error
-    /// (the spec MUSTs the response, N3).
+    /// (the spec MUSTs the response, N3). Read live at settle time — a
+    /// cancel that lands after the stream ended, before the response is
+    /// written, counts too (ticket #84; ACP v1 prompt-turn Cancellation).
     pub cancel_requested: bool,
-    /// Snapshot of `cancel_requested` at the turn's `StreamEnd`: only a cancel
-    /// that predates the stream end may answer `cancelled`. A cancel landing
-    /// in the post-turn window (stream ended, settle pending) must not rewrite
-    /// a completed turn's outcome (ticket #78).
-    pub cancel_active: bool,
+    /// Opt-in yolo (headless episode loop): `session/new` `_meta.headless`
+    /// wins, else the `TAU_ACP_HEADLESS=1` env var; default off (ticket #84).
+    pub yolo: bool,
     /// The session model's declared context window, when any config layer
     /// declares one: a `StreamEnd` with usage then rides a `usage_update`
     /// (the schema's `size` must not be guessed; N5). Resolved at

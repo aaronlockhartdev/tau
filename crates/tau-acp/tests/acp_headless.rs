@@ -185,7 +185,11 @@ async fn early_stop_continues_until_completion() {
     let _ = &home;
 
     let new = client
-        .request(1, "session/new", json!({ "cwd": home.path() }))
+        .request(
+            1,
+            "session/new",
+            json!({ "cwd": home.path(), "_meta": { "headless": true } }),
+        )
         .await;
     let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
 
@@ -200,7 +204,6 @@ async fn early_stop_continues_until_completion() {
         )
         .await;
     assert_eq!(resp["result"]["stopReason"], "end_turn");
-
     // Every episode's assistant text reached the client.
     let text = agent_text(&updates);
     for expected in [
@@ -239,7 +242,11 @@ async fn question_stop_gets_the_auto_answer() {
     .await;
 
     let new = client
-        .request(1, "session/new", json!({ "cwd": home.path() }))
+        .request(
+            1,
+            "session/new",
+            json!({ "cwd": home.path(), "_meta": { "headless": true } }),
+        )
         .await;
     let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
 
@@ -254,7 +261,6 @@ async fn question_stop_gets_the_auto_answer() {
         )
         .await;
     assert_eq!(resp["result"]["stopReason"], "end_turn");
-
     let nudges = user_chunks(&updates);
     assert!(
         nudges
@@ -271,7 +277,11 @@ async fn empty_stops_settle_at_the_budget() {
     let (home, mut client) = spawn_client(mock_with_turns("empty-task", &[""])).await;
 
     let new = client
-        .request(1, "session/new", json!({ "cwd": home.path() }))
+        .request(
+            1,
+            "session/new",
+            json!({ "cwd": home.path(), "_meta": { "headless": true } }),
+        )
         .await;
     let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
 
@@ -316,7 +326,11 @@ async fn provider_cut_stream_continues_the_run() {
     let mut client = Client::spawn(home.path(), &format!("http://{addr}/v1"), "mock-model");
 
     let new = client
-        .request(1, "session/new", json!({ "cwd": home.path() }))
+        .request(
+            1,
+            "session/new",
+            json!({ "cwd": home.path(), "_meta": { "headless": true } }),
+        )
         .await;
     let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
 
@@ -382,4 +396,116 @@ async fn cut_provider(listener: tokio::net::TcpListener) {
             .await;
         drop(stream); // the cut: the connection ends without `[DONE]`
     }
+}
+
+/// Spawn a client with `TAU_ACP_HEADLESS=1` in the child's environment:
+/// the env-var yolo opt-in (ticket #84) — no `_meta` on `session/new`.
+async fn spawn_client_env_headless(
+    scenarios: Arc<tau_mock_llm::scenario::ScenarioSet>,
+) -> (tempfile::TempDir, Client) {
+    let home = tempfile::tempdir().expect("temp home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the mock LLM");
+    let addr = listener.local_addr().expect("bound addr");
+    tokio::spawn(tau_mock_llm::server::serve(listener, scenarios));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tau-acp"))
+        .env("HOME", home.path())
+        .env("TAU_BASE_URL", format!("http://{addr}/v1"))
+        .env("TAU_MODEL", "mock-model")
+        .env("TAU_ACP_HEADLESS", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawns the tau-acp binary");
+    let stdin = child.stdin.take().expect("piped stdin");
+    let lines = BufReader::new(child.stdout.take().expect("piped stdout"));
+    (
+        home,
+        Client {
+            child,
+            stdin,
+            lines,
+        },
+    )
+}
+
+/// The env-var yolo flag (`TAU_ACP_HEADLESS=1`) turns the session headless
+/// without any `_meta` on `session/new`: the question stop gets the
+/// auto-answer continuation (ticket #84 change 2).
+#[tokio::test]
+async fn env_headless_flag_enables_the_episode_loop() {
+    let (home, mut client) =
+        spawn_client_env_headless(mock_with_turns("env-task", &["Which option?", MARKER])).await;
+    let _ = &home;
+
+    let new = client
+        .request(1, "session/new", json!({ "cwd": home.path() }))
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    let (resp, updates) = client
+        .request_with_updates(
+            2,
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{ "type": "text", "text": "env-task: pick a db" }],
+            }),
+        )
+        .await;
+    assert_eq!(resp["result"]["stopReason"], "end_turn");
+
+    let nudges = user_chunks(&updates);
+    assert!(
+        nudges
+            .iter()
+            .any(|n| n.starts_with("There is no user to answer questions")),
+        "auto-answer missing: {nudges:?}"
+    );
+}
+
+/// `_meta.headless: false` overrides `TAU_ACP_HEADLESS=1`: the session
+/// stays interactive, one provider call, no continuation (ticket #84
+/// precedence: meta wins over env).
+#[tokio::test]
+async fn meta_false_overrides_env_headless() {
+    let (home, mut client) =
+        spawn_client_env_headless(mock_with_turns("override-task", &["Just a plain answer."]))
+            .await;
+    let _ = &home;
+
+    let new = client
+        .request(
+            1,
+            "session/new",
+            json!({ "cwd": home.path(), "_meta": { "headless": false } }),
+        )
+        .await;
+    let session_id = new["result"]["sessionId"].as_str().expect("sessionId");
+
+    let (resp, updates) = client
+        .request_with_updates(
+            2,
+            "session/prompt",
+            json!({
+                "sessionId": session_id,
+                "prompt": [{ "type": "text", "text": "override-task: say hello" }],
+            }),
+        )
+        .await;
+    assert_eq!(resp["result"]["stopReason"], "end_turn");
+
+    // Interactive: no continuation prompts. The client's own prompt text is
+    // echoed as a user_message_chunk, but no nudge follows.
+    let nudges = user_chunks(&updates);
+    assert!(
+        nudges
+            .iter()
+            .all(|n| !n.starts_with("The task is not complete")
+                && !n.starts_with("There is no user to answer")
+                && !n.starts_with("Your previous response")),
+        "interactive session must not emit continuation nudges: {nudges:?}"
+    );
 }
