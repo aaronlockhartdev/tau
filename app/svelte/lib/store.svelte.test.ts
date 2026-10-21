@@ -797,6 +797,9 @@ describe('subagent_event', () => {
     expect(store.sessions['c']).toBeTruthy();
     expect(store.sessions['c']!.state).toBe('running');
     expect(store.sessions['c']!.meta.title).toBe('worker');
+    // #247: the child's turn mirrors the spawn — the composer's stop button
+    // reads it, and a child has no stream_start of its own.
+    expect(store.sessions['c']!.turn).toBe('running');
   });
 
   it('state: the mirror and the child row update, the declared wait rides the detail', () => {
@@ -813,6 +816,9 @@ describe('subagent_event', () => {
     expect(store.sessions['p']!.subagents[0]!.waiting_on).toBe('user');
     expect(store.sessions['c']!.state).toBe('idle');
     expect(store.sessions['c']!.waiting_on).toBe('user');
+    // #247: the state event's idle closes the child's turn (the stop button
+    // flapped on this one before the event drove the turn).
+    expect(store.sessions['c']!.turn).toBe('idle');
   });
 
   it('notified: the wake maps onto a terminal state (stopped must not read back as idle)', () => {
@@ -827,6 +833,8 @@ describe('subagent_event', () => {
     ]);
     expect(store.sessions['p']!.subagents[0]!.state).toBe('stopped');
     expect(store.sessions['c']!.state).toBe('stopped');
+    // #247: a terminal wake leaves the child idle, not running.
+    expect(store.sessions['c']!.turn).toBe('idle');
   });
 
 });

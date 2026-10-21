@@ -733,6 +733,48 @@ fn bash_path() -> String {
     parts.join(":")
 }
 
+/// Whether `stdbuf` resolves on the augmented child PATH (#249). A presence
+/// probe, not a version probe: macOS's BSD `stdbuf` rejects `--version`
+/// (non-zero exit) yet the binary is present, so we walk the PATH looking for
+/// the executable rather than running it. Pure (no process spawn), safe to
+/// call from the async dispatch.
+#[cfg(unix)]
+pub(super) fn stdbuf_on_path() -> bool {
+    let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
+    path.is_some_and(|p| {
+        p.split(':').any(|dir| {
+            let d = Path::new(dir);
+            let candidate = if d.is_absolute() {
+                d.join("stdbuf")
+            } else {
+                Path::new(".").join(d).join("stdbuf")
+            };
+            candidate.is_file()
+        })
+    })
+}
+
+/// The argv for a bash child (#249): plain `bash -c <command>`, or wrapped in
+/// `stdbuf -oL -eL` for line-buffered stdio when `stdbuf` is available — a
+/// piped stdout is block-buffered by default, so a long command's output
+/// would otherwise land only at exit, not as it streams. `stdbuf` execs its
+/// argument (single process), so the stop/timeout kill path is unchanged.
+#[cfg(unix)]
+pub(super) fn bash_argv(command: &str, has_stdbuf: bool) -> Vec<String> {
+    if has_stdbuf {
+        vec![
+            "stdbuf".into(),
+            "-oL".into(),
+            "-eL".into(),
+            "bash".into(),
+            "-c".into(),
+            command.to_owned(),
+        ]
+    } else {
+        vec!["bash".into(), "-c".into(), command.to_owned()]
+    }
+}
+
 /// Resolve once `flag` is set. A stop is a plain `AtomicBool` (no channel),
 /// so this polls it; the interval is short enough to feel immediate (#174).
 async fn wait_for_flag(flag: &AtomicBool) {
@@ -793,9 +835,22 @@ pub(super) async fn bash_inner(
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(60)
         .max(1);
-    let child = tokio::process::Command::new("bash")
-        .arg("-c")
-        .arg(command)
+    // #249: line-buffer the child's stdio when stdbuf is available; a piped
+    // stdout is block-buffered by default, so a long command's output would
+    // otherwise land only at exit. Absent stdbuf degrades to plain bash
+    // silently (availability is an environment fact, not a command failure).
+    #[cfg(unix)]
+    let spawn_argv = bash_argv(command, stdbuf_on_path());
+    #[cfg(not(unix))]
+    let spawn_argv = vec!["bash".to_owned(), "-c".to_owned(), command.to_owned()];
+    let program = spawn_argv
+        .first()
+        .expect("bash_argv always yields a non-empty argv");
+    let mut cmd = tokio::process::Command::new(program);
+    for a in &spawn_argv[1..] {
+        cmd.arg(a);
+    }
+    let child = cmd
         .env("PATH", bash_path())
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())

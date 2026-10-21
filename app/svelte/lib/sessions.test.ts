@@ -110,6 +110,18 @@ describe('touchChild', () => {
     expect(m['c']!.meta.workspace).toBe(WS.id);
     expect(m['c']!.parent).toBe('p');
   });
+
+  it('derives the child turn from the state (#247: the stop button reads turn)', () => {
+    let m: SessionMap = touchChild({}, 'p', 'c', 'running', 5, null, 'w');
+    expect(m['c']!.turn).toBe('running');
+    // a state correction on the existing row flips the turn with the state
+    m = touchChild(m, 'p', 'c', 'idle', 6, 'user', null);
+    expect(m['c']!.turn).toBe('idle');
+    m = touchChild(m, 'p', 'c', 'running', 7, null, null);
+    expect(m['c']!.turn).toBe('running');
+    m = touchChild(m, 'p', 'c', 'done', 8, null, null);
+    expect(m['c']!.turn).toBe('idle');
+  });
 });
 
 describe('applySessionList', () => {
@@ -323,5 +335,30 @@ describe('openSession (ticket #221 restart restore)', () => {
     expect(out['s1']!.state).toBe('running');
     const idle = openSession({}, 's1', snap('s1', { turn: 'idle' }));
     expect(idle['s1']!.state).toBe('idle');
+  });
+
+  it('keeps wire-only entries absent from the snapshot (#248: the switch must not drop them)', () => {
+    // A session switched away from mid-stream: the in-memory map holds a
+    // wire-only streaming assistant entry (not yet file-backed) plus a file
+    // entry the snapshot also lists. Re-opening must keep the wire-only one
+    // and let the snapshot win the id it lists — the previous replace dropped
+    // both.
+    const base = snap('s1');
+    const snapWithFile = { ...base, entries: [{ id: 'e1', parent: null, kind: 'user', timestamp: 1, size: 10, preview: 'file preview', first_kept: null }] };
+    const prev: SessionMap = {
+      s1: {
+        ...makeStub(meta('s1'), null, 'running', null, 1),
+        entries: {
+          e1: { id: 'e1', kind: 'user', text: 'stale in-memory' },
+          // wire-only: a streaming assistant entry the snapshot does not list
+          stream1: { id: 'stream1', kind: 'message', text: 'in-flight…' }
+        }
+      }
+    };
+    const out = openSession(prev, 's1', snapWithFile);
+    // the wire-only entry survives
+    expect(out['s1']!.entries['stream1']).toEqual({ id: 'stream1', kind: 'message', text: 'in-flight…' });
+    // the id the snapshot lists takes the snapshot's decoded value
+    expect(out['s1']!.entries['e1']).toMatchObject({ id: 'e1', text: 'file preview' });
   });
 });
