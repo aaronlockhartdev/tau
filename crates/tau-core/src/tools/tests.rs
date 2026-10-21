@@ -1,11 +1,10 @@
-use super::impls::{bash, bash_inner, edit, image_media_type, read, write};
+use super::impls::{bash, bash_inner, edit, read, write};
 use super::*;
-use base64::Engine;
 use std::fmt::Write as _;
 
 /// A throwaway session registry for a test, locked for the call.
 #[allow(clippy::mut_mutex_lock)] // the leaked box is the only way to get a 'static guard
-fn fresh_registry() -> std::sync::MutexGuard<'static, hashline::registry::Registry> {
+pub fn fresh_registry() -> std::sync::MutexGuard<'static, hashline::registry::Registry> {
     // A 'static guard is not possible; these tests own the registry for the
     // duration of the call, so a leaked-once box is acceptable in test code.
     let box_ = Box::leak(Box::new(std::sync::Mutex::new(
@@ -16,10 +15,20 @@ fn fresh_registry() -> std::sync::MutexGuard<'static, hashline::registry::Regist
 
 /// The text of a tool output: these tests assert on text, and an image
 /// block on these paths is a bug.
-fn text(out: ToolResult) -> String {
+pub fn text(out: ToolResult) -> String {
     match out.output {
         ToolOutput::Text(t) => t,
         ToolOutput::Image { .. } => panic!("expected text, got an image block"),
+    }
+}
+
+/// The GUI-only detail channel's text (#243): an `edit`'s diff, a `write`'
+/// content, a `read`'s anchor-stripped body. `None` on non-split results.
+pub fn detail(out: ToolResult) -> Option<String> {
+    match out.ui_detail {
+        Some(ToolOutput::Text(t)) => Some(t),
+        Some(ToolOutput::Image { .. }) => panic!("expected text detail, got an image block"),
+        None => None,
     }
 }
 
@@ -45,74 +54,21 @@ async fn write_then_read_roundtrip_with_anchors() {
     assert!(rows[1].ends_with("two"));
     let from = rows[0].split('│').next().unwrap().to_string();
     let to = rows[1].split('│').next().unwrap().to_string();
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": "ONE AND TWO"}]}),
         Some(&mut *reg),
         false,
-    ));
-    assert!(out.starts_with("edited"), "edit failed: {out}");
+    );
+    // #243: the model sees the one-line ack, not the diff.
+    assert!(
+        text(res.clone()).starts_with("Successfully edited "),
+        "edit failed: {res:?}"
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
         "ONE AND TWO\n"
     );
-}
-
-#[tokio::test]
-async fn read_pages_with_offset_and_limit() {
-    let dir = tempfile::tempdir().unwrap();
-    write(
-        dir.path(),
-        &json!({"path": "p.txt", "content": "l1\nl2\nl3\nl4\n"}),
-        None,
-    )
-    .await;
-    let mut reg = fresh_registry();
-    let out = text(read(
-        dir.path(),
-        &json!({"path": "p.txt", "offset": "2", "limit": 2}),
-        None,
-        Some(&mut *reg),
-    ));
-    assert!(out.contains("lines 2–3 of 4"), "{out}");
-    assert!(out.contains("l2") && out.contains("l3"));
-    assert!(!out.contains("l1") && !out.contains("l4"));
-}
-
-#[tokio::test]
-async fn read_offset_accepts_an_anchor() {
-    let dir = tempfile::tempdir().unwrap();
-    write(
-        dir.path(),
-        &json!({"path": "p.txt", "content": "l1\nl2\nl3\nl4\n"}),
-        None,
-    )
-    .await;
-    let mut reg = fresh_registry();
-    let first = text(read(
-        dir.path(),
-        &json!({"path": "p.txt", "limit": 2}),
-        None,
-        Some(&mut *reg),
-    ));
-    // The first shown line's anchor, used as the next page's offset.
-    let anchor = first
-        .lines()
-        .next()
-        .unwrap()
-        .split('│')
-        .next()
-        .unwrap()
-        .to_string();
-    let out = text(read(
-        dir.path(),
-        &json!({"path": "p.txt", "offset": anchor, "limit": 2}),
-        None,
-        Some(&mut *reg),
-    ));
-    // Resuming from the anchor shows that line and the one after.
-    assert!(out.contains("l1") && out.contains("l2"), "{out}");
-    assert!(!out.contains("l4"), "{out}");
 }
 
 #[tokio::test]
@@ -209,13 +165,19 @@ async fn edit_output_is_bounded_to_the_changed_region() {
     ));
     let lines: Vec<&str> = read_out.lines().collect();
     let anchor = lines[24].split('│').next().unwrap().to_string();
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "big.txt", "edits": [{"from": anchor, "to": anchor, "content": "LINE25"}]}),
         Some(&mut *reg),
         false,
-    ));
+    );
+    // #243: the diff rides the detail channel; the model sees the ack.
+    assert!(
+        text(res.clone()).starts_with("Successfully edited "),
+        "edit failed: {res:?}"
+    );
     // The changed region plus two context lines per side — never the 50-line file.
+    let out = detail(res).expect("an edit success carries its diff in ui_detail");
     let shown = out.lines().count() - 1;
     assert!(shown <= 7, "output had {shown} rows: {out}");
     assert!(out.contains("LINE25"), "{out}");
@@ -242,12 +204,21 @@ async fn edit_pure_deletion_reports_the_removed_line_not_no_change() {
     let lines: Vec<&str> = read_out.lines().collect();
     // Delete "beta" (the second line).
     let anchor = lines[1].split('│').next().unwrap().to_string();
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "del.txt", "edits": [{"from": anchor, "to": anchor, "content": ""}]}),
         Some(&mut *reg),
         false,
-    ));
+    );
+    // #243: the model ack counts the change; the diff keeps the removed line.
+    assert_eq!(
+        text(res.clone()),
+        format!(
+            "Successfully edited {}. Added 0 line(s), removed 1 line(s).",
+            dir.path().join("del.txt").display()
+        )
+    );
+    let out = detail(res).expect("an edit success carries its diff in ui_detail");
     assert!(
         !out.contains("(no change)"),
         "a pure deletion must not report no change: {out}"
@@ -302,48 +273,6 @@ async fn bash_stop_interrupts_a_running_command() {
         "stop did not interrupt in time: {elapsed:?}"
     );
     setter.await.unwrap();
-}
-
-#[test]
-fn image_detection_by_magic_bytes() {
-    assert_eq!(image_media_type(b"\x89PNG\r\n\x1a\n"), Some("image/png"));
-    assert_eq!(image_media_type(b"\xff\xd8\xff\xe0"), Some("image/jpeg"));
-    assert_eq!(image_media_type(b"GIF89a"), Some("image/gif"));
-    assert_eq!(
-        image_media_type(b"RIFF\x08\x00\x00\x00WEBP"),
-        Some("image/webp")
-    );
-    assert_eq!(
-        image_media_type(b"BM\x36\x00\x00\x00\x00\x00\x00\x00\x36\x00\x00\x00"),
-        Some("image/bmp")
-    );
-    assert_eq!(image_media_type(b"II\x2a\x00"), Some("image/tiff"));
-    assert_eq!(image_media_type(b"MM\x00\x2a"), Some("image/tiff"));
-    // A text file that merely starts with the BMP prefix is not an image.
-    assert_eq!(image_media_type(b"BM not a bitmap, just text"), None);
-    assert_eq!(image_media_type(b"hello\nworld\n"), None);
-    assert_eq!(image_media_type(b""), None);
-}
-
-#[tokio::test]
-async fn read_returns_an_image_block_for_a_png() {
-    let dir = tempfile::tempdir().unwrap();
-    let png = b"\x89PNG\r\n\x1a\nfake-png-pixels";
-    std::fs::write(dir.path().join("shot.png"), png).unwrap();
-    match read(dir.path(), &json!({"path": "shot.png"}), None, None).output {
-        ToolOutput::Image(img) => {
-            assert_eq!(img.kind, "image");
-            assert_eq!(img.media_type, "image/png");
-            // The block carries the exact file bytes, base64-encoded.
-            assert_eq!(
-                base64::engine::general_purpose::STANDARD
-                    .decode(&img.data_base64)
-                    .unwrap(),
-                png.to_vec()
-            );
-        }
-        ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
-    }
 }
 
 #[tokio::test]
@@ -405,13 +334,22 @@ async fn edit_output_is_a_bounded_before_after_diff() {
     let lines: Vec<&str> = read_out.lines().collect();
     let from = lines[1].split('│').next().unwrap().to_string();
     let to = lines[2].split('│').next().unwrap().to_string();
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "d.txt", "edits": [{"from": from, "to": to, "content": "BETA'\nGAMMA'"}]}),
         Some(&mut *reg),
         false,
-    ));
+    );
+    // #243: the model gets the ack; the bounded diff rides the detail channel.
+    assert_eq!(
+        text(res.clone()),
+        format!(
+            "Successfully edited {}. Added 2 line(s), removed 2 line(s).",
+            dir.path().join("d.txt").display()
+        )
+    );
     // The one-line summary, then a bounded body of marked lines.
+    let out = detail(res).expect("an edit success carries its diff in ui_detail");
     assert!(
         out.starts_with("edited ") && out.contains("(lines 2–3 of 4)"),
         "summary: {out}"
@@ -463,13 +401,18 @@ async fn edit_diff_over_the_cap_still_renders_the_head() {
     let rows: Vec<&str> = read_out.lines().collect();
     let from = rows[0].split('│').next().unwrap().to_string();
     let to = rows[219].split('│').next().unwrap().to_string();
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "big.txt", "edits": [{"from": from, "to": to, "content": "NEW"}]}),
         Some(&mut *reg),
         true,
-    ));
-    assert!(out.starts_with("edited "), "edit failed: {out}");
+    );
+    // #243: the model gets the ack; the capped diff rides the detail channel.
+    assert!(
+        text(res.clone()).starts_with("Successfully edited "),
+        "edit failed: {res:?}"
+    );
+    let out = detail(res).expect("an edit success carries its diff in ui_detail");
     let lines: Vec<&str> = out.lines().collect();
     assert!(
         lines.len() > 201,
@@ -592,7 +535,7 @@ async fn edit_array_form_applies_all_edits() {
     let lines: Vec<&str> = read_out.lines().collect();
     let a0 = lines[0].split('│').next().unwrap().to_string();
     let a2 = lines[2].split('│').next().unwrap().to_string();
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "m.txt", "edits": [
             {"from": a0, "to": a0, "content": "ONE"},
@@ -600,8 +543,15 @@ async fn edit_array_form_applies_all_edits() {
         ]}),
         Some(&mut *reg),
         false,
-    ));
-    assert!(out.starts_with("edited"), "edit failed: {out}");
+    );
+    // #243: the ack counts net change; the diff (in ui_detail) shows both.
+    assert_eq!(
+        text(res.clone()),
+        format!(
+            "Successfully edited {}. Added 2 line(s), removed 2 line(s).",
+            dir.path().join("m.txt").display()
+        )
+    );
     assert_eq!(
         std::fs::read_to_string(dir.path().join("m.txt")).unwrap(),
         "ONE\ntwo\nTHREE\nfour\n"
@@ -629,7 +579,7 @@ async fn edit_overlapping_ranges_demotes_the_colliding_member() {
     let a1 = lines[1].split('│').next().unwrap().to_string();
     // Demotion is the default posture (#207 §5): the non-overlapping member
     // applies, the colliding one is demoted and reported with its reason.
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "o.txt", "edits": [
             {"from": a0, "to": a1, "content": "A"},
@@ -637,9 +587,12 @@ async fn edit_overlapping_ranges_demotes_the_colliding_member() {
         ]}),
         Some(&mut *reg),
         false,
-    ));
+    );
+    // #243: the demotion notice rides the model ack — the model needs it to
+    // retry the skipped member; the diff is UI-only.
+    let out = text(res);
     assert!(
-        out.starts_with("edited"),
+        out.starts_with("Successfully edited "),
         "the valid member applies under demotion: {out}"
     );
     assert!(
@@ -679,7 +632,7 @@ async fn edit_batch_with_one_valid_and_one_invalid_demotes_the_invalid() {
     let a2 = lines[2].split('│').next().unwrap().to_string();
     // One member targets a real anchor; the other targets a stale (unknown)
     // anchor. Demotion applies the valid member and reports the invalid one.
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "d.txt", "edits": [
             {"from": a0, "to": a0, "content": "ONE!"},
@@ -687,8 +640,13 @@ async fn edit_batch_with_one_valid_and_one_invalid_demotes_the_invalid() {
         ]}),
         Some(&mut *reg),
         false,
-    ));
-    assert!(out.starts_with("edited"), "valid member applies: {out}");
+    );
+    // #243: the demotion notice rides the model ack.
+    let out = text(res);
+    assert!(
+        out.starts_with("Successfully edited "),
+        "valid member applies: {out}"
+    );
     assert!(
         out.contains("[H_DEMOTED]") && out.contains("E_STALE_ANCHOR"),
         "invalid member is demoted with a stale-anchor reason: {out}"
@@ -722,14 +680,19 @@ async fn edit_anchored_content_is_stripped_in_lenient_mode() {
     let to = lines[1].split('│').next().unwrap().to_string();
     // The model pasted the read output verbatim (HASH│ prefixes on every line).
     let anchored = format!("{from}│one\n{to}│two");
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": anchored}]}),
         Some(&mut *reg),
         false,
-    ));
+    );
+    // #243: the lenient-fix warning rides the model ack.
+    let out = text(res);
     // Lenient (the default): the prefixes are stripped, the edit applies.
-    assert!(out.starts_with("edited"), "lenient edit failed: {out}");
+    assert!(
+        out.starts_with("Successfully edited "),
+        "lenient edit failed: {out}"
+    );
     assert!(out.contains("W_BARE_HASH_PREFIX"), "{out}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
@@ -794,13 +757,18 @@ async fn reversed_range_is_swapped_in_lenient_mode() {
     let a0 = lines[0].split('│').next().unwrap().to_string();
     let a1 = lines[1].split('│').next().unwrap().to_string();
     // from after to: lenient swaps the range, with a warning.
-    let out = text(edit(
+    let res = edit(
         dir.path(),
         &json!({"path": "r.txt", "edits": [{"from": a1, "to": a0, "content": "TWO\nONE"}]}),
         Some(&mut *reg),
         false,
-    ));
-    assert!(out.starts_with("edited"), "lenient swap failed: {out}");
+    );
+    // #243: the lenient-fix warning rides the model ack.
+    let out = text(res);
+    assert!(
+        out.starts_with("Successfully edited "),
+        "lenient swap failed: {out}"
+    );
     assert!(out.contains("W_RANGE_REVERSED"), "{out}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("r.txt")).unwrap(),
@@ -954,4 +922,38 @@ async fn an_edit_error_is_never_an_empty_result() {
         "a missing-field failure must carry its message"
     );
     assert!(out.contains("requires"), "{out}");
+}
+
+#[tokio::test]
+async fn write_ui_detail_carries_the_written_content() {
+    // #243: the model gets the #184 ack; the echoed content is UI-only.
+    let dir = tempfile::tempdir().unwrap();
+    let res = write(
+        dir.path(),
+        &json!({"path": "w.txt", "content": "alpha\nbeta\n"}),
+        None,
+    )
+    .await;
+    assert_eq!(
+        text(res.clone()),
+        format!(
+            "wrote {} (11 bytes, 3 lines)",
+            dir.path().join("w.txt").display()
+        )
+    );
+    assert_eq!(detail(res).as_deref(), Some("alpha\nbeta\n"));
+}
+
+#[tokio::test]
+async fn bash_and_errors_carry_no_ui_detail() {
+    // #243 negative: a non-split result keeps the channel absent — the wire
+    // line stays byte-identical to a pre-#243 record.
+    let dir = tempfile::tempdir().unwrap();
+    let res = bash(dir.path(), &json!({"command": "echo hi"})).await;
+    assert!(res.ui_detail.is_none(), "bash must not split: {res:?}");
+    let err = write(dir.path(), &json!({"content": "x"}), None).await;
+    assert!(
+        err.ui_detail.is_none(),
+        "an error is single-channel: {err:?}"
+    );
 }

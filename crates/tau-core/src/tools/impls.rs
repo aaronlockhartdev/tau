@@ -1,6 +1,5 @@
 use super::{Path, PathBuf, ToolOutput, ToolResult, hashline};
 use base64::Engine;
-use std::fmt::Write as _;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -72,7 +71,9 @@ pub(super) fn read(
         Ok(o) => o,
         Err(e) => return ToolResult::err(e.into()),
     };
-    ToolResult::ok(outcome.text.into())
+    // #243: the GUI card renders the anchor-stripped twin (the anchors are a
+    // model↔tool protocol, not for a human); the model gets the anchored page.
+    ToolResult::ok_with_detail(outcome.text.into(), outcome.stripped.into())
 }
 
 /// The text path of `read`: allocate the file's anchors (the registry
@@ -127,10 +128,13 @@ fn read_page(
     };
 
     if start_line > total {
+        let hint = format!(
+            "Offset {start_line} is beyond end of file ({total} lines total). Use offset=1 to read from the start, or offset={total} to read the last line."
+        );
+        // A hint-only page has no anchored rows: the card shows the same text.
         return Ok(ReadPage {
-            text: format!(
-                "Offset {start_line} is beyond end of file ({total} lines total). Use offset=1 to read from the start, or offset={total} to read the last line."
-            ),
+            text: hint.clone(),
+            stripped: hint,
         });
     }
 
@@ -139,24 +143,54 @@ fn read_page(
     let selected = &rows[start_line - 1..end_line];
     let shown_lines = &lines[start_line - 1..];
 
-    let (out, served, oversized, out_bytes) = render_page(path, selected, shown_lines, start_line);
-    let shown = out.len();
+    let page = render_page(path, selected, shown_lines, start_line);
+    let shown = page.out.len();
     if let Some(reg) = registry {
-        let rows_to_serve = served.clone();
-        reg.serve(path, &rows_to_serve);
+        reg.serve(path, &page.served);
     }
 
+    // #243: the anchored rows and their stripped twin are built together.
+    let reclaim = reclaim.or(None);
+    Ok(assemble_page_text(page, shown, start_line, total, reclaim))
+}
+
+/// The rendered page's two texts (#243): the model-facing anchored rows plus
+/// hints, and the anchor-stripped twin the GUI card renders. The stripped rows
+/// arrive pre-stripped from [`render_page`] (built row-by-row, where the anchor
+/// and content are already separate); this joins them and appends the same
+/// truncation/oversized/reclaim hints to both, so the card and the model's page
+/// never drift.
+fn assemble_page_text(
+    page: PageRender,
+    shown: usize,
+    start_line: usize,
+    total: usize,
+    reclaim: Option<String>,
+) -> ReadPage {
+    let PageRender {
+        out,
+        stripped,
+        served,
+        oversized,
+        out_bytes,
+    } = page;
     let mut text = out.join("\n");
+    let mut stripped = stripped.join("\n");
     let end_display = start_line + shown.saturating_sub(1);
     if shown == 0 {
         // The byte cap cut the page before any row fit.
-        let _ = write!(text, "\n… truncated (output cap 1 MiB)");
+        let hint = "\n… truncated (output cap 1 MiB)";
+        text.push_str(hint);
+        stripped.push_str(hint);
     } else if end_display < total {
         let last_anchor = served.last().map(|(h, _)| h.as_str()).unwrap_or_default();
-        let _ = write!(
-            text,
-            "\n… truncated (showing lines {start_line}–{end_display} of {total} — {out_bytes} bytes). Use offset={last_anchor} to continue.",
+        let hint = format!(
+            "\n… truncated (showing lines {start_line}–{end_display} of {total} — {out_bytes} bytes). Use offset={last_anchor} to continue."
         );
+        text.push_str(&hint);
+        // The hint's next-page offset is the anchor — meaningless to a human,
+        // but the line-count context is not: the stripped twin keeps it as-is.
+        stripped.push_str(&hint);
     }
     if !oversized.is_empty() {
         let listed: Vec<String> = oversized
@@ -164,23 +198,31 @@ fn read_page(
             .take(10)
             .map(std::string::ToString::to_string)
             .collect();
-        let _ = write!(
-            text,
+        let hint = format!(
             "\n[{} oversized line(s) over 100 KiB not shown: lines {}]",
             oversized.len(),
             listed.join(", ")
         );
+        text.push_str(&hint);
+        stripped.push_str(&hint);
     }
     let reclaim = reclaim.or(None);
     if let Some(w) = reclaim {
         text = format!("{w}\n{text}");
+        stripped = format!("{w}\n{stripped}");
     }
-    Ok(ReadPage { text })
+    ReadPage { text, stripped }
 }
-/// The output of a rendered read page: the model-facing rows, the served
-/// (anchor, checksum) baseline, the oversized line numbers, and the byte
-/// count of the rendered output.
-type PageRender = (Vec<String>, Vec<(String, String)>, Vec<usize>, usize);
+/// The output of a rendered read page: the model-facing anchored rows plus
+/// their anchor-stripped twin (#243), the served (anchor, checksum) baseline,
+/// the oversized line numbers, and the byte count of the rendered output.
+struct PageRender {
+    out: Vec<String>,
+    stripped: Vec<String>,
+    served: Vec<(String, String)>,
+    oversized: Vec<usize>,
+    out_bytes: usize,
+}
 
 /// Render a page of `rows` (the file's anchors for the selected range) into
 /// the model-facing lines: `HASH│content` per row, in file order. Rows over
@@ -196,6 +238,7 @@ fn render_page(
     start_line: usize,
 ) -> PageRender {
     let mut out: Vec<String> = Vec::new();
+    let mut stripped: Vec<String> = Vec::new();
     let mut served: Vec<(String, String)> = Vec::new();
     let mut oversized: Vec<usize> = Vec::new();
     let mut out_bytes = 0usize;
@@ -211,14 +254,28 @@ fn render_page(
         }
         out_bytes += row.len();
         out.push(row);
+        // #243: the anchor-stripped twin, built row-by-row as the anchored
+        // rows are (the card's `ui_detail` renders these; the model's text
+        // joins `out`). The anchor and separator are never in `line`.
+        stripped.push(line.clone());
         served.push((hash.clone(), hashline::line_checksum(line)));
     }
-    (out, served, oversized, out_bytes)
+    PageRender {
+        out,
+        stripped,
+        served,
+        oversized,
+        out_bytes,
+    }
 }
-/// A `read` page: the model-facing text.
+/// A `read` page: the model-facing text (hash-anchored rows + hints) and its
+/// anchor-stripped twin for the GUI card (the `ui_detail` channel, #243):
+/// the same rows without the `HASH│` prefixes, the same hints — the anchors
+/// are a model↔tool protocol, not information for a human.
 #[derive(Debug)]
 pub(super) struct ReadPage {
     pub text: String,
+    pub stripped: String,
 }
 
 /// The image type by magic bytes (#34): the extension is not authoritative —
@@ -252,10 +309,12 @@ pub(super) async fn write(
     let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
         return ToolResult::err("write: missing \"content\"".into());
     };
-    // Issue #197: a large write streams its content in-flight (the final
-    // result — the confirmation line — replaces it on completion).
+    // Issue #197: a large write streams its content in-flight. Since #243
+    // the final result is the ack only, so the in-flight content rides the
+    // `ui_detail` channel — the live card and the final card render from the
+    // same place the model never sees.
     if let Some(p) = progress {
-        p.report(content);
+        p.report_detail(content);
     }
     let path = resolve(cwd, path);
     if let Some(parent) = path.parent()
@@ -270,7 +329,8 @@ pub(super) async fn write(
             } else {
                 content.matches('\n').count() + 1
             };
-            ToolResult::ok(
+            // #184's ack to the model; #243: the echoed content is UI-only.
+            ToolResult::ok_with_detail(
                 format!(
                     "wrote {} ({} bytes, {} lines)",
                     path.display(),
@@ -278,6 +338,7 @@ pub(super) async fn write(
                     lines
                 )
                 .into(),
+                content.to_owned().into(),
             )
         }
         Err(e) => ToolResult::err(format!("write: {e}").into()),
@@ -409,6 +470,7 @@ fn parse_edit_args(args: &serde_json::Value) -> Result<(String, Vec<hashline::Ed
     Ok((path.to_owned(), edits))
 }
 
+#[allow(clippy::too_many_lines)] // the #243 ack + detail tail pushed it 3 over
 pub(super) fn edit(
     cwd: &Path,
     args: &serde_json::Value,
@@ -535,7 +597,11 @@ pub(super) fn edit(
         reg.serve(&path_str, &served_rows);
     }
 
-    ToolResult::ok(super::edit_diff::diff_output(&path_str, &original, &planned).into())
+    // #243: the model gets the one-line ack; the bounded diff rides the GUI-only channel.
+    ToolResult::ok_with_detail(
+        super::edit_diff::model_ack(&path_str, &original, &planned).into(),
+        super::edit_diff::diff_output(&path_str, &original, &planned).into(),
+    )
 }
 /// A sane PATH for a bash child (#172): the inherited PATH (if any) plus the
 /// common per-user tool dirs, de-duplicated. The app is launched from a GUI,
@@ -693,6 +759,7 @@ pub(super) async fn bash_inner(
     }
     ToolResult {
         output: out.into(),
+        ui_detail: None,
         ok: code == 0,
         cancelled: false,
     }

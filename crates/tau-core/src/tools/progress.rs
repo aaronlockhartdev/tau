@@ -35,6 +35,10 @@ pub struct ToolProgress {
     args: serde_json::Value,
     // The in-flight output accumulated so far (the growing Text).
     output: Mutex<String>,
+    // The in-flight ui_detail (#243): the split tools stream their card
+    // content here, so the live card and the final card render from the
+    // same channel. Never touches `output`.
+    detail: Mutex<String>,
     // The display-frame last-emitted clock (frame-aligned coalescing).
     last: Mutex<Option<Instant>>,
 }
@@ -59,6 +63,7 @@ impl ToolProgress {
             name,
             args,
             output: Mutex::new(String::new()),
+            detail: Mutex::new(String::new()),
             last: Mutex::new(None),
         }
     }
@@ -96,6 +101,51 @@ impl ToolProgress {
                 name: self.name.clone(),
                 args: self.args.clone(),
                 output: ToolOutput::Text(snapshot),
+                ui_detail: None,
+                status: None,
+            }
+            .to_value(),
+            blob: None,
+            first_kept_entry_id: None,
+            crc: None,
+        };
+        hook(&entry);
+    }
+
+    /// Fold a chunk of in-flight GUI detail in and re-emit the growing entry,
+    /// at most once per display frame — the `ui_detail` twin of [`report`]
+    /// (#243): the final result wins, and the detail never rides `output`.
+    pub fn report_detail(&self, chunk: &str) {
+        if chunk.is_empty() || self.upsert.is_none() {
+            return;
+        }
+        let now = Instant::now();
+        {
+            let mut last = self.last.lock().expect("tool progress clock: no panic");
+            if last.is_some_and(|t| now.duration_since(t) < SNAPSHOT_INTERVAL) {
+                return;
+            }
+            *last = Some(now);
+        }
+        let snapshot = {
+            let mut out = self.detail.lock().expect("tool progress detail: no panic");
+            out.push_str(chunk);
+            out.clone()
+        };
+        let Some(hook) = &self.upsert else {
+            return;
+        };
+        let entry = Entry {
+            id: self.id.clone(),
+            parent: self.parent.clone(),
+            kind: KIND_TOOL.to_owned(),
+            timestamp: self.timestamp,
+            payload: tau_protocol::payload::ToolPayload {
+                call_id: self.call_id.clone(),
+                name: self.name.clone(),
+                args: self.args.clone(),
+                output: ToolOutput::Text(String::new()),
+                ui_detail: Some(ToolOutput::Text(snapshot)),
                 status: None,
             }
             .to_value(),

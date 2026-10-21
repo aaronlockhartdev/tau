@@ -2,6 +2,11 @@ use super::*;
 use crate::agent::{CallOutput, Entry, FunctionCall, InputEntry, KIND_TOOL, KIND_USER};
 
 fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
+    tool_entry_with_detail(id, call_id, output, None)
+}
+
+/// A tool entry with a GUI-only detail channel (#243).
+fn tool_entry_with_detail(id: &str, call_id: &str, output: &str, ui_detail: Option<&str>) -> Entry {
     Entry {
         id: id.to_owned(),
         parent: None,
@@ -9,9 +14,10 @@ fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
         kind: KIND_TOOL.to_owned(),
         payload: tau_protocol::payload::ToolPayload {
             call_id: call_id.to_owned(),
-            name: "bash".to_owned(),
+            name: "write".to_owned(),
             args: Value::Null,
             output: tau_protocol::payload::ToolOutput::Text(output.to_owned()),
+            ui_detail: ui_detail.map(|d| tau_protocol::payload::ToolOutput::Text(d.to_owned())),
             status: None,
         }
         .to_value(),
@@ -219,5 +225,32 @@ fn non_child_session_user_and_bare_are_untouched() {
             "Sub-agent user: from the gui".to_owned(),
             "plain".to_owned()
         ]
+    );
+}
+
+#[test]
+fn ui_detail_never_enters_the_assembled_model_context() {
+    // #243's structural guarantee: the GUI-only detail channel is on the wire
+    // entry, and the context assembly reads only `output` — the diff/content
+    // the model already authored can never leak back into its context.
+    let entries = vec![tool_entry_with_detail(
+        "e1",
+        "call-1",
+        "wrote /tmp/a.txt (11 bytes, 3 lines)",
+        Some("alpha\nbeta\n"),
+    )];
+    // Positive: the detail reaches the wire entry (the GUI's channel).
+    assert_eq!(entries[0].payload["ui_detail"], "alpha\nbeta\n");
+    // Negative: the assembled input item carries only the model-facing output.
+    let items = input_items(&entries, None);
+    assert!(
+        matches!(
+            &items[..],
+            [InputEntry::CallOutput(o)]
+                if o.call_id == "call-1"
+                    && matches!(&o.output, CallOutput::Text(t)
+                        if t == "wrote /tmp/a.txt (11 bytes, 3 lines)")
+        ),
+        "ui_detail leaked into the model context: {items:?}"
     );
 }
