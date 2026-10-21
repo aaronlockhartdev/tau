@@ -274,47 +274,6 @@ async fn bash_stop_interrupts_a_running_command() {
     );
     setter.await.unwrap();
 }
-
-#[tokio::test]
-async fn read_returns_an_image_block_for_a_jpeg() {
-    let dir = tempfile::tempdir().unwrap();
-    let jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF";
-    std::fs::write(dir.path().join("shot.jpg"), jpeg).unwrap();
-    match read(dir.path(), &json!({"path": "shot.jpg"}), None, None).output {
-        ToolOutput::Image(img) => assert_eq!(img.media_type, "image/jpeg"),
-        ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
-    }
-}
-
-#[tokio::test]
-async fn an_oversized_image_is_refused_loudly() {
-    let dir = tempfile::tempdir().unwrap();
-    // A PNG past the cap: the 8-byte signature plus 200 padding bytes.
-    let mut png = b"\x89PNG\r\n\x1a\n".to_vec();
-    png.resize(png.len() + 200, 0);
-    std::fs::write(dir.path().join("big.png"), &png).unwrap();
-    // Over the cap: a loud text refusal, not an image block.
-    let out = text(read(
-        dir.path(),
-        &json!({"path": "big.png"}),
-        Some(100),
-        None,
-    ));
-    assert!(out.contains("over the 100-byte cap"), "{out}");
-    // At the cap: the image block comes through.
-    match read(
-        dir.path(),
-        &json!({"path": "big.png"}),
-        Some(u64::try_from(png.len()).expect("fixture size, well under u64::MAX")),
-        None,
-    )
-    .output
-    {
-        ToolOutput::Image(img) => assert_eq!(img.media_type, "image/png"),
-        ToolOutput::Text(t) => panic!("expected an image block, got text: {t}"),
-    }
-}
-
 #[tokio::test]
 async fn edit_output_is_a_bounded_before_after_diff() {
     let dir = tempfile::tempdir().unwrap();

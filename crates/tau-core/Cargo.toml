@@ -29,6 +29,8 @@ gix = { workspace = true }
 jiff = "0.2"
 similar = { workspace = true }
 tau-protocol = { path = "../tau-protocol" }
+# Image detection + conversion for `read` (#252): the canonical wire format is JPEG q85.
+image = "0.25"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -323,6 +323,8 @@ pub mod surface;
 #[cfg(test)]
 pub(crate) mod tests;
 #[cfg(test)]
+mod tests_image;
+#[cfg(test)]
 mod tests_read;
 #[cfg(test)]
 mod tests_surface;
