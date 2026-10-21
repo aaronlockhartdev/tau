@@ -395,6 +395,7 @@ pub(crate) fn derive_turn(
             .then(|| (session.to_owned(), config.cache.retention)),
         context_window: def.and_then(|d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
+        image_max_pixels: Some(config.limits.image.max_pixels),
     }
 }
 

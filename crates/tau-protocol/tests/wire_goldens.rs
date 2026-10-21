@@ -304,6 +304,7 @@ mod payloads {
                 kind: "image".into(),
                 media_type: "image/png".into(),
                 data_base64: "AAAA".into(),
+                note: None,
             }),
             ui_detail: None,
             status: None,

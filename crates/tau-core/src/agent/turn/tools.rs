@@ -171,7 +171,7 @@ impl AgentSession {
             // routes re-lock this session's `inner` (a child notify
             // records a state entry; a spawn reads the parent's OM
             // record), and the lock is not reentrant.
-            let (sup, link, cwd, image_max) = {
+            let (sup, link, cwd, image_max, image_pixels) = {
                 let inner = self
                     .inner
                     .lock()
@@ -181,6 +181,7 @@ impl AgentSession {
                     inner.child.clone(),
                     inner.cwd.clone(),
                     inner.turn.image_max_bytes,
+                    inner.turn.image_max_pixels,
                 )
             };
             // ticket #70: an unparseable call is a parse error, never a silent
@@ -191,6 +192,7 @@ impl AgentSession {
                         session: self,
                         cwd: &cwd,
                         image_max_bytes: image_max,
+                        image_max_pixels: image_pixels,
                         progress: Some(progress.as_ref()),
                         supervisor: sup,
                         child: link,

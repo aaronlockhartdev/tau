@@ -46,6 +46,7 @@ async fn write_then_read_roundtrip_with_anchors() {
         dir.path(),
         &json!({"path": "a.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let rows: Vec<&str> = out.lines().collect();
@@ -106,6 +107,7 @@ async fn crlf_files_preserve_their_line_endings() {
         dir.path(),
         &json!({"path": "w.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     // The read normalizes for the model (no \r in the anchor rows).
@@ -161,6 +163,7 @@ async fn edit_output_is_bounded_to_the_changed_region() {
         dir.path(),
         &json!({"path": "big.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -198,6 +201,7 @@ async fn edit_pure_deletion_reports_the_removed_line_not_no_change() {
     let read_out = text(read(
         dir.path(),
         &json!({"path": "del.txt"}),
+        None,
         None,
         Some(&mut *reg),
     ));
@@ -288,6 +292,7 @@ async fn edit_output_is_a_bounded_before_after_diff() {
         dir.path(),
         &json!({"path": "d.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -355,6 +360,7 @@ async fn edit_diff_over_the_cap_still_renders_the_head() {
         dir.path(),
         &json!({"path": "big.txt", "offset": "1", "limit": 220}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let rows: Vec<&str> = read_out.lines().collect();
@@ -411,10 +417,10 @@ async fn core_tools_carry_a_typed_verdict() {
     let err = bash(cwd, &json!({"command": "false"})).await;
     assert_eq!(err.status(), "error");
     // read: a missing file is an error; a present one is ok.
-    let err = read(cwd, &json!({"path": "missing.txt"}), None, None);
+    let err = read(cwd, &json!({"path": "missing.txt"}), None, None, None);
     assert_eq!(err.status(), "error");
     std::fs::write(cwd.join("a.txt"), "hi\n").unwrap();
-    let ok = read(cwd, &json!({"path": "a.txt"}), None, None);
+    let ok = read(cwd, &json!({"path": "a.txt"}), None, None, None);
     assert_eq!(ok.status(), "ok");
     // write: a clean write is ok.
     let ok = write(cwd, &json!({"path": "b.txt", "content": "x"}), None).await;
@@ -489,6 +495,7 @@ async fn edit_array_form_applies_all_edits() {
         dir.path(),
         &json!({"path": "m.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -530,6 +537,7 @@ async fn edit_overlapping_ranges_demotes_the_colliding_member() {
     let read_out = text(read(
         dir.path(),
         &json!({"path": "o.txt"}),
+        None,
         None,
         Some(&mut *reg),
     ));
@@ -584,6 +592,7 @@ async fn edit_batch_with_one_valid_and_one_invalid_demotes_the_invalid() {
         dir.path(),
         &json!({"path": "d.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -632,6 +641,7 @@ async fn edit_anchored_content_is_stripped_in_lenient_mode() {
         dir.path(),
         &json!({"path": "a.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -673,6 +683,7 @@ async fn edit_anchored_content_is_rejected_in_strict_mode() {
         dir.path(),
         &json!({"path": "a.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -709,6 +720,7 @@ async fn reversed_range_is_swapped_in_lenient_mode() {
     let read_out = text(read(
         dir.path(),
         &json!({"path": "r.txt"}),
+        None,
         None,
         Some(&mut *reg),
     ));
@@ -749,6 +761,7 @@ async fn reversed_range_is_rejected_in_strict_mode() {
         dir.path(),
         &json!({"path": "r.txt"}),
         None,
+        None,
         Some(&mut *reg),
     ));
     let lines: Vec<&str> = read_out.lines().collect();
@@ -785,6 +798,7 @@ async fn range_stale_shows_fresh_anchors_and_retry_succeeds() {
     let read_out = text(read(
         dir.path(),
         &json!({"path": "s.txt"}),
+        None,
         None,
         Some(&mut *reg),
     ));
@@ -846,6 +860,7 @@ async fn an_edit_error_is_never_an_empty_result() {
     let read_out = text(read(
         dir.path(),
         &json!({"path": "e.txt"}),
+        None,
         None,
         Some(&mut *reg),
     ));

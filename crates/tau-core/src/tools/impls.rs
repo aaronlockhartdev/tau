@@ -3,6 +3,7 @@ use base64::Engine;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::info;
 
 fn resolve(cwd: &Path, path: &str) -> PathBuf {
     let p = Path::new(path);
@@ -25,6 +26,7 @@ pub(super) fn read(
     cwd: &Path,
     args: &serde_json::Value,
     image_max_bytes: Option<u64>,
+    image_max_pixels: Option<u64>,
     registry: Option<&mut hashline::registry::Registry>,
 ) -> ToolResult {
     let Some(path) = args.get("path").and_then(|v| v.as_str()) else {
@@ -56,11 +58,27 @@ pub(super) fn read(
                     .into(),
                 );
             }
+            // #257: decode-area budget (pi parity) — over it, downscale and
+            // tell the model how to map coordinates back to the original.
+            let (orig_w, orig_h) = (img.width(), img.height());
+            let (img, note) = downscale_to_budget(&img, image_max_pixels);
             let jpeg = encode_jpeg_q85(&img);
+            // One line per image read at the encode site: the dimensions the
+            // model sees, and the encoded payload size in base64 bytes.
+            info!(
+                "image read encoded path={} original={}x{} displayed={}x{} b64_bytes={}",
+                path.display(),
+                orig_w,
+                orig_h,
+                img.width(),
+                img.height(),
+                jpeg.len(),
+            );
             return ToolResult::ok(ToolOutput::Image(tau_protocol::payload::ImageBlock {
                 kind: "image".into(),
                 media_type: "image/jpeg".into(),
                 data_base64: base64::engine::general_purpose::STANDARD.encode(&jpeg),
+                note,
             }));
         }
         Err(_) => {
@@ -326,6 +344,44 @@ fn looks_like_image(bytes: &[u8]) -> bool {
             | [b'I', b'I', 0x2A, 0x00, _, _, ..]
             | [b'M', b'M', 0x00, 0x2A, _, _, ..]
             | [b'B', b'M', _, _, ..]
+    )
+}
+
+/// #257: shrink to the decode-area budget when over it. The scale is floored
+/// so the result stays under `max_pixels`; a note maps wire coordinates back
+/// to the original (pi's format). The casts are safe at image scale: areas
+/// and dimensions are far under f64's exact-integer range, and the f64→u32
+/// floor stays within the original image's dimensions.
+#[allow(
+    clippy::as_conversions,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_wrap
+)]
+fn downscale_to_budget(
+    img: &image::DynamicImage,
+    max_pixels: Option<u64>,
+) -> (image::DynamicImage, Option<String>) {
+    let budget = max_pixels.unwrap_or(crate::config::ImageLimits::default().max_pixels);
+    let area = u64::from(img.width()) * u64::from(img.height());
+    if area <= budget {
+        return (img.clone(), None);
+    }
+    let scale = (budget as f64 / area as f64).sqrt();
+    let w = (f64::from(img.width()) * scale).floor().max(1.0) as u32;
+    let h = (f64::from(img.height()) * scale).floor().max(1.0) as u32;
+    let note = format!(
+        "[Image: original {}x{}, displayed at {}x{}. Multiply coordinates by {:.2} to map to original image.]",
+        img.width(),
+        img.height(),
+        w,
+        h,
+        f64::from(img.width()) / f64::from(w)
+    );
+    (
+        img.resize(w, h, image::imageops::FilterType::Lanczos3),
+        Some(note),
     )
 }
 

@@ -25,6 +25,7 @@ fn absent_files_yield_defaults() {
     assert_eq!(config.thinking.level, ThinkingLevel::Off);
     assert_eq!(config.cache.retention, CacheRetention::None);
     assert_eq!(config.limits.image.jpeg_quality, 80);
+    assert_eq!(config.limits.image.max_pixels, 2_097_152);
     assert_eq!(config.limits.max_request_bytes, None);
     // No `[gates]` section: no gate (enforce-always — presence is the switch).
     assert!(config.gates.is_none());
@@ -204,6 +205,7 @@ max_request_bytes = 8388608
 max_width = 1024
 max_height = 1024
 max_bytes = 5242880
+max_pixels = 1000000
 jpeg_quality = 60
 "#;
     let project = r#"
@@ -234,6 +236,7 @@ retention = "short"
     assert_eq!(config.limits.max_request_bytes, Some(8_388_608));
     assert_eq!(config.limits.image.max_width, 1024);
     assert_eq!(config.limits.image.jpeg_quality, 60);
+    assert_eq!(config.limits.image.max_pixels, 1_000_000);
 }
 
 #[test]

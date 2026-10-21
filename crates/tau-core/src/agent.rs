@@ -84,6 +84,10 @@ pub struct TurnConfig {
     /// The `limits.image.max_bytes` cap on a `read` of an image file (#36);
     /// `None` (the default) is uncapped.
     pub image_max_bytes: Option<u64>,
+    /// The `limits.image.max_pixels` decode-area budget for a `read` of an
+    /// image file (#257): above it, the image is downscaled, not refused.
+    /// `None` falls back to the default budget.
+    pub image_max_pixels: Option<u64>,
 }
 
 #[derive(Clone)]

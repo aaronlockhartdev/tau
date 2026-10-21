@@ -45,11 +45,11 @@ fn function_call_output_carries_text_and_image_shapes() {
     let image: serde_json::Value = serde_json::to_value(&FunctionCallOutputInput {
         kind: "function_call_output",
         call_id: "c2".into(),
-        output: CallOutput::Image(vec![InputImagePart {
+        output: CallOutput::Image(vec![InputCallPart::Image(InputImagePart {
             kind: "input_image",
             image_url: "data:image/png;base64,AAAA".into(),
             detail: "auto",
-        }]),
+        })]),
     })
     .unwrap();
     assert_eq!(image["output"][0]["type"], "input_image");
@@ -72,11 +72,13 @@ fn call_output_from_payload_maps_the_stored_shapes() {
     });
     assert_eq!(
         CallOutput::from_payload(&block),
-        Some(CallOutput::Image(vec![InputImagePart {
-            kind: "input_image",
-            image_url: "data:image/png;base64,AAAA".into(),
-            detail: "auto",
-        }]))
+        Some(CallOutput::Image(vec![InputCallPart::Image(
+            InputImagePart {
+                kind: "input_image",
+                image_url: "data:image/png;base64,AAAA".into(),
+                detail: "auto",
+            }
+        )]))
     );
     assert_eq!(
         CallOutput::from_payload(&serde_json::json!("plain")),
@@ -85,6 +87,25 @@ fn call_output_from_payload_maps_the_stored_shapes() {
     assert_eq!(
         CallOutput::from_payload(&serde_json::json!({"other": 1})),
         None
+    );
+    // #257: a noted image block rides as a parts array — the note first as an
+    // `input_text` part, then the image.
+    let noted = serde_json::json!({
+        "type": "image",
+        "media_type": "image/jpeg",
+        "data_base64": "BBBB",
+        "note": "[Image: original 2048x2048, displayed at 1448x1448.]"
+    });
+    assert_eq!(
+        CallOutput::from_payload(&noted),
+        Some(CallOutput::Image(vec![
+            InputCallPart::Text("[Image: original 2048x2048, displayed at 1448x1448.]".into()),
+            InputCallPart::Image(InputImagePart {
+                kind: "input_image",
+                image_url: "data:image/jpeg;base64,BBBB".into(),
+                detail: "auto",
+            }),
+        ]))
     );
 }
 
