@@ -101,6 +101,9 @@ export function decodeEntry(v: ViewEntry): Entry {
         call_id: typeof p.call_id === 'string' ? p.call_id : undefined,
         args: a && typeof a === 'object' ? (a as Record<string, unknown>) : undefined,
         output: typeof p.output === 'string' ? p.output : undefined,
+        // GUI-only detail (#243): a wire-absent field (a tool that does not
+        // split, or a pre-#243 session line) stays undefined.
+        ui_detail: typeof p.ui_detail === 'string' ? p.ui_detail : undefined,
         status: decodeToolStatus(p),
         // The sidecar's bytes are gone (blob deleted from disk): the record is
         // what it is — say so, never fake a still-running call.

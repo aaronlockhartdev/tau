@@ -29,9 +29,16 @@ pub use tau_protocol::payload::ToolOutput;
 /// was interrupted by a user stop while in flight (ticket #222): it is
 /// neither an ok nor a plain error — the transcript shows the cancellation
 /// as such.
+///
+/// `ui_detail` is the GUI-only channel (spec §5.4, ADR-0012): a split result
+/// carries it (the edit's diff, the write's content, the read's anchor-
+/// stripped body) while `output` keeps what the model needs. Context assembly
+/// structurally reads only `output`, so the detail can never leak into the
+/// model's context. Errors are single-channel: `ui_detail` stays `None`.
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub output: ToolOutput,
+    pub ui_detail: Option<ToolOutput>,
     pub ok: bool,
     pub cancelled: bool,
 }
@@ -41,6 +48,19 @@ impl ToolResult {
     pub fn ok(output: ToolOutput) -> Self {
         Self {
             output,
+            ui_detail: None,
+            ok: true,
+            cancelled: false,
+        }
+    }
+
+    /// A success whose GUI card renders a split channel (#243): `detail`
+    /// rides the wire entry for the card; the model sees only `output`.
+    #[must_use]
+    pub fn ok_with_detail(output: ToolOutput, detail: ToolOutput) -> Self {
+        Self {
+            output,
+            ui_detail: Some(detail),
             ok: true,
             cancelled: false,
         }
@@ -50,6 +70,7 @@ impl ToolResult {
     pub fn err(output: ToolOutput) -> Self {
         Self {
             output,
+            ui_detail: None,
             ok: false,
             cancelled: false,
         }
@@ -61,6 +82,7 @@ impl ToolResult {
     pub fn cancelled(output: ToolOutput) -> Self {
         Self {
             output,
+            ui_detail: None,
             ok: false,
             cancelled: true,
         }
@@ -299,6 +321,8 @@ mod impls;
 mod progress;
 pub mod surface;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
+#[cfg(test)]
+mod tests_read;
 #[cfg(test)]
 mod tests_surface;

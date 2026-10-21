@@ -127,13 +127,13 @@ describe('resolveBlobs (om)', () => {
 });
 
 describe('decodeEntry (tool status, B5)', () => {
-  function toolView(status: unknown, output: unknown): ViewEntry {
+  function toolView(status: unknown, output: unknown, ui_detail: unknown = undefined): ViewEntry {
     return {
       id: 't1',
       parent: null,
       kind: 'tool',
       timestamp: 1,
-      payload: { name: 'read', output, status },
+      payload: { name: 'read', output, status, ui_detail },
       blob: null,
       first_kept: null
     };
@@ -144,6 +144,17 @@ describe('decodeEntry (tool status, B5)', () => {
     // "read: ..." is an error by the heuristic, but the explicit ok wins.
     expect(decoded(toolView('ok', 'read: cannot read /x'))).toBe('ok');
     expect(decoded(toolView('error', 'file contents'))).toBe('error');
+  });
+
+  it('decodes the GUI-only ui_detail channel (#243)', () => {
+    const withDetail = decodeEntry(
+      toolView('ok', 'wrote a.txt (7 bytes, 2 lines)', 'alpha\nbeta')
+    ) as { ui_detail?: string; output?: string };
+    expect(withDetail.ui_detail).toBe('alpha\nbeta');
+    expect(withDetail.output).toBe('wrote a.txt (7 bytes, 2 lines)');
+    // A wire-absent field (a non-split tool, or a pre-#243 line) stays undefined.
+    const bare = decodeEntry(toolView('ok', 'exit 0')) as { ui_detail?: string };
+    expect(bare.ui_detail).toBeUndefined();
   });
 
   it('honors an explicit cancelled status (a user stop, #222)', () => {

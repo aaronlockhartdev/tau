@@ -1,6 +1,7 @@
-//! The bounded before/after diff in an `edit` success output (item 4): the
-//! model sees the changed region — removed lines, added lines with their
-//! fresh anchors, a little unchanged context — never the whole file.
+//! The bounded before/after diff in an `edit` result (item 4): the changed
+//! region — removed lines, added lines with their fresh anchors, a little
+//! unchanged context — never the whole file. Since #243 it rides the GUI-only
+//! `ui_detail` channel; the model sees [`model_ack`] instead.
 
 use std::fmt::Write as _;
 
@@ -75,6 +76,33 @@ pub(super) fn diff_output(path: &str, original: &str, planned: &Planned) -> Stri
     if let Some(n) = notice {
         out.push('\n');
         out.push_str(&n);
+    }
+    out
+}
+
+/// The model-facing `edit` ack (spec §5.4, #243): one line of what changed
+/// plus the line counts — the diff itself rides the GUI-only `ui_detail`
+/// channel, never the model's context. Demotion notices stay model-facing:
+/// the model needs them to retry the skipped members.
+pub(super) fn model_ack(path: &str, original: &str, planned: &Planned) -> String {
+    // Added = the new lines that replace no old line: a same-length
+    // replacement reports both sides, a pure deletion reports 0 added.
+    let added = planned.lines.len().saturating_sub(
+        original
+            .lines()
+            .count()
+            .saturating_sub(planned.removed_lines.len()),
+    );
+    let mut out = format!(
+        "Successfully edited {path}. Added {added} line(s), removed {} line(s).",
+        planned.removed_lines.len()
+    );
+    for w in &planned.warnings {
+        out.push('\n');
+        out.push_str(w);
+    }
+    for (i, e) in &planned.demoted {
+        let _ = write!(out, "\n[H_DEMOTED] edits[{i}] not applied: {e}");
     }
     out
 }

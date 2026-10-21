@@ -105,6 +105,21 @@ describe('present', () => {
     });
   });
 
+  it('#243: a split tool card renders ui_detail, not the model-facing output', () => {
+    const s = shells({
+      id: 'e1',
+      kind: 'tool',
+      name: 'write',
+      args: { path: 'a.txt' },
+      status: 'ok',
+      output: 'wrote a.txt (7 bytes, 2 lines)',
+      ui_detail: 'alpha\nbeta\n'
+    })[0];
+    if (s?.kind !== 'tool') throw new Error('expected a tool shell');
+    // The card body is the detail channel; the model ack is not the card text.
+    expect(s.output?.text).toBe('alpha\nbeta\n');
+  });
+
   it('a long read output collapses to the TAIL preview', () => {
     const body = 'HEAD' + 'y'.repeat(300) + 'TAIL';
     const s = shells({

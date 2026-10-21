@@ -61,6 +61,7 @@ impl AgentSession {
                 output: tau_protocol::payload::ToolOutput::Text(
                     "cancelled by user stop".to_owned(),
                 ),
+                ui_detail: None,
                 status: Some("cancelled".to_owned()),
             }
             .to_value(),
@@ -97,6 +98,7 @@ impl AgentSession {
                             "edit: file already edited in this batch; batch it into one edit call"
                                 .into(),
                         ),
+                        ui_detail: None,
                         status: Some("error".to_owned()),
                     }
                     .to_value(),
@@ -139,6 +141,7 @@ impl AgentSession {
                         name: call.name.clone(),
                         args: args.clone(),
                         output: tau_protocol::payload::ToolOutput::Text(String::new()),
+                        ui_detail: None,
                         status: None,
                     }
                     .to_value(),
@@ -209,6 +212,7 @@ impl AgentSession {
                     name: call.name.clone(),
                     args,
                     output: result.output,
+                    ui_detail: result.ui_detail,
                     status: Some(status.to_owned()),
                 }
                 .to_value(),

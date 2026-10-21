@@ -92,11 +92,15 @@ type OmEntry = Extract<Entry, { kind: 'om' }> | AnyEntry;
 
 
 // The user-facing tool output: for bash, the command is prepended to the
-// result, and the combined text is what gets truncated.
+// result, and the combined text is what gets truncated. #243: a split tool
+// (write/edit/read) carries the card's content in `ui_detail` — the model
+// only sees the ack; the card renders the detail, `output` is the fallback.
 function toolOutput(e: ToolEntry): string {
+  const detail = (e as { ui_detail?: string }).ui_detail;
+  const body = detail ?? e.output ?? '';
   const command =
     e.name === 'bash' && typeof e.args?.command === 'string' ? e.args.command : '';
-  return [command, e.output ?? ''].filter(Boolean).join('\n\n');
+  return [command, body].filter(Boolean).join('\n\n');
 }
 
 // The tools whose result the reader cares about at the END (a file's tail,

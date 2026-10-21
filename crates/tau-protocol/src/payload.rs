@@ -64,12 +64,23 @@ pub struct AssistantPayload {
 /// as the dispatcher returned it, and the core's success/failure verdict — the
 /// source of truth for the GUI's status indicator. Absent while the call is in
 /// flight (the call-phase record carries no output yet).
+///
+/// `output` is the model-facing channel (it rides into the assembled context);
+/// `ui_detail` is the GUI-only channel (spec §5.4, ADR-0012): present on the
+/// wire entry for the card, structurally ignored by context assembly. `None`
+/// for every tool that does not split its result (the common case) — a payload
+/// written before the field existed deserializes to `None`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolPayload {
     pub call_id: String,
     pub name: String,
     pub args: Value,
     pub output: ToolOutput,
+    /// GUI-only result detail (#243): the diff of an `edit`, the written
+    /// content of a `write`, the anchor-stripped body of a `read`. Never
+    /// assembled into the model context. Absent when the tool does not split.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_detail: Option<ToolOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
 }
@@ -239,6 +250,7 @@ mod tests {
             name: "read".into(),
             args: json!({"path": "a.txt"}),
             output: ToolOutput::Text("line".into()),
+            ui_detail: None,
             status: None,
         };
         assert_eq!(text.to_value()["output"], "line");
@@ -252,12 +264,50 @@ mod tests {
                 media_type: "image/png".into(),
                 data_base64: "AAAA".into(),
             }),
+            ui_detail: None,
             status: None,
         };
         assert_eq!(
             image.to_value()["output"],
             json!({"type": "image", "media_type": "image/png", "data_base64": "AAAA"})
         );
+    }
+
+    /// #243: `ui_detail` is wire-optional (a `skip_serializing_if` Option):
+    /// absent when `None`, present when set, and a payload written before the
+    /// field existed deserializes with `None`.
+    #[test]
+    fn ui_detail_wire_contract() {
+        let p = ToolPayload {
+            call_id: "c1".into(),
+            name: "write".into(),
+            args: json!({"path": "a.txt"}),
+            output: ToolOutput::Text("wrote a.txt (7 bytes, 2 lines)".into()),
+            ui_detail: Some(ToolOutput::Text("hello\nworld".into())),
+            status: Some("ok".into()),
+        };
+        let v = p.to_value();
+        assert_eq!(v["ui_detail"], "hello\nworld");
+
+        let bare = ToolPayload {
+            call_id: "c1".into(),
+            name: "bash".into(),
+            args: json!({"command": "ls"}),
+            output: ToolOutput::Text("ok".into()),
+            ui_detail: None,
+            status: None,
+        };
+        assert!(
+            bare.to_value().get("ui_detail").is_none(),
+            "a None ui_detail must stay off the wire line"
+        );
+
+        // A session file line written before the field existed decodes to None.
+        let old: ToolPayload = serde_json::from_str(
+            r#"{"call_id":"c1","name":"edit","args":{},"output":"edited a.txt","status":"ok"}"#,
+        )
+        .unwrap();
+        assert!(old.ui_detail.is_none());
     }
 
     #[test]
