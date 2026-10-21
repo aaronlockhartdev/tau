@@ -296,5 +296,5 @@ pub(crate) fn session_of(file: &Path, workspace: &Path) -> Option<String> {
 }
 
 #[cfg(test)]
-#[path = "plan/tests.rs"]
+#[path = "tests.rs"]
 mod tests;
