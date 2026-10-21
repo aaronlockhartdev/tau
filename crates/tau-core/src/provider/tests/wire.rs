@@ -157,3 +157,39 @@ fn clamp_respects_the_declared_window_and_prompt() {
     // Prompt fills the window: untouched (the server rejects).
     assert_eq!(clamp_max_output(8192, Some(500), 1000), 8192);
 }
+
+#[test]
+fn prompt_estimate_counts_image_data_urls_and_text() {
+    // #255: an image call output must count toward the gate's budget —
+    // the data URL and any text parts, not zero.
+    let url = "data:image/png;base64,".to_owned() + &"A".repeat(4000);
+    let input = vec![InputEntry::CallOutput(FunctionCallOutputInput {
+        kind: "function_call_output",
+        call_id: "c1".into(),
+        output: CallOutput::Image(vec![
+            InputCallPart::Text("note".to_owned()),
+            InputCallPart::Image(InputImagePart {
+                kind: "input_image",
+                image_url: url.clone(),
+                detail: "auto",
+            }),
+        ]),
+    })];
+    let est = prompt_token_estimate("sys", &input, &[]);
+    // ~4 chars/token (the shared soft estimator, spec §4): 4022 chars / 4
+    // for the URL, 1 for the note ("sys" is under a token).
+    assert_eq!(est, 4022 / 4 + 1, "image and note both count");
+}
+
+#[test]
+fn prompt_estimate_counts_text_call_outputs() {
+    // The pre-#255 behavior for text: unchanged by the image fix.
+    let input = vec![InputEntry::CallOutput(FunctionCallOutputInput {
+        kind: "function_call_output",
+        call_id: "c1".into(),
+        output: CallOutput::Text("b".repeat(1200)),
+    })];
+    let est = prompt_token_estimate("sys", &input, &[]);
+    // The "sys" prompt is under a token: only the result counts.
+    assert_eq!(est, 1200 / 4);
+}

@@ -7,7 +7,6 @@ use crate::config::{Provider, Requests};
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::error::Error;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -24,7 +23,6 @@ pub struct Model {
     pub id: String,
 }
 
-#[derive(Debug)]
 pub enum ProviderError {
     Request(reqwest::Error),
     /// No data for `requests.timeout_secs` (connect, headers, or
@@ -52,7 +50,41 @@ impl fmt::Display for ProviderError {
     }
 }
 
-impl Error for ProviderError {}
+impl std::error::Error for ProviderError {}
+
+impl ProviderError {
+    /// A 400 whose body carries a context-length signature (the #256
+    /// classifier): the over-window rejections the bounded retry recovers
+    /// from. Kept narrow — other 400s (auth, schema) are not over-window.
+    #[must_use]
+    pub fn is_context_length_error(&self) -> bool {
+        let Self::Status { status, body } = self else {
+            return false;
+        };
+        if *status != 400 {
+            return false;
+        }
+        let lower = body.to_ascii_lowercase();
+        lower.contains("context length")
+            || lower.contains("too long")
+            || lower.contains("input_tokens")
+    }
+}
+
+impl fmt::Debug for ProviderError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Request(e) => write!(f, "Request({e:?})"),
+            Self::IdleTimeout => f.write_str("IdleTimeout"),
+            Self::Status { status, body } => f
+                .debug_struct("Status")
+                .field("status", status)
+                .field("body", body)
+                .finish(),
+            Self::MalformedStream(msg) => f.debug_tuple("MalformedStream").field(msg).finish(),
+        }
+    }
+}
 
 /// Join the API root with a sub-path, tolerating a trailing slash on `base`.
 fn endpoint_url(base: &str, path: &str) -> String {
