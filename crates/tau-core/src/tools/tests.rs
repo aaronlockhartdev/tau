@@ -934,7 +934,7 @@ async fn bash_and_errors_carry_no_ui_detail() {
 
 #[cfg(unix)]
 mod stdbuf {
-    use super::impls::{bash_argv, stdbuf_on_path};
+    use super::impls::{bash_argv, stdbuf_in_path};
 
     #[test]
     fn stdbuf_wrap_produces_line_buffered_argv() {
@@ -967,8 +967,11 @@ mod stdbuf {
 
     #[test]
     fn stdbuf_probe_reports_presence() {
-        // #249: the probe resolves stdbuf on the augmented PATH; a macOS/Linux
-        // CI host ships it, so presence is the expected positive case.
-        assert!(stdbuf_on_path());
+        // #249: the probe is pure over the PATH string, so the cases are
+        // built, not assumed from the host (a CI macOS has no GNU stdbuf).
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("stdbuf"), b"").unwrap();
+        assert!(stdbuf_in_path(&dir.path().to_string_lossy()));
+        assert!(!stdbuf_in_path("/nonexistent"));
     }
 }

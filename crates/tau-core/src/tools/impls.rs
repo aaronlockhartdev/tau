@@ -733,24 +733,29 @@ fn bash_path() -> String {
     parts.join(":")
 }
 
-/// Whether `stdbuf` resolves on the augmented child PATH (#249). A presence
-/// probe, not a version probe: macOS's BSD `stdbuf` rejects `--version`
-/// (non-zero exit) yet the binary is present, so we walk the PATH looking for
-/// the executable rather than running it. Pure (no process spawn), safe to
-/// call from the async dispatch.
+/// Whether `stdbuf` resolves on a PATH string (#249). A presence probe, not a
+/// version probe: macOS's BSD `stdbuf` rejects `--version` (non-zero exit) yet
+/// the binary is present, so we walk the PATH looking for the executable rather
+/// than running it. Pure (no process spawn), safe to call from the async
+/// dispatch.
 #[cfg(unix)]
 pub(super) fn stdbuf_on_path() -> bool {
-    let path = std::env::var_os("PATH").map(|p| p.to_string_lossy().into_owned());
-    path.is_some_and(|p| {
-        p.split(':').any(|dir| {
-            let d = Path::new(dir);
-            let candidate = if d.is_absolute() {
-                d.join("stdbuf")
-            } else {
-                Path::new(".").join(d).join("stdbuf")
-            };
-            candidate.is_file()
-        })
+    match std::env::var_os("PATH") {
+        Some(p) => stdbuf_in_path(&p.to_string_lossy()),
+        None => false,
+    }
+}
+
+#[cfg(unix)]
+pub(super) fn stdbuf_in_path(path: &str) -> bool {
+    path.split(':').any(|dir| {
+        let d = Path::new(dir);
+        let candidate = if d.is_absolute() {
+            d.join("stdbuf")
+        } else {
+            Path::new(".").join(d).join("stdbuf")
+        };
+        candidate.is_file()
     })
 }
 
