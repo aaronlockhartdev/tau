@@ -5,6 +5,27 @@ use super::{
     entry_to_view, usage_of,
 };
 
+/// The settlement guarantee (#267): the one mechanism that clears
+/// `live.turn` on *any* exit of a turn — normal completion, early
+/// return, or a task that panics and is dropped. Without it a panicked
+/// `run_turn` left the flag `true` forever: the session showed
+/// "running" and every send steered into a turn that would never end.
+///
+/// It is `RefUnwindSafe` on purpose: the guard must be allowed to unwind
+/// out of the panicked task, because its `Drop` is what clears the flag
+/// on that task before the panic is caught at the `JoinHandle`.
+struct TurnSettleGuard {
+    live: Arc<LiveSession>,
+}
+
+impl Drop for TurnSettleGuard {
+    fn drop(&mut self) {
+        self.live.turn.store(false, Ordering::SeqCst);
+    }
+}
+
+impl std::panic::RefUnwindSafe for TurnSettleGuard {}
+
 /// The post-turn reconciliation (spec §8 idempotent updates): the session
 /// file is the record; the events it implies are derived here, after
 /// `process()` drained the queue.
@@ -17,6 +38,9 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // reported `Idle` — the GUI's `openSession` then clobbered a running
     // child's badge. For a parent session the flag is already true from that
     // check-and-set, so this is an idempotent no-op there.
+    let settle = TurnSettleGuard {
+        live: Arc::clone(&live),
+    };
     live.turn.store(true, Ordering::SeqCst);
     let mut store = SessionStore::for_workspace(
         &live.cwd,
@@ -50,7 +74,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         if live.agent.first_pending().is_some() {
             core.emit_queue(&live);
         }
-        live.turn.store(false, Ordering::SeqCst);
+        drop(settle);
         return;
     }
     // The archive sets the meta flag before its file moves (ADR-0005):
@@ -78,7 +102,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                 ),
             },
         });
-        live.turn.store(false, Ordering::SeqCst);
+        drop(settle);
         return;
     }
     let start = store.leaf().ok().flatten().map(|e| e.id);
@@ -246,7 +270,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     if queue_changed {
         core.emit_queue(&live);
     }
-    live.turn.store(false, Ordering::SeqCst);
+    drop(settle);
 }
 
 impl Core {
