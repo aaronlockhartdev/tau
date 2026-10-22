@@ -4,7 +4,7 @@
 default:
     @just build
 
-# The development loop: a debug build (tauri-pilot's socket is debug-only,
+# The development loop: a debug build with the e2e feature (the pilot +
 # The development loop: a debug build with the e2e feature (the pilot +
 # WebdriverIO plugins are feature-gated, sweep finding X1) plus the Svelte
 # dev server and hot reload.
@@ -14,6 +14,15 @@ dev:
     cd "{{justfile_directory()}}/app"
     npx tauri dev --features e2e
 
+# A logging-only debug build, no dev server: `tauri build --debug` compiles
+# the frontend statically (no vite hot reload) and runs the debug binary,
+# with RUST_LOG routing tau_core tracing (incl. the #98 provider wire log)
+# to stderr. Release builds compile the emitters out.
+debug:
+    #!/bin/sh
+    set -eu
+    cd "{{justfile_directory()}}/app"
+    RUST_LOG=tau_core=trace npx tauri build --debug
 build:
     #!/bin/sh
     set -eu

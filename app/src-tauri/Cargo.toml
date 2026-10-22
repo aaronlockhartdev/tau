@@ -22,6 +22,9 @@ e2e = [
     "dep:tauri-plugin-wdio-webdriver",
     "tauri/devtools",
 ]
+# Diagnostic builds (#98/#100): lift the `max_level` cap so `trace!` events
+# (e.g. the provider wire log) compile in. `just dev-trace` uses it.
+trace = ["tracing/max_level_trace"]
 [dependencies]
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "2.8"
@@ -39,9 +42,12 @@ tau-acp = { path = "../../crates/tau-acp" }
 tau-protocol = { path = "../../crates/tau-protocol" }
 tau-core = { path = "../../crates/tau-core" }
 tokio = { workspace = true }
-# Production GUI build compiles tracing out entirely (#100): the same
-# one-liner tau-acp carries as the #98 precedent.
-tracing = { version = "0.1", features = ["max_level_off"] }
+# The `max_level` cap: release builds stay at `error` (#100) — identical to
+# the old `max_level_off` for everything that matters; debug builds can reach
+# `trace`, which `just dev-trace` uses. The ACP binary carries the same
+# split (#98 precedent in tau-acp).
+tracing = { version = "0.1", features = ["release_max_level_error"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 
 [dev-dependencies]

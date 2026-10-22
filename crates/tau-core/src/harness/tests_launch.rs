@@ -2,7 +2,7 @@
 //! wiring defaults, without a dispatch round-trip.
 
 use super::{
-    AgentSession, Config, CoreBuilder, Event, SessionRole, SessionStore,
+    AgentSession, Config, Core, CoreBuilder, Event, SessionRole, SessionStore,
     testkit::{collect_events, open_ws, providers},
 };
 use crate::agent_type::builtin_general;
@@ -440,4 +440,118 @@ fn upsert_falls_through_when_the_blob_file_is_missing() {
     let view = upsert_view(dir.path()).entry(&entry);
     assert!(view.payload.is_null());
     assert_eq!(view.blob.as_ref().map(|b| b.id.as_str()), Some("e3"));
+}
+
+/// The pi prompt-file seam (ticket #77): `SYSTEM.md` replaces the default
+/// base prompt, and `APPEND_SYSTEM.md` composes on top of it — both at
+/// `root_session`'s assembly point, before the plan and skills layers.
+fn prompt_files_core() -> (Arc<Core>, std::path::PathBuf, std::path::PathBuf) {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    // Leak the tempdirs for the test's lifetime: the paths must outlive the
+    // launched session's prompt assembly.
+    let home = std::mem::ManuallyDrop::new(home);
+    let cwd = std::mem::ManuallyDrop::new(cwd);
+    let core = CoreBuilder::custom(providers())
+        .with_home(home.path().to_path_buf())
+        .build();
+    (core, home.path().to_path_buf(), cwd.path().to_path_buf())
+}
+
+#[tokio::test]
+async fn root_session_system_md_replaces_the_default_and_append_composes() {
+    let (core, home, cwd) = prompt_files_core();
+    std::fs::create_dir_all(cwd.join(".pi")).unwrap();
+    std::fs::write(cwd.join(".pi").join("SYSTEM.md"), "be a project agent").unwrap();
+    std::fs::write(
+        cwd.join(".pi").join("APPEND_SYSTEM.md"),
+        "project extra rules",
+    )
+    .unwrap();
+    let ws = open_ws(&core, &cwd).await;
+    let store = fresh_store(&cwd, &SessionStore::new_session_id());
+    let config = core.system_config();
+    let first = config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, p)| (name.clone(), p.clone()))
+        .expect("the test config carries the dev provider");
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: Some(core.clone()),
+            workspace: Some(ws),
+            config: Some(config),
+            provider: canned_provider(),
+            supervisor: None,
+            system_prompt: None,
+            base_prompt: None,
+            first_provider: Some(first),
+        },
+    )
+    .unwrap();
+    let prompt = agent.system_prompt();
+    // Replaced: the default frame is gone, the project SYSTEM.md is the base.
+    assert!(!prompt.contains("You are Tau, a coding agent."), "{prompt}");
+    assert!(prompt.starts_with("be a project agent"), "{prompt}");
+    // The append composes on top, in document order after the base.
+    assert!(prompt.contains("project extra rules"), "{prompt}");
+    assert!(
+        prompt.find("be a project agent").unwrap() < prompt.find("project extra rules").unwrap(),
+        "the append section lands after the replaced base: {prompt}"
+    );
+    let _ = home; // keep the tempdir alive for the session's lifetime
+}
+
+#[tokio::test]
+async fn root_session_headless_frame_is_not_clobbered_by_system_md() {
+    // The ACP yolo path passes its headless frame as `base_prompt`: a project
+    // SYSTEM.md must not replace it, but APPEND_SYSTEM.md still composes on
+    // top (the ticket's precedence rule).
+    const FRAME: &str = "You are Tau, an autonomous coding agent running headless.";
+    let (core, _home, cwd) = prompt_files_core();
+    std::fs::create_dir_all(cwd.join(".pi")).unwrap();
+    std::fs::write(cwd.join(".pi").join("SYSTEM.md"), "be a project agent").unwrap();
+    std::fs::write(
+        cwd.join(".pi").join("APPEND_SYSTEM.md"),
+        "project extra rules",
+    )
+    .unwrap();
+    let ws = open_ws(&core, &cwd).await;
+    let store = fresh_store(&cwd, &SessionStore::new_session_id());
+    let config = core.system_config();
+    let first = config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, p)| (name.clone(), p.clone()))
+        .expect("the test config carries the dev provider");
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: Some(core),
+            workspace: Some(ws),
+            config: Some(config),
+            provider: canned_provider(),
+            supervisor: None,
+            system_prompt: None,
+            base_prompt: Some(FRAME.to_owned()),
+            first_provider: Some(first),
+        },
+    )
+    .unwrap();
+    let prompt = agent.system_prompt();
+    assert!(
+        prompt.starts_with(FRAME),
+        "the headless frame survives: {prompt}"
+    );
+    assert!(
+        !prompt.contains("be a project agent"),
+        "SYSTEM.md must not replace it: {prompt}"
+    );
+    assert!(
+        prompt.contains("project extra rules"),
+        "the append still composes: {prompt}"
+    );
 }
