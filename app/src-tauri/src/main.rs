@@ -123,6 +123,19 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 }
 
 fn main() {
+    // The RUST_LOG-driven subscriber (the #98 wire-log precedent from the
+    // standalone ACP binary): stderr, never stdout — the ACP mode below
+    // speaks on stdout. `just debug` sets RUST_LOG=tau_core=trace; release
+    // builds compile the emitters out at `max_level = error`, so this is
+    // inert there.
+    let filter = std::env::var("RUST_LOG").map_or_else(
+        |_| tracing_subscriber::EnvFilter::new("tau_core=trace"),
+        tracing_subscriber::EnvFilter::new,
+    );
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .try_init();
     // The headless ACP mode takes over before any Tauri init: the branch is
     // first in `main` so no wry/tauri code path can touch stdout (ACP's
     // transport is the process stdout itself; research doc §3.1).
