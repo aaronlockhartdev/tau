@@ -323,7 +323,6 @@ mod tests {
             json!({ "name": "read", "args": { "path": "/src/main.rs" }, "output": "" }),
         ));
         assert_eq!(out[0]["title"], "/src/main.rs");
-        assert_eq!(out[0]["title"], "/src/main.rs");
     }
 
     #[test]
