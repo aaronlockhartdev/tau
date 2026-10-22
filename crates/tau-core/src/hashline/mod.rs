@@ -145,6 +145,14 @@ pub enum EditError {
     /// The file changed between planning and writing the edit; nothing was
     /// written.
     OpAborted { reason: String },
+    /// The anchor resolves to more than one line: the file's anchor set lost
+    /// its allocation invariant. Reported as a structured error, not a
+    /// process panic, so the session's registry lock is never poisoned.
+    Ambiguous {
+        anchor: String,
+        /// The 1-based line numbers the anchor points at.
+        lines: Vec<usize>,
+    },
 }
 
 impl fmt::Display for EditError {
@@ -202,6 +210,10 @@ impl fmt::Display for EditError {
                 Ok(())
             }
             Self::OpAborted { reason } => write!(f, "[E_OP_ABORTED] {reason}"),
+            Self::Ambiguous { anchor, lines } => write!(
+                f,
+                "[E_AMBIGUOUS_ANCHOR] anchor \"{anchor}\" matches multiple lines ({lines:?}): the file's anchor set is corrupted. Use a line number, or read the file again."
+            ),
         }
     }
 }
@@ -581,7 +593,7 @@ fn lcs_reanchor(
 
 /// Resolve `anchor` to a 0-based line position in `hashes`.
 fn resolve_anchor(hashes: &[String], anchor: &str) -> Result<usize, EditError> {
-    let Some(idx) = hash_to_idx(anchor) else {
+    let Some(_idx) = hash_to_idx(anchor) else {
         return Err(EditError::BadAnchor(anchor.to_owned()));
     };
     let positions: Vec<usize> = (0..hashes.len()).filter(|&i| hashes[i] == anchor).collect();
@@ -591,10 +603,14 @@ fn resolve_anchor(hashes: &[String], anchor: &str) -> Result<usize, EditError> {
             context: None,
         }),
         [pos] => Ok(*pos),
-        // Allocation makes every anchor unique in the file, so a repeat is
-        // structurally impossible; fail loudly if the invariant breaks
-        // rather than fuzzy-match.
-        _ => unreachable!("anchor set is unique by allocation (idx {idx} repeats)"),
+        // A repeat means the anchor set lost its allocation invariant: a
+        // data-integrity failure, not a match. Report it as a structured
+        // error — a panic here would poison the session's anchor-registry
+        // lock and brick every subsequent read/edit.
+        _ => Err(EditError::Ambiguous {
+            anchor: anchor.to_owned(),
+            lines: positions.iter().map(|&p| p + 1).collect(),
+        }),
     }
 }
 

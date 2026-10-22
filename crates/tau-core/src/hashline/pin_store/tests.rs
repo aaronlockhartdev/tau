@@ -284,11 +284,10 @@ fn reanchor_matches_by_checksum_in_order() {
     // and s2 keep their pins, s4 is fresh, s3's slot is tombstoned
     // downstream.
     let new = vec!["s4".to_owned(), "s1".to_owned(), "s2".to_owned()];
-    let (matched, fresh) = reanchor(&prev, &new);
-    assert!(fresh[0], "s4 is new");
-    assert!(matched[1], "s1 keeps its pin");
-    assert!(matched[2], "s2 keeps its pin");
-    assert_eq!(fresh.iter().filter(|b| **b).count(), 1);
+    let paired = reanchor(&prev, &new);
+    assert!(paired[0].is_none(), "s4 is new");
+    assert_eq!(paired[1], Some(0), "s1 keeps its own pin");
+    assert_eq!(paired[2], Some(1), "s2 keeps its own pin");
 }
 
 #[test]
@@ -300,13 +299,10 @@ fn reanchor_reverse_order_is_not_matched() {
     // needs three.)
     let prev = pins("a", &["A", "B", "C"], &["s1", "s2", "s3"]);
     let new = vec!["s3".to_owned(), "s2".to_owned(), "s1".to_owned()];
-    let (matched, fresh) = reanchor(&prev, &new);
-    assert_eq!(
-        matched.iter().filter(|b| **b).count(),
-        1,
-        "a full reversal matches only one survivor"
-    );
-    assert_eq!(fresh.iter().filter(|b| **b).count(), 2);
+    let paired = reanchor(&prev, &new);
+    let matched = paired.iter().filter(|p| p.is_some()).count();
+    assert_eq!(matched, 1, "a full reversal matches only one survivor");
+    assert_eq!(paired.len() - matched, 2);
 }
 
 #[test]
@@ -314,9 +310,9 @@ fn next_pins_tombstones_deleted_and_keeps_survivors() {
     let prev = pins("a", &["A", "B"], &["s1", "s2"]);
     // Delete s2 (anchor B), keep s1, add s3.
     let new = vec!["s1".to_owned(), "s3".to_owned()];
-    let (matched, _fresh) = reanchor(&prev, &new);
+    let paired = reanchor(&prev, &new);
     let minted = vec!["A".to_owned(), "ZZZZ".to_owned()];
-    let next = next_pins(&prev, &matched, &minted, &new);
+    let next = next_pins(&prev, &paired, &minted, &new);
     // s1 survives with anchor A; s3 is minted ZZZZ; s2's pin B is
     // tombstoned (present, flagged), not recycled.
     let live: Vec<&Pin> = next.pins.iter().filter(|p| !p.tombstone).collect();
@@ -329,6 +325,31 @@ fn next_pins_tombstones_deleted_and_keeps_survivors() {
     let tomb: Vec<&Pin> = next.pins.iter().filter(|p| p.tombstone).collect();
     assert_eq!(tomb.len(), 1);
     assert_eq!(tomb[0].anchor, "B", "the deleted line's slot is tombstoned");
+}
+
+#[test]
+fn next_pins_keeps_anchors_unique_for_repeated_lines() {
+    // A file with two identical lines (same checksum): each copy must keep its
+    // own previous pin, not the first pin sharing that checksum — otherwise the
+    // persisted set holds one anchor twice and the next session's seeded read
+    // serves the duplicate, tripping resolve_anchor's uniqueness invariant.
+    let prev = pins("a", &["AA11", "BB22"], &["s1", "s1"]);
+    let new = vec!["s1".to_owned(), "s1".to_owned()];
+    let paired = reanchor(&prev, &new);
+    assert_eq!(
+        paired,
+        vec![Some(0), Some(1)],
+        "each copy pairs with its own previous pin"
+    );
+    let minted = vec!["ZZZZ".to_owned(), "YYYY".to_owned()];
+    let next = next_pins(&prev, &paired, &minted, &new);
+    let anchors = next.anchors();
+    let unique: std::collections::HashSet<&str> = anchors.iter().map(String::as_str).collect();
+    assert_eq!(
+        unique.len(),
+        anchors.len(),
+        "duplicate anchors in persisted pins: {anchors:?}"
+    );
 }
 
 #[test]

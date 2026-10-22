@@ -604,3 +604,32 @@ fn plan_edits_file_grew_with_a_matching_line_succeeds() {
     assert_eq!(planned.lines.len(), 300);
     assert_eq!(planned.hashes.len(), 300);
 }
+
+#[test]
+fn duplicate_anchor_fails_as_ambiguous_not_a_panic() {
+    // A broken anchor set (e.g. a stale pin store that wrote one anchor
+    // twice) must surface as a structured Ambiguous error, never a process
+    // panic — a panic here would poison the session's registry lock.
+    let content = "one\ntwo\n";
+    let opts = PlanOptions {
+        strict: false,
+        served: None,
+        hashes: Some(vec!["AAAA".into(), "AAAA".into()]),
+        demote: false,
+    };
+    let err = plan_edits(
+        content,
+        line_endings::Ending::Lf,
+        &[Edit {
+            from: "AAAA".into(),
+            to: "AAAA".into(),
+            content: "x".into(),
+        }],
+        &opts,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, EditError::Ambiguous { ref lines, .. } if lines == &[1, 2]),
+        "expected Ambiguous, got {err:?}"
+    );
+}

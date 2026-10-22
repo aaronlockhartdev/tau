@@ -273,3 +273,24 @@ async fn a_child_core_tool_is_not_swallowed_by_the_link() {
     assert!(t.starts_with("exit 0"), "{t}");
     assert!(t.contains("surface"), "{t}");
 }
+
+#[test]
+fn poisoned_anchor_registry_lock_is_recovered() {
+    // A poisoned registry lock (an earlier panic while held) must not take
+    // the dispatch down: the lock's data is intact, and a panic here would
+    // kill the task and hang the turn on the in-flight tool call.
+    let m = std::sync::Arc::new(std::sync::Mutex::new(
+        crate::hashline::registry::Registry::new(),
+    ));
+    std::thread::spawn({
+        let m = std::sync::Arc::clone(&m);
+        move || {
+            let _guard = m.lock().expect("a fresh lock is not poisoned");
+            panic!("poison the lock");
+        }
+    })
+    .join()
+    .unwrap_err();
+    let guard = surface::lock_anchors(&m);
+    assert!(guard.served_map("never-read").is_none());
+}
