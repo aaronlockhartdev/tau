@@ -7,7 +7,7 @@ use crate::harness::testkit::*;
 /// GUI derives a child's composer/stop from this, so an always-idle snapshot
 /// is what flips a running child to `idle` when it is opened.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_running_childs_snapshot_reports_turn_running() {
+async fn a_running_children_snapshot_reports_turn_running() {
     // A slow child: its turn stays in flight long enough to snapshot it.
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(SlowChildFactory {
@@ -48,7 +48,9 @@ async fn a_running_childs_snapshot_reports_turn_running() {
     let mut saw_running = false;
     while tokio::time::Instant::now() < deadline {
         let snap = match core
-            .dispatch(Command::SessionSnapshot { session: child.clone() })
+            .dispatch(Command::SessionSnapshot {
+                session: child.clone(),
+            })
             .unwrap()
         {
             CommandOutput::Snapshot { snapshot } => snapshot,
@@ -71,7 +73,9 @@ async fn a_running_childs_snapshot_reports_turn_running() {
     let mut saw_idle = false;
     while tokio::time::Instant::now() < deadline {
         let snap = match core
-            .dispatch(Command::SessionSnapshot { session: child.clone() })
+            .dispatch(Command::SessionSnapshot {
+                session: child.clone(),
+            })
             .unwrap()
         {
             CommandOutput::Snapshot { snapshot } => snapshot,
@@ -83,7 +87,10 @@ async fn a_running_childs_snapshot_reports_turn_running() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert!(saw_idle, "the settled child's snapshot never reported turn: Idle");
+    assert!(
+        saw_idle,
+        "the settled child's snapshot never reported turn: Idle"
+    );
     drop(core);
 }
 
@@ -95,9 +102,7 @@ async fn a_running_childs_snapshot_reports_turn_running() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_snapshot_lists_subagents_in_spawn_order() {
     let core = CoreBuilder::custom(providers())
-        .with_child_factory(Arc::new(CannedChildFactory {
-            body: plain_body(),
-        }))
+        .with_child_factory(Arc::new(CannedChildFactory { body: plain_body() }))
         .build();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
@@ -138,13 +143,20 @@ async fn a_snapshot_lists_subagents_in_spawn_order() {
         other => panic!("expected a subagent: {other:?}"),
     };
     let snap = match core
-        .dispatch(Command::SessionSnapshot { session: session.id.clone() })
+        .dispatch(Command::SessionSnapshot {
+            session: session.id.clone(),
+        })
         .unwrap()
     {
         CommandOutput::Snapshot { snapshot } => snapshot,
         other => panic!("expected a snapshot: {other:?}"),
     };
-    let order: Vec<String> = snap.live.subagents.iter().map(|i| i.child.clone()).collect();
+    let order: Vec<String> = snap
+        .live
+        .subagents
+        .iter()
+        .map(|i| i.child.clone())
+        .collect();
     assert_eq!(
         order,
         vec![first.child.clone(), second.child.clone()],

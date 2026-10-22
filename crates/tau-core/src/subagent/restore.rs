@@ -346,6 +346,10 @@ mod tests {
         std::fs::write(&p2, lines.join("\n")).unwrap();
         let children = restore_children_from_disk(tmp.path(), "p");
         let order: Vec<String> = children.iter().map(|c| c.child.clone()).collect();
-        assert_eq!(order, vec!["c2", "c1"], "the restore is not in created order");
+        assert_eq!(
+            order,
+            vec!["c2", "c1"],
+            "the restore is not in created order"
+        );
     }
 }
