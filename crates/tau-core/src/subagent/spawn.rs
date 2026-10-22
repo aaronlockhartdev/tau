@@ -181,6 +181,7 @@ impl Supervisor {
             agent_type: agent_type.to_owned(),
             context_mode,
             agent: agent.clone(),
+            created,
             state: Mutex::new(ChildState::Running),
             // The spawn's brief is autonomous work: its rest wakes the
             // delegating parent (spec §5.2 turn-origin wake routing).

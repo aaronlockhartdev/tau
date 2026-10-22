@@ -75,9 +75,16 @@ function snapshotToState(snap: Snapshot): SessionState {
   // is authoritative for the child's tab (a restart's child is not running,
   // so the turn-derived state would misbadge a done/failed child as idle).
   // A root session (or a child with no recorded state) falls back to the
-  // turn-derived state.
+  // turn-derived state. #261: while the turn is running it wins over a
+  // stale `own_state` — a child's badge must stay `running` while it
+  // streams, not snap back to the log's last recorded `idle`.
   const own = snap.live.own_state;
-  const state = own ? own.state : snap.live.turn === 'running' ? 'running' : 'idle';
+  const state =
+    own && snap.live.turn !== 'running'
+      ? own.state
+      : snap.live.turn === 'running'
+        ? 'running'
+        : 'idle';
   const waitingOn = own ? own.waiting_on : null;
   return {
     meta,

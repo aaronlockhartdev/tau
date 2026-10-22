@@ -8,7 +8,7 @@ use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
     Mutex, OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
-    TurnConfig, Workspace, context, derive_turn, entry_to_view, last_model_note, tools,
+    TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, last_model_note, tools,
 };
 use crate::config::ToolBatchPolicy;
 use crate::om::OmRecord;
@@ -466,7 +466,13 @@ fn root_session(
         subagents: Some(sup.clone()),
         child: None,
     }));
-    wire_events(core, &workspace.id, &sid, &agent);
+    wire_events(
+        core,
+        &workspace.id,
+        &sid,
+        &agent,
+        Path::new(&workspace.cwd).join(".tau").as_path(),
+    );
     sup.attach_parent(&agent);
     Ok(agent)
 }
@@ -479,6 +485,7 @@ pub(super) fn wire_events(
     workspace_id: &str,
     sid: &str,
     agent: &Arc<AgentSession>,
+    blob_root: &Path,
 ) {
     // The plan-state hook (design: the plan file is the source of
     // truth): the core's watcher-parsed state, re-injected at each
@@ -534,19 +541,55 @@ pub(super) fn wire_events(
         let u_tx = tx.clone();
         let u_ws = ws.clone();
         let u_sid = sid.clone();
+        // #265: the live upsert inlines sidecar-blob payloads, so every
+        // consumer (GUI live path, ACP) sees the full payload without a
+        // client-side `BlobRead` follow-up.
+        let upsert = UpsertView::new(blob_root.to_path_buf());
+        let upsert2 = UpsertView::new(blob_root.to_path_buf());
         agent.set_entry_upsert_hook(Some(Arc::new(move |entry: &Entry| {
             let _ = u_tx.try_send(Event::EntryUpsert {
                 workspace: u_ws.clone(),
                 session: u_sid.clone(),
-                entry: entry_to_view(entry),
+                entry: upsert.entry(entry),
             });
         })));
         agent.set_entry_event_hook(Some(Arc::new(move |entry: &Entry| {
             let _ = tx.try_send(Event::EntryUpsert {
                 workspace: ws.clone(),
                 session: sid.clone(),
-                entry: entry_to_view(entry),
+                entry: upsert2.entry(entry),
             });
         })));
+    }
+}
+
+/// The live-upsert view (ADR-0008, #265): `entry_to_view` plus sidecar-blob
+/// inlining. An entry whose payload was extracted to a blob (the 100 KB
+/// threshold) carries the decoded payload on the wire; a failed read (the
+/// blob file is gone) falls through to the blobless view, never an error.
+pub(super) struct UpsertView {
+    blob_root: PathBuf,
+}
+
+impl UpsertView {
+    pub(super) fn new(blob_root: PathBuf) -> Self {
+        Self { blob_root }
+    }
+
+    pub(super) fn entry(&self, entry: &Entry) -> ViewEntry {
+        let mut view = entry_to_view(entry);
+        if let Some(blob) = &view.blob {
+            let core_ref = crate::session::BlobRef {
+                id: blob.id.clone(),
+                size: blob.size,
+                hash: blob.hash.clone(),
+            };
+            if let Ok(bytes) = SessionStore::read_blob(&self.blob_root, &core_ref)
+                && let Ok(payload) = serde_json::from_slice(&bytes)
+            {
+                view.payload = payload;
+            }
+        }
+        view
     }
 }

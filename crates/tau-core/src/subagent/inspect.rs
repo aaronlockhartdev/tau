@@ -76,6 +76,7 @@ impl Supervisor {
                 .lock()
                 .expect("child last message: no panic while the lock is held")
                 .clone(),
+            created: child.agent.store_created(),
             usage,
             resume_contract,
         })

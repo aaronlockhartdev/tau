@@ -342,4 +342,102 @@ async fn a_reopened_session_resumes_gate_failed_from_the_record() {
     )
     .unwrap();
     assert!(reopened.gate_failed(), "gate_failed survives the re-open");
+    assert!(reopened.gate_failed(), "gate_failed survives the re-open");
+}
+
+// The live upsert hook's blob inlining (#265): an entry whose payload was
+// extracted to a sidecar blob carries the decoded payload on the wire, not
+// the blobless view.
+
+fn upsert_view(dir: &std::path::Path) -> super::launch::UpsertView {
+    super::launch::UpsertView::new(dir.join(".tau"))
+}
+
+fn blob_entry(dir: &tempfile::TempDir, id: &str, payload: &serde_json::Value) {
+    let bytes = payload.to_string().into_bytes();
+    let hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(&bytes));
+    let compressed = zstd::encode_all(&bytes[..], 3).unwrap();
+    let blobs = dir.path().join(".tau").join("blobs");
+    std::fs::create_dir_all(&blobs).unwrap();
+    std::fs::write(blobs.join(id), compressed).unwrap();
+    let entry = crate::session::Entry {
+        id: id.into(),
+        parent: None,
+        timestamp: 1,
+        kind: "tool".into(),
+        payload: serde_json::Value::Null,
+        blob: Some(crate::session::BlobRef {
+            id: id.into(),
+            size: u64::try_from(bytes.len()).unwrap(),
+            hash,
+        }),
+        first_kept_entry_id: None,
+        crc: None,
+    };
+    std::fs::write(
+        dir.path().join("entry.json"),
+        serde_json::to_string(&entry).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn upsert_inlines_a_blob_backed_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = serde_json::json!({ "name": "bash", "output": "x".repeat(120_000) });
+    blob_entry(&dir, "e1", &payload);
+
+    let entry: crate::session::Entry =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("entry.json")).unwrap())
+            .unwrap();
+    let view = upsert_view(dir.path()).entry(&entry);
+
+    assert_eq!(view.payload, payload, "the decoded payload is inlined");
+    assert_eq!(
+        view.blob.as_ref().map(|b| b.id.as_str()),
+        Some("e1"),
+        "the ref stays"
+    );
+}
+
+#[test]
+fn upsert_leaves_a_small_entry_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let payload = serde_json::json!({ "text": "hi" });
+    let entry = crate::session::Entry {
+        id: "e2".into(),
+        parent: None,
+        timestamp: 1,
+        kind: "user".into(),
+        payload: payload.clone(),
+        blob: None,
+        first_kept_entry_id: None,
+        crc: None,
+    };
+    let view = upsert_view(dir.path()).entry(&entry);
+    assert_eq!(view.payload, payload);
+    assert!(view.blob.is_none());
+}
+
+#[test]
+fn upsert_falls_through_when_the_blob_file_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let entry = crate::session::Entry {
+        id: "e3".into(),
+        parent: None,
+        timestamp: 1,
+        kind: "tool".into(),
+        payload: serde_json::Value::Null,
+        blob: Some(crate::session::BlobRef {
+            id: "e3".into(),
+            size: 10,
+            hash: "0000000000000000".into(),
+        }),
+        first_kept_entry_id: None,
+        crc: None,
+    };
+    // No blob file on disk: the view is the blobless one, no panic.
+    let view = upsert_view(dir.path()).entry(&entry);
+    assert!(view.payload.is_null());
+    assert_eq!(view.blob.as_ref().map(|b| b.id.as_str()), Some("e3"));
 }

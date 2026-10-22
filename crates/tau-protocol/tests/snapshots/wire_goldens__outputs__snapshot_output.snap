@@ -65,6 +65,7 @@ expression: output
           "state": "running",
           "waiting_on": null,
           "last_message": null,
+          "created": 1,
           "usage": null,
           "resume_contract": null
         }

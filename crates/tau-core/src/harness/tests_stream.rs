@@ -2,8 +2,158 @@ use super::*;
 
 use crate::harness::testkit::*;
 
+/// #261: a child's own live snapshot must report `turn: Running` while it is
+/// driving a turn — not the `Idle` its never-set `turn` flag always gave. The
+/// GUI derives a child's composer/stop from this, so an always-idle snapshot
+/// is what flips a running child to `idle` when it is opened.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_running_childs_snapshot_reports_turn_running() {
+    // A slow child: its turn stays in flight long enough to snapshot it.
+    let core = CoreBuilder::custom(providers())
+        .with_child_factory(Arc::new(SlowChildFactory {
+            body: plain_body(),
+            delay_ms: 80,
+        }))
+        .build();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let info = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "do the thing".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let child = info.child.clone();
+
+    // Positive: while the child's slow turn is in flight, its own snapshot
+    // reports `turn: Running`.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut saw_running = false;
+    while tokio::time::Instant::now() < deadline {
+        let snap = match core
+            .dispatch(Command::SessionSnapshot { session: child.clone() })
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected a snapshot: {other:?}"),
+        };
+        if snap.live.turn == TurnState::Running {
+            saw_running = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(
+        saw_running,
+        "the running child's snapshot never reported turn: Running"
+    );
+
+    // Negative: once the turn settles, the same snapshot is `Idle` again —
+    // the flag is not sticky, so an idle child does not read as running.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut saw_idle = false;
+    while tokio::time::Instant::now() < deadline {
+        let snap = match core
+            .dispatch(Command::SessionSnapshot { session: child.clone() })
+            .unwrap()
+        {
+            CommandOutput::Snapshot { snapshot } => snapshot,
+            other => panic!("expected a snapshot: {other:?}"),
+        };
+        if snap.live.turn == TurnState::Idle {
+            saw_idle = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(saw_idle, "the settled child's snapshot never reported turn: Idle");
+    drop(core);
+}
+
+/// #226 variant: with two same-type children, the parent snapshot's
+/// `subagents` must come back in SPAWN order — the frontend's `claimCrew`
+/// pairs the transcript's Nth spawn point to the Nth list entry by
+/// (agent_type, context_mode), so an arbitrary (HashMap) order pairs a
+/// spawn point to the wrong child's card.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_snapshot_lists_subagents_in_spawn_order() {
+    let core = CoreBuilder::custom(providers())
+        .with_child_factory(Arc::new(CannedChildFactory {
+            body: plain_body(),
+        }))
+        .build();
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    // Two same-type children, spawned in sequence.
+    let first = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "first".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let second = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "second".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let snap = match core
+        .dispatch(Command::SessionSnapshot { session: session.id.clone() })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected a snapshot: {other:?}"),
+    };
+    let order: Vec<String> = snap.live.subagents.iter().map(|i| i.child.clone()).collect();
+    assert_eq!(
+        order,
+        vec![first.child.clone(), second.child.clone()],
+        "the snapshot's subagents are not in spawn order"
+    );
+    drop(core);
+}
+
 /// A spawned child's observed `done` wakes the parent: the Notified
-/// event reaches the stream, and the wake's message lands on the
 /// parent's branch tagged with the child's session id.
 #[tokio::test]
 async fn a_spawned_child_finishes_and_wakes_the_parent() {

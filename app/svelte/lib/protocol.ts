@@ -195,6 +195,8 @@ export interface SubagentInfo {
   state: SubagentState;
   waiting_on: string | null;
   last_message: string | null;
+  /** The child session's created timestamp (epoch ms): the core's spawn-order sort key. */
+  created?: number;
   usage: Usage | null;
   resume_contract: ResumeContract | null;
 }

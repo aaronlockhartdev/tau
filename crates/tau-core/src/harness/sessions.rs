@@ -4,7 +4,7 @@ use super::thinking::thinking_adjusted_max_output;
 use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
     MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionRole,
-    SessionStore, SkillInfo, TurnConfig, ViewEntry, Workspace, session_inner, session_name,
+    SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner, session_name,
     skill_info, unique_name,
 };
 
@@ -266,6 +266,15 @@ impl Core {
         store.open().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
+        // #267: a turn that died between writing the assistant's calls and
+        // writing their results leaves the transcript's last entry an
+        // assistant with uncovered `call_id`s — the invariant "every call
+        // gets a tool entry" is broken and the model would re-see an
+        // open call. Settle it at the open boundary: mint the missing
+        // results as errors, so a reopen heals the record before the next
+        // turn assembles its context. A healthy file (a tool entry after
+        // the last assistant) matches nothing and stays byte-identical.
+        repair_dangling_tool_calls(&mut store)?;
         let title = store.title().map(str::to_string);
         let created = store.created();
         self.build_live(workspace, store, title, created, None)
@@ -352,6 +361,71 @@ impl Core {
             .insert(id.clone(), live.clone());
         Ok(meta)
     }
+}
+
+/// #267: mint `status: "error"` tool entries for a dangling assistant — one
+/// whose `calls` have no following `KIND_TOOL` entry per `call_id` (the turn
+/// died mid-execution). Runs at session re-open, before the store is
+/// handed to `build_live`, so the repaired file is what every later turn
+/// reads.
+fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolError> {
+    use tau_protocol::payload::{AssistantPayload, ToolOutput, ToolPayload};
+
+    let Some(leaf) = store.leaf().map_err(|e| ProtocolError::Other {
+        message: e.to_string(),
+    })?
+    else {
+        // A fresh file has no entries; nothing to repair.
+        return Ok(());
+    };
+    let leaf = leaf.clone();
+    if leaf.kind != crate::agent::KIND_ASSISTANT {
+        return Ok(());
+    }
+
+    let Ok(payload) = serde_json::from_value::<AssistantPayload>(leaf.payload.clone()) else {
+        return Ok(());
+    };
+    if payload.calls.is_empty() {
+        return Ok(());
+    }
+    let after = store
+        .entries_since(&leaf.id)
+        .map_err(|e| ProtocolError::Other {
+            message: e.to_string(),
+        })?;
+    let covered: std::collections::HashSet<&str> = after
+        .iter()
+        .filter(|e| e.kind == crate::agent::KIND_TOOL)
+        .filter_map(|e| e.payload.get("call_id").and_then(Value::as_str))
+        .collect();
+    for call in &payload.calls {
+        if covered.contains(call.call_id.as_str()) {
+            continue;
+        }
+        let entry_id = store.mint_id();
+        store
+            .append_entry(
+                &entry_id,
+                crate::agent::KIND_TOOL,
+                ToolPayload {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    args: Value::Null,
+                    output: ToolOutput::Text(
+                        "turn was interrupted before tool execution completed".to_owned(),
+                    ),
+                    ui_detail: None,
+                    status: Some("error".to_owned()),
+                }
+                .to_value(),
+                Some(&leaf.id),
+            )
+            .map_err(|e| ProtocolError::Other {
+                message: e.to_string(),
+            })?;
+    }
+    Ok(())
 }
 
 /// The session's per-turn provider options (spec §12, #35): sampling from

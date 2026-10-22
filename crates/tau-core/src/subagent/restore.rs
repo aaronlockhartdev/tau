@@ -19,7 +19,7 @@ use std::path::Path;
 /// survive a restart; the child process is gone).
 #[must_use]
 pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol::SubagentInfo> {
-    list_workspace(cwd)
+    let mut out: Vec<tau_protocol::SubagentInfo> = list_workspace(cwd)
         .into_iter()
         .filter(|m| !m.archived && m.parent.as_deref() == Some(parent))
         .map(|m| {
@@ -77,10 +77,16 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
                 waiting_on: waiting_on.map(|w| w.as_str().to_owned()),
                 last_message: None,
                 usage: None,
+                created: m.created,
                 resume_contract: None,
             }
         })
-        .collect()
+        .collect();
+    // Spawn order (#226 variant): the transcript's Nth spawn point claims
+    // the Nth list entry, so the projection sorts by the child session's
+    // created timestamp, the handle as a stable tie-break.
+    out.sort_by_key(|i: &tau_protocol::SubagentInfo| (i.created, i.child.clone()));
+    out
 }
 
 /// A child session's own lifecycle state for its snapshot's `own_state`
@@ -315,5 +321,31 @@ mod tests {
         assert_eq!(children.len(), 1);
         assert_eq!(children[0].state, "idle");
         assert_eq!(children[0].waiting_on.as_deref(), Some("parent"));
+    }
+    #[test]
+    fn restore_lists_children_in_created_order() {
+        // #226 variant: the restore's projection must be in spawn order,
+        // sorted by the child sessions' created timestamps — `list_workspace`
+        // yields an arbitrary (directory) order.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut parent = SessionStore::for_workspace(tmp.path(), "p");
+        parent.create().unwrap();
+        for id in ["c1", "c2"] {
+            let mut store = SessionStore::for_workspace(tmp.path(), id);
+            store.create().unwrap();
+            store.set_parent("p").unwrap();
+        }
+        // c2's header gets the EARLIER created timestamp: despite c1's id
+        // sorting first, the restore must list c2 first.
+        let p2 = tmp.path().join(".tau").join("sessions").join("c2.jsonl");
+        let raw = std::fs::read_to_string(&p2).unwrap();
+        let mut lines: Vec<String> = raw.lines().map(std::borrow::ToOwned::to_owned).collect();
+        let mut h: serde_json::Value = serde_json::from_str(lines[0].as_str()).unwrap();
+        h["created"] = serde_json::json!(1);
+        lines[0] = serde_json::to_string(&h).unwrap();
+        std::fs::write(&p2, lines.join("\n")).unwrap();
+        let children = restore_children_from_disk(tmp.path(), "p");
+        let order: Vec<String> = children.iter().map(|c| c.child.clone()).collect();
+        assert_eq!(order, vec!["c2", "c1"], "the restore is not in created order");
     }
 }

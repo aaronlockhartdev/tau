@@ -192,6 +192,7 @@ pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInf
         state: state.to_owned(),
         waiting_on: i.waiting_on.map(|w| w.as_str().to_owned()),
         last_message: i.last_message.clone(),
+        created: i.created,
         usage: i.usage.as_ref().map(|u| Usage {
             input_tokens: u.input_tokens,
             output_tokens: u.output_tokens,
@@ -361,7 +362,8 @@ impl SubagentBridge for SessionSubagentBridge {
             });
         // Wire the child's event hooks (#173): the child launch path only wires
         // the plan hook, so its streaming entries never reached the GUI.
-        super::launch::wire_events(&self.core, &self.workspace, &n.child, &agent);
+        let blob_root = std::path::Path::new(&parent_live.cwd).join(".tau");
+        super::launch::wire_events(&self.core, &self.workspace, &n.child, &agent, &blob_root);
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),
