@@ -344,6 +344,7 @@ fn root_session(
     // The turn's provider options (spec §12, #35): resolved from the
     // merged config + this model's facts, once, at registration.
     let turn = derive_turn(config, first, &model, store.id());
+
     let cwd = PathBuf::from(&workspace.cwd);
 
     // The per-session OM record (ticket #22): reconstructed from the
@@ -355,10 +356,15 @@ fn root_session(
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
-    let layers = context::discover(&cwd, &core.system_dir_of());
+    let files = context::resolve_prompt_files(&cwd, core.home.as_deref());
+    // Precedence (ticket #77): an explicit `base_prompt` (the ACP headless
+    // frame) wins, then a resolved `SYSTEM.md`, then the default frame.
     let system_prompt = context::assemble(
-        base_prompt.unwrap_or("You are Tau, a coding agent."),
-        &layers,
+        base_prompt
+            .or(files.system.as_deref())
+            .unwrap_or("You are Tau, a coding agent."),
+        &context::discover(&cwd, &core.system_dir_of()),
+        files.append.as_ref(),
     );
 
     // The plan file (design: the source of truth): seeded at session
