@@ -41,6 +41,27 @@ pub struct SpawnNotice {
     pub model: String,
 }
 
+/// A child handle was reclaimed (spawn-triggered terminal reclamation,
+/// #250): the implementation drops the matching `child_handles` entry.
+/// The session file and the child's live session are untouched.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReclaimNotice {
+    pub parent: String,
+    pub handle: String,
+    pub child: String,
+}
+
+/// A child handle was re-adopted (its `resolve` miss fell back to the disk
+/// record, #250): the implementation re-records the handle's mint (the
+/// reclamation dropped it). The session file and the child's live session
+/// are untouched, as on reclamation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReadoptNotice {
+    pub parent: String,
+    pub handle: String,
+    pub child: String,
+}
+
 /// A wake (ADR-0001 wake rules): the implementation appends the
 /// notification to the parent's active branch (child provenance) and starts
 /// a turn there.
@@ -74,6 +95,14 @@ pub enum WakeKind {
 pub trait SubagentBridge: Send + Sync {
     fn spawned(&self, notice: &SpawnNotice);
     fn state(&self, notice: &StateNotice);
+    /// A child handle was reclaimed (its entry left the supervisor's
+    /// children map, #250): the dispatch drops the matching `child_handles`
+    /// entry. The session file and the child's live session are untouched.
+    fn reclaimed(&self, notice: &ReclaimNotice);
+    /// A child handle was re-adopted from disk, #250): the dispatch
+    /// re-records the handle's mint in `child_handles` (the reclamation
+    /// dropped it).
+    fn re_adopted(&self, notice: &ReadoptNotice);
     fn wake(&self, notice: &WakeNotice);
 }
 

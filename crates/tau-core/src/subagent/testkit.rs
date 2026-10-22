@@ -11,6 +11,8 @@ use std::time::Duration;
 pub(crate) struct TestBridge {
     pub(crate) spawns: Mutex<Vec<SpawnNotice>>,
     pub(crate) states: Mutex<Vec<StateNotice>>,
+    pub(crate) reclaims: Mutex<Vec<ReclaimNotice>>,
+    pub(crate) readopts: Mutex<Vec<ReadoptNotice>>,
     pub(crate) wakes: Mutex<Vec<WakeNotice>>,
 }
 
@@ -20,6 +22,12 @@ impl SubagentBridge for TestBridge {
     }
     fn state(&self, n: &StateNotice) {
         self.states.lock().unwrap().push(n.clone());
+    }
+    fn reclaimed(&self, n: &ReclaimNotice) {
+        self.reclaims.lock().unwrap().push(n.clone());
+    }
+    fn re_adopted(&self, n: &ReadoptNotice) {
+        self.readopts.lock().unwrap().push(n.clone());
     }
     fn wake(&self, n: &WakeNotice) {
         self.wakes.lock().unwrap().push(n.clone());

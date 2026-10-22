@@ -148,11 +148,11 @@ impl Core {
                     message: "session has no children (it is a child itself)".into(),
                 })?;
                 Ok(CommandOutput::Subagents {
-                    subagents: sup
-                        .handles()
-                        .iter()
-                        .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
-                        .collect(),
+                    // The union (design #250 §6.6): the registry's live
+                    // handles plus the on-disk children no longer in the
+                    // registry (reclaimed) — the same projection the
+                    // snapshot uses.
+                    subagents: sup.fleet_view(),
                 })
             }
             Command::SubagentState { handle } => {

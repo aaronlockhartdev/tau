@@ -24,8 +24,9 @@ use tau_core::om_integration::OmState;
 use tau_core::provider;
 use tau_core::session::{Entry, SessionStore};
 use tau_core::subagent::{
-    BoxedDrive, ChildDriver, ChildProviderFactory, KIND_SUBAGENT, SpawnNotice, StateNotice,
-    SubagentBridge, Supervisor, SupervisorParams, WakeNotice,
+    BoxedDrive, ChildDriver, ChildProviderFactory, ChildState, KIND_SUBAGENT, ReadoptNotice,
+    ReclaimNotice, SpawnNotice, StateNotice, SubagentBridge, Supervisor, SupervisorParams,
+    WakeNotice,
 };
 use tau_core::tools;
 use tau_mock_llm::server::MODEL_ID;
@@ -179,6 +180,8 @@ impl ChildDriver for AcceptanceDriver {
 /// to the parent loop exactly as the app does (`send_notified_steer`, provenance).
 struct AcceptanceBridge {
     parent: Mutex<Weak<AgentSession>>,
+    reclaims: Mutex<Vec<ReclaimNotice>>,
+    readopts: Mutex<Vec<ReadoptNotice>>,
 }
 /// The completion gate (spec §5.3): a failing check bounces repair turns
 /// until `max_retries` is exhausted (the session is marked `gate_failed`), and
@@ -296,6 +299,12 @@ async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
 impl SubagentBridge for AcceptanceBridge {
     fn spawned(&self, _n: &SpawnNotice) {}
     fn state(&self, _n: &StateNotice) {}
+    fn reclaimed(&self, n: &ReclaimNotice) {
+        self.reclaims.lock().unwrap().push(n.clone());
+    }
+    fn re_adopted(&self, n: &ReadoptNotice) {
+        self.readopts.lock().unwrap().push(n.clone());
+    }
     fn wake(&self, n: &WakeNotice) {
         let Some(p) = self.parent.lock().unwrap().upgrade() else {
             return;
@@ -320,6 +329,8 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
 
     let bridge = Arc::new(AcceptanceBridge {
         parent: Mutex::new(Weak::new()),
+        reclaims: Mutex::new(Vec::new()),
+        readopts: Mutex::new(Vec::new()),
     });
     let sup = Supervisor::new(SupervisorParams {
         parent_session: id.clone(),
@@ -477,6 +488,211 @@ async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // one flat reclamation flow; splitting is refactoring
+//
+// The fleet-reclamation acceptance scenario (#250): the scripted parent
+// spawns two children (the E2E spawn path through the mock); the driver
+// then performs the 3rd spawn itself — with `fleet_soft_bound = 2` that
+// push evicts the oldest terminal child (spawn-triggered reclamation) — and
+// re-addresses it by session id, which a `resolve` miss rebuilds from disk
+// (re-adopt). The parent fixtures name the children by a "reclaim probe
+// child" marker so the mock routes them to `acceptance-reclaim-child.json`.
+async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
+    let ws = temp_ws();
+    let (id, store) = new_session(ws.path());
+    let (p, prov) = production(ctx);
+
+    let bridge = Arc::new(AcceptanceBridge {
+        parent: Mutex::new(Weak::new()),
+        reclaims: Mutex::new(Vec::new()),
+        readopts: Mutex::new(Vec::new()),
+    });
+    let sup = Supervisor::new(SupervisorParams {
+        parent_session: id.clone(),
+        cwd: ws.path().into(),
+        provider: Arc::new(AcceptanceFactory {
+            client: client(),
+            provider: p,
+            requests: Requests::default(),
+        }),
+        model: ctx.model.clone(),
+        // The supervisor's prompt is the child's: the "reclaim probe child"
+        // marker routes every child turn to the reclaim child fixture.
+        system_prompt: format!(
+            "{SUBAGENT_PROMPT}\n\nYou are a reclaim probe child; call parent_notify with done true when the brief is met."
+        ),
+        om: Om::default(),
+        om_model: String::new(),
+        tool_batch_on_force: ToolBatchPolicy::default(),
+        turn: capped(),
+        gates: None,
+        hashline: tau_core::hashline::pin_store::GcPolicy::default(),
+        // Soft bound 2: the 3rd spawn pushes the fleet to 3 and evicts one
+        // terminal child. The hard cap is far above: it is not the trigger.
+        caps: SubAgents {
+            fleet_soft_bound: Some(2),
+            fleet_hard_cap: Some(64),
+            ..SubAgents::default()
+        },
+        depth: 0,
+        types: vec![builtin_general()],
+        bridge: bridge.clone(),
+        driver: Arc::new(AcceptanceDriver),
+        core: None,
+    });
+    let agent = AgentSession::launch(
+        store,
+        SessionRole::Root {
+            core: None,
+            workspace: None,
+            config: None,
+            provider: prov,
+            supervisor: Some(sup.clone()),
+            // The parent's own prompt: the "reclaim scenario parent" marker
+            // routes the parent's turns to the reclaim parent fixture.
+            system_prompt: Some("reclaim scenario parent. You have the tools read, write, edit, bash, and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.".into()),
+            base_prompt: None,
+            first_provider: None,
+        },
+    )
+    .map_err(|e| format!("accept-reclaim: launch failed: {e:?}"))?;
+    {
+        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+    }
+
+    agent
+        .send(
+            "Spawn two sub-agents (type 'general', context_mode 'fresh'). Give the first the brief 'reclaim probe child 1: call parent_notify with text ok and done true, then stop.' and the second 'reclaim probe child 2: call parent_notify with text ok and done true, then stop.' Then reply: two sub-agents spawned.",
+            Lane::Steering,
+        );
+    agent.process().await.map_err(|e| e.to_string())?;
+
+    // Wait for both model-spawned children to reach a terminal state (their
+    // drive tasks run independently of the parent; the driver polls the
+    // child session files, as accept-subagent does).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if std::time::Instant::now() > deadline {
+            dump_sessions(ws.path(), "/tmp/accept-reclaim-dump");
+            return Err("accept-reclaim: the children never reached a terminal state in 120 s (dump at /tmp/accept-reclaim-dump)".into());
+        }
+        let terminal_count = session_files(ws.path())
+            .iter()
+            .filter(|f| f.file_stem().and_then(|n| n.to_str()) != Some(id.as_str()))
+            .filter(|f| {
+                let s = SessionStore::for_workspace(
+                    ws.path(),
+                    f.file_stem().unwrap().to_str().unwrap(),
+                );
+                all_entries(&s)
+                    .iter()
+                    .rev()
+                    .find(|e| e.kind == KIND_SUBAGENT)
+                    .and_then(|e| e.payload.get("state").and_then(Value::as_str))
+                    .is_some_and(|st| matches!(st, "done" | "failed" | "stopped"))
+            })
+            .count();
+        if terminal_count >= 2 {
+            break;
+        }
+        if agent.has_pending() {
+            agent.process().await.map_err(|e| e.to_string())?;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+
+    // Two terminal children, soft bound 2: the fleet is at the bound, not
+    // over it, so no reclamation has fired yet.
+    {
+        let reclaims = bridge.reclaims.lock().unwrap();
+        if !reclaims.is_empty() {
+            return Err(format!(
+                "accept-reclaim: unexpected early reclamation: {reclaims:?}"
+            ));
+        }
+    }
+    // The 3rd spawn pushes the fleet to 3 > soft bound 2: one terminal child
+    // is evicted (handles only — its file and live session are intact). The
+    // reclamation notice names the evicted child; that is the re-address key.
+    let third = sup
+        .spawn(
+            "general",
+            "reclaim probe child 3: call parent_notify with text ok and done true, then stop.",
+            None,
+            "c3",
+        )
+        .map_err(|e| format!("accept-reclaim: the 3rd spawn failed: {e}"))?;
+    let evicted = {
+        let reclaims = bridge.reclaims.lock().unwrap();
+        if reclaims.len() != 1 {
+            return Err(format!(
+                "accept-reclaim: expected one reclamation, saw {reclaims:?}"
+            ));
+        }
+        // The evicted child must be one of the two model-spawned children
+        // (never the 3rd, which is the live filler that triggered the push).
+        let evicted = reclaims[0].child.clone();
+        let live: Vec<String> = sup
+            .handles()
+            .iter()
+            .filter_map(|h| sup.child_session_id(h))
+            .collect();
+        if live.iter().any(|c| c == &evicted) {
+            return Err(format!(
+                "accept-reclaim: the evicted child {evicted} is still in the live registry"
+            ));
+        }
+        if evicted == third.session_id {
+            return Err(
+                "accept-reclaim: the 3rd (triggering) child was evicted, not a terminal one".into(),
+            );
+        }
+        evicted
+    };
+    // Re-address the evicted child by session id: a resolve miss falls back
+    // to the disk record and rebuilds it as a cold, terminal child.
+    let info = sup
+        .state_info(&evicted)
+        .ok_or("accept-reclaim: the evicted child did not re-adopt from disk")?;
+    if !matches!(
+        info.state,
+        ChildState::Done { .. } | ChildState::Failed { .. } | ChildState::Stopped { .. }
+    ) {
+        return Err(format!(
+            "accept-reclaim: the re-adopted child is not terminal: {}",
+            info.state.kind()
+        ));
+    }
+    {
+        let readopts = bridge.readopts.lock().unwrap();
+        if readopts.len() != 1 {
+            return Err(format!(
+                "accept-reclaim: expected one re-adopt, saw {readopts:?}"
+            ));
+        }
+        if readopts[0].child != evicted {
+            return Err(format!(
+                "accept-reclaim: re-adopted {} but addressed {}",
+                readopts[0].child, evicted
+            ));
+        }
+    }
+    // The re-adopted handle is back in the live registry.
+    if !sup
+        .handles()
+        .iter()
+        .any(|h| sup.child_session_id(h).as_deref() == Some(evicted.as_str()))
+    {
+        return Err("accept-reclaim: the re-adopted child is not back in the live registry".into());
+    }
+
+    // The third child's drive is still alive; drop the agent to let the run
+    // finish. (The 3rd child is not asserted: it is the fleet filler, not
+    // the reclamation subject.)
+    drop(third);
+    drop(agent);
+    Ok(())
+}
 #[allow(clippy::too_many_lines)] // the suite is one flat driver flow; splitting is refactoring
 async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
     let ws = temp_ws();
@@ -491,6 +707,8 @@ async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
 
     let bridge = Arc::new(AcceptanceBridge {
         parent: Mutex::new(Weak::new()),
+        reclaims: Mutex::new(Vec::new()),
+        readopts: Mutex::new(Vec::new()),
     });
     let sup = Supervisor::new(SupervisorParams {
         parent_session: id.clone(),
@@ -820,6 +1038,7 @@ fn main() {
         match args[i].as_str() {
             "accept-tools"
             | "accept-subagent"
+            | "accept-reclaim"
             | "accept-om"
             | "accept-gate"
             | "accept-sender-labels"
@@ -832,7 +1051,7 @@ fn main() {
     }
     if suite.is_empty() {
         eprintln!(
-            "usage: tau-test <accept-tools|accept-subagent|accept-om|accept-gate|accept-sender-labels|core>"
+            "usage: tau-test <accept-tools|accept-subagent|accept-reclaim|accept-om|accept-gate|accept-sender-labels|core>"
         );
         std::process::exit(2);
     }
@@ -845,6 +1064,7 @@ fn main() {
     let result = match suite {
         "accept-tools" => rt.block_on(accept_tools(&ctx)),
         "accept-subagent" => rt.block_on(accept_subagent(&ctx)),
+        "accept-reclaim" => rt.block_on(accept_reclaim(&ctx)),
         "accept-om" => rt.block_on(accept_om(&ctx)),
         "accept-gate" => rt.block_on(accept_gate(&ctx)),
         "accept-sender-labels" => rt.block_on(accept_sender_labels(&ctx)),

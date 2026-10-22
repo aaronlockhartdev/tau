@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex, Weak};
 use tau_protocol::payload::ResumeContract;
 
 pub use bridge::{
-    BoxedDrive, ChildDriver, ChildProviderFactory, SpawnNotice, StateNotice, SubagentBridge,
-    WakeKind, WakeNotice,
+    BoxedDrive, ChildDriver, ChildProviderFactory, ReadoptNotice, ReclaimNotice, SpawnNotice,
+    StateNotice, SubagentBridge, WakeKind, WakeNotice,
 };
 pub use child::Child;
 pub use link::ChildLink;
@@ -68,6 +68,11 @@ pub struct Supervisor {
     bridge: Arc<dyn SubagentBridge>,
     driver: Arc<dyn ChildDriver>,
     core: Option<Weak<crate::harness::Core>>,
+    /// Self-reference for the re-adopt: it builds a child's `AgentSession`
+    /// with the child link, which needs an `Arc<Supervisor>`. `Weak` (the
+    /// supervisor is owned by the parent session; a strong self would be a
+    /// cycle, ticket #43). Set in `new` (it always returns an `Arc`).
+    self_weak: Mutex<Option<Weak<Self>>>,
 }
 
 /// The values a session built around this supervisor inherits (the
@@ -148,7 +153,7 @@ pub struct Spawned {
 impl Supervisor {
     #[must_use]
     pub fn new(p: SupervisorParams) -> Arc<Self> {
-        Arc::new(Self {
+        let sup = Arc::new(Self {
             parent_session: p.parent_session.clone(),
             parent: Mutex::new(None),
             children: Mutex::new(HashMap::new()),
@@ -174,7 +179,13 @@ impl Supervisor {
             bridge: p.bridge,
             driver: p.driver,
             core: p.core,
-        })
+            self_weak: Mutex::new(None),
+        });
+        *sup.self_weak
+            .lock()
+            .expect("supervisor self ref: no panic while the lock is held") =
+            Some(Arc::downgrade(&sup));
+        sup
     }
 
     /// How many child handles this parent has minted across all its
@@ -289,12 +300,19 @@ impl Supervisor {
             .children
             .lock()
             .expect("children map: no panic while the lock is held");
-        children
+        let found = children
             .values()
             .find(|c| c.name == name_or_id)
             .or_else(|| children.values().find(|c| c.session_id == name_or_id))
             .or_else(|| children.get(name_or_id))
-            .cloned()
+            .cloned();
+        drop(children);
+        // A miss is a reclaimed child (spawn-triggered reclamation, #250):
+        // the disk record is the ground truth, so a resolve miss falls back
+        // to a re-adopt — rebuild the `Child` from the file and re-insert
+        // it. A miss with no matching terminal disk record is a genuine
+        // unknown, not a zombie.
+        found.or_else(|| self.re_adopt_from_disk(name_or_id))
     }
 
     /// The child's live agent (the dispatch registers it as an ordinary
@@ -343,6 +361,7 @@ mod inspect;
 mod lifecycle;
 mod link;
 mod notify;
+mod reclaim;
 pub(crate) mod restore;
 mod route;
 mod spawn;
@@ -362,6 +381,8 @@ mod tests_gate;
 mod tests_link;
 #[cfg(test)]
 mod tests_notify;
+#[cfg(test)]
+mod tests_reclaim;
 #[cfg(test)]
 mod tests_spawn_handles;
 #[cfg(test)]

@@ -15,13 +15,6 @@ const ACTIVITY_GROUPS: usize = 4;
 const ACTIVITY_TEXT_LIMIT: usize = 400;
 
 impl Supervisor {
-    /// The children restored from disk (ticket #221): the snapshot's
-    /// fallback when the in-memory registry is empty after a restart.
-    #[must_use]
-    pub(crate) fn restore_children(&self) -> Vec<tau_protocol::SubagentInfo> {
-        super::restore::restore_children_from_disk(&self.cwd, &self.parent_session)
-    }
-
     /// All registered children (the snapshot's live-state handles).
     pub fn handles(&self) -> Vec<String> {
         self.children

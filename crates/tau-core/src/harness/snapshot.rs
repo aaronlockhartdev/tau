@@ -3,7 +3,6 @@
 use super::{
     Core, CoreUsage, Entry, EntryMeta, EntryStatus, LiveSession, LiveState, OmSnapshot, Ordering,
     Path, ProtocolError, SessionMeta, SessionStore, Snapshot, TurnState, Usage, Value, ViewEntry,
-    info_to_protocol,
 };
 
 impl Core {
@@ -98,19 +97,11 @@ fn live_subagents(live: &LiveSession) -> Vec<tau_protocol::SubagentInfo> {
     let Some(sup) = live.agent.subagents() else {
         return vec![];
     };
-    let handles = sup.handles();
-    if !handles.is_empty() {
-        let mut out = handles
-            .iter()
-            .filter_map(|h| sup.state_info(h).map(|i| info_to_protocol(&i)))
-            .collect::<Vec<_>>();
-        // Spawn order (#226 variant): the transcript's Nth spawn point
-        // claims the Nth list entry, so the projection sorts by the child
-        // session's created timestamp (the handles map is unordered).
-        out.sort_by_key(|i| (i.created, i.child.clone()));
-        return out;
-    }
-    sup.restore_children()
+    // The union (design #250 §6.6): the registry's live handles plus the
+    // on-disk children no longer in the registry (reclaimed). A pure
+    // registry projection would make a partially-reclaimed fleet's early
+    // children vanish from the snapshot until a restart.
+    sup.fleet_view()
 }
 
 /// A child session's own badge state (ticket #221): present only for a

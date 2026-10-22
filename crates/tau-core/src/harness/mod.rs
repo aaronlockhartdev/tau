@@ -27,8 +27,8 @@ use crate::provider::{
 };
 use crate::session::{Entry, SessionStore};
 use crate::subagent::{
-    BoxedDrive, ChildDriver, ChildProviderFactory, SpawnNotice, StateNotice, StoppedBy,
-    SubagentBridge, Supervisor, SupervisorParams, WakeKind, WakeNotice,
+    BoxedDrive, ChildDriver, ChildProviderFactory, ReadoptNotice, ReclaimNotice, SpawnNotice,
+    StateNotice, StoppedBy, SubagentBridge, Supervisor, SupervisorParams, WakeKind, WakeNotice,
 };
 use crate::tools;
 use serde_json::{Value, json};
