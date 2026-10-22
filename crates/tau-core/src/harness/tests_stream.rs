@@ -97,7 +97,7 @@ async fn a_running_children_snapshot_reports_turn_running() {
 /// #226 variant: with two same-type children, the parent snapshot's
 /// `subagents` must come back in SPAWN order — the frontend's `claimCrew`
 /// pairs the transcript's Nth spawn point to the Nth list entry by
-/// (agent_type, context_mode), so an arbitrary (HashMap) order pairs a
+/// (`agent_type`, `context_mode`), so an arbitrary (`HashMap`) order pairs a
 /// spawn point to the wrong child's card.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_snapshot_lists_subagents_in_spawn_order() {
