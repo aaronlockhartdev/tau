@@ -315,6 +315,25 @@ pub struct TurnResult {
     pub mid_stream_errors: Vec<String>,
 }
 
+impl TurnResult {
+    /// JSONL wire view of the response: one parseable JSON line, `raw` the
+    /// verbatim SSE bytes, with `ms`/`completed`/`usage` summary fields.
+    /// `debug!` level (the #98 wire log's parseable companion) — compiled
+    /// out in release builds.
+    pub fn wire_response_jsonl(&self, id: &str, ms: u64, raw: &str) {
+        tracing::debug!(
+            line = %serde_json::json!({
+                "id": id,
+                "dir": "res",
+                "ms": ms,
+                "completed": self.completed,
+                "usage": self.usage,
+                "raw": raw,
+            }),
+            "llm wire"
+        );
+    }
+}
 /// One stream delta, or the usage at `response.completed`. The sink decides
 /// whether the stream may continue (false = kill, spec §7).
 #[derive(Debug, Clone, PartialEq)]

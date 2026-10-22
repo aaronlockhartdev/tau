@@ -234,7 +234,12 @@ async fn attempt_one_turn(
     request: &ResponseRequest,
     sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
+    // One id pairs the JSONL request/response lines; the trace log above
+    // stays unpaired (its consumers read by adjacency).
+    let wire_id = super::wire::new_id();
     super::wire::request(request);
+    request.wire_request_jsonl(&wire_id);
+    let wire_start = tokio::time::Instant::now();
     // `.timeout` is a *total* deadline, which kills a healthy long stream
     // mid-body: the connect/headers phase is bounded by
     // `requests.timeout_secs`, the stream by the per-chunk idle deadline
@@ -289,7 +294,9 @@ async fn attempt_one_turn(
             Ok(Ok(Some(chunk))) => {
                 // A received chunk restarts the idle deadline.
                 idle_deadline = tokio::time::Instant::now() + idle;
-                if tracing::level_enabled!(tracing::Level::TRACE) {
+                // The JSONL response line carries the raw bytes, so the raw
+                // buffer is live at `debug` level, not just `trace`.
+                if tracing::level_enabled!(tracing::Level::DEBUG) {
                     raw_response.push_str(&String::from_utf8_lossy(&chunk));
                 }
                 chunk
@@ -339,5 +346,12 @@ async fn attempt_one_turn(
         result.completed = true;
     }
     super::wire::response(&raw_response);
+    // `unwrap_or(MAX)`: a 584-year stream is a diagnostic-log sentinel, not a
+    // failure — `as u64` is a silent conversion, which clippy denies.
+    result.wire_response_jsonl(
+        &wire_id,
+        u64::try_from(wire_start.elapsed().as_millis()).unwrap_or(u64::MAX),
+        &raw_response,
+    );
     Ok(result)
 }

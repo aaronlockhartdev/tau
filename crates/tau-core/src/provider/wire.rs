@@ -4,6 +4,13 @@
 //! production build (`tracing/max_level_off`) compiles them out entirely, and a
 //! diagnostic build (`max_level_trace`) plus a `RUST_LOG`-driven subscriber
 //! routes them to its output. The binary's `max_level` is the only control.
+//!
+//! On top of the verbatim trace dump, a parseable JSONL view sits at `debug!`
+//! (`ResponseRequest::wire_request_jsonl`, `TurnResult::wire_response_jsonl`):
+//! one JSON object per line, request and response paired by a shared id
+//! (`new_id`), so `RUST_LOG=tau_core=debug` captures the raw model I/O
+//! without the trace-level verbosity.
+use rand::RngExt;
 
 use super::ResponseRequest;
 
@@ -20,4 +27,11 @@ pub(super) fn request(request: &ResponseRequest) {
 /// client-side parse drop.
 pub(super) fn response(body: &str) {
     tracing::trace!(%body, "llm response");
+}
+
+/// A per-attempt correlation id pairing a request with its response in the
+/// JSONL log: 16 random bits, hex. Collisions are possible but harmless — a
+/// pair is read by adjacency and `dir`, never keyed on the id alone.
+pub(super) fn new_id() -> String {
+    format!("{:04x}", rand::rng().random_range(0..u16::MAX))
 }

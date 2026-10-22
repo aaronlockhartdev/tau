@@ -15,14 +15,16 @@ dev:
     npx tauri dev --features e2e
 
 # A logging-only debug build, no dev server: `tauri build --debug` compiles
-# the frontend statically (no vite hot reload) and runs the debug binary,
-# with RUST_LOG routing tau_core tracing (incl. the #98 provider wire log)
-# to stderr. Release builds compile the emitters out.
+# the frontend statically (no vite hot reload) and runs the debug binary.
+# RUST_LOG=tau_core=debug captures the JSONL wire log (one parseable line
+# per request/response, raw model I/O in `raw`); escalate to
+# RUST_LOG=tau_core=trace for the verbatim dump. Release builds compile the
+# emitters out at `max_level = error`.
 debug:
     #!/bin/sh
     set -eu
     cd "{{justfile_directory()}}/app"
-    RUST_LOG=tau_core=trace npx tauri build --debug
+    RUST_LOG=tau_core=debug npx tauri build --debug
 build:
     #!/bin/sh
     set -eu

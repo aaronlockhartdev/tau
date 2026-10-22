@@ -98,6 +98,20 @@ pub struct ResponseRequest {
 }
 
 impl ResponseRequest {
+    /// JSONL wire view of this request: one parseable JSON line, `raw` the
+    /// verbatim serialized body. `debug!` level (the #98 wire log's
+    /// parseable companion) — compiled out in release builds.
+    pub fn wire_request_jsonl(&self, id: &str) {
+        tracing::debug!(
+            line = %serde_json::json!({
+                "id": id,
+                "dir": "req",
+                "model": self.model,
+                "raw": serde_json::to_string(self).unwrap_or_default(),
+            }),
+            "llm wire"
+        );
+    }
     pub fn new(
         model: impl Into<String>,
         instructions: Option<&str>,
