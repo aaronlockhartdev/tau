@@ -464,9 +464,9 @@ pub fn reanchor(prev: &FilePins, checksums: &[String]) -> Vec<Option<usize>> {
 /// Build the next `FilePins` from a previous set and the re-anchor pairing:
 /// survivors keep the anchor of their paired previous pin, fresh lines get
 /// `minted[j]`, and a pin whose checksum vanished is tombstoned (kept, not
-/// recycled). `paired` must be index-aligned with `checksums` (a `Some(i)`
-/// marks the survivor at new index j; fresh lines ignore `minted[j]`'s pair
-/// and take `minted[j]` itself).
+/// recycled). `paired` must be index-aligned with `checksums`: `Some(i)`
+/// marks new index j as a survivor keeping pin i's anchor, `None` takes
+/// `minted[j]`.
 #[must_use]
 pub fn next_pins(
     prev: &FilePins,
