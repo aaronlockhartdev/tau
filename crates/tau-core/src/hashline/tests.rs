@@ -524,3 +524,83 @@ fn identical_file_reports_no_change() {
     assert_eq!(edited.content, "one\ntwo\nthree\n");
     assert!(edited.first_changed > edited.last_changed);
 }
+
+// Red test (intermittent panic, tokio-rt-worker): the registry's anchor set
+// (299 entries) is out of sync with the file on disk (300 lines) — the file
+// grew out-of-band with a duplicate of a line already anchored. An edit
+// targeting the last registry row was spliced at file line 299, and
+// lcs_reanchor matched the duplicate's checksum to old index 299 and indexed
+// old_hashes[299] (len 299), panicking with
+// "index out of bounds: the len is 299 but the index is 299". Planning must
+// now tolerate the short registry: the edit applies, the duplicate keeps its
+// anchor, and the new line gets a fresh one.
+#[test]
+fn plan_edits_registry_shorter_than_file_does_not_panic() {
+    // 300-line file: the 299-line registry snapshot plus a duplicate of its
+    // last line appended out-of-band.
+    let base = (1..=299).map(|i| format!("line {i}")).collect::<Vec<_>>();
+    let mut lines = base.clone();
+    lines.push(base[298].clone());
+    let content = lines.join("\n");
+    let hashes: Vec<String> = base
+        .iter()
+        .map(|l| line_base_idx(l))
+        .map(idx_to_hash)
+        .collect();
+    let last = hashes[298].clone();
+    let planned = plan_edits(
+        &content,
+        line_endings::Ending::Lf,
+        &[Edit {
+            from: last.clone(),
+            to: last.clone(),
+            content: "changed".into(),
+        }],
+        &PlanOptions::default(),
+    )
+    .expect("planning against a registry shorter than the file succeeds");
+    assert_eq!(planned.lines.len(), 300);
+    assert_eq!(planned.hashes.len(), 300);
+    assert_eq!(planned.lines[298], "changed");
+    // The pre-existing anchors are never duplicated: the anchor set stays
+    // unique across the 300 lines, and the new line gets a fresh allocation.
+    assert_eq!(
+        planned.hashes.len(),
+        planned
+            .hashes
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+    assert_ne!(planned.hashes[299], last);
+}
+
+// The benign twin: the file grew out-of-band with a duplicate of the last
+// registry line — the LCS match is a valid old index, so planning must
+// succeed (guards against an over-broad fix that rejects every desync).
+#[test]
+fn plan_edits_file_grew_with_a_matching_line_succeeds() {
+    let base = (1..=299).map(|i| format!("line {i}")).collect::<Vec<_>>();
+    let mut lines = base.clone();
+    lines.push(base[298].clone());
+    let content = lines.join("\n");
+    let hashes: Vec<String> = base
+        .iter()
+        .map(|l| line_base_idx(l))
+        .map(idx_to_hash)
+        .collect();
+    let last = hashes[298].clone();
+    let planned = plan_edits(
+        &content,
+        line_endings::Ending::Lf,
+        &[Edit {
+            from: last.clone(),
+            to: last.clone(),
+            content: "changed".into(),
+        }],
+        &PlanOptions::default(),
+    )
+    .expect("planning against a matching-line growth succeeds");
+    assert_eq!(planned.lines.len(), 300);
+    assert_eq!(planned.hashes.len(), 300);
+}
