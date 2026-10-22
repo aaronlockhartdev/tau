@@ -708,7 +708,7 @@ pub(super) fn edit(
 /// common per-user tool dirs, de-duplicated. The app is launched from a GUI,
 /// so its ambient PATH is a minimal launchd set that misses `~/.cargo/bin`,
 /// Homebrew, nvm, and friends.
-fn bash_path() -> String {
+pub(crate) fn bash_path() -> String {
     let mut parts: Vec<String> = std::env::var("PATH")
         .map(|p| {
             p.split(':')

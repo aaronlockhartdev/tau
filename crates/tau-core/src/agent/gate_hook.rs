@@ -35,6 +35,12 @@ impl AgentSession {
         if tool_calls == 0 {
             return Ok(true);
         }
+        // A background job is live (#53): its completion will wake this
+        // session with a new turn, so a check now would race the work —
+        // the gate skips and re-qualifies when that wake arrives.
+        if self.background_jobs().has_live() {
+            return Ok(true);
+        }
         // Run the check (honoring the deadline).
         let result = crate::gate::run(&gates, &cwd).await;
         if result.passed {

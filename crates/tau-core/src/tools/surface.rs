@@ -130,7 +130,33 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
             let mut reg = anchors.lock().expect("anchor registry lock");
             edit(ctx.cwd, &call.args, Some(&mut *reg), strict)
         }
-        "bash" => bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag(), ctx.progress).await,
+        "bash" => {
+            // Background bash (#53): detached — the call returns with the
+            // job id and output path; the session's completion hook wakes it
+            // when the job exits.
+            let background = call
+                .args
+                .get("background")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if background {
+                let command = call
+                    .args
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let (jobs, on_done) = (ctx.session.background_jobs(), ctx.session.job_hook());
+                match crate::tools::bgjobs::spawn(ctx.cwd, &command, &jobs, on_done) {
+                    Ok((id, path)) => {
+                        ToolResult::ok(crate::tools::bgjobs::spawn_output(&id, &path).into())
+                    }
+                    Err(e) => ToolResult::err(e.into()),
+                }
+            } else {
+                bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag(), ctx.progress).await
+            }
+        }
         other => ToolResult::err(format!("unknown tool: {other}").into()),
     }
 }

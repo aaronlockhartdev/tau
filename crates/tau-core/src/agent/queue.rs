@@ -143,6 +143,9 @@ impl AgentSession {
     /// in-flight turn (set by `SessionClose`; unlike `stop`, a new send does
     /// not reset it).
     pub(crate) fn mark_closed(&self) {
+        // Session close kills the session's background jobs (#53): their
+        // children die with the session, not after it.
+        self.background_jobs().kill_all();
         self.closed.store(true, Ordering::SeqCst);
     }
 
