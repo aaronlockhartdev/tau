@@ -59,6 +59,19 @@ impl AgentSession {
             .plan_hook = hook;
     }
 
+    /// The job-completion hook (#53): the harness wires it to the session
+    /// wake (steering-lane notification + turn start), the way it wires the
+    /// sub-agent bridge. The core stays transport-free: the hook is the seam.
+    pub(crate) fn set_job_notify_hook(
+        &self,
+        hook: Option<crate::tools::bgjobs::JobCompletionHook>,
+    ) {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .job_notify_hook = hook;
+    }
+
     /// The live entry sink, set on this session's store (the append choke
     /// point); `None` clears it.
     pub(crate) fn set_entry_event_hook(&self, hook: Option<EntryEventHook>) {

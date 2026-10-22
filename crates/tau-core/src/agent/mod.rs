@@ -192,6 +192,12 @@ pub(crate) struct Inner {
     /// the session minted, and which it showed the model. In-memory for the
     /// session's lifetime; shared across tool calls via Arc.
     anchors: Arc<std::sync::Mutex<crate::hashline::registry::Registry>>,
+    /// The per-session background job registry (#53); `bash background:true`
+    /// records here; `mark_closed` kills every live job.
+    background_jobs: Arc<crate::tools::bgjobs::BackgroundJobs>,
+    /// The job-completion hook (#53): the harness wakes the session on it —
+    /// the same steering lane a sub-agent's report rides.
+    job_notify_hook: Option<crate::tools::bgjobs::JobCompletionHook>,
 }
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
 /// (or a parent agent) drives it with `send` + `process`; the kill flag is
@@ -278,6 +284,8 @@ impl AgentSession {
                 subagents: p.subagents,
                 child: p.child,
                 anchors: Arc::new(std::sync::Mutex::new(anchor_registry)),
+                background_jobs: Arc::new(crate::tools::bgjobs::BackgroundJobs::default()),
+                job_notify_hook: None,
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -361,6 +369,25 @@ impl AgentSession {
             .anchors
             .clone()
     }
+
+    /// The session's background job registry (#53): the tool dispatch reads
+    /// it per bash call; the completion gate asks it whether a job is live.
+    pub(crate) fn background_jobs(&self) -> Arc<crate::tools::bgjobs::BackgroundJobs> {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .background_jobs
+            .clone()
+    }
+
+    /// The job-completion hook (#53): the dispatch passes it to the spawn.
+    pub(crate) fn job_hook(&self) -> Option<crate::tools::bgjobs::JobCompletionHook> {
+        self.inner
+            .lock()
+            .expect("agent inner: no panic while the lock is held")
+            .job_notify_hook
+            .clone()
+    }
 }
 mod config;
 mod gate_hook;
@@ -369,6 +396,8 @@ mod turn;
 
 #[cfg(test)]
 pub(crate) mod testkit;
+#[cfg(test)]
+mod tests_bgjobs;
 #[cfg(test)]
 mod tests_gate;
 #[cfg(test)]
