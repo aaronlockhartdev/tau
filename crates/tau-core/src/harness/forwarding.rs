@@ -362,7 +362,8 @@ impl SubagentBridge for SessionSubagentBridge {
             });
         // Wire the child's event hooks (#173): the child launch path only wires
         // the plan hook, so its streaming entries never reached the GUI.
-        super::launch::wire_events(&self.core, &self.workspace, &n.child, &agent);
+        let blob_root = std::path::Path::new(&parent_live.cwd).join(".tau");
+        super::launch::wire_events(&self.core, &self.workspace, &n.child, &agent, &blob_root);
         let live = Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
                 id: n.child.clone(),

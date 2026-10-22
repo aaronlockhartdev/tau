@@ -323,5 +323,38 @@ mod tests {
             json!({ "name": "read", "args": { "path": "/src/main.rs" }, "output": "" }),
         ));
         assert_eq!(out[0]["title"], "/src/main.rs");
+        assert_eq!(out[0]["title"], "/src/main.rs");
+    }
+
+    #[test]
+    fn blob_backed_tool_with_inlined_payload_owes_the_result_update() {
+        // #265: once the upsert hook inlines the sidecar blob, the tool's
+        // result phase reaches the mapper with `output` present — the
+        // two-phase update fires, no client-side resolution needed.
+        let mut m = Mapper::default();
+        let start = entry(
+            "t1",
+            "tool",
+            json!({ "name": "bash", "args": { "command": "ls" }, "output": null }),
+        );
+        assert_eq!(m.on_entry(&start).len(), 1);
+
+        // The result upsert arrives with the inlined payload (payload is the
+        // decoded JSON, the blob ref is kept).
+        let mut done = entry(
+            "t1",
+            "tool",
+            json!({ "name": "bash", "args": { "command": "ls" }, "output": "the bytes" }),
+        );
+        done.blob = Some(tau_protocol::snapshot::BlobRef {
+            id: "t1".into(),
+            size: 12,
+            hash: "0000000000000000".into(),
+        });
+        let out = m.on_entry(&done);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0]["sessionUpdate"], "tool_call_update");
+        assert_eq!(out[0]["status"], "completed");
+        assert_eq!(out[0]["rawOutput"], "the bytes");
     }
 }
