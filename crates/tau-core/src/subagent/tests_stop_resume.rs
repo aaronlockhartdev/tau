@@ -129,6 +129,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
         SubAgents {
             max_depth: 1,
             max_concurrent: Some(1),
+            ..SubAgents::default()
         },
     );
     let first = sup

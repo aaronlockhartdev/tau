@@ -3,10 +3,10 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicU64, BoxedDrive, ChildDriver, ChildProviderFactory,
     ContextMode, Core, Duration, Event, HashMap, LiveSession, Mutex, Ordering, PipeCounters,
-    ProviderTurn, ResponseRequest, SessionMeta, SessionStore, SkillInfo, SpawnNotice, StateNotice,
-    SubagentBridge, SubagentEventKind, SubagentInfo, Supervisor, TurnEvent, TurnProvider,
-    TurnProviderRef, TurnSink, Usage, WakeKind, WakeNotice, Weak, json, mpsc, pipe_send, provider,
-    run_turn,
+    ProviderTurn, ReadoptNotice, ReclaimNotice, ResponseRequest, SessionMeta, SessionStore,
+    SkillInfo, SpawnNotice, StateNotice, SubagentBridge, SubagentEventKind, SubagentInfo,
+    Supervisor, TurnEvent, TurnProvider, TurnProviderRef, TurnSink, Usage, WakeKind, WakeNotice,
+    Weak, json, mpsc, pipe_send, provider, run_turn,
 };
 use std::future::Future;
 use std::pin::Pin;
@@ -393,6 +393,23 @@ impl SubagentBridge for SessionSubagentBridge {
             .lock()
             .expect("sessions map: no panic while the lock is held")
             .insert(id, live);
+    }
+
+    fn reclaimed(&self, n: &ReclaimNotice) {
+        // The handle is gone from the supervisor's map: drop the mint record
+        // (the session file and the child's live session stay, #250).
+        self.core
+            .child_handles
+            .lock()
+            .expect("child handle registry: no panic while the lock is held")
+            .remove(&n.handle);
+    }
+
+    fn re_adopted(&self, n: &ReadoptNotice) {
+        // The re-adopt re-minted an existing handle: re-record the parent
+        // (the reclamation dropped it), so handle-carrying commands resolve
+        // it again.
+        self.core.register_child_handle(&n.handle, &n.parent);
     }
 
     fn state(&self, n: &StateNotice) {

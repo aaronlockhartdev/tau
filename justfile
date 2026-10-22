@@ -48,7 +48,7 @@ test:
 # The accept-* suites run against the deterministic mock LLM only (ADR-0010):
 # red = a code problem, never a network/model problem; real-model runs live
 # in the eval rig's live leg, not here.
-acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate accept-sender-labels core e2e':
+acceptance *suites = 'launch accept-tools accept-subagent accept-reclaim accept-om accept-gate accept-sender-labels core e2e':
     #!/bin/sh
     set -u
     cd "{{justfile_directory()}}"
@@ -186,7 +186,7 @@ acceptance *suites = 'launch accept-tools accept-subagent accept-om accept-gate 
             report launch FAIL "just build failed (see /tmp/tau-test-build.log)"
           fi
           ;;
-        accept-tools|accept-subagent|accept-om|accept-gate|accept-sender-labels)
+        accept-tools|accept-subagent|accept-reclaim|accept-om|accept-gate|accept-sender-labels)
           run_driver "$suite"
           ;;
         core)

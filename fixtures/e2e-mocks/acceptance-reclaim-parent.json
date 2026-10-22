@@ -1,0 +1,31 @@
+{
+  "match": "reclaim scenario parent",
+  "turns": [
+    {
+      "calls": [
+        {
+          "name": "subagent_spawn",
+          "arguments": {
+            "type": "general",
+            "context_mode": "fresh",
+            "brief": "reclaim probe child 1: call parent_notify with text 'ok' and done true, then stop."
+          }
+        }
+      ]
+    },
+    {
+      "calls": [
+        {
+          "name": "subagent_spawn",
+          "arguments": {
+            "type": "general",
+            "context_mode": "fresh",
+            "brief": "reclaim probe child 2: call parent_notify with text 'ok' and done true, then stop."
+          }
+        }
+      ]
+    },
+    { "text": "two sub-agents spawned" }
+  ],
+  "usage": { "input_tokens": 220, "output_tokens": 80, "total_tokens": 300 }
+}

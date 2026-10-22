@@ -94,9 +94,18 @@ impl ChildState {
             Self::Stopped { .. } => "stopped",
         }
     }
+    /// A terminal lifecycle state (`Done`/`Failed`/`Stopped`): the child's
+    /// drive has ended and it holds no live interaction — reclaimable by
+    /// the fleet's reclamation (#250). `Running`/`Idle`/`Awaiting` are not.
+    #[must_use]
+    pub const fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::Done { .. } | Self::Failed { .. } | Self::Stopped { .. }
+        )
+    }
 }
 
-/// A spawn's context mode (spec §5.1; the protocol carries its own mirror).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContextMode {

@@ -42,7 +42,9 @@ impl Supervisor {
             ));
         }
         self.check_cap(true)?;
-
+        // The fleet's hard cap on total handles (the backstop the soft
+        // bound exists to keep under, #250) — checked before any work.
+        self.check_fleet_cap()?;
         let session_id = SessionStore::new_session_id();
         let parent_agent = self
             .parent
@@ -198,6 +200,10 @@ impl Supervisor {
             .lock()
             .expect("children map: no panic while the lock is held")
             .insert(handle.clone(), child.clone());
+        // The spawn's child is in: reclaim the oldest terminal children if
+        // the fleet now exceeds its soft bound (spawn-triggered, #250) —
+        // the new child is running, so it can never be the eviction target.
+        self.reclaim_terminal();
         self.bridge.spawned(&SpawnNotice {
             parent: self.parent_session.clone(),
             handle: handle.clone(),

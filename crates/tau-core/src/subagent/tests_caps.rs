@@ -47,6 +47,7 @@ async fn the_caps() {
         SubAgents {
             max_depth: 1,
             max_concurrent: Some(1),
+            ..SubAgents::default()
         },
     );
     let first = sup
@@ -300,6 +301,7 @@ async fn the_depth_cap() {
             caps: SubAgents {
                 max_depth,
                 max_concurrent: None,
+                ..SubAgents::default()
             },
             types: vec![crate::agent_type::builtin_general()],
             depth,

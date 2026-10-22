@@ -247,6 +247,12 @@ pub struct SubAgents {
     pub max_depth: u32,
     /// Concurrent children; unset means unlimited.
     pub max_concurrent: Option<u32>,
+    /// Fleet soft bound: total child handles before spawn-triggered
+    /// terminal reclamation evicts the oldest terminal children (#250).
+    pub fleet_soft_bound: Option<u32>,
+    /// Fleet hard cap on total child handles: a defensive backstop the
+    /// soft bound exists to keep under (#250).
+    pub fleet_hard_cap: Option<u32>,
 }
 
 impl Default for SubAgents {
@@ -254,7 +260,23 @@ impl Default for SubAgents {
         Self {
             max_depth: 1,
             max_concurrent: None,
+            fleet_soft_bound: Some(32),
+            fleet_hard_cap: Some(64),
         }
+    }
+}
+
+impl SubAgents {
+    // The soft bound exists to keep the fleet under the hard cap; an
+    // inverted pair would make every spawn a cap refusal — a config error,
+    // not a runtime surprise (#250).
+    fn validate(&self) -> Result<(), LoadError> {
+        if let (Some(soft), Some(hard)) = (self.fleet_soft_bound, self.fleet_hard_cap)
+            && soft > hard
+        {
+            return Err(LoadError::FleetCapInversion { soft, hard });
+        }
+        Ok(())
     }
 }
 
@@ -434,6 +456,7 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
     system.merge_into(&mut config);
     project.merge_into(&mut config);
     config.om.validate()?;
+    config.subagents.validate()?;
     Ok(config)
 }
 
@@ -447,8 +470,12 @@ pub enum LoadError {
         value: u64,
         limit: u32,
     },
+    /// `subagents.fleet_soft_bound` above `fleet_hard_cap` (#250).
+    FleetCapInversion {
+        soft: u32,
+        hard: u32,
+    },
 }
-
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -460,6 +487,12 @@ impl fmt::Display for LoadError {
                 limit,
             } => {
                 write!(f, "{field} = {value} exceeds the u32 token limit ({limit})")
+            }
+            Self::FleetCapInversion { soft, hard } => {
+                write!(
+                    f,
+                    "subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})"
+                )
             }
         }
     }
