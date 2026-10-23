@@ -1,4 +1,4 @@
-use super::{ChildState, SessionStore, SubagentInfo, Supervisor, Usage, WaitingOn};
+use super::{ChildState, SessionStore, SubagentInfo, Supervisor, TurnUsage, WaitingOn};
 use crate::om;
 use crate::om_integration::{self, OmState};
 use crate::session::Entry;
@@ -49,7 +49,7 @@ impl Supervisor {
                         .rev()
                         .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
                         .and_then(|e| e.payload.get("usage"))
-                        .and_then(|u| serde_json::from_value::<Usage>(u.clone()).ok())
+                        .and_then(|u| serde_json::from_value::<TurnUsage>(u.clone()).ok())
                 })
         };
         // The child's plan file (spec §5.3): its open-step resume contract.

@@ -104,7 +104,6 @@
     error: null as string | null,
     // The transcript's last window computation (spec §9 seg3 render stats).
     renderRange: '',
-    renderMs: 0,
     // The skill registry, cached per workspace (ticket #28): the
     // composer's /skill: autocomplete data source.
     skills: {} as Record<string, SkillInfo[]>,

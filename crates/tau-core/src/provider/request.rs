@@ -36,19 +36,15 @@ impl From<ThinkingLevel> for Option<ReasoningEffort> {
     }
 }
 
-/// OpenAI-native reasoning summary (opt-in; streams as
+/// The wire value for OpenAI-native reasoning summary (opt-in; streams as
 /// `response.reasoning_summary_text.delta`).
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum ReasoningSummary {
-    Auto,
-}
+pub(crate) const REASONING_SUMMARY: &str = "auto";
 
 #[derive(Debug, Clone, Copy, Serialize)]
 struct ReasoningParam {
     effort: ReasoningEffort,
     #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<ReasoningSummary>,
+    summary: Option<&'static str>,
 }
 
 /// The `prompt_cache_options` object (spec §12, #35).
@@ -184,7 +180,7 @@ impl ResponseRequest {
     #[must_use]
     pub const fn with_reasoning_summary(mut self) -> Self {
         if let Some(param) = &mut self.reasoning {
-            param.summary = Some(ReasoningSummary::Auto);
+            param.summary = Some(REASONING_SUMMARY);
         }
         self
     }

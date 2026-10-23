@@ -5,10 +5,15 @@ import { md, mdHighlight, argsLines, valueLinesOf } from './markdown';
 // The highlighter is the async shiki boundary; the markdown pass under test
 // is how the base render and the substitution interact, so the test names
 // tokens with a fake.
-const highlightHtml = vi.hoisted(() =>
-  vi.fn((code: string, lang: string) => Promise.resolve(`<i data-lang="${lang}">${code}</i>`))
-);
-vi.mock('./highlight', () => ({ highlightHtml }));
+const { highlightHtml, esc } = vi.hoisted(() => {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const highlightHtml = vi.fn((code: string, lang: string) =>
+    Promise.resolve(`<i data-lang="${lang}">${code}</i>`)
+  );
+  return { highlightHtml, esc };
+});
+vi.mock('./highlight', () => ({ highlightHtml, esc }));
 
 beforeEach(() => {
   highlightHtml.mockReset();

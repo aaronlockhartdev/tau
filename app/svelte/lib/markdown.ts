@@ -1,15 +1,5 @@
 import MarkdownIt from 'markdown-it';
-import { highlightHtml } from './highlight';
-
-// Markdown rendering, ported from the prototype's renderer: code segments
-// are PROTECTED from markdown interpretation — fences are split out first
-// and only non-code text gets inline rules, with inline code
-// placeholdered so it is never re-parsed.
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
+import { esc, highlightHtml } from './highlight';
 // A fenced code block: an escaped plain block in the app's .code pre
 // (markdownit's highlight hook returns the block verbatim). mdHighlight
 // replaces the block with shiki's colored spans after the render.

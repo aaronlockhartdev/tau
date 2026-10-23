@@ -5,10 +5,15 @@ import Markdown from './Markdown.svelte';
 
 // The highlighter is the async shiki boundary; the component under test is
 // the two-phase render: plain base first, colored after.
-const highlightHtml = vi.hoisted(() =>
-  vi.fn((code: string, lang: string) => Promise.resolve(`<i data-lang="${lang}">${code}</i>`))
-);
-vi.mock('../lib/highlight', () => ({ highlightHtml }));
+const { highlightHtml, esc } = vi.hoisted(() => {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const highlightHtml = vi.fn((code: string, lang: string) =>
+    Promise.resolve(`<i data-lang="${lang}">${code}</i>`)
+  );
+  return { highlightHtml, esc };
+});
+vi.mock('../lib/highlight', () => ({ highlightHtml, esc }));
 
 afterEach(() => {
   vi.clearAllMocks();

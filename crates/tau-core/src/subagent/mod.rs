@@ -13,7 +13,7 @@
 
 use crate::agent::{AgentSession, TurnConfig};
 use crate::config::{Gates, Om, SubAgents, ToolBatchPolicy};
-use crate::provider::{TurnProviderRef, Usage};
+use crate::provider::{TurnProviderRef, TurnUsage};
 use crate::session::SessionStore;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -351,7 +351,7 @@ pub struct SubagentInfo {
     /// The child session's created timestamp (epoch ms): the snapshot's
     /// spawn-order sort key (#226 variant).
     pub created: u64,
-    pub usage: Option<Usage>,
+    pub usage: Option<TurnUsage>,
     pub resume_contract: Option<ResumeContract>,
 }
 
@@ -364,6 +364,7 @@ mod notify;
 mod reclaim;
 pub(crate) mod restore;
 mod route;
+pub(crate) mod snapshot;
 mod spawn;
 mod states;
 

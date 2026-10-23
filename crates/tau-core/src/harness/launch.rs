@@ -208,7 +208,7 @@ impl AgentSession {
                 };
                 // A pre-built supervisor (the test seam): adopt its values,
                 // wire no events.
-                Self::root_with_supervisor(&sup, store, system_prompt, provider, None)
+                Self::root_with_supervisor(&sup, store, system_prompt, provider)
             }
         }
     }
@@ -220,7 +220,6 @@ impl AgentSession {
         mut store: SessionStore,
         system_prompt: Option<String>,
         provider: TurnProviderRef,
-        _base_prompt: Option<String>,
     ) -> Result<Arc<AgentSession>, ProtocolError> {
         let d = sup.inherited();
         let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
@@ -433,10 +432,7 @@ fn root_session(
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
         gates: config.gates.clone(),
-        hashline: crate::hashline::pin_store::GcPolicy {
-            retention_days: config.hashline.retention_days,
-            gc_on_start: config.hashline.gc_on_start,
-        },
+        hashline: gc_policy(config),
         caps: config.subagents.clone(),
         types: crate::agent_type::discover(core.system_dir.as_deref(), &cwd),
         depth: 0,
@@ -465,10 +461,7 @@ fn root_session(
         gate_failed,
         om: Some(OmState::from_config(&config.om, record)),
         om_model: config.om.om_model.clone(),
-        hashline: crate::hashline::pin_store::GcPolicy {
-            retention_days: config.hashline.retention_days,
-            gc_on_start: config.hashline.gc_on_start,
-        },
+        hashline: gc_policy(config),
         subagents: Some(sup.clone()),
         child: None,
     }));
@@ -481,6 +474,14 @@ fn root_session(
     );
     sup.attach_parent(&agent);
     Ok(agent)
+}
+
+/// The root's hashline GC policy (config carries both fields verbatim).
+fn gc_policy(config: &Config) -> crate::hashline::pin_store::GcPolicy {
+    crate::hashline::pin_store::GcPolicy {
+        retention_days: config.hashline.retention_days,
+        gc_on_start: config.hashline.gc_on_start,
+    }
 }
 
 /// The root's four event hooks: the `om_status` kind-string shaping, the
@@ -496,14 +497,8 @@ pub(super) fn wire_events(
     // The plan-state hook (design: the plan file is the source of
     // truth): the core's watcher-parsed state, re-injected at each
     // assembly. A `Weak` keeps the hook from pinning the core.
-    {
-        let core_weak = Arc::downgrade(core);
-        let sid = sid.to_owned();
-        agent.set_plan_hook(Some(Arc::new(move || {
-            core_weak.upgrade().and_then(|core| core.plan_state(&sid))
-        })));
-    }
-    // The core's om_status hook takes the kind string; this closure
+    wire_plan_hook(agent, Some(Arc::clone(core)), sid);
+    // The core's om_status hook
     // shapes it into the protocol event on the shared channel.
     {
         let tx = core.events_tx.clone();
