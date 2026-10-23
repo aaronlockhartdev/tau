@@ -190,9 +190,45 @@ impl SseParser {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum WireBlock {
-    Reasoning { text: String },
-    Text { text: String },
-    ToolCall { name: String, arguments: String },
+    Reasoning {
+        text: String,
+    },
+    Text {
+        text: String,
+    },
+    /// `text` holds one JSON object per call, each on its own line.
+    ToolCall {
+        text: String,
+    },
+}
+
+impl WireBlock {
+    /// The block's consolidation class: runs of the same kind merge into
+    /// one JSONL entry; a kind change starts a new one.
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Reasoning { .. } => "reasoning",
+            Self::Text { .. } => "text",
+            Self::ToolCall { .. } => "tool_call",
+        }
+    }
+
+    /// Append a same-kind block's payload: reasoning and text are plain
+    /// concatenation; a tool call is serialized as a `name` / `arguments`
+    /// object on a new line, so a merged run keeps each call distinct.
+    fn append(&mut self, other: &Self) {
+        match (self, other) {
+            (Self::Reasoning { text: a }, Self::Reasoning { text: b })
+            | (Self::Text { text: a }, Self::Text { text: b }) => {
+                a.push_str(b);
+            }
+            (Self::ToolCall { text: a }, Self::ToolCall { text: b }) => {
+                a.push('\n');
+                a.push_str(b);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// One stream frame decoded from a `data:` payload. Servers deviate in field
@@ -283,8 +319,7 @@ impl Frame {
                         name, arguments, ..
                     },
             } => vec![WireBlock::ToolCall {
-                name: name.clone(),
-                arguments: arguments.clone(),
+                text: serde_json::json!({ "name": name, "arguments": arguments }).to_string(),
             }],
             _ => Vec::new(),
         }
@@ -380,12 +415,32 @@ impl TurnResult {
                 "ms": ms,
                 "completed": self.completed,
                 "usage": self.usage,
-                "blocks": self.blocks,
+                "blocks": self.consolidated_blocks(),
             }),
             "llm wire"
         );
     }
+
+    /// The blocks with consecutive same-kind fragments merged: a streamed
+    /// turn arrives as dozens of `reasoning` / `text` / `tool_call` deltas,
+    /// and the JSONL line reads far better as one entry per run (order
+    /// preserved; the raw `self.blocks` stays as the stream emitted it).
+    pub(crate) fn consolidated_blocks(&self) -> Vec<WireBlock> {
+        let blocks = &self.blocks;
+        let mut out: Vec<WireBlock> = Vec::with_capacity(blocks.len());
+        for block in blocks {
+            if let Some(last) = out.last_mut()
+                && last.kind() == block.kind()
+            {
+                last.append(block);
+                continue;
+            }
+            out.push(block.clone());
+        }
+        out
+    }
 }
+
 /// One stream delta, or the usage at `response.completed`. The sink decides
 /// whether the stream may continue (false = kill, spec §7).
 #[derive(Debug, Clone, PartialEq)]

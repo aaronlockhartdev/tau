@@ -68,8 +68,7 @@ fn decode_stream_records_blocks_in_stream_order() {
                 text: "the loop is off-by-one".into(),
             },
             WireBlock::ToolCall {
-                name: "edit".into(),
-                arguments: r#"{"path":"a.rs"}"#.into(),
+                text: r#"{"arguments":"{\"path\":\"a.rs\"}","name":"edit"}"#.into(),
             },
             WireBlock::Text {
                 text: "fixed".into()
