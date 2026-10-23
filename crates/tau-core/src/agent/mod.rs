@@ -150,6 +150,12 @@ pub(crate) struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
+    /// The input-item count the previous wire request carried (the #98
+    /// wire log's delta view): this request's log line reports only the
+    /// items appended since then, not the whole conversation. OM
+    /// re-observations shrink the raw window, so the count is tracked per
+    /// request, not derived from a high-water mark.
+    prev_input_len: usize,
     /// The completion gate (spec §5.3); `None` = no gate configured.
     pub(crate) gates: Option<crate::config::Gates>,
     /// The live gate state: `true` when the most recent gate-qualified turn
@@ -271,6 +277,7 @@ impl AgentSession {
                 tool_batch_on_force: p.tool_batch_on_force,
                 turn: p.turn,
                 queue: VecDeque::new(),
+                prev_input_len: 0,
                 gates: p.gates,
                 gate_failed: p.gate_failed,
                 om: p.om,

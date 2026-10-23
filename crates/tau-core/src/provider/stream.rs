@@ -29,6 +29,10 @@ pub(super) fn apply_frame(
         Ok(frame) => frame,
         Err(_) => return true,
     };
+    // The JSONL response line's `blocks`: the frame's content blocks are
+    // recorded in arrival order, so the log shows where each tool call fell
+    // in the model's reasoning.
+    result.blocks.extend(frame.wire_blocks());
     match frame {
         Frame::Created { created_at: ts } => {
             if let Some(ts) = ts {
@@ -294,9 +298,9 @@ async fn attempt_one_turn(
             Ok(Ok(Some(chunk))) => {
                 // A received chunk restarts the idle deadline.
                 idle_deadline = tokio::time::Instant::now() + idle;
-                // The JSONL response line carries the raw bytes, so the raw
-                // buffer is live at `debug` level, not just `trace`.
-                if tracing::level_enabled!(tracing::Level::DEBUG) {
+                // The trace-level wire log (wire::response) carries the raw
+                // SSE bytes: the buffer is live at `trace` level only.
+                if tracing::level_enabled!(tracing::Level::TRACE) {
                     raw_response.push_str(&String::from_utf8_lossy(&chunk));
                 }
                 chunk
@@ -351,7 +355,6 @@ async fn attempt_one_turn(
     result.wire_response_jsonl(
         &wire_id,
         u64::try_from(wire_start.elapsed().as_millis()).unwrap_or(u64::MAX),
-        &raw_response,
     );
     Ok(result)
 }

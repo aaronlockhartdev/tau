@@ -68,6 +68,13 @@ const fn cache_retention_wire(retention: CacheRetention) -> Option<&'static str>
 /// ADR-0003).
 #[derive(Debug, Clone, Serialize)]
 pub struct ResponseRequest {
+    #[serde(skip)]
+    wire_delta_from: usize,
+    /// The caller's label for the wire log's request line (the OM
+    /// round-trips' `observe`/`buffer`/`reflect`); `None` = the session's
+    /// main turns. `serde(skip)`ed: log metadata, never wire content.
+    #[serde(skip)]
+    wire_label: Option<&'static str>,
     model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     instructions: Option<String>,
@@ -94,26 +101,14 @@ pub struct ResponseRequest {
 }
 
 impl ResponseRequest {
-    /// JSONL wire view of this request: one parseable JSON line, `raw` the
-    /// verbatim serialized body. `debug!` level (the #98 wire log's
-    /// parseable companion) — compiled out in release builds.
-    pub fn wire_request_jsonl(&self, id: &str) {
-        tracing::debug!(
-            line = %serde_json::json!({
-                "id": id,
-                "dir": "req",
-                "model": self.model,
-                "raw": serde_json::to_string(self).unwrap_or_default(),
-            }),
-            "llm wire"
-        );
-    }
     pub fn new(
         model: impl Into<String>,
         instructions: Option<&str>,
         input: Vec<InputEntry>,
     ) -> Self {
         Self {
+            wire_delta_from: 0,
+            wire_label: None,
             model: model.into(),
             instructions: instructions.map(str::to_owned),
             input,
@@ -128,6 +123,50 @@ impl ResponseRequest {
             prompt_cache_options: None,
             stream: true,
         }
+    }
+
+    /// The #98 wire log's delta view (agent-side seam): log only the input
+    /// items from index `from` on — the ones appended since this session's
+    /// previous wire request. The field is `serde(skip)`ed: it shapes the
+    /// log line, never the wire body.
+    #[must_use]
+    pub(crate) fn with_wire_delta(mut self, from: usize) -> Self {
+        self.wire_delta_from = from;
+        self
+    }
+
+    /// The caller's label for the wire log's request line (the OM
+    /// round-trips' `observe`/`buffer`/`reflect`).
+    #[must_use]
+    pub(crate) fn with_wire_label(mut self, label: &'static str) -> Self {
+        self.wire_label = Some(label);
+        self
+    }
+
+    /// JSONL wire view of this request: one parseable JSON line carrying the
+    /// caller's label, the system prompt, the delta input items (see
+    /// `with_wire_delta`), and the full item count. `debug!` level —
+    /// compiled out in release builds. Emitted once per attempt by the
+    /// provider layer (which mints the id the response line pairs with);
+    /// a retried attempt logs an empty delta, not the same items twice.
+    pub fn wire_request_jsonl(&self, id: &str) {
+        tracing::debug!(
+            line = %serde_json::json!({
+                "id": id,
+                "dir": "req",
+                "label": self.wire_label,
+                "model": self.model,
+                "instructions": self.instructions,
+                "delta": self
+                    .input
+                    .get(self.wire_delta_from..)
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .unwrap_or_default(),
+                "msg_count": self.input.len(),
+            }),
+            "llm wire"
+        );
     }
 
     #[must_use]

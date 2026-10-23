@@ -183,6 +183,18 @@ impl SseParser {
     }
 }
 
+/// One block of a model turn, in the order the stream emitted it: the
+/// JSONL response line's `blocks` (the #98 wire log's debug view). A model
+/// turn interleaves reasoning, text, and tool calls; the flat `text` /
+/// `reasoning` / `calls` fields are a lossy projection of this order.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum WireBlock {
+    Reasoning { text: String },
+    Text { text: String },
+    ToolCall { name: String, arguments: String },
+}
+
 /// One stream frame decoded from a `data:` payload. Servers deviate in field
 /// names; the serde aliases fold the reasoning dialects (`reasoning` /
 /// `reasoning_content` / `reasoning_details` / `thinking`) into one internal
@@ -238,6 +250,45 @@ enum Frame {
     /// Lifecycle/content items the v0 client does not consume.
     #[serde(other)]
     Other,
+}
+impl Frame {
+    /// The wire-log blocks this frame represents, in arrival order: an
+    /// `OutputTextDelta` is two dialects (the `reasoning_text` summary,
+    /// then the `delta` text), the other deltas and `output_item.done`
+    /// are one-for-one. A frame carrying none of them (completed, created,
+    /// error, …) has no blocks.
+    pub(crate) fn wire_blocks(&self) -> Vec<WireBlock> {
+        match self {
+            Self::OutputTextDelta {
+                delta,
+                reasoning_text,
+                ..
+            } => {
+                let mut blocks = Vec::new();
+                if let Some(text) = reasoning_text {
+                    blocks.push(WireBlock::Reasoning { text: text.clone() });
+                }
+                if let Some(text) = delta {
+                    blocks.push(WireBlock::Text { text: text.clone() });
+                }
+                blocks
+            }
+            Self::ReasoningDelta { delta: Some(text) }
+            | Self::ReasoningTextDelta { delta: Some(text) } => {
+                vec![WireBlock::Reasoning { text: text.clone() }]
+            }
+            Self::OutputItemDone {
+                item:
+                    OutputItem::FunctionCall {
+                        name, arguments, ..
+                    },
+            } => vec![WireBlock::ToolCall {
+                name: name.clone(),
+                arguments: arguments.clone(),
+            }],
+            _ => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -307,16 +358,21 @@ pub struct TurnResult {
     /// false and the partial stands (spec §6/§7, #17 handoff gap b).
     pub completed: bool,
     pub calls: Vec<FunctionCall>,
+    /// The turn's blocks in stream-arrival order (the JSONL response line's
+    /// `blocks`): reasoning, text, and tool calls interleaved as the model
+    /// emitted them, which the flat fields above lose.
+    pub blocks: Vec<WireBlock>,
     /// Mid-stream provider error frames, in arrival order.
     pub mid_stream_errors: Vec<String>,
 }
 
 impl TurnResult {
-    /// JSONL wire view of the response: one parseable JSON line, `raw` the
-    /// verbatim SSE bytes, with `ms`/`completed`/`usage` summary fields.
-    /// `debug!` level (the #98 wire log's parseable companion) — compiled
-    /// out in release builds.
-    pub fn wire_response_jsonl(&self, id: &str, ms: u64, raw: &str) {
+    /// JSONL wire view of the response: one parseable JSON line — the
+    /// model's exact output as ordered `blocks`, plus `ms`/`completed` /
+    /// `usage` summary fields. `debug!` level (the #98 wire log's
+    /// parseable companion) — compiled out in release builds. The verbatim
+    /// SSE bytes stay at `trace` (`wire::response`).
+    pub fn wire_response_jsonl(&self, id: &str, ms: u64) {
         tracing::debug!(
             line = %serde_json::json!({
                 "id": id,
@@ -324,7 +380,7 @@ impl TurnResult {
                 "ms": ms,
                 "completed": self.completed,
                 "usage": self.usage,
-                "raw": raw,
+                "blocks": self.blocks,
             }),
             "llm wire"
         );

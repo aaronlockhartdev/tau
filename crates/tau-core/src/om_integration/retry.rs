@@ -38,10 +38,14 @@ pub async fn call_with_retry(
     retries: u32,
 ) -> Result<TurnResult, OmError> {
     let mut n = 0u32;
+    // The label rides the wire log's request line (the #98 view): an OM
+    // round-trip logs as `observe`/`buffer`/`reflect`, a main turn as
+    // unlabeled.
+    let labeled = request.clone().with_wire_label(label);
     loop {
         let mut sink = NoopSink;
         match provider
-            .call(request, &mut sink)
+            .call(&labeled, &mut sink)
             .await
             .map_err(OmError::Provider)
         {

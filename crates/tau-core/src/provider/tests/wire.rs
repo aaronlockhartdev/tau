@@ -260,18 +260,42 @@ fn wire_json(out: &str) -> serde_json::Value {
 
 #[test]
 fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
-    // Positive — request line: one parseable JSON line, `raw` verbatim.
-    let request = ResponseRequest::new("mock-model", None, vec![]);
+    // Positive — request line: delta view, no full-body serialization.
+    let request = ResponseRequest::new(
+        "mock-model",
+        None,
+        vec![
+            InputEntry::Message(InputMessage {
+                role: "user".into(),
+                content: "old".into(),
+            }),
+            InputEntry::Message(InputMessage {
+                role: "user".into(),
+                content: "new".into(),
+            }),
+        ],
+    )
+    .with_wire_delta(1);
     let v = wire_json(&capture_debug(|| request.wire_request_jsonl("a1b2")));
     assert_eq!(v["id"], "a1b2");
     assert_eq!(v["dir"], "req");
+    assert_eq!(v["label"], serde_json::Value::Null);
     assert_eq!(v["model"], "mock-model");
-    let raw: serde_json::Value =
-        serde_json::from_str(v["raw"].as_str().expect("raw is a string")).unwrap();
-    assert_eq!(raw["model"], "mock-model");
-    assert_eq!(raw["stream"], true);
+    assert_eq!(v["msg_count"], 2);
+    // The delta is the appended items only — not the whole conversation.
+    assert_eq!(v["delta"][0]["role"], "user");
+    assert_eq!(v["delta"][0]["content"], "new");
+    assert_eq!(v["delta"].as_array().unwrap().len(), 1);
 
-    // Positive — response line: summary fields plus the verbatim raw bytes.
+    // Positive — a labeled OM round-trip carries its label.
+    let om =
+        ResponseRequest::new("mock-model", Some("observer sys"), vec![]).with_wire_label("observe");
+    let v = wire_json(&capture_debug(|| om.wire_request_jsonl("c3d4")));
+    assert_eq!(v["label"], "observe");
+    assert_eq!(v["instructions"], "observer sys");
+    assert!(v["delta"].as_array().unwrap().is_empty());
+
+    // Positive — response line: ordered blocks plus usage, no raw bytes.
     let result = TurnResult {
         completed: true,
         usage: Some(Usage {
@@ -280,22 +304,39 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
             total_tokens: 15,
             ..Default::default()
         }),
+        blocks: vec![
+            WireBlock::Reasoning {
+                text: "thinking".into(),
+            },
+            WireBlock::ToolCall {
+                name: "edit".into(),
+                arguments: r#"{"path":"a.rs"}"#.into(),
+            },
+            WireBlock::Text {
+                text: "done".into(),
+            },
+        ],
         ..TurnResult::default()
     };
-    let v = wire_json(&capture_debug(|| {
-        result.wire_response_jsonl("a1b2", 42, "data: x\n");
-    }));
+    let v = wire_json(&capture_debug(|| result.wire_response_jsonl("a1b2", 42)));
     assert_eq!(v["id"], "a1b2");
     assert_eq!(v["dir"], "res");
     assert_eq!(v["ms"], 42);
     assert_eq!(v["completed"], true);
     assert_eq!(v["usage"]["output_tokens"], 5);
-    assert_eq!(v["raw"], "data: x\n");
+    assert!(v.get("raw").is_none(), "the raw SSE bytes stay at trace");
+    // The blocks preserve the model's emission order.
+    let blocks = v["blocks"].as_array().unwrap();
+    assert_eq!(blocks[0]["kind"], "reasoning");
+    assert_eq!(blocks[1]["kind"], "tool_call");
+    assert_eq!(blocks[1]["name"], "edit");
+    assert_eq!(blocks[2]["kind"], "text");
 
     // Negative — an incomplete turn without usage: `usage` is null, not a
     // fabricated object.
     let result = TurnResult::default();
-    let v = wire_json(&capture_debug(|| result.wire_response_jsonl("a1b2", 7, "")));
+    let v = wire_json(&capture_debug(|| result.wire_response_jsonl("a1b2", 7)));
     assert_eq!(v["usage"], serde_json::Value::Null);
     assert_eq!(v["completed"], false);
+    assert!(v["blocks"].as_array().unwrap().is_empty());
 }

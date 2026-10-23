@@ -30,6 +30,7 @@ pub(crate) fn turn_result(text: &str) -> crate::provider::TurnResult {
         duration: None,
         completed: true,
         calls: Vec::new(),
+        blocks: Vec::new(),
         mid_stream_errors: Vec::new(),
     }
 }

@@ -45,6 +45,7 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
         duration: None,
         completed: true,
         calls: Vec::new(),
+        blocks: Vec::new(),
         mid_stream_errors: Vec::new(),
     };
     let mut action = TurnEndAction::Observe {

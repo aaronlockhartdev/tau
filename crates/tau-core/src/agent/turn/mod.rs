@@ -271,9 +271,23 @@ impl AgentSession {
         prompt: u32,
         max_output_override: Option<u64>,
     ) -> ResponseRequest {
+        // The #98 wire log's delta view: stamp the offset of the items
+        // already logged by this session's previous request, then advance
+        // it — under the session lock, so a mid-turn re-assembly after an
+        // OM compaction logs its (shrunken) window, not a stale offset.
+        let prev_len = {
+            let mut inner = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
+            let prev = inner.prev_input_len;
+            inner.prev_input_len = input.len();
+            prev
+        };
         let mut request =
             ResponseRequest::new(self.model().clone(), Some(system_prompt), input.to_vec())
-                .with_tools(tools.to_vec());
+                .with_tools(tools.to_vec())
+                .with_wire_delta(prev_len);
         if let Some(n) = max_output_override.or(turn.max_output_tokens) {
             request = request.with_max_output_tokens(crate::provider::clamp_max_output(
                 n,

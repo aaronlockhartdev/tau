@@ -38,6 +38,53 @@ fn decode_stream_extracts_function_calls_and_reasoning_dialect() {
 }
 
 #[test]
+fn decode_stream_records_blocks_in_stream_order() {
+    // The JSONL response line's `blocks` must show where each tool call
+    // fell in the model's reasoning: reasoning, then the call, then text —
+    // in the order the stream emitted them. `decode_stream` feeds
+    // `apply_frame` per payload, so driving `apply_frame` over the same
+    // payloads records the blocks exactly as the live path folds them.
+    struct Keep;
+    impl TurnSink for Keep {
+        fn event(&mut self, _: TurnEvent) -> bool {
+            true
+        }
+    }
+    let mut result = TurnResult::default();
+    let mut created_at: Option<i64> = None;
+    for payload in [
+        r#"{"type":"response.reasoning_text.delta","delta":"the loop is off-by-one"}"#,
+        r#"{"type":"response.output_item.done","item":{"id":"i1","type":"function_call","name":"edit","call_id":"c1","arguments":"{\"path\":\"a.rs\"}"}}"#,
+        r#"{"type":"response.output_text.delta","delta":"fixed"}"#,
+        r#"{"type":"response.reasoning_text.delta","delta":"double-checking"}"#,
+        r#"{"type":"response.output_text.delta","delta":". looks right"}"#,
+    ] {
+        apply_frame(&mut Keep, &mut result, &mut created_at, payload);
+    }
+    assert_eq!(
+        result.blocks,
+        vec![
+            WireBlock::Reasoning {
+                text: "the loop is off-by-one".into(),
+            },
+            WireBlock::ToolCall {
+                name: "edit".into(),
+                arguments: r#"{"path":"a.rs"}"#.into(),
+            },
+            WireBlock::Text {
+                text: "fixed".into()
+            },
+            WireBlock::Reasoning {
+                text: "double-checking".into(),
+            },
+            WireBlock::Text {
+                text: ". looks right".into(),
+            },
+        ]
+    );
+}
+
+#[test]
 fn decode_stream_computes_duration_from_created_timestamps() {
     // #224: the server's created_at on response.created and response.completed
     // bracket the decode window; the duration is their difference.
