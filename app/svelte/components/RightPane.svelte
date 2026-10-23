@@ -25,11 +25,11 @@
 
   const subs = $derived(cur ? cur.subagents : []);
   const isLive = (i: SubagentInfo) => i.state === 'running' || i.state === 'idle';
-  // Crew order (P3): running first, then waiting, then terminal — MRU breaks
+  // Crew order (P3): running first, then waiting, then terminal — last-modified
   // the ties within a rank.
   const crewRank = (i: SubagentInfo) => (i.state === 'running' ? 0 : i.state === 'idle' ? 1 : 2);
   const byCrew = (a: SubagentInfo, b: SubagentInfo) =>
-    crewRank(a) - crewRank(b) || childMru(b) - childMru(a);
+    crewRank(a) - crewRank(b) || childLastModified(b) - childLastModified(a);
   const liveSubs = $derived(subs.filter(isLive).sort(byCrew));
   const histSubs = $derived(subs.filter((i) => !isLive(i)).sort(byCrew));
   const grandOf = (list: SubagentInfo[], liveOnly: boolean) => {
@@ -44,8 +44,8 @@
   const liveGrand = $derived.by(() => grandOf(liveSubs, true));
   const histGrand = $derived.by(() => grandOf(histSubs, false));
 
-  function childMru(i: SubagentInfo): number {
-    return store.sessions[i.child]?.mru ?? 0;
+  function childLastModified(i: SubagentInfo): number {
+    return store.sessions[i.child]?.last_modified ?? 0;
   }
   function titleOf(i: SubagentInfo): string {
     return store.sessions[i.child]?.meta.title ?? i.child;

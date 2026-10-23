@@ -8,18 +8,7 @@ const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
-
-import {
-  type Command,
-  type CommandOutput,
-  type LiveState,
-  type SessionMeta,
-  type SkillInfo,
-  type SubagentInfo,
-  type Usage,
-  type ViewEntry,
-  type Workspace
-} from './protocol';
+import { type Command, type SkillInfo, type Workspace } from './protocol';
 import { applySessionList, openSession, touchChild } from './sessions';
 import {
   applyEvents,
@@ -34,137 +23,9 @@ import {
   tabSelect,
   toggleFileDir
 } from './store.svelte';
+import { USAGE, WS, bindIPC, entryView, freshStore, meta, snap, sub } from './testing/store-harness';
 
-const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
-
-function meta(id: string, workspace = WS.id, extra: Partial<SessionMeta> = {}): SessionMeta {
-  return {
-    id,
-    workspace,
-    title: null,
-    parent: null,
-    created: 1000,
-    leaf: null,
-    model: null,
-    usage: null,
-    archived: false,
-    ...extra
-  };
-}
-
-function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Partial<LiveState> } = {}): {
-  kind: 'snapshot';
-  snapshot: import('./protocol').Snapshot;
-} {
-  return {
-    kind: 'snapshot',
-    snapshot: {
-      workspace: WS,
-      session: meta(sid, WS.id, extra.session),
-      entries: [],
-      om: { observation_tokens: 0, pending_tokens: 0, reflector_threshold: 0 },
-      live: { queue: [], turn: 'idle', gate_failed: false, plan: { steps: [], criteria: '', notes: '' }, subagents: [], own_state: null, ...extra.live },
-      cursor: ''
-    }
-  };
-}
-
-function entryView(id: string, kind: string, payload: Record<string, unknown>): ViewEntry {
-  return {
-    id,
-    parent: null,
-    kind,
-    timestamp: 1,
-    payload,
-    blob: null,
-    first_kept: null
-  };
-}
-
-
-const USAGE: Usage = { input_tokens: 5, output_tokens: 10, total_tokens: 15, cached_prompt_tokens: 0 };
-
-// A sub-agent mirror row, complete (the wire shape the events carry).
-function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
-  return {
-    handle: child,
-    child,
-    agent_type: 'general',
-    context_mode: 'fresh',
-    state: 'idle',
-    waiting_on: null,
-    last_message: null,
-    usage: null,
-    resume_contract: null,
-    ...extra
-  };
-}
-
-function mockIPC(handler: (cmd: Command) => CommandOutput | Promise<CommandOutput>) {
-  mockInvoke.mockImplementation(async (_name: unknown, args: { command: Command }) => handler(args.command));
-}
-
-// The default route table: the commands a boot/switch flow issues.
-function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => CommandOutput>> = {}) {
-  const base: Record<Command['type'], (cmd: Command) => CommandOutput> = {
-    workspace_list: () => ({ kind: 'workspaces', workspaces: [WS] }),
-    workspace_open: () => ({ kind: 'workspace', workspace: WS }),
-    workspace_close: () => ({ kind: 'none' }),
-    session_list: () => ({ kind: 'sessions', sessions: [meta('s1')] }),
-    session_new: () => ({ kind: 'session', session: meta('s2') }),
-    session_rename: () => ({ kind: 'none' }),
-    session_set_model: () => ({ kind: 'none' }),
-    session_open: () => ({ kind: 'snapshot', snapshot: snap('s1').snapshot }),
-    session_close: () => ({ kind: 'none' }),
-    session_delete: () => ({ kind: 'none' }),
-    session_archive: (cmd) =>
-      cmd.type === 'session_archive' ? { kind: 'session', session: meta(cmd.session, WS.id, { archived: true }) } : { kind: 'none' },
-    session_restore: () => ({ kind: 'none' }),
-    session_fork: () => ({ kind: 'none' }),
-    session_branch: () => ({ kind: 'none' }),
-    session_snapshot: () => ({ kind: 'none' }),
-    session_entries: () => ({ kind: 'entries', entries: [] }),
-    blob_read: () => ({ kind: 'blob', payload: null }),
-    message_send: () => ({ kind: 'none' }),
-    message_stop: () => ({ kind: 'none' }),
-    queue_item_remove: () => ({ kind: 'none' }),
-    subagent_types: () => ({ kind: 'agents', agents: [] }),
-    subagent_list: () => ({ kind: 'subagents', subagents: [] }),
-    subagent_state: () => ({ kind: 'subagent', subagent: sub('c1') }),
-    subagent_activity: () => ({ kind: 'subagent_activity', activity: { observations: [], live: [], degraded: false } }),
-    subagent_spawn: () => ({ kind: 'none' }),
-    subagent_message: () => ({ kind: 'none' }),
-    subagent_stop: () => ({ kind: 'none' }),
-    skill_list: () => ({ kind: 'skills', skills: [] }),
-    provider_list: () => ({ kind: 'providers', providers: [] }),
-    provider_add: () => ({ kind: 'none' }),
-    provider_set: () => ({ kind: 'none' }),
-    provider_delete: () => ({ kind: 'none' }),
-    file_read: () => ({ kind: 'file', file: { text: '', truncated: false } }),
-    file_list: () => ({ kind: 'files', files: [] }),
-    file_unlist: () => ({ kind: 'none' }),
-    git_status: () => ({ kind: 'git_status', status: { branch: 'main', modified: [], untracked: [], deleted: [] } }),
-    git_show: () => ({ kind: 'git_show', text: '' })
-  };
-  mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type])(cmd));
-}
-
-function freshStore() {
-  store.workspaces = [];
-  store.current = null;
-  store.sessions = {};
-  store.files = {};
-  store.fileErrors = {};
-  store.skills = {};
-  store.pane = {};
-  store.tabSelected = [];
-  store.tabSelAnchor = null;
-  store.loading = false;
-  store.error = null;
-  store.tailJump = 0;
-  (window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
-}
-
+const { mockIPC, defaultIPC } = bindIPC(mockInvoke);
 beforeEach(() => {
   freshStore();
   mockInvoke.mockReset();
@@ -496,6 +357,101 @@ describe('applyEvents: queueing', () => {
   });
 });
 
+describe('applyEvents: last_modified (#282/#283)', () => {
+  function freshSession(): void {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    store.sessions['s1']!.last_modified = 1000;
+  }
+
+  it('stream_start and stream_end advance the timestamp (mock clock at 5000)', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    applyEvents([
+      {
+        type: 'stream_end',
+        workspace: WS.id,
+        session: 's1',
+        call_id: 'c1',
+        interrupted: false,
+        duration_secs: null,
+        usage: null
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('a tool entry_upsert (the user send echo, ADR-0008) advances the timestamp', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([
+      {
+        type: 'entry_upsert',
+        workspace: WS.id,
+        session: 's1',
+        entry: entryView('00000001', 'tool', { tool: 'bash', args: 'ls' })
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('queue and plan_changed advance the timestamp', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([{ type: 'queue', workspace: WS.id, session: 's1', items: [{ text: 'hi', lane: 'steering' }] }]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    applyEvents([
+      {
+        type: 'plan_changed',
+        workspace: WS.id,
+        session: 's1',
+        plan: { steps: [{ text: 'a', done: false }], criteria: '', notes: '' }
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('subagent activity advances the parent timestamp (spawn, then a notified wake)', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([
+      {
+        type: 'subagent_event',
+        workspace: WS.id,
+        session: 's1',
+        kind: { kind: 'spawned', handle: 'h1', child: 'c1', agent_type: 'general', context_mode: 'fresh', title: 'worker' }
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    applyEvents([
+      {
+        type: 'subagent_event',
+        workspace: WS.id,
+        session: 's1',
+        kind: { kind: 'notified', child: 'c1', wake: 'done', text: 'result', output: null }
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('om_status, session_event, and system errors do not advance the timestamp', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([
+      { type: 'om_status', workspace: WS.id, session: 's1', kind: 'observing' },
+      { type: 'session_event', workspace: WS.id, session: 's1', kind: { kind: 'branch_move', leaf: 'abc' } },
+      { type: 'system', workspace: WS.id, session: 's1', kind: { kind: 'error', message: 'boom' } }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(1000);
+    vi.restoreAllMocks();
+  });
+});
+
 describe('session switch', () => {
   it('replaces the stub with the snapshot and keeps the parent link', async () => {
     store.sessions = applySessionList({}, [meta('p'), meta('c', WS.id, { parent: 'p' })]);
@@ -521,15 +477,15 @@ describe('session switch', () => {
     expect(store.current).toBe('s1');
   });
 
-  it('re-opening a session preserves the row mru (no tree reshuffle away from the clicked row)', async () => {
+  it('re-opening a session preserves the row last_modified (no tree reshuffle away from the clicked row)', async () => {
     store.sessions = applySessionList({}, [meta('s1')]);
-    store.sessions['s1']!.mru = 9999;
+    store.sessions['s1']!.last_modified = 9999;
     defaultIPC();
     await switchSession('s1');
-    expect(store.sessions['s1']!.mru).toBe(9999);
+    expect(store.sessions['s1']!.last_modified).toBe(9999);
   });
 
-  it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the mru)', async () => {
+  it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the last_modified)', async () => {
     store.sessions = applySessionList({}, [meta('p')]);
     store.sessions = touchChild(store.sessions, 'p', 'c', 'running', 5000, null);
     defaultIPC({
@@ -545,7 +501,7 @@ describe('session switch', () => {
     });
     await switchSession('p');
     expect(store.sessions['c']!.state).toBe('done');
-    expect(store.sessions['c']!.mru).toBe(5000);
+    expect(store.sessions['c']!.last_modified).toBe(5000);
     expect(store.sessions['d']).toBeTruthy();
     expect(store.sessions['d']!.state).toBe('running');
     expect(store.sessions['d']!.parent).toBe('p');

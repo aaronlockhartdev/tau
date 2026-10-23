@@ -54,7 +54,7 @@
     if (!ws) return [];
     return Object.values(store.sessions)
       .filter((s) => s.meta.workspace === ws && !s.parent && !s.archived)
-      .sort((a, b) => b.mru - a.mru)
+      .sort((a, b) => b.last_modified - a.last_modified)
       .map((s) => s.meta.id);
   }
   function navSession(delta: number): void {

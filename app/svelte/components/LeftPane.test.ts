@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The left pane: the files | sessions tabs. The sessions tab is the MRU
+// The left pane: the files | sessions tabs. The sessions tab is the last-modified
 // session tree (children grouped under their parent, archive folder at
 // the bottom); the files tab is the workspace listing with a retry note
 // when the root fetch failed.
@@ -111,8 +111,8 @@ describe('LeftPane', () => {
   it('lists top-level sessions and groups a child under its active parent', async () => {
     seed({
       sessions: {
-        s1: seedState(meta('s1'), { mru: 2 }),
-        c1: seedState(meta('c1', { parent: 's1' }), { parent: 's1', mru: 1 })
+        s1: seedState(meta('s1'), { last_modified: 2 }),
+        c1: seedState(meta('c1', { parent: 's1' }), { parent: 's1', last_modified: 1 })
       }
     });
     await mount();
@@ -155,8 +155,8 @@ describe('LeftPane', () => {
   it('a shift click spans the selection across the visible rows', async () => {
     seed({
       sessions: {
-        s1: seedState(meta('s1'), { mru: 2 }),
-        s2: seedState(meta('s2'), { mru: 1 })
+        s1: seedState(meta('s1'), { last_modified: 2 }),
+        s2: seedState(meta('s2'), { last_modified: 1 })
       }
     });
     await mount();

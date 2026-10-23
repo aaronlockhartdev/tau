@@ -39,7 +39,7 @@ function source(over: Partial<PaletteSource> = {}): PaletteSource {
 }
 
 describe('paletteItems', () => {
-  it('groups sessions (MRU order), crew, and the fixed actions', () => {
+  it('groups sessions (last-modified order), crew, and the fixed actions', () => {
     const items = paletteItems(source());
     const groups = items.map((i) => i.group);
     // Sessions first, then crew (none for a bare session), then actions.

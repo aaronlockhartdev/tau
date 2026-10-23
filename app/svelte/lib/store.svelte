@@ -141,7 +141,7 @@
     tabSelAnchor: null as string | null
   });
 
-  // Advance the wall clock on a slow tick so relative-age labels (session mru,
+  // Advance the wall clock on a slow tick so relative-age labels (session last_modified,
   // attention "since") stay current without session activity.
   setInterval(() => {
     store.now = Date.now();
@@ -890,11 +890,16 @@
       }
       const s = store.sessions[sid];
       if (!s) continue;
+      // One clock read per event: the TPS math (the first-delta baseline,
+      // #224) and the last-modified touch (#282/#283) share it — a second
+      // read would drift between them (and advance fake timers in tests).
+      const now = Date.now();
       switch (ev.type) {
         case 'stream_start': {
           firstDeltaMs.delete(ev.session);
           s.tps = 0;
           s.turn = 'running';
+          if (now > s.last_modified) s.last_modified = now;
           break;
         }
         case 'stream_end': {
@@ -911,6 +916,7 @@
           firstDeltaMs.delete(ev.session);
           // No tail re-read: the finalized lines already landed as upserts.
           s.turn = 'idle';
+          if (now > s.last_modified) s.last_modified = now;
           break;
         }
         case 'entry_upsert': {
@@ -933,6 +939,7 @@
             const text = ((ev.entry.payload as { text?: string } | null) ?? {}).text ?? '';
             if (secs > 0.2) s.tps = Math.max(1, Math.round(text.length / 4)) / secs;
           }
+          if (now > s.last_modified) s.last_modified = now;
           break;
         }
         case 'queue': {
@@ -941,6 +948,7 @@
             lane: laneOf(q.lane),
             source: q.source ?? undefined
           }));
+          if (now > s.last_modified) s.last_modified = now;
           break;
         }
         case 'session_event': {
@@ -951,7 +959,13 @@
           // Idempotent-cumulative (spec §8): each event carries the full
           // state of one handle; a lost batch self-heals on the next
           // snapshot.
-          store.sessions = applySubagentEvent(store.sessions, ev.session, ev.kind, Date.now());
+          // The parent is modified by its subagent activity too (#283):
+          // applySubagentEvent advances the child, this advances the parent.
+          store.sessions = applySubagentEvent(store.sessions, ev.session, ev.kind, now);
+          // applySubagentEvent returns a new map: the parent row is a new
+          // object, so s (captured above) is detached — re-read it.
+          const ps = store.sessions[ev.session]!;
+          if (now > ps.last_modified) ps.last_modified = now;
           break;
         }
         case 'om_status': {
@@ -964,6 +978,7 @@
           // The plan pane's data (spec §5.3): full-state replacement — the
           // watcher's parse renders in place; idempotent by construction.
           s.plan = ev.plan;
+          if (now > s.last_modified) s.last_modified = now;
           break;
         }
         case 'system': {

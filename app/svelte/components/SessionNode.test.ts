@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// One session-tree node: the row content (title, badge, mru), the click
+// One session-tree node: the row content (title, badge, last_modified), the click
 // grammar (plain opens, cmd toggles the selection, shift spans), the
 // inline rename, and the right-click menu that acts on the selection.
 import { tick } from 'svelte';
@@ -84,10 +84,10 @@ beforeEach(() => {
 });
 
 describe('SessionNode', () => {
-  it('renders the title (falling back to the id) and a fresh mru', async () => {
+  it('renders the title (falling back to the id) and a fresh last_modified', async () => {
     const s = seed();
     s.meta.title = 'my session';
-    s.mru = Date.now();
+    s.last_modified = Date.now();
     await mount(s);
     expect(screen.getByText('my session')).toBeInTheDocument();
     expect(screen.getByText('just now')).toBeInTheDocument();
