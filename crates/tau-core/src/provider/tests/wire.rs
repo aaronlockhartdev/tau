@@ -280,7 +280,7 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
         ..TurnResult::default()
     };
     let v = wire_json(&capture_debug(|| {
-        result.wire_response_jsonl("a1b2", 42, "data: x\n")
+        result.wire_response_jsonl("a1b2", 42, "data: x\n");
     }));
     assert_eq!(v["id"], "a1b2");
     assert_eq!(v["dir"], "res");
