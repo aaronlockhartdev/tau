@@ -72,13 +72,11 @@ fn call_output_from_payload_maps_the_stored_shapes() {
     });
     assert_eq!(
         CallOutput::from_payload(&block),
-        Some(CallOutput::Image(vec![InputCallPart::Image(
-            InputImagePart {
-                kind: "input_image",
-                image_url: "data:image/png;base64,AAAA".into(),
-                detail: "auto",
-            }
-        )]))
+        Some(CallOutput::Image(vec![InputCallPart::Image(InputImagePart {
+            kind: "input_image",
+            image_url: "data:image/png;base64,AAAA".into(),
+            detail: "auto",
+        })]))
     );
     assert_eq!(
         CallOutput::from_payload(&serde_json::json!("plain")),
@@ -99,7 +97,8 @@ fn call_output_from_payload_maps_the_stored_shapes() {
     assert_eq!(
         CallOutput::from_payload(&noted),
         Some(CallOutput::Image(vec![
-            InputCallPart::Text("[Image: original 2048x2048, displayed at 1448x1448.]".into()),
+            InputCallPart::Text("[Image: original 2048x2048, displayed at 1448x1448.]"
+                .into()),
             InputCallPart::Image(InputImagePart {
                 kind: "input_image",
                 image_url: "data:image/jpeg;base64,BBBB".into(),
@@ -150,7 +149,7 @@ fn request_wire_shape_omits_unset_options() {
 fn clamp_respects_the_declared_window_and_prompt() {
     // Cap below the window's remainder: untouched.
     assert_eq!(clamp_max_output(8192, Some(32768), 1000), 8192);
-    // Cap above the remainder: clamped to it.
+    // Cap above the window: clamped to it.
     assert_eq!(clamp_max_output(8192, Some(9000), 1000), 8000);
     // No declared window: untouched.
     assert_eq!(clamp_max_output(8192, None, 1000), 8192);
@@ -260,7 +259,10 @@ fn wire_json(out: &str) -> serde_json::Value {
 
 #[test]
 fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
-    // Positive — request line: delta view, no full-body serialization.
+    // Positive — request line: the delta is the *new* items only, and only
+    // the tool results: the appended user message is filtered out (it is
+    // static context, and a `function_call_output` is the one item type the
+    // model has not seen before).
     let request = ResponseRequest::new(
         "mock-model",
         None,
@@ -273,6 +275,11 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
                 role: "user".into(),
                 content: "new".into(),
             }),
+            InputEntry::CallOutput(FunctionCallOutputInput {
+                kind: "function_call_output",
+                call_id: "c1".into(),
+                output: CallOutput::Text("result".into()),
+            }),
         ],
     )
     .with_wire_delta(1);
@@ -281,11 +288,13 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     assert_eq!(v["dir"], "req");
     assert_eq!(v["label"], serde_json::Value::Null);
     assert_eq!(v["model"], "mock-model");
-    assert_eq!(v["msg_count"], 2);
-    // The delta is the appended items only — not the whole conversation.
-    assert_eq!(v["delta"][0]["role"], "user");
-    assert_eq!(v["delta"][0]["content"], "new");
-    assert_eq!(v["delta"].as_array().unwrap().len(), 1);
+    assert_eq!(v["msg_count"], 3);
+    // The delta drops the appended user message (echo/static) and keeps the
+    // tool result — the only genuinely-new content in the request.
+    let delta = v["delta"].as_array().unwrap();
+    assert_eq!(delta.len(), 1, "only the tool result is new");
+    assert_eq!(delta[0]["type"], "function_call_output");
+    assert_eq!(delta[0]["output"], "result");
 
     // Positive — a labeled OM round-trip carries its label.
     let om =

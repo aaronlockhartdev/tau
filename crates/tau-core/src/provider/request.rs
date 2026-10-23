@@ -144,12 +144,33 @@ impl ResponseRequest {
     }
 
     /// JSONL wire view of this request: one parseable JSON line carrying the
-    /// caller's label, the system prompt, the delta input items (see
-    /// `with_wire_delta`), and the full item count. `debug!` level —
-    /// compiled out in release builds. Emitted once per attempt by the
-    /// provider layer (which mints the id the response line pairs with);
-    /// a retried attempt logs an empty delta, not the same items twice.
+    /// caller's label, the system prompt, and the *new* input items. The
+    /// delta is the items appended since this session's previous request
+    /// (`with_wire_delta`), further restricted to `function_call_output`
+    /// items: the assistant message and the tool *calls* in the delta are a
+    /// re-serialization of the model's own prior output, which the preceding
+    /// `res` line already logged verbatim — echoing them here doubles the log
+    /// with content that adds nothing. `debug!` level, so compiled out in
+    /// release builds. Emitted once per attempt by the provider layer (which
+    /// mints the id the response line pairs with); a retried attempt logs an
+    /// empty delta, not the same items twice.
     pub fn wire_request_jsonl(&self, id: &str) {
+        let delta: Vec<Value> = self
+            .input
+            .get(self.wire_delta_from..)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|e| match e {
+                        InputEntry::CallOutput(o) => serde_json::to_value(o).ok(),
+                        // The assistant message and the calls are the model's
+                        // own prior output (already in the `res` line); the
+                        // user message is static context. Neither is new.
+                        InputEntry::Message(_) | InputEntry::Call(_) => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         tracing::debug!(
             line = %serde_json::json!({
                 "id": id,
@@ -157,12 +178,7 @@ impl ResponseRequest {
                 "label": self.wire_label,
                 "model": self.model,
                 "instructions": self.instructions,
-                "delta": self
-                    .input
-                    .get(self.wire_delta_from..)
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .unwrap_or_default(),
+                "delta": delta,
                 "msg_count": self.input.len(),
             }),
             "llm wire"
