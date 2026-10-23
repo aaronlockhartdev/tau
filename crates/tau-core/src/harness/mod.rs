@@ -64,7 +64,7 @@ pub(crate) use forwarding::*;
 pub use launch::SessionRole;
 pub(crate) use snapshot::*;
 pub(crate) use state::*;
-pub use state::{Core, CoreBuilder};
+pub use state::{Core, CoreBuilder, CoreError};
 pub(crate) use turn::*;
 pub(crate) use watch::{Batch, Watcher};
 pub(crate) use watchers::*;

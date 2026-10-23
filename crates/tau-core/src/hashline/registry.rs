@@ -248,8 +248,8 @@ impl Registry {
             return;
         };
         if let Some(prev) = store.load(path) {
-            let (matched, _fresh) = pin_store::reanchor(&prev, checksums);
-            let next = pin_store::next_pins(&prev, &matched, hashes, checksums);
+            let paired = pin_store::reanchor(&prev, checksums);
+            let next = pin_store::next_pins(&prev, &paired, hashes, checksums);
             let _ = store.save(&next);
         } else {
             // First edit this store has seen: record the current pins.

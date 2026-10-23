@@ -132,7 +132,7 @@ struct Rig {
 
 fn rig(om: crate::om_integration::OmState, provider: provider::TurnProviderRef) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),

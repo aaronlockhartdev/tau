@@ -151,11 +151,25 @@ fn read_candidates(
         }
     };
     let tokens = live.pending_tokens(&candidates);
-    let range = (
-        candidates.first().expect("non-empty candidates").id.clone(),
-        candidates.last().expect("non-empty candidates").id.clone(),
-    );
+    // The turn-end pass may have committed everything the spawn snapshot
+    // saw (D4: the file cursor wins over the snapshot): nothing left to
+    // buffer. Consume the trigger and stop — a panic here would poison the
+    // session's inner lock.
+    let Some(range) = candidate_range(&candidates) else {
+        g.om_inflight = None;
+        return None;
+    };
     Some((candidates, tokens, range))
+}
+
+/// The (first, last) entry id range of a candidate batch; `None` for an
+/// empty batch (the turn-end pass committed everything the spawn snapshot
+/// saw) — the caller consumes the in-flight flag in that case.
+fn candidate_range(candidates: &[crate::session::Entry]) -> Option<(String, String)> {
+    candidates
+        .first()
+        .zip(candidates.last())
+        .map(|(first, last)| (first.id.clone(), last.id.clone()))
 }
 
 /// The cycle's phase 2 (D10): the commit point — under the lock, reload
@@ -184,7 +198,10 @@ fn commit_chunk(
     if !latest.buffered_chunks.iter().any(|c| c.range == range) {
         latest.buffered_chunks.push(BufferedChunk {
             range,
-            last_ts: candidates.last().expect("non-empty candidates").timestamp,
+            last_ts: candidates
+                .last()
+                .expect("read_candidates guards a non-empty batch")
+                .timestamp,
             text,
             tokens,
         });
@@ -274,5 +291,33 @@ mod tests {
         let cfg = config(30_000, 0);
         assert!(!boundary_crossed(60_000, &cfg, 0, 0));
         assert!(!boundary_crossed(60_000, &cfg, 12_000, 30_000));
+    }
+
+    #[test]
+    fn empty_candidate_batch_yields_no_range_not_a_panic() {
+        // The turn-end pass may commit everything the spawn snapshot saw
+        // before the cycle's phase-1 read (D4: the file cursor wins): an
+        // empty batch must degrade to `None`, never panic — a panic here
+        // poisons the session's inner lock.
+        assert_eq!(candidate_range(&[]), None);
+        let a = entry("a", 1);
+        let b = entry("b", 2);
+        assert_eq!(
+            candidate_range(&[a.clone(), b.clone()]),
+            Some(("a".to_owned(), "b".to_owned()))
+        );
+    }
+
+    fn entry(id: &str, ts: u64) -> crate::session::Entry {
+        crate::session::Entry {
+            id: id.to_owned(),
+            parent: None,
+            timestamp: ts,
+            kind: "message".to_owned(),
+            payload: serde_json::Value::Null,
+            blob: None,
+            first_kept_entry_id: None,
+            crc: None,
+        }
     }
 }

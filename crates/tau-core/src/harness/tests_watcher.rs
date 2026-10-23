@@ -5,7 +5,7 @@ use crate::harness::testkit::*;
 #[tokio::test]
 async fn a_skill_added_to_a_project_root_updates_the_registry() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let collected = collect_events(&core);
     write_skill_fixture(
@@ -36,7 +36,7 @@ async fn an_edited_skill_name_replaces_the_registry_entry() {
         ".agents/skills/s",
         "---\nname: old\ndescription: the old name\n---\nBody.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let collected = collect_events(&core);
     std::fs::write(
@@ -68,7 +68,7 @@ async fn a_deleted_skill_leaves_an_empty_registry() {
         ".agents/skills/gone",
         "---\nname: gone\ndescription: to be deleted\n---\nBody.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let collected = collect_events(&core);
     std::fs::remove_file(tmp.path().join(".agents/skills/gone/SKILL.md")).unwrap();
@@ -94,7 +94,7 @@ async fn a_home_root_change_fans_out_to_all_open_workspaces() {
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().to_path_buf())
         .with_home(home.path().to_path_buf())
-        .build();
+        .build().unwrap();
     let w1 = open_ws(&core, tmp1.path()).await;
     let w2 = open_ws(&core, tmp2.path()).await;
     let collected = collect_events(&core);
@@ -129,7 +129,7 @@ async fn a_home_root_change_fans_out_to_all_open_workspaces() {
 
 async fn none_seams_make_the_home_watcher_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     assert!(
         core.home_watcher.lock().unwrap().is_none(),
         "the None seam has no home roots to watch"
@@ -244,7 +244,7 @@ async fn a_write_under_a_watched_dir_invalidates_and_refetches() {
     // symlink (macOS /var -> /private/var), and the stale-dir mapping
     // attributes paths by string prefix.
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let collected = collect_events(&core);
     // The pane lists the root on open, so the root is watched (visibility-

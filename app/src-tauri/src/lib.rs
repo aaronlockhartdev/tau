@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn the_state_wrapper_round_trips_the_core_arc() {
-        let core = CoreBuilder::custom(BTreeMap::new()).build();
+        let core = CoreBuilder::custom(BTreeMap::new()).build().unwrap();
         let wrapped = CoreState(Arc::clone(&core));
         assert!(Arc::ptr_eq(&core, &wrapped.0));
     }

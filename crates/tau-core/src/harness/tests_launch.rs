@@ -25,7 +25,7 @@ fn fresh_store(cwd: &std::path::Path, id: &str) -> SessionStore {
 
 #[tokio::test]
 async fn launch_root_builds_the_supervisor_and_wires_the_events() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
@@ -87,7 +87,7 @@ fn agent_sid(agent: &AgentSession) -> String {
 
 #[tokio::test]
 async fn launch_root_without_providers_is_a_config_error() {
-    let core = CoreBuilder::custom(std::collections::BTreeMap::new()).build();
+    let core = CoreBuilder::custom(std::collections::BTreeMap::new()).build().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
@@ -128,7 +128,7 @@ async fn launch_root_with_a_modelless_provider_names_it() {
             models: std::collections::BTreeMap::new(),
         },
     );
-    let core = CoreBuilder::custom(providers).build();
+    let core = CoreBuilder::custom(providers).build().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
@@ -170,7 +170,7 @@ async fn launch_root_session_is_freed_when_dropped() {
     // The ticket #43 lifetime fix: the queue hook and the supervisor's
     // parent capture are `Weak`, so the last external `Arc` frees the
     // session (a strong self-capture would keep it alive).
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
@@ -454,7 +454,7 @@ fn prompt_files_core() -> (Arc<Core>, std::path::PathBuf, std::path::PathBuf) {
     let cwd = std::mem::ManuallyDrop::new(cwd);
     let core = CoreBuilder::custom(providers())
         .with_home(home.path().to_path_buf())
-        .build();
+        .build().unwrap();
     (core, home.path().to_path_buf(), cwd.path().to_path_buf())
 }
 

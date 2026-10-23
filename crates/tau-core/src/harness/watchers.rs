@@ -1,13 +1,16 @@
 //! The watcher consumers: the home/project/tree watchers, the batch-to-stale-dirs mapping, the dir listing, and the teardown.
 
-use super::{Arc, Batch, Core, Event, FileEntry, Path, WATCH_DEBOUNCE, Watcher, Workspace, mpsc};
+use super::{
+    state::CoreError,
+    Arc, Batch, Core, Event, FileEntry, Path, WATCH_DEBOUNCE, Watcher, Workspace, mpsc,
+};
 
 impl Core {
     /// The home-level roots are identical for every workspace (design #30):
     /// one global watcher; a batch re-discovers all open workspaces, each
     /// getting its own `SkillListChanged`. A `None` seam (the test shape)
     /// watches nothing — the watcher is a no-op.
-    pub(crate) fn start_home_watcher(self: &Arc<Self>) {
+    pub(crate) fn start_home_watcher(self: &Arc<Self>) -> Result<(), CoreError> {
         let mut roots = Vec::new();
         if let Some(dir) = &self.system_dir {
             roots.push(dir.join("skills"));
@@ -16,9 +19,9 @@ impl Core {
             roots.push(home.join(".agents").join("skills"));
         }
         if roots.is_empty() {
-            return;
+            return Ok(());
         }
-        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE)?;
         for root in &roots {
             watcher.add(root);
         }
@@ -36,7 +39,8 @@ impl Core {
             {
                 core.refresh_skills(ws);
             }
-        });
+        })?;
+        Ok(())
     }
 
     /// The workspace's project roots (the `.tau/skills` + `.agents/skills`
@@ -44,32 +48,33 @@ impl Core {
     /// that workspace. `workspace_close` drops the entry (the debouncer
     /// stops on drop), so the map tracks the open workspaces. A missing
     /// project dir has no roots to watch.
-    pub(crate) fn start_project_watcher(&self, workspace: &Workspace) {
+    pub(crate) fn start_project_watcher(&self, workspace: &Workspace) -> Result<(), CoreError> {
         if !Path::new(&workspace.cwd).is_dir() {
-            return;
+            return Ok(());
         }
         let mut map = self
             .project_watchers
             .lock()
             .expect("project watchers: no panic while the lock is held");
         if map.contains_key(&workspace.id) {
-            return;
+            return Ok(());
         }
-        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE)?;
         let cwd = Path::new(&workspace.cwd);
         watcher.add(&cwd.join(".tau").join("skills"));
         watcher.add(&cwd.join(".agents").join("skills"));
         map.insert(workspace.id.clone(), watcher);
         drop(map);
         let Some(core) = self.self_arc() else {
-            return;
+            return Ok(());
         };
         let id = workspace.id.clone();
         spawn_watcher_consumer(&core, rx, move |core, _batch| {
             if let Ok(ws) = core.workspace(&id) {
                 core.refresh_skills(&ws);
             }
-        });
+        })?;
+        Ok(())
     }
 
     /// The workspace's tree watcher (the files pane, #32/#115): the second
@@ -79,23 +84,23 @@ impl Core {
     /// paths (workspace-relative) and emits `FileTreeChanged`: the client
     /// refetches the affected listed dirs, and any fetch is a fresh read, so
     /// a lost batch self-heals on the next expand.
-    pub(crate) fn start_tree_watcher(&self, workspace: &Workspace) {
+    pub(crate) fn start_tree_watcher(&self, workspace: &Workspace) -> Result<(), CoreError> {
         let cwd = Path::new(&workspace.cwd);
         if !cwd.is_dir() {
-            return;
+            return Ok(());
         }
         let mut map = self
             .tree_watchers
             .lock()
             .expect("tree watchers: no panic while the lock is held");
         if map.contains_key(&workspace.id) {
-            return;
+            return Ok(());
         }
-        let (watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        let (watcher, rx) = Watcher::new(WATCH_DEBOUNCE)?;
         map.insert(workspace.id.clone(), watcher);
         drop(map);
         let Some(core) = self.self_arc() else {
-            return;
+            return Ok(());
         };
         let id = workspace.id.clone();
         let cwd = workspace.cwd.clone();
@@ -122,7 +127,8 @@ impl Core {
                     changed,
                 });
             }
-        });
+        })?;
+        Ok(())
     }
 
     /// The workspace's plan watcher (design: the plan file is the source
@@ -130,24 +136,24 @@ impl Core {
     /// `open_workspace`; a batch re-reads the changed plan files into the
     /// core's state cache. `workspace_close` drops the entry (the
     /// debouncer stops on drop), so the map tracks the open workspaces.
-    pub(crate) fn start_plan_watcher(&self, workspace: &Workspace) {
+    pub(crate) fn start_plan_watcher(&self, workspace: &Workspace) -> Result<(), CoreError> {
         let cwd = Path::new(&workspace.cwd);
         if !cwd.is_dir() {
-            return;
+            return Ok(());
         }
         let mut map = self
             .plan_watchers
             .lock()
             .expect("plan watchers: no panic while the lock is held");
         if map.contains_key(&workspace.id) {
-            return;
+            return Ok(());
         }
-        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE);
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE)?;
         watcher.add(&cwd.join(".tau").join("plans"));
         map.insert(workspace.id.clone(), watcher);
         drop(map);
         let Some(core) = self.self_arc() else {
-            return;
+            return Ok(());
         };
         let id = workspace.id.clone();
         spawn_watcher_consumer(&core, rx, move |core, batch| {
@@ -161,7 +167,8 @@ impl Core {
                 return;
             };
             refresh_plan_batch(&core, &ws, &batch);
-        });
+        })?;
+        Ok(())
     }
 
     /// Register a dir on the workspace's tree watcher (visibility-driven,
@@ -204,14 +211,14 @@ pub(crate) fn spawn_watcher_consumer(
     core: &Arc<Core>,
     mut rx: mpsc::UnboundedReceiver<Batch>,
     handler: impl Fn(Arc<Core>, Batch) + Send + 'static,
-) {
+) -> Result<(), CoreError> {
     let weak = Arc::downgrade(core);
     std::thread::Builder::new()
         .name("tau-watcher".into())
-        .spawn(move || {
+        .spawn(move || -> Result<(), String> {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .build()
-                .expect("the watcher runtime builds");
+                .map_err(|e| format!("watcher runtime build failed: {e}"))?;
             rt.block_on(async move {
                 while let Some(batch) = rx.recv().await {
                     let Some(core) = weak.upgrade() else {
@@ -220,8 +227,10 @@ pub(crate) fn spawn_watcher_consumer(
                     handler(core, batch);
                 }
             });
+            Ok(())
         })
-        .expect("the watcher thread spawns");
+        .map_err(|e| CoreError(format!("watcher thread spawn failed: {e}")))?;
+    Ok(())
 }
 
 /// A batch's plan updates (design: the watcher is the parser's only call

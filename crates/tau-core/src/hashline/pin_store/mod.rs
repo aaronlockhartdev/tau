@@ -36,7 +36,6 @@
 //! (`session.rs`, spec §3). One synchronous connection for the store's
 //! lifetime; a row is a file's whole pin record (`pins` a JSON blob column).
 
-use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -449,64 +448,50 @@ pub fn file_checksum(checksums: &[String]) -> String {
 }
 
 /// Re-anchor a new file's lines against a previous pin set: a line whose
-/// checksum matches a previous pin **in order** keeps that pin's anchor
-/// (content-addressed, position-independent); every other line is marked for
-/// a fresh mint. Returns `(matched, fresh)` index sets over the new lines —
-/// the caller does the minting (it owns the global anchor space).
+/// checksum matches a previous pin **in order** pairs with that pin (the
+/// content-addressed, position-independent identity); every other line is
+/// fresh. Returns the in-order LCS pairing — the previous pin index for each
+/// new line, `None` where the line is fresh. The pairing (not a
+/// per-checksum lookup) is what keeps repeated lines unique: two new copies
+/// of one old line pair with two *distinct* previous pins.
 #[must_use]
-pub fn reanchor(prev: &FilePins, checksums: &[String]) -> (Vec<bool>, Vec<bool>) {
+pub fn reanchor(prev: &FilePins, checksums: &[String]) -> Vec<Option<usize>> {
     use crate::hashline::registry::match_anchors;
     let prev_sums = prev.checksums();
-    let matched_idx = match_anchors(&prev_sums, checksums);
-    let mut matched = vec![false; checksums.len()];
-    let mut fresh = vec![false; checksums.len()];
-    for (j, m) in matched_idx.iter().enumerate() {
-        match m {
-            Some(_) => matched[j] = true,
-            None => fresh[j] = true,
-        }
-    }
-    (matched, fresh)
+    match_anchors(&prev_sums, checksums)
 }
 
-/// Build the next `FilePins` from a previous set and the re-anchor result:
-/// survivors keep their anchor, fresh lines get `minted[j]`, and a pin whose
-/// checksum vanished is tombstoned (kept, not recycled). `minted` must be
-/// index-aligned with `checksums` (the caller mints for every line; matched
-/// lines ignore their `minted` value and keep the survivor's anchor).
+/// Build the next `FilePins` from a previous set and the re-anchor pairing:
+/// survivors keep the anchor of their paired previous pin, fresh lines get
+/// `minted[j]`, and a pin whose checksum vanished is tombstoned (kept, not
+/// recycled). `paired` must be index-aligned with `checksums`: `Some(i)`
+/// marks new index j as a survivor keeping pin i's anchor, `None` takes
+/// `minted[j]`.
 #[must_use]
 pub fn next_pins(
     prev: &FilePins,
-    matched: &[bool],
+    paired: &[Option<usize>],
     minted: &[String],
     checksums: &[String],
 ) -> FilePins {
-    // Map previous pins to their (old) line index by checksum; a survivor at
-    // new index j reuses the pin it matched.
-    let prev_sums = prev.checksums();
-    let mut by_sum: HashMap<&str, (usize, &Pin)> = HashMap::new();
-    for (i, s) in prev_sums.iter().enumerate() {
-        by_sum.entry(s.as_str()).or_insert((i, &prev.pins[i]));
-    }
     let mut pins = Vec::with_capacity(checksums.len());
     let mut used_prev: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for (j, sum) in checksums.iter().enumerate() {
-        let pin = if matched[j] {
-            let (i, p) = by_sum
-                .get(sum.as_str())
-                .expect("a match implies a previous pin with this checksum");
-            used_prev.insert(*i);
-            Pin {
-                anchor: p.anchor.clone(),
-                checksum: sum.clone(),
-                tombstone: false,
+        let pin = match &paired[j] {
+            Some(i) => {
+                used_prev.insert(*i);
+                let p = &prev.pins[*i];
+                Pin {
+                    anchor: p.anchor.clone(),
+                    checksum: sum.clone(),
+                    tombstone: false,
+                }
             }
-        } else {
-            Pin {
+            None => Pin {
                 anchor: minted[j].clone(),
                 checksum: sum.clone(),
                 tombstone: false,
-            }
+            },
         };
         pins.push(pin);
     }

@@ -6,7 +6,7 @@
 
 use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
-    Mutex, OmStatusKind, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
+    Mutex, OmStatusKind, Ordering, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
     TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, last_model_note, tools,
 };
@@ -562,6 +562,62 @@ pub(super) fn wire_events(
             });
         })));
     }
+    // Background-job completion (#53): the wake a sub-agent's report gets —
+    // steering-lane notification + queue projection + turn start.
+    wire_job_hook(core, workspace_id, sid, agent);
+}
+
+/// The background-job completion hook (#53): the wake a sub-agent's report
+/// gets — steering-lane notification + queue projection + turn start. A
+/// closed session is gone from the map: no wake, no turn.
+pub(super) fn wire_job_hook(
+    core: &Arc<Core>,
+    workspace_id: &str,
+    sid: &str,
+    agent: &Arc<AgentSession>,
+) {
+    let core = core.clone();
+    let tx = core.events_tx.clone();
+    let ws = workspace_id.to_string();
+    let sid = sid.to_string();
+    agent.set_job_notify_hook(Some(Arc::new(
+        move |job_id: &str, code: Option<i32>, output_path: &Path| {
+            let Some(live) = core
+                .sessions
+                .lock()
+                .expect("sessions map: no panic while the lock is held")
+                .get(&sid)
+                .cloned()
+            else {
+                return;
+            };
+            let status = match code {
+                Some(n) => n.to_string(),
+                None => "killed".to_owned(),
+            };
+            let output = output_path.display();
+            live.agent.send_notified_steer(
+            format!(
+                "background job {job_id} ({output}): finished with exit {status}; output: {output}"
+            ),
+            format!("job:{job_id}"),
+        );
+            let _ = tx.try_send(Event::Queue {
+                workspace: ws.clone(),
+                session: sid.clone(),
+                items: live.agent.queued_items(),
+            });
+            live.stop.store(false, Ordering::SeqCst);
+            if live
+                .turn
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+                && let Some(core) = core.self_arc()
+            {
+                tokio::spawn(crate::harness::turn::run_turn(core, live));
+            }
+        },
+    )));
 }
 
 /// The live-upsert view (ADR-0008, #265): `entry_to_view` plus sidecar-blob

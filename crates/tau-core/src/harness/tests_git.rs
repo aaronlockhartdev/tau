@@ -41,7 +41,7 @@ async fn git_status_reports_branch_modifications_and_untracked() {
     std::fs::remove_file(tmp.path().join("b.txt")).unwrap();
     std::fs::write(tmp.path().join("c.txt"), "three\n").unwrap();
 
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let status = match core
         .dispatch(Command::GitStatus {
@@ -61,7 +61,7 @@ async fn git_status_reports_branch_modifications_and_untracked() {
 #[tokio::test]
 async fn git_status_in_a_non_git_workspace_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let err = core
         .dispatch(Command::GitStatus {
@@ -80,7 +80,7 @@ async fn git_show_returns_the_base_content_of_a_tracked_file() {
     init_repo(tmp.path());
     // Diverge the working copy so the HEAD base differs from the file on disk.
     std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let text = match core
         .dispatch(Command::GitShow {
@@ -101,7 +101,7 @@ async fn git_show_of_an_untracked_path_is_an_error() {
     let tmp = tempfile::tempdir().unwrap();
     init_repo(tmp.path());
     std::fs::write(tmp.path().join("untracked.txt"), "new\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let err = core
         .dispatch(Command::GitShow {
@@ -126,7 +126,7 @@ async fn git_show_from_a_subdir_workspace_resolves_the_toplevel_offset() {
     std::fs::write(sub.join("nested.txt"), "nested\n").unwrap();
     git_ok(tmp.path(), &["add", "sub/nested.txt"]);
     git_ok(tmp.path(), &["commit", "-qm", "sub"]);
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &sub).await;
     let text = match core
         .dispatch(Command::GitShow {
@@ -150,7 +150,7 @@ async fn file_listing_is_annotated_with_git_state_and_ignored() {
     std::fs::write(tmp.path().join("hidden.txt"), "h\n").unwrap();
     std::fs::write(tmp.path().join("shown.txt"), "s\n").unwrap();
     std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let files = match core
         .dispatch(Command::FileList {
@@ -199,7 +199,7 @@ async fn a_file_ignored_by_a_nested_gitignore_is_greyed() {
     std::fs::write(sub.join(".gitignore"), "nested.txt\n").unwrap();
     std::fs::write(sub.join("nested.txt"), "n\n").unwrap();
     std::fs::write(sub.join("visible.txt"), "v\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let files = match core
         .dispatch(Command::FileList {
@@ -239,7 +239,7 @@ async fn git_status_in_a_subdir_workspace_is_cwd_relative_and_scoped() {
     std::fs::write(sub.join("keep.txt"), "changed\n").unwrap();
     std::fs::write(sub.join("new.txt"), "new\n").unwrap();
     std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &sub).await;
     let status = match core
         .dispatch(Command::GitStatus {
@@ -267,7 +267,7 @@ async fn file_listing_in_a_subdir_workspace_carries_git_state() {
     git_ok(tmp.path(), &["commit", "-qm", "sub"]);
     std::fs::write(sub.join("keep.txt"), "changed\n").unwrap();
     std::fs::write(sub.join("new.txt"), "new\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &sub).await;
     let files = match core
         .dispatch(Command::FileList {
@@ -312,7 +312,7 @@ async fn a_subdir_workspace_neither_leaks_a_sibling_gitignore_nor_loses_its_own(
     std::fs::write(sub.join("sub2/notes.md"), "n\n").unwrap();
     std::fs::write(sub.join(".gitignore"), "inner.log\n").unwrap();
     std::fs::write(sub.join("inner.log"), "l\n").unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &sub).await;
     let root = match core
         .dispatch(Command::FileList {
@@ -359,7 +359,7 @@ async fn folder_greying_in_a_subdir_workspace_ignores_only_ignored_dirs() {
     std::fs::write(sub.join("junk/x.txt"), "x\n").unwrap();
     git_ok(tmp.path(), &["add", "sub/real/keep.txt", "sub/.gitignore"]);
     git_ok(tmp.path(), &["commit", "-qm", "sub"]);
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &sub).await;
     let files = match core
         .dispatch(Command::FileList {

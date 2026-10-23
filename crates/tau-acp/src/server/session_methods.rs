@@ -77,8 +77,9 @@ pub(super) async fn session_new(server: &Server, rpc: &Rpc) {
     let (models, default) = server.config.model_options_for(cwd).await;
     let mut result = json!({ "sessionId": session.id });
     let mut context_window = None;
-    if !models.is_empty() {
-        let current = default.expect("a non-empty model list has a default");
+    // `model_options_for` guarantees a non-empty list carries a default;
+    // no default means an empty list, so the selector is omitted.
+    if let Some(current) = default {
         result["configOptions"] = json!([model_option(&models, &current)]);
         context_window = server.config.context_window_for(cwd, &current).await;
     }
@@ -185,7 +186,14 @@ pub(super) async fn session_prompt(server: &Server, rpc: &Rpc) {
         }
     };
 
-    let core = server.ensure_core().await;
+    let core = match server.ensure_core().await {
+        Ok(core) => core,
+        Err(e) => {
+            server.out
+                .send(&transport::error(id, INTERNAL_ERROR, &format!("core build failed: {e}")));
+            return;
+        }
+    };
 
     // The turn lock and settle registration land before the send: a turn
     // that finished before the registration would otherwise orphan the
@@ -311,7 +319,13 @@ pub(super) async fn session_cancel(server: &Server, rpc: &Rpc) {
             state.cancel_requested = true;
         }
     }
-    let core = server.ensure_core().await;
+    let core = match server.ensure_core().await {
+        Ok(core) => core,
+        Err(e) => {
+            tracing::warn!("acp: cancel for {session_id}: core build failed: {e}");
+            return;
+        }
+    };
     if let Err(e) = core.dispatch(Command::MessageStop {
         session: session_id.to_owned(),
     }) {

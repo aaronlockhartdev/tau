@@ -12,11 +12,22 @@ pub mod server;
 pub mod sessions;
 pub mod transport;
 
-/// Run the ACP server over the process stdio. Returns when stdin closes.
+/// Run the ACP server over the process stdio. Returns when stdin closes;
+/// a runtime-build or core-build failure (an unset `HOME`) prints to
+/// stderr and exits non-zero.
 pub fn run() {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("the ACP runtime builds: a tokio builder failure has no failure mode to handle");
-    runtime.block_on(server::serve(tokio::io::stdin(), std::io::stdout()));
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("tau-acp: tokio runtime build failed: {e}");
+            std::process::exit(1);
+        }
+    };
+    if let Err(e) = runtime.block_on(server::serve(tokio::io::stdin(), std::io::stdout())) {
+        eprintln!("tau-acp: {e}");
+        std::process::exit(1);
+    }
 }

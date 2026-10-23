@@ -36,12 +36,21 @@ pub fn builtin_general() -> AgentType {
     }
 }
 
-/// Discover the registry: the built-in `general` first, then system
+/// The built-in researcher type (ticket #54): a committed `.md` file —
+/// `parse` is the same parser user types go through, so the built-in can
+/// never drift from the file format.
+#[must_use]
+pub fn builtin_researcher() -> AgentType {
+    parse(include_str!("../assets/agents/researcher.md"))
+        .expect("the committed researcher.md is a valid type file")
+}
+
+/// Discover the registry: the built-ins (`general`, `researcher`) first, then system
 /// `agents/*.md`, then project `.tau/agents/*.md` (project wins on a name
 /// collision, spec §5.5).
 #[must_use]
 pub fn discover(system_dir: Option<&Path>, project_root: &Path) -> Vec<AgentType> {
-    let mut types = vec![builtin_general()];
+    let mut types = vec![builtin_general(), builtin_researcher()];
     if let Some(dir) = system_dir.map(|d| d.join("agents")) {
         for t in dir_of(&dir) {
             replace(&mut types, t);
@@ -174,5 +183,44 @@ mod tests {
     #[test]
     fn a_file_without_frontmatter_is_not_a_type() {
         assert!(parse("just a note").is_none());
+    }
+
+    #[test]
+    fn the_builtin_researcher_is_read_only_and_fresh() {
+        let t = builtin_researcher();
+        assert_eq!(t.name, "researcher");
+        assert_eq!(
+            t.tools.as_deref(),
+            Some(["read".to_owned(), "recall".to_owned(), "bash".to_owned()].as_slice())
+        );
+        assert!(t.body.contains("parent_notify"));
+        assert!(
+            t.description.contains("15×"),
+            "the cost caveat: {}",
+            t.description
+        );
+        assert_eq!(t.context_mode, ContextMode::Fresh);
+        assert!(t.model.is_none());
+    }
+
+    #[test]
+    fn a_project_file_can_override_the_researcher_builtin() {
+        let root = tempfile::tempdir().unwrap();
+        let project = root.path().join("project");
+        write(
+            &project.join(".tau").join("agents"),
+            "researcher",
+            "---\nname: researcher\ndescription: mine\n---\nProject researcher.\n",
+        );
+        let types = discover(None, &project);
+        let researcher = types.iter().find(|t| t.name == "researcher").unwrap();
+        assert_eq!(researcher.description, "mine");
+        assert_eq!(researcher.body, "Project researcher.");
+        assert_eq!(
+            types.len(),
+            2,
+            "general + researcher, no duplicate: {:?}",
+            types.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
     }
 }

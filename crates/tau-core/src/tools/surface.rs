@@ -69,6 +69,17 @@ pub struct DispatchCtx<'a> {
     pub supervisor: Option<Arc<Supervisor>>,
     pub child: Option<Arc<ChildLink>>,
 }
+/// Lock the session's anchor registry, recovering a poisoned lock instead
+/// of panicking: a poisoned lock's data is intact, and a panic here would
+/// kill the dispatch task and hang the turn on the in-flight tool call.
+pub(crate) fn lock_anchors(
+    anchors: &std::sync::Mutex<crate::hashline::registry::Registry>,
+) -> std::sync::MutexGuard<'_, crate::hashline::registry::Registry> {
+    match anchors.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    }
+}
 
 /// The routing table (R1): one owner for "where does a call go" — the
 /// scoped recall, the supervisor's sub-agent tools, the child's
@@ -96,7 +107,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
         // call; write and bash are stateless.
         "read" => {
             let anchors = ctx.session.anchors();
-            let mut reg = anchors.lock().expect("anchor registry lock");
+            let mut reg = lock_anchors(&anchors);
             read(
                 ctx.cwd,
                 &call.args,
@@ -114,7 +125,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
                 // A write is a file drift: drop the served baseline so the
                 // next read re-anchors (item 3).
                 let anchors = ctx.session.anchors();
-                let mut reg = anchors.lock().expect("anchor registry lock");
+                let mut reg = lock_anchors(&anchors);
                 reg.free(path);
             }
             res
@@ -126,10 +137,36 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
             let anchors = ctx.session.anchors();
-            let mut reg = anchors.lock().expect("anchor registry lock");
+            let mut reg = lock_anchors(&anchors);
             edit(ctx.cwd, &call.args, Some(&mut *reg), strict)
         }
-        "bash" => bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag(), ctx.progress).await,
+        "bash" => {
+            // Background bash (#53): detached — the call returns with the
+            // job id and output path; the session's completion hook wakes it
+            // when the job exits.
+            let background = call
+                .args
+                .get("background")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false);
+            if background {
+                let command = call
+                    .args
+                    .get("command")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let (jobs, on_done) = (ctx.session.background_jobs(), ctx.session.job_hook());
+                match crate::tools::bgjobs::spawn(ctx.cwd, &command, &jobs, on_done) {
+                    Ok((id, path)) => {
+                        ToolResult::ok(crate::tools::bgjobs::spawn_output(&id, &path).into())
+                    }
+                    Err(e) => ToolResult::err(e.into()),
+                }
+            } else {
+                bash_inner(ctx.cwd, &call.args, &ctx.session.stop_flag(), ctx.progress).await
+            }
+        }
         other => ToolResult::err(format!("unknown tool: {other}").into()),
     }
 }

@@ -48,7 +48,7 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     let inner: TurnProviderRef = Arc::new(PanicOnceProvider {
         panicked: AtomicBool::new(false),
     });
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(&core, &workspace, inner, TurnConfig::default());
@@ -120,7 +120,7 @@ async fn a_panicking_turn_settles_the_turn_flag() {
 /// refusal mutates nothing, and the rename lands once the turn settles.
 #[tokio::test]
 async fn a_rename_of_a_running_session_is_refused() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
@@ -188,7 +188,7 @@ async fn a_rename_of_a_running_session_is_refused() {
 /// in-memory leaf), and it lands on the settled session.
 #[tokio::test]
 async fn a_branch_of_a_running_session_is_refused() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
@@ -314,7 +314,7 @@ fn append_dangling_assistant(cwd: &Path, session: &str) {
 /// accepts a new message afterwards.
 #[tokio::test]
 async fn a_reopened_session_repairs_dangling_tool_calls() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
@@ -389,7 +389,7 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
 /// re-opens byte-identical — the repair mints nothing.
 #[tokio::test]
 async fn a_healthy_reopen_mints_nothing() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(

@@ -111,6 +111,19 @@ pub struct Core {
     pub(crate) self_weak: Mutex<Option<Weak<Core>>>,
 }
 
+/// Core-construction failure: an OS-level condition with no in-band
+/// recovery (an unset `HOME`, an HTTP-client or watcher-thread build
+/// failure) — the embedding process exits with the message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoreError(pub String);
+
+impl std::fmt::Display for CoreError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for CoreError {}
+
 pub struct CoreBuilder {
     system_dir: Option<PathBuf>,
     home: Option<PathBuf>,
@@ -129,18 +142,20 @@ pub struct CoreBuilder {
 
 impl CoreBuilder {
     /// Production shape: the system config dir (`~/.config/tau`).
-    pub fn default_system() -> Self {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .expect("HOME set");
-        Self {
+    pub fn default_system() -> Result<Self, CoreError> {
+        let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return Err(CoreError(
+                "home is not set; cannot locate the system config dir".into(),
+            ));
+        };
+        Ok(Self {
             system_dir: Some(home.join(".config").join("tau")),
             home: Some(home),
             custom: false,
             providers: BTreeMap::new(),
             child_factory: None,
             root_provider: None,
-        }
+        })
     }
 
     /// A test shape: no config files, an explicit provider list.
@@ -195,8 +210,7 @@ impl CoreBuilder {
         self
     }
 
-    #[must_use]
-    pub fn build(self) -> Arc<Core> {
+    pub fn build(self) -> Result<Arc<Core>, CoreError> {
         let (events_tx, rx) = mpsc::channel(1024);
         let core = Arc::new(Core {
             pipe: PipeCounters {
@@ -220,11 +234,16 @@ impl CoreBuilder {
             explicit_providers: self.providers.clone(),
             // Test builds use a no-pool client: a pooled keep-alive connection
             // keeps the tokio runtime alive after the test, hanging teardown.
-            client: reqwest::Client::builder()
-                .pool_max_idle_per_host(if self.custom { 0 } else { 10 })
-                .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-                .build()
-                .expect("client"),
+            client: {
+                let mut builder = reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS));
+                if self.custom {
+                    builder = builder.pool_max_idle_per_host(0);
+                }
+                builder.build().map_err(|e| {
+                    CoreError(format!("http client build failed: {e}"))
+                })?
+            },
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             child_factory: self.child_factory.clone(),
@@ -235,11 +254,11 @@ impl CoreBuilder {
             .lock()
             .expect("core self-reference: no panic while the lock is held")
             .replace(Arc::downgrade(&core));
-        self.apply_startup(&core);
-        core
+        self.apply_startup(&core)?;
+        Ok(core)
     }
 
-    fn apply_startup(self, core: &Arc<Core>) {
+    fn apply_startup(self, core: &Arc<Core>) -> Result<(), CoreError> {
         let mut config = Config::default();
         if let Some(dir) = self.system_dir
             && let Ok(loaded) = config::load(&dir, Path::new("/nonexistent-tau-project"))
@@ -272,7 +291,8 @@ impl CoreBuilder {
         }
         // The home-level roots are watched once globally (ticket #31); a
         // `None` seam (the test shape) is a no-op.
-        core.start_home_watcher();
+        core.start_home_watcher()?;
+        Ok(())
     }
 }
 
@@ -437,7 +457,7 @@ impl Core {
             .unwrap_or_default()
     }
 
-    pub(crate) fn open_workspace(&self, cwd: &str) -> Workspace {
+    pub(crate) fn open_workspace(&self, cwd: &str) -> Result<Workspace, ProtocolError> {
         let cwd = cwd.trim().to_owned();
         let id = format!("w-{:x}", xxhash_rust::xxh3::xxh3_64(cwd.as_bytes()));
         let name = Path::new(&cwd)
@@ -461,10 +481,15 @@ impl Core {
             },
         });
         self.set_workspace_open(&workspace, true);
-        self.start_project_watcher(&workspace);
-        self.start_tree_watcher(&workspace);
-        self.start_plan_watcher(&workspace);
-        workspace
+        // A watcher build failure (OS thread exhaustion) refuses the open
+        // instead of leaving the workspace unwatched.
+        let refuse = |e: CoreError| ProtocolError::Other {
+            message: e.to_string(),
+        };
+        self.start_project_watcher(&workspace).map_err(&refuse)?;
+        self.start_tree_watcher(&workspace).map_err(&refuse)?;
+        self.start_plan_watcher(&workspace).map_err(&refuse)?;
+        Ok(workspace)
     }
 
     pub(crate) fn workspace(&self, id: &str) -> Result<Workspace, ProtocolError> {

@@ -125,11 +125,12 @@ fn build_menu(app: &tauri::App) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> 
 fn main() {
     // The RUST_LOG-driven subscriber (the #98 wire-log precedent from the
     // standalone ACP binary): stderr, never stdout — the ACP mode below
-    // speaks on stdout. `just debug` sets RUST_LOG=tau_core=trace; release
-    // builds compile the emitters out at `max_level = error`, so this is
-    // inert there.
+    // speaks on stdout. The RUST_LOG-less fallback is `tau_core=debug` so a
+    // plain launch of the debug binary matches what `just debug` promises
+    // (the JSONL wire log); release builds compile the emitters out at
+    // `max_level = error`, so this is inert there.
     let filter = std::env::var("RUST_LOG").map_or_else(
-        |_| tracing_subscriber::EnvFilter::new("tau_core=trace"),
+        |_| tracing_subscriber::EnvFilter::new("tau_core=debug"),
         tracing_subscriber::EnvFilter::new,
     );
     let _ = tracing_subscriber::fmt()
@@ -143,10 +144,19 @@ fn main() {
         tau_acp::run();
         return;
     }
+    // A core-build failure (an unset `HOME`, a thread-spawn failure) is a
+    // startup abort, not a recoverable state.
+    let core = match CoreBuilder::default_system().and_then(CoreBuilder::build) {
+        Ok(core) => core,
+        Err(e) => {
+            eprintln!("tau: {e}");
+            std::process::exit(1);
+        }
+    };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(CoreState(CoreBuilder::default_system().build()))
+        .manage(CoreState(core))
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "open-folder" {
                 let _ = app.emit("open_folder_requested", ());

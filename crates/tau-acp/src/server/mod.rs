@@ -6,7 +6,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use serde_json::Value;
-use tau_core::harness::Core;
+use tau_core::harness::{Core, CoreError};
 use tau_protocol::{Command, CommandOutput};
 use tokio::io::{AsyncBufReadExt, AsyncRead};
 
@@ -36,24 +36,35 @@ impl Server {
     /// lock is held across the build: a concurrent first use must queue,
     /// not build a second core (a second `pump::run` would panic in
     /// `Core::events()`, which hands out its receiver exactly once).
-    pub async fn ensure_core(&self) -> Arc<Core> {
+    pub async fn ensure_core(&self) -> Result<Arc<Core>, CoreError> {
         let mut slot = self.core.lock().await;
         if let Some(core) = &*slot {
-            return core.clone();
+            return Ok(core.clone());
         }
-        let core = self.config.build_core().await;
+        let core = self.config.build_core().await?;
         let pump_out = self.out.clone();
         let pump_registry = self.registry.clone();
         tokio::spawn(pump::run(core.clone(), pump_out, pump_registry));
         *slot = Some(core.clone());
-        core
+        Ok(core)
     }
 
     /// Dispatch `cmd`, answering a JSON-RPC internal-error response on a
     /// `ProtocolError`; `None` once that error has been sent (the caller
     /// returns).
     async fn dispatch(&self, id: &Value, cmd: Command) -> Option<CommandOutput> {
-        match self.ensure_core().await.dispatch(cmd) {
+        let core = match self.ensure_core().await {
+            Ok(core) => core,
+            Err(e) => {
+                self.out.send(&transport::error(
+                    id,
+                    INTERNAL_ERROR,
+                    &format!("core build failed: {e}"),
+                ));
+                return None;
+            }
+        };
+        match core.dispatch(cmd) {
             Ok(out) => Some(out),
             Err(e) => {
                 self.out
@@ -65,9 +76,12 @@ impl Server {
 }
 
 /// Run the server over the given streams until stdin closes.
-pub async fn serve(stdin: impl AsyncRead + Unpin, stdout: impl Write + Send + 'static) {
+pub async fn serve(
+    stdin: impl AsyncRead + Unpin,
+    stdout: impl Write + Send + 'static,
+) -> Result<(), CoreError> {
     let server = Server {
-        config: std::sync::Arc::new(AcpConfig::load()),
+        config: std::sync::Arc::new(AcpConfig::load()?),
         out: Out::new(stdout),
         registry: std::sync::Arc::new(Registry::new(HashMap::new())),
         core: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
@@ -79,6 +93,7 @@ pub async fn serve(stdin: impl AsyncRead + Unpin, stdout: impl Write + Send + 's
         }
         dispatch_line(&server, &line).await;
     }
+    Ok(())
 }
 
 async fn dispatch_line(server: &Server, line: &str) {

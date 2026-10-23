@@ -21,7 +21,7 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         "dev".into(),
         Provider::with_model("http://127.0.0.1:9/v1", "m"),
     );
-    let core = CoreBuilder::custom(providers).build();
+    let core = CoreBuilder::custom(providers).build().unwrap();
 
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {

@@ -62,7 +62,14 @@ pub(super) fn read(
             // tell the model how to map coordinates back to the original.
             let (orig_w, orig_h) = (img.width(), img.height());
             let (img, note) = downscale_to_budget(&img, image_max_pixels);
-            let jpeg = encode_jpeg_q85(&img);
+            let jpeg = match encode_jpeg_q85(&img) {
+                Ok(jpeg) => jpeg,
+                Err(e) => {
+                    return ToolResult::err(
+                        format!("read: {} image re-encode failed: {e}", path.display()).into(),
+                    );
+                }
+            };
             // One line per image read at the encode site: the dimensions the
             // model sees, and the encoded payload size in base64 bytes.
             info!(
@@ -380,15 +387,13 @@ fn downscale_to_budget(
 /// Encode a decoded image as JPEG quality 85 — the canonical wire format
 /// (#252): the smallest format `image` encodes, and the one every known
 /// vision endpoint accepts.
-fn encode_jpeg_q85(img: &image::DynamicImage) -> Vec<u8> {
+fn encode_jpeg_q85(img: &image::DynamicImage) -> Result<Vec<u8>, image::ImageError> {
     // `to_rgb8` flattens every pixel format to RGB (alpha discarded).
     let rgb = img.to_rgb8();
     let mut out = Vec::new();
     let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 85);
-    encoder
-        .encode_image(&rgb)
-        .expect("encoding a freshly decoded image to JPEG cannot fail");
-    out
+    encoder.encode_image(&rgb)?;
+    Ok(out)
 }
 
 pub(super) async fn write(
@@ -698,7 +703,7 @@ pub(super) fn edit(
 /// common per-user tool dirs, de-duplicated. The app is launched from a GUI,
 /// so its ambient PATH is a minimal launchd set that misses `~/.cargo/bin`,
 /// Homebrew, nvm, and friends.
-fn bash_path() -> String {
+pub(crate) fn bash_path() -> String {
     let mut parts: Vec<String> = std::env::var("PATH")
         .map(|p| {
             p.split(':')

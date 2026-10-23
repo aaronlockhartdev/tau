@@ -190,13 +190,17 @@ pub fn tool_specs() -> Vec<ToolSpec> {
             kind: "function".into(),
             name: "bash".into(),
             description: "Run a shell command with the workspace as the working \
-                 directory. Returns the exit code, stdout, and stderr."
+                 directory. Returns the exit code, stdout, and stderr. With \
+                 background: true the command is detached (output streams to a file) and \
+                 the call returns immediately with the job id and output path; you are \
+                 notified when it exits."
                 .into(),
             parameters: json!({
                 "type": "object",
                 "properties": {
                     "command": {"type": "string"},
-                    "timeout_secs": {"type": "integer", "minimum": 1}
+                    "timeout_secs": {"type": "integer", "minimum": 1},
+                    "background": {"type": "boolean", "default": false, "description": "detach: run the command as a background job and return immediately with its output file path"}
                 },
                 "required": ["command"]
             }),
@@ -316,12 +320,15 @@ pub fn child_tool_specs() -> Vec<ToolSpec> {
     v
 }
 
+pub(crate) mod bgjobs;
 mod edit_diff;
 mod impls;
 mod progress;
 pub mod surface;
 #[cfg(test)]
 pub(crate) mod tests;
+#[cfg(test)]
+mod tests_bgjobs;
 #[cfg(test)]
 mod tests_image;
 #[cfg(test)]

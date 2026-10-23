@@ -83,7 +83,7 @@ fn rig(body: String, slow_ms: u64) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(dead_providers())
         .with_child_factory(Arc::new(CannedChild { body, slow_ms }))
-        .build();
+        .build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -600,7 +600,7 @@ async fn a_fork_spawn_copies_the_parent_file() {
 async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
     // Phase 1: a provider-bearing core writes the session file.
     let tmp = tempfile::tempdir().unwrap();
-    let seeded = CoreBuilder::custom(dead_providers()).build();
+    let seeded = CoreBuilder::custom(dead_providers()).build().unwrap();
     let ws = match seeded
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -639,7 +639,7 @@ async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
     // read-only from its file.
     let empty: std::collections::BTreeMap<String, tau_core::config::Provider> =
         std::collections::BTreeMap::new();
-    let core = CoreBuilder::custom(empty).build();
+    let core = CoreBuilder::custom(empty).build().unwrap();
     core.dispatch(Command::WorkspaceOpen {
         cwd: tmp.path().to_string_lossy().into_owned(),
     })
@@ -775,7 +775,7 @@ async fn a_restart_restores_a_child_state_from_disk() {
             body: done_body(),
             slow_ms: 0,
         }))
-        .build();
+        .build().unwrap();
     core2
         .dispatch(Command::WorkspaceOpen {
             cwd: rig.cwd.path().to_string_lossy().into_owned(),

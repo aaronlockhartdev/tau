@@ -13,7 +13,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
             body: plain_body(),
             delay_ms: 1200,
         }))
-        .build();
+        .build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -133,7 +133,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
 #[tokio::test]
 
 async fn an_archive_io_failure_keeps_the_session_live() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let session = match core
@@ -175,7 +175,7 @@ async fn an_archive_io_failure_keeps_the_session_live() {
 #[tokio::test]
 
 async fn an_archive_turn_started_in_the_window_aborts_with_reinsertion() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
@@ -217,7 +217,7 @@ async fn an_archive_turn_started_in_the_window_aborts_with_reinsertion() {
 #[tokio::test]
 
 async fn a_send_to_an_archived_session_is_refused() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let session = match core
@@ -279,7 +279,7 @@ async fn a_send_to_an_archived_session_is_refused() {
 async fn a_half_archived_session_converges_on_the_next_archive() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build();
+        .build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -404,7 +404,7 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
             body: plain_body(),
             delay_ms: 1200,
         }))
-        .build();
+        .build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -490,7 +490,7 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
 /// file intact.
 #[tokio::test]
 async fn a_delete_of_a_running_session_is_refused() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
