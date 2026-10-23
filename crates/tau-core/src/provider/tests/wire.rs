@@ -72,11 +72,13 @@ fn call_output_from_payload_maps_the_stored_shapes() {
     });
     assert_eq!(
         CallOutput::from_payload(&block),
-        Some(CallOutput::Image(vec![InputCallPart::Image(InputImagePart {
-            kind: "input_image",
-            image_url: "data:image/png;base64,AAAA".into(),
-            detail: "auto",
-        })]))
+        Some(CallOutput::Image(vec![InputCallPart::Image(
+            InputImagePart {
+                kind: "input_image",
+                image_url: "data:image/png;base64,AAAA".into(),
+                detail: "auto",
+            }
+        )]))
     );
     assert_eq!(
         CallOutput::from_payload(&serde_json::json!("plain")),
@@ -97,8 +99,7 @@ fn call_output_from_payload_maps_the_stored_shapes() {
     assert_eq!(
         CallOutput::from_payload(&noted),
         Some(CallOutput::Image(vec![
-            InputCallPart::Text("[Image: original 2048x2048, displayed at 1448x1448.]"
-                .into()),
+            InputCallPart::Text("[Image: original 2048x2048, displayed at 1448x1448.]".into()),
             InputCallPart::Image(InputImagePart {
                 kind: "input_image",
                 image_url: "data:image/jpeg;base64,BBBB".into(),

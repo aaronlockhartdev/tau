@@ -301,7 +301,7 @@ fn plan_wiring(
     let sectioned = crate::plan::with_path(prompt, &crate::plan::path(cwd, sid));
     let core = core.cloned();
     if let Some(core) = &core {
-        core.refresh_plan(cwd, sid);
+        core.refresh_plan(cwd, sid, true);
     }
     (sectioned, core)
 }

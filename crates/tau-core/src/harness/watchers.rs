@@ -244,7 +244,7 @@ pub(crate) fn refresh_plan_batch(core: &Core, ws: &Workspace, batch: &Batch) {
         if let Ok(rd) = std::fs::read_dir(cwd.join(".tau").join("plans")) {
             for ent in rd.flatten() {
                 if let Some(sid) = crate::plan::session_of(&ent.path(), cwd) {
-                    core.refresh_plan(cwd, &sid);
+                    core.refresh_plan(cwd, &sid, false);
                 }
             }
         }
@@ -252,7 +252,7 @@ pub(crate) fn refresh_plan_batch(core: &Core, ws: &Workspace, batch: &Batch) {
     }
     for path in batch {
         if let Some(sid) = crate::plan::session_of(path, cwd) {
-            core.refresh_plan(cwd, &sid);
+            core.refresh_plan(cwd, &sid, false);
         }
     }
 }
