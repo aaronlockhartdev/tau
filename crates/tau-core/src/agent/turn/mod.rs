@@ -275,7 +275,10 @@ impl AgentSession {
         // already logged by this session's previous request, then advance
         // it — under the session lock, so a mid-turn re-assembly after an
         // OM compaction logs its (shrunken) window, not a stale offset.
-        let prev_len = {
+        // The lock is the cost, so it's taken only where `debug!` is live:
+        // `level_enabled!` folds to a compile-time const under a `max_level_*`
+        // feature, so a release build skips it and `prev_len` stays 0.
+        let prev_len = if tracing::level_enabled!(tracing::Level::DEBUG) {
             let mut inner = self
                 .inner
                 .lock()
@@ -283,6 +286,8 @@ impl AgentSession {
             let prev = inner.prev_input_len;
             inner.prev_input_len = input.len();
             prev
+        } else {
+            0
         };
         let mut request =
             ResponseRequest::new(self.model().clone(), Some(system_prompt), input.to_vec())

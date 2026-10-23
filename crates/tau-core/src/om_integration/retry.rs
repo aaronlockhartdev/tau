@@ -38,14 +38,21 @@ pub async fn call_with_retry(
     retries: u32,
 ) -> Result<TurnResult, OmError> {
     let mut n = 0u32;
-    // The label rides the wire log's request line (the #98 view): an OM
+    // The label rides the wire log's request line (the #98 debug view): an OM
     // round-trip logs as `observe`/`buffer`/`reflect`, a main turn as
-    // unlabeled.
-    let labeled = request.clone().with_wire_label(label);
+    // unlabeled. Debug-only — the `clone` is the cost, so it's skipped
+    // wherever `debug!` is compiled out (a release build sets
+    // `release_max_level_error`).
+    let labeled_clone = if tracing::level_enabled!(tracing::Level::DEBUG) {
+        Some(request.clone().with_wire_label(label))
+    } else {
+        None
+    };
+    let labeled = labeled_clone.as_ref().unwrap_or(request);
     loop {
         let mut sink = NoopSink;
         match provider
-            .call(&labeled, &mut sink)
+            .call(labeled, &mut sink)
             .await
             .map_err(OmError::Provider)
         {

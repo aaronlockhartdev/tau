@@ -29,10 +29,14 @@ pub(super) fn apply_frame(
         Ok(frame) => frame,
         Err(_) => return true,
     };
-    // The JSONL response line's `blocks`: the frame's content blocks are
-    // recorded in arrival order, so the log shows where each tool call fell
-    // in the model's reasoning.
-    result.blocks.extend(frame.wire_blocks());
+    // The JSONL response line's `blocks` (the #98 debug view): the frame's
+    // content blocks in arrival order, so the log shows where each tool call
+    // fell in the model's reasoning. `debug_assertions` is true in dev and
+    // test builds, false in release — the per-frame clones never compile in.
+    #[cfg(debug_assertions)]
+    {
+        result.blocks.extend(frame.wire_blocks());
+    }
     match frame {
         Frame::Created { created_at: ts } => {
             if let Some(ts) = ts {
@@ -238,12 +242,22 @@ async fn attempt_one_turn(
     request: &ResponseRequest,
     sink: &mut dyn TurnSink,
 ) -> Result<TurnResult, ProviderError> {
-    // One id pairs the JSONL request/response lines; the trace log above
-    // stays unpaired (its consumers read by adjacency).
-    let wire_id = super::wire::new_id();
+    // The JSONL request/response pairing (the #98 debug view) is `debug!`
+    // level: `level_enabled!` folds to a compile-time const under a
+    // `max_level_*` feature, so a release build (the app sets
+    // `release_max_level_error`) drops the id mint and the timestamp — only
+    // the trace-level verbatim dump (self-guarded by `trace!`) survives.
+    let wire_id: Option<String> = if tracing::level_enabled!(tracing::Level::DEBUG) {
+        Some(super::wire::new_id())
+    } else {
+        None
+    };
+    let wire_start: Option<tokio::time::Instant> =
+        wire_id.as_ref().map(|_| tokio::time::Instant::now());
     super::wire::request(request);
-    request.wire_request_jsonl(&wire_id);
-    let wire_start = tokio::time::Instant::now();
+    if let Some(id) = &wire_id {
+        request.wire_request_jsonl(id);
+    }
     // `.timeout` is a *total* deadline, which kills a healthy long stream
     // mid-body: the connect/headers phase is bounded by
     // `requests.timeout_secs`, the stream by the per-chunk idle deadline
@@ -352,9 +366,11 @@ async fn attempt_one_turn(
     super::wire::response(&raw_response);
     // `unwrap_or(MAX)`: a 584-year stream is a diagnostic-log sentinel, not a
     // failure — `as u64` is a silent conversion, which clippy denies.
-    result.wire_response_jsonl(
-        &wire_id,
-        u64::try_from(wire_start.elapsed().as_millis()).unwrap_or(u64::MAX),
-    );
+    if let (Some(id), Some(start)) = (&wire_id, &wire_start) {
+        result.wire_response_jsonl(
+            id,
+            u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
+    }
     Ok(result)
 }
