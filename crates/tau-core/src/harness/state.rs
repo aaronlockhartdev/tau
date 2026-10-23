@@ -601,11 +601,14 @@ impl Core {
     /// Re-read and parse the session's plan file into the state cache: the
     /// plan watcher's consumer, and the session-start seed. A failed read
     /// (a torn write, a delete) degrades to an empty plan — the parser is
-    /// total, so nothing here can fail a turn. The parse is also emitted as
+    /// total, so nothing here can fail a turn. A changed parse is emitted as
     /// a `plan_changed` (the GUI's plan pane, spec §5.3) when the cwd names
     /// an open workspace — and only when the parse actually changed: an
     /// editor saving unchanged content must not churn the UI (#177).
-    pub(crate) fn refresh_plan(&self, workspace: &Path, session_id: &str) {
+    /// `silent` seeds the cache without emitting: the session-open path must
+    /// warm the cache for the first assembly, but the seed is not a change —
+    /// emitting it made a plain open advance the sidebar's last-modified.
+    pub(crate) fn refresh_plan(&self, workspace: &Path, session_id: &str, silent: bool) {
         let raw =
             std::fs::read_to_string(crate::plan::path(workspace, session_id)).unwrap_or_default();
         let plan = crate::plan::parse(&raw);
@@ -623,7 +626,7 @@ impl Core {
             total,
             "plan state observed"
         );
-        if !changed {
+        if silent || !changed {
             return;
         }
         if let Some(id) = self.workspace_id_for_cwd(workspace) {
