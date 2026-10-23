@@ -127,6 +127,7 @@ struct ModelsResponse {
 /// In-tree SSE frame parser (spec §6, research #4): UTF-8-safe buffering,
 /// blank-line event splitting, `data:` line concatenation, `:`-comment
 /// skipping, `[DONE]` termination.
+#[derive(Default)]
 pub struct SseParser {
     buf: Vec<u8>,
     /// The `data:` payloads of the in-flight event; a blank line completes
