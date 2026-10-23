@@ -77,8 +77,9 @@ pub(super) async fn session_new(server: &Server, rpc: &Rpc) {
     let (models, default) = server.config.model_options_for(cwd).await;
     let mut result = json!({ "sessionId": session.id });
     let mut context_window = None;
-    if !models.is_empty() {
-        let current = default.expect("a non-empty model list has a default");
+    // `model_options_for` guarantees a non-empty list carries a default;
+    // no default means an empty list, so the selector is omitted.
+    if let Some(current) = default {
         result["configOptions"] = json!([model_option(&models, &current)]);
         context_window = server.config.context_window_for(cwd, &current).await;
     }

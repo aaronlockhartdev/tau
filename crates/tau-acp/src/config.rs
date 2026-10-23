@@ -127,21 +127,30 @@ impl AcpConfig {
     /// model — the launch.rs rule).
     pub async fn model_options_for(&self, cwd: &str) -> (Vec<String>, Option<String>) {
         let merged = self.merged(cwd).await;
-        let models = merged
+        let models: Vec<String> = merged
             .providers
             .values()
             .flat_map(|p| p.models.keys().cloned())
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        let default = merged.providers.values().next().and_then(|first| {
-            let wanted = &merged.generation.default_model;
-            if !wanted.is_empty() && first.models.contains_key(wanted) {
-                Some(wanted.clone())
-            } else {
-                first.models.keys().next().cloned()
-            }
-        });
+        // The default comes from the first provider, but that provider may
+        // be configured with an empty models table while a later one has
+        // models: fall back to the first listed model so a non-empty list
+        // always carries a default (session/new must not panic on config).
+        let default = merged
+            .providers
+            .values()
+            .next()
+            .and_then(|first| {
+                let wanted = &merged.generation.default_model;
+                if !wanted.is_empty() && first.models.contains_key(wanted) {
+                    Some(wanted.clone())
+                } else {
+                    first.models.keys().next().cloned()
+                }
+            })
+            .or_else(|| models.first().cloned());
         (models, default)
     }
 
@@ -257,5 +266,37 @@ mod tests {
         c.base.providers.insert("full".into(), full);
         assert_eq!(c.context_window_for("/p", "m1").await, Some(4096));
         assert_eq!(c.context_window_for("/p", "nope").await, None);
+    }
+
+    #[tokio::test]
+    async fn a_non_empty_model_list_always_carries_a_default() {
+        // Regression: a config whose alphabetically-first provider has an
+        // empty models table used to leave `default` None for a non-empty
+        // list — session/new then panicked on the expect.
+        let mut c = AcpConfig::test_empty();
+        let empty = Provider {
+            base_url: "http://a/v1".into(),
+            key_env: String::new(),
+            models: BTreeMap::new(),
+        };
+        c.base.providers.insert("aaa-empty".into(), empty);
+        let mut full = Provider {
+            base_url: "http://b/v1".into(),
+            key_env: String::new(),
+            models: BTreeMap::new(),
+        };
+        full.models.insert("m1".into(), ModelDef::default());
+        c.base.providers.insert("bbb-full".into(), full);
+
+        let (models, default) = c.model_options_for("/p").await;
+        assert_eq!(models, vec!["m1".to_owned()]);
+        assert_eq!(default.as_deref(), Some("m1"));
+
+        // Negative: no models anywhere — no list, no default.
+        let (models, default) = AcpConfig::test_empty()
+            .model_options_for("/p")
+            .await;
+        assert!(models.is_empty());
+        assert!(default.is_none());
     }
 }
