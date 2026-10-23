@@ -247,7 +247,7 @@ fn wire_json(out: &str) -> serde_json::Value {
     let line = out
         .lines()
         .find(|l| l.contains("llm wire"))
-        .expect("the llm wire debug event is emitted");
+        .unwrap_or_else(|| panic!("the llm wire debug event is emitted; captured [{}]", out));
     let json = line
         .split_once("llm wire line=")
         .map(|(_, rest)| rest)
