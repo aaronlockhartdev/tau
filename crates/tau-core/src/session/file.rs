@@ -142,6 +142,11 @@ impl SessionStore {
                 self.id
             )));
         }
+        // A second store over the same file (the harness re-opens live
+        // sessions on demand; fork/branch rewrite via their own stores)
+        // can grow the file out from under the in-memory id set: refresh
+        // before the parent check, or a valid parent reads "unknown".
+        self.refresh_if_grown()?;
         if let Some(p) = parent
             && !self.ids.contains(p)
         {

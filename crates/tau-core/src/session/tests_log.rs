@@ -61,3 +61,31 @@ fn refresh_if_grown_reopens_when_the_file_grew() {
     store.refresh_if_grown().unwrap();
     assert_eq!(store.entries_range_cached(0, usize::MAX).unwrap().len(), 3);
 }
+
+#[test]
+fn a_second_store_refreshes_before_parent_validation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut writer = SessionStore::for_workspace(dir.path(), "s1");
+    writer.create().unwrap();
+    let e1 = writer
+        .append("user", json!({ "text": "one" }), None)
+        .unwrap();
+    // A second store opens while the file holds one entry: its in-memory
+    // id set is current only until the writer appends again.
+    let mut other = SessionStore::for_workspace(dir.path(), "s1");
+    other.open().unwrap();
+    let e2 = writer
+        .append("user", json!({ "text": "two" }), Some(&e1.id))
+        .unwrap();
+    // The stale store must refresh against the grown file before the
+    // parent check, not refuse a valid parent as "unknown".
+    let e3 = other
+        .append("user", json!({ "text": "three" }), Some(&e2.id))
+        .unwrap();
+    assert_eq!(e3.parent.as_deref(), Some(e2.id.as_str()));
+    // A genuinely unknown parent is still refused.
+    let err = other
+        .append("user", json!({ "text": "four" }), Some("no-such-entry"))
+        .unwrap_err();
+    assert!(err.to_string().contains("unknown parent"), "{err}");
+}
