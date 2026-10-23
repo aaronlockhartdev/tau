@@ -116,7 +116,7 @@ fn own_state_of(
     // clone (a 10k-entry root must not pay for a projection it never uses).
     meta.parent.as_ref()?;
     let entries: Vec<crate::session::Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
-    crate::subagent::restore::own_state_for(&entries)
+    crate::subagent::snapshot::own_state_for(&entries)
 }
 
 impl Core {
@@ -194,9 +194,9 @@ impl Core {
         // and a closed child's own state are projected from the file (the
         // registry is empty and there is no live log to read).
         let cwd = Path::new(&workspace.cwd);
-        let subagents = crate::subagent::restore::restore_children_from_disk(cwd, id);
+        let subagents = crate::subagent::snapshot::restore_children_from_disk(cwd, id);
         let own_state = if meta.parent.is_some() {
-            crate::subagent::restore::own_state_for(&entries)
+            crate::subagent::snapshot::own_state_for(&entries)
         } else {
             None
         };

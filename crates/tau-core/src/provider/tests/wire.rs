@@ -194,7 +194,6 @@ fn prompt_estimate_counts_text_call_outputs() {
     assert_eq!(est, 1200 / 4);
 }
 
-
 // --- JSONL wire view (the #98 wire log's parseable companion) ---
 
 /// One static buffer per test binary: `set_global_default` installs once,
@@ -280,7 +279,9 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
         }),
         ..TurnResult::default()
     };
-    let v = wire_json(&capture_debug(|| result.wire_response_jsonl("a1b2", 42, "data: x\n")));
+    let v = wire_json(&capture_debug(|| {
+        result.wire_response_jsonl("a1b2", 42, "data: x\n")
+    }));
     assert_eq!(v["id"], "a1b2");
     assert_eq!(v["dir"], "res");
     assert_eq!(v["ms"], 42);

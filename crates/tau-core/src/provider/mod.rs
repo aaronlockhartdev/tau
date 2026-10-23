@@ -138,11 +138,6 @@ pub struct SseParser {
     pub terminated: bool,
 }
 
-impl Default for SseParser {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 impl SseParser {
     #[must_use]
     pub const fn new() -> Self {

@@ -2,8 +2,8 @@
 //! delete / archive / restore / branch / snapshot / paged reads.
 
 use super::{
-    Arc, Command, CommandOutput, Core, Event, MAX_TITLE_LEN, Ordering, Path, PathBuf,
-    ProtocolError, SessionMeta, SessionStore, StoppedBy, delete_session_files, derive_turn, json,
+    Arc, Command, CommandOutput, Core, Event, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
+    SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, json,
     last_model_note, model_note, running_turn_refusal,
 };
 
@@ -57,14 +57,7 @@ impl Core {
                 })
             }
             Command::SessionRename { session, title } => {
-                if title.chars().count() > MAX_TITLE_LEN {
-                    return Err(ProtocolError::Other {
-                        message: format!(
-                            "title is {} characters — the maximum is {MAX_TITLE_LEN}",
-                            title.chars().count()
-                        ),
-                    });
-                }
+                check_title_len(&title)?;
                 // The title lives in the file header, so the same write
                 // works for a live and a closed session alike.
                 let (live, cwd) = match self.live(&session) {
@@ -288,9 +281,7 @@ impl Core {
                     .get(&session)
                     && live.turn.load(Ordering::SeqCst)
                 {
-                    return Err(ProtocolError::Other {
-                        message: format!("session {session} is running — stop it first"),
-                    });
+                    return Err(running_turn_refusal(&session));
                 }
                 let Some(live) = self
                     .sessions
@@ -356,9 +347,7 @@ impl Core {
                 // mid-turn would tear it (ADR-0005 keeps the archive off
                 // the live path).
                 if live.turn.load(Ordering::SeqCst) {
-                    return Err(ProtocolError::Other {
-                        message: format!("session {session} is running — stop it first"),
-                    });
+                    return Err(running_turn_refusal(&session));
                 }
                 // The children that archive with this session (ADR-0005):
                 // the supervisor's, the live, and the ones closed on

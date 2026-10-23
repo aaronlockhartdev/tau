@@ -11,7 +11,7 @@ const LANGS: string[] = Object.keys(bundledLanguages);
 type Token = { content: string; color?: string };
 let instance: Promise<Highlighter> | null = null;
 
-function esc(s: string): string {
+export function esc(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 

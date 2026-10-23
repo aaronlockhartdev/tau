@@ -203,7 +203,6 @@ export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'e
 function decodeToolStatus(p: Record<string, unknown>): 'ok' | 'running' | 'error' | 'cancelled' {
   const s = p.status;
   if (s === 'ok' || s === 'error' || s === 'cancelled') return s;
-  if (s === 'ok' || s === 'error') return s;
   return toolStatus(typeof p.name === 'string' ? p.name : '', p.output);
 }
 

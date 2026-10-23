@@ -220,18 +220,11 @@ impl CoreBuilder {
             explicit_providers: self.providers.clone(),
             // Test builds use a no-pool client: a pooled keep-alive connection
             // keeps the tokio runtime alive after the test, hanging teardown.
-            client: if self.custom {
-                reqwest::Client::builder()
-                    .pool_max_idle_per_host(0)
-                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-                    .build()
-                    .expect("client")
-            } else {
-                reqwest::Client::builder()
-                    .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
-                    .build()
-                    .expect("client")
-            },
+            client: reqwest::Client::builder()
+                .pool_max_idle_per_host(if self.custom { 0 } else { 10 })
+                .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+                .build()
+                .expect("client"),
             events_tx,
             events_rx: Mutex::new(Some(rx)),
             child_factory: self.child_factory.clone(),

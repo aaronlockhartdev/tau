@@ -91,7 +91,6 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
             Some(link) => ToolResult::ok(link.notify(&call.args).into()),
             None => ToolResult::err("parent_notify: not available in a top-level session".into()),
         },
-        // Core tools are stateless: they reach only the cwd.
         // Core tools: the read/edit pair is stateful per session (the anchor
         // registry, spec §5.4) — it borrows the session's registry for the
         // call; write and bash are stateless.

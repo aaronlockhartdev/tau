@@ -38,7 +38,6 @@ pub(super) fn diff_output(path: &str, original: &str, planned: &Planned) -> Stri
     for (line, hash) in new_lines[lo..hi].iter().zip(planned.hashes[lo..hi].iter()) {
         change.push(format!("+ {hash}{}{line}", hashline::SEP));
     }
-    // Cap the diff body at ~200 lines; a larger change shows its head + a count.
     let mut body: Vec<String> = Vec::new();
     let mut notice: Option<String> = None;
     if change.len() > CAP {
