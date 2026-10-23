@@ -226,16 +226,19 @@ impl std::io::Write for CapWriter<'_> {
     }
 }
 
-/// Install the capture once per binary, run `f`, and return what it emitted.
-/// Each call drains the buffer first, so a scenario only sees its own event.
-/// `try_init` succeeds only on the first call; the later no-op calls still
-/// write into the same static buffer, so the read is unconditional.
+/// Run `f` under a thread-scoped capture subscriber and return what it
+/// emitted. Each call drains the buffer first, so a scenario only sees its
+/// own event. Scoped via `set_default` rather than a global `try_init`: on
+/// CI runners a global dispatch can already be installed, and a `try_init`
+/// no-op would leave the buffer empty (the capture is then empty and the
+/// JSONL assertions fail).
 fn capture_debug(f: impl FnOnce()) -> String {
-    let _ = tracing_subscriber::fmt()
+    let sub = tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_ansi(false)
         .with_writer(CapSource)
-        .try_init();
+        .finish();
+    let _guard = tracing::subscriber::set_default(sub);
     CAPTURE.lock().expect("capture poisoned").clear();
     f();
     CAPTURE.lock().expect("capture poisoned").clone()
