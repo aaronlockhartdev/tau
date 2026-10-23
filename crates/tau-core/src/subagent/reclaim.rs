@@ -111,11 +111,15 @@ impl Supervisor {
             .collect::<Vec<_>>();
         let live_children: std::collections::HashSet<String> =
             live.iter().map(|i| i.child.clone()).collect();
-        let from_disk = restore::disk_children(&self.cwd, &self.parent_session)
-            .into_iter()
-            .filter(|i| !live_children.contains(&i.child))
-            .map(|i| restore::disk_child_to_info(&i))
-            .collect::<Vec<_>>();
+        let from_disk = restore::disk_children(
+            &self.cwd,
+            &self.parent_session,
+            self.parent_entries.as_deref(),
+        )
+        .into_iter()
+        .filter(|i| !live_children.contains(&i.child))
+        .map(|i| restore::disk_child_to_info(&i))
+        .collect::<Vec<_>>();
         let mut out = live;
         out.extend(from_disk);
         // Spawn order (#226 variant): `created`, then the child session id.
@@ -145,7 +149,7 @@ impl Supervisor {
                 .clone();
             guard.and_then(|w| w.upgrade())?
         };
-        let disk = restore::disk_children(&self.cwd, &self.parent_session);
+        let disk = restore::disk_children(&self.cwd, &self.parent_session, None);
         let d: &DiskChild = disk
             .iter()
             .find(|i| i.name == name_or_id || i.child == name_or_id || i.handle == name_or_id)?;

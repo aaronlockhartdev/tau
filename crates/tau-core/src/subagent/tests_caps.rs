@@ -144,6 +144,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
     store.create().unwrap();
@@ -227,6 +228,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
     store.create().unwrap();
@@ -308,6 +310,7 @@ async fn the_depth_cap() {
             bridge: subagent_bridge,
             driver: Arc::new(TestDriver),
             core: None,
+            parent_entries: None,
         })
     };
     // At the cap: refused with a clear diagnostic.
@@ -388,6 +391,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         bridge: subagent_bridge,
         driver: driver.clone(),
         core: None,
+        parent_entries: None,
     });
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
     store.create().unwrap();

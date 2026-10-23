@@ -247,6 +247,7 @@ pub(crate) fn harness_full(
         bridge: bridge.clone(),
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     // A scripted parent loop (the parent is a full session): the
     // constructor adopts the pre-built supervisor (the test seam).

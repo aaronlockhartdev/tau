@@ -73,6 +73,9 @@ pub struct Supervisor {
     /// supervisor is owned by the parent session; a strong self would be a
     /// cycle, ticket #43). Set in `new` (it always returns an `Arc`).
     self_weak: Mutex<Option<Weak<Self>>>,
+    /// The parent's in-memory entries (issue #280): lets the fleet view and
+    /// the handle-count seed avoid re-reading the parent's file from disk.
+    parent_entries: Option<Vec<crate::session::Entry>>,
 }
 
 /// The values a session built around this supervisor inherits (the
@@ -120,6 +123,11 @@ pub struct SupervisorParams {
     /// wiring (seed, the prompt's path, the state re-injection) routes
     /// through it. `None` on the test seams (no plan wiring).
     pub core: Option<Weak<crate::harness::Core>>,
+    /// The parent's in-memory entries, threaded from the open path (issue
+    /// #280): a re-opened session already holds its full entry list, so the
+    /// handle-count seed and the snapshot's fleet projection read it from
+    /// memory instead of re-reading the parent's file from disk.
+    pub parent_entries: Option<Vec<crate::session::Entry>>,
 }
 
 /// A completed spawn: everything the dispatch needs to register the child
@@ -161,8 +169,15 @@ impl Supervisor {
             // #226): a re-opened session must not re-mint a handle an
             // earlier life already used — the GUI keys its roster rows
             // by handle, and a collision misattributes one child's
-            // state onto a sibling's card.
-            next: AtomicUsize::new(Self::minted_count(&p.cwd, &p.parent_session)),
+            // state onto a sibling's card. The open path threads the
+            // already-loaded entries through (issue #280) so this reads
+            // memory, not the file again; a fresh `new` (test seams) has
+            // none and falls back to the disk read.
+            next: AtomicUsize::new(Self::minted_count(
+                &p.cwd,
+                &p.parent_session,
+                p.parent_entries.as_deref(),
+            )),
             caps: p.caps,
             types: p.types,
             depth: p.depth,
@@ -179,6 +194,7 @@ impl Supervisor {
             bridge: p.bridge,
             driver: p.driver,
             core: p.core,
+            parent_entries: p.parent_entries,
             self_weak: Mutex::new(None),
         });
         *sup.self_weak
@@ -191,14 +207,16 @@ impl Supervisor {
     /// How many child handles this parent has minted across all its
     /// lives: the count of `subagent_spawn` tool records in its session
     /// file (one per spawn — a re-open re-reads the same file, so the
-    /// counter is monotonic across re-opens). A missing or unreadable
-    /// file seeds at zero (a fresh parent).
-    fn minted_count(cwd: &std::path::Path, parent_session: &str) -> usize {
-        let mut store = SessionStore::for_workspace(cwd, parent_session);
-        let Ok(()) = store.open() else {
-            return 0;
-        };
-        store.entries_range(0, usize::MAX).map_or(0, |entries| {
+    /// counter is monotonic across re-opens). When the open path has
+    /// already loaded the entries into memory (issue #280) it counts from
+    /// those; otherwise it reads the file. A missing or unreadable file
+    /// seeds at zero (a fresh parent).
+    fn minted_count(
+        cwd: &std::path::Path,
+        parent_session: &str,
+        entries: Option<&[crate::session::Entry]>,
+    ) -> usize {
+        let count = |entries: &[crate::session::Entry]| -> usize {
             entries
                 .iter()
                 .filter(|e| {
@@ -206,7 +224,17 @@ impl Supervisor {
                         && e.payload["name"] == serde_json::json!("subagent_spawn")
                 })
                 .count()
-        })
+        };
+        if let Some(entries) = entries {
+            return count(entries);
+        }
+        let mut store = SessionStore::for_workspace(cwd, parent_session);
+        let Ok(()) = store.open() else {
+            return 0;
+        };
+        store
+            .entries_range(0, usize::MAX)
+            .map_or(0, |entries| count(&entries))
     }
 
     /// The inherited bundle (see `Inherited`).

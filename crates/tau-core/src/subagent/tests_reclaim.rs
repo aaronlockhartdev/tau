@@ -73,7 +73,7 @@ fn disk_children_lists_only_terminal_children() {
     let mut sib = SessionStore::for_workspace(dir, "sib");
     sib.create().unwrap();
 
-    let children = restore::disk_children(dir, "p");
+    let children = restore::disk_children(dir, "p", None);
     let mut ids: Vec<String> = children.iter().map(|c| c.child.clone()).collect();
     ids.sort();
     // Only the terminal children (done + stopped): the parked one is a
@@ -113,7 +113,7 @@ fn disk_children_reads_the_minted_handle_from_spawn_records() {
     .unwrap();
     done_child(dir, "child-session", "p");
 
-    let children = restore::disk_children(dir, "p");
+    let children = restore::disk_children(dir, "p", None);
     assert_eq!(children.len(), 1);
     assert_eq!(children[0].child, "child-session");
     // Without a spawn record carrying the child's id, the handle falls back
@@ -124,9 +124,8 @@ fn disk_children_reads_the_minted_handle_from_spawn_records() {
 }
 
 #[test]
-fn a_missing_file_is_none_not_a_guess() {
-    let tmp = tempfile::tempdir().unwrap();
-    assert!(restore::last_state_on_disk(tmp.path(), "ghost").is_none());
+fn no_state_entry_is_none_not_a_guess() {
+    assert!(restore::last_state_from(&[]).is_none());
 }
 
 #[test]
@@ -138,7 +137,7 @@ fn a_running_record_is_not_terminal() {
     state_only_child(dir, "c1", "p", "running", &serde_json::json!({}));
     // A `running` record (a restart artifact) is not terminal: re-adopt
     // refuses it, and `disk_children` drops it.
-    assert!(restore::disk_children(dir, "p").is_empty());
+    assert!(restore::disk_children(dir, "p", None).is_empty());
 }
 
 /// The re-adopt positive path: a reclaimed (terminal) child on disk is
