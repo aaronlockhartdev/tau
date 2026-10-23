@@ -172,8 +172,9 @@ impl Supervisor {
             },
         )
         // The child role has no fallible step (the provider, the record,
-        // and the values are the spawn's resolved ones).
-        .expect("the child role has no fallible steps");
+        // and the values are the spawn's resolved ones); a failure here is
+        // reported like any other spawn failure, not a process panic.
+        .map_err(|e| format!("subagent_spawn: {e}"))?;
         let created = agent.store_created();
         let stop = agent.stop_flag();
         let child = Arc::new(Child {

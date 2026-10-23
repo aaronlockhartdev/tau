@@ -30,7 +30,7 @@ async fn result_tool_entry(
 #[tokio::test]
 async fn a_successful_tool_emits_status_ok_in_the_entry_payload() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let live = manual_session(
         &core,
@@ -64,7 +64,7 @@ async fn a_failing_tool_emits_status_error_in_the_entry_payload() {
     let data = format!("data: {{\"type\":\"response.output_item.done\",\"item\":{item}}}");
     let body = format!("{data}\n\ndata: [DONE]\n\n");
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let live = manual_session(
         &core,

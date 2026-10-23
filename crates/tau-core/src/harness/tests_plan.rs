@@ -87,7 +87,7 @@ fn plan_changed(events: &[Event], ws: &str, sid: &str) -> Option<tau_protocol::s
 async fn session_new_seeds_the_plan_file_and_injects_its_path() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
 
@@ -131,7 +131,7 @@ async fn session_new_reinjection_reaches_the_provider() {
     // the root session, so the turn's request is captured end-to-end.
     let core = CoreBuilder::custom(providers())
         .with_root_provider(provider)
-        .build();
+        .build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
 
@@ -160,7 +160,7 @@ async fn session_new_reinjection_reaches_the_provider() {
 async fn a_plan_file_change_updates_the_plan_state() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
     let plan_file = crate::plan::path(&cwd, &meta.id);
@@ -196,7 +196,7 @@ async fn a_plan_file_change_updates_the_plan_state() {
 async fn the_snapshot_carries_the_parsed_plan() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
 
@@ -251,7 +251,7 @@ async fn the_snapshot_carries_the_parsed_plan() {
 async fn a_plan_file_change_emits_plan_changed() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let events = collect_events(&core);
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
@@ -282,7 +282,7 @@ async fn a_plan_file_change_emits_plan_changed() {
 async fn an_unchanged_plan_file_emits_no_plan_changed() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let events = collect_events(&core);
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
@@ -351,7 +351,7 @@ async fn an_unchanged_plan_file_emits_no_plan_changed() {
 async fn a_new_session_emits_plan_changed_for_the_seed() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let events = collect_events(&core);
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
@@ -377,7 +377,7 @@ async fn a_new_session_emits_plan_changed_for_the_seed() {
 async fn an_unchanged_refresh_emits_no_plan_changed() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let events = collect_events(&core);
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
@@ -431,7 +431,7 @@ async fn an_unchanged_refresh_emits_no_plan_changed() {
 async fn the_plan_state_is_reinjected_into_the_assembly() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let provider = Arc::new(Capturing {
         bodies: vec![crate::agent::testkit::sse("working", &[])],
@@ -477,7 +477,7 @@ async fn the_plan_state_is_reinjected_into_the_assembly() {
 async fn a_plan_change_between_turns_changes_the_injected_state() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let provider = Arc::new(Capturing {
         bodies: vec![crate::agent::testkit::sse("working", &[])],
@@ -552,7 +552,7 @@ async fn a_plan_change_between_turns_changes_the_injected_state() {
 async fn closing_a_session_drops_its_plan_state() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
     assert!(core.plan_state(&meta.id).is_some());
@@ -571,7 +571,7 @@ async fn closing_a_session_drops_its_plan_state() {
 async fn a_spawned_child_prompt_names_its_own_plan_file() {
     let tmp = tempfile::tempdir().unwrap();
     let cwd = tmp.path().canonicalize().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
     let live = core.live(&meta.id).unwrap();
@@ -624,7 +624,7 @@ async fn a_spawned_child_keeps_the_inherited_skills_catalog() {
         "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
     )
     .unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
     let live = core.live(&meta.id).unwrap();

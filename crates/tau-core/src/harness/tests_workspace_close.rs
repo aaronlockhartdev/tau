@@ -35,7 +35,7 @@ async fn open_writes_the_open_flag_true() {
     let cwd = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build();
+        .build().unwrap();
     open_ws(&core, cwd.path()).await;
     let entry = entry_for(sys.path(), cwd.path());
     assert_eq!(entry["open"], true, "open marks the entry open: {entry:?}");
@@ -59,7 +59,7 @@ async fn an_index_entry_without_the_flag_loads_as_open() {
     .unwrap();
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build();
+        .build().unwrap();
     let list = list_ws(&core);
     assert_eq!(list.len(), 1, "the flagless entry restores: {list:?}");
     let w = list.into_iter().next().unwrap();
@@ -79,7 +79,7 @@ async fn close_persists_and_drops_the_workspace() {
     let cwd = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build();
+        .build().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     assert_eq!(list_ws(&core).len(), 1);
 
@@ -100,7 +100,7 @@ async fn close_persists_and_drops_the_workspace() {
 
 #[tokio::test]
 async fn close_refuses_an_unknown_workspace() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let err = core
         .dispatch(Command::WorkspaceClose {
             workspace: "w-none".into(),
@@ -118,7 +118,7 @@ async fn reopen_sets_the_flag_back_to_open() {
     let cwd = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build();
+        .build().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     core.dispatch(Command::WorkspaceClose {
         workspace: w.id.clone(),
@@ -140,14 +140,14 @@ async fn a_closed_workspace_stays_closed_across_a_restart() {
     {
         let core = CoreBuilder::custom(providers())
             .with_system_dir(sys.path().into())
-            .build();
+            .build().unwrap();
         let w = open_ws(&core, cwd.path()).await;
         core.dispatch(Command::WorkspaceClose { workspace: w.id })
             .unwrap();
     }
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build();
+        .build().unwrap();
     assert!(
         list_ws(&core).is_empty(),
         "boot restores open workspaces only"

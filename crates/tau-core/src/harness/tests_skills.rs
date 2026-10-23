@@ -33,7 +33,7 @@ async fn skill_list_serves_the_workspace_registry_with_project_wins() {
     );
     let core = CoreBuilder::custom(providers())
         .with_system_dir(system.path().to_path_buf())
-        .build();
+        .build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -90,7 +90,7 @@ async fn skill_list_lists_the_home_agents_skill_and_the_project_one_wins() {
     );
     let core = CoreBuilder::custom(providers())
         .with_home(home.path().to_path_buf())
-        .build();
+        .build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -139,7 +139,7 @@ async fn build_live_puts_the_catalog_after_the_context_files() {
         ".tau/skills/alpha",
         "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -185,7 +185,7 @@ async fn a_misspelled_skill_name_rejects_the_send() {
         ".agents/skills/alpha",
         "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -233,7 +233,7 @@ async fn a_skill_removed_from_disk_before_send_rejects_the_send() {
         ".agents/skills/alpha",
         "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -311,7 +311,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
         ".agents/skills/alpha",
         "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -416,7 +416,7 @@ async fn a_skill_send_queued_mid_turn_shows_its_expanded_text() {
         ".agents/skills/alpha",
         "---\nname: alpha\ndescription: the alpha skill\n---\nDo alpha.\n",
     );
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
         &core,

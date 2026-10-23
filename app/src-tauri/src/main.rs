@@ -143,10 +143,19 @@ fn main() {
         tau_acp::run();
         return;
     }
+    // A core-build failure (an unset `HOME`, a thread-spawn failure) is a
+    // startup abort, not a recoverable state.
+    let core = match CoreBuilder::default_system().and_then(CoreBuilder::build) {
+        Ok(core) => core,
+        Err(e) => {
+            eprintln!("tau: {e}");
+            std::process::exit(1);
+        }
+    };
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(CoreState(CoreBuilder::default_system().build()))
+        .manage(CoreState(core))
         .on_menu_event(|app, event| {
             if event.id().as_ref() == "open-folder" {
                 let _ = app.emit("open_folder_requested", ());

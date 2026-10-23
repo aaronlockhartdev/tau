@@ -7,7 +7,7 @@ use crate::harness::testkit::*;
 /// before the session file is created, at the cap it is accepted.
 #[tokio::test]
 async fn session_rename_caps_the_title_length() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let live = match core
@@ -65,7 +65,7 @@ async fn session_rename_caps_the_title_length() {
 async fn a_child_refusal_names_the_reopen_route_for_a_closed_parent() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build();
+        .build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -111,7 +111,7 @@ async fn a_child_refusal_names_the_reopen_route_for_a_closed_parent() {
 #[tokio::test]
 
 async fn session_rename_syncs_the_live_meta() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let live = match core
@@ -145,7 +145,7 @@ async fn session_rename_syncs_the_live_meta() {
 #[tokio::test]
 
 async fn session_rename_updates_a_closed_session_header() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let id = SessionStore::new_session_id();
@@ -172,7 +172,7 @@ async fn session_rename_updates_a_closed_session_header() {
 #[tokio::test]
 
 async fn session_set_model_updates_the_live_meta_and_records_the_change() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let live = match core
@@ -231,7 +231,7 @@ async fn session_set_model_updates_the_live_meta_and_records_the_change() {
 #[tokio::test]
 
 async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let id = SessionStore::new_session_id();
@@ -271,7 +271,7 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
 #[tokio::test]
 
 async fn session_set_model_survives_close_and_reopen() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let live = match core

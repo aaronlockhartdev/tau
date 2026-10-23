@@ -7,7 +7,7 @@ use crate::harness::testkit::*;
 #[tokio::test]
 async fn a_queue_item_remove_deletes_and_re_projects_the_queue() {
     let cwd = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
         &core,
@@ -77,7 +77,7 @@ async fn a_queue_item_remove_deletes_and_re_projects_the_queue() {
 #[tokio::test]
 async fn an_out_of_bounds_queue_item_remove_is_an_error() {
     let cwd = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
         &core,
@@ -105,7 +105,7 @@ async fn an_out_of_bounds_queue_item_remove_is_an_error() {
 #[tokio::test]
 async fn a_stop_with_queued_messages_leaves_them_and_starts_no_new_turn() {
     let cwd = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     // A 60 s prefill: the stop lands long before the first event, and the
     // turn settles quickly after the cut.

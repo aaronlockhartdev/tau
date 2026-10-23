@@ -17,6 +17,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::state::CoreError;
+
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{
     DebounceEventResult, DebouncedEvent, Debouncer, RecommendedCache, new_debouncer,
@@ -37,7 +39,9 @@ pub struct Watcher {
 impl Watcher {
     /// The debouncer thread (owned by notify; idle on its tick sleep) and
     /// the app-side receiver a consumer task drains.
-    pub fn new(timeout: Duration) -> (Self, mpsc::UnboundedReceiver<Batch>) {
+    pub fn new(
+        timeout: Duration,
+    ) -> Result<(Self, mpsc::UnboundedReceiver<Batch>), CoreError> {
         let (tx, rx) = mpsc::unbounded_channel();
         let debouncer = new_debouncer(timeout, None, move |batch: DebounceEventResult| {
             let paths = match batch {
@@ -49,14 +53,14 @@ impl Watcher {
             // nothing to deliver.
             let _ = tx.send(paths);
         })
-        .expect("the debouncer thread spawns");
-        (
+        .map_err(|e| CoreError(format!("file watcher build failed: {e}")))?;
+        Ok((
             Self {
                 debouncer: Some(debouncer),
                 watched: HashSet::new(),
             },
             rx,
-        )
+        ))
     }
 
     /// Watch a root recursively, creating it first: both backends reject
@@ -154,7 +158,7 @@ mod tests {
     async fn watch_path_delivers_a_change_in_the_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
-        let (mut watcher, mut rx) = Watcher::new(TEST_DEBOUNCE);
+        let (mut watcher, mut rx) = Watcher::new(TEST_DEBOUNCE).unwrap();
         watcher.watch_path(&dir);
 
         let file = dir.join("a.txt");
@@ -166,7 +170,7 @@ mod tests {
     async fn unwatch_path_stops_delivery_for_that_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
-        let (mut watcher, mut rx) = Watcher::new(TEST_DEBOUNCE);
+        let (mut watcher, mut rx) = Watcher::new(TEST_DEBOUNCE).unwrap();
         watcher.watch_path(&dir);
 
         // Prime: confirm the dir is currently watched.
@@ -196,7 +200,7 @@ mod tests {
     async fn rewatching_a_watched_dir_is_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().canonicalize().unwrap();
-        let (mut watcher, _rx) = Watcher::new(TEST_DEBOUNCE);
+        let (mut watcher, _rx) = Watcher::new(TEST_DEBOUNCE).unwrap();
         watcher.watch_path(&dir);
         let first = watcher.watched.len();
         watcher.watch_path(&dir);

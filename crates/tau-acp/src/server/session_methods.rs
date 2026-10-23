@@ -185,7 +185,14 @@ pub(super) async fn session_prompt(server: &Server, rpc: &Rpc) {
         }
     };
 
-    let core = server.ensure_core().await;
+    let core = match server.ensure_core().await {
+        Ok(core) => core,
+        Err(e) => {
+            server.out
+                .send(&transport::error(id, INTERNAL_ERROR, &format!("core build failed: {e}")));
+            return;
+        }
+    };
 
     // The turn lock and settle registration land before the send: a turn
     // that finished before the registration would otherwise orphan the
@@ -311,7 +318,13 @@ pub(super) async fn session_cancel(server: &Server, rpc: &Rpc) {
             state.cancel_requested = true;
         }
     }
-    let core = server.ensure_core().await;
+    let core = match server.ensure_core().await {
+        Ok(core) => core,
+        Err(e) => {
+            tracing::warn!("acp: cancel for {session_id}: core build failed: {e}");
+            return;
+        }
+    };
     if let Err(e) = core.dispatch(Command::MessageStop {
         session: session_id.to_owned(),
     }) {

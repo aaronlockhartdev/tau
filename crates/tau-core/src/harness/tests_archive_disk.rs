@@ -7,7 +7,7 @@ use crate::harness::testkit::*;
 /// list flag all converge; a child id is still refused outright.
 #[tokio::test]
 async fn a_never_opened_session_archives_from_disk() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     // Two roots, the second with a child — all on disk only, none in
@@ -109,7 +109,7 @@ async fn a_never_opened_session_archives_from_disk() {
 /// and the list converges (the disk-only twin of the archive test above).
 #[tokio::test]
 async fn a_never_opened_session_deletes_from_disk() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = SessionStore::new_session_id();

@@ -4,7 +4,7 @@ use crate::harness::testkit::*;
 
 #[tokio::test]
 async fn workspace_identity_is_stable_and_path_free() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let w1 = core
         .dispatch(Command::WorkspaceOpen {
             cwd: "/tmp/w".into(),
@@ -29,7 +29,7 @@ async fn workspace_identity_is_stable_and_path_free() {
 #[tokio::test]
 
 async fn not_yet_landed_commands_fail_explicitly() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     // The sub-agent commands are live (ticket #23): an unknown
     // session's child is a NotFound, not an Unsupported.
     let err = core
@@ -51,7 +51,7 @@ async fn not_yet_landed_commands_fail_explicitly() {
 
 async fn file_read_pages_lines_relative_to_the_workspace() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -84,7 +84,7 @@ async fn file_read_pages_lines_relative_to_the_workspace() {
 async fn a_new_session_registers_its_workspace_and_streams_events() {
     let tmp = tempfile::tempdir().unwrap();
     // A session with no provider models fails explicitly.
-    let core = CoreBuilder::custom(BTreeMap::new()).build();
+    let core = CoreBuilder::custom(BTreeMap::new()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -112,7 +112,7 @@ async fn a_new_session_registers_its_workspace_and_streams_events() {
 
 async fn entries_without_a_cursor_or_range_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -159,7 +159,7 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
             "[providers.dev]\nbase_url = \"http://project:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"proj-model\"]\n",
         )
         .unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -194,14 +194,14 @@ async fn an_explicit_provider_survives_the_workspace_file_layer() {
         "[providers.dev]\nbase_url = \"http://file:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"file-model\"]\n",
     )
     .unwrap();
-    let core = CoreBuilder::default_system()
+    let core = CoreBuilder::default_system().unwrap()
         .with_system_dir(sys.path().to_path_buf())
         .with_home(sys.path().to_path_buf())
         .with_provider(
             "dev".into(),
             crate::config::Provider::with_model("http://explicit:9/v1", "explicit-model"),
         )
-        .build();
+        .build().unwrap();
     let workspace = open_ws(&core, ws.path()).await;
     let config = core.workspace_config(&workspace);
     let dev = &config.providers["dev"];
@@ -235,10 +235,10 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
         "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-model\"]\n",
     )
     .unwrap();
-    let core = CoreBuilder::default_system()
+    let core = CoreBuilder::default_system().unwrap()
         .with_system_dir(sys.path().to_path_buf())
         .with_home(home.path().to_path_buf())
-        .build();
+        .build().unwrap();
     let workspace = open_ws(&core, ws.path()).await;
     let session = match core
         .dispatch(Command::SessionNew {
@@ -267,10 +267,10 @@ async fn a_production_send_makes_exactly_one_provider_call() {
         "[providers.canned]\nbase_url = \"canned://text\"\n\n[providers.canned.models.\"canned-model\"]\n",
     )
     .unwrap();
-    let core = CoreBuilder::default_system()
+    let core = CoreBuilder::default_system().unwrap()
         .with_system_dir(sys.path().to_path_buf())
         .with_home(home.path().to_path_buf())
-        .build();
+        .build().unwrap();
     let workspace = open_ws(&core, ws.path()).await;
     let session = match core
         .dispatch(Command::SessionNew {
@@ -338,7 +338,7 @@ async fn a_production_send_makes_exactly_one_provider_call() {
 #[tokio::test]
 
 async fn closed_session_serves_snapshot_and_entries_from_disk() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let id = SessionStore::new_session_id();
@@ -386,7 +386,7 @@ async fn workspace_index_survives_a_restart() {
     {
         let core = CoreBuilder::custom(providers())
             .with_system_dir(sys.path().into())
-            .build();
+            .build().unwrap();
         open_ws(&core, cwd.path()).await;
         assert!(
             sys.path().join("workspaces.json").exists(),
@@ -395,7 +395,7 @@ async fn workspace_index_survives_a_restart() {
     }
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build();
+        .build().unwrap();
     let list = match core.dispatch(Command::WorkspaceList).unwrap() {
         CommandOutput::Workspaces { workspaces } => workspaces,
         other => panic!("expected workspaces: {other:?}"),
@@ -409,7 +409,7 @@ async fn workspace_index_survives_a_restart() {
 }
 #[tokio::test]
 async fn session_list_merges_live_and_disk_sessions() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let live = match core
@@ -475,7 +475,7 @@ fn unique_name_numbers_past_the_collisions() {
 #[tokio::test]
 async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let live = manual_session(
         &core,
@@ -554,7 +554,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
 #[tokio::test]
 async fn blob_read_decodes_the_sidecar_and_errors_are_clean() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let id = SessionStore::new_session_id();
     // An oversized payload becomes a sidecar blob on append.

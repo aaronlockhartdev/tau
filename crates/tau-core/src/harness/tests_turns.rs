@@ -5,7 +5,7 @@ use crate::harness::testkit::*;
 #[tokio::test]
 async fn closing_a_session_stops_its_in_flight_turn() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -84,7 +84,7 @@ async fn closing_a_session_stops_its_in_flight_turn() {
 #[tokio::test]
 async fn a_stop_before_the_first_event_still_ends_the_stream() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -155,7 +155,7 @@ async fn a_stop_before_the_first_event_still_ends_the_stream() {
 #[allow(clippy::too_many_lines)] // one end-to-end turn flow; splitting is refactoring
 async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -307,7 +307,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
 
 async fn a_mid_turn_send_is_queued_not_a_second_turn() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -388,7 +388,7 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
 #[allow(clippy::too_many_lines)] // one end-to-end turn flow; splitting is refactoring
 async fn a_live_om_run_emits_om_status_events() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let cwd = PathBuf::from(&workspace.cwd);
     let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
@@ -503,7 +503,7 @@ async fn a_live_om_run_emits_om_status_events() {
 /// post-turn reconciliation removes it by text.
 #[tokio::test]
 async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(
@@ -570,7 +570,7 @@ async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
 /// the first moment the pipe has room again.
 #[tokio::test]
 async fn a_pipe_overflow_is_counted_and_surfaced() {
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let mut rx = core.events();
     // Flood the bounded pipe (capacity 1024) with no reader: every
     // event past the capacity is a drop.
@@ -645,7 +645,7 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     );
 
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -800,7 +800,7 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
     );
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -905,7 +905,7 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
     );
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),

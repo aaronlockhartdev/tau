@@ -14,7 +14,7 @@ async fn a_running_children_snapshot_reports_turn_running() {
             body: plain_body(),
             delay_ms: 80,
         }))
-        .build();
+        .build().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let session = match core
@@ -103,7 +103,7 @@ async fn a_running_children_snapshot_reports_turn_running() {
 async fn a_snapshot_lists_subagents_in_spawn_order() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: plain_body() }))
-        .build();
+        .build().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let session = match core
@@ -187,7 +187,7 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
     let body = format!("{data}\n\ndata: [DONE]\n\n");
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body }))
-        .build();
+        .build().unwrap();
     let mut rx = core.events_rx.lock().unwrap().take().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = match core
@@ -285,7 +285,7 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
             body: done_body(),
             delay_ms: 400,
         }))
-        .build();
+        .build().unwrap();
     let collected = collect_events(&core);
     let workspace = open_ws(&core, tmp.path()).await;
     let session = match core
@@ -389,7 +389,7 @@ async fn a_child_reuses_its_agents_provider_and_emits_its_stream_end() {
     );
     // No `with_child_factory`: the core uses the default forwarding factory,
     // whose stash-reuse of the child's provider is the fix under test.
-    let core = CoreBuilder::custom(providers).build();
+    let core = CoreBuilder::custom(providers).build().unwrap();
     let collected = collect_events(&core);
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
@@ -491,7 +491,7 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
             body: plain_body(),
             delay_ms: 3000,
         }))
-        .build();
+        .build().unwrap();
     let collected = collect_events(&core);
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
@@ -610,7 +610,7 @@ async fn a_force_send_to_a_running_child_still_emits_its_stream_end() {
     );
     // No `with_child_factory`: the default forwarding factory is the fix's
     // path (stop flag shared, stream cut at the next delta).
-    let core = CoreBuilder::custom(providers).build();
+    let core = CoreBuilder::custom(providers).build().unwrap();
     let collected = collect_events(&core);
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
@@ -696,7 +696,7 @@ async fn a_force_send_to_a_running_child_still_emits_its_stream_end() {
 #[tokio::test]
 async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build();
+    let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),

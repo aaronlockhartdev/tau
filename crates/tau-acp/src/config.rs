@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use tau_core::config::{Config, ModelDef, Provider};
-use tau_core::harness::{Core, CoreBuilder};
+use tau_core::harness::{Core, CoreBuilder, CoreError};
 use tokio::sync::Mutex as TokioMutex;
 
 /// The env contract (frozen once the registry entry ships): a base URL and
@@ -31,20 +31,22 @@ pub struct AcpConfig {
 
 impl AcpConfig {
     /// Load the user's real config and capture the env overrides.
-    pub fn load() -> Self {
-        let home = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .expect("HOME set");
+    pub fn load() -> Result<Self, CoreError> {
+        let Some(home) = std::env::var_os("HOME").map(std::path::PathBuf::from) else {
+            return Err(CoreError(
+                "home is not set; cannot locate the system config dir".into(),
+            ));
+        };
         let system_dir = home.join(".config").join("tau");
         // No project at startup: the core layers the workspace's
         // `.tau/config.toml` itself at workspace open (spec §12).
         let base = tau_core::config::load(&system_dir, Path::new("/nonexistent-tau-project"))
             .unwrap_or_default();
-        Self {
+        Ok(Self {
             base,
             system_dir,
             meta: TokioMutex::new(None),
-        }
+        })
     }
 
     /// The `TAU_*` env-override provider, when the contract is met
@@ -81,8 +83,8 @@ impl AcpConfig {
     }
 
     /// Build the production-shape core with the layered providers.
-    pub async fn build_core(&self) -> std::sync::Arc<Core> {
-        let mut builder = CoreBuilder::default_system();
+    pub async fn build_core(&self) -> Result<std::sync::Arc<Core>, CoreError> {
+        let mut builder = CoreBuilder::default_system()?;
         if let Some(p) = self.env_provider() {
             builder = builder.with_provider(ENV_PROVIDER.to_owned(), p);
         }
