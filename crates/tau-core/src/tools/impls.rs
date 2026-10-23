@@ -616,6 +616,7 @@ pub(super) fn edit(
         demote: !strict,
         ..Default::default()
     };
+    let mut gated: Vec<(usize, hashline::EditError)> = Vec::new();
     if let Some(reg) = registry.as_ref() {
         if let Some(served) = reg.served_map(&path_str) {
             opts.served = Some(served.clone());
@@ -625,9 +626,42 @@ pub(super) fn edit(
         if let Some(anchors) = reg.anchors_for(&path_str) {
             opts.hashes = Some(anchors.to_vec());
         }
+        // The ownership gate (parity with the reference's
+        // `resolveEditTarget`): an anchor the session does not own, a
+        // from/to pair spanning two files, or an anchor owned by another
+        // file is rejected before planning. Strict mode rejects the batch;
+        // demotion skips the offending members and plans the rest.
+        gated = edits
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                reg.edit_target_error(&path_str, &e.from, &e.to)
+                    .map(|err| (i, err))
+            })
+            .collect();
+        if strict && !gated.is_empty() {
+            let (i, err) = &gated[0];
+            return ToolResult::err(format!("edit: edits[{i}]: {err}").into());
+        }
     }
+    let edits = if gated.is_empty() {
+        edits
+    } else {
+        let bad: std::collections::HashSet<usize> = gated.iter().map(|(i, _)| *i).collect();
+        edits
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !bad.contains(i))
+            .map(|(_, e)| e)
+            .collect()
+    };
     let planned = match hashline::plan_edits(&original, ending, &edits, &opts) {
-        Ok(p) => p,
+        Ok(mut p) => {
+            // Ownership-gated members ride the demotion channel: the ack and
+            // the diff report them with their typed errors.
+            p.demoted.extend(gated);
+            p
+        }
         // A stale range: adopt the diagnostic's fresh anchors in place so the
         // model can retry with them without a re-read.
         Err(hashline::EditError::RangeStale {

@@ -135,12 +135,22 @@ impl Registry {
         let mut new_anchors: Vec<String> = Vec::with_capacity(lines.len());
         for (i, m) in matched.into_iter().enumerate() {
             if let Some(j) = m {
-                new_anchors.push(
-                    prev.as_ref()
-                        .expect("a match implies a previous allocation")
-                        .0[j]
-                        .clone(),
-                );
+                let prev_anchor = prev
+                    .as_ref()
+                    .expect("a match implies a previous allocation")
+                    .0[j]
+                    .clone();
+                // Ownership gate (parity with the reference's
+                // `alignOwnershipWithSpans`): a pinned anchor this session
+                // already owns for a *different* file is not reused — it
+                // would mint a cross-file duplicate. Mint fresh instead.
+                if self.owned.get(&prev_anchor).is_some_and(|e| e.path != path) {
+                    let anchor = self.mint(path, Some(lines[i].as_str()), &fresh)?;
+                    fresh.insert(anchor.clone());
+                    new_anchors.push(anchor);
+                } else {
+                    new_anchors.push(prev_anchor);
+                }
             } else {
                 let anchor = self.mint(path, Some(lines[i].as_str()), &fresh)?;
                 fresh.insert(anchor.clone());
@@ -412,8 +422,10 @@ impl Registry {
         hashes: &[String],
     ) -> Result<usize, String> {
         let Some(existing) = self.owned.get(anchor) else {
+            let folded = self.owners_differing_only_by_case(anchor, None);
             return Err(format!(
-                "[E_STALE_ANCHOR] \"{anchor}\" is not owned in this session. Use a line number, or read again for fresh anchors."
+                "[E_STALE_ANCHOR] \"{anchor}\" is not owned in this session.{} Use a line number, or read again for fresh anchors.",
+                case_fold_hint(&folded)
             ));
         };
         if existing.path != path {
@@ -435,7 +447,119 @@ impl Registry {
             )),
         }
     }
+
+    /// The session's owned anchors that differ from `anchor` only in case
+    /// (the reference's `ownersDifferingOnlyByCase`): the candidates a
+    /// case-mangled anchor gets pointed at. `paths`, when given, restricts
+    /// the candidates to those files. Sorted for deterministic output.
+    #[must_use]
+    pub fn owners_differing_only_by_case(
+        &self,
+        anchor: &str,
+        paths: Option<&HashSet<String>>,
+    ) -> Vec<(String, String)> {
+        let lower = anchor.to_lowercase();
+        let mut out: Vec<(String, String)> = self
+            .owned
+            .iter()
+            .filter(|(owned, _entry)| *owned != anchor && owned.to_lowercase() == lower)
+            .filter(|(_, entry)| paths.is_none_or(|p| p.is_empty() || p.contains(&entry.path)))
+            .map(|(owned, entry)| (owned.clone(), entry.path.clone()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// The pre-plan ownership gate for one edit member (parity with the
+    /// reference's `resolveEditTarget`): `None` when the file is unknown to
+    /// the registry (content-addressed resolution applies) or every anchor
+    /// is owned by the target file; the typed error otherwise.
+    #[must_use]
+    pub fn edit_target_error(
+        &self,
+        path: &str,
+        from: &str,
+        to: &str,
+    ) -> Option<crate::hashline::EditError> {
+        self.anchors_for(path)?;
+        let owners = [self.owned.get(from), self.owned.get(to)];
+        // Gate order mirrors the reference: an unowned bound shadows the
+        // cross-file and owned-elsewhere checks.
+        let Some(err) = self.unowned_bound_error(owners, from, to) else {
+            return Self::owned_but_wrong_file(owners, path, from, to);
+        };
+        Some(err)
+    }
+
+    /// The gate's later checks, once both bounds are owned: the cross-file
+    /// pair, then the pair owned by a file other than the target.
+    fn owned_but_wrong_file(
+        owners: [Option<&OwnedEntry>; 2],
+        path: &str,
+        from: &str,
+        to: &str,
+    ) -> Option<crate::hashline::EditError> {
+        use crate::hashline::EditError;
+        let mut distinct = Vec::new();
+        for o in owners.iter().flatten() {
+            if !distinct.contains(&o.path) {
+                distinct.push(o.path.clone());
+            }
+        }
+        if distinct.len() > 1 {
+            return Some(EditError::CrossFile { files: distinct });
+        }
+        let owner = owners[0]
+            .expect("both bounds owned: unowned_bound_error returned None")
+            .path
+            .clone();
+        if owner != path {
+            let mut anchors = Vec::new();
+            for a in [from, to] {
+                if !anchors.iter().any(|x| x == a) {
+                    anchors.push(a.to_owned());
+                }
+            }
+            return Some(EditError::OwnedElsewhere { anchors, owner });
+        }
+        None
+    }
+
+    /// The gate's first check: the first bound the session does not own,
+    /// as the typed `NotOwned` error. The case-fold hint is scoped to the
+    /// paths the other bounds own; an empty scope means no filter (the
+    /// reference's `paths.size > 0`).
+    fn unowned_bound_error(
+        &self,
+        owners: [Option<&OwnedEntry>; 2],
+        from: &str,
+        to: &str,
+    ) -> Option<crate::hashline::EditError> {
+        use crate::hashline::EditError;
+        let i = (0..2).find(|&i| owners[i].is_none())?;
+        let anchor = if i == 0 { from } else { to };
+        let known: HashSet<String> = owners.iter().flatten().map(|o| o.path.clone()).collect();
+        let folded = self.owners_differing_only_by_case(anchor, Some(&known));
+        Some(EditError::NotOwned {
+            anchor: anchor.to_owned(),
+            case_hint: case_fold_hint(&folded),
+        })
+    }
 }
+/// The "Anchors are case-sensitive; …" clause the reference appends to an
+/// unowned-anchor diagnostic ("" when there is no case-folded candidate).
+fn case_fold_hint(candidates: &[(String, String)]) -> String {
+    if candidates.is_empty() {
+        return String::new();
+    }
+    let list = candidates
+        .iter()
+        .map(|(a, _)| format!("\"{a}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(" Anchors are case-sensitive; {list} differs only in case.")
+}
+
 /// In-order LCS over line checksums: the indices of old lines that match new
 /// lines in order. Uses a standard DP table — a changed line in the middle
 /// does not prevent later unchanged lines from being matched. Shared with the
@@ -475,7 +599,9 @@ pub(crate) fn match_anchors(prev_checksums: &[String], checksums: &[String]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hashline::{HASH_SPACE, idx_to_hash, line_base_idx, line_hashes};
+    use crate::hashline::{
+        EditError, HASH_SPACE, idx_to_hash, line_base_idx, line_checksum, line_hashes,
+    };
 
     #[test]
     fn allocate_is_idempotent_for_unchanged_content() {
@@ -628,5 +754,158 @@ mod tests {
         assert_eq!(a[0], idx_to_hash(line_base_idx("one")));
         let probe_after = (line_base_idx("one") + (HASH_SPACE - 3)) % HASH_SPACE;
         assert_eq!(reg.probe, probe_after, "the cursor advances past the base");
+    }
+
+    #[test]
+    fn store_seeded_pin_owned_by_another_file_is_reminted() {
+        // Parity with the reference's ownership alignment: a pinned anchor
+        // that this session already owns for a *different* file is not
+        // reused when the file is seeded from the store — reusing it would
+        // mint a cross-file duplicate (two files, one anchor).
+        use crate::hashline::pin_store::{FilePins, GcPolicy, Pin, PinStore};
+        let dir = tempfile::tempdir().unwrap();
+        let store = PinStore::new(
+            dir.path(),
+            GcPolicy {
+                retention_days: 0,
+                gc_on_start: false,
+            },
+        );
+        let sum = line_checksum("two");
+        store
+            .save(&FilePins {
+                path: "b".into(),
+                checksum: crate::hashline::pin_store::file_checksum(std::slice::from_ref(&sum)),
+                line_count: 1,
+                pins: vec![Pin {
+                    anchor: "XyZa".into(),
+                    checksum: sum.clone(),
+                    tombstone: false,
+                }],
+                crc: None,
+            })
+            .expect("save");
+        let mut reg = Registry::with_store(store);
+        // The session owns "XyZa" for a different file.
+        reg.adopt("a", &[("XyZa".into(), "c".into())]);
+        let (b, _) = reg.allocate("b", "two\n").expect("allocate");
+        assert_ne!(
+            b[0], "XyZa",
+            "the cross-file collision is re-minted, not reused"
+        );
+        assert_eq!(
+            reg.owned.get("XyZa").expect("owned").path,
+            "a",
+            "the first file keeps its ownership"
+        );
+        assert!(reg.owned.contains_key(&b[0]), "the fresh mint is owned");
+    }
+
+    #[test]
+    fn store_seeded_pin_owned_by_the_same_file_is_reused() {
+        // The ownership gate must not clobber the normal re-read case: a
+        // pin owned by the file itself is reused.
+        use crate::hashline::pin_store::{FilePins, GcPolicy, Pin, PinStore};
+        let dir = tempfile::tempdir().unwrap();
+        let store = PinStore::new(
+            dir.path(),
+            GcPolicy {
+                retention_days: 0,
+                gc_on_start: false,
+            },
+        );
+        let sum = line_checksum("two");
+        store
+            .save(&FilePins {
+                path: "a".into(),
+                checksum: crate::hashline::pin_store::file_checksum(std::slice::from_ref(&sum)),
+                line_count: 1,
+                pins: vec![Pin {
+                    anchor: "XyZa".into(),
+                    checksum: sum.clone(),
+                    tombstone: false,
+                }],
+                crc: None,
+            })
+            .expect("save");
+        let mut reg = Registry::with_store(store);
+        reg.adopt("a", &[("XyZa".into(), "c".into())]);
+        let (a, _) = reg.allocate("a", "two\n").expect("allocate");
+        assert_eq!(a[0], "XyZa", "the same-file pin is reused");
+    }
+
+    #[test]
+    fn resolve_offset_hints_on_case_folded_anchors() {
+        // The reference's case-folding hint: a case-mangled anchor is
+        // pointed at the owned anchor it differs from, not left to guess.
+        let mut reg = Registry::new();
+        reg.adopt("a", &[("abcd".into(), "c".into())]);
+        let hashes = vec!["abcd".into()];
+        let err = reg
+            .resolve_offset("ABCD", "a", &hashes)
+            .expect_err("a case-folded ref is not owned");
+        assert!(err.contains("not owned in this session"), "{err}");
+        assert!(
+            err.contains("Anchors are case-sensitive; \"abcd\" differs only in case."),
+            "{err}"
+        );
+        // No case-folded candidate: no hint.
+        let err = reg
+            .resolve_offset("WXYZ", "a", &hashes)
+            .expect_err("unowned");
+        assert!(!err.contains("case-sensitive"), "{err}");
+    }
+
+    #[test]
+    fn edit_target_error_is_typed_per_failure_mode() {
+        let mut reg = Registry::new();
+        let (a, _) = reg.allocate("a", "one\ntwo\n").expect("allocate");
+        let (b, _) = reg.allocate("b", "three\n").expect("allocate");
+        // Happy path: both bounds owned by the target file.
+        assert!(reg.edit_target_error("a", &a[0], &a[1]).is_none());
+        // Unowned anchor, no case-folded candidate: empty hint.
+        match reg.edit_target_error("a", &a[0], "zzzz").expect("gated") {
+            EditError::NotOwned {
+                ref anchor,
+                ref case_hint,
+            } => {
+                assert_eq!(anchor, "zzzz");
+                assert_eq!(case_hint, "");
+            }
+            other => panic!("expected NotOwned, got {other:?}"),
+        }
+        // Unowned anchor with a case-folded candidate: the hint names it.
+        reg.adopt("a", &[("MnOp".into(), "c".into())]);
+        match reg.edit_target_error("a", &a[0], "mnop").expect("gated") {
+            EditError::NotOwned {
+                ref anchor,
+                ref case_hint,
+            } => {
+                assert_eq!(anchor, "mnop");
+                assert!(case_hint.contains("\"MnOp\""), "{case_hint}");
+            }
+            other => panic!("expected NotOwned, got {other:?}"),
+        }
+        // A from/to pair owned by two different files: one file per call.
+        match reg.edit_target_error("a", &a[0], &b[0]).expect("gated") {
+            EditError::CrossFile { ref files } => {
+                assert_eq!(files, &vec!["a".to_owned(), "b".to_owned()]);
+            }
+            other => panic!("expected CrossFile, got {other:?}"),
+        }
+        // Both bounds owned by one file, but not the target: point at the owner.
+        match reg.edit_target_error("b", &a[0], &a[1]).expect("gated") {
+            EditError::OwnedElsewhere {
+                ref anchors,
+                ref owner,
+            } => {
+                assert_eq!(anchors, &vec![a[0].clone(), a[1].clone()]);
+                assert_eq!(owner, "a");
+            }
+            other => panic!("expected OwnedElsewhere, got {other:?}"),
+        }
+        // A file the registry has never seen: the gate does not apply
+        // (content-addressed resolution proceeds, as before).
+        assert!(reg.edit_target_error("unknown", &a[0], &b[0]).is_none());
     }
 }

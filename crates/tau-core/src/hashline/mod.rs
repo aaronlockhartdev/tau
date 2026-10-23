@@ -95,9 +95,9 @@ impl fmt::Display for TooManyLines {
     }
 }
 
-/// A stale or invalid anchor: not found, ambiguous, reversed, malformed,
-/// a stale range, a plan/commit drift, or an attempt to empty a file via
-/// edit.
+/// A stale or invalid anchor: not found, unowned (ownership gate),
+/// reversed, malformed, a stale range, a plan/commit drift, or an attempt to
+/// empty a file via edit.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditError {
     /// The anchor is not in the file's current anchor set.
@@ -145,14 +145,15 @@ pub enum EditError {
     /// The file changed between planning and writing the edit; nothing was
     /// written.
     OpAborted { reason: String },
-    /// The anchor resolves to more than one line: the file's anchor set lost
-    /// its allocation invariant. Reported as a structured error, not a
-    /// process panic, so the session's registry lock is never poisoned.
-    Ambiguous {
-        anchor: String,
-        /// The 1-based line numbers the anchor points at.
-        lines: Vec<usize>,
-    },
+    /// The session does not own the anchor (never minted in this session, or
+    /// already freed): the pre-plan ownership gate's rejection (parity with
+    /// the reference's `resolveEditTarget`). `case_hint` is the case-folded
+    /// candidate clause ("" when there is none).
+    NotOwned { anchor: String, case_hint: String },
+    /// The edit's anchors are owned by different files: one file per call.
+    CrossFile { files: Vec<String> },
+    /// The anchor is owned, but by a file other than the edit's target.
+    OwnedElsewhere { anchors: Vec<String>, owner: String },
 }
 
 impl fmt::Display for EditError {
@@ -169,6 +170,30 @@ impl fmt::Display for EditError {
                 Ok(())
             }
             Self::TooLarge => write!(f, "{TooManyLines}"),
+            Self::NotOwned { anchor, case_hint } => write!(
+                f,
+                "[E_STALE_ANCHOR] \"{anchor}\" is not owned in this session.{case_hint} Call read() on the target file first."
+            ),
+            Self::CrossFile { files } => write!(
+                f,
+                "[E_BAD_SHAPE] The anchors are owned by different files ({}); edit one file per call.",
+                files.join(", ")
+            ),
+            Self::OwnedElsewhere { anchors, owner } => {
+                let refs = anchors
+                    .iter()
+                    .map(|a| format!("\"{a}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let (verb, noun) = match anchors.len() {
+                    1 => ("is", "that anchor"),
+                    _ => ("are", "those anchors"),
+                };
+                write!(
+                    f,
+                    "[E_STALE_ANCHOR] {refs} {verb} owned by {owner}. Use a line number, or read {owner} to use {noun}."
+                )
+            }
             Self::Reversed { from, to } => write!(
                 f,
                 "[E_RANGE_REVERSED] reversed range: \"{from}\" resolves after \"{to}\"; swap from/to"
@@ -210,10 +235,6 @@ impl fmt::Display for EditError {
                 Ok(())
             }
             Self::OpAborted { reason } => write!(f, "[E_OP_ABORTED] {reason}"),
-            Self::Ambiguous { anchor, lines } => write!(
-                f,
-                "[E_AMBIGUOUS_ANCHOR] anchor \"{anchor}\" matches multiple lines ({lines:?}): the file's anchor set is corrupted. Use a line number, or read the file again."
-            ),
         }
     }
 }
@@ -591,25 +612,18 @@ fn lcs_reanchor(
         .collect())
 }
 
-/// Resolve `anchor` to a 0-based line position in `hashes`.
+/// Resolve `anchor` to a 0-based line position in `hashes`. A duplicate
+/// anchor (a broken set) resolves to the first occurrence — the reference
+/// implementation's deterministic behavior — never an error.
 fn resolve_anchor(hashes: &[String], anchor: &str) -> Result<usize, EditError> {
     let Some(_idx) = hash_to_idx(anchor) else {
         return Err(EditError::BadAnchor(anchor.to_owned()));
     };
-    let positions: Vec<usize> = (0..hashes.len()).filter(|&i| hashes[i] == anchor).collect();
-    match positions.as_slice() {
-        [] => Err(EditError::Stale {
+    match hashes.iter().position(|h| h == anchor) {
+        Some(pos) => Ok(pos),
+        None => Err(EditError::Stale {
             anchor: anchor.to_owned(),
             context: None,
-        }),
-        [pos] => Ok(*pos),
-        // A repeat means the anchor set lost its allocation invariant: a
-        // data-integrity failure, not a match. Report it as a structured
-        // error — a panic here would poison the session's anchor-registry
-        // lock and brick every subsequent read/edit.
-        _ => Err(EditError::Ambiguous {
-            anchor: anchor.to_owned(),
-            lines: positions.iter().map(|&p| p + 1).collect(),
         }),
     }
 }

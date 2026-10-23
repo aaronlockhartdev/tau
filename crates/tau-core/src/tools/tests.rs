@@ -932,6 +932,202 @@ async fn bash_and_errors_carry_no_ui_detail() {
     );
 }
 
+#[tokio::test]
+async fn edit_with_unowned_anchor_is_a_typed_ownership_error() {
+    // Parity with the reference's `resolveEditTarget`: for a file the
+    // registry knows, an anchor the session does not own is rejected before
+    // planning, with the reference's message — not the "stale, re-read"
+    // message (that one is for owned anchors that no longer match).
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "a.txt", "content": "one\ntwo\n"}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        None,
+        Some(&mut *reg),
+    );
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [{"from": "Qqqq", "to": "Qqqq", "content": "x"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(
+        out.contains("[E_STALE_ANCHOR] \"Qqqq\" is not owned in this session."),
+        "{out}"
+    );
+    assert!(
+        out.contains("Call read() on the target file first."),
+        "{out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "one\ntwo\n",
+        "nothing was written"
+    );
+}
+
+#[tokio::test]
+async fn edit_unowned_anchor_case_hint_names_the_owned_variant() {
+    // A case-mangled anchor is pointed at the owned variant it differs
+    // from (the reference's case-folding hint) — a one-token fix, not a
+    // re-read.
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "a.txt", "content": "one\n"}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        None,
+        Some(&mut *reg),
+    ));
+    let owned = out
+        .lines()
+        .next()
+        .unwrap()
+        .split('│')
+        .next()
+        .unwrap()
+        .to_string();
+    let ref_ = if owned.chars().any(char::is_lowercase) {
+        owned.to_uppercase()
+    } else {
+        owned.to_lowercase()
+    };
+    assert_ne!(ref_, owned);
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [{"from": ref_, "to": ref_, "content": "x"}]}),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(out.contains("not owned in this session"), "{out}");
+    assert!(
+        out.contains(&format!(
+            "Anchors are case-sensitive; \"{owned}\" differs only in case."
+        )),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn edit_cross_file_anchors_are_a_bad_shape() {
+    // The from bound is owned by a.txt, the to bound by b.txt: one file per
+    // call (parity with the reference's `resolveEditTarget`). Strict mode:
+    // the whole batch rejects, nothing is written.
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "a.txt", "content": "one\n"}),
+        None,
+    )
+    .await;
+    write(
+        dir.path(),
+        &json!({"path": "b.txt", "content": "two\n"}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let ra = text(read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        None,
+        Some(&mut *reg),
+    ));
+    let rb = text(read(
+        dir.path(),
+        &json!({"path": "b.txt"}),
+        None,
+        None,
+        Some(&mut *reg),
+    ));
+    let from = ra
+        .lines()
+        .next()
+        .unwrap()
+        .split('│')
+        .next()
+        .unwrap()
+        .to_string();
+    let to = rb
+        .lines()
+        .next()
+        .unwrap()
+        .split('│')
+        .next()
+        .unwrap()
+        .to_string();
+    let out = text(edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [{"from": from, "to": to, "content": "x"}]}),
+        Some(&mut *reg),
+        true,
+    ));
+    assert!(out.contains("[E_BAD_SHAPE]"), "{out}");
+    assert!(out.contains("owned by different files"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "one\n"
+    );
+}
+
+#[tokio::test]
+async fn edit_batch_demotes_unowned_members_and_applies_the_rest() {
+    // Demotion mode (the default): a member with an unowned anchor is
+    // reported with its typed error on the demotion channel, and the valid
+    // members apply.
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        &json!({"path": "a.txt", "content": "one\ntwo\n"}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "a.txt"}),
+        None,
+        None,
+        Some(&mut *reg),
+    ));
+    let rows: Vec<&str> = out.lines().collect();
+    let from = rows[0].split('│').next().unwrap().to_string();
+    let to = rows[1].split('│').next().unwrap().to_string();
+    let res = edit(
+        dir.path(),
+        &json!({"path": "a.txt", "edits": [
+            {"from": from, "to": to, "content": "ONE AND TWO"},
+            {"from": "Qqqq", "to": "Qqqq", "content": "nope"}
+        ]}),
+        Some(&mut *reg),
+        false,
+    );
+    let out = text(res);
+    assert!(out.starts_with("Successfully edited"), "{out}");
+    assert!(out.contains("[H_DEMOTED] edits[1] not applied:"), "{out}");
+    assert!(out.contains("not owned in this session"), "{out}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "ONE AND TWO\n"
+    );
+}
+
 #[cfg(unix)]
 mod stdbuf {
     use super::impls::{bash_argv, stdbuf_in_path};
