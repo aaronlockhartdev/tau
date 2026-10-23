@@ -324,6 +324,7 @@ pub(crate) mod bgjobs;
 mod edit_diff;
 mod impls;
 mod progress;
+mod read_page;
 pub mod surface;
 #[cfg(test)]
 pub(crate) mod tests;

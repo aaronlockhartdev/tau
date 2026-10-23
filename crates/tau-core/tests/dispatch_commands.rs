@@ -83,7 +83,8 @@ fn rig(body: String, slow_ms: u64) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(dead_providers())
         .with_child_factory(Arc::new(CannedChild { body, slow_ms }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -775,7 +776,8 @@ async fn a_restart_restores_a_child_state_from_disk() {
             body: done_body(),
             slow_ms: 0,
         }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     core2
         .dispatch(Command::WorkspaceOpen {
             cwd: rig.cwd.path().to_string_lossy().into_owned(),

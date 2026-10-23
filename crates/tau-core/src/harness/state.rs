@@ -240,9 +240,9 @@ impl CoreBuilder {
                 if self.custom {
                     builder = builder.pool_max_idle_per_host(0);
                 }
-                builder.build().map_err(|e| {
-                    CoreError(format!("http client build failed: {e}"))
-                })?
+                builder
+                    .build()
+                    .map_err(|e| CoreError(format!("http client build failed: {e}")))?
             },
             events_tx,
             events_rx: Mutex::new(Some(rx)),

@@ -293,9 +293,7 @@ mod tests {
         assert_eq!(default.as_deref(), Some("m1"));
 
         // Negative: no models anywhere — no list, no default.
-        let (models, default) = AcpConfig::test_empty()
-            .model_options_for("/p")
-            .await;
+        let (models, default) = AcpConfig::test_empty().model_options_for("/p").await;
         assert!(models.is_empty());
         assert!(default.is_none());
     }

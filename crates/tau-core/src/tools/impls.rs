@@ -17,10 +17,11 @@ fn resolve(cwd: &Path, path: &str) -> PathBuf {
 /// The 1 MiB output cap on a `read` (item 8): a page that would exceed it
 /// is cut at the last whole row that fits, and the pagination hint carries
 /// the cap so the model knows why the page is short.
-const READ_MAX_BYTES: usize = 1024 * 1024;
-/// A line over 100 KiB is not shown (and not served): its anchor alone would
-/// not fit the model's useful context; the hint says how to inspect it.
-const READ_MAX_LINE_BYTES: usize = 100 * 1024;
+pub(super) const READ_MAX_BYTES: usize = 1024 * 1024;
+/// A line over 100 KiB is shown as an inspection placeholder (its anchor
+/// stays live): the raw content would burn the model's useful context; the
+/// placeholder says how to inspect it.
+pub(super) const READ_MAX_LINE_BYTES: usize = 100 * 1024;
 
 pub(super) fn read(
     cwd: &Path,
@@ -126,13 +127,13 @@ pub(super) fn read(
 /// reclaims LRU-cold files past the cap, item 2), resolve an anchor or
 /// numeric offset, page with a byte cap, and serve the shown rows
 /// (item 8: the pagination hint offers the last shown anchor as the next
-/// offset; >100 KiB lines are marked and not served).
+/// offset; >100 KiB lines become inspection placeholders and stay served).
 fn read_page(
     path: &str,
     content: &str,
     args: &serde_json::Value,
     mut registry: Option<&mut hashline::registry::Registry>,
-) -> Result<ReadPage, String> {
+) -> Result<super::read_page::ReadPage, String> {
     let offset_arg = args
         .get("offset")
         .and_then(serde_json::Value::as_str)
@@ -177,7 +178,7 @@ fn read_page(
             "Offset {start_line} is beyond end of file ({total} lines total). Use offset=1 to read from the start, or offset={total} to read the last line."
         );
         // A hint-only page has no anchored rows: the card shows the same text.
-        return Ok(ReadPage {
+        return Ok(super::read_page::ReadPage {
             text: hint.clone(),
             stripped: hint,
         });
@@ -188,132 +189,16 @@ fn read_page(
     let selected = &rows[start_line - 1..end_line];
     let shown_lines = &lines[start_line - 1..];
 
-    let page = render_page(selected, shown_lines, start_line);
+    let page = super::read_page::render_page(path, selected, shown_lines, start_line);
     let shown = page.out.len();
     if let Some(reg) = registry {
         reg.serve(path, &page.served);
     }
 
     // #243: the anchored rows and their stripped twin are built together.
-    Ok(assemble_page_text(page, shown, start_line, total, reclaim))
-}
-
-/// The rendered page's two texts (#243): the model-facing anchored rows plus
-/// hints, and the anchor-stripped twin the GUI card renders. The stripped rows
-/// arrive pre-stripped from [`render_page`] (built row-by-row, where the anchor
-/// and content are already separate); this joins them and appends the same
-/// truncation/oversized/reclaim hints to both, so the card and the model's page
-/// never drift.
-fn assemble_page_text(
-    page: PageRender,
-    shown: usize,
-    start_line: usize,
-    total: usize,
-    reclaim: Option<String>,
-) -> ReadPage {
-    let PageRender {
-        out,
-        stripped,
-        served,
-        oversized,
-        out_bytes,
-    } = page;
-    let mut text = out.join("\n");
-    let mut stripped = stripped.join("\n");
-    let end_display = start_line + shown.saturating_sub(1);
-    if shown == 0 {
-        // The byte cap cut the page before any row fit.
-        let hint = "\n… truncated (output cap 1 MiB)";
-        text.push_str(hint);
-        stripped.push_str(hint);
-    } else if end_display < total {
-        let last_anchor = served.last().map(|(h, _)| h.as_str()).unwrap_or_default();
-        let hint = format!(
-            "\n… truncated (showing lines {start_line}–{end_display} of {total} — {out_bytes} bytes). Use offset={last_anchor} to continue."
-        );
-        text.push_str(&hint);
-        // The hint's next-page offset is the anchor — meaningless to a human,
-        // but the line-count context is not: the stripped twin keeps it as-is.
-        stripped.push_str(&hint);
-    }
-    if !oversized.is_empty() {
-        let listed: Vec<String> = oversized
-            .iter()
-            .take(10)
-            .map(std::string::ToString::to_string)
-            .collect();
-        let hint = format!(
-            "\n[{} oversized line(s) over 100 KiB not shown: lines {}]",
-            oversized.len(),
-            listed.join(", ")
-        );
-        text.push_str(&hint);
-        stripped.push_str(&hint);
-    }
-    if let Some(w) = reclaim {
-        text = format!("{w}\n{text}");
-        stripped = format!("{w}\n{stripped}");
-    }
-    ReadPage { text, stripped }
-}
-/// The output of a rendered read page: the model-facing anchored rows plus
-/// their anchor-stripped twin (#243), the served (anchor, checksum) baseline,
-/// the oversized line numbers, and the byte count of the rendered output.
-struct PageRender {
-    out: Vec<String>,
-    stripped: Vec<String>,
-    served: Vec<(String, String)>,
-    oversized: Vec<usize>,
-    out_bytes: usize,
-}
-
-/// Render a page of `rows` (the file's anchors for the selected range) into
-/// the model-facing lines: `HASH│content` per row, in file order. Rows over
-/// [`READ_MAX_LINE_BYTES`] are not shown (their anchor alone would burn
-/// context); they are listed in `oversized` so the caller can hint at them.
-/// `served` is the (anchor, line checksum) pair per *shown* row — the
-/// integrity baseline `read` registers (item 1). The 1 MiB page cap (item 8)
-/// drops rows from the end once the accumulated output would exceed it.
-fn render_page(selected: &[String], lines: &[String], start_line: usize) -> PageRender {
-    let mut out: Vec<String> = Vec::new();
-    let mut stripped: Vec<String> = Vec::new();
-    let mut served: Vec<(String, String)> = Vec::new();
-    let mut oversized: Vec<usize> = Vec::new();
-    let mut out_bytes = 0usize;
-    for (i, pair) in selected.iter().zip(lines.iter()).enumerate() {
-        let (hash, line) = pair;
-        if line.len() > READ_MAX_LINE_BYTES {
-            oversized.push(start_line + i);
-            continue;
-        }
-        let row = format!("{}{}{line}", hash, hashline::SEP);
-        if out_bytes.saturating_add(row.len()) > READ_MAX_BYTES {
-            break;
-        }
-        out_bytes += row.len();
-        out.push(row);
-        // #243: the anchor-stripped twin, built row-by-row as the anchored
-        // rows are (the card's `ui_detail` renders these; the model's text
-        // joins `out`). The anchor and separator are never in `line`.
-        stripped.push(line.clone());
-        served.push((hash.clone(), hashline::line_checksum(line)));
-    }
-    PageRender {
-        out,
-        stripped,
-        served,
-        oversized,
-        out_bytes,
-    }
-}
-/// A `read` page: the model-facing text (hash-anchored rows + hints) and its
-/// anchor-stripped twin for the GUI card (the `ui_detail` channel, #243):
-/// the same rows without the `HASH│` prefixes, the same hints — the anchors
-/// are a model↔tool protocol, not information for a human.
-#[derive(Debug)]
-pub(super) struct ReadPage {
-    pub text: String,
-    pub stripped: String,
+    Ok(super::read_page::assemble_page_text(
+        page, shown, start_line, total, reclaim, path,
+    ))
 }
 
 /// The #36 refusal predicate: does the buffer start with the magic bytes of a
@@ -604,6 +489,7 @@ pub(super) fn edit(
     let mut opts = hashline::PlanOptions {
         strict,
         demote: !strict,
+        path: path_str.clone(),
         ..Default::default()
     };
     let mut gated: Vec<(usize, hashline::EditError)> = Vec::new();

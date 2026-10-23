@@ -27,6 +27,8 @@ tokio = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
 tempfile = { workspace = true }
-# GUI/CLI dev-tool shape: compile tracing out entirely (max_level_off),
-# same as the #98 precedent in tau-acp (#100).
-tracing = { version = "0.1", features = ["max_level_off"] }
+# GUI/CLI dev-tool shape: no tracing output. Not via
+# `tracing/max_level_off` — max_level features unify across the whole
+# workspace build, so that one silently stripped every crate's test events
+# too (the wire JSONL test caught it on CI).
+tracing = { version = "0.1" }

@@ -189,8 +189,8 @@ pub(super) async fn session_prompt(server: &Server, rpc: &Rpc) {
     let core = match server.ensure_core().await {
         Ok(core) => core,
         Err(e) => {
-            server.out
-                .send(&transport::error(id, INTERNAL_ERROR, &format!("core build failed: {e}")));
+            let msg = format!("core build failed: {e}");
+            server.out.send(&transport::error(id, INTERNAL_ERROR, &msg));
             return;
         }
     };

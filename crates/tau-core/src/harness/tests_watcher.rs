@@ -94,7 +94,8 @@ async fn a_home_root_change_fans_out_to_all_open_workspaces() {
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().to_path_buf())
         .with_home(home.path().to_path_buf())
-        .build().unwrap();
+        .build()
+        .unwrap();
     let w1 = open_ws(&core, tmp1.path()).await;
     let w2 = open_ws(&core, tmp2.path()).await;
     let collected = collect_events(&core);

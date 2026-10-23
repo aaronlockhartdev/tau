@@ -13,6 +13,7 @@
 //! [`plan_edits`] / [`apply_edits`] core stays registry-free (property tests,
 //! and a no-registry caller).
 
+mod diagnostics;
 pub mod encoding;
 pub mod line_endings;
 pub mod pin_store;
@@ -20,6 +21,8 @@ pub mod registry;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_diag;
 
 use std::collections::HashMap;
 use std::fmt;
@@ -103,9 +106,10 @@ pub enum EditError {
     /// The anchor is not in the file's current anchor set.
     Stale {
         anchor: String,
-        /// The other bound resolved: the 1-based line number it points at,
-        /// so the diagnostic can show the model where it actually is.
-        context: Option<usize>,
+        /// The resolved other bound, with its ±1-line neighbourhood
+        /// re-anchored: the model sees where things are without a re-read
+        /// (parity with the reference's `fmtMismatchWithHashes`).
+        context: Option<StaleContext>,
     },
     /// The file exceeds the 7,311,616-line anchor cap; fall back to `write`.
     TooLarge,
@@ -126,11 +130,16 @@ pub enum EditError {
     /// `content` carries HASH│ prefixes — the model pasted read output
     /// (strict mode; lenient mode strips the prefixes with a warning).
     AnchoredContent { at: usize },
+    /// `content` carries diff-preview markers (`+`/`-` rows) — the model
+    /// pasted a diff (strict mode; lenient mode strips them with a warning).
+    InvalidPatch { at: usize },
     /// The range's lines no longer match what the session showed the model:
     /// the file drifted after the read. `rows` carries the range with fresh
     /// anchors inline; the model retries with them, no read needed.
     RangeStale {
         edit: usize,
+        /// The file the range is in: the continuation hint names it.
+        path: String,
         from: usize,
         to: usize,
         /// Fresh `HASH│line` rows for the range (capped at
@@ -156,16 +165,32 @@ pub enum EditError {
     OwnedElsewhere { anchors: Vec<String>, owner: String },
 }
 
+/// The resolved other bound a stale diagnostic points at: where it is, with
+/// its ±1-line neighbourhood re-anchored (fresh `HASH│line` rows).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleContext {
+    /// The other bound's anchor.
+    pub anchor: String,
+    /// 1-based line of the other bound.
+    pub line: usize,
+    /// The neighbourhood rows, `HASH│<clipped line>` each, line-labelled.
+    pub rows: Vec<String>,
+}
+
 impl fmt::Display for EditError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Stale { anchor, context } => {
                 write!(
                     f,
-                    "[E_STALE_ANCHOR] stale anchor \"{anchor}\": it no longer matches the file. Re-read the file for fresh anchors."
+                    "[E_STALE_ANCHOR] stale anchor \"{anchor}\": the file changed since read. Call read() for fresh anchors."
                 )?;
-                if let Some(line) = context {
-                    write!(f, " (the other bound of the range is at line {line})")?;
+                if let Some(ctx) = context {
+                    write!(
+                        f,
+                        "\n{}",
+                        diagnostics::stale_context_block(&ctx.anchor, ctx.line, &ctx.rows)
+                    )?;
                 }
                 Ok(())
             }
@@ -198,10 +223,7 @@ impl fmt::Display for EditError {
                 f,
                 "[E_RANGE_REVERSED] reversed range: \"{from}\" resolves after \"{to}\"; swap from/to"
             ),
-            Self::BadAnchor(a) => write!(
-                f,
-                "[E_BAD_ANCHOR] invalid anchor \"{a}\": expected a bare 4-letter alphabetic anchor"
-            ),
+            Self::BadAnchor(a) => write!(f, "{}", diagnostics::bad_ref_message(a)),
             Self::EmptyFile => write!(f, "cannot empty a non-empty file via edit; use write"),
             Self::Overlapping { a, b, .. } => write!(
                 f,
@@ -211,8 +233,13 @@ impl fmt::Display for EditError {
                 f,
                 "[E_ANCHORED_CONTENT] edits[{at}].content must be unanchored: strip the HASH{SEP} prefixes"
             ),
+            Self::InvalidPatch { at } => write!(
+                f,
+                "[W_INVALID_PATCH] edits[{at}].content carries diff-preview markers (+/-); strip them before the edit"
+            ),
             Self::RangeStale {
                 edit,
+                path,
                 from,
                 to,
                 rows,
@@ -227,7 +254,11 @@ impl fmt::Display for EditError {
                 if *capped {
                     write!(
                         f,
-                        "\n\n[The range is capped at {MAX_RANGE_STALE_LINES} rows; read the file past line {to} to see the rest.]"
+                        "\n\n[The range has {} lines; showing the first {}. Call read() on {} with offset={} to see the rest.]",
+                        to - from + 1,
+                        rows.len(),
+                        path,
+                        from + rows.len()
                     )?;
                 } else {
                     write!(f, "\n\nRetry with the fresh anchors above without a read.")?;
@@ -373,6 +404,8 @@ pub struct PlanOptions {
     /// Strict input (the reference's `strictInput`): the auto-fixes (reversed
     /// range swap, prefix stripping) become hard rejections.
     pub strict: bool,
+    /// The file being edited: the range-stale continuation hint names it.
+    pub path: String,
     /// The session's served baseline for the file (anchor → line checksum).
     /// `None` disables the integrity check (pure path, first read in the
     /// same call).
@@ -417,6 +450,7 @@ pub struct Planned {
 /// checksums that go with them — the retry's integrity baseline.
 fn range_stale(
     edit: usize,
+    path: &str,
     lines: &[String],
     hashes: &[String],
     from: usize,
@@ -427,11 +461,16 @@ fn range_stale(
     let mut rows = Vec::with_capacity(shown);
     let mut fresh = Vec::with_capacity(shown);
     for i in from..from + shown {
-        rows.push(format!("{}{SEP}{}", hashes[i], lines[i]));
+        rows.push(format!(
+            "{}{SEP}{}",
+            hashes[i],
+            diagnostics::clip_line(&lines[i])
+        ));
         fresh.push((hashes[i].clone(), line_checksum(&lines[i])));
     }
     EditError::RangeStale {
         edit,
+        path: path.to_owned(),
         from: from + 1,
         to: to + 1,
         rows,
@@ -443,11 +482,13 @@ fn range_stale(
 /// The integrity check (item 1): every line of the range must match the
 /// checksum the session served it with. A mismatch means the file drifted
 /// after the read — the range is reported with fresh anchors inline.
+#[allow(clippy::too_many_arguments)] // the path feeds the range-stale cap hint (G5)
 fn assert_range_served(
     lines: &[String],
     hashes: &[String],
     served: &HashMap<String, String>,
     edit: usize,
+    path: &str,
     from: usize,
     to: usize,
     deletion: bool,
@@ -460,10 +501,10 @@ fn assert_range_served(
             if deletion && i != from && i != to {
                 continue;
             }
-            return Err(range_stale(edit, lines, hashes, from, to));
+            return Err(range_stale(edit, path, lines, hashes, from, to));
         };
         if served_sum != &line_checksum(&lines[i]) {
-            return Err(range_stale(edit, lines, hashes, from, to));
+            return Err(range_stale(edit, path, lines, hashes, from, to));
         }
     }
     Ok(())
@@ -479,16 +520,15 @@ fn lenient_fixes(
 ) -> Result<Vec<String>, EditError> {
     let mut warnings = Vec::new();
     for (i, edit) in edits.iter_mut().enumerate() {
-        // Reversed range: swap, with a warning the model can audit. In demote
-        // mode a member with an unresolvable anchor is left for the resolution
-        // phase to demote — no reversed check, no hard reject here.
-        let (from_line, to_line) = match (
+        // Reversed range: swap, with a warning the model can audit. Bounds
+        // that don't both resolve are left for the resolution phase, which
+        // owns the stale/overlapping diagnostics (incl. the other-bound
+        // context) — an early reject here would pre-empt the richer message.
+        let (Ok(from_line), Ok(to_line)) = (
             resolve_anchor(hashes, &edit.from),
             resolve_anchor(hashes, &edit.to),
-        ) {
-            (Ok(f), Ok(t)) => (f, t),
-            _ if opts.demote => continue,
-            (Err(e), _) | (_, Err(e)) => return Err(e),
+        ) else {
+            continue;
         };
         if from_line > to_line {
             if opts.strict {
@@ -506,6 +546,25 @@ fn lenient_fixes(
         let stripped = strip_anchored_content(&mut edit.content, i, opts)?;
         if !stripped.is_empty() {
             warnings.extend(stripped);
+        }
+        // Pasted diff-preview markers (`+HASH│` / `-HASH│` rows): the model
+        // pasted a diff. Strip with a warning (the reference's
+        // `[W_INVALID_PATCH]`); strict mode rejects.
+        if opts.strict {
+            if diagnostics::has_diff_markers(&edit.content) {
+                return Err(EditError::InvalidPatch { at: i });
+            }
+        } else {
+            let n = diagnostics::strip_diff_markers(&mut edit.content);
+            if n > 0 {
+                warnings.push(format!(
+                    "[W_INVALID_PATCH] edits[{i}]: stripped diff-preview markers from {n} content line(s)."
+                ));
+            }
+        }
+        // A literal \uDDDD is a paste artifact: flagged, never auto-corrected.
+        if let Some(w) = diagnostics::unicode_esc_warning(&edit.content) {
+            warnings.push(w);
         }
     }
     Ok(warnings)
@@ -631,6 +690,7 @@ fn resolve_anchor(hashes: &[String], anchor: &str) -> Result<usize, EditError> {
 /// Resolve with the other bound as diagnostic context: when this anchor is
 /// stale but the other resolved, the error carries the other's line.
 fn resolve_anchor_with_context(
+    lines: &[String],
     hashes: &[String],
     other: &str,
     anchor: &str,
@@ -638,7 +698,28 @@ fn resolve_anchor_with_context(
     match resolve_anchor(hashes, anchor) {
         Ok(pos) => Ok(pos),
         Err(EditError::Stale { ref anchor, .. }) => {
-            let context = resolve_anchor(hashes, other).ok();
+            // The other bound resolved: point the diagnostic at it, with its
+            // ±1-line neighbourhood re-anchored so the model recovers without
+            // a re-read (parity with the reference's `fmtMismatchWithHashes`).
+            let context = resolve_anchor(hashes, other).ok().map(|i| {
+                let from = i.saturating_sub(1);
+                let to = (i + 1).min(hashes.len() - 1);
+                let rows = (from..=to)
+                    .map(|j| {
+                        format!(
+                            "    {}: {}{SEP}{}",
+                            j + 1,
+                            hashes[j],
+                            diagnostics::clip_line(&lines[j])
+                        )
+                    })
+                    .collect();
+                StaleContext {
+                    anchor: other.to_owned(),
+                    line: i + 1,
+                    rows,
+                }
+            });
             Err(EditError::Stale {
                 anchor: anchor.clone(),
                 context,
@@ -721,8 +802,8 @@ pub fn plan_edits(
     let mut ranges: Vec<(usize, usize, usize)> = Vec::with_capacity(edits.len());
     let mut demoted: Vec<(usize, EditError)> = Vec::new();
     for (i, edit) in fixed_edits.iter().enumerate() {
-        let start = resolve_anchor_with_context(&hashes, &edit.to, &edit.from);
-        let end = resolve_anchor_with_context(&hashes, &edit.from, &edit.to);
+        let start = resolve_anchor_with_context(&lines, &hashes, &edit.to, &edit.from);
+        let end = resolve_anchor_with_context(&lines, &hashes, &edit.from, &edit.to);
         match (start, end) {
             (Ok(start), Ok(end)) => ranges.push((i, start, end)),
             (Err(e), _) | (_, Err(e)) => {
@@ -772,6 +853,7 @@ pub fn plan_edits(
                 &hashes,
                 served,
                 i,
+                &opts.path,
                 start,
                 end,
                 fixed_edits[i].content.is_empty(),

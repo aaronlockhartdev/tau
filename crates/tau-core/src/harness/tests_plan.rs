@@ -131,7 +131,8 @@ async fn session_new_reinjection_reaches_the_provider() {
     // the root session, so the turn's request is captured end-to-end.
     let core = CoreBuilder::custom(providers())
         .with_root_provider(provider)
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = open_ws(&core, &cwd).await;
     let meta = new_root_session(&core, &workspace);
 

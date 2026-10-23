@@ -124,7 +124,8 @@ async fn a_session_archives_and_lists_with_the_flag() {
 async fn a_child_session_refuses_a_direct_archive() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -171,7 +172,8 @@ async fn a_child_session_refuses_a_direct_archive() {
 async fn a_parent_archive_archives_its_children() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -247,7 +249,8 @@ async fn a_parent_archive_archives_its_children() {
 async fn a_parent_archive_archives_a_closed_child() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -306,7 +309,8 @@ async fn a_parent_archive_archives_a_closed_child() {
 async fn a_restore_round_trips_a_parent_and_its_children() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core

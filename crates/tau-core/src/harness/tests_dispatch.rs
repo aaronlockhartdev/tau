@@ -194,14 +194,16 @@ async fn an_explicit_provider_survives_the_workspace_file_layer() {
         "[providers.dev]\nbase_url = \"http://file:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"file-model\"]\n",
     )
     .unwrap();
-    let core = CoreBuilder::default_system().unwrap()
+    let core = CoreBuilder::default_system()
+        .unwrap()
         .with_system_dir(sys.path().to_path_buf())
         .with_home(sys.path().to_path_buf())
         .with_provider(
             "dev".into(),
             crate::config::Provider::with_model("http://explicit:9/v1", "explicit-model"),
         )
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = open_ws(&core, ws.path()).await;
     let config = core.workspace_config(&workspace);
     let dev = &config.providers["dev"];
@@ -235,10 +237,12 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
         "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-model\"]\n",
     )
     .unwrap();
-    let core = CoreBuilder::default_system().unwrap()
+    let core = CoreBuilder::default_system()
+        .unwrap()
         .with_system_dir(sys.path().to_path_buf())
         .with_home(home.path().to_path_buf())
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = open_ws(&core, ws.path()).await;
     let session = match core
         .dispatch(Command::SessionNew {
@@ -267,10 +271,12 @@ async fn a_production_send_makes_exactly_one_provider_call() {
         "[providers.canned]\nbase_url = \"canned://text\"\n\n[providers.canned.models.\"canned-model\"]\n",
     )
     .unwrap();
-    let core = CoreBuilder::default_system().unwrap()
+    let core = CoreBuilder::default_system()
+        .unwrap()
         .with_system_dir(sys.path().to_path_buf())
         .with_home(home.path().to_path_buf())
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = open_ws(&core, ws.path()).await;
     let session = match core
         .dispatch(Command::SessionNew {
@@ -386,7 +392,8 @@ async fn workspace_index_survives_a_restart() {
     {
         let core = CoreBuilder::custom(providers())
             .with_system_dir(sys.path().into())
-            .build().unwrap();
+            .build()
+            .unwrap();
         open_ws(&core, cwd.path()).await;
         assert!(
             sys.path().join("workspaces.json").exists(),
@@ -395,7 +402,8 @@ async fn workspace_index_survives_a_restart() {
     }
     let core = CoreBuilder::custom(providers())
         .with_system_dir(sys.path().into())
-        .build().unwrap();
+        .build()
+        .unwrap();
     let list = match core.dispatch(Command::WorkspaceList).unwrap() {
         CommandOutput::Workspaces { workspaces } => workspaces,
         other => panic!("expected workspaces: {other:?}"),

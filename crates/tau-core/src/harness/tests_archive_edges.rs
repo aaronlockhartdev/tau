@@ -13,7 +13,8 @@ async fn a_running_child_refusal_leaves_the_child_running() {
             body: plain_body(),
             delay_ms: 1200,
         }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -279,7 +280,8 @@ async fn a_send_to_an_archived_session_is_refused() {
 async fn a_half_archived_session_converges_on_the_next_archive() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
@@ -404,7 +406,8 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
             body: plain_body(),
             delay_ms: 1200,
         }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core
