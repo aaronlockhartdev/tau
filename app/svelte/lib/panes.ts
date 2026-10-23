@@ -26,7 +26,6 @@ export interface PaneState {
   selAnchor: string | null;
 }
 
-// The filters default to 'all': a done sub-agent that the user
 export function defaultPane(): PaneState {
   return {
     center: 'chat',

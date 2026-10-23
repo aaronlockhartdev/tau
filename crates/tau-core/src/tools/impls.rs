@@ -113,7 +113,7 @@ pub(super) fn read(
     };
     let content = hashline::normalize(&raw);
     let path_str = path.display().to_string();
-    let outcome = match read_page(&path_str, &content, &raw, args, registry) {
+    let outcome = match read_page(&path_str, &content, args, registry) {
         Ok(o) => o,
         Err(e) => return ToolResult::err(e.into()),
     };
@@ -130,7 +130,6 @@ pub(super) fn read(
 fn read_page(
     path: &str,
     content: &str,
-    _raw: &str,
     args: &serde_json::Value,
     mut registry: Option<&mut hashline::registry::Registry>,
 ) -> Result<ReadPage, String> {
@@ -189,14 +188,13 @@ fn read_page(
     let selected = &rows[start_line - 1..end_line];
     let shown_lines = &lines[start_line - 1..];
 
-    let page = render_page(path, selected, shown_lines, start_line);
+    let page = render_page(selected, shown_lines, start_line);
     let shown = page.out.len();
     if let Some(reg) = registry {
         reg.serve(path, &page.served);
     }
 
     // #243: the anchored rows and their stripped twin are built together.
-    let reclaim = reclaim.or(None);
     Ok(assemble_page_text(page, shown, start_line, total, reclaim))
 }
 
@@ -252,7 +250,6 @@ fn assemble_page_text(
         text.push_str(&hint);
         stripped.push_str(&hint);
     }
-    let reclaim = reclaim.or(None);
     if let Some(w) = reclaim {
         text = format!("{w}\n{text}");
         stripped = format!("{w}\n{stripped}");
@@ -277,12 +274,7 @@ struct PageRender {
 /// `served` is the (anchor, line checksum) pair per *shown* row — the
 /// integrity baseline `read` registers (item 1). The 1 MiB page cap (item 8)
 /// drops rows from the end once the accumulated output would exceed it.
-fn render_page(
-    _path: &str,
-    selected: &[String],
-    lines: &[String],
-    start_line: usize,
-) -> PageRender {
+fn render_page(selected: &[String], lines: &[String], start_line: usize) -> PageRender {
     let mut out: Vec<String> = Vec::new();
     let mut stripped: Vec<String> = Vec::new();
     let mut served: Vec<(String, String)> = Vec::new();
@@ -461,7 +453,6 @@ pub(super) async fn write(
 fn current_mode(path: &Path) -> Option<u32> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::metadata(path).ok().map(|m| m.permissions().mode())
     }
     #[cfg(not(unix))]
@@ -473,7 +464,6 @@ fn current_mode(path: &Path) -> Option<u32> {
 
 #[cfg(unix)]
 pub(super) fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     let existing_mode = std::fs::metadata(path).ok().map(|m| m.permissions().mode());
     write_atomic_bytes(path, content.as_bytes(), existing_mode)
 }

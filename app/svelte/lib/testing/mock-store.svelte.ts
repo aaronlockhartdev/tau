@@ -45,7 +45,6 @@ export function freshDefaults() {
     loading: false,
     error: null as string | null,
     renderRange: '',
-    renderMs: 0,
     skills: {} as Record<string, SkillInfo[]>,
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,

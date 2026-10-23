@@ -222,19 +222,8 @@ impl Core {
         title: Option<String>,
         base_prompt: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
-        // The same cap as a rename: the archive listing reads the header
-        // line bounded, so an oversized title would drop the entry from
-        // the list. The check runs before the file is created — a refused
-        // request mutates nothing.
-        if let Some(t) = &title
-            && t.chars().count() > MAX_TITLE_LEN
-        {
-            return Err(ProtocolError::Other {
-                message: format!(
-                    "title is {} characters — the maximum is {MAX_TITLE_LEN}",
-                    t.chars().count()
-                ),
-            });
+        if let Some(t) = &title {
+            check_title_len(t)?;
         }
         let cwd = PathBuf::from(&workspace.cwd);
         let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
@@ -494,7 +483,21 @@ pub(crate) fn entry_to_view(entry: &crate::session::Entry) -> ViewEntry {
     }
 }
 
-/// The live-turn refusal shared by the header-writers (rename, fork,
+/// The title's cap, shared by new and rename: the archive listing reads
+/// the header line bounded, so an oversized title would drop the entry
+/// from the list. Both call sites run it before any mutation.
+pub(crate) fn check_title_len(title: &str) -> Result<(), ProtocolError> {
+    if title.chars().count() > MAX_TITLE_LEN {
+        return Err(ProtocolError::Other {
+            message: format!(
+                "title is {} characters — the maximum is {MAX_TITLE_LEN}",
+                title.chars().count()
+            ),
+        });
+    }
+    Ok(())
+}
+
 /// branch) and the delete: the same guard as the archive (ADR-0005).
 pub(crate) fn running_turn_refusal(session: &str) -> ProtocolError {
     ProtocolError::Other {
