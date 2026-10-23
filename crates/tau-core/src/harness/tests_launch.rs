@@ -235,6 +235,7 @@ fn launch_seam_session_is_freed_when_dropped() {
         bridge,
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     let agent = AgentSession::launch(
         store,
@@ -291,6 +292,7 @@ async fn a_reopened_session_resumes_gate_failed_from_the_record() {
         bridge,
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     // The first life: the check fails through its one repair.
     let write = |id: &str| {

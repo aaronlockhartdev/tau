@@ -319,8 +319,8 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
                 text: "thinking".into(),
             },
             WireBlock::ToolCall {
-                name: "edit".into(),
-                arguments: r#"{"path":"a.rs"}"#.into(),
+                text: serde_json::json!({ "name": "edit", "arguments": "{\"path\":\"a.rs\"}" })
+                    .to_string(),
             },
             WireBlock::Text {
                 text: "done".into(),
@@ -339,7 +339,13 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     let blocks = v["blocks"].as_array().unwrap();
     assert_eq!(blocks[0]["kind"], "reasoning");
     assert_eq!(blocks[1]["kind"], "tool_call");
-    assert_eq!(blocks[1]["name"], "edit");
+    assert!(
+        blocks[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("\"name\":\"edit\""),
+        "the merged run keeps each call's name"
+    );
     assert_eq!(blocks[2]["kind"], "text");
 
     // Negative — an incomplete turn without usage: `usage` is null, not a
@@ -349,4 +355,89 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     assert_eq!(v["usage"], serde_json::Value::Null);
     assert_eq!(v["completed"], false);
     assert!(v["blocks"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn response_wire_line_consolidates_consecutive_blocks() {
+    // Positive — consecutive same-kind blocks merge into one entry, in
+    // place: a kind change starts a new one.
+    let result = TurnResult {
+        completed: true,
+        blocks: vec![
+            WireBlock::Reasoning { text: "hmm".into() },
+            WireBlock::Reasoning {
+                text: "…let me".into(),
+            },
+            WireBlock::Reasoning {
+                text: " think".into(),
+            },
+            WireBlock::Text {
+                text: "done".into(),
+            },
+            WireBlock::Text {
+                text: " already".into(),
+            },
+            WireBlock::Reasoning {
+                text: "second".into(),
+            },
+        ],
+        ..TurnResult::default()
+    };
+    let blocks = result.consolidated_blocks();
+    assert_eq!(blocks.len(), 3);
+    assert_eq!(
+        blocks[0],
+        WireBlock::Reasoning {
+            text: "hmm…let me think".into()
+        }
+    );
+    assert_eq!(
+        blocks[1],
+        WireBlock::Text {
+            text: "done already".into()
+        }
+    );
+    assert_eq!(
+        blocks[2],
+        WireBlock::Reasoning {
+            text: "second".into()
+        }
+    );
+
+    // Positive — consecutive tool calls merge too, one JSON object per call
+    // on its own line, so the run stays per-call distinct.
+    let result = TurnResult {
+        blocks: vec![
+            WireBlock::ToolCall {
+                text: r#"{"name":"read","arguments":"{\"path\":\"a.rs\"}"}"#.into(),
+            },
+            WireBlock::ToolCall {
+                text: r#"{"name":"read","arguments":"{\"path\":\"b.rs\"}"}"#.into(),
+            },
+        ],
+        ..TurnResult::default()
+    };
+    let blocks = result.consolidated_blocks();
+    assert_eq!(blocks.len(), 1);
+    if let WireBlock::ToolCall { text } = &blocks[0] {
+        assert_eq!(text.lines().count(), 2, "each call keeps its own line");
+        assert!(text.contains("\"name\":\"read\""));
+    } else {
+        panic!("expected a merged tool_call block");
+    }
+
+    // Negative — a single block stands alone; an empty turn is empty.
+    let result = TurnResult {
+        blocks: vec![WireBlock::Text {
+            text: "solo".into(),
+        }],
+        ..TurnResult::default()
+    };
+    assert_eq!(
+        result.consolidated_blocks(),
+        vec![WireBlock::Text {
+            text: "solo".into()
+        }]
+    );
+    assert!(TurnResult::default().consolidated_blocks().is_empty());
 }

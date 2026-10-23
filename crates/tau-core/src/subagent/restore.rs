@@ -8,6 +8,7 @@
 use super::states::WaitingOn;
 use super::{ChildState, ContextMode, KIND_SUBAGENT};
 use crate::session::{Entry, SessionStore, list_workspace};
+use std::borrow::Cow;
 use std::path::Path;
 
 /// One of the parent's children as reconstructed from disk alone (the
@@ -55,15 +56,10 @@ pub fn disk_child_to_info(d: &DiskChild) -> tau_protocol::SubagentInfo {
     }
 }
 
-/// A child session's last recorded lifecycle state: the last `subagent`
-/// state entry, deserialized with the exact serde the live path writes
-/// (child.rs `set_state`). A missing or unreadable file, a missing state
-/// entry, or an unparseable entry is `None` (the caller decides the
-/// fallback: restart-restore reads parked, re-adopt refuses).
-pub(crate) fn last_state_on_disk(cwd: &Path, child: &str) -> Option<ChildState> {
-    let mut store = SessionStore::for_workspace(cwd, child);
-    store.open().ok()?;
-    let entries = store.entries_range(0, usize::MAX).ok()?;
+/// The child's last recorded lifecycle state, over entries already in
+/// memory (issue #280): the fleet read opens each child file once and
+/// re-uses the entries for both the state check and the spawn provenance.
+pub(crate) fn last_state_from(entries: &[Entry]) -> Option<ChildState> {
     entries
         .iter()
         .rev()
@@ -76,26 +72,36 @@ pub(crate) fn last_state_on_disk(cwd: &Path, child: &str) -> Option<ChildState> 
 /// carrying its name, minted handle, spawn provenance, and last recorded
 /// state — a child whose state is not terminal (or that has none) is
 /// dropped: re-adopt is terminal-only (design §5).
-pub fn disk_children(cwd: &Path, parent: &str) -> Vec<DiskChild> {
+pub fn disk_children(cwd: &Path, parent: &str, parent_entries: Option<&[Entry]>) -> Vec<DiskChild> {
     // The parent's spawn records map child session id → minted handle, so a
     // re-adopted child keeps the exact handle the GUI and the parent model
-    // already address it by (not a synthesized session-id handle).
+    // already address it by (not a synthesized session-id handle). The
+    // open path threads the parent's already-loaded entries through (issue
+    // #280); a caller without them (the `subagent_list` command, the
+    // re-adopt) re-reads the parent's file.
     let mut handle_of: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut pstore = SessionStore::for_workspace(cwd, parent);
-    if let Ok(entries) = pstore
-        .open()
-        .and_then(|()| pstore.entries_range(0, usize::MAX))
-    {
-        for e in &entries {
-            if e.kind == KIND_SUBAGENT
-                && e.payload["event"] == "spawn"
-                && let (Some(child), Some(handle)) = (
-                    e.payload.get("child").and_then(|v| v.as_str()),
-                    e.payload.get("handle").and_then(|v| v.as_str()),
-                )
-            {
-                handle_of.insert(child.to_owned(), handle.to_owned());
-            }
+    // The threaded entries are borrowed (a `Cow::Borrowed`); a caller
+    // without them re-reads the parent's file (a `Cow::Owned`).
+    let spawn_records: Cow<'_, [Entry]> = if let Some(entries) = parent_entries {
+        Cow::Borrowed(entries)
+    } else {
+        let mut pstore = SessionStore::for_workspace(cwd, parent);
+        Cow::Owned(
+            pstore
+                .open()
+                .and_then(|()| pstore.entries_range(0, usize::MAX))
+                .unwrap_or_default(),
+        )
+    };
+    for e in spawn_records.iter() {
+        if e.kind == KIND_SUBAGENT
+            && e.payload["event"] == "spawn"
+            && let (Some(child), Some(handle)) = (
+                e.payload.get("child").and_then(|v| v.as_str()),
+                e.payload.get("handle").and_then(|v| v.as_str()),
+            )
+        {
+            handle_of.insert(child.to_owned(), handle.to_owned());
         }
     }
     let mut out = Vec::new();
@@ -103,17 +109,23 @@ pub fn disk_children(cwd: &Path, parent: &str) -> Vec<DiskChild> {
         if m.archived || m.parent.as_deref() != Some(parent) {
             continue;
         }
-        let Some(state) = last_state_on_disk(cwd, &m.id) else {
+        // One open of the child file serves both the state check and the
+        // spawn provenance (issue #280: the fleet read used to open it
+        // twice).
+        let mut cstore = SessionStore::for_workspace(cwd, &m.id);
+        let Some(entries) = cstore
+            .open()
+            .and_then(|()| cstore.entries_range(0, usize::MAX))
+            .ok()
+        else {
+            continue;
+        };
+        let Some(state) = last_state_from(&entries) else {
             continue;
         };
         if !state.is_terminal() {
             continue;
         }
-        let mut cstore = SessionStore::for_workspace(cwd, &m.id);
-        let entries = cstore
-            .open()
-            .and_then(|()| cstore.entries_range(0, usize::MAX))
-            .unwrap_or_default();
         let (agent_type, context_mode) = spawn_provenance(&entries);
         let name = m.title.clone().unwrap_or_else(|| m.id.clone());
         let handle = handle_of
