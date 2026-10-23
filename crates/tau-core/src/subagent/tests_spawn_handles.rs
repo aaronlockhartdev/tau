@@ -85,6 +85,7 @@ async fn a_reopened_parent_does_not_remint_a_child_handle() {
         bridge: bridge.clone(),
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     sup2.attach_parent(&parent);
     let s3 = sup2

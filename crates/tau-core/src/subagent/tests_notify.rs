@@ -95,6 +95,7 @@ async fn an_observed_done_is_confirmed_by_the_complete_plan() {
         bridge: subagent_bridge,
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     let parent = Arc::new(AgentSession::new(SessionParams {
         store,

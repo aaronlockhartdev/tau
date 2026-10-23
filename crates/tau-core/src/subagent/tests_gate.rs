@@ -48,6 +48,7 @@ fn harness_with_gate(
         bridge: bridge.clone(),
         driver: Arc::new(TestDriver),
         core: None,
+        parent_entries: None,
     });
     // The spawn resolves the parent through the supervisor's `Weak` link,
     // so the parent session must exist (the test seam's attach).

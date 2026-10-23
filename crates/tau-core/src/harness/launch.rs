@@ -441,6 +441,14 @@ fn root_session(
             core: Arc::downgrade(core),
         }),
         core: Some(Arc::downgrade(core)),
+        parent_entries: Some(
+            store
+                .entries_range_cached(0, usize::MAX)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(e, _)| e)
+                .collect(),
+        ),
     });
     bridge
         .sup
