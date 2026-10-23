@@ -93,6 +93,31 @@ None of the six blocks the merge of PR #285; each is an independent follow-up
 ticket. The rest of the surface is at parity or an intentional, documented
 design difference.
 
+
+**Resolution (this branch).** All six are now closed:
+
+- G1, G2, G3, G4, G5 live in `hashline/diagnostics.rs` (shared helpers) wired
+  into `EditError::BadAnchor` (shape-specific `E_BAD_REF`),
+  `EditError::InvalidPatch` + `PlanOptions.path`, `EditError::Stale` carrying a
+  `StaleContext` (±1-line block with fresh anchors), the `lenient_fixes`
+  warnings, and the `E_RANGE_STALE` 100-row cap with the continuation hint.
+  `lenient_fixes` no longer pre-empts the resolution phase on unresolvable
+  bounds, so the rich stale diagnostic is the standard stale path.
+  One known residual vs the reference: when the context neighbourhood was
+  never served, a first retry with the context anchors bounces through one
+  `E_RANGE_STALE` (which adopts them) before succeeding — the reference's
+  `adoptAnchors` avoids the bounce; a consequence of the ADR-0033 split,
+  not a defect.
+- G6 lives in `tools/read_page.rs` (the read-page rendering extracted out of
+  `impls.rs` for the 1000-LOC gate): oversized lines render an inline
+  `sed -n 'Np'` placeholder and stay served, so a targeted edit by their
+  anchor works.
+
+Two deliberate adaptations vs the reference: the diff-marker detector also
+accepts tau's own diff-preview shape (`+ AbCd│…` with a space after the sign),
+and tau keeps its letters-only anchor alphabet (the block-shape `E_BAD_REF`
+names only parseable anchors). Tests: `hashline/tests_diag.rs` (G1–G5) and
+`tools/tests_read.rs` (G6).
 ## 5. Method
 
 Pro side: `read.ts`, `edit-common.ts`, `hashline/{parse,resolve,apply}.ts`,

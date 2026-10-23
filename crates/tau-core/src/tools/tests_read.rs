@@ -1,4 +1,4 @@
-use super::impls::{read, write};
+use super::impls::{edit, read, write};
 use super::tests::{detail, fresh_registry, text};
 use super::*;
 
@@ -100,4 +100,54 @@ async fn read_ui_detail_is_the_anchor_stripped_body() {
             .all(|l| l.contains('\u{2502}')),
         "{out}"
     );
+}
+
+#[tokio::test]
+async fn oversized_read_line_gets_an_inline_sed_hint() {
+    // Parity with the reference's per-line placeholder: the line keeps its
+    // anchor and gets an inspection command in place of the content, so a
+    // targeted edit by that anchor still works.
+    let dir = tempfile::tempdir().unwrap();
+    let big: String = "x".repeat(110 * 1024);
+    write(
+        dir.path(),
+        &json!({"path": "big.txt", "content": format!("head\n{big}\ntail\n")}),
+        None,
+    )
+    .await;
+    let mut reg = fresh_registry();
+    let out = text(read(
+        dir.path(),
+        &json!({"path": "big.txt"}),
+        None,
+        None,
+        Some(&mut *reg),
+    ));
+    // The placeholder names the exact line and the exact command; the summary
+    // repeats it. The placeholder row keeps the anchor.
+    assert!(
+        out.contains("content not shown. Use bash: sed -n '2p'"),
+        "{out}"
+    );
+    assert!(
+        out.contains("[1 oversized line(s) over 100 KiB; inspect with bash: sed -n '2p'"),
+        "{out}"
+    );
+    let anchor = out
+        .lines()
+        .nth(1)
+        .and_then(|row| row.split('\u{2502}').next())
+        .expect("row 2 keeps its anchor")
+        .to_string();
+    // The anchor stays served: a targeted edit by it applies.
+    let res = text(edit(
+        dir.path(),
+        &json!({
+            "path": "big.txt",
+            "edits": [{"from": anchor, "to": anchor, "content": "SMALL"}]
+        }),
+        Some(&mut *reg),
+        false,
+    ));
+    assert!(res.starts_with("Successfully edited"), "{res}");
 }

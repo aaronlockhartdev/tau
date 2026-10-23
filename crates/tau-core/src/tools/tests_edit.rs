@@ -654,7 +654,7 @@ async fn an_edit_error_is_never_an_empty_result() {
         !out.trim().is_empty(),
         "an edit failure must carry its message"
     );
-    assert!(out.contains("E_BAD_ANCHOR"), "{out}");
+    assert!(out.contains("E_BAD_REF"), "{out}");
     // Stale anchor: the file changed after the read.
     let read_out = text(read(
         dir.path(),

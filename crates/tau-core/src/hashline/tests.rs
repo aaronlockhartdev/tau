@@ -614,6 +614,7 @@ fn duplicate_anchor_resolves_to_first_occurrence() {
     let content = "one\ntwo\n";
     let opts = PlanOptions {
         strict: false,
+        path: "a.txt".into(),
         served: None,
         hashes: Some(vec!["AAAA".into(), "AAAA".into()]),
         demote: false,
@@ -650,6 +651,7 @@ fn duplicate_anchor_at_a_later_line_is_unreachable_by_reference() {
     let content = "one\ntwo\nthree\n";
     let opts = PlanOptions {
         strict: false,
+        path: "a.txt".into(),
         served: None,
         hashes: Some(vec!["AAAA".into(), "BBBB".into(), "AAAA".into()]),
         demote: false,
@@ -684,6 +686,7 @@ fn duplicate_set_still_rejects_unknown_anchors() {
     // absent from a (broken) set is Stale, never fuzzy-matched.
     let opts = PlanOptions {
         strict: false,
+        path: "a.txt".into(),
         served: None,
         hashes: Some(vec!["AAAA".into(), "AAAA".into()]),
         demote: false,
