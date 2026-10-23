@@ -240,6 +240,7 @@ fn capture_debug(f: impl FnOnce()) -> String {
         .finish();
     let _guard = tracing::subscriber::set_default(sub);
     CAPTURE.lock().expect("capture poisoned").clear();
+    tracing::debug!("capture-probe"); // CI bisection: is the pipeline alive?
     f();
     CAPTURE.lock().expect("capture poisoned").clone()
 }
