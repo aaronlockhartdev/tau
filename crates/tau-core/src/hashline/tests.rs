@@ -606,10 +606,11 @@ fn plan_edits_file_grew_with_a_matching_line_succeeds() {
 }
 
 #[test]
-fn duplicate_anchor_fails_as_ambiguous_not_a_panic() {
+fn duplicate_anchor_resolves_to_first_occurrence() {
     // A broken anchor set (e.g. a stale pin store that wrote one anchor
-    // twice) must surface as a structured Ambiguous error, never a process
-    // panic — a panic here would poison the session's registry lock.
+    // twice) resolves deterministically to the first occurrence — the
+    // reference implementation's behavior — not an error. The second
+    // occurrence is untouched and keeps its (duplicated) anchor.
     let content = "one\ntwo\n";
     let opts = PlanOptions {
         strict: false,
@@ -617,7 +618,7 @@ fn duplicate_anchor_fails_as_ambiguous_not_a_panic() {
         hashes: Some(vec!["AAAA".into(), "AAAA".into()]),
         demote: false,
     };
-    let err = plan_edits(
+    let planned = plan_edits(
         content,
         line_endings::Ending::Lf,
         &[Edit {
@@ -627,9 +628,141 @@ fn duplicate_anchor_fails_as_ambiguous_not_a_panic() {
         }],
         &opts,
     )
+    .expect("a duplicated anchor resolves to its first occurrence");
+    assert_eq!(planned.lines, vec!["x".to_owned(), "two".to_owned()]);
+    // The broken duplicate does not propagate: the new set is unique again
+    // (survivors and new lines are anchored against the used set).
+    let mut seen = std::collections::HashSet::new();
+    for h in &planned.hashes {
+        assert!(
+            seen.insert(h.clone()),
+            "duplicate anchor {h} in the new set"
+        );
+    }
+}
+
+#[test]
+fn duplicate_anchor_at_a_later_line_is_unreachable_by_reference() {
+    // First-occurrence resolution means the second occurrence of a broken
+    // set's anchor is only reachable by line number — the same deterministic
+    // semantics the reference has (`hashMatches[0]`), asserted here through
+    // a range whose start bound is the duplicated anchor.
+    let content = "one\ntwo\nthree\n";
+    let opts = PlanOptions {
+        strict: false,
+        served: None,
+        hashes: Some(vec!["AAAA".into(), "BBBB".into(), "AAAA".into()]),
+        demote: false,
+    };
+    let planned = plan_edits(
+        content,
+        line_endings::Ending::Lf,
+        &[Edit {
+            from: "AAAA".into(),
+            to: "BBBB".into(),
+            content: "x".into(),
+        }],
+        &opts,
+    )
+    .expect("planning against a broken set succeeds");
+    // The "from" bound took the FIRST "AAAA" (line 1), so the range is
+    // lines 1–2 and the second occurrence (line 3) is left in place.
+    assert_eq!(planned.lines, vec!["x".to_owned(), "three".to_owned()]);
+    // The broken duplicate does not propagate: the new set is unique again.
+    let mut seen = std::collections::HashSet::new();
+    for h in &planned.hashes {
+        assert!(
+            seen.insert(h.clone()),
+            "duplicate anchor {h} in the new set"
+        );
+    }
+}
+
+#[test]
+fn duplicate_set_still_rejects_unknown_anchors() {
+    // The first-occurrence rule changes nothing about staleness: an anchor
+    // absent from a (broken) set is Stale, never fuzzy-matched.
+    let opts = PlanOptions {
+        strict: false,
+        served: None,
+        hashes: Some(vec!["AAAA".into(), "AAAA".into()]),
+        demote: false,
+    };
+    let err = plan_edits(
+        "one\ntwo\n",
+        line_endings::Ending::Lf,
+        &[Edit {
+            from: "ZZZZ".into(),
+            to: "ZZZZ".into(),
+            content: "x".into(),
+        }],
+        &opts,
+    )
     .unwrap_err();
     assert!(
-        matches!(err, EditError::Ambiguous { ref lines, .. } if lines == &[1, 2]),
-        "expected Ambiguous, got {err:?}"
+        matches!(err, EditError::Stale { ref anchor, .. } if anchor == "ZZZZ"),
+        "expected Stale, got {err:?}"
+    );
+}
+
+#[test]
+fn ownership_gates_render_their_e_codes() {
+    // The ownership gate's typed errors display with their E-codes (the
+    // model-facing diagnostics), each with its fix hint.
+    let msg = EditError::NotOwned {
+        anchor: "XyZa".into(),
+        case_hint: " Anchors are case-sensitive; \"XYZA\" differs only in case.".into(),
+    }
+    .to_string();
+    assert!(
+        msg.starts_with("[E_STALE_ANCHOR] \"XyZa\" is not owned in this session."),
+        "{msg}"
+    );
+    assert!(
+        msg.contains("Anchors are case-sensitive; \"XYZA\" differs only in case."),
+        "{msg}"
+    );
+    assert!(
+        msg.ends_with("Call read() on the target file first."),
+        "{msg}"
+    );
+
+    let msg = EditError::NotOwned {
+        anchor: "XyZa".into(),
+        case_hint: String::new(),
+    }
+    .to_string();
+    assert!(
+        !msg.contains("case-sensitive"),
+        "no hint when there is no candidate: {msg}"
+    );
+
+    let msg = EditError::CrossFile {
+        files: vec!["a.rs".into(), "b.rs".into()],
+    }
+    .to_string();
+    assert!(msg.starts_with("[E_BAD_SHAPE]"), "{msg}");
+    assert!(
+        msg.contains("owned by different files (a.rs, b.rs)"),
+        "{msg}"
+    );
+    assert!(msg.ends_with("edit one file per call."), "{msg}");
+
+    let msg = EditError::OwnedElsewhere {
+        anchors: vec!["AAAA".into()],
+        owner: "other.rs".into(),
+    }
+    .to_string();
+    assert!(msg.starts_with("[E_STALE_ANCHOR]"), "{msg}");
+    assert!(msg.contains("\"AAAA\" is owned by other.rs"), "{msg}");
+
+    let msg = EditError::OwnedElsewhere {
+        anchors: vec!["AAAA".into(), "BBBB".into()],
+        owner: "other.rs".into(),
+    }
+    .to_string();
+    assert!(
+        msg.contains("\"AAAA\", \"BBBB\" are owned by other.rs"),
+        "{msg}"
     );
 }

@@ -113,7 +113,7 @@ pub(super) fn read(
     };
     let content = hashline::normalize(&raw);
     let path_str = path.display().to_string();
-    let outcome = match read_page(&path_str, &content, &raw, args, registry) {
+    let outcome = match read_page(&path_str, &content, args, registry) {
         Ok(o) => o,
         Err(e) => return ToolResult::err(e.into()),
     };
@@ -130,7 +130,6 @@ pub(super) fn read(
 fn read_page(
     path: &str,
     content: &str,
-    _raw: &str,
     args: &serde_json::Value,
     mut registry: Option<&mut hashline::registry::Registry>,
 ) -> Result<ReadPage, String> {
@@ -189,14 +188,13 @@ fn read_page(
     let selected = &rows[start_line - 1..end_line];
     let shown_lines = &lines[start_line - 1..];
 
-    let page = render_page(path, selected, shown_lines, start_line);
+    let page = render_page(selected, shown_lines, start_line);
     let shown = page.out.len();
     if let Some(reg) = registry {
         reg.serve(path, &page.served);
     }
 
     // #243: the anchored rows and their stripped twin are built together.
-    let reclaim = reclaim.or(None);
     Ok(assemble_page_text(page, shown, start_line, total, reclaim))
 }
 
@@ -252,7 +250,6 @@ fn assemble_page_text(
         text.push_str(&hint);
         stripped.push_str(&hint);
     }
-    let reclaim = reclaim.or(None);
     if let Some(w) = reclaim {
         text = format!("{w}\n{text}");
         stripped = format!("{w}\n{stripped}");
@@ -277,12 +274,7 @@ struct PageRender {
 /// `served` is the (anchor, line checksum) pair per *shown* row — the
 /// integrity baseline `read` registers (item 1). The 1 MiB page cap (item 8)
 /// drops rows from the end once the accumulated output would exceed it.
-fn render_page(
-    _path: &str,
-    selected: &[String],
-    lines: &[String],
-    start_line: usize,
-) -> PageRender {
+fn render_page(selected: &[String], lines: &[String], start_line: usize) -> PageRender {
     let mut out: Vec<String> = Vec::new();
     let mut stripped: Vec<String> = Vec::new();
     let mut served: Vec<(String, String)> = Vec::new();
@@ -461,7 +453,6 @@ pub(super) async fn write(
 fn current_mode(path: &Path) -> Option<u32> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::metadata(path).ok().map(|m| m.permissions().mode())
     }
     #[cfg(not(unix))]
@@ -473,7 +464,6 @@ fn current_mode(path: &Path) -> Option<u32> {
 
 #[cfg(unix)]
 pub(super) fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     let existing_mode = std::fs::metadata(path).ok().map(|m| m.permissions().mode());
     write_atomic_bytes(path, content.as_bytes(), existing_mode)
 }
@@ -616,6 +606,7 @@ pub(super) fn edit(
         demote: !strict,
         ..Default::default()
     };
+    let mut gated: Vec<(usize, hashline::EditError)> = Vec::new();
     if let Some(reg) = registry.as_ref() {
         if let Some(served) = reg.served_map(&path_str) {
             opts.served = Some(served.clone());
@@ -625,9 +616,61 @@ pub(super) fn edit(
         if let Some(anchors) = reg.anchors_for(&path_str) {
             opts.hashes = Some(anchors.to_vec());
         }
+        // The ownership gate (parity with the reference's
+        // `resolveEditTarget`): an anchor the session does not own, a
+        // from/to pair spanning two files, or an anchor owned by another
+        // file is rejected before planning. Strict mode rejects the batch;
+        // demotion skips the offending members and plans the rest.
+        gated = edits
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| {
+                reg.edit_target_error(&path_str, &e.from, &e.to)
+                    .map(|err| (i, err))
+            })
+            .collect();
+        if strict && !gated.is_empty() {
+            let (i, err) = &gated[0];
+            return ToolResult::err(format!("edit: edits[{i}]: {err}").into());
+        }
     }
+    let (edits, original_indices) = if gated.is_empty() {
+        let n = edits.len();
+        (edits, (0..n).collect())
+    } else {
+        let bad: std::collections::HashSet<usize> = gated.iter().map(|(i, _)| *i).collect();
+        let mut kept = Vec::new();
+        let mut original_indices = Vec::new();
+        for (i, e) in edits.into_iter().enumerate() {
+            if !bad.contains(&i) {
+                kept.push(e);
+                original_indices.push(i);
+            }
+        }
+        (kept, original_indices)
+    };
     let planned = match hashline::plan_edits(&original, ending, &edits, &opts) {
-        Ok(p) => p,
+        Ok(mut p) => {
+            // Demotion channel: internal demotions are indexed in the
+            // filtered list — remap to the model's original batch indices,
+            // then append the ownership-gated members.
+            p.demoted = p
+                .demoted
+                .into_iter()
+                .map(|(i, e)| {
+                    (
+                        original_indices
+                            .get(i)
+                            .copied()
+                            .expect("an internal demotion indexes the filtered list"),
+                        e,
+                    )
+                })
+                .collect();
+            p.demoted.extend(gated);
+            p.demoted.sort_by_key(|&(i, _)| i);
+            p
+        }
         // A stale range: adopt the diagnostic's fresh anchors in place so the
         // model can retry with them without a re-read.
         Err(hashline::EditError::RangeStale {
