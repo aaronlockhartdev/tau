@@ -51,7 +51,7 @@ invariant is broken, or when the model's reference is ambiguous**:
   `Anchors are case-sensitive; "Y" differs only in case.`; owned by another file →
   `owned by {path}`; else first-occurrence resolution, with the diagnostic's fresh
   anchors adopted before the re-throw.
-- **Edit target gate.** `resolveEditTarget` (`src/edit-common.ts:211`), run *before*
+- **Edit target gate.** `resolveEditTarget` (`src/edit-common.ts:222`), run *before*
   planning: any bound unowned → `[E_STALE_ANCHOR] "X" is not owned in this session.{hint}
   Call read() on the target file first.` (the hint is scoped to the paths the *other*
   bounds own — and an empty scope means *no filter*, `paths.size > 0`); bounds owned by
@@ -72,8 +72,9 @@ invariant is broken, or when the model's reference is ambiguous**:
 | 1 | Edit bound duplicated in the file | `EditError::Ambiguous` — whole batch rejected (or the member demoted) | first occurrence | `resolve_anchor` resolves to the **first occurrence**; `EditError::Ambiguous` removed (its only construction site) |
 | 2 | Cross-file duplicate via store seed | reused → `owned` map flip-flops, "owned by" ambiguity | re-minted (the `alignOwnershipWithSpans` guard) | `registry::allocate` re-mints a pinned anchor the session owns for a **different** file; same-file pins still reuse |
 | 3 | Case-mangled anchor, read offset | bare "not owned" | + case-folding hint | `registry::resolve_offset` gains the hint via new `owners_differing_only_by_case` (sorted; empty path-scope = no filter, matching pro) |
-| 4 | Case-mangled / unowned anchor, edit | fell through to `Stale` ("re-read the file") | pre-plan gate with the reference's messages | new **ownership gate** in `edit()`: per-member `registry::edit_target_error` → typed `EditError::{NotOwned, CrossFile, OwnedElsewhere}` (E-codes `[E_STALE_ANCHOR]` / `[E_BAD_SHAPE]`). Strict mode: the batch rejects. Demotion mode (the default): the offending members are reported on the existing `[H_DEMOTED]` channel and the rest apply — the batch planner's per-member demotion, parity with `src/batch.ts` |
+| 4 | Case-mangled / unowned anchor, edit | fell through to `Stale` ("re-read the file") | pre-plan gate with the reference's messages | new **ownership gate** in `edit()`: per-member `registry::edit_target_error` → typed `EditError::{NotOwned, CrossFile, OwnedElsewhere}` (E-codes `[E_STALE_ANCHOR]` / `[E_BAD_SHAPE]`). Strict mode: the batch rejects. Demotion mode (the default): the offending members are reported on the existing `[H_DEMOTED]` channel and the rest apply — the batch planner's per-member demotion, parity with `src/batch.ts`; the `[H_DEMOTED]` labels use the model's **original** batch indices (internal demotions are remapped across the gate's filtering) |
 | 5 | Broken set after an edit | duplicate propagated into the new set | unchanged lines keep their (duplicated) anchors; the set is re-anchored over the used bitset | no change needed — `lcs_reanchor` already mints around the used set, so the duplicate does not survive an edit (asserted by test) |
+| 6 | Malformed ref (a line number, 3 letters) on a registry-known file | `E_BAD_ANCHOR` / `E_BAD_SHAPE` at resolution | same — `parseHashRef` before `ownerOf` | reordered: refs are parsed **before** the ownership gate in both `resolve_offset` and `edit_target_error` — a re-read never fixes a malformed ref, so it must not be reported as "not owned" |
 
 All edit failures — including the new gate — surface as the **typed** `EditError`
 through the existing `format!("edit: {e}")` / `[H_DEMOTED] edits[{i}] not applied: {e}`

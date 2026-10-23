@@ -421,6 +421,13 @@ impl Registry {
         path: &str,
         hashes: &[String],
     ) -> Result<usize, String> {
+        // Parse before ownership (the reference's order): a malformed ref
+        // is E_BAD_SHAPE, not "not owned" — re-reading never fixes it.
+        if hash_to_idx(anchor).is_none() {
+            return Err(format!(
+                "[E_BAD_SHAPE] \"{anchor}\" is not a 4-letter anchor."
+            ));
+        }
         let Some(existing) = self.owned.get(anchor) else {
             let folded = self.owners_differing_only_by_case(anchor, None);
             return Err(format!(
@@ -434,18 +441,13 @@ impl Registry {
                 existing.path, path
             ));
         }
-        match hash_to_idx(anchor) {
-            Some(_) => (0..hashes.len())
-                .find(|&i| hashes[i] == anchor)
-                .ok_or_else(|| {
-                    format!(
-                        "[E_STALE_ANCHOR] \"{anchor}\" no longer matches the file at {path}. Use a line number, or read again for fresh anchors."
-                    )
-                }),
-            None => Err(format!(
-                "[E_BAD_SHAPE] \"{anchor}\" is not a 4-letter anchor."
-            )),
-        }
+        (0..hashes.len())
+            .find(|&i| hashes[i] == anchor)
+            .ok_or_else(|| {
+                format!(
+                    "[E_STALE_ANCHOR] \"{anchor}\" no longer matches the file at {path}. Use a line number, or read again for fresh anchors."
+                )
+            })
     }
 
     /// The session's owned anchors that differ from `anchor` only in case
@@ -482,6 +484,14 @@ impl Registry {
         to: &str,
     ) -> Option<crate::hashline::EditError> {
         self.anchors_for(path)?;
+        // Parse before ownership (the reference's order): a malformed ref
+        // is a BadAnchor, not "not owned" — re-reading never fixes it.
+        if hash_to_idx(from).is_none() {
+            return Some(crate::hashline::EditError::BadAnchor(from.to_owned()));
+        }
+        if hash_to_idx(to).is_none() {
+            return Some(crate::hashline::EditError::BadAnchor(to.to_owned()));
+        }
         let owners = [self.owned.get(from), self.owned.get(to)];
         // Gate order mirrors the reference: an unowned bound shadows the
         // cross-file and owned-elsewhere checks.
@@ -854,6 +864,11 @@ mod tests {
             .resolve_offset("WXYZ", "a", &hashes)
             .expect_err("unowned");
         assert!(!err.contains("case-sensitive"), "{err}");
+        // A malformed ref is E_BAD_SHAPE, not "not owned" (parse first).
+        let err = reg
+            .resolve_offset("12", "a", &hashes)
+            .expect_err("malformed");
+        assert!(err.contains("[E_BAD_SHAPE]"), "{err}");
     }
 
     #[test]
@@ -907,5 +922,22 @@ mod tests {
         // A file the registry has never seen: the gate does not apply
         // (content-addressed resolution proceeds, as before).
         assert!(reg.edit_target_error("unknown", &a[0], &b[0]).is_none());
+    }
+
+    #[test]
+    fn edit_target_error_reports_malformed_refs_before_ownership() {
+        // Parse before ownership (the reference's order): a line number or a
+        // 3-letter ref is a BadAnchor, not "not owned" — re-reading never
+        // fixes it.
+        let mut reg = Registry::new();
+        let (a, _) = reg.allocate("a", "one\n").expect("allocate");
+        for r in ["5", "abc", "abcd5"] {
+            match reg.edit_target_error("a", r, &a[0]).expect("gated") {
+                EditError::BadAnchor(ref a) => assert_eq!(a, r),
+                other => panic!("expected BadAnchor for {r}, got {other:?}"),
+            }
+        }
+        // A valid ref on an owned file still passes the gate.
+        assert!(reg.edit_target_error("a", &a[0], &a[0]).is_none());
     }
 }

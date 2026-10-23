@@ -644,22 +644,41 @@ pub(super) fn edit(
             return ToolResult::err(format!("edit: edits[{i}]: {err}").into());
         }
     }
-    let edits = if gated.is_empty() {
-        edits
+    let (edits, original_indices) = if gated.is_empty() {
+        let n = edits.len();
+        (edits, (0..n).collect())
     } else {
         let bad: std::collections::HashSet<usize> = gated.iter().map(|(i, _)| *i).collect();
-        edits
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !bad.contains(i))
-            .map(|(_, e)| e)
-            .collect()
+        let mut kept = Vec::new();
+        let mut original_indices = Vec::new();
+        for (i, e) in edits.into_iter().enumerate() {
+            if !bad.contains(&i) {
+                kept.push(e);
+                original_indices.push(i);
+            }
+        }
+        (kept, original_indices)
     };
     let planned = match hashline::plan_edits(&original, ending, &edits, &opts) {
         Ok(mut p) => {
-            // Ownership-gated members ride the demotion channel: the ack and
-            // the diff report them with their typed errors.
+            // Demotion channel: internal demotions are indexed in the
+            // filtered list — remap to the model's original batch indices,
+            // then append the ownership-gated members.
+            p.demoted = p
+                .demoted
+                .into_iter()
+                .map(|(i, e)| {
+                    (
+                        original_indices
+                            .get(i)
+                            .copied()
+                            .expect("an internal demotion indexes the filtered list"),
+                        e,
+                    )
+                })
+                .collect();
             p.demoted.extend(gated);
+            p.demoted.sort_by_key(|&(i, _)| i);
             p
         }
         // A stale range: adopt the diagnostic's fresh anchors in place so the
