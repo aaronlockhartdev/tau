@@ -22,7 +22,7 @@
           line: last?.text ? last.text.slice(0, 90) : ''
         };
       })
-      .sort((a, b) => rank(a.s) - rank(b.s) || b.s.mru - a.s.mru);
+      .sort((a, b) => rank(a.s) - rank(b.s) || b.s.last_modified - a.s.last_modified);
   });
 
   const wsName = (id: string) => store.workspaces.find((w) => w.id === id)?.name ?? id;

@@ -99,10 +99,10 @@ describe('touchChild', () => {
     expect(m['c']!.meta.title).toBe('worker');
   });
 
-  it('keeps the row mru when correcting an existing child', () => {
+  it('keeps the row last_modified when correcting an existing child', () => {
     let m: SessionMap = touchChild({}, 'p', 'c', 'running', 100, null, 'x');
     m = touchChild(m, 'p', 'c', 'done', 999, null, null);
-    expect(m['c']!.mru).toBe(999);
+    expect(m['c']!.last_modified).toBe(999);
   });
 
   it('a new child inherits the parent workspace', () => {
@@ -123,7 +123,6 @@ describe('touchChild', () => {
     expect(m['c']!.turn).toBe('idle');
   });
 });
-
 describe('applySessionList', () => {
   it('an existing row adopts the list archive flag (the list is the authority)', () => {
     const map: SessionMap = { s1: makeStub(meta('s1'), null, 'idle', null, 1) };
@@ -298,12 +297,12 @@ describe('openSession (ticket #221 restart restore)', () => {
     expect(out['c']!.waiting_on).toBe('user');
   });
 
-  it('the row mru and parent survive the re-open (stable sort, link kept)', () => {
+  it('the row last_modified and parent survive the re-open (stable sort, link kept)', () => {
     const stubbed: SessionMap = {
       c: makeStub(meta('c', { parent: 'p' }), 'p', 'idle', null, 42)
     };
     const out = openSession(stubbed, 'c', snap('c', { own_state: { state: 'done', waiting_on: null } }));
-    expect(out['c']!.mru).toBe(42);
+    expect(out['c']!.last_modified).toBe(42);
     expect(out['c']!.parent).toBe('p');
   });
 

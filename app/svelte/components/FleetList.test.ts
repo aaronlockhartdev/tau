@@ -29,9 +29,9 @@ beforeEach(() => {
   resetMockStore({
     workspaces: [{ id: 'w1', name: 'tau', cwd: '/x' }, { id: 'w2', name: 'chairs', cwd: '/y' }],
     sessions: {
-      idle1: seedState(meta('idle1', { title: 'sitting' }), { state: 'idle', mru: 5 }),
-      run1: seedState(meta('run1', { title: 'working' }), { state: 'running', mru: 3 }),
-      run2: seedState(meta('run2', { title: 'other', workspace: 'w2' }), { state: 'running', mru: 9 })
+      idle1: seedState(meta('idle1', { title: 'sitting' }), { state: 'idle', last_modified: 5 }),
+      run1: seedState(meta('run1', { title: 'working' }), { state: 'running', last_modified: 3 }),
+      run2: seedState(meta('run2', { title: 'other', workspace: 'w2' }), { state: 'running', last_modified: 9 })
     }
   });
   store.fleetOpen = true;

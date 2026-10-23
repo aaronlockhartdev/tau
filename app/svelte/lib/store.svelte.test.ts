@@ -496,6 +496,101 @@ describe('applyEvents: queueing', () => {
   });
 });
 
+describe('applyEvents: last_modified (#282/#283)', () => {
+  function freshSession(): void {
+    store.sessions = openSession({}, 's1', snap('s1').snapshot);
+    store.sessions['s1']!.last_modified = 1000;
+  }
+
+  it('stream_start and stream_end advance the timestamp (mock clock at 5000)', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    applyEvents([
+      {
+        type: 'stream_end',
+        workspace: WS.id,
+        session: 's1',
+        call_id: 'c1',
+        interrupted: false,
+        duration_secs: null,
+        usage: null
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('a tool entry_upsert (the user send echo, ADR-0008) advances the timestamp', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([
+      {
+        type: 'entry_upsert',
+        workspace: WS.id,
+        session: 's1',
+        entry: entryView('00000001', 'tool', { tool: 'bash', args: 'ls' })
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('queue and plan_changed advance the timestamp', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([{ type: 'queue', workspace: WS.id, session: 's1', items: [{ text: 'hi', lane: 'steering' }] }]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    applyEvents([
+      {
+        type: 'plan_changed',
+        workspace: WS.id,
+        session: 's1',
+        plan: { steps: [{ text: 'a', done: false }], criteria: '', notes: '' }
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('subagent activity advances the parent timestamp (spawn, then a notified wake)', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([
+      {
+        type: 'subagent_event',
+        workspace: WS.id,
+        session: 's1',
+        kind: { kind: 'spawned', handle: 'h1', child: 'c1', agent_type: 'general', context_mode: 'fresh', title: 'worker' }
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    applyEvents([
+      {
+        type: 'subagent_event',
+        workspace: WS.id,
+        session: 's1',
+        kind: { kind: 'notified', child: 'c1', wake: 'done', text: 'result', output: null }
+      }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(5000);
+    vi.restoreAllMocks();
+  });
+
+  it('om_status, session_event, and system errors do not advance the timestamp', () => {
+    freshSession();
+    vi.spyOn(Date, 'now').mockReturnValue(5000);
+    applyEvents([
+      { type: 'om_status', workspace: WS.id, session: 's1', kind: 'observing' },
+      { type: 'session_event', workspace: WS.id, session: 's1', kind: { kind: 'branch_move', leaf: 'abc' } },
+      { type: 'system', workspace: WS.id, session: 's1', kind: { kind: 'error', message: 'boom' } }
+    ]);
+    expect(store.sessions['s1']!.last_modified).toBe(1000);
+    vi.restoreAllMocks();
+  });
+});
+
 describe('session switch', () => {
   it('replaces the stub with the snapshot and keeps the parent link', async () => {
     store.sessions = applySessionList({}, [meta('p'), meta('c', WS.id, { parent: 'p' })]);
@@ -521,15 +616,15 @@ describe('session switch', () => {
     expect(store.current).toBe('s1');
   });
 
-  it('re-opening a session preserves the row mru (no tree reshuffle away from the clicked row)', async () => {
+  it('re-opening a session preserves the row last_modified (no tree reshuffle away from the clicked row)', async () => {
     store.sessions = applySessionList({}, [meta('s1')]);
-    store.sessions['s1']!.mru = 9999;
+    store.sessions['s1']!.last_modified = 9999;
     defaultIPC();
     await switchSession('s1');
-    expect(store.sessions['s1']!.mru).toBe(9999);
+    expect(store.sessions['s1']!.last_modified).toBe(9999);
   });
 
-  it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the mru)', async () => {
+  it('self-heals the child stubs from the snapshot (fills a lost spawn, corrects a stale one, keeps the last_modified)', async () => {
     store.sessions = applySessionList({}, [meta('p')]);
     store.sessions = touchChild(store.sessions, 'p', 'c', 'running', 5000, null);
     defaultIPC({
@@ -545,7 +640,7 @@ describe('session switch', () => {
     });
     await switchSession('p');
     expect(store.sessions['c']!.state).toBe('done');
-    expect(store.sessions['c']!.mru).toBe(5000);
+    expect(store.sessions['c']!.last_modified).toBe(5000);
     expect(store.sessions['d']).toBeTruthy();
     expect(store.sessions['d']!.state).toBe('running');
     expect(store.sessions['d']!.parent).toBe('p');

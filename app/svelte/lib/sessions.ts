@@ -49,7 +49,7 @@ export interface SessionState {
   // event's detail; annotated on the row and the child's own header.
   waiting_on: string | null;
   archived: boolean;
-  mru: number;
+  last_modified: number;
   // The session's children (the parent's view — the sub-agent panel).
   subagents: SubagentInfo[];
   // The session's parsed plan file (spec §5.3) — the plan pane's data:
@@ -116,7 +116,7 @@ function snapshotToState(snap: Snapshot): SessionState {
     state,
     waiting_on: waitingOn,
     archived: meta.archived,
-    mru: meta.created,
+    last_modified: meta.created,
     subagents: snap.live.subagents,
     plan: snap.live.plan,
     gate_failed: snap.live.gate_failed,
@@ -130,7 +130,7 @@ export function makeStub(
   parent: string | null,
   state: SessionState['state'],
   waitingOn: string | null,
-  mru: number
+  last_modified: number
 ): SessionState {
   return {
     meta,
@@ -144,7 +144,7 @@ export function makeStub(
     state,
     waiting_on: state === 'idle' ? waitingOn : null,
     archived: meta.archived,
-    mru,
+    last_modified,
     subagents: [],
     plan: { steps: [], criteria: '', notes: '' },
     gate_failed: false,
@@ -153,14 +153,14 @@ export function makeStub(
 
 // Sub-agent mirror sync (a spawn/state event, the open's self-heal): the
 // supervisor is ground truth for the child's state and declared wait. A
-// corrected row keeps its mru (stable sort) and a real title — a late spawn
+// corrected row keeps its last_modified (stable sort) and a real title — a late spawn
 // title only fills a stub's blank name.
 export function touchChild(
   sessions: SessionMap,
   parentSid: string,
   childSid: string,
   state: SessionState['state'],
-  mru: number,
+  last_modified: number,
   waitingOn: string | null = null,
   title: string | null = null
 ): SessionMap {
@@ -170,7 +170,7 @@ export function touchChild(
   if (prev) {
     // #247: the child's turn mirrors its state — the composer's stop button
     // reads turn, and a child has no stream_start/stream_end of its own.
-    const next: SessionState = { ...prev, state, mru, turn: state === 'running' ? 'running' : 'idle' };
+    const next: SessionState = { ...prev, state, last_modified, turn: state === 'running' ? 'running' : 'idle' };
     if (waitingOn !== null) next.waiting_on = waitingOn;
     if (title !== null && prev.meta.title === null) next.meta = { ...prev.meta, title };
     return { ...sessions, [childSid]: next };
@@ -180,17 +180,17 @@ export function touchChild(
     workspace: ws,
     title,
     parent: parentSid,
-    created: mru,
+    created: last_modified,
     leaf: null,
     model: null,
     usage: null,
     archived: false
   };
-  return { ...sessions, [childSid]: makeStub(meta, parentSid, state, waitingOn, mru) };
+  return { ...sessions, [childSid]: makeStub(meta, parentSid, state, waitingOn, last_modified) };
 }
 
 // Merge a session_list into the map: an existing row adopts the list's
-// archive flag (the list is the flag's authority — a row archived while
+// archive flag (the list is the authority — a row archived while
 // listed, or listed after a restart, converges on the file's state); a new
 // id materializes as a stub (entries hydrate lazily on open).
 export function applySessionList(sessions: SessionMap, list: SessionMeta[]): SessionMap {
@@ -220,28 +220,28 @@ export function setArchived(sessions: SessionMap, sid: string, meta: SessionMeta
 // child to `idle`). A child's parent link is not in its own snapshot (it
 // lives in the parent's sub-agent list) so it survives re-opens, the
 // archive flag stays with the row (the list is its authority), and the
-// row's mru survives too — resetting it to creation time reshuffles the
-// MRU tree away from the row the user just clicked.
+// row's last_modified survives too — resetting it to creation time reshuffles the
+// most-recently-modified tree away from the row the user just clicked.
 export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): SessionMap {
   const next = snapshotToState(snap);
   const prev = sessions[sid];
   if (prev) {
     next.parent = prev.parent;
     next.archived = prev.archived;
-    next.mru = prev.mru;
+    next.last_modified = prev.last_modified;
   }
   let out = { ...sessions, [sid]: next };
   // Self-heal the child stubs: the snapshot's sub-agent list is the
   // supervisor's ground truth, so it both fills a lost spawn and
   // corrects a stale stub (a done child must not keep its pre-wake
-  // state). A corrected stub keeps its own mru, so the sort is stable.
+  // state). A corrected stub keeps its own last_modified, so the sort is stable.
   for (const sub of next.subagents) {
     const existing = out[sub.child];
     if (!existing) {
       out = touchChild(out, sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
       continue;
     }
-    out = touchChild(out, sid, sub.child, sub.state, existing.mru, sub.waiting_on, null);
+    out = touchChild(out, sid, sub.child, sub.state, existing.last_modified, sub.waiting_on, null);
     if (sub.waiting_on === null && sub.state !== 'idle') {
       const c = out[sub.child]!;
       out = { ...out, [sub.child]: { ...c, waiting_on: null } };
@@ -378,7 +378,7 @@ export function applySubagentEvent(
   if (child) {
     const next: SessionState = {
       ...child,
-      mru: now,
+      last_modified: now,
       state: st,
       // A notified wake is terminal or an idle re-wait — never running.
       turn: 'idle'

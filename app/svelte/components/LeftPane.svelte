@@ -1,6 +1,6 @@
 <script lang="ts">
   // Left pane (spec §9, the #11 verdict): tabbed files | sessions. The
-  // sessions tab is the MRU-sorted session tree — sub-agent sessions
+  // sessions tab is the last-modified-sorted session tree — sub-agent sessions
   // grouped under their parent (collapsible; the active session's chain
   // expanded by default), an archive folder at the bottom, and the badge
   // rule: top-level rows are badged `running` only while the model is
@@ -23,11 +23,11 @@
     if (ws === null) return [];
     return Object.values(store.sessions).filter((s) => s.meta.workspace === ws);
   });
-  const top = $derived(sessions.filter((s) => !s.parent && !s.archived).sort((a, b) => b.mru - a.mru));
+  const top = $derived(sessions.filter((s) => !s.parent && !s.archived).sort((a, b) => b.last_modified - a.last_modified));
   // Roots only: a child's archive flag is its parent's cascade (the core
   // archives the children with the parent), so listing children here would
   // show them twice — once top-level, once under their parent.
-  const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.mru - a.mru));
+  const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.last_modified - a.last_modified));
   // The red-edge tint (P5): the shared attention fold, keyed by session.
   const attSessions = $derived(new Set(attention().map((i) => i.session)));
 
@@ -45,7 +45,7 @@
         const s = store.sessions[id]!;
         const kids = sessions
           .filter((k) => k.parent === id)
-          .sort((a, b) => b.mru - a.mru)
+          .sort((a, b) => b.last_modified - a.last_modified)
           .map((k) => k.meta.id);
         if (q && kids.length && groupIsOpen(q, s, active, sessions)) walk(kids);
       }

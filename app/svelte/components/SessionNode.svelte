@@ -1,6 +1,6 @@
 <script lang="ts">
   // One node of the session tree (the left pane's sessions tab): the row's
-  // content (title, badge, mru) plus its children rendered recursively. The
+  // content (title, badge, last-modified) plus its children rendered recursively. The
   // row shell is the shared TreeNode. Collapse state is the pane's
   // openGroups — null is the default view (the group containing the active
   // session expanded), an array is the explicit set the user has toggled.
@@ -44,7 +44,7 @@
 
   const active = $derived(currentSession());
   const kids = $derived(
-    sessions.filter((s) => s.parent === session.meta.id).sort((a, b) => b.mru - a.mru)
+    sessions.filter((s) => s.parent === session.meta.id).sort((a, b) => b.last_modified - a.last_modified)
   );
 
   function groupOpen(sid: string, s: SessionState = session): boolean {
@@ -231,7 +231,7 @@
   {:else if !session.archived}
     <span class="badge {badgeLabel(session)}"><span class="dot"></span>{badgeLabel(session)}</span>
   {/if}
-  <span class="mru">{fmtAgo(session.mru, store.now)}</span>
+  <span class="modified">{fmtAgo(session.last_modified, store.now)}</span>
   {#if !session.archived && !session.parent}
     <button
       class="arch-b"
@@ -306,7 +306,7 @@
     color: var(--tx);
     font: inherit;
   }
-  .mru {
+  .modified {
     font: 9.5px var(--mono);
     color: var(--faint);
     flex: none;

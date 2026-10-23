@@ -30,7 +30,7 @@ export function paletteItems(s: PaletteSource): PaletteItem[] {
   const items: PaletteItem[] = [];
   const sessions = Object.values(s.sessions)
     .filter((x) => !x.meta.archived)
-    .sort((a, b) => b.mru - a.mru);
+    .sort((a, b) => b.last_modified - a.last_modified);
   for (const x of sessions) {
     items.push({
       group: 'sessions',

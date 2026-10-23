@@ -167,10 +167,10 @@ export function seedState(
     parent?: string | null;
     state?: SessionState['state'];
     waitingOn?: string | null;
-    mru?: number;
+    last_modified?: number;
     over?: Partial<SessionState>;
   } = {}
 ) {
-  const { parent = null, state = 'idle', waitingOn = null, mru = 1, over = {} } = opts;
-  return { ...makeStub(meta, parent, state, waitingOn, mru), ...over };
+  const { parent = null, state = 'idle', waitingOn = null, last_modified = 1, over = {} } = opts;
+  return { ...makeStub(meta, parent, state, waitingOn, last_modified), ...over };
 }

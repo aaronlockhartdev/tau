@@ -105,8 +105,8 @@ describe('RightPane', () => {
         sub('h2', 'c2', { state: 'done' })
       ],
       sessions: {
-        c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }),
-        c2: seedState(meta('c2', { title: 'worker two' }), { parent: 's1', mru: 3 })
+        c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }),
+        c2: seedState(meta('c2', { title: 'worker two' }), { parent: 's1', last_modified: 3 })
       }
     });
     await mount();
@@ -129,10 +129,10 @@ describe('RightPane', () => {
         sub('hD', 'cD', { state: 'idle', waiting_on: 'user' })
       ],
       sessions: {
-        cA: seedState(meta('cA', { title: 'alpha' }), { parent: 's1', mru: 1 }),
-        cB: seedState(meta('cB', { title: 'beta' }), { parent: 's1', mru: 2 }),
-        cC: seedState(meta('cC', { title: 'gamma' }), { parent: 's1', mru: 3 }),
-        cD: seedState(meta('cD', { title: 'delta' }), { parent: 's1', mru: 4 })
+        cA: seedState(meta('cA', { title: 'alpha' }), { parent: 's1', last_modified: 1 }),
+        cB: seedState(meta('cB', { title: 'beta' }), { parent: 's1', last_modified: 2 }),
+        cC: seedState(meta('cC', { title: 'gamma' }), { parent: 's1', last_modified: 3 }),
+        cD: seedState(meta('cD', { title: 'delta' }), { parent: 's1', last_modified: 4 })
       }
     });
     await mount();
@@ -145,7 +145,7 @@ describe('RightPane', () => {
   it('refreshes the live line when a new last_message lands', async () => {
     seed({
       subagents: [sub('h1', 'c1', { last_message: 'first line' })],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }) }
     });
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
@@ -160,7 +160,7 @@ describe('RightPane', () => {
   it('follow toggles the store follow handle', async () => {
     seed({
       subagents: [sub('h1', 'c1')],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }) }
     });
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
@@ -173,7 +173,7 @@ describe('RightPane', () => {
   it('open calls switchSession with the child id', async () => {
     seed({
       subagents: [sub('h1', 'c1')],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }) }
     });
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
@@ -184,7 +184,7 @@ describe('RightPane', () => {
   it('clicking a sub-agent row selects it', async () => {
     seed({
       subagents: [sub('h1', 'c1')],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }) }
     });
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
@@ -197,7 +197,7 @@ describe('RightPane', () => {
   it('double-clicking a sub-agent row opens the child session', async () => {
     seed({
       subagents: [sub('h1', 'c1')],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }) }
     });
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
@@ -211,10 +211,10 @@ describe('RightPane', () => {
       sessions: {
         c1: seedState(meta('c1', { title: 'worker one' }), {
           parent: 's1',
-          mru: 2,
+          last_modified: 2,
           over: { subagents: [sub('h2', 'c2')] }
         }),
-        c2: seedState(meta('c2', { title: 'worker two' }), { parent: 'c1', mru: 3 })
+        c2: seedState(meta('c2', { title: 'worker two' }), { parent: 'c1', last_modified: 3 })
       }
     });
     await mount();
@@ -263,7 +263,7 @@ describe('RightPane', () => {
       sessions: {
         c1: seedState(meta('c1', { title: 'worker one' }), {
           parent: 's1',
-          mru: 2,
+          last_modified: 2,
           over: {
             plan: {
               steps: [
@@ -277,7 +277,7 @@ describe('RightPane', () => {
         }),
         c2: seedState(meta('c2', { title: 'worker two' }), {
           parent: 's1',
-          mru: 3,
+          last_modified: 3,
           over: {
             plan: { steps: [{ text: 'the work', done: true }], criteria: '', notes: '' }
           }
@@ -296,7 +296,7 @@ describe('RightPane', () => {
   it('a child without a plan shows no projection line', async () => {
     seed({
       subagents: [sub('h1', 'c1')],
-      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', mru: 2 }) }
+      sessions: { c1: seedState(meta('c1', { title: 'worker one' }), { parent: 's1', last_modified: 2 }) }
     });
     await mount();
     await user.click(screen.getByRole('button', { name: 'sub-agents' }));
