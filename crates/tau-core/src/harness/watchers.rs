@@ -1,8 +1,8 @@
 //! The watcher consumers: the home/project/tree watchers, the batch-to-stale-dirs mapping, the dir listing, and the teardown.
 
 use super::{
-    state::CoreError,
     Arc, Batch, Core, Event, FileEntry, Path, WATCH_DEBOUNCE, Watcher, Workspace, mpsc,
+    state::CoreError,
 };
 
 impl Core {

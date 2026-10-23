@@ -65,7 +65,8 @@ async fn session_rename_caps_the_title_length() {
 async fn a_child_refusal_names_the_reopen_route_for_a_closed_parent() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: done_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let parent = match core

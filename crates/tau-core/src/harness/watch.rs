@@ -39,9 +39,7 @@ pub struct Watcher {
 impl Watcher {
     /// The debouncer thread (owned by notify; idle on its tick sleep) and
     /// the app-side receiver a consumer task drains.
-    pub fn new(
-        timeout: Duration,
-    ) -> Result<(Self, mpsc::UnboundedReceiver<Batch>), CoreError> {
+    pub fn new(timeout: Duration) -> Result<(Self, mpsc::UnboundedReceiver<Batch>), CoreError> {
         let (tx, rx) = mpsc::unbounded_channel();
         let debouncer = new_debouncer(timeout, None, move |batch: DebounceEventResult| {
             let paths = match batch {

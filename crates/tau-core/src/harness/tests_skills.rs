@@ -33,7 +33,8 @@ async fn skill_list_serves_the_workspace_registry_with_project_wins() {
     );
     let core = CoreBuilder::custom(providers())
         .with_system_dir(system.path().to_path_buf())
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -90,7 +91,8 @@ async fn skill_list_lists_the_home_agents_skill_and_the_project_one_wins() {
     );
     let core = CoreBuilder::custom(providers())
         .with_home(home.path().to_path_buf())
-        .build().unwrap();
+        .build()
+        .unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),

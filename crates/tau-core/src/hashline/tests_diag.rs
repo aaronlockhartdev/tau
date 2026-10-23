@@ -211,7 +211,7 @@ fn literal_unicode_escape_in_content_is_flagged() {
         &[Edit {
             from: "AAAA".into(),
             to: "AAAA".into(),
-            content: "caf\\uDDDD".into(),
+            content: "ab\\uDDDD".into(),
         }],
         &opts,
     )

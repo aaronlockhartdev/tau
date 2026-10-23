@@ -14,7 +14,8 @@ async fn a_running_children_snapshot_reports_turn_running() {
             body: plain_body(),
             delay_ms: 80,
         }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let session = match core
@@ -103,7 +104,8 @@ async fn a_running_children_snapshot_reports_turn_running() {
 async fn a_snapshot_lists_subagents_in_spawn_order() {
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body: plain_body() }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
     let session = match core
@@ -187,7 +189,8 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
     let body = format!("{data}\n\ndata: [DONE]\n\n");
     let core = CoreBuilder::custom(providers())
         .with_child_factory(Arc::new(CannedChildFactory { body }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let mut rx = core.events_rx.lock().unwrap().take().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = match core
@@ -285,7 +288,8 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
             body: done_body(),
             delay_ms: 400,
         }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let collected = collect_events(&core);
     let workspace = open_ws(&core, tmp.path()).await;
     let session = match core
@@ -491,7 +495,8 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
             body: plain_body(),
             delay_ms: 3000,
         }))
-        .build().unwrap();
+        .build()
+        .unwrap();
     let collected = collect_events(&core);
     let tmp = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;

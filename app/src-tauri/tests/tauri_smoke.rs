@@ -15,7 +15,9 @@ use tauri::test::mock_app;
 #[tokio::test]
 async fn the_command_reaches_the_core_through_managed_state() {
     let app = mock_app();
-    app.manage(CoreState(CoreBuilder::custom(BTreeMap::new()).build().unwrap()));
+    app.manage(CoreState(
+        CoreBuilder::custom(BTreeMap::new()).build().unwrap(),
+    ));
     let out = tau_command(app.state(), Command::WorkspaceList)
         .await
         .expect("the command must not fail");

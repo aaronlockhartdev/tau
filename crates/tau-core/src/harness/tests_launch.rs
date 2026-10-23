@@ -87,7 +87,9 @@ fn agent_sid(agent: &AgentSession) -> String {
 
 #[tokio::test]
 async fn launch_root_without_providers_is_a_config_error() {
-    let core = CoreBuilder::custom(std::collections::BTreeMap::new()).build().unwrap();
+    let core = CoreBuilder::custom(std::collections::BTreeMap::new())
+        .build()
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
@@ -454,7 +456,8 @@ fn prompt_files_core() -> (Arc<Core>, std::path::PathBuf, std::path::PathBuf) {
     let cwd = std::mem::ManuallyDrop::new(cwd);
     let core = CoreBuilder::custom(providers())
         .with_home(home.path().to_path_buf())
-        .build().unwrap();
+        .build()
+        .unwrap();
     (core, home.path().to_path_buf(), cwd.path().to_path_buf())
 }
 
