@@ -32,6 +32,10 @@ _Avoid_: session store (that is the whole GUI state), session index
 One assistant response and the tool calls it executes, from model request to completion.
 _Avoid_: step, iteration
 
+**Cutoff**:
+A turn whose model stream ended before the model finished: the answer or a tool call was cut short through no fault of the user. Distinct from a Force-send, which the user ends and which leaves an `interrupted` message (ADR-0034).
+_Avoid_: truncation (used of a failed compaction), interruption (user-ended), stop (too generic)
+
 **Steering**:
 A message the user queues while a turn is active; delivered after the current turn's tool-call batch completes, becoming the next turn.
 _Avoid_: interrupt, nudge
@@ -51,6 +55,18 @@ _Avoid_: summarization, truncation
 **Observational Memory (OM)**:
 The memory model introduced by Mastra that tau's compaction is built on (ADR-0004): an Observer LLM converts raw messages into a dense, append-only, date-grouped observation log; a Reflector LLM rewrites the log to keep it bounded; raw messages stay in storage, recoverable via `recall`.
 _Avoid_: "the OM feature", "memory feature"
+
+**Context gate**:
+The check, before a model request goes out, that the assembled prompt fits the model's context window with room left for its answer; over budget it triggers compaction, and with nothing left to compact it refuses the call (spec §4, ADR-0034). A gate whose threshold cannot be computed is not a lenient gate — it is no gate.
+_Avoid_: budget (that is its threshold), pressure valve, overflow (the outcome it prevents)
+
+**Model facts**:
+What the user declares about a model — its context window, output cap, whether it reasons, its cost; fidelity is the user's responsibility (spec §12, ADR-0003).
+_Avoid_: model card, capabilities, model metadata (too generic)
+
+**Diagnostic**:
+A typed fact the harness records about a session — a code plus its fields — written into the session's own record so the harness, the GUI, and a session reopened later can all read it back (ADR-0034).
+_Avoid_: log (a log line describes one process run and dies with it), warning, note (the untyped predecessor)
 
 **Sub-agent**:
 A concurrent agent-loop instance in `tau-core` working a delegated task in its own session file linked to the parent. Always asynchronous (the spawn returns the child's name; the session id stays the machine key); a child is an *ordinary* session — openable, steerable, branchable in the GUI. States: running · idle (explicit wait) · done · failed · stopped — all deliberately resumable; nothing auto-resumes (ADR-0001, ADR-0006).
