@@ -14,7 +14,7 @@ fn state_entry(state: &str, extra: &serde_json::Value) -> crate::session::Entry 
         id: "e1".into(),
         parent: None,
         timestamp: 0,
-        kind: KIND_SUBAGENT.into(),
+        kind: EntryKind::Subagent,
         payload,
         blob: None,
         first_kept_entry_id: None,
@@ -33,7 +33,7 @@ fn state_only_child(
     store.create().unwrap();
     store.set_parent(parent).unwrap();
     store
-        .append(KIND_SUBAGENT, state_entry(state, extra).payload, None)
+        .append(EntryKind::Subagent, state_entry(state, extra).payload, None)
         .unwrap();
 }
 
@@ -99,7 +99,7 @@ fn disk_children_reads_the_minted_handle_from_spawn_records() {
     p.create().unwrap();
     // The parent's spawn record names the child's minted handle.
     p.append(
-        KIND_SUBAGENT,
+        EntryKind::Subagent,
         serde_json::json!({
             "event": "spawn",
             "type": "general",

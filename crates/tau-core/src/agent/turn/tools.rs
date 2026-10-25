@@ -1,7 +1,6 @@
-use crate::agent::{
-    AgentError, AgentSession, Entry, FunctionCall, KIND_TOOL, Ordering, Value, tools,
-};
+use crate::agent::{AgentError, AgentSession, Entry, FunctionCall, Ordering, Value, tools};
 use std::collections::{HashMap, HashSet};
+use tau_protocol::EntryKind;
 
 /// #186: the batch indices of `edit` calls whose target file is also
 /// targeted by another `edit` call in the same batch. They would share one
@@ -53,7 +52,7 @@ impl AgentSession {
             .mint_id();
         self.append_id(
             &entry_id,
-            KIND_TOOL,
+            EntryKind::Tool,
             tau_protocol::payload::ToolPayload {
                 call_id: call.call_id.clone(),
                 name: call.name.clone(),
@@ -89,7 +88,7 @@ impl AgentSession {
                     .mint_id();
                 self.append_id(
                     &entry_id,
-                    KIND_TOOL,
+                    EntryKind::Tool,
                     tau_protocol::payload::ToolPayload {
                         call_id: call.call_id.clone(),
                         name: call.name.clone(),
@@ -134,7 +133,7 @@ impl AgentSession {
                 hook(&Entry {
                     id: entry_id.clone(),
                     parent: parent.clone(),
-                    kind: KIND_TOOL.to_owned(),
+                    kind: EntryKind::Tool,
                     timestamp,
                     payload: tau_protocol::payload::ToolPayload {
                         call_id: call.call_id.clone(),
@@ -208,7 +207,7 @@ impl AgentSession {
             let status = result.status();
             self.append_id(
                 &entry_id,
-                KIND_TOOL,
+                EntryKind::Tool,
                 tau_protocol::payload::ToolPayload {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),

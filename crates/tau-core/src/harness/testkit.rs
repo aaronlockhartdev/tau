@@ -370,7 +370,7 @@ pub(crate) async fn wait_for_user_entry(workspace: &Workspace, session: &str) ->
     store.open().unwrap();
     for _ in 0..100 {
         let entries = store.entries_range(0, 100).unwrap();
-        if entries.iter().any(|e| e.kind == crate::agent::KIND_USER) {
+        if entries.iter().any(|e| e.kind == EntryKind::User) {
             return entries;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;

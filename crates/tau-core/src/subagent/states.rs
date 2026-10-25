@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The session entry kind for sub-agent lifecycle records (spawn, state
-/// transitions, notifies) — the child's session file is the record.
-pub const KIND_SUBAGENT: &str = "subagent";
-
 /// A parked child's declared wait target (spec §5.2: a secondary hint —
 /// the observed rest is the driver; the declaration rides the `idle`
 /// state as the GUI's badge).

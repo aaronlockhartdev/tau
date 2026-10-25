@@ -17,7 +17,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     for _ in 0..5 {
         let e = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
@@ -116,7 +116,7 @@ async fn om_runs_notify_the_status_hook_in_order() {
     for _ in 0..5 {
         let e = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
@@ -196,7 +196,7 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
     for _ in 0..5 {
         let e = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
                 parent.as_deref(),
             )
@@ -297,7 +297,7 @@ async fn context_gate_fires_when_over_budget() {
     for _ in 0..10 {
         let e = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "a".repeat(3200), "lane": "follow-up" }),
                 parent.as_deref(),
             )
@@ -395,7 +395,7 @@ async fn context_gate_noop_when_under_budget() {
     // One small entry: well under the 7904 budget.
     store
         .append(
-            "user",
+            EntryKind::User,
             serde_json::json!({ "text": "hello", "lane": "follow-up" }),
             None,
         )
@@ -455,7 +455,7 @@ async fn context_gate_degraded_when_still_over_budget() {
     for _ in 0..10 {
         let e = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "a".repeat(3200), "lane": "follow-up" }),
                 parent.as_deref(),
             )

@@ -4,6 +4,7 @@ use super::{
     Core, CoreUsage, Entry, EntryMeta, EntryStatus, LiveSession, LiveState, OmSnapshot, Ordering,
     Path, ProtocolError, SessionMeta, SessionStore, Snapshot, TurnState, Usage, Value, ViewEntry,
 };
+use tau_protocol::EntryKind;
 
 impl Core {
     pub(crate) fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
@@ -34,7 +35,7 @@ impl Core {
         let usage = entries
             .iter()
             .rev()
-            .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
+            .find(|e| e.kind == EntryKind::Assistant)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
         let meta = live
@@ -177,7 +178,7 @@ impl Core {
         let usage = entries
             .iter()
             .rev()
-            .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
+            .find(|e| e.kind == EntryKind::Assistant)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
         let leaf = store.leaf_cached().map_err(|e| ProtocolError::Other {
@@ -295,7 +296,7 @@ pub(crate) fn entry_meta(e: &Entry, size: u64) -> EntryMeta {
         size,
         preview: preview(e),
         first_kept: e.first_kept_entry_id.clone(),
-        status: if e.kind == crate::agent::KIND_ASSISTANT
+        status: if e.kind == EntryKind::Assistant
             && e.payload.get("interrupted") == Some(&Value::Bool(true))
         {
             EntryStatus::Interrupted
@@ -339,7 +340,7 @@ pub(crate) fn last_model_note(store: &mut SessionStore) -> Option<String> {
         .iter()
         .rev()
         .find(|e| {
-            e.kind == crate::agent::KIND_SYSTEM
+            e.kind == EntryKind::System
                 && e.payload
                     .get("note")
                     .and_then(|n| n.as_str())

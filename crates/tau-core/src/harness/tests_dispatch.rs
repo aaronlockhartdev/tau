@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::harness::testkit::*;
+use tau_protocol::EntryKind;
 
 #[tokio::test]
 async fn workspace_identity_is_stable_and_path_free() {
@@ -323,16 +324,13 @@ async fn a_production_send_makes_exactly_one_provider_call() {
         store.open().unwrap();
         let entries = store.entries_range(0, usize::MAX).unwrap();
         assert_eq!(
-            entries
-                .iter()
-                .filter(|e| e.kind == crate::agent::KIND_USER)
-                .count(),
+            entries.iter().filter(|e| e.kind == EntryKind::User).count(),
             expected
         );
         assert_eq!(
             entries
                 .iter()
-                .filter(|e| e.kind == crate::agent::KIND_ASSISTANT)
+                .filter(|e| e.kind == EntryKind::Assistant)
                 .count(),
             expected
         );
@@ -352,7 +350,7 @@ async fn closed_session_serves_snapshot_and_entries_from_disk() {
         let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
         store.create().unwrap();
         store
-            .append("user", json!({ "text": "hello" }), None)
+            .append(EntryKind::User, json!({ "text": "hello" }), None)
             .unwrap();
     }
     let snap = match core
@@ -438,7 +436,7 @@ async fn session_list_merges_live_and_disk_sessions() {
         store.create().unwrap();
         store.set_title("Closed One").unwrap();
         store
-            .append("user", json!({ "text": "hello" }), None)
+            .append(EntryKind::User, json!({ "text": "hello" }), None)
             .unwrap();
     }
     let list = match core
@@ -499,7 +497,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
             for i in 0..5u32 {
                 let e = store
                     .append(
-                        crate::agent::KIND_USER,
+                        EntryKind::User,
                         json!({ "text": format!("msg {i}") }),
                         parent.as_deref(),
                     )
@@ -569,7 +567,7 @@ async fn blob_read_decodes_the_sidecar_and_errors_are_clean() {
     let mut store = SessionStore::for_workspace(Path::new(&workspace.cwd), &id);
     store.create().unwrap();
     let payload = json!({ "active_observations": "x".repeat(120_000) });
-    let entry = store.append("om", payload, None).unwrap();
+    let entry = store.append(EntryKind::Om, payload, None).unwrap();
     let blob = entry.blob.expect("the oversized payload is a sidecar blob");
     let out = core
         .dispatch(Command::BlobRead {

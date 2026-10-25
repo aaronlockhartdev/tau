@@ -125,7 +125,7 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
     fn gate_notes(store: &SessionStore) -> Vec<String> {
         all_entries(store)
             .into_iter()
-            .filter(|e| e.kind == tau_core::agent::KIND_SYSTEM)
+            .filter(|e| e.kind == EntryKind::System)
             .filter_map(|e| {
                 e.payload
                     .get("note")
@@ -138,7 +138,7 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
     fn assistant_count(store: &SessionStore) -> usize {
         all_entries(store)
             .iter()
-            .filter(|e| e.kind == tau_core::agent::KIND_ASSISTANT)
+            .filter(|e| e.kind == EntryKind::Assistant)
             .count()
     }
 
@@ -307,7 +307,7 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
                 all_entries(&store)
                     .iter()
                     .rev()
-                    .find(|e| e.kind == KIND_SUBAGENT)
+                    .find(|e| e.kind == EntryKind::Subagent)
                     .and_then(|e| e.payload.get("state").and_then(Value::as_str))
                     .map(|s| matches!(s, "done" | "failed" | "stopped"))
             })
@@ -348,7 +348,7 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     // child's id (a done/failed wake or an idle notification — both are
     // lifecycle notifications, spec §5.2).
     let wake = pentries.iter().any(|e| {
-        e.kind == tau_core::agent::KIND_USER
+        e.kind == EntryKind::User
             && e.payload.get("source").and_then(Value::as_str) == Some(child_id.as_str())
     });
     if !wake {
@@ -357,13 +357,13 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     // The child's session carries its own record trail (state entries).
     let child_store = SessionStore::for_workspace(ws.path(), &child_id);
     let centries = all_entries(&child_store);
-    if !centries.iter().any(|e| e.kind == KIND_SUBAGENT) {
+    if !centries.iter().any(|e| e.kind == EntryKind::Subagent) {
         return Err("accept-subagent: the child's session has no lifecycle state entries".into());
     }
     let child_state = centries
         .iter()
         .rev()
-        .find(|e| e.kind == KIND_SUBAGENT)
+        .find(|e| e.kind == EntryKind::Subagent)
         .and_then(|e| e.payload.get("state").and_then(Value::as_str))
         .unwrap_or("");
     // Plan-file linkage (spec §5.3): the child's `done` is observed from
@@ -489,7 +489,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
                 all_entries(&s)
                     .iter()
                     .rev()
-                    .find(|e| e.kind == KIND_SUBAGENT)
+                    .find(|e| e.kind == EntryKind::Subagent)
                     .and_then(|e| e.payload.get("state").and_then(Value::as_str))
                     .is_some_and(|st| matches!(st, "done" | "failed" | "stopped"))
             })
@@ -765,7 +765,11 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let mut parent_id: Option<String> = None;
     for i in 0..40 {
         let e = store
-            .append("user", json!({ "text": prose(i) }), parent_id.as_deref())
+            .append(
+                EntryKind::User,
+                json!({ "text": prose(i) }),
+                parent_id.as_deref(),
+            )
             .map_err(|e| e.to_string())?;
         parent_id = Some(e.id);
     }
@@ -817,10 +821,7 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
 
     let mut store = SessionStore::for_workspace(ws.path(), &id);
     let entries = all_entries(&store);
-    let om_entries: Vec<&Entry> = entries
-        .iter()
-        .filter(|e| e.kind == tau_core::om_integration::KIND_OM)
-        .collect();
+    let om_entries: Vec<&Entry> = entries.iter().filter(|e| e.kind == EntryKind::Om).collect();
     if om_entries.is_empty() {
         // No om entry at all: the observe call did not land.
         return Ok(None);
@@ -881,7 +882,7 @@ pub(crate) fn core_offline() -> Result<(), String> {
     for i in 0..3usize {
         let e = store
             .append(
-                "message",
+                EntryKind::User,
                 json!({ "text": format!("trunk {i}") }),
                 prev.as_deref(),
             )
@@ -893,11 +894,15 @@ pub(crate) fn core_offline() -> Result<(), String> {
     }
     // The branch: append to the second entry (a new parentId forks it).
     let b1 = store
-        .append("message", json!({ "text": "branch 1" }), second.as_deref())
+        .append(
+            EntryKind::User,
+            json!({ "text": "branch 1" }),
+            second.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
     let b2 = store
         .append(
-            "message",
+            EntryKind::User,
             json!({ "text": "branch 2" }),
             Some(b1.id.as_str()),
         )

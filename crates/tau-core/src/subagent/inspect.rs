@@ -2,6 +2,7 @@ use super::{ChildState, SessionStore, SubagentInfo, Supervisor, TurnUsage, Waiti
 use crate::om;
 use crate::om_integration::{self, OmState};
 use crate::session::Entry;
+use tau_protocol::EntryKind;
 use tau_protocol::payload::{ActivityEntry, ActivityGroup, ChildActivity};
 
 /// The activity window's tail cap: a 10k-entry child must stay cheap
@@ -47,7 +48,7 @@ impl Supervisor {
                     branch
                         .iter()
                         .rev()
-                        .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
+                        .find(|e| e.kind == EntryKind::Assistant)
                         .and_then(|e| e.payload.get("usage"))
                         .and_then(|u| serde_json::from_value::<TurnUsage>(u.clone()).ok())
                 })
@@ -228,21 +229,21 @@ mod tests {
         store.create().unwrap();
         let user = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "work the thing" }),
                 None,
             )
             .unwrap();
         let assistant = store
             .append(
-                "assistant",
+                EntryKind::Assistant,
                 serde_json::json!({ "text": "on it" }),
                 Some(&user.id),
             )
             .unwrap();
         store
             .append(
-                "tool",
+                EntryKind::Tool,
                 serde_json::json!({
                     "call_id": "c1",
                     "name": "bash",
@@ -303,10 +304,14 @@ mod tests {
         let mut store = SessionStore::for_workspace(tmp.path(), "child-2");
         store.create().unwrap();
         let one = store
-            .append("user", serde_json::json!({ "text": "one" }), None)
+            .append(EntryKind::User, serde_json::json!({ "text": "one" }), None)
             .unwrap();
         let two = store
-            .append("user", serde_json::json!({ "text": "two" }), Some(&one.id))
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "two" }),
+                Some(&one.id),
+            )
             .unwrap();
         // The record's cursor points at an entry the branch does not carry
         // (the skew direction: the record read is newer than the entry
@@ -322,14 +327,18 @@ mod tests {
             ..Default::default()
         };
         let om_entry = store
-            .append("om", serde_json::to_value(&record).unwrap(), Some(&two.id))
+            .append(
+                EntryKind::Om,
+                serde_json::to_value(&record).unwrap(),
+                Some(&two.id),
+            )
             .unwrap();
         // A raw entry after the `om` record: the branch's leaf is past the
         // record, so `load_record` walks to it and finds the record
         // (the degraded path needs a leaf newer than the record).
         store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "three" }),
                 Some(&om_entry.id),
             )
@@ -357,7 +366,7 @@ mod tests {
         for i in 0..total {
             let e = store
                 .append(
-                    "user",
+                    EntryKind::User,
                     serde_json::json!({ "text": format!("entry {i}") }),
                     parent_id.as_deref(),
                 )
@@ -376,7 +385,7 @@ mod tests {
         };
         store
             .append(
-                "om",
+                EntryKind::Om,
                 serde_json::to_value(&record).unwrap(),
                 parent_id.as_deref(),
             )
@@ -406,7 +415,7 @@ mod tests {
         store.create().unwrap();
         store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "x".repeat(ACTIVITY_TEXT_LIMIT + 10) }),
                 None,
             )
@@ -431,7 +440,7 @@ mod tests {
         let mut store = SessionStore::for_workspace(tmp.path(), "child-5");
         store.create().unwrap();
         store
-            .append("user", serde_json::json!({ "text": big }), None)
+            .append(EntryKind::User, serde_json::json!({ "text": big }), None)
             .unwrap();
         let activity = read_activity(tmp.path(), "child-5", &crate::config::Om::default()).unwrap();
         let text = &activity.live[0].text;

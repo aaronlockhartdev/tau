@@ -3,6 +3,7 @@ use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
+use tau_protocol::EntryKind;
 
 use super::{BlobRef, DEFAULT_BLOB_THRESHOLD, Entry, Error, Header, SessionStore, ZSTD_LEVEL};
 
@@ -254,7 +255,7 @@ impl SessionStore {
     /// blob automatically.
     pub fn append(
         &mut self,
-        kind: &str,
+        kind: EntryKind,
         payload: Value,
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
@@ -269,7 +270,7 @@ impl SessionStore {
     pub fn append_entry(
         &mut self,
         id: &str,
-        kind: &str,
+        kind: EntryKind,
         payload: Value,
         parent: Option<&str>,
     ) -> Result<Entry, Error> {
@@ -282,7 +283,7 @@ impl SessionStore {
     /// Wire-only upsert for a pre-minted id (ADR-0008, #148): fires the
     /// entry event without writing the file line, which a later
     /// `append_entry` under the same id settles.
-    pub fn upsert_event(&self, id: &str, kind: &str, payload: Value) {
+    pub fn upsert_event(&self, id: &str, kind: EntryKind, payload: Value) {
         if let Some(hook) = &self.entry_event_hook {
             hook(&self.new_entry(id, kind, payload, None));
         }
@@ -409,7 +410,7 @@ mod tests {
         let mut s = store(tmp.path(), "s1");
         s.create().unwrap();
         let payload = Value::String("x".repeat(120_000));
-        let e = s.append("tool_result", payload.clone(), None).unwrap();
+        let e = s.append(EntryKind::Tool, payload.clone(), None).unwrap();
         assert!(e.payload.is_null());
         let blob = e.blob.as_ref().unwrap();
         assert_eq!(blob.size, 120_002);
@@ -432,7 +433,7 @@ mod tests {
         s.set_entry_event_hook(Some(std::sync::Arc::new(move |e: &Entry| {
             f.lock().unwrap().push(e.id.clone());
         })));
-        s.upsert_event("00000042", "user", Value::String("hi".into()));
+        s.upsert_event("00000042", EntryKind::User, Value::String("hi".into()));
         assert_eq!(fired.lock().unwrap().as_slice(), &["00000042".to_string()]);
         // Wire-only: the file still holds just the header.
         let raw = fs::read_to_string(s.path()).unwrap();
@@ -472,7 +473,7 @@ mod tests {
         // read the header — the bounded read must not need it.
         for i in 0..200 {
             s.append(
-                "message",
+                EntryKind::User,
                 serde_json::json!({"text": format!("entry {i} {}", "x".repeat(512))}),
                 None,
             )

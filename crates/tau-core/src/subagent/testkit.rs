@@ -317,7 +317,7 @@ pub(crate) fn entry_by_event(
         .entries_range(0, usize::MAX)
         .unwrap()
         .into_iter()
-        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!(event))
+        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == json!(event))
 }
 
 pub(crate) fn wait_for(cond: impl Fn() -> bool) {

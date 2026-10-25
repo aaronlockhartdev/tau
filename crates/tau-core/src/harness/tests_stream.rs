@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::harness::testkit::*;
-
+use tau_protocol::EntryKind;
 /// #261: a child's own live snapshot must report `turn: Running` while it is
 /// driving a turn — not the `Idle` its never-set `turn` flag always gave. The
 /// GUI derives a child's composer/stop from this, so an always-idle snapshot
@@ -354,7 +354,7 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
     // The report is present, attributed to the child.
     assert!(
         entries.iter().any(|e| {
-            e.kind == crate::agent::KIND_USER
+            e.kind == EntryKind::User
                 && e.payload["lane"] == "steering"
                 && e.payload["source"] == json!(sub.child)
         }),
@@ -432,7 +432,7 @@ async fn a_child_reuses_its_agents_provider_and_emits_its_stream_end() {
             matches!(
                 e,
                 Event::EntryUpsert { session, entry, .. }
-                    if *session == child && entry.kind == crate::agent::KIND_ASSISTANT
+                    if *session == child && entry.kind == EntryKind::Assistant
             )
         });
         if let Some(found) = snap.iter().find_map(|e| match e {
@@ -580,7 +580,7 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
         });
         if !found {
             found = store.entries_range(0, usize::MAX).unwrap().iter().any(|e| {
-                e.kind == crate::agent::KIND_USER
+                e.kind == EntryKind::User
                     && e.payload.get("text").and_then(|t| t.as_str()) == Some("steer the child")
                     && e.payload.get("source").and_then(|s| s.as_str()) == Some("user")
             });
@@ -656,7 +656,7 @@ async fn a_force_send_to_a_running_child_still_emits_its_stream_end() {
                     session,
                     entry,
                     ..
-                } if *session == child && entry.kind == crate::agent::KIND_ASSISTANT
+                } if *session == child && entry.kind == EntryKind::Assistant
             )
         });
         if !in_flight {
@@ -751,7 +751,7 @@ async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
     let tools: Vec<&tau_protocol::snapshot::ViewEntry> = events
         .iter()
         .filter_map(|e| match e {
-            Event::EntryUpsert { entry, .. } if entry.kind == "tool" => Some(entry),
+            Event::EntryUpsert { entry, .. } if entry.kind == EntryKind::Tool => Some(entry),
             _ => None,
         })
         .collect();

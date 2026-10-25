@@ -1,6 +1,7 @@
-use super::{AgentSession, KIND_USER, Lane, Queued};
+use super::{AgentSession, Lane, Queued};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tau_protocol::EntryKind;
 
 impl AgentSession {
     /// Queue `text` on `lane` (shared by `send`/`send_skill`): clears a
@@ -94,7 +95,7 @@ impl AgentSession {
             let id = inner.store.mint_id();
             inner.store.upsert_event(
                 &id,
-                KIND_USER,
+                EntryKind::User,
                 tau_protocol::payload::UserPayload {
                     text: text.clone(),
                     lane: "steering".to_owned(),

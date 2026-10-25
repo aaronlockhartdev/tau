@@ -192,7 +192,7 @@ async fn a_message_origin_rest_is_silent_to_the_parent() {
         let idle = es
             .iter()
             .filter(|e| {
-                e.kind == KIND_SUBAGENT
+                e.kind == EntryKind::Subagent
                     && e.payload["event"] == json!("state")
                     && e.payload["state"] == json!("idle")
             })

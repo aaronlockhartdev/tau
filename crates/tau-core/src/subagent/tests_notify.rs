@@ -230,7 +230,7 @@ async fn state_records_carry_the_discriminant_and_variant_fields() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .iter()
-        .filter(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!("state"))
+        .filter(|e| e.kind == EntryKind::Subagent && e.payload["event"] == json!("state"))
         .map(|e| e.payload.clone())
         .collect();
     assert_eq!(
@@ -248,7 +248,7 @@ async fn state_records_carry_the_discriminant_and_variant_fields() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .iter()
-        .filter(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!("notify"))
+        .filter(|e| e.kind == EntryKind::Subagent && e.payload["event"] == json!("notify"))
         .map(|e| e.payload.clone())
         .collect();
     assert_eq!(

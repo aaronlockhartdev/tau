@@ -4,7 +4,7 @@
 //! format) resolves unambiguously.
 
 use super::testkit::{CannedFactory, ScriptedProvider, TestBridge, TestDriver, sse, wait_for};
-use super::{ContextMode, SubagentBridge, Supervisor, SupervisorParams, route_parent};
+use super::{ContextMode, EntryKind, SubagentBridge, Supervisor, SupervisorParams, route_parent};
 use crate::agent::{AgentSession, Lane, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
@@ -112,7 +112,7 @@ async fn a_handle_round_trips_with_a_hyphenated_parent_id() {
                 .unwrap_or_default()
                 .iter()
                 .any(|e| {
-                    e.kind == crate::agent::KIND_USER
+                    e.kind == EntryKind::User
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("hello")
                         && e.payload.get("source").is_none()
@@ -154,7 +154,7 @@ async fn a_subagent_message_stamps_the_parent_as_the_sender() {
                 .unwrap_or_default()
                 .iter()
                 .any(|e| {
-                    e.kind == crate::agent::KIND_USER
+                    e.kind == EntryKind::User
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("focus on the edge cases")
                         && e.payload.get("source") == Some(&json!("parent"))
@@ -194,7 +194,7 @@ async fn a_gui_send_to_a_child_stamps_the_user_as_the_sender() {
                 .unwrap_or_default()
                 .iter()
                 .any(|e| {
-                    e.kind == crate::agent::KIND_USER
+                    e.kind == EntryKind::User
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("steer me")
                         && e.payload.get("source") == Some(&json!("user"))

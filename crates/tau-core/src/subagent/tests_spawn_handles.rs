@@ -134,9 +134,7 @@ async fn a_parent_without_spawn_records_starts_counting_from_one() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .iter()
-        .filter(|e| {
-            e.kind == crate::agent::KIND_TOOL && e.payload["name"] == json!("subagent_spawn")
-        })
+        .filter(|e| e.kind == EntryKind::Tool && e.payload["name"] == json!("subagent_spawn"))
         .count();
     assert_eq!(spawns, 1, "the spawn record is the seed's source");
 }

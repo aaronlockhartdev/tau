@@ -3,6 +3,7 @@ use super::*;
 use crate::harness::testkit::*;
 use crate::provider::TurnResult;
 use std::sync::atomic::AtomicBool;
+use tau_protocol::EntryKind;
 
 /// #267: the settlement guarantee is a `Drop` guard, so a `run_turn` task
 /// that panics mid-turn leaves `live.turn` cleared — the session is not
@@ -304,7 +305,7 @@ fn append_dangling_assistant(cwd: &Path, session: &str) {
         }],
     };
     store
-        .append(crate::agent::KIND_ASSISTANT, payload.to_value(), None)
+        .append(EntryKind::Assistant, payload.to_value(), None)
         .unwrap();
 }
 
@@ -352,7 +353,7 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
     recheck.open().unwrap();
     let entries = recheck.entries_range(0, usize::MAX).unwrap();
     let repaired = entries.iter().find(|e| {
-        e.kind == crate::agent::KIND_TOOL && e.payload.get("call_id").is_some_and(|c| c == "call_9")
+        e.kind == EntryKind::Tool && e.payload.get("call_id").is_some_and(|c| c == "call_9")
     });
     let repaired = repaired.expect("the repair minted the dangling call's tool entry");
     assert_eq!(

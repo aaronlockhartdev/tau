@@ -9,14 +9,7 @@ use crate::om::{self, Cursor, OmConfig, OmRecord};
 use crate::session::{Entry, SessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// The session entry kind that carries the OM record (spec §4: the session
-/// file carries the record; the newest entry is the current state).
-pub const KIND_OM: &str = "om";
-
-/// The child session's first entry at a compacted spawn (ADR-0004): points
-/// at the parent session and the source range the frozen prefix covers.
-pub const KIND_SPAWN_SNAPSHOT: &str = "spawn-snapshot";
+pub(crate) use tau_protocol::EntryKind;
 
 /// Fixed idle timeout for buffered-chunk activation (spec §4: v0 uses a
 /// fixed idle timeout, not provider-cache-TTL auto-mapping).
@@ -109,7 +102,7 @@ impl OmState {
         Ok(branch_entries(&entries, leaf.as_deref())
             .into_iter()
             .rev()
-            .find(|e| e.kind == KIND_OM)
+            .find(|e| e.kind == EntryKind::Om)
             .and_then(|e| record_from_entry(store, &e).ok())
             .unwrap_or_default())
     }
@@ -140,7 +133,7 @@ impl OmState {
         let payload = serde_json::to_value(&self.record)
             .map_err(|e| crate::session::Error::Other(e.to_string()))?;
         store
-            .append(KIND_OM, payload, parent.as_deref())
+            .append(EntryKind::Om, payload, parent.as_deref())
             .map(|_| ())
     }
 
@@ -256,7 +249,7 @@ impl From<crate::session::Error> for OmError {
 /// A raw conversation entry (spec §4: raw = what the Observer observes);
 /// record entries (om, spawn-snapshot, system) are not raw.
 fn is_raw(entry: &Entry) -> bool {
-    matches!(entry.kind.as_str(), "user" | "assistant" | "tool")
+    entry.kind.is_raw()
 }
 
 /// The raw text of an entry for token accounting and transcripts: user and
@@ -354,7 +347,7 @@ pub fn seed_compacted_child(
         }
         .to_value();
         let leaf = child.leaf()?.map(|e| e.id);
-        child.append(KIND_SPAWN_SNAPSHOT, payload, leaf.as_deref())?;
+        child.append(EntryKind::SpawnSnapshot, payload, leaf.as_deref())?;
     }
     Ok(OmRecord {
         frozen_prefix: log,
@@ -441,13 +434,18 @@ pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
     // skipped too: a background buffer cycle can commit one mid-episode,
     // after the turn's last model output (ticket #86 P2).
     let mut i = branch.len();
-    while i > 0 && matches!(branch[i - 1].kind.as_str(), "assistant" | "tool" | "om") {
+    while i > 0
+        && matches!(
+            branch[i - 1].kind,
+            EntryKind::Assistant | EntryKind::Tool | EntryKind::Om
+        )
+    {
         i -= 1;
     }
     if i == 0 {
         return 0;
     }
-    while i > 0 && branch[i - 1].kind == "user" {
+    while i > 0 && branch[i - 1].kind == EntryKind::User {
         i -= 1;
     }
     if i == 0 {

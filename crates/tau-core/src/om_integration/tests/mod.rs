@@ -12,7 +12,7 @@ pub(crate) fn store_with_text_entries(
         let text = "w".repeat(chars_each);
         let entry = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": text, "lane": "follow-up" }),
                 parent.as_deref(),
             )

@@ -15,6 +15,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+pub(crate) use tau_protocol::EntryKind;
 
 /// Session file format version — a versioned surface separate from the
 /// protocol (spec §3, pi-style).
@@ -230,7 +231,7 @@ impl SessionStore {
     fn new_entry(
         &self,
         id: &str,
-        kind: &str,
+        kind: EntryKind,
         payload: Value,
         first_kept_entry_id: Option<String>,
     ) -> Entry {
@@ -238,7 +239,7 @@ impl SessionStore {
             id: id.to_owned(),
             parent: None,
             timestamp: self.now(),
-            kind: kind.to_owned(),
+            kind,
             payload,
             blob: None,
             first_kept_entry_id,

@@ -24,6 +24,7 @@ use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::path::Path;
 use tau_core::session::SessionStore;
+use tau_protocol::EntryKind;
 
 /// The fixture's fixed clock (epoch ms).
 const FIXED_TIME: u64 = 1_750_000_000_000;
@@ -161,7 +162,7 @@ fn the_shared_fixture_is_written_and_hashed() {
         let file = FILES[usize::try_from(g).expect("loop index 0..50") % FILES.len()];
         let e = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": goal, "lane": "follow-up" }),
                 prev.as_deref(),
             )
@@ -170,7 +171,7 @@ fn the_shared_fixture_is_written_and_hashed() {
         n += 1;
         let e = store
             .append(
-                "assistant",
+                EntryKind::Assistant,
                 serde_json::json!({
                     "text": format!("Plan: start with {file}, then work the loop to completion."),
                     "reasoning": "",
@@ -215,19 +216,23 @@ fn the_shared_fixture_is_written_and_hashed() {
                     "output": "written"
                 }),
             };
-            let e = store.append("tool", tool, prev.as_deref()).unwrap();
+            let e = store
+                .append(EntryKind::Tool, tool, prev.as_deref())
+                .unwrap();
             prev = Some(e.id);
             n += 1;
         }
         // Compaction after the long tool loop, before the summary: the
         // record is the newest `om` entry, so re-opens read it back through
         // the blob sidecar when it is big enough (#49).
-        let e = store.append("om", om_payload(g), prev.as_deref()).unwrap();
+        let e = store
+            .append(EntryKind::Om, om_payload(g), prev.as_deref())
+            .unwrap();
         prev = Some(e.id);
         n += 1;
         let e = store
             .append(
-                "assistant",
+                EntryKind::Assistant,
                 serde_json::json!({
                     "text": format!("Done: {goal} — verified on a re-run."),
                     "reasoning": "",

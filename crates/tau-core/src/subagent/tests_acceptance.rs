@@ -183,7 +183,7 @@ async fn the_lifecycle_acceptance_flow() {
     let nudges: Vec<_> = centries
         .iter()
         .filter(|e| {
-            e.kind == crate::agent::KIND_SYSTEM
+            e.kind == EntryKind::System
                 && e.payload["note"].as_str()
                     == Some("Nudge: state what you are waiting for, or finish")
         })

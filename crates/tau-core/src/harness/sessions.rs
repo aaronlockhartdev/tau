@@ -7,6 +7,7 @@ use super::{
     SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner, session_name,
     skill_info, unique_name,
 };
+use tau_protocol::EntryKind;
 
 impl Core {
     /// The workspace's skill registry (ticket #28): the per-workspace
@@ -353,7 +354,7 @@ impl Core {
 }
 
 /// #267: mint `status: "error"` tool entries for a dangling assistant — one
-/// whose `calls` have no following `KIND_TOOL` entry per `call_id` (the turn
+/// whose `calls` have no following `EntryKind::Tool` entry per `call_id` (the turn
 /// died mid-execution). Runs at session re-open, before the store is
 /// handed to `build_live`, so the repaired file is what every later turn
 /// reads.
@@ -368,7 +369,7 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
         return Ok(());
     };
     let leaf = leaf.clone();
-    if leaf.kind != crate::agent::KIND_ASSISTANT {
+    if leaf.kind != EntryKind::Assistant {
         return Ok(());
     }
 
@@ -385,7 +386,7 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
         })?;
     let covered: std::collections::HashSet<&str> = after
         .iter()
-        .filter(|e| e.kind == crate::agent::KIND_TOOL)
+        .filter(|e| e.kind == EntryKind::Tool)
         .filter_map(|e| e.payload.get("call_id").and_then(Value::as_str))
         .collect();
     for call in &payload.calls {
@@ -396,7 +397,7 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
         store
             .append_entry(
                 &entry_id,
-                crate::agent::KIND_TOOL,
+                EntryKind::Tool,
                 ToolPayload {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),

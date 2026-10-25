@@ -4,6 +4,7 @@ use super::{
     Arc, Core, Entry, Event, LiveSession, Ordering, SessionStore, SystemEventKind, Value,
     entry_to_view, usage_of,
 };
+use tau_protocol::EntryKind;
 
 /// The settlement guarantee (#267): the one mechanism that clears
 /// `live.turn` on *any* exit of a turn — normal completion, early
@@ -153,15 +154,15 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     let mut assistant_index = 0usize;
     let mut queue_changed = false;
     for entry in &new {
-        match entry.kind.as_str() {
-            crate::agent::KIND_USER => {
+        match entry.kind {
+            EntryKind::User => {
                 // A delivered message has left the agent's queue (the
                 // process loop drained it): the post-turn Queue event is
                 // projected from the queue, so the GUI converges without a
                 // second ledger to remove from.
                 queue_changed = true;
             }
-            crate::agent::KIND_ASSISTANT => {
+            EntryKind::Assistant => {
                 let call_id = live
                     .provider
                     .calls
@@ -202,7 +203,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                         .usage = Some(u);
                 }
             }
-            crate::agent::KIND_TOOL => {
+            EntryKind::Tool => {
                 // The live hook already upserted this entry; the post-turn
                 // pass re-emits the file line (a lossy-channel dedup,
                 // idempotent by construction).
@@ -212,7 +213,14 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     entry: entry_to_view(entry),
                 });
             }
-            _ => {}
+            // Record kinds imply no event here; listed so a new kind forces a
+            // decision rather than defaulting silently.
+            EntryKind::System
+            | EntryKind::Om
+            | EntryKind::Subagent
+            | EntryKind::SpawnSnapshot
+            | EntryKind::Diagnostic
+            | EntryKind::Other(_) => {}
         }
         if let Some(first_kept) = &entry.first_kept_entry_id {
             core.emit(Event::SessionEvent {

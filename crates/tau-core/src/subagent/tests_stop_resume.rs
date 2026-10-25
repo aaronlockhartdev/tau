@@ -76,7 +76,7 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
     let entries = store.entries_range(0, usize::MAX).unwrap();
     let interrupted = entries
         .iter()
-        .find(|e| e.kind == crate::agent::KIND_ASSISTANT && e.payload["interrupted"] == json!(true))
+        .find(|e| e.kind == EntryKind::Assistant && e.payload["interrupted"] == json!(true))
         .expect("the partial is kept as interrupted");
     assert!(
         interrupted.payload["text"]
@@ -89,7 +89,7 @@ async fn a_stopped_child_keeps_its_partial_and_resumes() {
     cstore.open().unwrap();
     let entries = cstore.entries_range(0, usize::MAX).unwrap();
     assert!(
-        entries.iter().any(|e| e.kind == KIND_SUBAGENT
+        entries.iter().any(|e| e.kind == EntryKind::Subagent
             && e.payload["event"] == json!("state")
             && e.payload["state"] == json!("running")),
         "the resume transition is recorded"

@@ -6,6 +6,7 @@ use super::{
     SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, json,
     last_model_note, model_note, running_turn_refusal,
 };
+use tau_protocol::EntryKind;
 
 impl Core {
     #[allow(clippy::too_many_lines)] // one command per arm; splitting is refactoring
@@ -153,7 +154,7 @@ impl Core {
                     }
                     live.agent
                         .append_entry(
-                            crate::agent::KIND_SYSTEM,
+                            EntryKind::System,
                             json!({ "note": model_note(old.as_deref(), &model) }),
                         )
                         .map_err(|e| ProtocolError::Other {
@@ -182,7 +183,7 @@ impl Core {
                     let leaf = store.leaf().ok().flatten().map(|e| e.id);
                     store
                         .append(
-                            crate::agent::KIND_SYSTEM,
+                            EntryKind::System,
                             json!({ "note": model_note(old.as_deref(), &model) }),
                             leaf.as_deref(),
                         )

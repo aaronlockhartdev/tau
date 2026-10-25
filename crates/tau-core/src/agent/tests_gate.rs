@@ -45,7 +45,7 @@ fn write_call(id: &str, path: &str) -> (String, String, String) {
 fn system_notes(agent: &AgentSession) -> Vec<String> {
     entries_of(&agent.inner.lock().unwrap().store)
         .into_iter()
-        .filter(|e| e.kind == KIND_SYSTEM)
+        .filter(|e| e.kind == EntryKind::System)
         .filter_map(|e| e.payload["note"].as_str().map(str::to_owned))
         .collect()
 }

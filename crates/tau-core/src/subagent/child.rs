@@ -1,9 +1,9 @@
-use super::KIND_SUBAGENT;
 use super::states::{ChildState, ContextMode, TurnOrigin, WaitingOn};
 use crate::agent::AgentSession;
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use tau_protocol::EntryKind;
 
 /// One child's live record.
 pub struct Child {
@@ -90,7 +90,7 @@ impl Child {
             }),
         };
         self.agent
-            .append_entry(KIND_SUBAGENT, payload)
+            .append_entry(EntryKind::Subagent, payload)
             .map_err(|e| format!("subagent state entry failed: {e}"))
     }
 

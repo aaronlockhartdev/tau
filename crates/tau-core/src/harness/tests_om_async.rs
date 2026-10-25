@@ -205,7 +205,7 @@ impl Rig {
             events
                 .iter()
                 .any(|e| matches!(e, Event::EntryUpsert { entry, .. }
-                    if entry.kind == "assistant")),
+                    if entry.kind == EntryKind::Assistant)),
             "the turn's assistant entry is missing: {events:?}"
         );
         assert!(
@@ -250,7 +250,7 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     let entries = rig.entries();
     let om_entry = entries
         .iter()
-        .filter(|e| e.kind == "om")
+        .filter(|e| e.kind == EntryKind::Om)
         .max_by_key(|e| e.timestamp)
         .expect("an om entry is recorded");
     let record: crate::om::OmRecord =
@@ -261,7 +261,7 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     let tool_id = entries
         .iter()
         .rev()
-        .find(|e| e.kind == "tool")
+        .find(|e| e.kind == EntryKind::Tool)
         .expect("the tool entry")
         .id
         .clone();
@@ -322,7 +322,7 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
     let entries = rig.entries();
     let om_records: Vec<crate::om::OmRecord> = entries
         .iter()
-        .filter(|e| e.kind == "om")
+        .filter(|e| e.kind == EntryKind::Om)
         .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
         .collect();
     assert!(
@@ -364,7 +364,7 @@ async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
     let entries = rig.entries();
     let om_records: Vec<crate::om::OmRecord> = entries
         .iter()
-        .filter(|e| e.kind == "om")
+        .filter(|e| e.kind == EntryKind::Om)
         .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
         .collect();
     assert!(
@@ -428,13 +428,13 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     let entries = rig.entries();
     let tool_ids: Vec<&str> = entries
         .iter()
-        .filter(|e| e.kind == "tool")
+        .filter(|e| e.kind == EntryKind::Tool)
         .map(|e| e.id.as_str())
         .collect();
     assert_eq!(tool_ids.len(), 6);
     let promoted = entries
         .iter()
-        .filter(|e| e.kind == "om")
+        .filter(|e| e.kind == EntryKind::Om)
         .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
         .find(|r| r.cursor.as_ref().is_some_and(|c| c.entry_id == tool_ids[1]));
     assert!(
@@ -468,7 +468,11 @@ async fn a_done_turn_appends_no_om_entry() {
     Rig::settled_cleanly(&events);
     assert_eq!(served.load(Ordering::SeqCst), 1);
 
-    let om_entries = rig.entries().iter().filter(|e| e.kind == "om").count();
+    let om_entries = rig
+        .entries()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Om)
+        .count();
     assert_eq!(om_entries, 0, "a Done turn must not append an om entry");
 }
 
@@ -507,7 +511,11 @@ async fn a_promoting_turn_end_writes_one_record_not_two() {
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());
 
-    let om_entries = rig.entries().iter().filter(|e| e.kind == "om").count();
+    let om_entries = rig
+        .entries()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Om)
+        .count();
     assert_eq!(
         om_entries, 1,
         "a promoting turn-end writes exactly one om record; the write-back merge \

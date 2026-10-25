@@ -18,6 +18,8 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+#[cfg(test)]
+pub(crate) use tau_protocol::EntryKind;
 
 /// A message lane (spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,12 +28,6 @@ pub enum Lane {
     Steering,
     FollowUp,
 }
-
-/// The session entry kinds the loop defines on top of the storage (spec §3).
-pub const KIND_USER: &str = "user";
-pub const KIND_ASSISTANT: &str = "assistant";
-pub const KIND_TOOL: &str = "tool";
-pub const KIND_SYSTEM: &str = "system";
 
 /// A loop-level failure: session storage, the provider, or a prompt the
 /// gate's budget math already knows is over the window (a refusal that

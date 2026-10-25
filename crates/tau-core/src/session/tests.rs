@@ -12,21 +12,21 @@ pub(super) fn seeded(dir: &Path) -> (SessionStore, Vec<Entry>) {
     s.create().unwrap();
     let e1 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({"role": "user", "text": "one"}),
             None,
         )
         .unwrap();
     let e2 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({"role": "assistant", "text": "two"}),
             Some(&e1.id),
         )
         .unwrap();
     let e3 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({"role": "user", "text": "three"}),
             Some(&e2.id),
         )
@@ -66,7 +66,7 @@ fn branch_appends_a_child_line() {
     // Branch off the first entry — an append, no rewrite.
     let e4 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({"text": "branch"}),
             Some(&entries[0].id),
         )
@@ -207,7 +207,7 @@ fn cached_paged_reads_match_the_file_reads() {
     // An append lands in the in-memory log too (the live path's truth).
     let e4 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({ "text": "four" }),
             Some(&entries[2].id),
         )
@@ -262,7 +262,7 @@ fn an_append_settles_a_torn_tail() {
     fs::write(s.path(), raw).unwrap();
     let e4 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({ "text": "after the tear" }),
             Some(&entries[2].id),
         )
@@ -288,7 +288,7 @@ fn an_append_terminates_a_complete_line_missing_its_newline() {
     fs::write(s.path(), raw.trim_end_matches('\n')).unwrap();
     let e4 = s
         .append(
-            "message",
+            EntryKind::User,
             serde_json::json!({ "text": "next" }),
             Some(&entries[2].id),
         )
@@ -306,7 +306,7 @@ fn small_payload_stays_inline() {
     let mut s = store(tmp.path(), "s1");
     s.create().unwrap();
     let e = s
-        .append("message", Value::String("y".repeat(50)), None)
+        .append(EntryKind::User, Value::String("y".repeat(50)), None)
         .unwrap();
     assert!(e.blob.is_none());
     assert_eq!(e.payload, Value::String("y".repeat(50)));
@@ -328,7 +328,7 @@ fn unknown_parent_is_rejected() {
     let tmp = tempfile::tempdir().unwrap();
     let (mut s, _) = seeded(tmp.path());
     assert!(
-        s.append("message", serde_json::json!({}), Some("99999999"))
+        s.append(EntryKind::User, serde_json::json!({}), Some("99999999"))
             .is_err()
     );
 }
@@ -342,7 +342,11 @@ fn an_append_to_a_deleted_file_is_refused_not_resurrected() {
     let (mut s, _) = seeded(tmp.path());
     std::fs::remove_file(s.path()).unwrap();
     let err = s
-        .append("message", serde_json::json!({ "text": "ghost" }), None)
+        .append(
+            EntryKind::User,
+            serde_json::json!({ "text": "ghost" }),
+            None,
+        )
         .unwrap_err();
     assert!(
         matches!(err, Error::Other(_)),
@@ -361,7 +365,7 @@ fn leaf_is_none_on_a_fresh_session_and_the_entry_on_a_used_one() {
     store.create().unwrap();
     assert_eq!(store.leaf().unwrap(), None);
     let e = store
-        .append("user", serde_json::json!({"text": "hi"}), None)
+        .append(EntryKind::User, serde_json::json!({"text": "hi"}), None)
         .unwrap();
     assert_eq!(store.leaf().unwrap().unwrap().id, e.id);
 }
@@ -385,7 +389,7 @@ fn a_fork_copies_the_entry_tree_with_stable_ids_and_crcs() {
     // The fork appends against the inherited leaf, not a new root.
     let e = re
         .append(
-            "user",
+            EntryKind::User,
             serde_json::json!({"text": "after the fork"}),
             Some(&entries.last().unwrap().id),
         )
@@ -410,7 +414,11 @@ fn a_fork_cannot_clobber_an_existing_session_file() {
     let mut taken = store(dir.path(), "s2");
     taken.create().unwrap();
     taken
-        .append("user", serde_json::json!({"text": "the original"}), None)
+        .append(
+            EntryKind::User,
+            serde_json::json!({"text": "the original"}),
+            None,
+        )
         .unwrap();
     assert!(SessionStore::fork_from(&s, "s2").is_err());
     // The existing file is untouched.
@@ -440,7 +448,7 @@ fn a_fresh_handle_mints_past_the_files_ids() {
     let mut first = store(dir.path(), "s1");
     first.create().unwrap();
     let last = first
-        .append("message", serde_json::json!({"text": "seed"}), None)
+        .append(EntryKind::User, serde_json::json!({"text": "seed"}), None)
         .unwrap();
 
     let mut fresh = store(dir.path(), "s1");
@@ -450,4 +458,40 @@ fn a_fresh_handle_mints_past_the_files_ids() {
         "fresh handle minted {minted}, at or below the file's last id {}",
         last.id
     );
+}
+
+#[test]
+fn an_unknown_kind_survives_the_file_round_trip() {
+    // ADR-0034's forward tolerance: a line written by a newer build (a kind
+    // name this build has never heard of) still loads, keeps its payload and
+    // its CRC, and keeps its kind name for display.
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = store(dir.path(), "s1");
+    s.create().unwrap();
+    s.append(
+        EntryKind::User,
+        serde_json::json!({ "text": "before" }),
+        None,
+    )
+    .unwrap();
+    s.append(
+        EntryKind::Other("quantum".into()),
+        serde_json::json!({ "text": "from a newer build" }),
+        None,
+    )
+    .unwrap();
+
+    let mut reopened = store(dir.path(), "s1");
+    reopened.open().unwrap();
+    let all = reopened.entries_range(0, usize::MAX).unwrap();
+    let kinds: Vec<EntryKind> = all.iter().map(|e| e.kind.clone()).collect();
+    assert!(
+        kinds.contains(&EntryKind::Other("quantum".into())),
+        "the unknown kind was dropped: {kinds:?}"
+    );
+    let unknown = all
+        .iter()
+        .find(|e| e.kind == EntryKind::Other("quantum".into()))
+        .expect("the unknown-kind line");
+    assert_eq!(unknown.payload["text"], "from a newer build");
 }

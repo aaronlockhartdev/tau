@@ -12,6 +12,7 @@ use crate::om::{
 };
 use crate::om_integration::{BufferedChunk, OmState};
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
+use tau_protocol::EntryKind;
 
 /// The effective buffer interval at a pending level (D5): the full
 /// `buffer_tokens` below the ramp point, `buffer_tokens / 2` from there
@@ -209,7 +210,7 @@ fn commit_chunk(
         if let Ok(payload) = serde_json::to_value(&latest) {
             let parent = g.store.leaf().ok().flatten().map(|e| e.id);
             if g.store
-                .append(crate::om_integration::KIND_OM, payload, parent.as_deref())
+                .append(EntryKind::Om, payload, parent.as_deref())
                 .is_err()
             {
                 // The chunk is lost (rework at the next trigger, not data
@@ -313,7 +314,7 @@ mod tests {
             id: id.to_owned(),
             parent: None,
             timestamp: ts,
-            kind: "message".to_owned(),
+            kind: EntryKind::User,
             payload: serde_json::Value::Null,
             blob: None,
             first_kept_entry_id: None,

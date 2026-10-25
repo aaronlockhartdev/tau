@@ -1,10 +1,8 @@
-use super::{
-    AgentError, AgentSession, KIND_ASSISTANT, OmStatusHook, PlanStateHook, QueueEventHook,
-    TurnConfig,
-};
+use super::{AgentError, AgentSession, OmStatusHook, PlanStateHook, QueueEventHook, TurnConfig};
 use crate::provider::ToolSpec;
 use crate::session::{EntryEventHook, SessionStore};
 use serde_json::Value;
+use tau_protocol::EntryKind;
 
 impl AgentSession {
     /// The session store's header timestamp (epoch ms).
@@ -111,7 +109,7 @@ impl AgentSession {
 
     /// Append a record entry against the active leaf (the sub-agent
     /// lifecycle records, ticket #23).
-    pub(crate) fn append_entry(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
+    pub(crate) fn append_entry(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
         self.append(kind, payload)
     }
 
@@ -173,7 +171,7 @@ impl AgentSession {
         crate::om_integration::branch_entries(&entries, leaf.as_deref())
             .iter()
             .rev()
-            .find(|e| e.kind == KIND_ASSISTANT)
+            .find(|e| e.kind == EntryKind::Assistant)
             .and_then(|e| e.payload.get("text"))
             .and_then(Value::as_str)
             .map(str::to_owned)

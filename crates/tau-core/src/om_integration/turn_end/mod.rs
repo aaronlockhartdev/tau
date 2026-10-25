@@ -4,6 +4,7 @@ use super::{
     branch_entries, entry_text, idle_gap_secs, is_raw, om, transcript,
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
+use tau_protocol::EntryKind;
 
 /// The assembled main-turn context: the stable `instructions` (system prompt)
 /// plus the OM-derived `input` items — the one-shot continuation hint today,
@@ -362,7 +363,7 @@ impl OmState {
         // advance past the leading tool run (spec §4 cut rule). No floor prune:
         // unsummarized raw stays in the window until promotion advances the cursor.
         while let Some(entry) = raw.first() {
-            if entry.kind == "tool" {
+            if entry.kind == EntryKind::Tool {
                 raw.remove(0);
             } else {
                 break;

@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::harness::testkit::*;
+use tau_protocol::EntryKind;
 
 fn write_skill_fixture(project: &Path, rel: &str, raw: &str) {
     let path = project.join(rel).join("SKILL.md");
@@ -341,10 +342,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
     })
     .unwrap();
     let entries = wait_for_user_entry(&workspace, &s1).await;
-    let user = entries
-        .iter()
-        .find(|e| e.kind == crate::agent::KIND_USER)
-        .unwrap();
+    let user = entries.iter().find(|e| e.kind == EntryKind::User).unwrap();
     assert_eq!(
         user.payload["text"],
         format!(
@@ -370,10 +368,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
     })
     .unwrap();
     let entries = wait_for_user_entry(&workspace, &s2).await;
-    let user = entries
-        .iter()
-        .find(|e| e.kind == crate::agent::KIND_USER)
-        .unwrap();
+    let user = entries.iter().find(|e| e.kind == EntryKind::User).unwrap();
     assert_eq!(
         user.payload["text"],
         format!(
@@ -397,10 +392,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
     })
     .unwrap();
     let entries = wait_for_user_entry(&workspace, &s3).await;
-    let user = entries
-        .iter()
-        .find(|e| e.kind == crate::agent::KIND_USER)
-        .unwrap();
+    let user = entries.iter().find(|e| e.kind == EntryKind::User).unwrap();
     assert_eq!(user.payload["text"], "/not-a-skill");
     assert!(user.payload.get("skill").is_none());
 }

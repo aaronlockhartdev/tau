@@ -197,7 +197,7 @@ pub enum SystemEventKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::MessageLane;
+    use crate::{EntryKind, MessageLane};
     use serde_json::json;
 
     /// Every event variant round-trips; the multiplexed-channel envelope
@@ -231,7 +231,7 @@ mod tests {
                 entry: ViewEntry {
                     id: "00000007".into(),
                     parent: None,
-                    kind: "assistant".into(),
+                    kind: EntryKind::Assistant,
                     timestamp: 123,
                     payload: json!({ "text": "hello" }),
                     blob: None,

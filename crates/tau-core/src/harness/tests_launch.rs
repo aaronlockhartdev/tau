@@ -2,7 +2,7 @@
 //! wiring defaults, without a dispatch round-trip.
 
 use super::{
-    AgentSession, Config, Core, CoreBuilder, Event, SessionRole, SessionStore,
+    AgentSession, Config, Core, CoreBuilder, EntryKind, Event, SessionRole, SessionStore,
     testkit::{collect_events, open_ws, providers},
 };
 use crate::agent_type::builtin_general;
@@ -61,7 +61,7 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
     // The entry hook is wired: an append rides the channel as an
     // EntryUpsert (ADR-0008's file-line tee).
     agent
-        .append_entry("user", serde_json::json!({ "text": "hi" }))
+        .append_entry(EntryKind::User, serde_json::json!({ "text": "hi" }))
         .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
@@ -368,7 +368,7 @@ fn blob_entry(dir: &tempfile::TempDir, id: &str, payload: &serde_json::Value) {
         id: id.into(),
         parent: None,
         timestamp: 1,
-        kind: "tool".into(),
+        kind: EntryKind::Tool,
         payload: serde_json::Value::Null,
         blob: Some(crate::session::BlobRef {
             id: id.into(),
@@ -412,7 +412,7 @@ fn upsert_leaves_a_small_entry_alone() {
         id: "e2".into(),
         parent: None,
         timestamp: 1,
-        kind: "user".into(),
+        kind: EntryKind::User,
         payload: payload.clone(),
         blob: None,
         first_kept_entry_id: None,
@@ -430,7 +430,7 @@ fn upsert_falls_through_when_the_blob_file_is_missing() {
         id: "e3".into(),
         parent: None,
         timestamp: 1,
-        kind: "tool".into(),
+        kind: EntryKind::Tool,
         payload: serde_json::Value::Null,
         blob: Some(crate::session::BlobRef {
             id: "e3".into(),

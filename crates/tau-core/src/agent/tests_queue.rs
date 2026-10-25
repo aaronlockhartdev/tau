@@ -68,7 +68,7 @@ async fn a_stop_preempts_the_drain_and_a_send_resumes_it() {
     let entries = entries_of(&agent.inner.lock().unwrap().store);
     let users: Vec<&str> = entries
         .iter()
-        .filter(|e| e.kind == KIND_USER)
+        .filter(|e| e.kind == EntryKind::User)
         .map(|e| e.payload["text"].as_str().unwrap())
         .collect();
     assert_eq!(users, vec!["one", "two", "three", "go"]);

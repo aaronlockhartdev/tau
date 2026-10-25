@@ -23,6 +23,7 @@ clippy.dbg_macro = "deny"
 [dependencies]
 tau-core = { path = "../tau-core" }
 tau-mock-llm = { path = "../tau-mock-llm" }
+tau-protocol = { path = "../tau-protocol" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }

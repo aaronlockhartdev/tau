@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
+#[cfg(test)]
+pub(crate) use tau_protocol::EntryKind;
 
 use crate::agent::{AgentSession, Lane, SessionParams, TurnConfig};
 use crate::config::{self, Config};

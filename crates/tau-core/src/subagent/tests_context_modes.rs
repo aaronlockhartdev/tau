@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::om::OmRecord;
-use crate::om_integration::{self, OmState};
+use crate::om_integration::OmState;
 use crate::session::SessionStore;
 use crate::subagent::testkit::*;
 use serde_json::json;
@@ -56,7 +56,7 @@ async fn a_compacted_spawn_seeds_the_frozen_prefix() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .into_iter()
-        .find(|e| e.kind == om_integration::KIND_SPAWN_SNAPSHOT)
+        .find(|e| e.kind == EntryKind::SpawnSnapshot)
         .expect("a spawn-snapshot entry links the frozen prefix to the parent");
     assert_eq!(snapshot.payload["parentSession"], "parent");
     assert!(
@@ -98,13 +98,13 @@ async fn a_compacted_child_recalls_the_parent_session() {
     // The parent's raw history, plus an observation group covering it.
     parent
         .append_entry(
-            crate::agent::KIND_USER,
+            EntryKind::User,
             json!({ "text": "parent raw one", "lane": "follow-up" }),
         )
         .unwrap();
     parent
         .append_entry(
-            crate::agent::KIND_USER,
+            EntryKind::User,
             json!({ "text": "parent raw two", "lane": "follow-up" }),
         )
         .unwrap();
@@ -178,7 +178,7 @@ async fn a_fork_copies_the_tree_and_inherits_the_record() {
     // A user entry on the parent (the fork must copy it).
     parent
         .append_entry(
-            crate::agent::KIND_USER,
+            EntryKind::User,
             json!({ "text": "work 1", "lane": "follow-up" }),
         )
         .unwrap();
@@ -214,7 +214,7 @@ async fn a_fork_copies_the_tree_and_inherits_the_record() {
     let parent_entries = pstore.entries_range(0, usize::MAX).unwrap();
     let parent_user = parent_entries
         .iter()
-        .find(|e| e.kind == "user")
+        .find(|e| e.kind == EntryKind::User)
         .expect("the parent has a user entry");
     assert!(
         child_entries.iter().any(|e| e.id == parent_user.id),

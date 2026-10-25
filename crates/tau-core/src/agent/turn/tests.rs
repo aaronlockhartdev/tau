@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::{CallOutput, Entry, FunctionCall, InputEntry, KIND_TOOL, KIND_USER};
+use crate::agent::{CallOutput, Entry, FunctionCall, InputEntry};
 
 fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
     tool_entry_with_detail(id, call_id, output, None)
@@ -11,7 +11,7 @@ fn tool_entry_with_detail(id: &str, call_id: &str, output: &str, ui_detail: Opti
         id: id.to_owned(),
         parent: None,
         timestamp: 0,
-        kind: KIND_TOOL.to_owned(),
+        kind: EntryKind::Tool,
         payload: tau_protocol::payload::ToolPayload {
             call_id: call_id.to_owned(),
             name: "write".to_owned(),
@@ -33,7 +33,7 @@ fn user_entry(id: &str, text: &str, source: Option<&str>) -> Entry {
         id: id.to_owned(),
         parent: None,
         timestamp: 0,
-        kind: KIND_USER.to_owned(),
+        kind: EntryKind::User,
         payload: tau_protocol::payload::UserPayload {
             text: text.to_owned(),
             lane: "steering".to_owned(),
@@ -228,6 +228,19 @@ fn non_child_session_user_and_bare_are_untouched() {
     );
 }
 
+fn entry_of_kind(id: &str, kind: EntryKind, text: &str) -> Entry {
+    Entry {
+        id: id.to_owned(),
+        parent: None,
+        timestamp: 0,
+        kind,
+        payload: serde_json::json!({ "text": text }),
+        blob: None,
+        first_kept_entry_id: None,
+        crc: None,
+    }
+}
+
 #[test]
 fn ui_detail_never_enters_the_assembled_model_context() {
     // #243's structural guarantee: the GUI-only detail channel is on the wire
@@ -252,5 +265,25 @@ fn ui_detail_never_enters_the_assembled_model_context() {
                         if t == "wrote /tmp/a.txt (11 bytes, 3 lines)")
         ),
         "ui_detail leaked into the model context: {items:?}"
+    );
+}
+
+#[test]
+fn an_unknown_kind_never_enters_the_model_context() {
+    // ADR-0034: an entry kind this build does not know still loads and still
+    // renders, but it is not raw input — the prompt stays byte-stable.
+    let entries = vec![
+        user_entry("e1", "ask", None),
+        entry_of_kind(
+            "e2",
+            EntryKind::Other("quantum".into()),
+            "a newer build's kind",
+        ),
+    ];
+    let items = input_items(&entries, None);
+    assert_eq!(
+        user_content(&items),
+        vec!["ask".to_owned()],
+        "an unknown kind leaked into the model context: {items:?}"
     );
 }

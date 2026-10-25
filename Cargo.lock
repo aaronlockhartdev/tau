@@ -6141,6 +6141,7 @@ dependencies = [
  "serde_json",
  "tau-core",
  "tau-mock-llm",
+ "tau-protocol",
  "tempfile",
  "tokio",
  "tracing",

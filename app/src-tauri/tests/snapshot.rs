@@ -10,7 +10,7 @@ use tau_core::config::Provider;
 use tau_core::harness::CoreBuilder;
 use tau_core::session::SessionStore;
 use tau_protocol::snapshot::{EntryRange, Snapshot};
-use tau_protocol::{Command, CommandOutput};
+use tau_protocol::{Command, CommandOutput, EntryKind};
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // one end-to-end snapshot bound check; splitting is refactoring
@@ -52,7 +52,11 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
     for i in 0..10_000u32 {
         let text = format!("entry {i:05} ") + &"p".repeat(150);
         let e = store
-            .append("message", json!({ "text": text }), prev.as_deref())
+            .append(
+                EntryKind::Other("message".into()),
+                json!({ "text": text }),
+                prev.as_deref(),
+            )
             .unwrap();
         prev = Some(e.id);
     }

@@ -1,15 +1,16 @@
 use super::*;
 
 use serde_json::json;
+use tau_protocol::EntryKind;
 
 use crate::session::SessionStore;
 
-fn entry(kind: &str, payload: serde_json::Value) -> Entry {
+fn entry(kind: EntryKind, payload: serde_json::Value) -> Entry {
     Entry {
         id: "e1".into(),
         parent: None,
         timestamp: 1,
-        kind: kind.into(),
+        kind,
         payload,
         blob: None,
         first_kept_entry_id: None,
@@ -19,53 +20,50 @@ fn entry(kind: &str, payload: serde_json::Value) -> Entry {
 
 #[test]
 fn preview_reads_the_first_line_and_caps_at_80_chars() {
-    let e = entry(crate::agent::KIND_USER, json!({ "text": "short" }));
+    let e = entry(EntryKind::User, json!({ "text": "short" }));
     assert_eq!(snapshot::preview(&e), "short");
 
     let long = "x".repeat(90);
-    let e = entry(crate::agent::KIND_USER, json!({ "text": long }));
+    let e = entry(EntryKind::User, json!({ "text": long }));
     let out = snapshot::preview(&e);
     assert_eq!(out.chars().count(), 81); // 80 chars + the ellipsis
     assert!(out.ends_with('…'));
 
     // Only the first line: the rest is dropped.
-    let e = entry(crate::agent::KIND_USER, json!({ "text": "first\nsecond" }));
+    let e = entry(EntryKind::User, json!({ "text": "first\nsecond" }));
     assert_eq!(snapshot::preview(&e), "first");
 }
 
 #[test]
 fn preview_falls_back_through_note_state_output_name() {
     assert_eq!(
-        snapshot::preview(&entry("system", json!({ "note": "a note" }))),
+        snapshot::preview(&entry(EntryKind::System, json!({ "note": "a note" }))),
         "a note"
     );
     assert_eq!(
-        snapshot::preview(&entry("subagent", json!({ "state": "running" }))),
+        snapshot::preview(&entry(EntryKind::Subagent, json!({ "state": "running" }))),
         "running"
     );
     assert_eq!(
-        snapshot::preview(&entry(
-            crate::agent::KIND_TOOL,
-            json!({ "output": "the output" })
-        )),
+        snapshot::preview(&entry(EntryKind::Tool, json!({ "output": "the output" }))),
         "the output"
     );
     assert_eq!(
-        snapshot::preview(&entry(crate::agent::KIND_TOOL, json!({ "name": "bash" }))),
+        snapshot::preview(&entry(EntryKind::Tool, json!({ "name": "bash" }))),
         "bash"
     );
 }
 
 #[test]
 fn preview_of_an_entry_without_a_string_field_is_empty() {
-    let e = entry(crate::agent::KIND_TOOL, json!({ "args": { "n": 1 } }));
+    let e = entry(EntryKind::Tool, json!({ "args": { "n": 1 } }));
     assert_eq!(snapshot::preview(&e), "");
 }
 
 #[test]
 fn entry_meta_marks_an_interrupted_assistant() {
     let e = entry(
-        crate::agent::KIND_ASSISTANT,
+        EntryKind::Assistant,
         json!({ "text": "partial", "interrupted": true }),
     );
     let meta = snapshot::entry_meta(&e, 42);
@@ -74,7 +72,7 @@ fn entry_meta_marks_an_interrupted_assistant() {
     assert_eq!(meta.preview, "partial");
 
     let e = entry(
-        crate::agent::KIND_ASSISTANT,
+        EntryKind::Assistant,
         json!({ "text": "whole", "interrupted": false }),
     );
     assert_eq!(snapshot::entry_meta(&e, 7).status, EntryStatus::Ok);
@@ -128,11 +126,7 @@ fn last_model_note_is_the_newest_model_on_the_active_branch() {
     assert_eq!(snapshot::last_model_note(&mut store), None);
 
     store
-        .append(
-            crate::agent::KIND_SYSTEM,
-            json!({ "note": "model: gpt-5" }),
-            None,
-        )
+        .append(EntryKind::System, json!({ "note": "model: gpt-5" }), None)
         .unwrap();
     assert_eq!(snapshot::last_model_note(&mut store), Some("gpt-5".into()));
 
@@ -140,7 +134,7 @@ fn last_model_note_is_the_newest_model_on_the_active_branch() {
     // A second change: the note carries the arrow, and the newest side wins.
     store
         .append(
-            crate::agent::KIND_SYSTEM,
+            EntryKind::System,
             json!({ "note": "model: gpt-5 → claude-opus-4-8" }),
             Some(first_id.as_str()),
         )
@@ -154,7 +148,7 @@ fn last_model_note_is_the_newest_model_on_the_active_branch() {
     let second_id = store.leaf().unwrap().unwrap().id;
     store
         .append(
-            crate::agent::KIND_SYSTEM,
+            EntryKind::System,
             json!({ "note": "something else" }),
             Some(second_id.as_str()),
         )

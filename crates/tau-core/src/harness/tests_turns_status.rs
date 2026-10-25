@@ -14,7 +14,7 @@ async fn result_tool_entry(
             matches!(
                 e,
                 Event::EntryUpsert { entry, .. }
-                    if entry.kind == "tool" && entry.payload["output"] != serde_json::json!("")
+                    if entry.kind == EntryKind::Tool && entry.payload["output"] != serde_json::json!("")
             )
         }) {
             return entry.clone();

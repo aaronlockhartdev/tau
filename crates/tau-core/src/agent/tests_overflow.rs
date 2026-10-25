@@ -107,7 +107,7 @@ fn omless_agent(
 
 fn recorded_400(store: &SessionStore, want_body: &str) -> bool {
     entries_of(store).iter().any(|e| {
-        e.kind == KIND_SYSTEM && e.payload["status"] == 400 && e.payload["body"] == want_body
+        e.kind == EntryKind::System && e.payload["status"] == 400 && e.payload["body"] == want_body
     })
 }
 
@@ -142,7 +142,7 @@ async fn over_budget_without_unobserved_material_is_refused() {
     let entries = entries_of(&reopened);
     assert!(
         entries.iter().any(|e| {
-            e.kind == KIND_SYSTEM
+            e.kind == EntryKind::System
                 && e.payload["prompt"].as_u64().unwrap() > e.payload["budget"].as_u64().unwrap()
         }),
         "a system entry records the overflow: {entries:?}"

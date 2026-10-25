@@ -14,7 +14,7 @@ use crate::transport::{self, Out};
 use serde_json::json;
 use tau_core::harness::Core;
 use tau_protocol::snapshot::ViewEntry;
-use tau_protocol::{Command, Event, MessageLane, SystemEventKind};
+use tau_protocol::{Command, EntryKind, Event, MessageLane, SystemEventKind};
 
 /// The four values every pump handler needs, named once: a future pump
 /// dependency (a clock, a policy) adds a field, not a parameter to `handle`
@@ -249,7 +249,7 @@ fn track_last_assistant(
     session: &str,
     entry: &ViewEntry,
 ) {
-    if entry.kind != "assistant" {
+    if entry.kind != EntryKind::Assistant {
         return;
     }
     let Some(s) = sessions.get_mut(session) else {

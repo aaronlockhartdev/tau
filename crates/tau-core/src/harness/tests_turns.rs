@@ -204,7 +204,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
                 .filter(|e| {
                     matches!(
                         e,
-                        Event::EntryUpsert { entry, .. } if entry.kind == "tool"
+                        Event::EntryUpsert { entry, .. } if entry.kind == EntryKind::Tool
                     )
                 })
                 .count()
@@ -229,7 +229,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     let Some(Event::EntryUpsert { entry: first, .. }) = events.iter().find(|e| {
         matches!(
             e,
-            Event::EntryUpsert { entry, .. } if entry.kind == "assistant"
+            Event::EntryUpsert { entry, .. } if entry.kind == EntryKind::Assistant
         )
     }) else {
         panic!("no assistant upsert: {events:?}");
@@ -242,7 +242,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     }) = events.iter().rev().find(|e| {
         matches!(
             e,
-            Event::EntryUpsert { entry, .. } if entry.kind == "assistant"
+            Event::EntryUpsert { entry, .. } if entry.kind == EntryKind::Assistant
         )
     })
     else {
@@ -269,7 +269,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     let tools: Vec<&tau_protocol::snapshot::ViewEntry> = events
         .iter()
         .filter_map(|e| match e {
-            Event::EntryUpsert { entry, .. } if entry.kind == "tool" => Some(entry),
+            Event::EntryUpsert { entry, .. } if entry.kind == EntryKind::Tool => Some(entry),
             _ => None,
         })
         .collect();
@@ -739,7 +739,9 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     let assistants = events
         .iter()
         .filter_map(|e| match e {
-            Event::EntryUpsert { entry, .. } if entry.kind == "assistant" => Some(entry.id.clone()),
+            Event::EntryUpsert { entry, .. } if entry.kind == EntryKind::Assistant => {
+                Some(entry.id.clone())
+            }
             _ => None,
         })
         .collect::<std::collections::BTreeSet<_>>();
@@ -880,7 +882,7 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         events
             .iter()
             .any(|e| matches!(e, Event::EntryUpsert { entry, .. }
-            if entry.kind == "assistant")),
+            if entry.kind == EntryKind::Assistant)),
         "the turn's assistant entry is missing: {events:?}"
     );
     assert!(

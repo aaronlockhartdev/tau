@@ -62,7 +62,7 @@ async fn a_background_bash_returns_immediately_and_wakes_on_exit() {
 
     // The tool entry is the immediate ack: job id + output path.
     let entries = entries_of(&agent.inner.lock().unwrap().store);
-    let tool = entries.iter().find(|e| e.kind == KIND_TOOL).unwrap();
+    let tool = entries.iter().find(|e| e.kind == EntryKind::Tool).unwrap();
     assert_eq!(tool.payload["name"], "bash");
     let output = tool.payload["output"].as_str().unwrap().to_owned();
     assert!(
@@ -113,13 +113,16 @@ async fn the_completion_gate_skips_while_a_job_is_live() {
     // job it skips, so the turn stands: two assistant entries, no gate
     // record.
     let entries = entries_of(&agent.inner.lock().unwrap().store);
-    let assistants = entries.iter().filter(|e| e.kind == KIND_ASSISTANT).count();
+    let assistants = entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Assistant)
+        .count();
     assert_eq!(
         assistants, 2,
         "tool segment + final segment, no repair bounce"
     );
     assert!(!entries.iter().any(|e| {
-        e.kind == KIND_SYSTEM
+        e.kind == EntryKind::System
             && e.payload
                 .get("note")
                 .and_then(serde_json::Value::as_str)

@@ -1,8 +1,9 @@
 use super::{
-    Arc, Child, ChildState, KIND_SUBAGENT, ResumeContract, StateNotice, Supervisor, Value,
-    WaitingOn, WakeKind, WakeNotice,
+    Arc, Child, ChildState, ResumeContract, StateNotice, Supervisor, Value, WaitingOn, WakeKind,
+    WakeNotice,
 };
 use serde_json::json;
+use tau_protocol::EntryKind;
 
 impl Supervisor {
     /// Emit a child state transition: the identity (parent, handle, child)
@@ -114,7 +115,7 @@ impl Supervisor {
         if let Some(w) = waiting_on {
             payload["waiting_on"] = json!(w.as_str());
         }
-        if let Err(e) = child.agent.append_entry(KIND_SUBAGENT, payload) {
+        if let Err(e) = child.agent.append_entry(EntryKind::Subagent, payload) {
             return format!("parent_notify: recording the note failed: {e}");
         }
         child.set_last_message(text);

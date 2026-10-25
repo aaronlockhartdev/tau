@@ -10,6 +10,7 @@
 use crate::config::Gates;
 use std::path::Path;
 use std::time::Duration;
+use tau_protocol::EntryKind;
 
 /// The cap on the check output carried into the system entry and the repair
 /// message: a failing build/test suite can emit megabytes, and the record
@@ -178,7 +179,7 @@ pub(crate) fn initial_gate_failed(
             .iter()
             .rev()
             .any(|e| {
-                e.kind == crate::agent::KIND_SYSTEM
+                e.kind == EntryKind::System
                     && e.payload
                         .get("note")
                         .and_then(|n| n.as_str())

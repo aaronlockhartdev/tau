@@ -1,7 +1,8 @@
 //! The turn-end completion-gate stop-hook, in its own module so `turn.rs`
 //! stays under the 1000-LOC file-size limit (AGENTS.md).
 
-use super::{AgentError, AgentSession, KIND_SYSTEM, Lane};
+use super::{AgentError, AgentSession, Lane};
+use tau_protocol::EntryKind;
 
 impl AgentSession {
     /// The turn-end stop-hook (spec §5.3): run the completion gate on a
@@ -54,7 +55,7 @@ impl AgentSession {
         if *retries > gates.max_retries {
             // max_retries failed repairs: the session is gate_failed.
             self.append(
-                KIND_SYSTEM,
+                EntryKind::System,
                 serde_json::json!({
                     "note": crate::gate::failed_note(&gates, &result, gates.max_retries)
                 }),
@@ -63,7 +64,7 @@ impl AgentSession {
             return Ok(true); // end the turn
         }
         self.append(
-            KIND_SYSTEM,
+            EntryKind::System,
             serde_json::json!({
                 "note": crate::gate::failure_note(&gates, &result, *retries)
             }),

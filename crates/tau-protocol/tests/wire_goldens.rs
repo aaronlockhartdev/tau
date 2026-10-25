@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 
 use serde_json::json;
+use tau_protocol::EntryKind;
 use tau_protocol::snapshot::{SessionMeta, ViewEntry, Workspace};
 
 fn ws() -> Workspace {
@@ -35,7 +36,7 @@ fn view_entry() -> ViewEntry {
     ViewEntry {
         id: "00000007".into(),
         parent: Some("00000006".into()),
-        kind: "assistant".into(),
+        kind: EntryKind::Assistant,
         timestamp: 1_700_000_000_123,
         payload: json!({ "text": "hello" }),
         blob: None,
@@ -190,7 +191,7 @@ mod outputs {
     use tau_protocol::snapshot::{
         EntryMeta, EntryStatus, LiveState, OmSnapshot, Snapshot, TurnState,
     };
-    use tau_protocol::{CommandOutput, ContextMode, SkillInfo, SubagentInfo};
+    use tau_protocol::{CommandOutput, ContextMode, EntryKind, SkillInfo, SubagentInfo};
 
     #[test]
     fn snapshot_output() {
@@ -201,7 +202,7 @@ mod outputs {
                 entries: vec![EntryMeta {
                     id: "00000007".into(),
                     parent: None,
-                    kind: "assistant".into(),
+                    kind: EntryKind::Assistant,
                     timestamp: 1_700_000_000_123,
                     size: 42,
                     preview: "hello".into(),

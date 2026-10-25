@@ -5,6 +5,7 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Write as _;
+use tau_protocol::EntryKind;
 
 use super::{Error, SessionStore};
 
@@ -21,8 +22,9 @@ pub struct BlobRef {
     pub hash: String,
 }
 
-/// One session entry: one JSONL line (spec §3). `kind` is free-form — the
-/// agent-loop and OM tickets define the concrete kinds on top of this storage.
+/// One session entry: one JSONL line (spec §3). The kind set is closed
+/// ([`EntryKind`]); each kind's payload shape is owned by one type in
+/// [`tau_protocol::payload`] (ADR-0034, C9).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
@@ -33,7 +35,7 @@ pub struct Entry {
     /// Epoch milliseconds.
     pub timestamp: u64,
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: EntryKind,
     /// Inline payload; `Value::Null` when the data lives in a sidecar blob.
     #[serde(default, skip_serializing_if = "Value::is_null")]
     pub payload: Value,

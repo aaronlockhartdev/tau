@@ -454,7 +454,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         };
         es.iter()
             .filter(|e| {
-                e.kind == "subagent"
+                e.kind == EntryKind::Subagent
                     && e.payload["event"] == json!("state")
                     && e.payload["state"] == json!("idle")
             })
@@ -471,7 +471,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
     let rests = entries
         .iter()
         .filter(|e| {
-            e.kind == "subagent"
+            e.kind == EntryKind::Subagent
                 && e.payload["event"] == json!("state")
                 && e.payload["state"] == json!("idle")
         })

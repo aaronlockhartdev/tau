@@ -240,7 +240,7 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
         let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
         store.create().unwrap();
         store
-            .append("user", json!({ "text": "hello" }), None)
+            .append(EntryKind::User, json!({ "text": "hello" }), None)
             .unwrap();
     }
     core.dispatch(Command::SessionSetModel {

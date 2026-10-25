@@ -1,10 +1,11 @@
 use super::{
-    AgentError, AgentSession, InputEntry, KIND_ASSISTANT, KIND_SYSTEM, KIND_USER, Lane, Ordering,
-    Queued, ResponseRequest, ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
+    AgentError, AgentSession, InputEntry, Lane, Ordering, Queued, ResponseRequest, ToolBatchPolicy,
+    TurnConfig, TurnResult, Value, lane_name,
 };
 use crate::provider::ToolSpec;
 use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
 use sink::StreamEntrySink;
+use tau_protocol::EntryKind;
 
 /// Headroom reserved for the system prompt and framing overhead when
 /// computing the context gate's safe budget (ticket #210, spec §4).
@@ -133,7 +134,7 @@ impl AgentSession {
                     // the wire instead of sending a doomed 400, and leave a
                     // durable trace of the refusal.
                     self.append(
-                        KIND_SYSTEM,
+                        EntryKind::System,
                         serde_json::json!({ "prompt": prompt, "budget": budget }),
                     )?;
                     return Err(AgentError::ContextOverflow { prompt, budget });
@@ -363,7 +364,7 @@ impl AgentSession {
     fn record_rejection(&self, e: &crate::provider::ProviderError) -> Result<(), AgentError> {
         if let crate::provider::ProviderError::Status { status, body } = e {
             self.append(
-                KIND_SYSTEM,
+                EntryKind::System,
                 serde_json::json!({ "note": "provider rejection", "status": status, "body": body }),
             )
         } else {
@@ -449,8 +450,8 @@ impl AgentSession {
         // already fired): the line lands now, under that id, after the
         // in-flight entry it was queued behind (#148).
         match msg.entry_id {
-            Some(id) => self.append_id(&id, KIND_USER, payload),
-            None => self.append(KIND_USER, payload),
+            Some(id) => self.append_id(&id, EntryKind::User, payload),
+            None => self.append(EntryKind::User, payload),
         }
     }
 
@@ -467,7 +468,7 @@ impl AgentSession {
         }
         self.append_id(
             id,
-            KIND_ASSISTANT,
+            EntryKind::Assistant,
             tau_protocol::payload::AssistantPayload {
                 text: result.text.clone(),
                 reasoning: result.reasoning.clone(),
@@ -488,7 +489,7 @@ impl AgentSession {
         )
     }
 
-    pub(super) fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
+    pub(super) fn append(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
         let id = self
             .inner
             .lock()
@@ -500,7 +501,12 @@ impl AgentSession {
 
     /// Append under a pre-minted id (ADR-0008): the re-emitted item keeps
     /// the id its first emission carried.
-    pub(super) fn append_id(&self, id: &str, kind: &str, payload: Value) -> Result<(), AgentError> {
+    pub(super) fn append_id(
+        &self,
+        id: &str,
+        kind: EntryKind,
+        payload: Value,
+    ) -> Result<(), AgentError> {
         let mut inner = self
             .inner
             .lock()

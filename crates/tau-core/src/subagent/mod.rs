@@ -28,7 +28,9 @@ pub use bridge::{
 pub use child::Child;
 pub use link::ChildLink;
 pub use route::route_parent;
-pub use states::{ChildState, ContextMode, KIND_SUBAGENT, StoppedBy, TurnOrigin, WaitingOn};
+pub use states::{ChildState, ContextMode, StoppedBy, TurnOrigin, WaitingOn};
+pub(crate) use tau_protocol::EntryKind;
+
 /// The supervisor: one per non-child session; owns that session's
 /// children. A child session carries no supervisor — the depth cap (a
 /// child cannot spawn) is structural, not a check.
@@ -220,7 +222,7 @@ impl Supervisor {
             entries
                 .iter()
                 .filter(|e| {
-                    e.kind == crate::agent::KIND_TOOL
+                    e.kind == EntryKind::Tool
                         && e.payload["name"] == serde_json::json!("subagent_spawn")
                 })
                 .count()

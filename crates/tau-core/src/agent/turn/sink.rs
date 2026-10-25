@@ -1,9 +1,8 @@
-use crate::agent::{
-    Arc, AtomicBool, Entry, EntryEventHook, KIND_ASSISTANT, Ordering, TurnEvent, TurnSink,
-};
+use crate::agent::{Arc, AtomicBool, Entry, EntryEventHook, Ordering, TurnEvent, TurnSink};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, Instant};
+use tau_protocol::EntryKind;
 
 /// The sink the loop gives the provider: the per-call kill flag (force)
 /// or the persistent stop flag (ticket #23) stops the stream (spec §7).
@@ -68,7 +67,7 @@ impl StreamEntrySink {
         let entry = Entry {
             id: self.id.clone(),
             parent: self.parent.clone(),
-            kind: KIND_ASSISTANT.to_owned(),
+            kind: EntryKind::Assistant,
             timestamp: self.timestamp,
             payload: tau_protocol::payload::AssistantPayload {
                 text: self.text.clone(),

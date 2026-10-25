@@ -178,7 +178,7 @@ fn command_output_variants_roundtrip() {
     let entry = snapshot::ViewEntry {
         id: "e1".into(),
         parent: None,
-        kind: "message".into(),
+        kind: EntryKind::Other("message".into()),
         timestamp: 1,
         payload: json!({ "text": "hi" }),
         blob: None,

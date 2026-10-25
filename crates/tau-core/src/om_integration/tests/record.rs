@@ -105,7 +105,7 @@ fn a_record_over_the_blob_threshold_round_trips() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .into_iter()
-        .filter(|e| e.kind == KIND_OM)
+        .filter(|e| e.kind == EntryKind::Om)
         .collect();
     let newest = om_entries.last().unwrap();
     assert!(

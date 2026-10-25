@@ -7,11 +7,11 @@
 //! the same id (order-preservation rule #148 untouched — progress upserts are
 //! wire-only).
 
-use crate::agent::KIND_TOOL;
 use crate::session::{Entry, EntryEventHook};
 use crate::tools::ToolOutput;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tau_protocol::EntryKind;
 
 /// The display-frame cadence: at most one in-flight re-upsert per frame
 /// (ADR-0008, the streaming assistant entry's [`StreamEntrySink`] interval).
@@ -94,7 +94,7 @@ impl ToolProgress {
         let entry = Entry {
             id: self.id.clone(),
             parent: self.parent.clone(),
-            kind: KIND_TOOL.to_owned(),
+            kind: EntryKind::Tool,
             timestamp: self.timestamp,
             payload: tau_protocol::payload::ToolPayload {
                 call_id: self.call_id.clone(),
@@ -138,7 +138,7 @@ impl ToolProgress {
         let entry = Entry {
             id: self.id.clone(),
             parent: self.parent.clone(),
-            kind: KIND_TOOL.to_owned(),
+            kind: EntryKind::Tool,
             timestamp: self.timestamp,
             payload: tau_protocol::payload::ToolPayload {
                 call_id: self.call_id.clone(),
