@@ -1,6 +1,6 @@
 # Diagnostics are typed session records; `system` prose notes are retired and `tracing` stays a mirror capped at error
 
-**Status**: accepted (2026-10-25) — from the "agents randomly stop" investigation; implementation is #306, with follow-on tickets for the provider `StreamEnd` and for semantic config validation + resolved Model facts.
+**Status**: accepted (2026-10-25) — from the "agents randomly stop" investigation; implementation is #306, with follow-on tickets for the provider `StreamEnd` and for semantic config validation + resolved Model facts. The full codebase sweep for this pattern is `docs/research/typed-facts-surface-audit.md`.
 
 ## The gap
 
