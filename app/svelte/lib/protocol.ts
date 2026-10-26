@@ -71,7 +71,7 @@ export type EntryKind =
   | 'system'
   | 'om'
   | 'subagent'
-  | 'spawn_snapshot'
+  | 'spawn-snapshot'
   | 'diagnostic'
   | (string & {});
 
@@ -144,7 +144,7 @@ export type DiagnosticCode =
 // A fact the harness recorded about a session: the code is the discriminant
 // and the GUI composes the sentence, so no display string crosses the seam.
 export type Diagnostic =
-  | { code: 'model_changed'; from: string | null; to: string }
+  | { code: 'model_changed'; from?: string; to: string }
   | { code: 'gate_unavailable'; model: string; missing: string[] }
   | { code: 'context_overflow'; prompt: number; budget: number }
   | { code: 'gate_attempt'; command: string; retries: number; max: number; output: string }

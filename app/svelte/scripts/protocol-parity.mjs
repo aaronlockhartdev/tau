@@ -103,6 +103,17 @@ function topParts(body) {
   return parts;
 }
 
+// A hand-written Serialize names its wire tags in code instead of through a
+// serde attr, and the `as_str` arm is where the wire spelling lives.
+function wireTags(clean, name) {
+  const at = clean.indexOf(`impl ${name} {`);
+  if (at < 0) return {};
+  const tags = {};
+  const arms = /(?:Self|[A-Z]\w*)::(\w+)\s*(?:\([^)]*\))?\s*=>\s*"([^"]+)"/g;
+  for (const arm of bodyAfter(clean, at).matchAll(arms)) tags[arm[1]] ??= arm[2];
+  return tags;
+}
+
 function rustEnums(src) {
   const out = {};
   const clean = stripComments(src);
@@ -114,6 +125,9 @@ function rustEnums(src) {
     const tag = (attrs.find((a) => a.includes('tag')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
     const rename = (attrs.find((a) => a.includes('rename_all')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
     const variants = [];
+    // A hand-written Serialize spells its tags in code, not with a serde attr:
+    // the `as_str` arm is the wire spelling (EntryKind's is `spawn-snapshot`).
+    const wire = clean.includes(`impl Serialize for ${name} {`) ? wireTags(clean, name) : {};
     for (const part of topParts(bodyAfter(clean, m.index))) {
       // Serde/allow attributes sit on their own line above a variant; they
       // must not glue into the variant part the field split sees.
@@ -125,14 +139,22 @@ function rustEnums(src) {
       const vm = p2.match(/^(\w+)(\s*\{[^]*\})?$/);
       if (!vm) continue;
       const fields = {};
-      if (vm[2]) {
-        const inner = vm[2].match(/\{([\s\S]*)\}/)[1];
-        for (const f of topParts(inner)) {
-          const fmm = f.match(/^(\w+)\s*:\s*([\s\S]+)$/);
-          if (fmm) fields[fmm[1]] = fmm[2].trim();
+      // The attrs live in the unstripped part: a field's serde attr says whether
+      // the key reaches the wire at all, which is what a TS optional mirrors.
+      const body = part.match(/\{([\s\S]*)\}/);
+      if (body) {
+        for (const f of topParts(body[1])) {
+          const attrs = [...f.matchAll(/#\[serde\(([^)]*)\)\]/g)].flatMap((a) => a[1].split(','));
+          const fmm = f
+            .replace(/^[^\S\n]*#[^\n]*$/gm, '')
+            .trim()
+            .match(/^(\w+)\s*:\s*([\s\S]+)$/);
+          if (!fmm) continue;
+          fields[fmm[1]] = { type: fmm[2].trim(), skip: attrs.some((a) => a.includes('skip')) };
         }
       }
-      variants.push({ name: vm[1], tag: rename === 'lowercase' ? vm[1].toLowerCase() : snake(vm[1]), fields });
+      const tag = wire[vm[1]] ?? (rename === 'lowercase' ? vm[1].toLowerCase() : snake(vm[1]));
+      variants.push({ name: vm[1], tag, fields });
     }
     out[name] = { tag: tag ?? 'kind', variants };
   }
@@ -362,17 +384,22 @@ function diffUnion(rustName, tsName = rustName) {
   for (const rv of r.variants) {
     const tv = t.members.find((m) => m.tagFields[r.tag] === rv.tag);
     if (!tv) continue;
-    const rfields = Object.entries(rv.fields).map(([n, ty]) => [n, normRust(ty)]);
+    const rfields = Object.entries(rv.fields).map(([n, f]) => [n, normRust(f.type), f.skip]);
     const tfields = Object.entries(tv.fields)
       .filter(([n]) => n !== r.tag)
-      .map(([n, f]) => [n, normTs(f.type)]);
+      .map(([n, f]) => [n, normTs(f.type), f.optional]);
     const rnames = rfields.map(([n]) => n);
     const tnames = tfields.map(([n]) => n);
     for (const n of rnames) if (!tnames.includes(n)) errors.push(`${rustName}.${rv.tag}: missing TS field '${n}'`);
     for (const n of tnames) if (!rnames.includes(n)) errors.push(`${rustName}.${rv.tag}: TS-only field '${n}'`);
-    for (const [n, ty] of rfields) {
-      const tt = tfields.find(([x]) => x === n)?.[1];
-      if (tt !== undefined && !sameType(ty, tt)) errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tt}`);
+    for (const [n, ty, skip] of rfields) {
+      const tf = tfields.find(([x]) => x === n);
+      if (!tf) continue;
+      if (sameType(ty, tf[1])) continue;
+      // skip_serializing_if: the key is wire-absent when the Option is empty, so
+      // an optional TS field of the inner type is its parity.
+      if (skip && tf[2] && sameType(ty.replace(/\s*\|\s*null$/, ''), tf[1])) continue;
+      errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tf[1]}`);
     }
   }
 }
