@@ -74,6 +74,27 @@ only one module should know the exhaustive list*)
    timer averaging 729 ms: the webview stopped painting, so `rAF` sampled a
    suspension instead of the transcript. The same code passed the next run, so a
    red there is read against the frame count before it is believed.
+6. **The mirror's open arms hide mirror drift.** `EntryKind` and the diagnostic
+   escape arm carry `(string & {})` so an unknown wire spelling still type-checks
+   — correct for an open vocabulary, and it means the compiler can never catch a
+   *typo in a declared arm*. `spawn_snapshot` for `spawn-snapshot` sat in the
+   mirror through a green parity run for exactly this reason: the parity script
+   compares declared members and the open arm absorbs the difference at every read
+   site. For tag spellings the script, not `svelte-check`, is the gate.
+7. **`TurnUsage::from_record` is a convention, not a type gate.** The frozen
+   legacy read lives on the record type and both intended readers call it, while
+   `harness/sessions.rs:376` decodes the same payload with
+   `from_value::<AssistantPayload>` and would see `cached_input_tokens: None` on a
+   pre-S14 record. That site reads tool calls today, so nothing is wrong yet. What
+   makes it worth naming: S13 turns stored usage into a load-bearing read (the
+   anchored estimate), and a second reader path appearing then would be a silent
+   under-count rather than a wrong cache percentage.
+8. **OM has no off switch, so configs reach for the ceiling.** `Om` is a required
+   config section with no disable flag, and an empty `om_model` means *use the
+   session's model*, not *off* — which is how the incident's ten doomed OM calls
+   against an undeclared `qwen3.8-27b` happened, and why both E2E configs now set
+   thresholds near the `u32` ceiling the validator allows. A config pressing a
+   counter to its maximum to say "don't" is the symptom; S19 is the switch.
 
 ## 2. Crate boundaries
 
@@ -255,7 +276,10 @@ finish it, and each keeps the existing tests as the harness.
 | **S13** | The prompt estimate anchors on the last recorded `usage.input_tokens`; only content appended after it is estimated. Bytes/4 rounded up, serialized tool arguments included | `provider/request.rs:385` (`estimate_prompt_tokens`), `om/mod.rs:292` (`token_count`) | §6.4: the provider's count is the authority for what was already sent, so the estimator only covers the delta — one tool output, not the whole conversation, is ever a guess |
 | **S14** | The usage **record** stops mirroring one API: stored fields become the concepts (`input_tokens`, `output_tokens`, `cached_input_tokens`), the Responses/chat spellings move into the provider adapter, the total becomes an accessor instead of a stored field, and `OutputTokensDetails` + `TurnUsage::reasoning_tokens()` are deleted (no production reader) | `tau-protocol/src/payload.rs`, `provider/usage.rs` (the wire decode that used to land straight on the record type), `harness/snapshot.rs` `usage_of` (one of the two readers of a stored usage) | §6.5/§6.6. **Landed**: no golden moved (the record-side goldens carry no usage, the usage goldens are event-side) and the store fixture carries no usage; the event-side `Usage` keeps its spelling because its goldens and the TS mirror pin it. `TurnUsage::from_record` is the one frozen read for records written before the change — two readers exist (`usage_of`, `subagent/inspect`), so the legacy shim lives on the record type, not in either caller |
 | **S15** | The real-app E2E legs run configs the audit channel correctly calls unhealthy, so they have been red since #306 landed: neither leg's models declare a `context_window`/`max_tokens`, so a `gate_unavailable` record really is owed at open, and the stress leg's OM pass runs against a provider with no script for the OM prompt, so each turn ends with an `om_stalled` record and the assistant message is no longer the tail. Both break entry-count and render-range assertions that predate #306 (the stress fixture grew 10050 → 10052) | `app/wdio.conf.mjs` (`CANNED_CONFIG`, `makeWorkspaces`), `app/tests/e2e/stress.spec.mjs`, `app/tests/e2e/mock-multi.spec.mjs` | The legs assert a world where nothing is recorded while their configs describe a world where something is owed. Make the configs healthy — declare the window and the cap on the E2E models, and take OM out of the stress leg (it measures windowing and the §8 perf bar, not compaction) — so a healthy open mints nothing, the invariant `a_healthy_reopen_mints_nothing` already pins in Rust. A leg that wants the ungated case asserts the record it mints, by code. **Landed**: the E2E models carry a window and a cap and the OM thresholds sit past anything the fixture reaches, so the stress leg opens with one record — the `model_changed` baseline its pre-audit session never wrote — and mints no OM traffic. Its counts and render ranges are read from the store after open instead of the fixture's, and the audit records are named by code off the store |
-| **S16** | A model id has two spellings and no resolution rule. The model menu sends `provider/key` (built in `ModelMenu.svelte` from `provider_list`); the config keys models by the bare `key` under a provider. `derive_turn` looks the session's id up with `provider.models.get(model)`, so after any menu switch the model's declared facts — `context_window`, `max_tokens`, `reasoning` — are dropped, the context gate goes Missing, and the audit channel records `gate_unavailable` for a model the config does describe. The same id goes into the request body (`ResponseRequest::new(self.model()…)`), so the endpoint is addressed as `dev/qwen3.8-…` instead of the model it hosts | `config/mod.rs` (one resolver over the provider maps), `harness/sessions.rs` `derive_turn`, `harness/launch.rs` (its default-model pick writes the bare spelling), `agent/turn/mod.rs` (the request's `model` field), `agent/turn/om_pass.rs` (the OM fallback had the same bug) | §6.7. Found from the legs: the mock leg's second open record is `gate_unavailable { model: "mock/mock-model-2", missing: [context_window, max_tokens] }` against a config declaring both. This is the incident family — switch model, lose the gate, run unbounded, get refused. **Landed**: `Config::model_key` is the resolver, stripping `provider/` only when the prefix names a configured provider, so a gateway key like `openai/gpt-5` passes through; the facts lookup and the thinking level read it, and the resolved key reaches the request as `TurnConfig.request_model` with `request_address` as the one fallback the turn and the OM pass share. The session keeps the id the user chose in its meta, its records, and the GUI |
+| **S16** | A model id has two spellings and no resolution rule. The model menu sends `provider/key` (built in `ModelMenu.svelte` from `provider_list`); the config keys models by the bare `key` under a provider. `derive_turn` looks the session's id up with `provider.models.get(model)`, so after any menu switch the model's declared facts — `context_window`, `max_tokens`, `reasoning` — are dropped, the context gate goes Missing, and the audit channel records `gate_unavailable` for a model the config does describe. The same id goes into the request body (`ResponseRequest::new(self.model()…)`), so the endpoint is addressed as `dev/qwen3.8-…` instead of the model it hosts | `config/mod.rs` (one resolver over the provider maps), `harness/sessions.rs` `derive_turn`, `harness/launch.rs` (its default-model pick and its default-model lookup), `agent/turn/mod.rs` (the request's `model` field), `agent/turn/om_pass.rs` (the OM fallback had the same bug) | §6.7. Found from the legs: the mock leg's second open record is `gate_unavailable { model: "mock/mock-model-2", missing: [context_window, max_tokens] }` against a config declaring both. This is the incident family — switch model, lose the gate, run unbounded, get refused. **Landed**: `Config::model_key` is the resolver, stripping `provider/` only when the prefix names a configured provider, so a gateway key like `openai/gpt-5` passes through; the facts lookup, the thinking level and the launch default-model lookup all read it. The resolved pair reaches the request through `TurnConfig::request_address`, the one fallback the turn and the OM pass share. The session keeps the id the user chose in its meta, its records, and the GUI |
+| **S17** | Bind the provider the id names, not the first one configured. `derive_turn` and the live `set_model` path take the handle from `config.providers.iter().next()` whatever the id's prefix says, so `b/k` reads `a.models` — with two *distinct* providers a declared model silently borrows another provider's window and cap. The same seam leaves the prefix ambiguous for a key whose own spelling starts with a provider name (`openai/gpt-5` under provider `openai`), and leaves `tau-acp`'s own facts read (`crates/tau-acp/src/config.rs:147,166`) resolving ids by its own second rule | `harness/sessions.rs` `derive_turn` + the `set_model` arm, `harness/dispatch.rs` (the handle the session is born with), `tau-acp/src/config.rs` | §6.7's deferral, and hazard: today the E2E workspace's two providers are one canned endpoint spelled twice, so nothing misbehaves visibly. Doing this means the resolver returns the provider too, which is what §6.7 declined until the multi-provider seam arrived |
+| **S18** | A subagent child's model *facts* are its parent's. The child inherits the parent's `TurnConfig` verbatim (`harness/launch.rs` Child arm, `turn: d.turn`), so when an agent type overrides the child's model (`subagent/spawn.rs:159`, `ty.model`), the child runs with the parent's `context_window`, `max_output_tokens` and thinking level. §6.8 fixed the address half — the child addresses its own model — but the gate's facts still describe the parent | `subagent/mod.rs` (the Supervisor holds no `Config`), `harness/launch.rs` Child/restart arms | found while fixing S16's address: the fix is a re-derive against the child's model, which needs the config reachable from the spawn path — the same owner gap hazard 1 describes for OM |
+| **S19** | Name the OM off switch. `Om` is a required section with no disable, and empty `om_model` means *the session's model* rather than *off*, so the only lever today is thresholds at the `u32` ceiling | `config/mod.rs` `Om`, `agent/turn/om_pass.rs` (`resolve_om_model`), `app/wdio.conf.mjs` (both legs press the ceiling) | hazard 8: the incident's ten doomed OM calls came from exactly this, and both E2E configs now say "don't" by maxing a counter. `enabled = false`, or empty `om_model` meaning off, is the honest version — the choice changes the config contract, so it is a decision, not a cleanup |
 
 ## 5. Order of work
 
@@ -285,11 +309,18 @@ finish it, and each keeps the existing tests as the harness.
 9. **S4** (disperse `om_integration`) — four commits, each behaviour-neutral.
 10. **S7, S8** — wire-visible; each needs goldens + the TS mirror + a protocol
    commit.
-11. **The ADR**, then `tau-tokens` → `tau-provider` → `tau-session` →
+11. **S17, S18** — the two half-fixed seams S16 left: the provider a model id
+    binds, and the facts a subagent child runs on. Both need the config reachable
+    where the model is chosen, so they land after the seams §5's earlier steps have
+    tidied, and S18 leans on hazard 1's owner question.
+12. **The ADR**, then `tau-tokens` → `tau-provider` → `tau-session` →
     `tau-hashline`, each its own commit series, each with `lto = "thin"` in the
     same PR as the first split.
-12. **S10, S11** last — dep additions are easy to review once the code is in the
+13. **S10, S11** last — dep additions are easy to review once the code is in the
     shape the plan wants. S3's dep is the exception: it lands with step 6.
+14. **S19** whenever its decision is taken — it changes the config contract, so it
+    is not a cleanup waiting in line; hazard 8 is the reason it is on the list at
+    all.
 
 ## 6. Decided (2026-10-26)
 
@@ -371,20 +402,21 @@ finish it, and each keeps the existing tests as the harness.
    owner. The rule is not "no unused fields": it is that a stored field needs a
    reader, and a derived quantity needs exactly one.
 
-### 6.7 A model id is one string with one resolution rule
+### 6.7 A model id is one string, resolved by one read (narrowed on review 2026-10-26)
 
 The session's model id is the qualified form the menu offers — `provider/key` —
 because a workspace can reach several providers and the bare key does not say
 which one serves it. The config keeps declaring models under a provider table
-by bare key, because that is what a provider's model list is. So the id carries
-both halves and exactly one function splits it: a resolver over the merged
-config returning the provider, the key, and the declared facts. Everything that
+both halves and exactly one read splits it, `Config::model_key`, returning the **key**
+the provider declares — the provider is *not* part of the answer.
 reads a model's facts — the context gate, the output cap, the reasoning level —
 and everything that addresses the provider, including the `model` field of the
 request body, goes through that one read. A bare id (what the open writes when
 it takes the provider's first model, and what every record predating this
-decision carries) resolves against the provider the session was opened on.
-
+decision carries) resolves against the provider the session was opened on: v0
+binds a session to one provider, so the prefix selects nothing today — the review
+found the E2E workspace's two providers are the same canned endpoint spelled
+twice, which is why the collision below is deferred rather than fixed.
 Two spellings with no rule is how a model switch silently turns the gate off:
 the switch stores `dev/qwen3.8-flash-next`, the lookup wants
 `qwen3.8-flash-next`, and a miss is indistinguishable from an undeclared model.
@@ -392,8 +424,22 @@ The audit channel made it visible — `gate_unavailable` naming a model the
 config describes — and the fix is the resolver, not a record that hushes the
 symptom.
 
-Out of scope: switching to a model on a *different* provider also needs the
-session's provider handle re-resolved — it is bound at open from the first
-provider, so a cross-provider switch today keeps calling the first. That stays
-with the multi-provider seam; the resolver makes it a visible next step rather
-than a second silent miss.
+Two things this deliberately does **not** fix, both now visible instead of
+silent. A switch to a model on a *different* provider keeps calling the first,
+because the handle is bound at open (S17). And a model key whose own spelling
+begins with a configured provider name — `openai/gpt-5` under provider `openai` —
+is unreachable by its bare spelling, because the prefix is always stripped.
+
+### 6.8 A resolved value carries what it was resolved for (taken 2026-10-26)
+
+`Config::model_key` answers for an id, and its answer was being stored on the turn
+as a bare key. A subagent child inherits its parent's turn config and an agent
+type can override the child's model, so the parent's key went out naming the
+child's model — the same silent-miss class, now at a different seam, and no test
+saw it because the fixture parent used a bare id. The stored value is now a pair,
+`ModelAddress { id, key }`, and `TurnConfig::request_address` applies it only
+where the ids agree. The rule generalises: when a derived value is stored beside
+the thing it was derived from, it carries that thing's identity, so a stale copy
+cannot be mistaken for a current one at the read. Fixing it at the read rather
+than at each write is what makes the third seam (a model change whose config
+re-derive never ran) fall out of the same rule.
