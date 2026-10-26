@@ -150,8 +150,9 @@ fn read_candidates(
     let tokens = live.pending_tokens(&candidates);
     // The turn-end pass may have committed everything the spawn snapshot
     // saw (D4: the file cursor wins over the snapshot): nothing left to
-    // buffer. Consume the trigger and stop — a panic here would poison the
-    // session's inner lock.
+    // buffer. Consume the trigger and stop — a panic under the session's
+    // inner lock would leave a half-mutated `Inner` that no later reader
+    // could tell apart from a good one.
     let Some(range) = candidate_range(&candidates) else {
         g.om_inflight = None;
         return None;
@@ -291,8 +292,9 @@ mod tests {
     fn empty_candidate_batch_yields_no_range_not_a_panic() {
         // The turn-end pass may commit everything the spawn snapshot saw
         // before the cycle's phase-1 read (D4: the file cursor wins): an
-        // empty batch must degrade to `None`, never panic — a panic here
-        // poisons the session's inner lock.
+        // empty batch must degrade to `None`, never panic — a panic under
+        // the session's inner lock leaves a half-mutated `Inner` behind
+        // with nothing to signal it.
         assert_eq!(candidate_range(&[]), None);
         let a = entry("a", 1);
         let b = entry("b", 2);
