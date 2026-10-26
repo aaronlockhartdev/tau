@@ -20,7 +20,7 @@ use std::time::Duration;
 #[cfg(test)]
 pub(crate) use tau_protocol::{Diagnostic, EntryKind};
 
-use crate::agent::{AgentSession, Lane, SessionParams, TurnConfig};
+use crate::agent::{AgentSession, Lane, ModelAddress, SessionParams, TurnConfig};
 use crate::config::{self, Config};
 use crate::context;
 use crate::provider::{

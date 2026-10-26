@@ -73,6 +73,18 @@ impl From<crate::provider::ProviderError> for AgentError {
     }
 }
 
+/// The endpoint address for a model id: the config key the provider declares,
+/// resolved from the id the session carries (§6.7 — a menu switch sends
+/// `provider/key`, a launch writes the bare key, and the endpoint is addressed
+/// by the key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelAddress {
+    /// The id as the session, its records and the GUI name the model.
+    pub id: String,
+    /// The key the request body's `model` field carries.
+    pub key: String,
+}
+
 /// Per-turn provider options, resolved from the merged config and the
 /// session's model facts at session build (spec §12, #35); re-resolved when
 /// the session's model changes.
@@ -87,6 +99,12 @@ pub struct TurnConfig {
     pub presence_penalty: Option<f32>,
     /// A stable cache key (the session id) plus the `cache.retention`.
     pub prompt_cache: Option<(String, crate::config::CacheRetention)>,
+    /// Where the endpoint is addressed, and the model id that resolution was
+    /// done for (§6.7). The pair travels together so a key resolved for one
+    /// model can never address another: a `.md` agent type overrides a child's
+    /// model while the child inherits its parent's turn config. `None` = no
+    /// config resolved this turn, so the id addresses itself.
+    pub address: Option<ModelAddress>,
     /// The model's declared context window (its facts); the clamp's ceiling.
     pub context_window: Option<u32>,
     /// The `limits.image.max_bytes` cap on a `read` of an image file (#36);
@@ -96,11 +114,6 @@ pub struct TurnConfig {
     /// image file (#257): above it, the image is downscaled, not refused.
     /// `None` falls back to the default budget.
     pub image_max_pixels: Option<u64>,
-    /// The model this turn's requests address (§6.7): the config key the
-    /// session's model id resolves to — a menu id carries its provider, and the
-    /// endpoint is addressed by the key alone. `None` = the id addresses itself,
-    /// which is what a hand-built `TurnConfig` with no config behind it means.
-    pub request_model: Option<String>,
 }
 
 /// The framing margin the context gate keeps against the model's declared
@@ -134,12 +147,15 @@ impl ContextGate {
 impl TurnConfig {
     /// §6.7: the model name a provider request carries. The session's id may
     /// name the provider it was picked from; the endpoint is addressed by the
-    /// config key alone, which `request_model` holds when a config resolved it.
+    /// config key. An address applies only to the id it was resolved from, so a
+    /// turn config inherited by a session on another model addresses that model
+    /// itself.
     #[must_use]
-    pub(crate) fn request_address(&self, session_model: &str) -> String {
-        self.request_model
-            .clone()
-            .unwrap_or_else(|| session_model.to_owned())
+    pub(crate) fn request_address(&self, model: &str) -> String {
+        self.address
+            .as_ref()
+            .filter(|address| address.id == model)
+            .map_or_else(|| model.to_owned(), |address| address.key.clone())
     }
 
     /// The context gate, from the model's declared facts (spec §4).
@@ -475,6 +491,8 @@ mod turn;
 
 #[cfg(test)]
 pub(crate) mod testkit;
+#[cfg(test)]
+mod tests_address;
 #[cfg(test)]
 mod tests_bgjobs;
 #[cfg(test)]

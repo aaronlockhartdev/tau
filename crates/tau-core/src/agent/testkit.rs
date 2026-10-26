@@ -74,6 +74,8 @@ pub(crate) struct ScriptedProvider {
     calls: Vec<String>,
     index: std::sync::atomic::AtomicUsize,
     pub(crate) seen: std::sync::Mutex<Vec<(Option<String>, Option<String>)>>,
+    /// The `model` field of each request body as it went on the wire (§6.7).
+    pub(crate) models: std::sync::Mutex<Vec<String>>,
 }
 
 impl ScriptedProvider {
@@ -82,6 +84,7 @@ impl ScriptedProvider {
             calls,
             index: std::sync::atomic::AtomicUsize::new(0),
             seen: std::sync::Mutex::new(Vec::new()),
+            models: std::sync::Mutex::new(Vec::new()),
         }
     }
 }
@@ -98,6 +101,13 @@ impl crate::provider::TurnProvider for ScriptedProvider {
             .cloned()
             .unwrap_or_else(|| sse("", &[]));
         let captured = serde_json::to_value(request).unwrap();
+        self.models.lock().unwrap().push(
+            captured
+                .get("model")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        );
         self.seen.lock().unwrap().push((
             captured
                 .get("instructions")

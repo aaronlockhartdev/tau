@@ -3,9 +3,9 @@
 use super::thinking::thinking_adjusted_max_output;
 use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
-    MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionRole,
-    SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner, session_name,
-    skill_info, unique_name,
+    MAX_TITLE_LEN, ModelAddress, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
+    SessionRole, SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner,
+    session_name, skill_info, unique_name,
 };
 use tau_protocol::EntryKind;
 
@@ -461,9 +461,12 @@ pub(crate) fn derive_turn(
         context_window: def.and_then(|d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
         image_max_pixels: Some(config.limits.image.max_pixels),
-        // Only a resolved id needs an address: when the session's id is already
-        // the key, the request sends what the session carries (§6.7).
-        request_model: (key != model).then(|| key.to_owned()),
+        // Resolved here, applied at the request: the id the session carries and
+        // the key the endpoint is addressed by (§6.7).
+        address: Some(ModelAddress {
+            id: model.to_owned(),
+            key: key.to_owned(),
+        }),
     }
 }
 
