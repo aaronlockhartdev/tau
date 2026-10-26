@@ -33,3 +33,4 @@ tempfile = { workspace = true }
 # workspace build, so that one silently stripped every crate's test events
 # too (the wire JSONL test caught it on CI).
 tracing = { version = "0.1" }
+parking_lot = "0.13"

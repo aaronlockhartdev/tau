@@ -16,6 +16,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { version = "0.1", features = ["release_max_level_error"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+parking_lot = "0.13"
 
 [dev-dependencies]
 tau-mock-llm = { path = "../tau-mock-llm" }
