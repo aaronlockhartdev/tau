@@ -314,9 +314,12 @@ fn root_session(
 ) -> Result<Arc<AgentSession>, ProtocolError> {
     let (name, first) = first;
     // `generation.default_model` wins; an empty or unknown value falls
-    // back to the provider's first model (BTreeMap order).
+    // back to the provider's first model (BTreeMap order). A default written
+    // with its provider's prefix is looked up by its key — §6.7's one rule
+    // applies to config-supplied ids too, or a prefixed default silently
+    // becomes the first model.
     let default = config.generation.default_model.clone();
-    let model = if !default.is_empty() && first.models.contains_key(&default) {
+    let model = if !default.is_empty() && first.models.contains_key(config.model_key(&default)) {
         default
     } else {
         first

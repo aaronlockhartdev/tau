@@ -124,8 +124,9 @@ const MODEL_FACTS = 'context_window = 1000000\nmax_tokens = 8192';
 // canned provider replays one body for any prompt, so an OM call can never
 // return an OM envelope: it retries to exhaustion (~50s a turn) and records
 // om_stalled, which moves the session tail off the assistant entry. The
-// thresholds sit above anything the run accumulates, so the pass never runs.
-const OM_OUT_OF_LEG = ['', '[om]', 'om_model = "canned-model"', 'observe_threshold = 4000000000', 'reflect_threshold = 4000000000', 'buffer_increment = 4000000000', 'buffer_tokens = 0'].join('\n');
+// thresholds sit above anything the run accumulates, so the pass never runs;
+// they stay clear of the u32 ceiling the config validator enforces.
+const OM_OUT_OF_LEG = ['', '[om]', 'observe_threshold = 1000000000', 'reflect_threshold = 1000000000', 'buffer_increment = 1000000000', 'buffer_tokens = 0'].join('\n');
 const CANNED_CONFIG = ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', MODEL_FACTS, '', OM_OUT_OF_LEG].join('\n');
 function makeWorkspaces() {
   const dirs = {};

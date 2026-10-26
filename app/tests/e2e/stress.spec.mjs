@@ -50,13 +50,13 @@ const storeState = () => {
     entries: cur ? ids.length : null,
     // This leg predates the store refactor (#39): a session no longer holds
     // a live-stream array — a user stream in flight is the turn field, and
-    // the streaming text lands in the last entry as it grows. The turn-end
-    // Observer/Reflector aftermath re-runs the turn too (the re-open test
-    // waits it out), so a non-idle om gauge is aftermath, not a user stream.
-    live: cur && cur.turn !== 'idle' && cur.om.kind === 'idle' ? 1 : 0,
+    // the streaming text lands in the last entry as it grows. OM is kept out
+    // of this leg by config — the canned provider cannot answer the OM prompt,
+    // so a pass would only retry to exhaustion — so the om gauge stays idle and
+    // a user stream is simply a turn in flight.
+    live: cur && cur.turn !== 'idle' ? 1 : 0,
     liveTexts: last ? [last.text.length] : [],
     turn: cur ? cur.turn : null,
-    omKind: cur ? cur.om.kind : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     subagents: cur ? cur.subagents.length : null,
     // The audit records the session wrote, by code, in append order (#306).
@@ -510,22 +510,9 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       // Fire the re-open (it runs to completion in the webview even when
       // the W3C command times out — a 10k snapshot reload on a starved
       // display outlasts any command budget), then auto-wait the
-      // convergence with a 120 s-class deadline. First, let the turn-end
-      // Observer/Reflector aftermath finish: re-opening mid-aftermath
-      // hydrates a 'running' turn that the already-delivered stream events
-      // never correct, so the convergence would wedge on the turn field.
-      await waitUntil(
-        readStore,
-        (s) => s.omKind !== null && s.omKind !== 'idle',
-        60000,
-        `${label}: om aftermath started`
-      ).catch(() => {});
-      await waitUntil(
-        readStore,
-        (s) => s.omKind === 'idle',
-        120000,
-        `${label}: om aftermath done`
-      ).catch(() => {});
+      // convergence with a 120 s-class deadline. No OM pass runs in this leg,
+      // so the turn field is settled by the time the stream events land and the
+      // re-open cannot hydrate a 'running' turn.
       await sleep(500);
       browser
         .execute(
