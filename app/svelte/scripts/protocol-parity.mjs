@@ -127,7 +127,13 @@ function rustEnums(src) {
     const variants = [];
     // A hand-written Serialize spells its tags in code, not with a serde attr:
     // the `as_str` arm is the wire spelling (EntryKind's is `spawn-snapshot`).
-    const wire = clean.includes(`impl Serialize for ${name} {`) ? wireTags(clean, name) : {};
+    const handwritten = clean.includes(`impl Serialize for ${name} {`);
+  const wire = handwritten ? wireTags(clean, name) : {};
+  if (handwritten && Object.keys(wire).length === 0) {
+    // Falling back to snake_case here would re-introduce the very error this
+    // gate exists to catch: a hand-written Serialize whose tags live inline.
+    throw new Error(`${name}: impl Serialize is hand-written but names no tags to read`);
+  }
     for (const part of topParts(bodyAfter(clean, m.index))) {
       // Serde/allow attributes sit on their own line above a variant; they
       // must not glue into the variant part the field split sees.
@@ -317,6 +323,8 @@ function normRust(t) {
   if (ALIASES[t] ?? LOOSE_ALIASES[t]) return ALIASES[t] ?? LOOSE_ALIASES[t];
   return t;
 }
+const stripNull = (t) => t.replace(/\s*\|\s*null$/, '');
+
 function normTs(t) {
   t = t.trim().replace(/\s+/g, ' ');
   if (t.startsWith('{') && t.endsWith('}')) {
@@ -395,10 +403,21 @@ function diffUnion(rustName, tsName = rustName) {
     for (const [n, ty, skip] of rfields) {
       const tf = tfields.find(([x]) => x === n);
       if (!tf) continue;
+      if (skip) {
+        // A skipped Option is wire-absent: the mirror marks it optional and names
+        // the inner type. `| null` describes a key the wire never sends.
+        if (!tf[2] || tf[1].includes('null')) {
+          errors.push(`${rustName}.${rv.tag}.${n}: Rust skips it when empty, so TS marks it optional of the inner type, not nullable`);
+        } else if (!sameType(stripNull(ty), tf[1])) {
+          errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tf[1]}`);
+        }
+        continue;
+      }
       if (sameType(ty, tf[1])) continue;
       // skip_serializing_if: the key is wire-absent when the Option is empty, so
-      // an optional TS field of the inner type is its parity.
-      if (skip && tf[2] && sameType(ty.replace(/\s*\|\s*null$/, ''), tf[1])) continue;
+      // the mirror marks the field optional — widening it to null describes a key
+      // the wire never sends.
+      if (skip && tf[2] && sameType(stripNull(ty), stripNull(tf[1]))) continue;
       errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tf[1]}`);
     }
   }
@@ -423,8 +442,8 @@ function diffStruct(rustName, tsName = rustName) {
     const b = normTs(tf.type);
     if (a === b) continue;
     // skip_serializing_if: the field is wire-absent (an Option, or a
-    // default-filled one) — a TS optional field is its parity.
-    if (rf.skip && tf.optional && sameType(a.replace(/\s*\|\s*null$/, ''), b)) continue;
+    // default-filled one) — a TS optional field is its parity, a nullable one is not.
+    if (rf.skip && tf.optional && sameType(stripNull(a), stripNull(b))) continue;
     if (!sameType(a, b)) errors.push(`${rustName}.${n}: Rust ${a} vs TS ${b}`);
   }
 }

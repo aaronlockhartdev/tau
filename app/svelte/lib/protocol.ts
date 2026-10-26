@@ -428,7 +428,7 @@ export type SystemEventKind =
 
 export type Event =
   | { type: 'stream_start'; workspace: string; session: string; call_id: string }
-  | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null; duration_secs: number | null }
+  | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null; duration_secs?: number }
   // A transcript entry is upserted: the exact file-line view the session log
   // holds (or will hold when finalized). The store sets map[id] = entry — the
   // only live transcript op (ADR-0008). Carries the streaming assistant entry
