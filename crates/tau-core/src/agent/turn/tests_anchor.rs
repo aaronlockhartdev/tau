@@ -3,40 +3,21 @@
 
 use super::*;
 
-use crate::agent::testkit::{ScriptedProvider, session_in};
+use crate::agent::testkit::{ScriptedProvider, session_in, sse_charged};
 use crate::harness::SessionRole;
-use serde_json::json;
 use std::sync::Arc;
 
-fn read_call_frame(call_id: &str, input_tokens: Option<u64>) -> String {
-    let item = json!({
-        "id": call_id,
-        "type": "function_call",
-        "name": "read",
-        "call_id": call_id,
-        "arguments": r#"{"path":"n.txt"}"#,
-    });
-    let frame = json!({
-        "type": "response.output_item.done",
-        "item": item,
-    });
-    format!("data: {frame}\n\n{}\n\n", completion_frame(input_tokens))
-}
-
-fn final_frame(text: &str) -> String {
-    let delta = json!({ "type": "response.output_text.delta", "delta": text });
-    format!("data: {delta}\n\n{}\n\n", completion_frame(None))
-}
-
-fn completion_frame(input_tokens: Option<u64>) -> String {
-    let response = match input_tokens {
-        Some(input_tokens) => json!({
-            "usage": { "input_tokens": input_tokens, "output_tokens": 1 }
-        }),
-        None => json!({}),
-    };
-    let done = json!({ "type": "response.completed", "response": response });
-    format!("data: {done}\n\ndata: [DONE]\n\n")
+/// A read call the provider charged `input_tokens` for, then a final answer.
+fn read_then_answer(input_tokens: Option<u64>) -> Vec<String> {
+    let call = [(
+        "read".to_owned(),
+        "c1".to_owned(),
+        r#"{"path":"n.txt"}"#.to_owned(),
+    )];
+    vec![
+        sse_charged("", &call, input_tokens),
+        sse_charged("done", &[], None),
+    ]
 }
 
 /// A session whose model declares a 12,000-token window and a 500-token output
@@ -76,10 +57,7 @@ fn calls(provider: &ScriptedProvider) -> usize {
 async fn the_gate_refuses_on_the_count_the_provider_charged() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("n.txt"), "a\n").unwrap();
-    let provider = Arc::new(ScriptedProvider::new(vec![
-        read_call_frame("c1", Some(9_000)),
-        final_frame("done"),
-    ]));
+    let provider = Arc::new(ScriptedProvider::new(read_then_answer(Some(9_000))));
     let agent = gated_agent(dir.path(), provider.clone());
     agent.send("read n.txt", Lane::Steering);
     let err = agent.process().await.unwrap_err();
@@ -104,10 +82,7 @@ async fn the_gate_refuses_on_the_count_the_provider_charged() {
 async fn a_charge_inside_the_budget_keeps_the_turn_running() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("n.txt"), "a\n").unwrap();
-    let provider = Arc::new(ScriptedProvider::new(vec![
-        read_call_frame("c1", Some(1_000)),
-        final_frame("done"),
-    ]));
+    let provider = Arc::new(ScriptedProvider::new(read_then_answer(Some(1_000))));
     let agent = gated_agent(dir.path(), provider.clone());
     agent.send("read n.txt", Lane::Steering);
     agent.process().await.unwrap();
@@ -120,10 +95,7 @@ async fn a_charge_inside_the_budget_keeps_the_turn_running() {
 async fn a_call_that_reports_no_usage_anchors_nothing() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("n.txt"), "a\n").unwrap();
-    let provider = Arc::new(ScriptedProvider::new(vec![
-        read_call_frame("c1", None),
-        final_frame("done"),
-    ]));
+    let provider = Arc::new(ScriptedProvider::new(read_then_answer(None)));
     let agent = gated_agent(dir.path(), provider.clone());
     agent.send("read n.txt", Lane::Steering);
     agent.process().await.unwrap();
