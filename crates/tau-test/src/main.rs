@@ -12,7 +12,9 @@
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
+
+use parking_lot::Mutex;
 
 use serde_json::{Value, json};
 use tau_core::agent::{AgentSession, Lane, TurnConfig};

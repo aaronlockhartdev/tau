@@ -204,13 +204,13 @@ impl SubagentBridge for AcceptanceBridge {
     fn spawned(&self, _n: &SpawnNotice) {}
     fn state(&self, _n: &StateNotice) {}
     fn reclaimed(&self, n: &ReclaimNotice) {
-        self.reclaims.lock().unwrap().push(n.clone());
+        self.reclaims.lock().push(n.clone());
     }
     fn re_adopted(&self, n: &ReadoptNotice) {
-        self.readopts.lock().unwrap().push(n.clone());
+        self.readopts.lock().push(n.clone());
     }
     fn wake(&self, n: &WakeNotice) {
-        let Some(p) = self.parent.lock().unwrap().upgrade() else {
+        let Some(p) = self.parent.lock().upgrade() else {
             return;
         };
         let text = match &n.output {
@@ -280,7 +280,7 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
     {
-        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+        *bridge.parent.lock() = Arc::downgrade(&agent);
     }
 
     agent
@@ -463,7 +463,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
     )
     .map_err(|e| format!("accept-reclaim: launch failed: {e:?}"))?;
     {
-        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+        *bridge.parent.lock() = Arc::downgrade(&agent);
     }
 
     agent
@@ -510,7 +510,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
     // Two terminal children, soft bound 2: the fleet is at the bound, not
     // over it, so no reclamation has fired yet.
     {
-        let reclaims = bridge.reclaims.lock().unwrap();
+        let reclaims = bridge.reclaims.lock();
         if !reclaims.is_empty() {
             return Err(format!(
                 "accept-reclaim: unexpected early reclamation: {reclaims:?}"
@@ -529,7 +529,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
         )
         .map_err(|e| format!("accept-reclaim: the 3rd spawn failed: {e}"))?;
     let evicted = {
-        let reclaims = bridge.reclaims.lock().unwrap();
+        let reclaims = bridge.reclaims.lock();
         if reclaims.len() != 1 {
             return Err(format!(
                 "accept-reclaim: expected one reclamation, saw {reclaims:?}"
@@ -570,7 +570,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
         ));
     }
     {
-        let readopts = bridge.readopts.lock().unwrap();
+        let readopts = bridge.readopts.lock();
         if readopts.len() != 1 {
             return Err(format!(
                 "accept-reclaim: expected one re-adopt, saw {readopts:?}"
@@ -662,7 +662,7 @@ pub(crate) async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
     {
-        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+        *bridge.parent.lock() = Arc::downgrade(&agent);
     }
 
     // The parent spawns the child (the mock's `subagent_spawn` turn).
