@@ -258,15 +258,10 @@ pub(crate) fn harness_full(
     // `Weak` (ticket #43 broke the v0 parent↔supervisor cycle).
     let parent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
+            supervisor: Arc::clone(&sup),
             provider: parent_provider,
-            supervisor: Some(Arc::clone(&sup)),
             system_prompt: None,
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .unwrap();

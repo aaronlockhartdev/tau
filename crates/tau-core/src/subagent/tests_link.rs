@@ -51,21 +51,16 @@ fn sup_with_parent(
         parent_entries: None,
     });
     // A scripted parent loop (the parent is a full session): the
-    // constructor adopts the pre-built supervisor (the test seam).
+    // the `Seam` role adopts it without a core to wire events through.
     let mut store = SessionStore::for_workspace(dir, parent_session);
     store.create().unwrap();
     let parent_provider = Arc::new(ScriptedProvider::new(vec![sse("parent", &[])]));
     let parent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
+            supervisor: sup.clone(),
             provider: parent_provider,
-            supervisor: Some(sup.clone()),
             system_prompt: None,
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .unwrap();

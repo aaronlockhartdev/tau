@@ -264,18 +264,13 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
             provider: prov,
-            supervisor: Some(sup),
+            supervisor: sup,
             // The parent's own prompt, explicitly: the supervisor's is the
             // child's (the mock scenario matches on it), so the seam takes
             // the parent's rather than adopting it.
             system_prompt: Some(SUBAGENT_PROMPT.into()),
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
@@ -448,17 +443,12 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
             provider: prov,
-            supervisor: Some(sup.clone()),
+            supervisor: sup.clone(),
             // The parent's own prompt: the "reclaim scenario parent" marker
             // routes the parent's turns to the reclaim parent fixture.
             system_prompt: Some("reclaim scenario parent. You have the tools read, write, edit, bash, and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.".into()),
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .map_err(|e| format!("accept-reclaim: launch failed: {e:?}"))?;
@@ -644,20 +634,15 @@ pub(crate) async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
             provider: prov,
-            supervisor: Some(sup.clone()),
+            supervisor: sup.clone(),
             // The parent's own prompt, explicitly: the supervisor's is the
             // child's (the mock scenario matches on it).
             system_prompt: Some(
                 "sender-labels parent: you are the parent; delegate with the sub-agent tools."
                     .into(),
             ),
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;

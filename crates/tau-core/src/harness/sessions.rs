@@ -281,14 +281,12 @@ impl Core {
         let agent = AgentSession::launch(
             store,
             SessionRole::Root {
-                core: Some(self_arc),
-                workspace: Some(workspace.clone()),
-                config: Some(config),
+                core: self_arc,
+                workspace: workspace.clone(),
+                config,
                 provider: provider.clone(),
-                supervisor: None,
-                system_prompt: None,
                 base_prompt,
-                first_provider: Some((name, first)),
+                first_provider: (name, first),
             },
         )?;
         let meta = SessionMeta {

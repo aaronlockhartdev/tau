@@ -20,26 +20,32 @@ use crate::session::Entry;
 #[derive(Clone)]
 pub enum SessionRole {
     /// A top-level session. With the core (and no pre-built supervisor)
-    /// the constructor builds the supervisor from the config and wires the
-    /// full event set; with a pre-built supervisor (the test seam) it
-    /// adopts the supervisor's values and wires no events.
+    /// A top-level session: the constructor builds the supervisor from the
+    /// config, wires the full event set, and resolves the model. A root without
+    /// a core is not a half-built root — it is the other role, `Seam`.
     Root {
-        core: Option<Arc<Core>>,
-        workspace: Option<Workspace>,
-        config: Option<Config>,
+        core: Arc<Core>,
+        workspace: Workspace,
+        config: Config,
         provider: TurnProviderRef,
-        supervisor: Option<Arc<Supervisor>>,
-        /// The parent's own system prompt when it differs from the
-        /// supervisor's (the acceptance driver's seam: the supervisor's
-        /// prompt is the child's); `None` = adopt the supervisor's.
-        system_prompt: Option<String>,
         /// Replace the root session's base prompt line (the headless frame
         /// seam, `session/new` `base_prompt`); `None` keeps the default.
         base_prompt: Option<String>,
         /// The config's first provider, resolved by the caller (`build_live`
-        /// resolves it for the live shell); the supervisor's child factory
-        /// and bridge take it — no second resolution (ticket #43).
-        first_provider: Option<(String, crate::config::Provider)>,
+        /// resolves it for the live shell, and its no-providers error is the
+        /// one `session/new` returns); the supervisor's child factory and
+        /// bridge take it — no second resolution (ticket #43).
+        first_provider: (String, crate::config::Provider),
+    },
+    /// A root session around a caller-built supervisor: what the acceptance
+    /// driver needs, since its children run without a core. It adopts the
+    /// supervisor's values and wires no events. Production opens use `Root`.
+    Seam {
+        supervisor: Arc<Supervisor>,
+        provider: TurnProviderRef,
+        /// The parent's own prompt when it differs from the supervisor's (the
+        /// supervisor's is the child's); `None` = adopt the supervisor's.
+        system_prompt: Option<String>,
     },
     /// A sub-agent session: the child's link; no supervisor, no events. The
     /// values the child inherits (cwd, turn config, OM) come from the
@@ -81,7 +87,7 @@ impl AgentSession {
     /// queue hook captures a `Weak` self-reference, not a strong one).
     #[allow(clippy::too_many_lines)] // one arm per session role; splitting is refactoring
     pub fn launch(
-        store: SessionStore,
+        mut store: SessionStore,
         role: SessionRole,
     ) -> Result<Arc<AgentSession>, ProtocolError> {
         match role {
@@ -175,88 +181,61 @@ impl AgentSession {
                 workspace,
                 config,
                 provider,
-                supervisor,
-                system_prompt,
                 base_prompt,
                 first_provider,
+            } => root_session(
+                &core,
+                &workspace,
+                &config,
+                &first_provider,
+                store,
+                provider,
+                base_prompt.as_deref(),
+            ),
+            SessionRole::Seam {
+                supervisor,
+                provider,
+                system_prompt,
             } => {
-                let Some(sup) = supervisor else {
-                    // Building the supervisor (the bridge cycle) needs the core's
-                    // seams; a pre-built one (the test seam) needs none.
-                    let (Some(core), Some(workspace), Some(config)) = (core, workspace, config)
-                    else {
-                        return Err(ProtocolError::Other {
-                            message:
-                                "root role: the core, workspace, and config are needed to build the supervisor"
-                                    .into(),
-                        });
-                    };
-                    let Some(first) = first_provider else {
-                        return Err(ProtocolError::Other {
-                            message: "no providers configured; add a [providers.x] section".into(),
-                        });
-                    };
-                    return root_session(
-                        &core,
-                        &workspace,
-                        &config,
-                        &first,
-                        store,
-                        provider,
-                        base_prompt.as_deref(),
-                    );
+                let d = supervisor.inherited();
+                let record =
+                    OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
+                // The plan file (design): the prompt's section and the state
+                // re-injection exist only when the caller passes a prompt and
+                // the supervisor carries a core (the seam carries none).
+                let sid = store.id().to_owned();
+                let (system_prompt, core) = match system_prompt {
+                    Some(prompt) => {
+                        let core = supervisor.core().and_then(|w| w.upgrade());
+                        plan_wiring(core.as_ref(), &prompt, &d.cwd, &sid)
+                    }
+                    None => (d.system_prompt.clone(), None),
                 };
-                // A pre-built supervisor (the test seam): adopt its values,
-                // wire no events.
-                Self::root_with_supervisor(&sup, store, system_prompt, provider)
+                let gate_failed = session_open::facts(&mut store)?.is_some_and(|f| f.gate_failed);
+                let agent = Arc::new(Self::new(SessionParams {
+                    store,
+                    system_prompt,
+                    model: d.model,
+                    tools: tools::surface::root_specs(),
+                    cwd: d.cwd,
+                    provider,
+                    tool_batch_on_force: d.tool_batch_on_force,
+                    turn: d.turn,
+                    gates: d.gates,
+                    gate_failed,
+                    om: Some(OmState::from_config(&d.om, record)),
+                    om_model: d.om_model,
+                    hashline: d.hashline,
+                    subagents: Some(supervisor.clone()),
+                    child: None,
+                }));
+                wire_plan_hook(&agent, core, &sid);
+                supervisor.attach_parent(&agent);
+                Ok(agent)
             }
         }
-    }
-
-    /// A pre-built supervisor (the test seam): adopt the supervisor's values,
-    /// wire no events.
-    fn root_with_supervisor(
-        sup: &Arc<Supervisor>,
-        mut store: SessionStore,
-        system_prompt: Option<String>,
-        provider: TurnProviderRef,
-    ) -> Result<Arc<AgentSession>, ProtocolError> {
-        let d = sup.inherited();
-        let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
-            message: e.to_string(),
-        })?;
-        // The plan file (design): the prompt's section and the state
-        // re-injection exist only when the caller passes a prompt and
-        // the supervisor carries a core (the test seams carry none).
-        let sid = store.id().to_owned();
-        let (system_prompt, core) = match system_prompt {
-            Some(prompt) => {
-                let core = sup.core().and_then(|w| w.upgrade());
-                plan_wiring(core.as_ref(), &prompt, &d.cwd, &sid)
-            }
-            None => (d.system_prompt.clone(), None),
-        };
-        let gate_failed = session_open::facts(&mut store)?.is_some_and(|f| f.gate_failed);
-        let agent = Arc::new(Self::new(SessionParams {
-            store,
-            system_prompt,
-            model: d.model,
-            tools: tools::surface::root_specs(),
-            cwd: d.cwd,
-            provider,
-            tool_batch_on_force: d.tool_batch_on_force,
-            turn: d.turn,
-            gates: d.gates,
-            gate_failed,
-            om: Some(OmState::from_config(&d.om, record)),
-            om_model: d.om_model,
-            hashline: d.hashline,
-            subagents: Some(sup.clone()),
-            child: None,
-        }));
-        wire_plan_hook(&agent, core, &sid);
-        sup.attach_parent(&agent);
-        Ok(agent)
     }
 }
 

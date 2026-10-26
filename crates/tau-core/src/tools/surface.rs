@@ -19,7 +19,7 @@ use std::sync::Arc;
 #[must_use]
 pub fn specs_for(role: &SessionRole, agent_tools: Option<&[String]>) -> Vec<ToolSpec> {
     match role {
-        SessionRole::Root { .. } => root_specs(),
+        SessionRole::Root { .. } | SessionRole::Seam { .. } => root_specs(),
         SessionRole::Child { .. } => child_specs(agent_tools),
         SessionRole::Bare { .. } => bare_specs(),
     }
