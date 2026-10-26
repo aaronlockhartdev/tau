@@ -263,7 +263,7 @@ finish it, and each keeps the existing tests as the harness.
 |---|---|---|---|
 | **S1** | One fact-append helper: `diagnostics::append_facts(&mut store, facts)` that re-reads the leaf between appends | `harness/launch.rs` (`record_model_at_open`), `harness/dispatch_sessions.rs:196-211`, used by `agent/config.rs:119` too | hazard 3: the chaining rule gets one owner instead of being re-derived at each call site; also drops the `leaf()`/`leaf_cached()` inconsistency |
 | **S2** | One truncation module (`bounded_head` char-boundary, `truncate_lines` line-boundary + marker) | `agent/turn/mod.rs:17`, `gate.rs:82`, `subagent/inspect.rs:198` | three helpers, two semantics, one concept; the frontend's `firstLine` mirrors the same idea |
-| **S3** | `std::sync::Mutex` → `parking_lot::Mutex`, and the `.expect("<invariant>")` clause disappears with the `Result`. Two guardrails come with it, as requirements: model-supplied text is parsed **outside** a critical section, and no guard is held across an await | 217 production sites (worst `agent/mod.rs`, `harness/state.rs`, `harness/dispatch_sessions.rs`), 196 test sites, and four `Err` arms that lose their reason to exist | §6.2; hazard 2. A lock stops being a thing that can wedge the process, and the code stops asserting an invariant it cannot keep |
+| **S3** | `std::sync::Mutex` → `parking_lot::Mutex`, and the `.expect("<invariant>")` clause disappears with the `Result`. Two guardrails come with it, as requirements: model-supplied text is parsed **outside** a critical section, and no guard is held across an await | 251 production sites and 209 test sites across `tau-core`, `tau-acp` and `tau-test`; 36 declarations now name `parking_lot`. **Landed**: `tools::surface::lock_anchors` and its poison-recovery test are deleted, and the four `Err` arms went with them — `om_integration/background.rs` was the only one with behavior attached, so a panic in the agent thread is now fatal where it used to be logged and read again | §6.2; hazard 2. A lock stops being a thing that can wedge the process, and the code stops asserting an invariant it cannot keep |
 | **S4** | Disperse `om_integration` per §2, ending with the port replacing `Arc<Mutex<agent::Inner>>` | `om_integration/*` | hazard 1; also the prerequisite for `tau-om` if that is ever revisited |
 | **S5** | Collapse the 7 `UNIX_EPOCH` conversions onto `jiff::Timestamp`, one `now_ms()` | `session/mod.rs:206`, `session/file.rs:315`, `harness/state.rs:531`, `hashline/pin_store/mod.rs:130`, `tools/impls.rs:393`, `om_integration/mod.rs:321` | already a dependency; two incompatible epoch idioms today |
 | **S6** | `context_gate_budget` and `gate_unavailable_reasons` computed from one function returning `Result<budget, reasons>` | `agent/mod.rs:110,124` | they must never disagree — #306 had to reconcile exactly that drift by hand |
@@ -296,9 +296,9 @@ finish it, and each keeps the existing tests as the harness.
 5. ~~**S14, then S13**~~ — **done**: the record carries the concepts, the
    adapter carries the spellings, `from_record` is the one frozen read, and the
    estimate reads a recorded count instead of guessing the whole prompt.
-6. **S3** — the `parking_lot` migration, alone in its own series: ~400 sites, no
-   semantics, one commit per module group. It must never share a commit with a
-   behavior change, and it is where hazard 2 dies.
+6. ~~**S3** — the `parking_lot` migration, alone in its own series~~ — **done**: ~460
+   sites over six commits, one per module group, none sharing a commit with a
+   behavior change. Hazard 2 died with `lock_anchors` and its test.
 7. **S9** — remove the supervisor seam from the production open path, then
    re-point its three test callers.
 8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
@@ -339,6 +339,13 @@ finish it, and each keeps the existing tests as the harness.
    `await_holding_lock` gate stays `-D warnings`. Worth remembering while hunting
    the "stopped" reports: `deadlock_detection` is an experimental feature flag,
    and a *hung* lock and a poisoned one look identical from the GUI.
+   Shipped (S3): the guardrail held as written — `await_holding_lock` fires on a
+   `parking_lot` guard across an await on the pinned toolchain, so the compiler
+   still gates it even though lock_api 0.5 makes the guard `Send`. The migration
+   deleted one helper that existed only to absorb poisoning
+   (`tools::surface::lock_anchors`) and the test that pinned its recovery, and
+   dropped one `Err` arm that had behavior attached: a panic in the agent thread
+   is now fatal where it used to be logged and the state read again.
 3. **`tau-hashline` stays workspace-internal.** No crates.io means no semver
    policy, no separate CI job, and no public-API discipline past the crate
    boundary.
