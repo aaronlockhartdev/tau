@@ -204,7 +204,7 @@ async fn a_misspelled_skill_name_rejects_the_send() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     let err = core
         .dispatch(Command::MessageSend {
             session: session_id.clone(),
@@ -273,7 +273,7 @@ async fn a_skill_removed_from_disk_before_send_rejects_the_send() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     let err = core
         .dispatch(Command::MessageSend {
             session: session_id.clone(),
@@ -334,7 +334,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let s1 = live.meta.lock().unwrap().id.clone();
+    let s1 = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: s1.clone(),
         text: "/skill:alpha do it".into(),
@@ -360,7 +360,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let s2 = live.meta.lock().unwrap().id.clone();
+    let s2 = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: s2.clone(),
         text: "/skill:alpha".into(),
@@ -384,7 +384,7 @@ async fn a_skill_invocation_records_the_expanded_entry() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let s3 = live.meta.lock().unwrap().id.clone();
+    let s3 = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: s3.clone(),
         text: "/not-a-skill".into(),
@@ -418,7 +418,7 @@ async fn a_skill_send_queued_mid_turn_shows_its_expanded_text() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),

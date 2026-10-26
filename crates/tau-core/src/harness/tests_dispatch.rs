@@ -293,7 +293,6 @@ async fn a_production_send_makes_exactly_one_provider_call() {
     let live = core
         .sessions
         .lock()
-        .unwrap()
         .get(&session.id)
         .cloned()
         .expect("the new session is live");
@@ -315,7 +314,7 @@ async fn a_production_send_makes_exactly_one_provider_call() {
         }
         let expected = n + 1;
         assert_eq!(
-            live.provider.calls.lock().unwrap().len(),
+            live.provider.calls.lock().len(),
             expected,
             "send {expected} made a second provider call"
         );
@@ -489,7 +488,7 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     // Five entries through the session's own store (the live writer's path).
     live.agent
         .with_store(|store| {

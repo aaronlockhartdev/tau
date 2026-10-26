@@ -18,19 +18,19 @@ pub(crate) struct TestBridge {
 
 impl SubagentBridge for TestBridge {
     fn spawned(&self, n: &SpawnNotice) {
-        self.spawns.lock().unwrap().push(n.clone());
+        self.spawns.lock().push(n.clone());
     }
     fn state(&self, n: &StateNotice) {
-        self.states.lock().unwrap().push(n.clone());
+        self.states.lock().push(n.clone());
     }
     fn reclaimed(&self, n: &ReclaimNotice) {
-        self.reclaims.lock().unwrap().push(n.clone());
+        self.reclaims.lock().push(n.clone());
     }
     fn re_adopted(&self, n: &ReadoptNotice) {
-        self.readopts.lock().unwrap().push(n.clone());
+        self.readopts.lock().push(n.clone());
     }
     fn wake(&self, n: &WakeNotice) {
-        self.wakes.lock().unwrap().push(n.clone());
+        self.wakes.lock().push(n.clone());
     }
 }
 
@@ -101,7 +101,7 @@ impl provider::TurnProvider for CannedChildProvider {
             // The request's `instructions` is private: capture it the way
             // the wire encodes it (the struct's Serialize).
             let captured = serde_json::to_value(req).unwrap();
-            self.instructions.lock().unwrap().push(
+            self.instructions.lock().push(
                 captured
                     .get("instructions")
                     .and_then(Value::as_str)

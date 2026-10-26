@@ -111,7 +111,6 @@ async fn the_lifecycle_acceptance_flow() {
     let wake = bridge
         .wakes
         .lock()
-        .unwrap()
         .iter()
         .find(|w| w.kind == WakeKind::Done)
         .cloned()
@@ -136,7 +135,6 @@ async fn the_lifecycle_acceptance_flow() {
         bridge
             .wakes
             .lock()
-            .unwrap()
             .iter()
             .any(|w| w.kind == WakeKind::Waiting)
     );
@@ -170,7 +168,6 @@ async fn the_lifecycle_acceptance_flow() {
         bridge
             .wakes
             .lock()
-            .unwrap()
             .iter()
             .any(|w| w.kind == WakeKind::Waiting
                 && w.child == sup.state_info(&handle_c).unwrap().child),
@@ -191,11 +188,10 @@ async fn the_lifecycle_acceptance_flow() {
     assert_eq!(nudges.len(), 0, "the nudge is deleted: no nudge entry");
     // Every spawn produced a bridge event; the state stream saw the
     // full transition set.
-    assert_eq!(bridge.spawns.lock().unwrap().len(), 3);
+    assert_eq!(bridge.spawns.lock().len(), 3);
     let states: Vec<&str> = bridge
         .states
         .lock()
-        .unwrap()
         .iter()
         .map(|n| n.state.kind())
         .collect();
@@ -205,14 +201,7 @@ async fn the_lifecycle_acceptance_flow() {
 /// Drive the parent's loop: it calls the spawn tools in its script.
 async fn sup_spawn_from_parent(sup: &Arc<Supervisor>) {
     // The harness's parent agent: find it via the supervisor's parent.
-    let parent = sup
-        .parent
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
+    let parent = sup.parent.lock().as_ref().unwrap().upgrade().unwrap();
     parent.send("go", Lane::FollowUp);
     parent.process().await.unwrap();
 }

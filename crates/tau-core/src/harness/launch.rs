@@ -451,11 +451,7 @@ fn root_session(
                 .collect(),
         ),
     });
-    bridge
-        .sup
-        .lock()
-        .expect("supervisor bridge: no panic while the lock is held")
-        .replace(Arc::downgrade(&sup));
+    bridge.sup.lock().replace(Arc::downgrade(&sup));
     let sid = store.id().to_owned();
     let agent = Arc::new(AgentSession::new(SessionParams {
         store,
@@ -591,13 +587,7 @@ pub(super) fn wire_job_hook(
     let sid = sid.to_string();
     agent.set_job_notify_hook(Some(Arc::new(
         move |job_id: &str, code: Option<i32>, output_path: &Path| {
-            let Some(live) = core
-                .sessions
-                .lock()
-                .expect("sessions map: no panic while the lock is held")
-                .get(&sid)
-                .cloned()
-            else {
+            let Some(live) = core.sessions.lock().get(&sid).cloned() else {
                 return;
             };
             let status = match code {

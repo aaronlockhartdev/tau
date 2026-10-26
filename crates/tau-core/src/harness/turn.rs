@@ -43,14 +43,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         live: Arc::clone(&live),
     };
     live.turn.store(true, Ordering::SeqCst);
-    let mut store = SessionStore::for_workspace(
-        &live.cwd,
-        &live
-            .meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .id,
-    );
+    let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().id);
     if let Err(e) = store.open() {
         // The send is already accepted (the GUI shows it as the turn):
         // a failed open must surface, or every send to a corrupted
@@ -59,10 +52,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         // delivers it, and the queue's projection shows it — nothing is
         // re-queued anywhere.
         let (workspace, id) = {
-            let meta = live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held");
+            let meta = live.meta.lock();
             (meta.workspace.clone(), meta.id.clone())
         };
         core.emit(Event::System {
@@ -81,17 +71,9 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // The archive sets the meta flag before its file moves (ADR-0005):
     // a turn that started in that window dies here, at its first write —
     // no headerless file, no partial turn in the archive.
-    if live
-        .meta
-        .lock()
-        .expect("session meta: no panic while the lock is held")
-        .archived
-    {
+    if live.meta.lock().archived {
         let (workspace, id) = {
-            let meta = live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held");
+            let meta = live.meta.lock();
             (meta.workspace.clone(), meta.id.clone())
         };
         core.emit(Event::System {
@@ -107,22 +89,14 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         return;
     }
     let start = store.leaf().ok().flatten().map(|e| e.id);
-    let calls_before = live
-        .provider
-        .calls
-        .lock()
-        .expect("provider call ids: no panic while the lock is held")
-        .len();
+    let calls_before = live.provider.calls.lock().len();
 
     if let Err(e) = live.agent.process().await {
         // One locked scope: two meta locks in one expression would be a
         // same-thread re-entrant deadlock (the first guard lives until the
         // statement ends).
         let (workspace, id) = {
-            let meta = live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held");
+            let meta = live.meta.lock();
             (meta.workspace.clone(), meta.id.clone())
         };
         core.emit(Event::System {
@@ -139,18 +113,8 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         None => store.entries_range(0, usize::MAX).unwrap_or_default(),
     };
 
-    let workspace = live
-        .meta
-        .lock()
-        .expect("session meta: no panic while the lock is held")
-        .workspace
-        .clone();
-    let session = live
-        .meta
-        .lock()
-        .expect("session meta: no panic while the lock is held")
-        .id
-        .clone();
+    let workspace = live.meta.lock().workspace.clone();
+    let session = live.meta.lock().id.clone();
     let mut assistant_index = 0usize;
     let mut queue_changed = false;
     for entry in &new {
@@ -167,7 +131,6 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     .provider
                     .calls
                     .lock()
-                    .expect("provider call ids: no panic while the lock is held")
                     .get(calls_before + assistant_index)
                     .cloned();
                 assistant_index += 1;
@@ -197,10 +160,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
                     });
                 }
                 if let Some(u) = usage {
-                    live.meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .usage = Some(u);
+                    live.meta.lock().usage = Some(u);
                 }
             }
             EntryKind::Tool => {
@@ -239,16 +199,8 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     // bubble must close either way (N10).
     {
         let (calls, completed) = {
-            let calls = live
-                .provider
-                .calls
-                .lock()
-                .expect("provider call ids: no panic while the lock is held");
-            let completed = live
-                .provider
-                .completed
-                .lock()
-                .expect("completed-call map: no panic while the lock is held");
+            let calls = live.provider.calls.lock();
+            let completed = live.provider.completed.lock();
             (calls, completed)
         };
         let new_calls = calls.len() - calls_before;
@@ -270,10 +222,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
     if let Ok(leaf) = store.leaf()
         && let Some(leaf) = leaf
     {
-        live.meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .leaf = Some(leaf.id);
+        live.meta.lock().leaf = Some(leaf.id);
     }
     if queue_changed {
         core.emit_queue(&live);
@@ -288,10 +237,7 @@ impl Core {
         // a projection of the agent's lane queue (the single source of
         // truth), not a second ledger.
         let (workspace, session, items) = {
-            let meta = live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held");
+            let meta = live.meta.lock();
             (
                 meta.workspace.clone(),
                 meta.id.clone(),

@@ -9,8 +9,8 @@ use crate::agent_type::builtin_general;
 use crate::config::{Gates, Om, Provider, SubAgents, ToolBatchPolicy};
 use crate::subagent::testkit::{CannedFactory, TestBridge, TestDriver};
 use crate::subagent::{Supervisor, SupervisorParams};
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 
 fn canned_provider() -> crate::provider::TurnProviderRef {
@@ -65,7 +65,7 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
         .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let seen = collected.lock().unwrap().iter().any(
+        let seen = collected.lock().iter().any(
             |e| matches!(e, Event::EntryUpsert { session, .. } if session == &agent_sid(&agent)),
         );
         if seen {
@@ -272,7 +272,7 @@ async fn a_reopened_session_resumes_gate_failed_from_the_record() {
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
-            instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
+            instructions: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),

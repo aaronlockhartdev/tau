@@ -15,10 +15,11 @@ use crate::agent::{AgentSession, TurnConfig};
 use crate::config::{Gates, Om, SubAgents, ToolBatchPolicy};
 use crate::provider::TurnProviderRef;
 use crate::session::SessionStore;
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use tau_protocol::payload::{ResumeContract, TurnUsage};
 
 pub use bridge::{
@@ -199,10 +200,7 @@ impl Supervisor {
             parent_entries: p.parent_entries,
             self_weak: Mutex::new(None),
         });
-        *sup.self_weak
-            .lock()
-            .expect("supervisor self ref: no panic while the lock is held") =
-            Some(Arc::downgrade(&sup));
+        *sup.self_weak.lock() = Some(Arc::downgrade(&sup));
         sup
     }
 
@@ -270,11 +268,7 @@ impl Supervisor {
     /// The parent's loop (attached once by the caller after the parent's
     /// `AgentSession` exists); stored as a `Weak` (ticket #43).
     pub fn attach_parent(&self, agent: &Arc<AgentSession>) {
-        *self
-            .parent
-            .lock()
-            .expect("supervisor parent: no panic while the lock is held") =
-            Some(Arc::downgrade(agent));
+        *self.parent.lock() = Some(Arc::downgrade(agent));
     }
 
     /// Whether a child is still `Running` (the child-side loop's exit
@@ -282,7 +276,6 @@ impl Supervisor {
     pub fn child_running(&self, handle: &str) -> bool {
         self.children
             .lock()
-            .expect("children map: no panic while the lock is held")
             .get(handle)
             .is_some_and(|c| matches!(c.state(), ChildState::Running))
     }
@@ -293,7 +286,6 @@ impl Supervisor {
     fn live_children(&self) -> Vec<Arc<Child>> {
         self.children
             .lock()
-            .expect("children map: no panic while the lock is held")
             .values()
             .filter(|c| {
                 !matches!(
@@ -326,10 +318,7 @@ impl Supervisor {
     /// the session id, then the internal handle (the GUI's protocol
     /// commands pass it).
     fn resolve(&self, name_or_id: &str) -> Option<Arc<Child>> {
-        let children = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held");
+        let children = self.children.lock();
         let found = children
             .values()
             .find(|c| c.name == name_or_id)
@@ -348,11 +337,7 @@ impl Supervisor {
     /// The child's live agent (the dispatch registers it as an ordinary
     /// live session — a child is a session, ADR-0006).
     pub fn child_agent(&self, handle: &str) -> Option<Arc<AgentSession>> {
-        self.children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .get(handle)
-            .map(|c| c.agent.clone())
+        self.children.lock().get(handle).map(|c| c.agent.clone())
     }
 
     /// The child's session id for a handle (the children map is the
@@ -360,7 +345,6 @@ impl Supervisor {
     pub fn child_session_id(&self, handle: &str) -> Option<String> {
         self.children
             .lock()
-            .expect("children map: no panic while the lock is held")
             .get(handle)
             .map(|c| c.session_id.clone())
     }

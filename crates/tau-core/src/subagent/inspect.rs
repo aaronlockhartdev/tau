@@ -18,12 +18,7 @@ const ACTIVITY_TEXT_LIMIT: usize = 400;
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).
     pub fn handles(&self) -> Vec<String> {
-        self.children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .keys()
-            .cloned()
-            .collect()
+        self.children.lock().keys().cloned().collect()
     }
 
     /// A child's structured inspection (the `subagent_state` tool and the
@@ -60,11 +55,7 @@ impl Supervisor {
             context_mode: child.context_mode,
             state,
             waiting_on,
-            last_message: child
-                .last_message
-                .lock()
-                .expect("child last message: no panic while the lock is held")
-                .clone(),
+            last_message: child.last_message.lock().clone(),
             created: child.agent.store_created(),
             usage,
             resume_contract,

@@ -304,7 +304,7 @@ async fn a_spawn_over_the_soft_bound_evicts_the_oldest_terminal() {
         .expect("spawn 2")
         .handle;
     // The reclamation notice names the evicted (oldest terminal) child.
-    let reclaims = bridge.reclaims.lock().unwrap().clone();
+    let reclaims = bridge.reclaims.lock().clone();
     assert_eq!(reclaims.len(), 1, "one child was reclaimed");
     assert_eq!(
         reclaims[0].handle, h0,
@@ -362,7 +362,7 @@ async fn a_parked_child_is_never_evicted() {
     // Two parked children, soft bound 1: over the bound, but neither is
     // terminal, so the reclamation evicts nothing.
     assert!(
-        bridge.reclaims.lock().unwrap().is_empty(),
+        bridge.reclaims.lock().is_empty(),
         "no parked child is ever reclaimed"
     );
     assert_eq!(sup.handles().len(), 2, "both parked children stay");

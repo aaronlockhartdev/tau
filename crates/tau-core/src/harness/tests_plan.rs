@@ -5,8 +5,9 @@
 
 use super::*;
 use crate::harness::testkit::*;
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// A scripted provider that records each request's instructions — the
@@ -33,7 +34,7 @@ impl provider::TurnProvider for Capturing {
         let inner = provider::canned(&body);
         let turn = inner.call(request, sink);
         Box::pin(async move {
-            seen.lock().unwrap().push(instructions);
+            seen.lock().push(instructions);
             turn.await
         })
     }
@@ -44,7 +45,7 @@ async fn settle_turn(live: &Arc<LiveSession>, seen: &Arc<Mutex<Vec<Option<String
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let idle = !live.turn.load(Ordering::SeqCst);
-        let captured = !seen.lock().unwrap().is_empty();
+        let captured = !seen.lock().is_empty();
         if idle && captured {
             return;
         }
@@ -147,7 +148,6 @@ async fn session_new_reinjection_reaches_the_provider() {
 
     let ins = seen
         .lock()
-        .unwrap()
         .first()
         .and_then(Clone::clone)
         .expect("the request carries instructions");
@@ -263,7 +263,7 @@ async fn a_plan_file_change_emits_plan_changed() {
     // The session-start refresh also emits (the empty skeleton); the
     // assertion keys on the edited plan's two steps.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while plan_changed(&events.lock().unwrap(), &workspace.id, &meta.id)
+    while plan_changed(&events.lock(), &workspace.id, &meta.id)
         .as_ref()
         .is_none_or(|p| p.steps.len() != 2)
     {
@@ -308,7 +308,7 @@ async fn an_unchanged_plan_file_emits_no_plan_changed() {
     // the silent seed it is the session's only plan_changed.
     std::fs::write(&plan_file, "## Steps\n- [x] done step\n- [ ] open step\n").unwrap();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    while plan_changed(&events.lock().unwrap(), &workspace.id, &meta.id)
+    while plan_changed(&events.lock(), &workspace.id, &meta.id)
         .as_ref()
         .is_none_or(|p| p.steps.len() != 2)
     {
@@ -318,7 +318,7 @@ async fn an_unchanged_plan_file_emits_no_plan_changed() {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let before = count_for(&events.lock().unwrap());
+    let before = count_for(&events.lock());
     assert_eq!(
         before, 1,
         "the silent seed emits nothing; the change is the only event"
@@ -332,7 +332,7 @@ async fn an_unchanged_plan_file_emits_no_plan_changed() {
     while tokio::time::Instant::now() < quiet {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let after = count_for(&events.lock().unwrap());
+    let after = count_for(&events.lock());
     assert_eq!(
         after, before,
         "a byte-identical rewrite must not emit a second plan_changed"
@@ -358,7 +358,6 @@ async fn a_new_session_delivers_its_plan_via_the_open_snapshot() {
         0,
         events
             .lock()
-            .unwrap()
             .iter()
             .filter(|e| matches!(e, Event::PlanChanged { session, .. } if session == &meta.id))
             .count(),
@@ -396,7 +395,7 @@ async fn an_unchanged_refresh_emits_no_plan_changed() {
     let meta = new_root_session(&core, &workspace);
 
     let count = || {
-        let events = events.lock().unwrap();
+        let events = events.lock();
         events
             .iter()
             .filter(|e| {
@@ -448,7 +447,7 @@ async fn the_plan_state_is_reinjected_into_the_assembly() {
     });
     let seen = provider.seen.clone();
     let live = manual_session(&core, &workspace, provider, TurnConfig::default());
-    let sid = live.meta.lock().unwrap().id.clone();
+    let sid = live.meta.lock().id.clone();
 
     // The production shape: the core's watcher-parsed state.
     let core_weak = Arc::downgrade(&core);
@@ -471,7 +470,6 @@ async fn the_plan_state_is_reinjected_into_the_assembly() {
 
     let ins = seen
         .lock()
-        .unwrap()
         .first()
         .and_then(Clone::clone)
         .expect("the request carries instructions");
@@ -494,7 +492,7 @@ async fn a_plan_change_between_turns_changes_the_injected_state() {
     });
     let seen = provider.seen.clone();
     let live = manual_session(&core, &workspace, provider, TurnConfig::default());
-    let sid = live.meta.lock().unwrap().id.clone();
+    let sid = live.meta.lock().id.clone();
     let core_weak = Arc::downgrade(&core);
     let hook_sid = sid.clone();
     live.agent.set_plan_hook(Some(Arc::new(move || {
@@ -513,7 +511,7 @@ async fn a_plan_change_between_turns_changes_the_injected_state() {
     })
     .unwrap();
     settle_turn(&live, &seen).await;
-    let first = seen.lock().unwrap()[0]
+    let first = seen.lock()[0]
         .clone()
         .expect("the first request carries instructions");
     assert!(!first.contains("done step"), "turn 1: {first}");
@@ -543,9 +541,9 @@ async fn a_plan_change_between_turns_changes_the_injected_state() {
         lane: MessageLane::Steering,
     })
     .unwrap();
-    let prev = seen.lock().unwrap().len();
+    let prev = seen.lock().len();
     settle_turn(&live, &seen).await;
-    let seen = seen.lock().unwrap();
+    let seen = seen.lock();
     assert!(seen.len() > prev, "turn 2 never ran");
     let second = seen[prev]
         .clone()

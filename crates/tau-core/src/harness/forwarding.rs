@@ -82,11 +82,7 @@ impl TurnProvider for ForwardingProvider {
         // Record the call at start, not first event (#67): a call aborted
         // before it emits anything is still a call, and must finalize like
         // any other — a StreamStart now, a StreamEnd at turn settlement.
-        forward
-            .calls
-            .lock()
-            .expect("forwarded call ids: no panic while the lock is held")
-            .push(forward.call_id.clone());
+        forward.calls.lock().push(forward.call_id.clone());
         forward.send(Event::StreamStart {
             workspace: forward.workspace.clone(),
             session: forward.session.clone(),
@@ -130,10 +126,7 @@ impl TurnSink for ForwardSink<'_> {
         if let TurnEvent::Completed(_, _) = &event
             && !stopped
         {
-            self.completed
-                .lock()
-                .expect("completed-call map: no panic while the lock is held")
-                .insert(self.call_id.clone(), true);
+            self.completed.lock().insert(self.call_id.clone(), true);
         }
         if stopped {
             return false;
@@ -240,7 +233,6 @@ impl ChildProviderFactory for ForwardingChildFactory {
         // child's LiveSession (one per child, as the root has).
         self.providers
             .lock()
-            .expect("child provider registry: no panic while the lock is held")
             .insert(child.to_owned(), provider.clone());
         provider
     }
@@ -250,10 +242,7 @@ impl ForwardingChildFactory {
     /// The concrete provider `create` made for a child, so the bridge's
     /// `LiveSession` shares it with the child's agent (one provider, #175).
     fn take_provider(&self, child: &str) -> Option<Arc<ForwardingProvider>> {
-        self.providers
-            .lock()
-            .expect("child provider registry: no panic while the lock is held")
-            .remove(child)
+        self.providers.lock().remove(child)
     }
 }
 
@@ -265,13 +254,10 @@ pub(crate) struct TurnChildDriver {
 }
 impl ChildDriver for TurnChildDriver {
     fn drive(&self, session: &str, _agent: &Arc<AgentSession>) -> BoxedDrive {
-        let live = self.core.upgrade().and_then(|c| {
-            c.sessions
-                .lock()
-                .expect("sessions map: no panic while the lock is held")
-                .get(session)
-                .cloned()
-        });
+        let live = self
+            .core
+            .upgrade()
+            .and_then(|c| c.sessions.lock().get(session).cloned());
         let Some((core, live)) = self.core.upgrade().zip(live) else {
             return Box::pin(async { Ok(()) });
         };
@@ -301,7 +287,6 @@ impl SubagentBridge for SessionSubagentBridge {
         let Some(agent) = self
             .sup
             .lock()
-            .expect("supervisor bridge: no panic while the lock is held")
             .as_ref()
             .and_then(Weak::upgrade)
             .and_then(|s| s.child_agent(&n.handle))
@@ -312,14 +297,7 @@ impl SubagentBridge for SessionSubagentBridge {
         // GUI's handle-carrying commands resolve the parent from the
         // registry, never from the handle's format.
         self.core.register_child_handle(&n.handle, &n.parent);
-        let Some(parent_live) = self
-            .core
-            .sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .get(&n.parent)
-            .cloned()
-        else {
+        let Some(parent_live) = self.core.sessions.lock().get(&n.parent).cloned() else {
             return;
         };
         let mut store = SessionStore::for_workspace(&parent_live.cwd, &n.child);
@@ -379,27 +357,14 @@ impl SubagentBridge for SessionSubagentBridge {
             provider,
             cwd: parent_live.cwd.clone(),
         });
-        let id = live
-            .meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .id
-            .clone();
-        self.core
-            .sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .insert(id, live);
+        let id = live.meta.lock().id.clone();
+        self.core.sessions.lock().insert(id, live);
     }
 
     fn reclaimed(&self, n: &ReclaimNotice) {
         // The handle is gone from the supervisor's map: drop the mint record
         // (the session file and the child's live session stay, #250).
-        self.core
-            .child_handles
-            .lock()
-            .expect("child handle registry: no panic while the lock is held")
-            .remove(&n.handle);
+        self.core.child_handles.lock().remove(&n.handle);
     }
 
     fn re_adopted(&self, n: &ReadoptNotice) {
@@ -462,14 +427,7 @@ impl SubagentBridge for SessionSubagentBridge {
         // The report rides the steering lane — a child that finishes mid
         // parent-turn is delivered at this turn's next LLM call, not
         // spliced into a later, unrelated one.
-        let Some(live) = self
-            .core
-            .sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .get(&n.parent)
-            .cloned()
-        else {
+        let Some(live) = self.core.sessions.lock().get(&n.parent).cloned() else {
             return;
         };
         let text = match &n.output {

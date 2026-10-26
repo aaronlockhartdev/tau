@@ -16,21 +16,11 @@ impl Core {
     /// slot between opens (ticket #31), so a stale list never outlives a
     /// change.
     pub(crate) fn skills_of(&self, ws: &Workspace) -> Vec<SkillInfo> {
-        if let Some(reg) = self
-            .skills
-            .lock()
-            .expect("skills registry: no panic while the lock is held")
-            .get(&ws.id)
-        {
+        if let Some(reg) = self.skills.lock().get(&ws.id) {
             return reg.clone();
         }
         self.refresh_skills(ws);
-        self.skills
-            .lock()
-            .expect("skills registry: no panic while the lock is held")
-            .get(&ws.id)
-            .cloned()
-            .unwrap_or_default()
+        self.skills.lock().get(&ws.id).cloned().unwrap_or_default()
     }
 
     /// Re-run discovery for `ws`, replace its registry slot, and emit the
@@ -47,10 +37,7 @@ impl Core {
             Path::new(&ws.cwd),
         );
         let reg: Vec<SkillInfo> = skills.iter().map(skill_info).collect();
-        self.skills
-            .lock()
-            .expect("skills registry: no panic while the lock is held")
-            .insert(ws.id.clone(), reg.clone());
+        self.skills.lock().insert(ws.id.clone(), reg.clone());
         self.emit(Event::SkillListChanged {
             workspace: ws.id.clone(),
             skills: reg,
@@ -76,13 +63,7 @@ impl Core {
             Some((n, a)) => (n, a.trim()),
             None => (rest, ""),
         };
-        let ws = self.workspace(
-            &live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held")
-                .workspace,
-        )?;
+        let ws = self.workspace(&live.meta.lock().workspace)?;
         let Some(skill) = self.skills_of(&ws).into_iter().find(|s| s.name == name) else {
             return Err(ProtocolError::Other {
                 message: format!("unknown skill '{name}' — the send was not recorded"),
@@ -120,16 +101,12 @@ impl Core {
     /// The (workspace, session-meta) pair owning a non-archived session,
     /// scanning every open workspace — the one home for that lookup.
     pub(crate) fn owning_session(&self, id: &str) -> Option<(Workspace, SessionMeta)> {
-        self.workspaces
-            .lock()
-            .expect("workspaces map: no panic while the lock is held")
-            .values()
-            .find_map(|w| {
-                Self::session_access(w)
-                    .into_iter()
-                    .find(|m| m.id == id && !m.archived)
-                    .map(|m| (w.clone(), m))
-            })
+        self.workspaces.lock().values().find_map(|w| {
+            Self::session_access(w)
+                .into_iter()
+                .find(|m| m.id == id && !m.archived)
+                .map(|m| (w.clone(), m))
+        })
     }
 
     /// A name free of collisions among the workspace's sessions (the file is
@@ -158,12 +135,7 @@ impl Core {
                 "session {child} is a sub-agent — archive its parent session to archive it"
             );
         };
-        if self
-            .sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .contains_key(parent)
-        {
+        if self.sessions.lock().contains_key(parent) {
             return format!(
                 "session {child} is a sub-agent — archive its parent session {parent} to archive it"
             );
@@ -206,7 +178,6 @@ impl Core {
         if live.turn.load(Ordering::SeqCst) {
             self.sessions
                 .lock()
-                .expect("sessions map: no panic while the lock is held")
                 .insert(session.to_owned(), live.clone());
             return Err(ProtocolError::Other {
                 message: format!(
@@ -339,16 +310,8 @@ impl Core {
             provider,
             cwd: PathBuf::from(&workspace.cwd),
         });
-        let id = live
-            .meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .id
-            .clone();
-        self.sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .insert(id.clone(), live.clone());
+        let id = live.meta.lock().id.clone();
+        self.sessions.lock().insert(id.clone(), live.clone());
         Ok(meta)
     }
 }

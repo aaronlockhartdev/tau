@@ -8,13 +8,7 @@ use tau_protocol::EntryKind;
 
 impl Core {
     pub(crate) fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
-        let workspace = self.workspace(
-            &live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held")
-                .workspace,
-        )?;
+        let workspace = self.workspace(&live.meta.lock().workspace)?;
         // The live session's own store serves the snapshot from its
         // in-memory log (verified at open; only it appends to the file):
         // no file re-open per snapshot — one open serves it all.
@@ -38,18 +32,13 @@ impl Core {
             .find(|e| e.kind == EntryKind::Assistant)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
-        let meta = live
-            .meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .clone();
+        let meta = live.meta.lock().clone();
         let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
         // The plan pane's data (spec §5.3): the watcher-parsed state;
         // a session with no observed plan renders empty.
         let plan = self
             .plans
             .lock()
-            .expect("plan states: no panic while the lock is held")
             .get(&meta.id)
             .cloned()
             .map(Into::into)

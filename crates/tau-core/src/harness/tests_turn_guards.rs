@@ -53,7 +53,7 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(&core, &workspace, inner, TurnConfig::default());
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -66,7 +66,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -77,7 +76,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
         !core
             .sessions
             .lock()
-            .unwrap()
             .get(&session_id)
             .unwrap()
             .turn
@@ -95,7 +93,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -106,7 +103,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
         !core
             .sessions
             .lock()
-            .unwrap()
             .get(&session_id)
             .unwrap()
             .turn
@@ -130,7 +126,7 @@ async fn a_rename_of_a_running_session_is_refused() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -164,7 +160,6 @@ async fn a_rename_of_a_running_session_is_refused() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -198,7 +193,7 @@ async fn a_branch_of_a_running_session_is_refused() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -242,7 +237,6 @@ async fn a_branch_of_a_running_session_is_refused() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -293,7 +287,6 @@ async fn wait_settled(core: &Arc<Core>, session: &str) {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(session)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -341,7 +334,7 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -394,7 +387,6 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
         !core
             .sessions
             .lock()
-            .unwrap()
             .get(&session_id)
             .unwrap()
             .turn
@@ -416,7 +408,7 @@ async fn a_healthy_reopen_mints_nothing() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),

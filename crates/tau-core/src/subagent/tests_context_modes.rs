@@ -19,14 +19,7 @@ async fn a_compacted_spawn_seeds_the_frozen_prefix() {
         vec![vec![sse("", &[])]],
         SubAgents::default(),
     );
-    let parent = sup
-        .parent
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
+    let parent = sup.parent.lock().as_ref().unwrap().upgrade().unwrap();
     parent.set_om(Some(OmState::from_config(
         &Om::default(),
         OmRecord {
@@ -87,14 +80,7 @@ async fn a_compacted_child_recalls_the_parent_session() {
         vec![vec![sse("", &[])]],
         SubAgents::default(),
     );
-    let parent = sup
-        .parent
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
+    let parent = sup.parent.lock().as_ref().unwrap().upgrade().unwrap();
     // The parent's raw history, plus an observation group covering it.
     parent
         .append_entry(
@@ -167,14 +153,7 @@ async fn a_fork_copies_the_tree_and_inherits_the_record() {
         vec![vec![sse("", &[])]],
         SubAgents::default(),
     );
-    let parent = sup
-        .parent
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
+    let parent = sup.parent.lock().as_ref().unwrap().upgrade().unwrap();
     // A user entry on the parent (the fork must copy it).
     parent
         .append_entry(

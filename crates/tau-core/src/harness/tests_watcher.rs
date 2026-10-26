@@ -132,7 +132,7 @@ async fn none_seams_make_the_home_watcher_a_noop() {
     let tmp = tempfile::tempdir().unwrap();
     let core = CoreBuilder::custom(providers()).build().unwrap();
     assert!(
-        core.home_watcher.lock().unwrap().is_none(),
+        core.home_watcher.lock().is_none(),
         "the None seam has no home roots to watch"
     );
     let workspace = open_ws(&core, tmp.path()).await;

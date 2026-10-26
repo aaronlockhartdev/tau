@@ -10,14 +10,7 @@ use std::time::Duration;
 /// tools in-loop (the tool dispatch records the spawn entries in the
 /// parent's session file).
 async fn sup_spawn_from_parent(sup: &Arc<Supervisor>) {
-    let parent = sup
-        .parent
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
+    let parent = sup.parent.lock().as_ref().unwrap().upgrade().unwrap();
     parent.send("go", Lane::FollowUp);
     parent.process().await.unwrap();
 }

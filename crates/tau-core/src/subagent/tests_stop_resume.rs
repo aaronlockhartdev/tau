@@ -151,7 +151,7 @@ async fn a_running_child_is_stopped_and_releases_its_slot() {
         ),
         "the stopped state is recorded with its provenance"
     );
-    assert!(bridge.states.lock().unwrap().iter().any(|n| n.state
+    assert!(bridge.states.lock().iter().any(|n| n.state
         == ChildState::Stopped {
             by: StoppedBy::User
         }));
@@ -279,7 +279,6 @@ async fn a_non_running_child_refuses_a_second_stop() {
     let done_states: Vec<&str> = bridge
         .states
         .lock()
-        .unwrap()
         .iter()
         .filter(|n| n.handle == done_child.handle)
         .map(|n| n.state.kind())

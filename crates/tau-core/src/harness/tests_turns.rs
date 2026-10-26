@@ -27,12 +27,12 @@ async fn closing_a_session_stops_its_in_flight_turn() {
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
 
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "first".into(),
@@ -50,7 +50,7 @@ async fn closing_a_session_stops_its_in_flight_turn() {
     // The sink cuts the stream at the next delta (≤ 600 ms); the turn
     // then winds down — give it room to finish.
     tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
     let session_events: Vec<&Event> = events
         .iter()
         .filter(|e| {
@@ -102,7 +102,7 @@ async fn a_stop_before_the_first_event_still_ends_the_stream() {
         TurnConfig::default(),
     );
     let collected = collect_events(&core);
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "hang".into(),
@@ -120,7 +120,7 @@ async fn a_stop_before_the_first_event_still_ends_the_stream() {
 
     // The turn winds down; settlement emits the end for the aborted call.
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
     let streams: Vec<&Event> = events
         .iter()
         .filter(|e| {
@@ -179,7 +179,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
@@ -187,7 +187,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     // The meta guard must not live across this await: the dispatch
     // path re-locks the same mutex (emit_queue), and a std mutex is
     // not reentrant.
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id,
         text: "do the thing".into(),
@@ -197,7 +197,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
 
     // The canned turn is fast; give the pump a bounded time to flush.
     for _ in 0..500 {
-        let events = collected.lock().unwrap().clone();
+        let events = collected.lock().clone();
         if events.iter().any(|e| matches!(e, Event::StreamEnd { .. }))
             && events
                 .iter()
@@ -214,7 +214,7 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
 
     // The stream: one start, the growing assistant entry (frame-aligned
     // snapshots), one end with the usage; the tool batch: one id, re-emitted
@@ -331,12 +331,12 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
 
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "first".into(),
@@ -355,7 +355,7 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
     .unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
     let starts = events
         .iter()
         .filter(|e| matches!(e, Event::StreamStart { .. }))
@@ -451,7 +451,7 @@ async fn a_live_om_run_emits_om_status_events() {
             });
         })));
     }
-    core.sessions.lock().unwrap().insert(
+    core.sessions.lock().insert(
         sid.clone(),
         Arc::new(LiveSession {
             meta: Mutex::new(SessionMeta {
@@ -512,7 +512,7 @@ async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     // Corrupt the file: open() now refuses it.
     std::fs::write(
         Path::new(&workspace.cwd)
@@ -531,7 +531,7 @@ async fn a_send_to_a_corrupted_session_fails_visibly_and_keeps_the_message() {
     .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let events = collected.lock().unwrap().clone();
+        let events = collected.lock().clone();
         let surfaced = events
             .iter()
             .rev()
@@ -686,12 +686,12 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
 
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "do the thing".into(),
@@ -704,7 +704,6 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     for _ in 0..1000 {
         let seen_end = collected
             .lock()
-            .unwrap()
             .iter()
             .any(|e| matches!(e, Event::StreamEnd { .. }));
         if seen_end {
@@ -725,7 +724,6 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     for _ in 0..2000 {
         let ends = collected
             .lock()
-            .unwrap()
             .iter()
             .filter(|e| matches!(e, Event::StreamEnd { .. }))
             .count();
@@ -735,7 +733,7 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
     let assistants = events
         .iter()
         .filter_map(|e| match e {
@@ -844,12 +842,12 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
 
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "do the thing".into(),
@@ -862,7 +860,6 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
     for _ in 0..3000 {
         let done = collected
             .lock()
-            .unwrap()
             .iter()
             .any(|e| matches!(e, Event::StreamEnd { .. }));
         if done {
@@ -871,7 +868,7 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
 
     // Three calls: the main turn call, then the two OM attempts
     // (first failure + the single configured retry).
@@ -949,12 +946,12 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
 
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "do the thing".into(),
@@ -965,7 +962,6 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
     for _ in 0..3000 {
         let done = collected
             .lock()
-            .unwrap()
             .iter()
             .any(|e| matches!(e, Event::StreamEnd { .. }));
         if done {
@@ -974,7 +970,7 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
 
     // Exactly one OM attempt: a 4xx is permanent, retries do not apply.
     assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);

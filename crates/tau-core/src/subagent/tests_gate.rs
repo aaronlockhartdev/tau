@@ -108,7 +108,7 @@ async fn a_md_type_child_prompt_carries_the_gate_section() {
 
     // The child's first LLM call carries the type's body plus the gate
     // section — the check is stated in the prompt (spec §5.3).
-    let seen = factory.instructions.lock().unwrap();
+    let seen = factory.instructions.lock();
     assert_eq!(seen.len(), 1, "one child, one first call");
     let prompt = seen[0]
         .as_ref()
@@ -178,7 +178,6 @@ async fn a_gate_failed_child_rests_failed_not_idle() {
         bridge
             .wakes
             .lock()
-            .unwrap()
             .iter()
             .any(|w| w.child == s.session_id && w.kind == WakeKind::Failed)
     );

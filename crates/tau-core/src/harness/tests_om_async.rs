@@ -4,8 +4,9 @@
 
 use super::*;
 use crate::harness::testkit::*;
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// A captured request: (system-prompt instructions, serialized input).
@@ -60,7 +61,7 @@ impl provider::TurnProvider for ScriptedOm {
         let inner = provider::canned(&body);
         let turn = inner.call(request, sink);
         Box::pin(async move {
-            seen_mutex.lock().unwrap().push(seen);
+            seen_mutex.lock().push(seen);
             if delay > 0 {
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
@@ -148,7 +149,7 @@ fn rig(om: crate::om_integration::OmState, provider: provider::TurnProviderRef) 
     let pump_core = Arc::clone(&core);
     tokio::spawn(async move {
         crate::harness::pump::pump(pump_core, move |batch| {
-            sink.lock().unwrap().extend(batch.iter().cloned());
+            sink.lock().extend(batch.iter().cloned());
         })
         .await;
     });
@@ -157,7 +158,7 @@ fn rig(om: crate::om_integration::OmState, provider: provider::TurnProviderRef) 
     Rig {
         core,
         cwd: workspace.cwd.clone(),
-        session_id: live.meta.lock().unwrap().id.clone(),
+        session_id: live.meta.lock().id.clone(),
         collected,
     }
 }
@@ -175,7 +176,6 @@ impl Rig {
             let done = self
                 .collected
                 .lock()
-                .unwrap()
                 .iter()
                 .any(|e| matches!(e, Event::StreamEnd { .. }));
             if done {
@@ -187,7 +187,7 @@ impl Rig {
     }
 
     fn events(&self) -> Vec<Event> {
-        self.collected.lock().unwrap().clone()
+        self.collected.lock().clone()
     }
 
     /// The session entries in file order (a fresh store over the file).
@@ -412,7 +412,7 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     // The final main-turn call's input carries the PROMOTED observation (a
     // `role: system` item, #96) — the mid-loop activation ran before it
     // assembled.
-    let all = seen.lock().unwrap().clone();
+    let all = seen.lock().clone();
     let main_calls: Vec<_> = all
         .iter()
         .filter(|(ins, _)| ins.as_deref() != Some(crate::om::observer_system_prompt().as_str()))

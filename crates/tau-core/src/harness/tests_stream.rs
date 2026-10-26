@@ -191,7 +191,7 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
         .with_child_factory(Arc::new(CannedChildFactory { body }))
         .build()
         .unwrap();
-    let mut rx = core.events_rx.lock().unwrap().take().unwrap();
+    let mut rx = core.events_rx.lock().take().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
@@ -262,7 +262,7 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
     // The child registered as an ordinary live session (the GUI can
     // open it like any session).
     assert!(
-        core.sessions.lock().unwrap().get(&info.child).is_some(),
+        core.sessions.lock().get(&info.child).is_some(),
         "the child's live session was not registered"
     );
     drop(core);
@@ -325,7 +325,6 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
     let is_running = || {
         core.sessions
             .lock()
-            .unwrap()
             .get(&session.id)
             .is_some_and(|l| l.turn.load(Ordering::SeqCst))
     };
@@ -364,7 +363,7 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
     // parent's turn is in flight).
     let sid = session.id.clone();
     assert!(
-        collected.lock().unwrap().iter().any(|e| {
+        collected.lock().iter().any(|e| {
             matches!(
                 e,
                 Event::EntryUpsert { session, entry, .. }
@@ -427,7 +426,7 @@ async fn a_child_reuses_its_agents_provider_and_emits_its_stream_end() {
     let mut stream_end: Option<(String, Option<u64>)> = None;
     let mut assistant_upserted = false;
     while tokio::time::Instant::now() < deadline {
-        let snap = collected.lock().unwrap().clone();
+        let snap = collected.lock().clone();
         assistant_upserted = snap.iter().any(|e| {
             matches!(
                 e,
@@ -527,7 +526,7 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
     // non-running child would be resumed by it and drain it at once).
     let handle = sub.handle.clone();
     let sup = {
-        let sessions = core.sessions.lock().unwrap();
+        let sessions = core.sessions.lock();
         let session = sessions
             .get(&session.id)
             .expect("the parent session is live");
@@ -567,7 +566,7 @@ async fn a_gui_send_to_a_child_projects_the_child_queue_with_a_sender() {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut found = false;
     while !found && tokio::time::Instant::now() < deadline {
-        found = collected.lock().unwrap().iter().any(|e| {
+        found = collected.lock().iter().any(|e| {
             matches!(
                 e,
                 Event::Queue { session, items, .. }
@@ -649,7 +648,7 @@ async fn a_force_send_to_a_running_child_still_emits_its_stream_end() {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     let mut in_flight = false;
     while !in_flight && tokio::time::Instant::now() < deadline {
-        in_flight = collected.lock().unwrap().iter().any(|e| {
+        in_flight = collected.lock().iter().any(|e| {
             matches!(
                 e,
                 Event::EntryUpsert {
@@ -677,7 +676,7 @@ async fn a_force_send_to_a_running_child_still_emits_its_stream_end() {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
     let mut first_end: Option<bool> = None;
     while first_end.is_none() && tokio::time::Instant::now() < deadline {
-        first_end = collected.lock().unwrap().iter().find_map(|e| match e {
+        first_end = collected.lock().iter().find_map(|e| match e {
             Event::StreamEnd {
                 session,
                 interrupted,
@@ -723,7 +722,7 @@ async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
         TurnConfig::default(),
     );
     let collected = collect_events(&core);
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "run it".into(),
@@ -735,7 +734,6 @@ async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
     while !collected
         .lock()
-        .unwrap()
         .iter()
         .any(|e| matches!(e, Event::StreamEnd { .. }))
     {
@@ -745,7 +743,7 @@ async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
 
     // Collect all tool upserts for this session.
     let tools: Vec<&tau_protocol::snapshot::ViewEntry> = events

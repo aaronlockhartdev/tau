@@ -135,7 +135,7 @@ async fn an_observed_done_is_confirmed_by_the_complete_plan() {
         "the declared output rides the observed done"
     );
     // The observed done woke the parent with the result.
-    let wakes = bridge.wakes.lock().unwrap();
+    let wakes = bridge.wakes.lock();
     assert!(
         wakes.iter().any(|w| w.kind == WakeKind::Done
             && w.child == spawned.session_id
@@ -261,7 +261,6 @@ async fn state_records_carry_the_discriminant_and_variant_fields() {
         bridge
             .states
             .lock()
-            .unwrap()
             .iter()
             .any(|n| matches!(n.state, ChildState::Done { .. }))
     );
@@ -372,7 +371,6 @@ async fn the_subagent_tools_address_a_child_by_name() {
     let new = sup
         .children
         .lock()
-        .unwrap()
         .values()
         .find(|c| c.session_id != s.session_id)
         .expect("the second child")

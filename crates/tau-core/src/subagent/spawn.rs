@@ -50,7 +50,6 @@ impl Supervisor {
         let parent_agent = self
             .parent
             .lock()
-            .expect("supervisor parent: no panic while the lock is held")
             .as_ref()
             .and_then(Weak::upgrade)
             .ok_or_else(|| "supervisor has no parent attached".to_owned())?;
@@ -198,10 +197,7 @@ impl Supervisor {
             last_ended_gen: AtomicUsize::new(0),
             wake: tokio::sync::Notify::new(),
         });
-        self.children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .insert(handle.clone(), child.clone());
+        self.children.lock().insert(handle.clone(), child.clone());
         // The spawn's child is in: reclaim the oldest terminal children if
         // the fleet now exceeds its soft bound (spawn-triggered, #250) —
         // the new child is running, so it can never be the eviction target.

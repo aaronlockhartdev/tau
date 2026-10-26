@@ -25,18 +25,10 @@ impl Core {
         for root in &roots {
             watcher.add(root);
         }
-        self.home_watcher
-            .lock()
-            .expect("home watcher slot: no panic while the lock is held")
-            .replace(watcher);
+        self.home_watcher.lock().replace(watcher);
         let core = Arc::clone(self);
         spawn_watcher_consumer(&core, rx, move |core, _batch| {
-            for ws in core
-                .workspaces
-                .lock()
-                .expect("workspaces map: no panic while the lock is held")
-                .values()
-            {
+            for ws in core.workspaces.lock().values() {
                 core.refresh_skills(ws);
             }
         })?;
@@ -52,10 +44,7 @@ impl Core {
         if !Path::new(&workspace.cwd).is_dir() {
             return Ok(());
         }
-        let mut map = self
-            .project_watchers
-            .lock()
-            .expect("project watchers: no panic while the lock is held");
+        let mut map = self.project_watchers.lock();
         if map.contains_key(&workspace.id) {
             return Ok(());
         }
@@ -89,10 +78,7 @@ impl Core {
         if !cwd.is_dir() {
             return Ok(());
         }
-        let mut map = self
-            .tree_watchers
-            .lock()
-            .expect("tree watchers: no panic while the lock is held");
+        let mut map = self.tree_watchers.lock();
         if map.contains_key(&workspace.id) {
             return Ok(());
         }
@@ -105,23 +91,14 @@ impl Core {
         let id = workspace.id.clone();
         let cwd = workspace.cwd.clone();
         spawn_watcher_consumer(&core, rx, move |core, batch| {
-            let Some(ws) = core
-                .workspaces
-                .lock()
-                .expect("workspaces map: no panic while the lock is held")
-                .get(&id)
-                .cloned()
-            else {
+            let Some(ws) = core.workspaces.lock().get(&id).cloned() else {
                 return;
             };
             let changed = tree_changed_dirs(&cwd, &batch);
             if !changed.is_empty() {
                 // A tree change invalidates the git snapshot: the next
                 // listing (or numstat) rebuilds it.
-                core.git_snapshots
-                    .lock()
-                    .expect("git snapshots: no panic while the lock is held")
-                    .remove(&id);
+                core.git_snapshots.lock().remove(&id);
                 core.emit(Event::FileTreeChanged {
                     workspace: ws.id,
                     changed,
@@ -141,10 +118,7 @@ impl Core {
         if !cwd.is_dir() {
             return Ok(());
         }
-        let mut map = self
-            .plan_watchers
-            .lock()
-            .expect("plan watchers: no panic while the lock is held");
+        let mut map = self.plan_watchers.lock();
         if map.contains_key(&workspace.id) {
             return Ok(());
         }
@@ -157,13 +131,7 @@ impl Core {
         };
         let id = workspace.id.clone();
         spawn_watcher_consumer(&core, rx, move |core, batch| {
-            let Some(ws) = core
-                .workspaces
-                .lock()
-                .expect("workspaces map: no panic while the lock is held")
-                .get(&id)
-                .cloned()
-            else {
+            let Some(ws) = core.workspaces.lock().get(&id).cloned() else {
                 return;
             };
             refresh_plan_batch(&core, &ws, &batch);
@@ -175,10 +143,7 @@ impl Core {
     /// #115): a `file_list` means the pane is showing the dir, so watch it.
     /// No-op if the workspace has no tree watcher yet.
     pub(crate) fn watch_tree_dir(&self, workspace: &Workspace, dir: &Path) {
-        let mut map = self
-            .tree_watchers
-            .lock()
-            .expect("tree watchers: no panic while the lock is held");
+        let mut map = self.tree_watchers.lock();
         if let Some(watcher) = map.get_mut(&workspace.id) {
             watcher.watch_path(dir);
         }
@@ -187,10 +152,7 @@ impl Core {
     /// Drop a dir from the workspace's tree watcher (visibility-driven,
     /// #115): a `file_unlist` means the pane collapsed the dir.
     pub(crate) fn unwatch_tree_dir(&self, workspace: &Workspace, dir: &Path) {
-        let mut map = self
-            .tree_watchers
-            .lock()
-            .expect("tree watchers: no panic while the lock is held");
+        let mut map = self.tree_watchers.lock();
         if let Some(watcher) = map.get_mut(&workspace.id) {
             watcher.unwatch_path(dir);
         }
@@ -262,26 +224,11 @@ pub(crate) fn refresh_plan_batch(core: &Core, ws: &Workspace, batch: &Batch) {
 /// joining).
 impl Drop for Core {
     fn drop(&mut self) {
-        self.home_watcher
-            .lock()
-            .expect("home watcher slot: no panic while the lock is held")
-            .take();
-        self.project_watchers
-            .lock()
-            .expect("project watchers: no panic while the lock is held")
-            .clear();
-        self.tree_watchers
-            .lock()
-            .expect("tree watchers: no panic while the lock is held")
-            .clear();
-        self.plan_watchers
-            .lock()
-            .expect("plan watchers: no panic while the lock is held")
-            .clear();
-        self.plans
-            .lock()
-            .expect("plan states: no panic while the lock is held")
-            .clear();
+        self.home_watcher.lock().take();
+        self.project_watchers.lock().clear();
+        self.tree_watchers.lock().clear();
+        self.plan_watchers.lock().clear();
+        self.plans.lock().clear();
     }
 }
 

@@ -98,13 +98,7 @@ impl Supervisor {
             return "parent_notify: output requires done:true".into();
         }
 
-        let Some(child) = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .get(handle)
-            .cloned()
-        else {
+        let Some(child) = self.children.lock().get(handle).cloned() else {
             return format!("parent_notify: unknown child {handle}");
         };
 

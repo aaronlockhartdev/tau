@@ -34,10 +34,7 @@ impl Supervisor {
             // all non-running states are deliberately resumable; the
             // only asymmetry is the provenance the stop recorded).
             let was_quiescent = matches!(
-                *child
-                    .state
-                    .lock()
-                    .expect("child state: no panic while the lock is held"),
+                *child.state.lock(),
                 ChildState::Stopped { .. } | ChildState::Failed { .. } | ChildState::Done { .. }
             );
             // A quiescent child holds no slot; the resume re-acquires
@@ -241,10 +238,7 @@ impl Supervisor {
     /// Whether the child's newest drive has exited (the archive's settle
     /// check: a stopped child's drive must be gone before its file moves).
     pub fn drive_quiescent(&self, handle: &str) -> bool {
-        let children = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held");
+        let children = self.children.lock();
         let Some(child) = children.get(handle) else {
             return true;
         };

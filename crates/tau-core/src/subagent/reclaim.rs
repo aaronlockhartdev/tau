@@ -14,7 +14,7 @@ use super::{
 use crate::harness::{SessionRole, info_to_protocol};
 use crate::om_integration::OmState;
 use crate::tools;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 /// The fleet's soft bound: `None` (or zero) means no terminal reclamation.
@@ -41,11 +41,7 @@ impl Supervisor {
         let Some(hard) = hard_cap(&self.caps) else {
             return Ok(());
         };
-        let total = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .len();
+        let total = self.children.lock().len();
         if total + 1 > hard {
             return Err(format!("subagent_spawn: fleet cap ({hard}) reached"));
         }
@@ -61,10 +57,7 @@ impl Supervisor {
         let Some(soft) = soft_bound(&self.caps) else {
             return;
         };
-        let mut children = self
-            .children
-            .lock()
-            .expect("children map: no panic while the lock is held");
+        let mut children = self.children.lock();
         if children.len() < soft {
             return;
         }
@@ -142,11 +135,7 @@ impl Supervisor {
         // The child's link needs an `Arc<Supervisor>`: upgrade the self
         // ref (`new` always sets it).
         let sup = {
-            let guard = self
-                .self_weak
-                .lock()
-                .expect("supervisor self ref: no panic while the lock is held")
-                .clone();
+            let guard = self.self_weak.lock().clone();
             guard.and_then(|w| w.upgrade())?
         };
         let disk = restore::disk_children(&self.cwd, &self.parent_session, None);
@@ -193,7 +182,6 @@ impl Supervisor {
         });
         self.children
             .lock()
-            .expect("children map: no panic while the lock is held")
             .insert(child.handle.clone(), child.clone());
         // The reclamation dropped the mint record: re-register the handle
         // (the bridge re-records `child_handles`; the child's live session

@@ -87,7 +87,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
-            instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
+            instructions: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
