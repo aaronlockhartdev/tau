@@ -270,7 +270,7 @@ finish it, and each keeps the existing tests as the harness.
 | **S6** | `context_gate_budget` and `gate_unavailable_reasons` computed from one function returning `Result<budget, reasons>` | `agent/mod.rs:110,124` | they must never disagree — #306 had to reconcile exactly that drift by hand |
 | **S7** | `ToolTarget` enum (`Subagent { name }` / `Core`) replacing the prefix test | `tools/surface.rs:97` | §1.2; the audit already recorded a bug this shape caused |
 | **S8** | `ChildStatus` typed in `OwnState`, and a `ToolOutcome` enum for `ToolResult` | `tau-protocol/src/snapshot.rs:179`, `tools/mod.rs:39` | §1.2; both are wire-visible, so they need a protocol commit + TS mirror + goldens |
-| **S9** | Remove the caller-supplied `Supervisor` from `SessionRole::Root` and the `root_with_supervisor` branch that exists for it; re-point the three test sites at the real open path | `harness/launch.rs:213,220`, exercised by `harness/tests_launch.rs:247,321,341`; production (`harness/sessions.rs:317`) always passes `None` | a test seam living in the production open path. Not a drive-by: the tests need a `Core`, which is why it is its own ticket rather than a deletion |
+| **S9** | Remove the caller-supplied `Supervisor` from `SessionRole::Root` and the `root_with_supervisor` branch that exists for it; re-point the three test sites at the real open path | `harness/launch.rs` (the `root_with_supervisor` body, now deleted), `harness/tests_launch.rs`, `subagent/{testkit,tests_link,tests_gate}`, `tools/tests_surface.rs`, and `tau-test/tests_accept.rs:267,451,647` — **six** seam callers, not the three this row named; production (`harness/sessions.rs`) always passed `None` | a test seam living in the production open path. **Landed**: `Root` is total — it carries `core`, `workspace`, `config` and the resolved `first_provider` as plain fields, so an under-specified root is a type error — and the model and first-provider checks launch ran now run once, where the provider is resolved (`build_live`). The seam did not vanish: the acceptance driver builds a `Supervisor` around a mock bridge, an in-process notice recorder, and a parent-specific prompt the mock scenario matches on, and none of that can come from a `Core`. It became `SessionRole::Seam`, a role with a `Supervisor` and a `Core`-less constructor, holding the branch `launch` used to branch on (§6.10) |
 | **S10** | `thiserror` on the error enums | 10 files | §3 |
 | **S11** | `backon` for the OM retry policy | `om_integration/retry.rs` | §3 |
 | **S12** | Typed payload per `EntryKind`: the `json!` writers and `payload.get` readers become the derived payload types | 12 files with `json!` (`tools/mod.rs`, `subagent/*`, `session/file.rs`, …), 83 key reads | §2.2; one shape per kind, so a reader cannot guess a key and each kind gains exactly one legal append path |
@@ -301,8 +301,10 @@ finish it, and each keeps the existing tests as the harness.
    sites over six commits, one per module group, none sharing a commit with a
    behavior change. The wedge died with `lock_anchors` and its test; the one
    site still parsing model-supplied text under a guard is recorded in §6.2.
-7. **S9** — remove the supervisor seam from the production open path, then
-   re-point its three test callers.
+7. ~~**S9** — remove the supervisor seam from the production open path, then
+   re-point its three test callers.~~ — **done** (§6.10). The row's count was
+   wrong: six callers, and the acceptance driver cannot ride the real path. `Root`
+   became total; the seam became its own role.
 8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
    `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.
 9. **S4** (disperse `om_integration`) — four commits, each behaviour-neutral.
@@ -512,3 +514,43 @@ themselves are pinned by tests, so a retune is a deliberate edit, not a drift.
 What this closes is §6.4's failure mode: an under-estimate lets a prompt past the
 window the model really has, the provider rejects the request, and the agent
 stops mid-task.
+
+### 6.10 A constructor takes what it needs, or its caller names the role it plays (taken 2026-10-26)
+
+`SessionRole::Root` asked for eight fields and seven were `Option`; production
+filled five and left `supervisor` and `system_prompt` `None`. Those two were the
+seam: the constructor carried a branch whose doc comment named its caller — "the
+acceptance driver's seam" — which handed in a pre-built `Supervisor` and skipped
+model resolution, config files, the skills catalogue, the bridge, the event
+wiring, and the open audit record. Every root built through it was a root the app
+never opens, and its two checks — `no providers configured`, `provider x has no
+models` — also ran where the provider is actually resolved, so each was pinned
+in two places.
+
+The plan's fix — re-point the seam's callers at the real open path — was written
+from a count of three and the real count was six. The extra three are the
+acceptance driver's subagent, reclaim, and sender-labels suites. They hand the
+`Supervisor` a mock bridge, an in-process recorder of reclaim and adopt notices,
+and a parent system prompt that differs from the supervisor's own because the
+mock-LLM scenario is chosen by matching request content (ADR-0010). None of that
+is reachable from a `Core`: `Core::child_factory` is injectable, `Core`'s bridge
+is not, and the driver asserts on notices it collects itself, not on protocol
+events. Re-pointing those suites would have rewritten what they prove.
+
+So the constructor got honest instead of smaller. `Root` is total: the four
+values production resolves — the core, the workspace, the merged config, the first
+provider and its name — are plain fields, and an under-specified root does not
+compile. The fake got a name of its own, `SessionRole::Seam`: a role that declares
+it supplies its own supervisor and provider and asks for no core. Deleting it
+would have cost the deterministic-LLM contract; faking it as a `Root` with four
+fabricated `expect()`s would have had a test invent a provider and a workspace to
+prove something about prompt wiring, which is how a fixture starts lying.
+
+What moved as a result is the part worth keeping. The provider checks now fire
+where the provider is resolved, so the pin for `no providers configured` moved to
+`session/new`, the call a user actually makes. The `gate_failed` re-open test
+reads its gate from a config file the way the app layers one, instead of a `Core`
+with the gate bolted on. The role→tool-spec table is pinned through `Seam`, the
+root-shaped role that builds without a core. What the branch itself did — adopt a
+supervisor, load the OM counters, replay the open facts, attach the parent — still
+runs, in the arm of `launch` that belongs to the role that asks for it.
