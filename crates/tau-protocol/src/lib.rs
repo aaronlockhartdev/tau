@@ -10,10 +10,12 @@
 //! narrows as features finalize (ADR-0006).
 #![cfg_attr(test, allow(clippy::unwrap_used), allow(clippy::panic))]
 
+pub mod diagnostic;
 pub mod kind;
 pub mod payload;
 pub mod snapshot;
 
+pub use diagnostic::{Diagnostic, StreamEnd};
 pub use kind::EntryKind;
 
 use serde::{Deserialize, Serialize};

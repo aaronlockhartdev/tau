@@ -277,6 +277,7 @@ mod payloads {
     use tau_protocol::payload::{
         AssistantPayload, FunctionCall, ImageBlock, ResumeContract, ToolPayload,
     };
+    use tau_protocol::{Diagnostic, StreamEnd};
 
     #[test]
     fn assistant_payload() {
@@ -320,6 +321,53 @@ mod payloads {
             next_action: "fix the parser".into(),
         };
         assert_json_snapshot!(c);
+    }
+
+    #[test]
+    fn diagnostic_payloads() {
+        // The code spellings are append-only (ADR-0034): this snapshot is the
+        // shape a GUI and a future core agree on.
+        assert_json_snapshot!(vec![
+            Diagnostic::ModelChanged {
+                from: Some("qwen3.8-27b".into()),
+                to: "qwen3.8-flash-next-iq3_s".into(),
+            },
+            Diagnostic::ModelChanged {
+                from: None,
+                to: "qwen3.8-flash-next-iq3_s".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "qwen3.8-flash-next-iq3_s".into(),
+                missing: vec!["context_window".into(), "max_tokens".into()],
+            },
+            Diagnostic::ContextOverflow {
+                prompt: 120_000,
+                budget: 110_592,
+            },
+            Diagnostic::GateAttempt {
+                command: "cargo nextest run".into(),
+                retries: 1,
+                max: 2,
+                output: "test failed".into(),
+            },
+            Diagnostic::GateFailed {
+                command: "cargo nextest run".into(),
+                retries: 2,
+            },
+            Diagnostic::OmStalled {
+                pending: 24_000,
+                activation: 24_000,
+            },
+            Diagnostic::ProviderRejected {
+                status: 400,
+                body: "context length exceeded".into(),
+            },
+            Diagnostic::TurnCutoff {
+                model: "qwen3.8-flash-next-iq3_s".into(),
+                ended_by: StreamEnd::EofWithoutDone,
+                blocks: 2,
+            },
+        ]);
     }
 }
 
