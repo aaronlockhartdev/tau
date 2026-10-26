@@ -209,7 +209,7 @@ mod tests {
         let branch = vec![
             diagnostic(&Diagnostic::TurnCutoff {
                 model: "m".into(),
-                ended_by: tau_protocol::StreamEnd::EofWithoutDone,
+                ended_by: tau_protocol::StreamOutcome::EofWithoutDone,
                 blocks: 1,
             }),
             diagnostic(&Diagnostic::OmStalled {

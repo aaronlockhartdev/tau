@@ -15,7 +15,7 @@ pub mod kind;
 pub mod payload;
 pub mod snapshot;
 
-pub use diagnostic::{Diagnostic, StreamEnd};
+pub use diagnostic::{Diagnostic, StreamOutcome};
 pub use kind::EntryKind;
 
 use serde::{Deserialize, Serialize};

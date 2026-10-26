@@ -104,8 +104,9 @@ export type SubagentPayload =
   | { event: 'state'; state: 'stopped'; by: string }
   | { event: 'notify'; text: string; done: boolean; output?: Record<string, unknown>; waiting_on?: string };
 
-// How a provider stream ended (the wire spelling of the core's StreamEnd).
-export type StreamEnd =
+// How a provider stream ended (ADR-0034 record vocabulary). Distinct from the
+// 'stream_end' event, which says a turn settled after the OM pass.
+export type StreamOutcome =
   | 'completed'
   | 'length'
   | 'idle_timeout'
@@ -136,7 +137,7 @@ export type Diagnostic =
   | { code: 'gate_failed'; command: string; retries: number }
   | { code: 'om_stalled'; pending: number; activation: number }
   | { code: 'provider_rejected'; status: number; body: string }
-  | { code: 'turn_cutoff'; model: string; ended_by: StreamEnd; blocks: number }
+  | { code: 'turn_cutoff'; model: string; ended_by: StreamOutcome; blocks: number }
   | { code: string };
 
 // The flat card shape the transcript renders: a ViewEntry payload decoded

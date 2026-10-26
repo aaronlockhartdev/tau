@@ -277,7 +277,7 @@ mod payloads {
     use tau_protocol::payload::{
         AssistantPayload, FunctionCall, ImageBlock, ResumeContract, ToolPayload,
     };
-    use tau_protocol::{Diagnostic, StreamEnd};
+    use tau_protocol::{Diagnostic, StreamOutcome};
 
     #[test]
     fn assistant_payload() {
@@ -364,7 +364,7 @@ mod payloads {
             },
             Diagnostic::TurnCutoff {
                 model: "qwen3.8-flash-next-iq3_s".into(),
-                ended_by: StreamEnd::EofWithoutDone,
+                ended_by: StreamOutcome::EofWithoutDone,
                 blocks: 2,
             },
         ]);

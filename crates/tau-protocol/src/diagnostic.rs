@@ -1,15 +1,16 @@
-use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// How a provider stream ended (#306, ADR-0034). The bool it replaces could
 /// not tell a cutoff — a turn cut by the provider — from a clean stop, so a
-/// stopped agent left no fact behind.
+/// stopped agent left no fact behind. Named apart from the `StreamEnd`
+/// protocol event, which says a turn settled: this is a recorded fact about
+/// one provider response, that is a notification to the GUI.
 ///
 /// The wire spellings are append-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum StreamEnd {
+pub enum StreamOutcome {
     /// The terminal frame arrived.
     Completed,
     /// The provider stopped at its output cap.
@@ -31,7 +32,7 @@ pub enum StreamEnd {
 /// The `code` spellings are append-only: never rename or remove one,
 /// deprecate it instead. There is no display string — the GUI composes the
 /// sentence from the code and its fields.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum Diagnostic {
     /// The effective model changed. `from` is absent when the session never
@@ -66,12 +67,12 @@ pub enum Diagnostic {
     /// A provider stream ended without a completion signal.
     TurnCutoff {
         model: String,
-        ended_by: StreamEnd,
+        ended_by: StreamOutcome,
         blocks: u64,
     },
-    /// A code this build does not know, kept verbatim so the line still
-    /// loads and renders by name. The entry's raw payload — not this
-    /// variant — is what the GUI reads, so an unknown code is never written
+    /// A code this build does not know, or a known code whose fields do not
+    /// decode — kept by name so the line still loads and renders. The entry's raw
+    /// payload — not this variant — is what the GUI reads, so it is never written
     /// back; it exists to be read, not re-emitted.
     Unknown { unknown_code: String },
 }
@@ -99,94 +100,21 @@ impl Diagnostic {
         serde_json::to_value(self).expect("a Diagnostic always serializes")
     }
 
-    /// Read a diagnostic entry's payload back. None when the payload is not
-    /// a diagnostic map at all; an unknown `code` becomes [`Diagnostic::Unknown`].
+    /// Read a diagnostic entry's payload back. None when the payload is not a
+    /// diagnostic map at all. An unknown `code` becomes [`Diagnostic::Unknown`],
+    /// and so does a known code whose fields do not decode: defaults filled into
+    /// a truncated record would state a fact no provider ever reported.
     #[must_use]
     pub fn from_value(value: &Value) -> Option<Self> {
-        serde_json::from_value(value.clone()).ok()
-    }
-}
-
-// Hand-written rather than derived: `#[serde(other)]` covers unit variants
-// only, and an unknown code must keep its name for the reader (ADR-0034's
-// forward compatibility), which the derive would drop. A payload with no
-// `code` key is not a diagnostic at all, hence `from_value`'s None.
-impl<'de> Deserialize<'de> for Diagnostic {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = Value::deserialize(deserializer)?;
-        let code = match value.get("code").and_then(Value::as_str) {
-            Some(code) => code.to_owned(),
-            None => return Err(D::Error::custom("diagnostic payload has no code")),
-        };
-        let string = |key: &str| {
-            value
-                .get(key)
+        match serde_json::from_value(value.clone()) {
+            Ok(fact) => Some(fact),
+            Err(_) => value
+                .get("code")
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_owned()
-        };
-        let opt_string = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
-        let number = |key: &str| value.get(key).and_then(Value::as_u64);
-        Ok(match code.as_str() {
-            "model_changed" => Self::ModelChanged {
-                from: opt_string("from"),
-                to: string("to"),
-            },
-            "gate_unavailable" => Self::GateUnavailable {
-                model: string("model"),
-                missing: value
-                    .get("missing")
-                    .and_then(Value::as_array)
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            },
-            "context_overflow" => Self::ContextOverflow {
-                prompt: number("prompt").unwrap_or_default(),
-                budget: number("budget").unwrap_or_default(),
-            },
-            "gate_attempt" => Self::GateAttempt {
-                command: string("command"),
-                retries: number("retries").unwrap_or_default(),
-                max: number("max").unwrap_or_default(),
-                output: string("output"),
-            },
-            "gate_failed" => Self::GateFailed {
-                command: string("command"),
-                retries: number("retries").unwrap_or_default(),
-            },
-            "om_stalled" => Self::OmStalled {
-                pending: number("pending").unwrap_or_default(),
-                activation: number("activation").unwrap_or_default(),
-            },
-            "provider_rejected" => Self::ProviderRejected {
-                status: value
-                    .get("status")
-                    .and_then(Value::as_u64)
-                    .and_then(|v| u16::try_from(v).ok())
-                    .unwrap_or_default(),
-                body: string("body"),
-            },
-            "turn_cutoff" => Self::TurnCutoff {
-                model: string("model"),
-                ended_by: value
-                    .get("ended_by")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or(StreamEnd::EofWithoutDone),
-                blocks: number("blocks").unwrap_or_default(),
-            },
-            other => Self::Unknown {
-                unknown_code: other.to_owned(),
-            },
-        })
+                .map(|code| Self::Unknown {
+                    unknown_code: code.to_owned(),
+                }),
+        }
     }
 }
 
@@ -238,7 +166,7 @@ mod tests {
             },
             Diagnostic::TurnCutoff {
                 model: "b".into(),
-                ended_by: StreamEnd::EofWithoutDone,
+                ended_by: StreamOutcome::EofWithoutDone,
                 blocks: 1,
             },
         ];
@@ -286,6 +214,20 @@ mod tests {
         assert_eq!(parsed.code(), "future_thing");
     }
 
+    #[test]
+    fn a_truncated_record_names_its_code_and_invents_nothing() {
+        // A missing `to` must not read back as the empty string: that string
+        // would become the session's recorded model.
+        let value = serde_json::json!({ "code": "model_changed", "from": "a" });
+        let parsed = Diagnostic::from_value(&value).expect("a payload with a code parses");
+        assert_eq!(
+            parsed,
+            Diagnostic::Unknown {
+                unknown_code: "model_changed".into()
+            }
+        );
+    }
+
     // `code()` feeds the log line and the list preview, so it must agree with
     // the tag the wire carries rather than be a second hand-maintained list.
     #[test]
@@ -323,7 +265,7 @@ mod tests {
             },
             Diagnostic::TurnCutoff {
                 model: "m".into(),
-                ended_by: StreamEnd::Length,
+                ended_by: StreamOutcome::Length,
                 blocks: 3,
             },
         ];
@@ -345,11 +287,14 @@ mod tests {
     }
 
     #[test]
-    fn the_stream_end_spellings_are_pinned() {
+    fn the_stream_outcome_spellings_are_pinned() {
         assert_eq!(
-            serde_json::to_value(StreamEnd::IdleTimeout).unwrap(),
+            serde_json::to_value(StreamOutcome::IdleTimeout).unwrap(),
             "idle_timeout"
         );
-        assert_eq!(serde_json::to_value(StreamEnd::Killed).unwrap(), "killed");
+        assert_eq!(
+            serde_json::to_value(StreamOutcome::Killed).unwrap(),
+            "killed"
+        );
     }
 }
