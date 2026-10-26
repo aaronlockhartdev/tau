@@ -115,7 +115,8 @@ function checkMockScenarios() {
 // TAU_E2E_WS_STRESS; the mock specs read TAU_E2E_WS_MOCK.
 // Every model these legs drive declares the gate's two facts. A session over a
 // model the gate can compute for is a healthy open, and a healthy open mints no
-// record — the invariant `a_healthy_reopen_mints_nothing` pins in Rust. The
+// record — the invariant `a_model_that_declares_its_facts_records_no_gate_gap` pins
+// in Rust. The
 // windows sit far above anything these legs send, so declaring them changes no
 // response; it stops the audit channel from recording a gap that is an artifact
 // of a test config rather than a fact about the session.
