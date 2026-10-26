@@ -84,7 +84,7 @@ async fn a_text_turn_streams_and_decodes_through_the_real_client() {
     .expect("the real client decodes the mock's stream");
     assert_eq!(result.text, "the mock answered the hello.");
     assert!(result.completed, "the [DONE]-terminated stream is complete");
-    assert_eq!(result.usage.unwrap().total_tokens, 18);
+    assert_eq!(result.usage.unwrap().total_tokens(), 18);
     // The text arrived as deltas (streaming fidelity), not one lump.
     let deltas = sink
         .0

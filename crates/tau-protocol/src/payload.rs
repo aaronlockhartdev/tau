@@ -52,6 +52,8 @@ pub struct AssistantPayload {
     pub reasoning: String,
     pub interrupted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Read a stored one with [`TurnUsage::from_record`], which also covers the
+    /// shape written before the record stopped mirroring one API.
     pub usage: Option<TurnUsage>,
     /// #224: the server's decode-window duration (seconds);
     /// `None` when the provider omitted the created/completed timestamps.
@@ -202,41 +204,53 @@ payload_value!(ToolPayload);
 payload_value!(SystemPayload);
 payload_value!(SpawnSnapshotPayload);
 
-/// Usage from the `response.completed` event (spec §6). Field names accept
-/// both the Responses shape and the chat-completions dialect.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+/// What a provider reported consuming for one response, as the record keeps
+/// it. The stored shape names the concepts, never one API's spelling (§6.5):
+/// each provider decodes its own wire shape into this (`provider::usage`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TurnUsage {
-    #[serde(alias = "prompt_tokens")]
     pub input_tokens: u64,
-    #[serde(alias = "completion_tokens")]
     pub output_tokens: u64,
-    pub total_tokens: u64,
-    pub output_tokens_details: Option<OutputTokensDetails>,
-    #[serde(alias = "input_tokens_details")]
-    pub prompt_tokens_details: Option<PromptTokensDetails>,
-}
-
-/// Prompt-side details: how many prompt tokens the server served from its
-/// prefix cache (vLLM/OpenAI `prompt_tokens_details.cached_tokens`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct PromptTokensDetails {
-    pub cached_tokens: u64,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct OutputTokensDetails {
-    pub reasoning_tokens: u64,
+    /// Served from the provider's prefix cache instead of recomputed. Always a
+    /// *subset* of `input_tokens`, never an addition: an API that bills cache
+    /// reads apart (Anthropic's `cache_read_input_tokens`) is folded in by its
+    /// adapter at decode, so a consumer can add these fields without knowing
+    /// which API answered. `None` is the provider not saying, which is not the
+    /// same fact as a reported zero.
+    ///
+    /// Read a stored one with [`TurnUsage::from_record`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_input_tokens: Option<u64>,
 }
 
 impl TurnUsage {
+    /// Derived, never stored: recording the sum beside the parts is the two
+    /// writers ADR-0034 refuses for a prose note next to typed fields.
+    /// Saturating — both addends arrive off the network.
     #[must_use]
-    pub fn reasoning_tokens(&self) -> u64 {
-        self.output_tokens_details
-            .as_ref()
-            .map_or(0, |d| d.reasoning_tokens)
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens.saturating_add(self.output_tokens)
+    }
+
+    /// Read a usage object as a record holds it, including the shape written
+    /// before the record stopped mirroring the Responses API: there the cached
+    /// count lived in a nested `prompt_tokens_details` and the total was
+    /// stored. Frozen — nothing writes that spelling any more, and a
+    /// pre-existing session must not read its cache as empty (the same reason
+    /// the audit channel keeps `apply_legacy`, ADR-0034). Anything reading a
+    /// stored usage through `AssistantPayload` instead skips this and loses the
+    /// cache count.
+    #[must_use]
+    pub fn from_record(value: &Value) -> Option<Self> {
+        let mut usage: Self = serde_json::from_value(value.clone()).ok()?;
+        if usage.cached_input_tokens.is_none() {
+            usage.cached_input_tokens = value
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64);
+        }
+        Some(usage)
     }
 }
 
@@ -324,42 +338,61 @@ mod tests {
         );
     }
 
-    /// The `skip_serializing_if` wire contract: unset optionals are absent from
-    /// the entry line, not serialized as nulls (ADR-0005 free-form line).
-    /// spec §6: usage arrives in the Responses shape or the chat-completions
-    /// dialect; the aliases fold both onto one field.
+    /// The record's shape is the concepts (§6.5): the parts, the cache as its
+    /// own field, and no stored sum.
     #[test]
-    fn turn_usage_accepts_chat_completions_aliases() {
-        let u: TurnUsage =
-            serde_json::from_str(r#"{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}"#)
-                .unwrap();
-        assert_eq!(u.input_tokens, 11);
-        assert_eq!(u.output_tokens, 7);
-        assert_eq!(u.total_tokens, 18);
+    fn turn_usage_records_concepts_not_a_wire_shape() {
+        let kept = TurnUsage::from_record(&json!({"input_tokens": 3, "output_tokens": 4})).unwrap();
+        assert_eq!(kept.cached_input_tokens, None, "silent about the cache");
+        assert_eq!(kept.total_tokens(), 7, "the total is derived");
+        assert_eq!(
+            serde_json::to_value(&kept).unwrap(),
+            json!({"input_tokens": 3, "output_tokens": 4}),
+            "an unknown cache is absent from the line, not null"
+        );
+    }
 
-        // The Responses shape and a bare `{}` both decode (#[serde(default)]).
-        let u: TurnUsage =
-            serde_json::from_str(r#"{"input_tokens":3,"output_tokens":4,"total_tokens":7}"#)
-                .unwrap();
-        assert_eq!((u.input_tokens, u.output_tokens, u.total_tokens), (3, 4, 7));
-        let u: TurnUsage = serde_json::from_str("{}").unwrap();
-        assert_eq!(u, TurnUsage::default());
+    /// Records written while the type mirrored the Responses API stored the sum
+    /// and nested the cached count. One key only: serde's aliases were
+    /// deserialize-only, so `input_tokens_details` never reached a line and the
+    /// frozen read must not claim it did.
+    #[test]
+    fn an_older_usage_record_keeps_its_cached_count() {
+        let read = TurnUsage::from_record(&json!({
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "total_tokens": 120,
+            "prompt_tokens_details": { "cached_tokens": 40 },
+            "output_tokens_details": { "reasoning_tokens": 5 },
+        }))
+        .unwrap();
+        assert_eq!(read.cached_input_tokens, Some(40));
+        assert_eq!(
+            read.total_tokens(),
+            120,
+            "the derived sum matches the stored one"
+        );
+    }
+
+    /// Both addends arrive off the network, so the sum neither wraps nor
+    /// panics on a gateway's nonsense.
+    #[test]
+    fn a_bizarre_usage_total_saturates() {
+        let huge = TurnUsage {
+            input_tokens: u64::MAX,
+            output_tokens: 1,
+            ..Default::default()
+        };
+        assert_eq!(huge.total_tokens(), u64::MAX);
     }
 
     #[test]
-    fn turn_usage_roundtrips_and_reasoning_tokens() {
-        let u = TurnUsage {
-            input_tokens: 1,
-            output_tokens: 2,
-            total_tokens: 3,
-            output_tokens_details: Some(OutputTokensDetails {
-                reasoning_tokens: 2,
-            }),
-            prompt_tokens_details: Some(PromptTokensDetails { cached_tokens: 1 }),
-        };
-        let back: TurnUsage = serde_json::from_str(&serde_json::to_string(&u).unwrap()).unwrap();
-        assert_eq!(back, u);
-        assert_eq!(u.reasoning_tokens(), 2);
-        assert_eq!(TurnUsage::default().reasoning_tokens(), 0);
+    fn a_malformed_usage_reads_as_absent() {
+        assert_eq!(TurnUsage::from_record(&json!(null)), None);
+        assert_eq!(
+            TurnUsage::from_record(&json!("tokens")),
+            None,
+            "a line that is not an object carries no usage"
+        );
     }
 }

@@ -81,21 +81,27 @@ fn sse_done_sets_terminated() {
 }
 
 #[test]
-fn usage_aliases_accept_chat_completions_names() {
-    let u: Usage = serde_json::from_str(
-        r#"{"prompt_tokens": 11, "completion_tokens": 5, "total_tokens": 16}"#,
+fn a_completed_frame_carries_usage_in_either_spelling() {
+    let responses: Frame = serde_json::from_str(
+        r#"{"type":"response.completed","response":{"usage":{"input_tokens":11,"output_tokens":5,"total_tokens":16}}}"#,
     )
-    .unwrap();
-    assert_eq!(
-        (u.input_tokens, u.output_tokens, u.total_tokens),
-        (11, 5, 16)
-    );
-    let u: Usage = serde_json::from_str(
-        r#"{"input_tokens": 3, "output_tokens": 9, "total_tokens": 12,
-            "output_tokens_details": {"reasoning_tokens": 4}}"#,
+    .expect("the Responses shape decodes");
+    let chat: Frame = serde_json::from_str(
+        r#"{"type":"response.completed","response":{"usage":{"prompt_tokens":11,"completion_tokens":5,"total_tokens":16}}}"#,
     )
-    .unwrap();
-    assert_eq!(u.reasoning_tokens(), 4);
+    .expect("the chat-completions dialect decodes");
+    for frame in [responses, chat] {
+        let Frame::Completed { response } = frame else {
+            unreachable!("both bodies are response.completed")
+        };
+        let usage = response
+            .and_then(|r| r.usage)
+            .map(super::usage::UsageWire::into_usage)
+            .expect("a usage object");
+        assert_eq!((usage.input_tokens, usage.output_tokens), (11, 5));
+        assert_eq!(usage.total_tokens(), 16, "the sum, not the sent total");
+        assert_eq!(usage.cached_input_tokens, None, "nothing was said");
+    }
 }
 
 #[test]

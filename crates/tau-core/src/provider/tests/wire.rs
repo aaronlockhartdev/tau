@@ -311,7 +311,6 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
         usage: Some(Usage {
             input_tokens: 10,
             output_tokens: 5,
-            total_tokens: 15,
             ..Default::default()
         }),
         blocks: vec![

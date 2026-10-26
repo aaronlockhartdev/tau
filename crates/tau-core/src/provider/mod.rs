@@ -12,10 +12,8 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+pub use tau_protocol::payload::FunctionCall;
 pub use tau_protocol::payload::TurnUsage as Usage;
-pub use tau_protocol::payload::{
-    FunctionCall, OutputTokensDetails, PromptTokensDetails, TurnUsage,
-};
 
 /// A model as reported by the provider's `/models` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -329,7 +327,7 @@ impl Frame {
 #[derive(Debug, Deserialize)]
 struct CompletedResponse {
     #[serde(default)]
-    usage: Option<Usage>,
+    usage: Option<usage::UsageWire>,
     /// #224: the server's completion timestamp — pairs with `Frame::Created`
     /// to yield the decode-window duration.
     #[serde(default)]
@@ -481,6 +479,7 @@ pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
 mod canned;
 mod request;
 mod stream;
+mod usage;
 mod wire;
 pub use canned::*;
 pub use request::*;

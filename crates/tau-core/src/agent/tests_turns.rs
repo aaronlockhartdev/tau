@@ -3,6 +3,7 @@ use super::*;
 use crate::agent::testkit::*;
 use crate::provider::canned_cut;
 use std::sync::atomic::AtomicUsize;
+use tau_protocol::payload::TurnUsage;
 
 #[tokio::test]
 async fn a_plain_turn_appends_user_then_assistant() {
@@ -19,6 +20,71 @@ async fn a_plain_turn_appends_user_then_assistant() {
     assert_eq!(entries[0].payload["text"], "hello");
     assert_eq!(entries[1].payload["text"], "done");
     assert!(!entries[1].payload["interrupted"].as_bool().unwrap());
+}
+
+/// The durable record of a turn's cost names the concepts (§6.5): the parts,
+/// never a stored sum, never one API's nesting, and an unknown cache stays
+/// absent rather than becoming zero.
+#[tokio::test]
+async fn an_assistant_record_keeps_usage_as_concepts() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = Arc::new(ScriptedProvider::new(vec![sse("done", &[])]));
+    let agent = make_agent(dir.path(), provider);
+    agent.send("hello", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let stored = entries
+        .iter()
+        .find(|e| e.kind == EntryKind::Assistant)
+        .and_then(|e| e.payload.get("usage"))
+        .expect("the turn reported a cost");
+    assert_eq!(
+        stored,
+        &serde_json::json!({"input_tokens": 1, "output_tokens": 1}),
+        "the concepts and nothing else: no stored total, no nesting, no null cache"
+    );
+    assert_eq!(
+        TurnUsage::from_record(stored),
+        Some(TurnUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_input_tokens: None,
+        })
+    );
+}
+
+/// A provider that answers in the chat-completions names, and nests its cache
+/// count, still leaves the record spelled as concepts.
+#[tokio::test]
+async fn a_chat_spelling_records_the_same_concepts() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = concat!(
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\n",
+        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":8}}}}\n\n",
+        "data: [DONE]\n\n"
+    );
+    let agent = make_agent(dir.path(), crate::provider::canned(body));
+    agent.send("hello", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let stored = entries
+        .iter()
+        .find(|e| e.kind == EntryKind::Assistant)
+        .and_then(|e| e.payload.get("usage"))
+        .expect("the turn reported a cost");
+    assert_eq!(
+        TurnUsage::from_record(stored),
+        Some(TurnUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cached_input_tokens: Some(8),
+        })
+    );
+    assert_eq!(
+        stored,
+        &serde_json::json!({"input_tokens": 10, "output_tokens": 5, "cached_input_tokens": 8}),
+        "the wire's spellings, its stored total and its nesting all stop at the adapter"
+    );
 }
 
 #[tokio::test]

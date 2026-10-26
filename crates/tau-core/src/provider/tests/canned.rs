@@ -24,8 +24,7 @@ fn decode_stream_extracts_function_calls_and_reasoning_dialect() {
                 Usage {
                     input_tokens: 2,
                     output_tokens: 3,
-                    total_tokens: 5,
-                    ..Default::default()
+                    cached_input_tokens: None,
                 },
                 None
             )
@@ -100,8 +99,7 @@ fn decode_stream_computes_duration_from_created_timestamps() {
             Usage {
                 input_tokens: 2,
                 output_tokens: 3,
-                total_tokens: 5,
-                ..Default::default()
+                cached_input_tokens: None,
             },
             Some(Duration::from_secs(2))
         ))
@@ -126,8 +124,7 @@ fn decode_stream_same_second_timestamps_yield_no_duration() {
             Usage {
                 input_tokens: 2,
                 output_tokens: 3,
-                total_tokens: 5,
-                ..Default::default()
+                cached_input_tokens: None,
             },
             None
         ))
@@ -151,8 +148,7 @@ fn decode_stream_missing_created_timestamps_yield_no_duration() {
             Usage {
                 input_tokens: 2,
                 output_tokens: 3,
-                total_tokens: 5,
-                ..Default::default()
+                cached_input_tokens: None,
             },
             None
         ))

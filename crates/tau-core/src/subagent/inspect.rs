@@ -45,7 +45,7 @@ impl Supervisor {
                     .rev()
                     .find(|e| e.kind == EntryKind::Assistant)
                     .and_then(|e| e.payload.get("usage"))
-                    .and_then(|u| serde_json::from_value::<TurnUsage>(u.clone()).ok())
+                    .and_then(TurnUsage::from_record)
             })
         };
         // The child's plan file (spec §5.3): its open-step resume contract.

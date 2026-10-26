@@ -312,12 +312,12 @@ pub(crate) fn entry_meta(e: &Entry, size: u64) -> EntryMeta {
 }
 
 pub(crate) fn usage_of(value: &Value) -> Option<Usage> {
-    let u: CoreUsage = serde_json::from_value(value.clone()).ok()?;
+    let u = CoreUsage::from_record(value)?;
     Some(Usage {
         input_tokens: u.input_tokens,
         output_tokens: u.output_tokens,
-        total_tokens: u.total_tokens,
-        cached_prompt_tokens: u.prompt_tokens_details.map_or(0, |d| d.cached_tokens),
+        total_tokens: u.total_tokens(),
+        cached_prompt_tokens: u.cached_input_tokens.unwrap_or(0),
     })
 }
 

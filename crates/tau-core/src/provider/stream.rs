@@ -62,7 +62,11 @@ pub(super) fn apply_frame(
                     (secs > 0).then(|| Duration::from_secs(secs))
                 });
             match response.and_then(|r| r.usage) {
-                Some(usage) => emit(sink, result, &TurnEvent::Completed(usage, duration)),
+                Some(wire) => emit(
+                    sink,
+                    result,
+                    &TurnEvent::Completed(wire.into_usage(), duration),
+                ),
                 None => true,
             }
         }

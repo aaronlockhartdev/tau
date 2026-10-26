@@ -47,8 +47,6 @@ const SKIP_NOTES = {
   FileText: 'mirrored inline in the CommandOutput file variant',
   OmSnapshot: 'mirrored inline in the Snapshot om field',
   TurnUsage: 'name parity with the TS Usage (the field diff runs on lib.rs Usage)',
-  PromptTokensDetails: 'nested in TurnUsage; the TS Usage flattens it',
-  OutputTokensDetails: 'nested in TurnUsage; the TS Usage flattens it',
   Coalescer: 'Rust-internal (the 25 ms delta window); no wire shape',
   OmPayload: 'TS-only: mirrors tau-core\'s OmRecord, which the protocol crate does not carry',
   SubagentPayload: 'TS-only: the subagent entry record the core writes; the crate carries its events, not the record'

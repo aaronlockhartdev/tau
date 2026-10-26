@@ -13,13 +13,13 @@
 
 use crate::agent::{AgentSession, TurnConfig};
 use crate::config::{Gates, Om, SubAgents, ToolBatchPolicy};
-use crate::provider::{TurnProviderRef, TurnUsage};
+use crate::provider::TurnProviderRef;
 use crate::session::SessionStore;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use tau_protocol::payload::ResumeContract;
+use tau_protocol::payload::{ResumeContract, TurnUsage};
 
 pub use bridge::{
     BoxedDrive, ChildDriver, ChildProviderFactory, ReadoptNotice, ReclaimNotice, SpawnNotice,

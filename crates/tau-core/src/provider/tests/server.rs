@@ -85,7 +85,7 @@ async fn mid_stream_error_never_terminates_the_stream() {
     .unwrap();
     assert_eq!(result.text, "part1 part2");
     assert_eq!(result.mid_stream_errors, vec!["boom".to_string()]);
-    assert_eq!(result.usage.unwrap().total_tokens, 3);
+    assert_eq!(result.usage.unwrap().total_tokens(), 3);
 }
 
 #[tokio::test]
