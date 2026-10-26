@@ -1,10 +1,12 @@
 use crate::agent::{AgentError, AgentSession, Inner, SessionStore, TurnProviderRef};
 use tau_protocol::Diagnostic;
-/// The OM model to use: the configured OM model, or the session's model when
-/// it is empty (spec §4).
-fn resolve_om_model(om_model: &str, model: &str) -> String {
+/// The OM model to use: the configured OM model, or the model the session's
+/// requests address when it is empty (spec §4). The fallback is the address and
+/// not the session's id, so a menu-qualified id does not reach the endpoint with
+/// its provider still attached (§6.7).
+fn resolve_om_model(om_model: &str, address: &str) -> String {
     if om_model.is_empty() {
-        model.to_owned()
+        address.to_owned()
     } else {
         om_model.to_owned()
     }
@@ -54,7 +56,7 @@ impl AgentSession {
                 .expect("agent inner: no panic while the lock is held");
             (
                 inner.om.clone(),
-                resolve_om_model(&inner.om_model, &inner.model),
+                resolve_om_model(&inner.om_model, &inner.turn.request_address(&inner.model)),
                 inner.om_status_hook.clone(),
             )
         };
@@ -226,6 +228,7 @@ impl AgentSession {
             om_buffer_boundary,
             om_model,
             model,
+            turn,
             ..
         } = &mut *guard;
         let Some(om) = om.as_mut() else {
@@ -275,7 +278,7 @@ impl AgentSession {
         let inner = std::sync::Arc::clone(&self.inner);
         let config = om.config.clone();
         let provider = self.om_provider();
-        let model_owned = resolve_om_model(om_model, model);
+        let model_owned = resolve_om_model(om_model, &turn.request_address(model));
         *om_inflight = Some(tokio::spawn(
             crate::om_integration::background::buffer_cycle(
                 inner,

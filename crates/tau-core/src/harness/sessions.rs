@@ -428,11 +428,12 @@ pub(crate) fn derive_turn(
     model: &str,
     session: &str,
 ) -> TurnConfig {
-    let def = provider.models.get(model);
+    let key = config.model_key(model);
+    let def = provider.models.get(key);
     let level = config
         .thinking
         .levels
-        .get(model)
+        .get(key)
         .copied()
         .unwrap_or(config.thinking.level);
     let reasoning = match def.and_then(|d| d.reasoning) {
@@ -460,6 +461,9 @@ pub(crate) fn derive_turn(
         context_window: def.and_then(|d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
         image_max_pixels: Some(config.limits.image.max_pixels),
+        // Only a resolved id needs an address: when the session's id is already
+        // the key, the request sends what the session carries (§6.7).
+        request_model: (key != model).then(|| key.to_owned()),
     }
 }
 

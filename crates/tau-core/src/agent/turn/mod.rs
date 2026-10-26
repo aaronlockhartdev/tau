@@ -288,10 +288,10 @@ impl AgentSession {
         } else {
             0
         };
-        let mut request =
-            ResponseRequest::new(self.model().clone(), Some(system_prompt), input.to_vec())
-                .with_tools(tools.to_vec())
-                .with_wire_delta(prev_len);
+        let address = turn.request_address(&self.model());
+        let mut request = ResponseRequest::new(address, Some(system_prompt), input.to_vec())
+            .with_tools(tools.to_vec())
+            .with_wire_delta(prev_len);
         if let Some(n) = max_output_override.or(turn.max_output_tokens) {
             request = request.with_max_output_tokens(crate::provider::clamp_max_output(
                 n,

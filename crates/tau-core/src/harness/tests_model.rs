@@ -446,3 +446,62 @@ async fn session_set_model_survives_close_and_reopen() {
     };
     assert_eq!(snap.session.model.as_deref(), Some("other/model"));
 }
+
+/// §6.7: the model menu switches by `provider/key`, the config declares the
+/// model by bare key. A switch through the menu's spelling must find the model's
+/// facts — before one resolver read it missed the key, and the audit channel
+/// correctly recorded a gate gap for a model whose window was declared.
+#[tokio::test]
+async fn a_menu_qualified_switch_keeps_the_declared_facts() {
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider.models.insert(
+        "second".to_owned(),
+        crate::config::ModelDef {
+            context_window: Some(131_072),
+            max_tokens: Some(16_384),
+            ..Default::default()
+        },
+    );
+    let core = CoreBuilder::custom(BTreeMap::from([("dev".to_owned(), provider)]))
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    core.dispatch(Command::SessionSetModel {
+        session: live.id.clone(),
+        model: "dev/second".into(),
+    })
+    .unwrap();
+    let facts = facts_in(&session_file(cwd.path(), &live.id));
+    assert_eq!(
+        facts,
+        vec![Diagnostic::ModelChanged {
+            from: Some("model".into()),
+            to: "dev/second".into(),
+        }],
+        "a declared model has a working gate, so the switch records the change alone"
+    );
+    // The id the session carries is the one the user picked; the config key it
+    // resolves to is the request's address, not the session's name.
+    let snap = match core
+        .dispatch(Command::SessionOpen {
+            session: live.id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected snapshot: {other:?}"),
+    };
+    assert_eq!(snap.session.model.as_deref(), Some("dev/second"));
+}

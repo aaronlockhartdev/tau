@@ -379,6 +379,21 @@ pub struct Config {
     pub hashline: Hashline,
 }
 
+impl Config {
+    /// §6.7: the one read of a model id. A model menu names a model as
+    /// `provider/key`, because a workspace can reach several providers; the
+    /// config declares each model by bare key and the endpoint is addressed by
+    /// that key. A prefix naming a configured provider selects it and the
+    /// remainder is its key; any other id — a bare key, or a gateway key that
+    /// carries `/` itself under a provider nobody declared — is its own key.
+    pub(crate) fn model_key<'a>(&self, id: &'a str) -> &'a str {
+        match id.split_once('/') {
+            Some((provider, key)) if self.providers.contains_key(provider) => key,
+            _ => id,
+        }
+    }
+}
+
 /// On-disk file shape: every section optional so a partial file layers cleanly.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]

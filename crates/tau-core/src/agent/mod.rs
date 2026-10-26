@@ -96,6 +96,11 @@ pub struct TurnConfig {
     /// image file (#257): above it, the image is downscaled, not refused.
     /// `None` falls back to the default budget.
     pub image_max_pixels: Option<u64>,
+    /// The model this turn's requests address (§6.7): the config key the
+    /// session's model id resolves to — a menu id carries its provider, and the
+    /// endpoint is addressed by the key alone. `None` = the id addresses itself,
+    /// which is what a hand-built `TurnConfig` with no config behind it means.
+    pub request_model: Option<String>,
 }
 
 /// The framing margin the context gate keeps against the model's declared
@@ -127,6 +132,16 @@ impl ContextGate {
 }
 
 impl TurnConfig {
+    /// §6.7: the model name a provider request carries. The session's id may
+    /// name the provider it was picked from; the endpoint is addressed by the
+    /// config key alone, which `request_model` holds when a config resolved it.
+    #[must_use]
+    pub(crate) fn request_address(&self, session_model: &str) -> String {
+        self.request_model
+            .clone()
+            .unwrap_or_else(|| session_model.to_owned())
+    }
+
     /// The context gate, from the model's declared facts (spec §4).
     #[must_use]
     pub(crate) fn context_gate(&self) -> ContextGate {
