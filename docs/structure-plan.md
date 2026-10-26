@@ -263,7 +263,7 @@ finish it, and each keeps the existing tests as the harness.
 |---|---|---|---|
 | **S1** | One fact-append helper: `diagnostics::append_facts(&mut store, facts)` that re-reads the leaf between appends | `harness/launch.rs` (`record_model_at_open`), `harness/dispatch_sessions.rs:196-211`, used by `agent/config.rs:119` too | hazard 3: the chaining rule gets one owner instead of being re-derived at each call site; also drops the `leaf()`/`leaf_cached()` inconsistency |
 | **S2** | One truncation module (`bounded_head` char-boundary, `truncate_lines` line-boundary + marker) | `agent/turn/mod.rs:17`, `gate.rs:82`, `subagent/inspect.rs:198` | three helpers, two semantics, one concept; the frontend's `firstLine` mirrors the same idea |
-| **S3** | `std::sync::Mutex` → `parking_lot::Mutex`, and the `.expect("<invariant>")` clause disappears with the `Result`. Two guardrails come with it, as requirements: model-supplied text is parsed **outside** a critical section, and no guard is held across an await | 251 production sites and 209 test sites across `tau-core`, `tau-acp` and `tau-test`; 36 declarations now name `parking_lot`. **Landed**: `tools::surface::lock_anchors` and its poison-recovery test are deleted, and the four `Err` arms went with them — `om_integration/background.rs` was the only one with behavior attached, so a panic in the agent thread is now fatal where it used to be logged and read again | §6.2; hazard 2. A lock stops being a thing that can wedge the process, and the code stops asserting an invariant it cannot keep |
+| **S3** | `std::sync::Mutex` → `parking_lot::Mutex`, and the `.expect("<invariant>")` clause disappears with the `Result`. Two guardrails come with it, as requirements: model-supplied text is parsed **outside** a critical section, and no guard is held across an await | 460 `.lock()` reads and 241 `.expect`/`.unwrap` clauses across `tau-core`, `tau-acp` and `tau-test`, over six commits. **Landed**: `tools::surface::lock_anchors`, its poison-recovery test, and the four `PoisonError` arms are gone; the OM cycle in `om_integration/background.rs` now reads a half-mutated `Inner` on faith where poisoning used to stop it — see §6.2's shipped note for what that costs and what it does not | §6.2; hazard 2. A lock stops being a thing that can wedge the process, and the code stops asserting an invariant it cannot keep |
 | **S4** | Disperse `om_integration` per §2, ending with the port replacing `Arc<Mutex<agent::Inner>>` | `om_integration/*` | hazard 1; also the prerequisite for `tau-om` if that is ever revisited |
 | **S5** | Collapse the 7 `UNIX_EPOCH` conversions onto `jiff::Timestamp`, one `now_ms()` | `session/mod.rs:206`, `session/file.rs:315`, `harness/state.rs:531`, `hashline/pin_store/mod.rs:130`, `tools/impls.rs:393`, `om_integration/mod.rs:321` | already a dependency; two incompatible epoch idioms today |
 | **S6** | `context_gate_budget` and `gate_unavailable_reasons` computed from one function returning `Result<budget, reasons>` | `agent/mod.rs:110,124` | they must never disagree — #306 had to reconcile exactly that drift by hand |
@@ -298,7 +298,8 @@ finish it, and each keeps the existing tests as the harness.
    estimate reads a recorded count instead of guessing the whole prompt.
 6. ~~**S3** — the `parking_lot` migration, alone in its own series~~ — **done**: ~460
    sites over six commits, one per module group, none sharing a commit with a
-   behavior change. Hazard 2 died with `lock_anchors` and its test.
+   behavior change. The wedge died with `lock_anchors` and its test; the one
+   site still parsing model-supplied text under a guard is recorded in §6.2.
 7. **S9** — remove the supervisor seam from the production open path, then
    re-point its three test callers.
 8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
@@ -339,13 +340,23 @@ finish it, and each keeps the existing tests as the harness.
    `await_holding_lock` gate stays `-D warnings`. Worth remembering while hunting
    the "stopped" reports: `deadlock_detection` is an experimental feature flag,
    and a *hung* lock and a poisoned one look identical from the GUI.
-   Shipped (S3): the guardrail held as written — `await_holding_lock` fires on a
-   `parking_lot` guard across an await on the pinned toolchain, so the compiler
-   still gates it even though lock_api 0.5 makes the guard `Send`. The migration
-   deleted one helper that existed only to absorb poisoning
-   (`tools::surface::lock_anchors`) and the test that pinned its recovery, and
-   dropped one `Err` arm that had behavior attached: a panic in the agent thread
-   is now fatal where it used to be logged and the state read again.
+   Shipped (S3, measured at the tip): 460 lock reads over 241 `.expect`/`.unwrap`
+   clauses went across in six commits. The predicted cost never arrived — the
+   guard is still `!Send`, because `send_guard` is an off-by-default feature — so
+   std's spawn-boundary protection survived, and on top of it
+   `await_holding_lock` fires on a `parking_lot` guard held across an await on the
+   pinned toolchain. What did change: the migration deleted the one helper that
+   existed only to absorb poisoning (`tools::surface::lock_anchors`), the test
+   that pinned its recovery, and the four `PoisonError` arms. The three in
+   `om_integration/background.rs` now read `Inner` unconditionally, so a panic
+   under the inner lock leaves a half-mutated `Inner` that every later reader —
+   the OM cycle included — takes on faith. That task already died on a panic (it
+   is `tokio::spawn`ed and nothing catches unwinds); poisoning is what made every
+   *later* acquirer die too, and that is the wedge hazard 2 was about.
+   Guardrail 1 is not met everywhere: `tools::surface.rs` still holds the
+   anchor-`Registry` guard across `read`/`edit`, so model-supplied text is parsed
+   inside a critical section there. What stands between that and a wedged session
+   is now the hashline fuzz target's totality oracle, not the shape of the code.
 3. **`tau-hashline` stays workspace-internal.** No crates.io means no semver
    policy, no separate CI job, and no public-API discipline past the crate
    boundary.
