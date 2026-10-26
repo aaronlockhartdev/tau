@@ -87,19 +87,10 @@ impl OmState {
     /// maintained in place). A newest om entry that cannot be decoded
     /// (corrupt payload, missing sidecar) degrades to an empty record —
     pub fn load_record(store: &mut SessionStore) -> Result<OmRecord, OmError> {
-        // Snapshot consistency: resolve the leaf BEFORE the entry read. The
-        // walk runs over the entry list from that read, and the leaf's
-        // ancestors are all older entries — an append-only file guarantees
-        // they are in the list. Reading the leaf after the list lets a
-        // concurrent writer append a new leaf between the two reads, which
-        // strands the walk on an id the list does not contain.
-        let leaf = store.leaf_cached()?.map(|e| e.id);
-        let entries: Vec<Entry> = store
-            .entries_range_cached(0, usize::MAX)?
-            .into_iter()
-            .map(|(e, _)| e)
-            .collect();
-        Ok(branch_entries(&entries, leaf.as_deref())
+        // The walk's snapshot ordering — leaf before entries — is guaranteed
+        // by `SessionStore::branch`.
+        let branch = store.branch()?;
+        Ok(branch
             .into_iter()
             .rev()
             .find(|e| e.kind == EntryKind::Om)
@@ -171,31 +162,6 @@ impl OmState {
         self.buffer_cursor = cursor;
         self.buffered = self.record.buffered_chunks.clone();
     }
-}
-
-/// The active branch, root to leaf: the leaf's parent chain walked over the
-/// file-order entries (the cursor is path-scoped, spec §4).
-#[must_use]
-pub fn branch_entries(entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
-    let by_id: std::collections::HashMap<&str, &Entry> =
-        entries.iter().map(|e| (e.id.as_str(), e)).collect();
-    let mut path = Vec::new();
-    let mut cur = leaf_id;
-    while let Some(id) = cur {
-        // Cycle guard: a legitimate chain visits each entry at most once, so
-        // a walk longer than the entry count means a corrupted file (duplicate
-        // ids) — stop instead of looping forever (the live-om 80GB regression).
-        if path.len() >= entries.len() {
-            break;
-        }
-        let Some(entry) = by_id.get(id) else {
-            break;
-        };
-        path.push((*entry).clone());
-        cur = entry.parent.as_deref();
-    }
-    path.reverse();
-    path
 }
 
 /// A fork copies the parent's record at the fork point (observations +
@@ -428,7 +394,7 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Resu
 /// entry (a fresh session).
 #[must_use]
 pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
-    let branch = branch_entries(all, leaf_id);
+    let branch = crate::session::branch(all, leaf_id);
     // Back over the current turn's model output (assistant + tool entries)
     // to its user run, then to the run's first entry. `om` entries are
     // skipped too: a background buffer cycle can commit one mid-episode,

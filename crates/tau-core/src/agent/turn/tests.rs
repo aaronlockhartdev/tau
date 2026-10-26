@@ -314,16 +314,3 @@ fn a_diagnostic_record_costs_no_context() {
         "a diagnostic record changed the model's input"
     );
 }
-
-#[test]
-fn a_bounded_head_keeps_a_short_body_whole() {
-    assert_eq!(bounded_head("no such model", 20), "no such model");
-}
-
-#[test]
-fn a_bounded_head_cuts_a_long_body_and_marks_the_cut() {
-    let head = bounded_head("abcdefghij", 4);
-    assert_eq!(head, "abcd…");
-    // A cut lands on a character boundary, never inside a multi-byte char.
-    assert_eq!(bounded_head("héllo wörld", 3), "hél…");
-}

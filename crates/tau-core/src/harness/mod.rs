@@ -52,6 +52,7 @@ mod forwarding;
 mod git;
 mod launch;
 pub mod pump;
+mod session_open;
 mod sessions;
 mod sessions_archive;
 pub(crate) use sessions::*;

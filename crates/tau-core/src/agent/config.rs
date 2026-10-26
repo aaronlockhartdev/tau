@@ -179,9 +179,8 @@ impl AgentSession {
             .inner
             .lock()
             .expect("agent inner: no panic while the lock is held");
-        let entries = inner.store.entries_range(0, usize::MAX).ok()?;
-        let leaf = inner.store.leaf().ok().flatten().map(|e| e.id);
-        crate::om_integration::branch_entries(&entries, leaf.as_deref())
+        let branch = inner.store.branch().ok()?;
+        branch
             .iter()
             .rev()
             .find(|e| e.kind == EntryKind::Assistant)

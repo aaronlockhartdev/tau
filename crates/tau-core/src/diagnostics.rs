@@ -3,7 +3,7 @@
 //!
 //! The entry log is the store and this is its read model, so the fold is
 //! pure and branch scoping belongs to the caller
-//! ([`crate::om_integration::branch_entries`]). Diagnostics are append-only:
+//! ([`crate::session::branch`]). Diagnostics are append-only:
 //! there are no upserts here, and a new code costs no migration.
 
 use crate::session::Entry;
@@ -65,17 +65,27 @@ pub fn project(branch: &[Entry]) -> Diagnostics {
 pub(crate) fn project_store(
     store: &mut crate::session::SessionStore,
 ) -> Result<Option<Diagnostics>, crate::session::Error> {
-    let entries: Vec<crate::session::Entry> = store
-        .entries_range_cached(0, usize::MAX)?
-        .into_iter()
-        .map(|(e, _)| e)
-        .collect();
-    let leaf = store.leaf_cached()?.map(|e| e.id);
-    if entries.is_empty() {
+    let branch = store.branch()?;
+    if branch.is_empty() {
         return Ok(None);
     }
-    let branch = crate::om_integration::branch_entries(&entries, leaf.as_deref());
     Ok(Some(project(&branch)))
+}
+
+/// Append audit facts to the log so each one hangs off the fact before it.
+/// Two facts that share one pre-computed leaf become siblings, and the branch
+/// walk from the leaf then visits only one of them — the next open re-emits
+/// the orphan, which is exactly the duplicate-record bug this helper exists to
+/// prevent (ADR-0034).
+pub(crate) fn append_facts(
+    store: &mut crate::session::SessionStore,
+    facts: &[Diagnostic],
+) -> Result<(), crate::session::Error> {
+    for fact in facts {
+        let leaf = store.leaf_cached()?.map(|e| e.id);
+        store.append(EntryKind::Diagnostic, fact.to_value(), leaf.as_deref())?;
+    }
+    Ok(())
 }
 
 impl Diagnostics {

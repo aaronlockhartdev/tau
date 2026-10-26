@@ -396,15 +396,19 @@ impl SessionStore {
     }
 }
 
+mod branch;
 mod entry;
 mod file;
 mod list;
 mod log;
 
+pub use branch::branch;
 pub use entry::{BlobRef, Entry};
 pub use list::list_workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_branch;
 #[cfg(test)]
 mod tests_log;

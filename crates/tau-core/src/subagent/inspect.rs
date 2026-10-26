@@ -1,6 +1,6 @@
 use super::{ChildState, SessionStore, SubagentInfo, Supervisor, TurnUsage, WaitingOn};
 use crate::om;
-use crate::om_integration::{self, OmState};
+use crate::om_integration::OmState;
 use crate::session::Entry;
 use tau_protocol::EntryKind;
 use tau_protocol::payload::{ActivityEntry, ActivityGroup, ChildActivity};
@@ -38,20 +38,15 @@ impl Supervisor {
         };
         let usage = {
             let mut store = SessionStore::for_workspace(&self.cwd, &child.session_id);
-            store
-                .open()
-                .ok()
-                .and_then(|()| store.leaf().ok().flatten())
-                .and_then(|leaf| {
-                    let entries = store.entries_range(0, usize::MAX).ok()?;
-                    let branch = om_integration::branch_entries(&entries, Some(&leaf.id));
-                    branch
-                        .iter()
-                        .rev()
-                        .find(|e| e.kind == EntryKind::Assistant)
-                        .and_then(|e| e.payload.get("usage"))
-                        .and_then(|u| serde_json::from_value::<TurnUsage>(u.clone()).ok())
-                })
+            store.open().ok().and_then(|()| {
+                let branch = store.branch().ok()?;
+                branch
+                    .iter()
+                    .rev()
+                    .find(|e| e.kind == EntryKind::Assistant)
+                    .and_then(|e| e.payload.get("usage"))
+                    .and_then(|u| serde_json::from_value::<TurnUsage>(u.clone()).ok())
+            })
         };
         // The child's plan file (spec §5.3): its open-step resume contract.
         let resume_contract =
@@ -127,7 +122,7 @@ pub(crate) fn read_activity(
             id: g.id.clone(),
             range: g.range.clone(),
             kind: g.kind.clone(),
-            content: truncate_at(&g.content, ACTIVITY_TEXT_LIMIT),
+            content: crate::truncate::head_lines(g.content.trim(), ACTIVITY_TEXT_LIMIT),
         })
         .collect();
     let window = state.raw_window_from(&entries, Some(&leaf.id));
@@ -171,7 +166,7 @@ fn project_entry(entry: &Entry) -> ActivityEntry {
                     .get("status")
                     .and_then(|v| v.as_str())
                     .map(str::to_owned),
-                text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),
+                text: crate::truncate::head_lines(text.trim(), ACTIVITY_TEXT_LIMIT),
             }
         }
         other => {
@@ -185,35 +180,10 @@ fn project_entry(entry: &Entry) -> ActivityEntry {
                 role: other.as_str().to_owned(),
                 tool: None,
                 status: None,
-                text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),
+                text: crate::truncate::head_lines(text.trim(), ACTIVITY_TEXT_LIMIT),
             }
         }
     }
-}
-
-/// A char-boundary-safe, line-boundary truncation (#219): over-limit text is
-/// cut to the last complete line that fits, with an ellipsis appended. A
-/// single line longer than the whole limit yields an empty prefix + ellipsis
-/// (the oversized-line case).
-fn truncate_at(text: &str, limit: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.len() <= limit {
-        return trimmed.to_owned();
-    }
-    let mut out = trimmed.to_owned();
-    let mut count = 0usize;
-    for (i, _) in out.char_indices() {
-        count += 1;
-        if count > limit {
-            let prefix = out.get(..i).expect("char_indices yields a boundary");
-            let cut = prefix.rfind('\n').map_or(0, |j| j + 1);
-            out.truncate(cut);
-            let _ = out.pop();
-            out.push('…');
-            break;
-        }
-    }
-    out
 }
 
 #[cfg(test)]

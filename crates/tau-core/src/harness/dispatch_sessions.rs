@@ -6,7 +6,7 @@ use super::{
     SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, recorded_model,
     running_turn_refusal,
 };
-use tau_protocol::{Diagnostic, EntryKind};
+use tau_protocol::Diagnostic;
 
 impl Core {
     #[allow(clippy::too_many_lines)] // one command per arm; splitting is refactoring
@@ -194,20 +194,16 @@ impl Core {
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
-                    let leaf = store.leaf().ok().flatten().map(|e| e.id);
-                    store
-                        .append(
-                            EntryKind::Diagnostic,
-                            Diagnostic::ModelChanged {
-                                from: old,
-                                to: model.clone(),
-                            }
-                            .to_value(),
-                            leaf.as_deref(),
-                        )
-                        .map_err(|e| ProtocolError::Other {
-                            message: e.to_string(),
-                        })?;
+                    crate::diagnostics::append_facts(
+                        &mut store,
+                        &[Diagnostic::ModelChanged {
+                            from: old,
+                            to: model.clone(),
+                        }],
+                    )
+                    .map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
                     Ok(CommandOutput::None)
                 }
             }

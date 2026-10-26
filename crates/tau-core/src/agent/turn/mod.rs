@@ -13,16 +13,6 @@ use tau_protocol::{Diagnostic, EntryKind};
 /// output for the same reason (`gate::MAX_OUTPUT`).
 pub(crate) const REJECTION_BODY_CAP: usize = 2_000;
 
-/// The first `cap` characters of `body`, marked with an ellipsis when cut.
-fn bounded_head(body: &str, cap: usize) -> String {
-    let head: String = body.chars().take(cap).collect();
-    if body.chars().count() > cap {
-        head + "…"
-    } else {
-        head
-    }
-}
-
 impl AgentSession {
     /// Run turns until the queue is empty. A stop (ticket #223) ends the
     /// drain at the next turn boundary: the in-flight turn cuts, and the
@@ -374,7 +364,7 @@ impl AgentSession {
             crate::provider::ProviderError::Status { status, body } => {
                 self.diagnostic(&Diagnostic::ProviderRejected {
                     status: *status,
-                    body: bounded_head(body, REJECTION_BODY_CAP),
+                    body: crate::truncate::head(body, REJECTION_BODY_CAP),
                 })
             }
             // A dead stream or a transport failure is the turn's error to

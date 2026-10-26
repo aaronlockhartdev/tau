@@ -8,15 +8,13 @@ use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
     Mutex, OmStatusKind, Ordering, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
-    TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, tools,
+    TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open, tools,
 };
 use crate::config::ToolBatchPolicy;
-use crate::diagnostics::Diagnostics;
 use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
 use crate::session::Entry;
-use tau_protocol::{Diagnostic, EntryKind};
 
 /// The session's role: the wiring defaults `launch` applies.
 #[derive(Clone)]
@@ -238,7 +236,7 @@ impl AgentSession {
             }
             None => (d.system_prompt.clone(), None),
         };
-        let gate_failed = open_facts(&mut store)?.is_some_and(|f| f.gate_failed);
+        let gate_failed = session_open::facts(&mut store)?.is_some_and(|f| f.gate_failed);
         let agent = Arc::new(Self::new(SessionParams {
             store,
             system_prompt,
@@ -273,64 +271,6 @@ fn wire_plan_hook(agent: &AgentSession, core: Option<Arc<Core>>, sid: &str) {
             core.upgrade().and_then(|core| core.plan_state(&sid))
         })));
     }
-}
-
-/// What the session file already says, in one walk: `None` when the session
-/// has no entries yet, so there is nothing to have changed.
-fn open_facts(store: &mut SessionStore) -> Result<Option<Diagnostics>, ProtocolError> {
-    crate::diagnostics::project_store(store).map_err(|e| ProtocolError::Other {
-        message: e.to_string(),
-    })
-}
-
-/// Record the model a session opens with, and whether a context gate exists
-/// for it (ADR-0034). The effective model is the config's whenever the record
-/// names none, so this is where a config-level model change — invisible in the
-/// file before this ticket — leaves a record. A model whose declared facts
-/// leave no gate is recorded once per model, never once per request.
-/// `facts` is what the record already said, from [`open_facts`].
-fn record_model_at_open(
-    store: &mut SessionStore,
-    facts: Option<&Diagnostics>,
-    model: &str,
-    turn: &TurnConfig,
-) -> Result<(), ProtocolError> {
-    let Some(facts) = facts else {
-        // A fresh session has nothing to have changed, so it gains no
-        // `model_changed`. The gate gap is not recorded here either: a session
-        // created on an ungated model is recorded at its first reopen, which is
-        // the point a config edit or a stale model becomes visible.
-        return Ok(());
-    };
-    let fail = |e: crate::session::Error| ProtocolError::Other {
-        message: e.to_string(),
-    };
-    // The session has no agent yet — `AgentSession::diagnostic` is the only
-    // writer once one exists, and this is the one place that appends the kind
-    // without it. Each record hangs off the one before it: the branch stays
-    // linear, so a later open projects the pair, not one record and an
-    // orphaned sibling.
-    let mut record_fact = |fact: Diagnostic| -> Result<(), ProtocolError> {
-        let leaf = store.leaf_cached().map_err(fail)?.map(|e| e.id);
-        store
-            .append(EntryKind::Diagnostic, fact.to_value(), leaf.as_deref())
-            .map(|_| ())
-            .map_err(fail)
-    };
-    if facts.model.as_deref() != Some(model) {
-        record_fact(Diagnostic::ModelChanged {
-            from: facts.model.clone(),
-            to: model.to_owned(),
-        })?;
-    }
-    let missing = turn.gate_unavailable_reasons();
-    if !missing.is_empty() && facts.last_gate_unavailable.as_deref() != Some(model) {
-        record_fact(Diagnostic::GateUnavailable {
-            model: model.to_owned(),
-            missing,
-        })?;
-    }
-    Ok(())
 }
 
 /// The plan wiring the supervisor-linked roles share (design: the plan
@@ -392,7 +332,7 @@ fn root_session(
     // asks (spec §8): the model it last named — a session that picked one
     // keeps it across close and re-open, a session with none takes the config
     // default — the gate state to resume, and the records this open owes.
-    let facts = open_facts(&mut store)?;
+    let facts = session_open::facts(&mut store)?;
     let model = facts
         .as_ref()
         .and_then(|f| f.model.clone())
@@ -409,7 +349,7 @@ fn root_session(
         message: e.to_string(),
     })?;
     let gate_failed = facts.as_ref().is_some_and(|f| f.gate_failed);
-    record_model_at_open(&mut store, facts.as_ref(), &model, &turn)?;
+    session_open::record_at_open(&mut store, facts.as_ref(), &model, &turn)?;
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
