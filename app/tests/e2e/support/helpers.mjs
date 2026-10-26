@@ -54,6 +54,11 @@ const storeState = (sid) => {
     model: cur ? cur.meta.model ?? null : null,
     entries: entries.length,
     entryKinds: entries.map((e) => e.kind),
+    // The kind alone hides which fact a session recorded, and a count that is
+    // off by a record needs the code to say why.
+    diagnostics: entries
+      .filter((e) => e.kind === 'diagnostic')
+      .map((e) => e.diagnostic ?? e.payload),
     toolNames: entries.filter((e) => e.kind === 'tool').map((e) => e.name),
     childIds: Object.values(s.sessions)
       .filter((x) => x.meta?.parent === key)

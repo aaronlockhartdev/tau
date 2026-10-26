@@ -19,8 +19,12 @@ import { dumpEvlog } from './support/helpers.mjs';
 const ws = process.env.TAU_E2E_WS_STRESS;
 // The stress leg is always the full fixture with two streams (the config
 // only runs this spec in stress/all mode): 10k transcript entries plus
-// 50 compaction records, one per goal (#49).
-const entries = 10050;
+// 50 compaction records, one per goal (#49). The fixture session predates the
+// model records (#306), so its first open audits the model its config resolves
+// to — one `model_changed` on top of the fixture, and no gate gap because that
+// config declares the model's facts.
+const fixtureEntries = 10050;
+const entries = fixtureEntries + 1;
 const streams = 2;
 const fixtureSession = process.env.TAU_E2E_FIXTURE_SESSION ?? 'session';
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
@@ -55,6 +59,13 @@ const storeState = () => {
     omKind: cur ? cur.om.kind : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     subagents: cur ? cur.subagents.length : null,
+    // The audit records the session wrote, by code, in append order (#306).
+    diagnostics: ids
+      ? ids
+          .map((id) => cur.entries[id])
+          .filter((e) => e.kind === 'diagnostic')
+          .map((e) => String(e.diagnostic?.code ?? '?'))
+      : [],
     renderRange: s.renderRange,
     lastText: last ? last.text : null
   };
@@ -234,6 +245,15 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       `the ${entries}-entry session hydrates from its snapshot (${entries} metadata entries, no payloads)`,
       s.current === fixtureSession && s.entries === entries,
       `current=${s.current}, entries=${s.entries}`
+    );
+  });
+
+  it('the open audit names the model the fixture session never recorded', async () => {
+    const s = await readStore();
+    check(
+      'open wrote one model_changed and no gate gap',
+      s.diagnostics.join(',') === 'model_changed',
+      s.diagnostics
     );
   });
 

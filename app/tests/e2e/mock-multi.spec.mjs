@@ -90,7 +90,7 @@ describe('mock E2E: session creation + a scripted 3-turn sequence', () => {
     check(
       'seven entries: the model note + three user / three message, in order',
       s.entries === 7 && s.entryKinds.slice(-6).join(',') === 'user,message,user,message,user,message',
-      JSON.stringify(s.entryKinds)
+      JSON.stringify({ entries: s.entries, kinds: s.entryKinds, diagnostics: s.diagnostics })
     );
   });
 });
