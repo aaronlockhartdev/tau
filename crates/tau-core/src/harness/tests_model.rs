@@ -557,8 +557,16 @@ default_model = "dev/second"
         Some("dev/second"),
         "the default is taken by name, not replaced by the map's first entry"
     );
-    // The reopen is where the resolution shows: a default that had resolved to a
-    // name only would leave its facts undeclared and owe a `gate_unavailable`.
+    // The reopen is where the resolution shows, and only once the session has a
+    // branch to project: an empty session records nothing whatever the gate says.
+    // A default that had resolved to a name alone would leave its facts undeclared
+    // and owe a `gate_unavailable` beside the model it states.
+    {
+        let mut store = SessionStore::for_workspace(cwd.path(), &live.id);
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
     core.dispatch(Command::SessionClose {
         session: live.id.clone(),
     })
@@ -569,7 +577,10 @@ default_model = "dev/second"
     .unwrap();
     assert_eq!(
         facts_in(&session_file(cwd.path(), &live.id)),
-        Vec::new(),
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "dev/second".into(),
+        }],
         "the default resolved to a model that declares its facts"
     );
 }
