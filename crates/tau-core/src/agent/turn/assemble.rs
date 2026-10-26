@@ -46,8 +46,9 @@ pub(super) fn with_plan_state(mut instructions: String, plan: Option<&str>) -> S
 /// One assembly's parts together with the branch they were read from. The
 /// entries travel with the items so the prompt estimate can anchor on the last
 /// request's provider count and price only what was appended after it (plan
-/// §6.9); `om_items` marks how many leading items the observation state
-/// contributed, since a compaction replaces raw entries with observed ones.
+/// §6.9); `om_items` is how many *leading* items the observation state
+/// contributed — assembly always prepends them, so `items[..om_items]` is that
+/// contribution, and a compaction is what makes it differ from zero.
 pub(super) struct Assembled {
     /// The model this request addresses, so a value resolved for another model
     /// fails beside it (plan §6.8).

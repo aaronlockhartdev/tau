@@ -65,7 +65,7 @@ pub(crate) fn sse_charged(
     let response = match input_tokens {
         Some(n) => format!(
             "{{\"usage\":{{\"input_tokens\":{n},\"output_tokens\":1,\"total_tokens\":{}}}}}",
-            n + 1
+            n.saturating_add(1)
         ),
         None => "{}".to_owned(),
     };

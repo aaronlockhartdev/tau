@@ -376,7 +376,7 @@ pub struct InputImagePart {
 }
 
 /// Soft prompt size in tokens (the shared bytes/4 estimator, spec §4): the
-/// system prompt, every input item, and the tool specs as serialized for the
+/// system prompt, every input item, and the tool specs as serialized, with the
 /// serialization allowance on top (plan §6.4).
 pub(crate) fn prompt_token_estimate(
     system_prompt: &str,

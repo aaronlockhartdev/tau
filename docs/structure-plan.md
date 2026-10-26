@@ -479,10 +479,10 @@ they are soft counters measured against the same yardstick, and no record or
 wire shape moves.
 
 Not measured: the bytes-over-four rule raises the OM counters (observation,
-pending, buffered chunks — up to three times for CJK), and the shipped
-thresholds were tuned against the old characters-over-four yardstick. The first
-dogfood that compaction-tunes moves them; nothing in the suites pins their
-placement.
+pending, buffered chunks — four times for a 4-byte code point, three for CJK),
+and the shipped thresholds were tuned against the old characters-over-four
+yardstick. The first dogfood that compaction-tunes moves them; the defaults
+themselves are pinned by tests, so a retune is a deliberate edit, not a drift.
 
 What this closes is §6.4's failure mode: an under-estimate lets a prompt past the
 window the model really has, the provider rejects the request, and the agent

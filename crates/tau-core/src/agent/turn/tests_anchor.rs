@@ -76,6 +76,29 @@ async fn the_gate_refuses_on_the_count_the_provider_charged() {
     assert_eq!(calls(&provider), 1, "the refused call never went out");
 }
 
+/// The largest charge a provider can report is not a number the gate shrugs at:
+/// the refusal names the ceiling, because a fresh estimate would read as room
+/// where the provider just said there is none.
+#[tokio::test]
+async fn a_charge_past_the_ceiling_refuses_at_the_ceiling() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "a\n").unwrap();
+    let provider = Arc::new(ScriptedProvider::new(read_then_answer(Some(
+        u64::from(u32::MAX) + 1_000,
+    ))));
+    let agent = gated_agent(dir.path(), provider.clone());
+    agent.send("read n.txt", Lane::Steering);
+    let err = agent.process().await.unwrap_err();
+    match err {
+        AgentError::ContextOverflow { prompt, budget } => {
+            assert_eq!(prompt, u32::MAX);
+            assert_eq!(budget, 7_404);
+        }
+        other => panic!("expected the context gate, saw {other:?}"),
+    }
+    assert_eq!(calls(&provider), 1, "the refused call never went out");
+}
+
 /// The same turn with a charge inside the budget runs to completion, so the
 /// anchor is not a refusal machine.
 #[tokio::test]
