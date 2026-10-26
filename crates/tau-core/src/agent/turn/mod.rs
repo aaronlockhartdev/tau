@@ -109,7 +109,7 @@ impl AgentSession {
             // The context gate (ticket #210, spec §4): when the assembled
             // prompt would exceed the safe budget and there is unobserved
             // material to compact, run the OM pass now so the call fits.
-            let budget = turn.context_gate_budget();
+            let budget = turn.context_gate().budget();
             if let Some(budget) = budget
                 && prompt > budget
             {

@@ -351,9 +351,10 @@ async fn a_huge_rejection_body_is_recorded_bounded() {
     );
 }
 
-/// The gate gap is actionable only if it names the real reason: the two facts
-/// by config name, or the room that is missing when both are declared
-/// (ADR-0034). One predicate serves both record sites.
+/// The gate is either a budget or a named gap, never both and never neither:
+/// the two facts by config name, or the room that is missing when both are
+/// declared (ADR-0034). One predicate answers for the gate and both record
+/// sites, so a record cannot name a gap the gate does not have.
 #[test]
 fn the_gate_gap_names_what_the_gate_lacks() {
     let declared = |window, max_output| TurnConfig {
@@ -362,17 +363,40 @@ fn the_gate_gap_names_what_the_gate_lacks() {
         ..Default::default()
     };
     assert_eq!(
-        TurnConfig::default().gate_unavailable_reasons(),
-        ["context_window", "max_tokens"]
+        TurnConfig::default().context_gate(),
+        ContextGate::Missing {
+            reasons: ["context_window".to_owned(), "max_tokens".to_owned()].into()
+        },
+        "an undeclared model names both facts"
     );
-    assert!(
-        declared(20_000, 200).gate_unavailable_reasons().is_empty(),
+    assert_eq!(
+        declared(20_000, 200).context_gate(),
+        ContextGate::Ready { budget: 15_704 },
         "a computable budget is no gap"
     );
     assert_eq!(
-        declared(8_192, 8_192).gate_unavailable_reasons(),
-        ["context_room"],
+        declared(8_192, 8_192).context_gate(),
+        ContextGate::Missing {
+            reasons: vec!["context_room".to_owned()]
+        },
         "facts can be declared and still leave no gate"
+    );
+    assert_eq!(
+        TurnConfig {
+            max_output_tokens: Some(200),
+            ..Default::default()
+        }
+        .context_gate(),
+        ContextGate::Missing {
+            reasons: vec!["context_window".to_owned()]
+        },
+        "one declared fact names only the other"
+    );
+    assert_eq!(declared(20_000, 200).context_gate().budget(), Some(15_704));
+    assert_eq!(
+        declared(8_192, 8_192).context_gate().budget(),
+        None,
+        "no gate means no budget to enforce"
     );
 }
 

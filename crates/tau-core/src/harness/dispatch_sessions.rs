@@ -157,16 +157,16 @@ impl Core {
                         let config = self.workspace_config(&ws);
                         if let Some((_, p)) = config.providers.iter().next() {
                             let turn = derive_turn(&config, p, &model, &session);
-                            let missing = turn.gate_unavailable_reasons();
+                            let gate = turn.context_gate();
                             live.agent.set_turn_config(turn);
-                            if !missing.is_empty() {
+                            if let crate::agent::ContextGate::Missing { reasons } = gate {
                                 // The switch landed on a model with no gate
                                 // (ADR-0034): the record says so here, once,
                                 // instead of every request running unbounded.
                                 live.agent
                                     .diagnostic(&Diagnostic::GateUnavailable {
                                         model: model.clone(),
-                                        missing,
+                                        missing: reasons,
                                     })
                                     .map_err(|e| ProtocolError::Other {
                                         message: e.to_string(),

@@ -102,37 +102,55 @@ pub struct TurnConfig {
 /// window (spec §4): the system prompt, the tool schemas, the request envelope.
 const CONTEXT_GATE_MARGIN: u32 = 4096;
 
-impl TurnConfig {
-    /// The context gate's safe prompt budget (spec §4): the declared window
-    /// less the output cap and the margin. `None` means the model's facts
-    /// leave no budget computable, which is no gate at all (ADR-0034).
+/// What the context gate knows about a turn (spec §4, ADR-0034). One predicate
+/// computes it, so the gate's own budget check and every `gate_unavailable`
+/// record read the same arm: a record cannot claim a gap the gate does not have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ContextGate {
+    /// The safe prompt budget: the declared window less the output cap and the
+    /// framing margin.
+    Ready { budget: u32 },
+    /// No gate at all. `reasons` is never empty: the missing facts by their
+    /// config names, or `context_room` when both are declared and the
+    /// subtraction leaves nothing.
+    Missing { reasons: Vec<String> },
+}
+
+impl ContextGate {
     #[must_use]
-    pub(crate) fn context_gate_budget(&self) -> Option<u32> {
-        self.context_window.and_then(|window| {
-            let output = u32::try_from(self.max_output_tokens?).ok()?;
-            window
-                .checked_sub(output)
-                .and_then(|rest| rest.checked_sub(CONTEXT_GATE_MARGIN))
-        })
+    pub(crate) fn budget(&self) -> Option<u32> {
+        match self {
+            Self::Ready { budget } => Some(*budget),
+            Self::Missing { .. } => None,
+        }
     }
-    /// Why this turn has no context gate, named (ADR-0034): the two facts the
-    /// gate needs by their config names, or `context_room` when both are
-    /// declared but the window leaves nothing once the output cap and the
-    /// margin are subtracted. Empty means the gate exists. Every
-    /// `gate_unavailable` record arms on this one predicate, so a record never
-    /// claims a gap the gate does not have.
-    pub(crate) fn gate_unavailable_reasons(&self) -> Vec<String> {
-        let mut reasons = Vec::new();
-        if self.context_window.is_none() {
-            reasons.push("context_window".to_owned());
+}
+
+impl TurnConfig {
+    /// The context gate, from the model's declared facts (spec §4).
+    #[must_use]
+    pub(crate) fn context_gate(&self) -> ContextGate {
+        match (self.context_window, self.max_output_tokens) {
+            (Some(window), Some(max_output)) => u32::try_from(max_output)
+                .ok()
+                .and_then(|output| window.checked_sub(output))
+                .and_then(|rest| rest.checked_sub(CONTEXT_GATE_MARGIN))
+                .map_or_else(
+                    || ContextGate::Missing {
+                        reasons: vec!["context_room".to_owned()],
+                    },
+                    |budget| ContextGate::Ready { budget },
+                ),
+            (None, None) => ContextGate::Missing {
+                reasons: vec!["context_window".to_owned(), "max_tokens".to_owned()],
+            },
+            (None, Some(_)) => ContextGate::Missing {
+                reasons: vec!["context_window".to_owned()],
+            },
+            (Some(_), None) => ContextGate::Missing {
+                reasons: vec!["max_tokens".to_owned()],
+            },
         }
-        if self.max_output_tokens.is_none() {
-            reasons.push("max_tokens".to_owned());
-        }
-        if reasons.is_empty() && self.context_gate_budget().is_none() {
-            reasons.push("context_room".to_owned());
-        }
-        reasons
     }
 }
 

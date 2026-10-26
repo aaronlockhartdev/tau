@@ -5,7 +5,7 @@
 //! agent yet, so this module is the one place that appends the kind without it.
 
 use super::ProtocolError;
-use crate::agent::TurnConfig;
+use crate::agent::{ContextGate, TurnConfig};
 use crate::diagnostics::{self, Diagnostics};
 use crate::session::SessionStore;
 use tau_protocol::Diagnostic;
@@ -44,11 +44,12 @@ pub(crate) fn record_at_open(
             to: model.to_owned(),
         });
     }
-    let missing = turn.gate_unavailable_reasons();
-    if !missing.is_empty() && facts.last_gate_unavailable.as_deref() != Some(model) {
+    if let ContextGate::Missing { reasons } = turn.context_gate()
+        && facts.last_gate_unavailable.as_deref() != Some(model)
+    {
         pending.push(Diagnostic::GateUnavailable {
             model: model.to_owned(),
-            missing,
+            missing: reasons,
         });
     }
     diagnostics::append_facts(store, &pending).map_err(|e| ProtocolError::Other {
