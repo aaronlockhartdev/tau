@@ -429,7 +429,11 @@ describe('a diagnostic entry (ADR-0034)', () => {
 
   it('composes the sentence from the typed fact, not a stored note', () => {
     expect(line({ code: 'gate_unavailable', model: 'dev/x', missing: ['context_window', 'max_tokens'] }))
-      .toBe('context gate off for dev/x: context_window, max_tokens undeclared');
+      .toBe('context gate off for dev/x: context_window undeclared; max_tokens undeclared');
+    expect(line({ code: 'gate_unavailable', model: 'dev/x', missing: ['context_room'] }))
+      .toBe(
+        'context gate off for dev/x: the declared window leaves no room once the output cap and the margin are taken'
+      );
     expect(line({ code: 'turn_cutoff', model: 'dev/x', ended_by: 'eof_without_done', blocks: 2 }))
       .toBe('provider cut the turn (eof_without_done) after 2 block(s)');
     expect(line({ code: 'om_stalled', pending: 24000, activation: 24000 }))

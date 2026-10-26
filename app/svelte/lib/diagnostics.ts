@@ -17,6 +17,15 @@ const KNOWN_DIAGNOSTIC_CODES: DiagnosticCode[] = [
   'gate_failed', 'om_stalled', 'provider_rejected', 'turn_cutoff'
 ];
 
+// A gate_unavailable record names what the gate lacks; the card says what that
+// means, so an undeclared fact and a window with no room do not read as one
+// identical gap.
+const GATE_GAP: Record<string, string> = {
+  context_window: 'context_window undeclared',
+  max_tokens: 'max_tokens undeclared',
+  context_room: 'the declared window leaves no room once the output cap and the margin are taken'
+};
+
 export function diagnosticLabel(entry: DiagnosticEntry): string {
   // A windowed transcript holds snapshot metadata until a paged read hydrates
   // the entry: such a row carries the preview and no payload, and the core's
@@ -33,7 +42,10 @@ export function diagnosticLabel(entry: DiagnosticEntry): string {
         ? `model: ${d.from} → ${d.to}`
         : `model: ${d.to} (no recorded predecessor)`;
     case 'gate_unavailable':
-      return `context gate off for ${d.model}: ${d.missing.join(', ')} undeclared`;
+      return (
+        `context gate off for ${d.model}: ` +
+        d.missing.map((reason) => GATE_GAP[reason] ?? reason).join('; ')
+      );
     case 'context_overflow':
       return `context gate refused: prompt ${fmtK(d.prompt)} over budget ${fmtK(d.budget)}`;
     case 'gate_attempt':
