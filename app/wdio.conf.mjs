@@ -113,13 +113,13 @@ function checkMockScenarios() {
 // dir let the mock leg's config write clobber the shared project layer
 // and pin the stress session to the mock provider. The stress spec reads
 // TAU_E2E_WS_STRESS; the mock specs read TAU_E2E_WS_MOCK.
-// Every model these legs drive declares the gate's two facts. A session over a
-// model the gate can compute for is a healthy open, and a healthy open mints no
-// record — the invariant `a_model_that_declares_its_facts_records_no_gate_gap` pins
-// in Rust. The
-// windows sit far above anything these legs send, so declaring them changes no
-// response; it stops the audit channel from recording a gap that is an artifact
-// of a test config rather than a fact about the session.
+// Every model these legs drive declares the gate's two facts: a session over a
+// model the gate can compute for mints no gate record at open, the invariant
+// `a_model_that_declares_its_facts_records_no_gate_gap` pins in Rust. The open
+// still states the model it runs with a `model_changed`. The windows sit far above
+// anything these legs send, so declaring them changes no response; it stops the
+// audit channel from recording a gap that is an artifact of a test config rather
+// than a fact about the session.
 const MODEL_FACTS = 'context_window = 1000000\nmax_tokens = 8192';
 // The stress leg measures a 10k-entry session, not the OM round trip. The
 // canned provider replays one body for any prompt, so an OM call can never
