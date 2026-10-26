@@ -2,14 +2,13 @@ use super::impls::{bash, bash_inner, edit, read, write};
 use super::*;
 
 /// A throwaway session registry for a test, locked for the call.
-#[allow(clippy::mut_mutex_lock)] // the leaked box is the only way to get a 'static guard
-pub fn fresh_registry() -> std::sync::MutexGuard<'static, hashline::registry::Registry> {
+pub fn fresh_registry() -> parking_lot::MutexGuard<'static, hashline::registry::Registry> {
     // A 'static guard is not possible; these tests own the registry for the
     // duration of the call, so a leaked-once box is acceptable in test code.
-    let box_ = Box::leak(Box::new(std::sync::Mutex::new(
+    let box_ = Box::leak(Box::new(parking_lot::Mutex::new(
         hashline::registry::Registry::new(),
     )));
-    box_.lock().expect("test registry lock")
+    box_.lock()
 }
 
 /// The text of a tool output: these tests assert on text, and an image

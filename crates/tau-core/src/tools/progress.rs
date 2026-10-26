@@ -9,7 +9,7 @@
 
 use crate::session::{Entry, EntryEventHook};
 use crate::tools::ToolOutput;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::time::{Duration, Instant};
 use tau_protocol::EntryKind;
 
@@ -77,14 +77,14 @@ impl ToolProgress {
         }
         let now = Instant::now();
         {
-            let mut last = self.last.lock().expect("tool progress clock: no panic");
+            let mut last = self.last.lock();
             if last.is_some_and(|t| now.duration_since(t) < SNAPSHOT_INTERVAL) {
                 return;
             }
             *last = Some(now);
         }
         let snapshot = {
-            let mut out = self.output.lock().expect("tool progress output: no panic");
+            let mut out = self.output.lock();
             out.push_str(chunk);
             out.clone()
         };
@@ -121,14 +121,14 @@ impl ToolProgress {
         }
         let now = Instant::now();
         {
-            let mut last = self.last.lock().expect("tool progress clock: no panic");
+            let mut last = self.last.lock();
             if last.is_some_and(|t| now.duration_since(t) < SNAPSHOT_INTERVAL) {
                 return;
             }
             *last = Some(now);
         }
         let snapshot = {
-            let mut out = self.detail.lock().expect("tool progress detail: no panic");
+            let mut out = self.detail.lock();
             out.push_str(chunk);
             out.clone()
         };

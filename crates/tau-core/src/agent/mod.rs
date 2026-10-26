@@ -285,7 +285,7 @@ pub(crate) struct Inner {
     /// the per-session owner of the read/edit anchor state — which anchors
     /// the session minted, and which it showed the model. In-memory for the
     /// session's lifetime; shared across tool calls via Arc.
-    anchors: Arc<std::sync::Mutex<crate::hashline::registry::Registry>>,
+    anchors: Arc<parking_lot::Mutex<crate::hashline::registry::Registry>>,
     /// The per-session background job registry (#53); `bash background:true`
     /// records here; `mark_closed` kills every live job.
     background_jobs: Arc<crate::tools::bgjobs::BackgroundJobs>,
@@ -379,7 +379,7 @@ impl AgentSession {
                 plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
-                anchors: Arc::new(std::sync::Mutex::new(anchor_registry)),
+                anchors: Arc::new(parking_lot::Mutex::new(anchor_registry)),
                 background_jobs: Arc::new(crate::tools::bgjobs::BackgroundJobs::default()),
                 job_notify_hook: None,
             })),
@@ -444,7 +444,7 @@ impl AgentSession {
 
     /// The session's anchor registry handle (spec §5.4): the tool dispatch
     /// locks it per read/edit call.
-    pub(crate) fn anchors(&self) -> Arc<std::sync::Mutex<crate::hashline::registry::Registry>> {
+    pub(crate) fn anchors(&self) -> Arc<parking_lot::Mutex<crate::hashline::registry::Registry>> {
         self.inner.lock().anchors.clone()
     }
 

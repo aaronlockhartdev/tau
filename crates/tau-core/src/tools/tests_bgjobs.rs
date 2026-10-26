@@ -2,8 +2,8 @@
 //! spawn failure (negative).
 
 use super::bgjobs::{BackgroundJobs, JobCompletionHook};
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 fn dir() -> tempfile::TempDir {
@@ -21,7 +21,6 @@ async fn a_background_job_streams_output_and_fires_the_hook() {
     let hook: JobCompletionHook = Arc::new(move |id, code, path| {
         fired_clone
             .lock()
-            .unwrap()
             .push((id.to_owned(), code, path.to_path_buf()));
         done_clone.store(true, Ordering::SeqCst);
     });
@@ -58,7 +57,7 @@ async fn a_background_job_streams_output_and_fires_the_hook() {
         file.contains("exit 0"),
         "the exit line was appended: {file:?}"
     );
-    let fired = fired.lock().unwrap();
+    let fired = fired.lock();
     assert_eq!(fired.len(), 1);
     assert_eq!(fired[0].0, "1");
     assert_eq!(fired[0].1, Some(0));
@@ -75,7 +74,7 @@ async fn a_failing_job_carries_its_exit_code() {
     let codes_clone = codes.clone();
     let done_clone = done.clone();
     let hook: JobCompletionHook = Arc::new(move |_id, code, _path| {
-        codes_clone.lock().unwrap().push(code);
+        codes_clone.lock().push(code);
         done_clone.store(true, Ordering::SeqCst);
     });
     super::bgjobs::spawn(d.path(), "echo fail; exit 3", &jobs, Some(hook)).unwrap();
@@ -87,7 +86,7 @@ async fn a_failing_job_carries_its_exit_code() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert_eq!(*codes.lock().unwrap(), vec![Some(3)]);
+    assert_eq!(*codes.lock(), vec![Some(3)]);
 }
 
 #[tokio::test]
