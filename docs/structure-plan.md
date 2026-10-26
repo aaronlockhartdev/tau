@@ -3,11 +3,11 @@
 Status: **preliminary.** Findings are measured against `typed-facts/diagnostics-306`
 (`.worktrees/typed-facts-306`) at the tip of the #306 work; line numbers are from
 that tree. Nothing here is decided except where a row says *adopted* — the
-decisions in §6 need a human.
+decisions in §6 were taken on 2026-10-26.
 
 Read it as: §1 what the code actually is, §2 where crate boundaries belong,
 §3 which hand-rolled logic a maintained crate should own, §4 what to simplify,
-§5 the order of work, §6 open decisions.
+§5 the order of work, §6 the decisions.
 
 ## 1. Findings — where the contracts are, and where they leak
 
@@ -61,9 +61,10 @@ only one module should know the exhaustive list*)
    first record and the next open re-emits it (`harness/launch.rs`
    `record_model_at_open`, `harness/dispatch_sessions.rs:196-211`). The
    "records chain linearly" rule has no owner.
-4. **A name collision across the seam:** `Event::StreamEnd` (protocol: the turn
-   settled) vs `tau_protocol::StreamEnd` (how the provider ended the stream). The
-   pending `turn_cutoff` work writes code on both names.
+4. **A name collision across the seam — resolved:** `Event::StreamEnd` (protocol:
+   the turn settled) vs `tau_protocol::StreamOutcome` (how the provider ended the
+   stream). The pending `turn_cutoff` work writes code on both names, which is why
+   the record vocabulary moved (§6.1).
 
 ## 2. Crate boundaries
 
@@ -179,6 +180,29 @@ them over — open-time fact emission — is a named piece of the audit channel,
 it moves to `harness/open_facts.rs` rather than being split by accident of
 length.
 
+### 2.2 Wire conversion is derived serde, not built JSON
+
+A type that crosses the wire derives `Serialize`/`Deserialize`; the conversion is
+not written by hand. `tau-protocol` already lives by this: the payload types,
+events and snapshots are derived, and `to_value` is a thin wrapper over the derive
+(a macro at `payload.rs:190`). Two hand-written impls were left; one was a defect.
+
+- `Diagnostic`'s hand-written `Deserialize` is replaced by the derive. Tolerance
+  sits in `from_value`, the one place that needs a name: a `code` this build
+  cannot decode becomes `Unknown { unknown_code }`, and no field value is
+  invented. The defaults the hand-written reader filled — `""`, `0` — were a live
+  hazard: a truncated `model_changed` read back as a model named by the empty
+  string, which the harness would then take as the session's model.
+- `EntryKind`'s hand-written `Serialize`/`Deserialize` stay, three lines each
+  delegating to `as_str()`/`parse()`: an open tag set with `Other(String)` cannot
+  be derived without dropping the unknown tag's name, and nothing is defaulted.
+
+The rest of the hand-built JSON is not a serde problem but an untyped-payload
+one: `json!` literals in 12 `tau-core` files and 83 `payload.get("key")` reads are
+payloads that have no type yet. Converting them is the per-kind typed-payload work
+the `tau-session` cut is meant to carry (§2); each one converted is a reader that
+stops guessing at keys.
+
 
 ## 3. Library audit
 
@@ -196,8 +220,9 @@ as of 2026-10-25.
 | SSE parser, `provider/mod.rs:131` + `stream.rs` (~100 LOC, `sse_properties.rs` proptest) | `eventsource-stream` (30 M dl, last publish **2022-02-17**), `sse-codec` (1.7 M dl, 2026-02-12), `reqwest-eventsource` (12 M dl, 2024-03-29) | **reject — keep hand-rolled.** The stale one is unmaintained; the live one is a frame codec that cannot express what tau's contract needs: the `[DONE]` sentinel, `eof_without_done`, mid-stream error, and the idle-timeout boundary that `StreamEnd` names. Replacing it would move the distinction into a dependency and lose the property tests |
 | Newtype boilerplate for `ModelName` (the N10 fix in §4) | `derive_more` (552 M dl, 2025-12-22) | **optional.** AGENTS.md's `into_inner()` convention is 4 lines; add the crate only if a second newtype appears |
 | Arg loops in `tau-mock-llm/src/main.rs:20` and `tau-test/src/main.rs:126` (3 flags total) | `clap` (1.27 B dl) | **reject.** Two binaries, three flags, no subcommand trees; the dep tree costs more than the loop |
-| Mutex + poisoning (§1.3 hazard 2) | `parking_lot` (1.20 B dl, 2026-10-21) — no poisoning concept at all | **optional; see §6.** The dependency-free version is a five-line helper that recovers with `PoisonError::into_inner()`; the crate additionally gives smaller guards |
+| Mutex + poisoning (§1.3 hazard 2) | `parking_lot` (1.20 B dl, 2026-10-21) — no poisoning concept at all | **reject the crate, keep `std::sync::Mutex`** (§6.2). A guard that can never be poisoned hides the one signal that shared state was mutated mid-panic; the guard-size and speed difference is noise against file IO and provider latency. The fix is dependency-free: recover with `PoisonError::into_inner()` where continuing is safe, and stop parsing untrusted model text under the lock |
 | `SystemTime → UNIX_EPOCH → millis` in 7 places while `jiff 0.2` is already a dependency | (none needed) | **simplify to the existing dep** — `jiff::Timestamp::now()`, see S5 |
+| Hand-built JSON: `json!` payload writers (12 `tau-core` files), 83 `payload.get("key")` readers, `Diagnostic`'s hand-written `Deserialize` | serde derive — already the repo's norm in `tau-protocol` | **adopt the derive wherever the shape has a type** (§2.2). Done for `Diagnostic`; the `json!`/key-read residue is the untyped-payload backlog, S12 |
 
 ## 4. Simplifications
 
@@ -217,6 +242,7 @@ finish it, and each keeps the existing tests as the harness.
 | **S9** | Delete `root_with_supervisor` (2 references, both inside `launch.rs`; no non-test caller) | `harness/launch.rs:213,220` | a test seam living in the production open path |
 | **S10** | `thiserror` on the error enums | 10 files | §3 |
 | **S11** | `backon` for the OM retry policy | `om_integration/retry.rs` | §3 |
+| **S12** | Typed payload per `EntryKind`: the `json!` writers and `payload.get` readers become the derived payload types | 12 files with `json!` (`tools/mod.rs`, `subagent/*`, `session/file.rs`, …), 83 key reads | §2.2; one shape per kind, so a reader cannot guess a key and each kind gains exactly one legal append path |
 
 ## 5. Order of work
 
@@ -224,8 +250,8 @@ finish it, and each keeps the existing tests as the harness.
    which owns the code they touch.
 2. **S6, S5, S3** — loop and store hygiene; S3 is the only one with real churn
    and it is where the app-wide stop lives.
-3. **Rename the `StreamEnd` collision** (§1.4) before the `turn_cutoff` ticket
-   lands, then land the `turn_cutoff`/`StreamEnd`-on-`ProviderResult` ticket.
+3. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
+   `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.
 4. **S4** (disperse `om_integration`) — four commits, each behaviour-neutral.
 5. **S7, S8** — wire-visible; each needs goldens + the TS mirror + a protocol
    commit.
@@ -235,13 +261,23 @@ finish it, and each keeps the existing tests as the harness.
 7. **S10, S11** last — dep additions are easy to review once the code is in the
    shape the plan wants.
 
-## 6. Needs a human
+## 6. Decided (2026-10-26)
 
-1. `Event::StreamEnd` vs `StreamEnd`: rename the *event* (`TurnSettled`) or the
-   *record vocabulary* (`StreamOutcome`)? The record vocabulary is ADR-0034 text
-   and has wire goldens; the event name is what the GUI subscribes to.
-2. Hazard 2: dependency-free poison-recovery helper, or `parking_lot` across the
-   workspace (423 sites, no poisoning concept, smaller guards)?
-3. Do we want `tau-hashline` published to crates.io (that is the book's stated
-   benefit — reuse outside this repo), or workspace-internal only?
-4. `tiktoken-rs` per model family *after* the calibration fix, or never?
+1. **The record vocabulary was renamed, not the event.** `tau_protocol::StreamEnd`
+   is now `StreamOutcome`; the TS mirror followed. `Event::StreamEnd` keeps its
+   name — it is what the GUI subscribes to and its wire spelling is already
+   pinned by goldens. The record type had no writers, so the rename cost four
+   Rust files and two TS lines and changed no bytes on the wire.
+2. **`std::sync::Mutex` stays; no `parking_lot`.** A lock whose guards are never
+   poisoned is wrong for a codebase whose product is a durable, CRC-checked
+   record, and the speed difference is invisible next to file IO and provider
+   latency. Still open: how far recovery reaches — named boundaries or every
+   acquisition (§1.3 hazard 2).
+3. **`tau-hashline` stays workspace-internal.** No crates.io means no semver
+   policy, no separate CI job, and no public-API discipline past the crate
+   boundary.
+4. **No tokenizer.** `token_count`'s `chars() / 4` stays a soft estimator. The
+   gate's real fix is calibration against the `usage.prompt_tokens` every
+   assistant record already carries; a tokenizer would buy precision the gate
+   does not need, at the cost of a model-family dependency ADR-0003 rules out
+   for a provider-agnostic core.
