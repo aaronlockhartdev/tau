@@ -426,13 +426,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let mut s = store(tmp.path(), "s1");
         s.create().unwrap();
-        let fired = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let fired = std::sync::Arc::new(parking_lot::Mutex::new(Vec::<String>::new()));
         let f = std::sync::Arc::clone(&fired);
         s.set_entry_event_hook(Some(std::sync::Arc::new(move |e: &Entry| {
-            f.lock().unwrap().push(e.id.clone());
+            f.lock().push(e.id.clone());
         })));
         s.upsert_event("00000042", EntryKind::User, Value::String("hi".into()));
-        assert_eq!(fired.lock().unwrap().as_slice(), &["00000042".to_string()]);
+        assert_eq!(fired.lock().as_slice(), &["00000042".to_string()]);
         // Wire-only: the file still holds just the header.
         let raw = fs::read_to_string(s.path()).unwrap();
         assert_eq!(

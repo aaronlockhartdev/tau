@@ -200,7 +200,7 @@ fn prompt_estimate_counts_text_call_outputs() {
 
 /// One static buffer per test binary: `set_global_default` installs once,
 /// so every `llm wire` event lands here; each scenario drains it first.
-static CAPTURE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+static CAPTURE: parking_lot::Mutex<String> = parking_lot::Mutex::new(String::new());
 
 /// A `MakeWriter` over the static buffer: the subscriber holds this unit
 /// struct, and each event locks the shared buffer.
@@ -210,13 +210,13 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapSource {
     type Writer = CapWriter<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        CapWriter(CAPTURE.lock().expect("capture poisoned"))
+        CapWriter(CAPTURE.lock())
     }
 }
 
 /// A `Write` view over one locked buffer: `MutexGuard<String>` is not
 /// itself a writer.
-struct CapWriter<'a>(std::sync::MutexGuard<'a, String>);
+struct CapWriter<'a>(parking_lot::MutexGuard<'a, String>);
 
 impl std::io::Write for CapWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -241,9 +241,9 @@ fn capture_debug(f: impl FnOnce()) -> String {
         .with_writer(CapSource)
         .finish();
     let _guard = tracing::subscriber::set_default(sub);
-    CAPTURE.lock().expect("capture poisoned").clear();
+    CAPTURE.lock().clear();
     f();
-    CAPTURE.lock().expect("capture poisoned").clone()
+    CAPTURE.lock().clone()
 }
 
 /// Pull the `line=...` field out of one fmt-rendered event and parse it as

@@ -39,6 +39,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use parking_lot::{Mutex, MutexGuard};
+
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
@@ -122,7 +124,7 @@ impl std::error::Error for StoreError {}
 #[derive(Debug)]
 pub struct PinStore {
     root: PathBuf,
-    conn: std::sync::Mutex<Option<Connection>>,
+    conn: Mutex<Option<Connection>>,
 }
 
 /// Epoch ms since the Unix epoch (0 on clock failure).
@@ -138,13 +140,10 @@ impl PinStore {
         let root = root.to_path_buf();
         let store = Self {
             root: root.clone(),
-            conn: std::sync::Mutex::new(None),
+            conn: Mutex::new(None),
         };
         {
-            let mut slot = store
-                .conn
-                .lock()
-                .expect("the mutex is not poisoned: a store is single-threaded");
+            let mut slot = store.conn.lock();
             if let Ok(c) = Self::open_store(&root) {
                 *slot = Some(c);
             }
@@ -268,10 +267,7 @@ impl PinStore {
         if !policy.gc_on_start {
             return;
         }
-        let guard = self
-            .conn
-            .lock()
-            .expect("the mutex is not poisoned: a store is single-threaded");
+        let guard = self.conn.lock();
         let Some(conn) = guard.as_ref() else {
             return;
         };
@@ -337,11 +333,8 @@ impl PinStore {
         }
     }
 
-    fn open_conn(&self) -> Result<std::sync::MutexGuard<'_, Option<Connection>>, StoreError> {
-        let mut guard = self
-            .conn
-            .lock()
-            .expect("the mutex is not poisoned: a store is single-threaded");
+    fn open_conn(&self) -> Result<MutexGuard<'_, Option<Connection>>, StoreError> {
+        let mut guard = self.conn.lock();
         if guard.is_none() {
             *guard = Some(Self::open_store(&self.root)?);
         }
