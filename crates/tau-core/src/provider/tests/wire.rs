@@ -176,9 +176,10 @@ fn prompt_estimate_counts_image_data_urls_and_text() {
         ]),
     })];
     let est = prompt_token_estimate("sys", &input, &[]);
-    // ~4 chars/token (the shared soft estimator, spec §4): 4022 chars / 4
-    // for the URL, 1 for the note ("sys" is under a token).
-    assert_eq!(est, 4022 / 4 + 1, "image and note both count");
+    // Bytes over four, rounded up, then the serialization allowance: the 4022-
+    // byte URL is 1006, the note 1, the "sys" prompt 1, the empty tool list 1 —
+    // 1009, plus a fifth for the request's JSON framing.
+    assert_eq!(est, 1009 + 1009 / 5, "image and note both count");
 }
 
 #[test]
@@ -190,8 +191,9 @@ fn prompt_estimate_counts_text_call_outputs() {
         output: CallOutput::Text("b".repeat(1200)),
     })];
     let est = prompt_token_estimate("sys", &input, &[]);
-    // The "sys" prompt is under a token: only the result counts.
-    assert_eq!(est, 1200 / 4);
+    // 300 for the result, 1 for the "sys" prompt, 1 for the empty tool list,
+    // plus a fifth.
+    assert_eq!(est, 302 + 302 / 5);
 }
 
 // --- JSONL wire view (the #98 wire log's parseable companion) ---

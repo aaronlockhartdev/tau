@@ -287,10 +287,12 @@ impl fmt::Display for Cursor {
 }
 
 /// Soft token estimate for thresholding (spec §4: "a single estimator is
-/// sufficient since thresholds are soft"). ~4 chars/token, no dependencies.
+/// sufficient since thresholds are soft"). Bytes over four, rounded up, no
+/// dependencies: a token estimate is a bytes rule, and a CJK character is three
+/// UTF-8 bytes rather than one character (plan §6.4).
 #[must_use]
 pub fn token_count(text: &str) -> u32 {
-    u32::try_from(text.chars().count() / 4)
+    u32::try_from(text.len().div_ceil(4))
         .expect("soft estimator over message-sized text, well under u32::MAX")
 }
 

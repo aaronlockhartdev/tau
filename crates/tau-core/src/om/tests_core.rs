@@ -195,6 +195,10 @@ fn token_count_is_a_soft_quarter_estimate() {
     assert_eq!(token_count(""), 0);
     assert_eq!(token_count("abcd"), 1);
     assert_eq!(token_count(&"x".repeat(40_000)), 10_000);
+    // Bytes, not characters: three UTF-8 bytes each, so a CJK run is counted at
+    // its real size, and a short byte count rounds up rather than to zero.
+    assert_eq!(token_count("中文"), 2);
+    assert_eq!(token_count("abc"), 1);
 }
 
 #[test]
