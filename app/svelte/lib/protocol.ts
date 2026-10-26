@@ -266,14 +266,14 @@ export interface ChildActivity {
 export interface ActivityGroup {
   id: string;
   range: string;
-  kind: string | null;
+  kind?: string;
   content: string;
 }
 
 export interface ActivityEntry {
   role: string;
-  tool: string | null;
-  status: string | null;
+  tool?: string;
+  status?: string;
   text: string;
 }
 export type SubagentEventKind =

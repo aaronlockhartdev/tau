@@ -14,8 +14,9 @@
 //   the same normalized fields (CommandOutput.file mirrors FileText inline).
 // - `#[serde(default)]` makes a field wire-optional; the TS mirror may carry
 //   it required (the writer always fills it).
-// - A field with `skip_serializing_if` is wire-absent; a TS optional field
-//   is its parity (an `Option<T>`, or a default-filled one).
+// - A field with `skip_serializing_if` is wire-absent; a TS optional field of
+//   the inner type is its parity (an `Option<T>`, or a default-filled one).
+//   A nullable mirror describes a key the wire never sends.
 // - Serde renames are the wire names: a `#[serde(rename)]`/`rename_all`
 //   field is checked under its renamed name (parentSession).
 // - `TurnUsage` (the payload module's usage) is name-parity with the TS
@@ -128,12 +129,12 @@ function rustEnums(src) {
     // A hand-written Serialize spells its tags in code, not with a serde attr:
     // the `as_str` arm is the wire spelling (EntryKind's is `spawn-snapshot`).
     const handwritten = clean.includes(`impl Serialize for ${name} {`);
-  const wire = handwritten ? wireTags(clean, name) : {};
-  if (handwritten && Object.keys(wire).length === 0) {
-    // Falling back to snake_case here would re-introduce the very error this
-    // gate exists to catch: a hand-written Serialize whose tags live inline.
-    throw new Error(`${name}: impl Serialize is hand-written but names no tags to read`);
-  }
+    const wire = handwritten ? wireTags(clean, name) : {};
+    if (handwritten && Object.keys(wire).length === 0) {
+      // Falling back to snake_case here would re-introduce the very error this
+      // gate exists to catch: a hand-written Serialize whose tags live inline.
+      throw new Error(`${name}: impl Serialize is hand-written but names no tags to read`);
+    }
     for (const part of topParts(bodyAfter(clean, m.index))) {
       // Serde/allow attributes sit on their own line above a variant; they
       // must not glue into the variant part the field split sees.
@@ -414,10 +415,6 @@ function diffUnion(rustName, tsName = rustName) {
         continue;
       }
       if (sameType(ty, tf[1])) continue;
-      // skip_serializing_if: the key is wire-absent when the Option is empty, so
-      // the mirror marks the field optional — widening it to null describes a key
-      // the wire never sends.
-      if (skip && tf[2] && sameType(stripNull(ty), stripNull(tf[1]))) continue;
       errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tf[1]}`);
     }
   }
@@ -440,10 +437,22 @@ function diffStruct(rustName, tsName = rustName) {
     if (!tf) continue;
     const a = normRust(rf.type).replace(/\?$/, '');
     const b = normTs(tf.type);
+    // marks it optional of the inner type, never nullable. This is checked before
+    // the equality line because normRust renders `Option<T>` as `T | null`, so a
+    // nullable mirror would otherwise match the Rust type and the wire-absent half
+    // of the contract would go unexamined.
+    if (rf.skip && a.includes('| null')) {
+      if (!tf.optional || b.includes('null')) {
+        errors.push(`${rustName}.${n}: Rust skips it when empty, so TS marks it optional of the inner type, not nullable`);
+      } else if (!sameType(stripNull(a), b)) {
+        errors.push(`${rustName}.${n}: Rust ${a} vs TS ${b}`);
+      }
+      continue;
+    }
     if (a === b) continue;
-    // skip_serializing_if: the field is wire-absent (an Option, or a
-    // default-filled one) — a TS optional field is its parity, a nullable one is not.
-    if (rf.skip && tf.optional && sameType(stripNull(a), stripNull(b))) continue;
+    // A skip on a non-Option (an empty-string or default-status skip) may still be
+    // mirrored as a field of its own type, optional or not.
+    if (rf.skip && sameType(stripNull(a), b)) continue;
     if (!sameType(a, b)) errors.push(`${rustName}.${n}: Rust ${a} vs TS ${b}`);
   }
 }
