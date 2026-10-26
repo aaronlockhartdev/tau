@@ -273,7 +273,7 @@ finish it, and each keeps the existing tests as the harness.
 | **S10** | `thiserror` on the error enums | 10 files | §3 |
 | **S11** | `backon` for the OM retry policy | `om_integration/retry.rs` | §3 |
 | **S12** | Typed payload per `EntryKind`: the `json!` writers and `payload.get` readers become the derived payload types | 12 files with `json!` (`tools/mod.rs`, `subagent/*`, `session/file.rs`, …), 83 key reads | §2.2; one shape per kind, so a reader cannot guess a key and each kind gains exactly one legal append path |
-| **S13** | The prompt estimate anchors on the last recorded `usage.input_tokens`; only content appended after it is estimated. Bytes/4 rounded up, serialized tool arguments included | `provider/request.rs:385` (`estimate_prompt_tokens`), `om/mod.rs:292` (`token_count`) | §6.4: the provider's count is the authority for what was already sent, so the estimator only covers the delta — one tool output, not the whole conversation, is ever a guess |
+| **S13** | The prompt estimate anchors on the last recorded `usage.input_tokens`; only content appended after it is estimated. Bytes/4 rounded up, serialized tool specs included | `agent/turn/estimate.rs` (`PromptAnchor`, `prompt_size`, `tool_fingerprint`), `provider/request.rs` (`prompt_token_estimate`, `items_token_estimate`), `om/mod.rs` (`token_count`) | §6.4, decided in §6.9. **Landed**: the provider's count is held beside the request it priced — its instructions, its serialized tool specs, its observation-item count, and the entry the request ended at — and the next call prices that count plus only the entries appended since, through the same converter assembly uses. A guard that does not match fails closed to the whole-prompt estimate. The anchor lives in the turn, not the file: it describes a request, not durable state, and a turn's first call has nothing recorded to lean on |
 | **S14** | The usage **record** stops mirroring one API: stored fields become the concepts (`input_tokens`, `output_tokens`, `cached_input_tokens`), the Responses/chat spellings move into the provider adapter, the total becomes an accessor instead of a stored field, and `OutputTokensDetails` + `TurnUsage::reasoning_tokens()` are deleted (no production reader) | `tau-protocol/src/payload.rs`, `provider/usage.rs` (the wire decode that used to land straight on the record type), `harness/snapshot.rs` `usage_of` (one of the two readers of a stored usage) | §6.5/§6.6. **Landed**: no golden moved (the record-side goldens carry no usage, the usage goldens are event-side) and the store fixture carries no usage; the event-side `Usage` keeps its spelling because its goldens and the TS mirror pin it. `TurnUsage::from_record` is the one frozen read for records written before the change — two readers exist (`usage_of`, `subagent/inspect`), so the legacy shim lives on the record type, not in either caller |
 | **S15** | The real-app E2E legs run configs the audit channel correctly calls unhealthy, so they have been red since #306 landed: neither leg's models declare a `context_window`/`max_tokens`, so a `gate_unavailable` record really is owed at open, and the stress leg's OM pass runs against a provider with no script for the OM prompt, so each turn ends with an `om_stalled` record and the assistant message is no longer the tail. Both break entry-count and render-range assertions that predate #306 (the stress fixture grew 10050 → 10052) | `app/wdio.conf.mjs` (`CANNED_CONFIG`, `makeWorkspaces`), `app/tests/e2e/stress.spec.mjs`, `app/tests/e2e/mock-multi.spec.mjs` | The legs assert a world where nothing is recorded while their configs describe a world where something is owed. Make the configs healthy — declare the window and the cap on the E2E models, and take OM out of the stress leg (it measures windowing and the §8 perf bar, not compaction) — so a healthy open mints nothing, the invariant `a_model_that_declares_its_facts_records_no_gate_gap` pins at the gate and `a_prefixed_default_model_opens_on_the_model_it_names` now pins at reopen. A leg that wants the ungated case asserts the record it mints, by code. **Landed**: the E2E models carry a window and a cap and the OM thresholds sit past anything the fixture reaches, so the stress leg opens with one record — the `model_changed` baseline its pre-audit session never wrote — and mints no OM traffic. Its counts and render ranges are read from the store after open instead of the fixture's, and the audit records are named by code off the store |
 | **S16** | A model id has two spellings and no resolution rule. The model menu sends `provider/key` (built in `ModelMenu.svelte` from `provider_list`); the config keys models by the bare `key` under a provider. `derive_turn` looks the session's id up with `provider.models.get(model)`, so after any menu switch the model's declared facts — `context_window`, `max_tokens`, `reasoning` — are dropped, the context gate goes Missing, and the audit channel records `gate_unavailable` for a model the config does describe. The same id goes into the request body (`ResponseRequest::new(self.model()…)`), so the endpoint is addressed as `dev/qwen3.8-…` instead of the model it hosts | `config/mod.rs` (one resolver over the provider maps), `harness/sessions.rs` `derive_turn`, `harness/launch.rs` (its default-model pick and its default-model lookup), `agent/turn/mod.rs` (the request's `model` field), `agent/turn/om_pass.rs` (the OM fallback had the same bug) | §6.7. Found from the legs: the mock leg's second open record is `gate_unavailable { model: "mock/mock-model-2", missing: [context_window, max_tokens] }` against a config declaring both. This is the incident family — switch model, lose the gate, run unbounded, get refused. **Landed**: `Config::model_key` is the resolver, stripping `provider/` only when the prefix names a configured provider, so a gateway key like `openai/gpt-5` passes through; the facts lookup, the thinking level and the launch default-model lookup all read it. The resolved pair reaches the request through `TurnConfig::request_address`, the one fallback the turn and the OM pass share. The session keeps the id the user chose in its meta, its records, and the GUI |
@@ -293,12 +293,9 @@ finish it, and each keeps the existing tests as the harness.
 4. ~~**S15** — the real-app E2E legs~~ — **done**: the configs declare the window
    and the cap, OM is out of the stress leg, and the specs name the one baseline
    record a pre-audit fixture owes at open. Both legs green in both browsers.
-5. **S14, then S13** — the usage record's shape first, because the anchored
-   estimate reads the fields S14 names (S14 landed: the record carries the
-   concepts, the adapter carries the spellings, `from_record` is the one frozen
-   read). Wire-visible, so one reviewable series:
-   the protocol type, the adapter decode, the single record reader, then the
-   goldens + the store fixture + the TS mirror together.
+5. ~~**S14, then S13**~~ — **done**: the record carries the concepts, the
+   adapter carries the spellings, `from_record` is the one frozen read, and the
+   estimate reads a recorded count instead of guessing the whole prompt.
 6. **S3** — the `parking_lot` migration, alone in its own series: ~400 sites, no
    semantics, one commit per module group. It must never share a commit with a
    behavior change, and it is where hazard 2 dies.
@@ -443,3 +440,38 @@ the thing it was derived from, it carries that thing's identity, so a stale copy
 cannot be mistaken for a current one at the read. Fixing it at the read rather
 than at each write is what makes the third seam (a model change whose config
 re-derive never ran) fall out of the same rule.
+
+### 6.9 The prompt estimate anchors on the request, not the conversation (taken 2026-10-26)
+
+The gate sized a prompt by guessing it: the shared estimator read every byte of
+the conversation, on every call, in every turn. The provider already reports the
+exact count for the request it answered — `input_tokens`, the field S14 made a
+concept — so the turn keeps that number beside the parts of the assembly it
+priced (the instructions, the serialized tool specs, the observation-item count,
+and the entry the request ended at) and prices the next call from that count
+plus only the entries appended since, through the same converter assembly uses.
+The estimate walks toward the truth across a turn instead of restarting from a
+guess each call.
+
+The anchor lives in the turn, not the session file: it describes a request, and
+a turn's first call has nothing recorded to lean on. Every guard fails closed —
+a mismatch drops to the whole-prompt estimate rather than pricing a prompt the
+request never was. A compaction that consumed the anchored entries, a
+re-injected plan state, a changed tool surface, a branch without the entry: each
+has its own test, and each guard was removed in turn to confirm the test stays
+load-bearing. When a call reports no usage nothing is fabricated; the estimate
+stays unanchored.
+
+Two base-rule changes come with it, both from §6.4: `token_count` counts bytes
+over four rounded up — it was characters over four truncated, so a CJK run
+counted at a third of its size and any short string at zero — and the
+whole-prompt estimate carries a 20 % allowance for the JSON framing a content
+estimate never sees (Codex's `estimate_request_tokens` plus a fifth). The
+allowance rides the estimated parts only; a provider's own count already
+includes the framing. OM thresholds shift with the estimator, which is intended:
+they are soft counters measured against the same yardstick, and no record or
+wire shape moves.
+
+What this closes is §6.4's failure mode: an under-estimate lets a prompt past the
+window the model really has, the provider rejects the request, and the agent
+stops mid-task.
