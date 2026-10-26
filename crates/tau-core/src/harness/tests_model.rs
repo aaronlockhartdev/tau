@@ -505,3 +505,105 @@ async fn a_menu_qualified_switch_keeps_the_declared_facts() {
     };
     assert_eq!(snap.session.model.as_deref(), Some("dev/second"));
 }
+
+/// A `generation.default_model` written the way the menu spells it opens on the
+/// model it names. Without §6.7's read on the config-supplied id, the prefixed
+/// name misses the bare-key map and the session silently opens on the provider's
+/// first model — a wrong model with nothing recorded about it.
+#[tokio::test]
+async fn a_prefixed_default_model_opens_on_the_model_it_names() {
+    // The config file, not a hand-built provider map: the default model is a
+    // config-supplied id, so the test travels the same layering production does.
+    let sys = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join("config.toml"),
+        r#"
+[providers.dev]
+base_url = "http://127.0.0.1:9/v1"
+key_env = ""
+
+[providers.dev.models.first]
+
+[providers.dev.models.second]
+context_window = 131_072
+max_tokens = 16_384
+
+[generation]
+default_model = "dev/second"
+"#,
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    assert_eq!(
+        live.model.as_deref(),
+        Some("dev/second"),
+        "the default is taken by name, not replaced by the map's first entry"
+    );
+    // The reopen is where the resolution shows: a default that had resolved to a
+    // name only would leave its facts undeclared and owe a `gate_unavailable`.
+    core.dispatch(Command::SessionClose {
+        session: live.id.clone(),
+    })
+    .unwrap();
+    core.dispatch(Command::SessionOpen {
+        session: live.id.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &live.id)),
+        Vec::new(),
+        "the default resolved to a model that declares its facts"
+    );
+}
+
+/// The fallback survives the read: a default no provider declares opens on the
+/// first model, which is what the config's empty-value contract has always meant.
+#[tokio::test]
+async fn an_undeclared_default_model_falls_back_to_the_first_model() {
+    let sys = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join("config.toml"),
+        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"model\"]\n\n[generation]\ndefault_model = \"other/nope\"\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    // `other` is not a configured provider, so the id is not stripped and matches
+    // nothing: the fallback, not a guess at a same-named key.
+    assert_eq!(live.model.as_deref(), Some("model"));
+}
