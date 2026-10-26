@@ -127,10 +127,8 @@ pub struct PinStore {
 
 /// Epoch ms since the Unix epoch (0 on clock failure).
 fn now_ms() -> i64 {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => i64::try_from(d.as_secs()).map_or(0, |s| s * 1000),
-        Err(_) => 0,
-    }
+    jiff::Timestamp::try_from(std::time::SystemTime::now())
+        .map_or(0, jiff::Timestamp::as_millisecond)
 }
 
 impl PinStore {

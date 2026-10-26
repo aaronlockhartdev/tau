@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod agent_type;
+mod clock;
 pub mod config;
 pub mod context;
 pub mod diagnostics;

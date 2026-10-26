@@ -312,9 +312,7 @@ impl SessionStore {
     /// name lets two concurrently dispatched commands interleave on one
     /// file; the nanosecond clock keeps the names apart.
     fn rewrite_tmp(&self) -> std::path::PathBuf {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
+        let nanos = crate::clock::now_ns();
         self.path().with_file_name(format!(
             "{}.tmp-{nanos:016x}",
             self.path()

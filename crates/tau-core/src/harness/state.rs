@@ -527,9 +527,7 @@ impl Core {
             // next boot; the temp-file rename makes the index all-or-nothing.
             let _ = std::fs::create_dir_all(dir);
             let path = dir.join("workspaces.json");
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos());
+            let nanos = crate::clock::now_ns();
             let tmp = dir.join(format!("workspaces.json.tmp-{nanos:016x}"));
             if std::fs::write(&tmp, raw).is_ok() {
                 let _ = std::fs::rename(&tmp, path);

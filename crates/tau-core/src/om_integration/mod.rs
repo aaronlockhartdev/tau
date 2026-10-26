@@ -273,13 +273,10 @@ fn transcript(entries: &[Entry]) -> String {
     out
 }
 
-/// Epoch millis for the boundary delimiter (no chrono in the dependency
-/// surface; the delimiter needs monotonicity, not a calendar).
+/// Epoch millis for the boundary delimiter: the delimiter needs monotonicity,
+/// not a calendar.
 fn boundary_ts() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis().to_string())
-        .unwrap_or_default()
+    crate::clock::now_ms().to_string()
 }
 
 /// The OM call's sink: OM calls are not user-facing — nothing kills them.

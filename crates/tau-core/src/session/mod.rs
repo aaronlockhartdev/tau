@@ -203,12 +203,7 @@ impl SessionStore {
     }
 
     fn now_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| {
-                u64::try_from(d.as_millis())
-                    .expect("epoch milliseconds fit u64 with ~584 million years to spare")
-            })
+        crate::clock::now_ms()
     }
     pub(crate) fn now(&self) -> u64 {
         self.fixed_time.unwrap_or_else(Self::now_ms)
