@@ -28,6 +28,9 @@ notify-debouncer-full = "0.7"
 # in-process, no `git` CLI spawns.
 gix = { version = "0.88", default-features = false, features = ["status", "revision", "excludes", "sha1"] }
 similar = "3"
+parking_lot = "0.13"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [workspace.lints.clippy]
 # Maximum strictness (2026-10-01): the whole pedantic group (CI's `-D warnings`

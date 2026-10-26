@@ -46,8 +46,8 @@ tokio = { workspace = true }
 # the old `max_level_off` for everything that matters; debug builds can reach
 # `trace`, which `just dev-trace` uses. The ACP binary carries the same
 # split (#98 precedent in tau-acp).
-tracing = { version = "0.1", features = ["release_max_level_error"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing = { workspace = true, features = ["release_max_level_error"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 
 [dev-dependencies]
