@@ -94,7 +94,6 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     let state = agent
         .inner
         .lock()
-        .unwrap()
         .om
         .clone()
         .expect("the om state is written back");
@@ -109,7 +108,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     assert!(!state.record.active_observations.contains("<observations>"));
     // The continuation hint: exactly one assembled context in the whole
     // run carries it — the turn-2 assembly, right after the observe.
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock();
     let hints = seen
         .iter()
         .filter(|(_, first_input)| {
@@ -189,13 +188,13 @@ async fn om_runs_notify_the_status_hook_in_order() {
     let kinds = Arc::new(Mutex::new(Vec::<String>::new()));
     let k = kinds.clone();
     agent.set_om_status_hook(Some(Arc::new(move |kind: &str| {
-        k.lock().unwrap().push(kind.to_owned());
+        k.lock().push(kind.to_owned());
     })));
     agent.send("go1", Lane::FollowUp);
     agent.send("go2", Lane::FollowUp);
     agent.process().await.unwrap();
     assert_eq!(
-        *kinds.lock().unwrap(),
+        *kinds.lock(),
         vec!["observing", "idle", "reflecting", "idle"]
     );
 }
@@ -276,14 +275,13 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
     let state = agent
         .inner
         .lock()
-        .unwrap()
         .om
         .clone()
         .expect("the om state is written back");
     assert_eq!(state.record.frozen_prefix, "FROZEN PARENT LOG");
     assert_eq!(state.record.generation, 1);
     // The reflector call used the frozen variant.
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock();
     let reflect = seen
         .iter()
         .find(|(_, content)| {
@@ -363,7 +361,7 @@ async fn context_gate_fires_when_over_budget() {
     agent.send("go2", Lane::FollowUp);
     agent.process().await.unwrap();
 
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock();
     // Turn 1: gate fires (observer + main). Turn 2: no gate (main only).
     assert_eq!(seen.len(), 3, "obs + main + main: {seen:?}");
     // The first call is the observer, not the main prompt.
@@ -458,7 +456,7 @@ async fn context_gate_noop_when_under_budget() {
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
 
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock();
     // No observer call: the gate did not fire.
     assert_eq!(seen.len(), 1, "no gate: {seen:?}");
     assert_eq!(seen[0].0.as_deref(), Some("be terse"));
@@ -529,7 +527,7 @@ async fn context_gate_degraded_when_still_over_budget() {
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
 
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock();
     // Gate observer + main + turn-end observer.
     assert_eq!(seen.len(), 3, "gate obs + main + turn-end obs: {seen:?}");
     // The main call (index 1) proceeded with the session prompt.

@@ -44,7 +44,7 @@ fn write_call(id: &str, path: &str) -> (String, String, String) {
 /// The completion-gate records a run wrote, decoded back to typed facts
 /// (ADR-0034).
 fn gate_records(agent: &AgentSession) -> Vec<Diagnostic> {
-    entries_of(&agent.inner.lock().unwrap().store)
+    entries_of(&agent.inner.lock().store)
         .into_iter()
         .filter(|e| e.kind == EntryKind::Diagnostic)
         .filter_map(|e| Diagnostic::from_value(&e.payload))
@@ -73,12 +73,12 @@ async fn a_passing_gate_stands_the_turn() {
     agent.process().await.unwrap();
 
     // Two LLM calls (the tool round + the final), no repair bounce.
-    assert_eq!(provider.seen.lock().unwrap().len(), 2);
+    assert_eq!(provider.seen.lock().len(), 2);
     assert!(!agent.gate_failed());
     assert!(gate_records(&agent).is_empty(), "a pass records nothing");
     // The check is stated in the system prompt (the design: the model knows
     // what "done" is verified against).
-    let seen = provider.seen.lock().unwrap();
+    let seen = provider.seen.lock();
     assert!(seen[0].0.as_deref().unwrap().contains("Completion gate"));
 }
 
@@ -102,7 +102,7 @@ async fn a_failing_gate_bounces_a_repair_that_passes() {
     agent.process().await.unwrap();
 
     // Four LLM calls: tool, final (fail), repair tool, final (pass).
-    assert_eq!(provider.seen.lock().unwrap().len(), 4);
+    assert_eq!(provider.seen.lock().len(), 4);
     assert!(!agent.gate_failed(), "a pass on repair clears the gate");
     // One failure record (the first check); the pass records nothing.
     let records = gate_records(&agent);
@@ -139,7 +139,7 @@ async fn an_always_failing_gate_exhausts_retries_and_marks_gate_failed() {
     agent.process().await.unwrap();
 
     // Four LLM calls: the initial + one repair, then the turn ends.
-    assert_eq!(provider.seen.lock().unwrap().len(), 4);
+    assert_eq!(provider.seen.lock().len(), 4);
     assert!(agent.gate_failed(), "retries exhausted → gate_failed");
     // Two records: the failed check, then the exhaustion.
     let records = gate_records(&agent);
@@ -173,7 +173,7 @@ async fn a_question_ending_skips_the_gate() {
     agent.process().await.unwrap();
 
     // Two LLM calls: the gate is skipped, so no repair bounce.
-    assert_eq!(provider.seen.lock().unwrap().len(), 2);
+    assert_eq!(provider.seen.lock().len(), 2);
     assert!(!agent.gate_failed());
     assert!(gate_records(&agent).is_empty(), "a skip records nothing");
 }
@@ -192,7 +192,7 @@ async fn a_no_tool_turn_is_not_gated() {
     agent.process().await.unwrap();
 
     // One LLM call: the gate is not run, so no repair.
-    assert_eq!(provider.seen.lock().unwrap().len(), 1);
+    assert_eq!(provider.seen.lock().len(), 1);
     assert!(!agent.gate_failed());
     assert!(
         gate_records(&agent).is_empty(),
@@ -228,7 +228,7 @@ async fn a_later_passing_turn_clears_the_prior_gate_failed() {
     agent.process().await.unwrap();
     // Six LLM calls: four in turn 1 (initial + repair + two finals), two
     // in turn 2.
-    assert_eq!(provider.seen.lock().unwrap().len(), 6);
+    assert_eq!(provider.seen.lock().len(), 6);
     assert!(
         !agent.gate_failed(),
         "turn 2's pass clears the prior gate_failed"

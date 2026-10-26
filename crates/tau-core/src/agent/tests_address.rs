@@ -50,7 +50,6 @@ async fn one_turn(
     provider_for_assert
         .models
         .lock()
-        .unwrap()
         .first()
         .cloned()
         .unwrap_or_default()

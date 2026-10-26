@@ -46,7 +46,7 @@ fn gated_agent(dir: &std::path::Path, provider: Arc<ScriptedProvider>) -> Arc<Ag
 }
 
 fn calls(provider: &ScriptedProvider) -> usize {
-    provider.models.lock().unwrap().len()
+    provider.models.lock().len()
 }
 
 /// The provider charged 9,000 tokens for the first request, so the second call

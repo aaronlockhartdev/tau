@@ -13,7 +13,7 @@ pub(crate) struct Scripted400 {
 struct Scripted400State {
     calls: Vec<(u16, String)>,
     index: std::sync::atomic::AtomicUsize,
-    seen: std::sync::Mutex<Vec<Option<u64>>>,
+    seen: parking_lot::Mutex<Vec<Option<u64>>>,
 }
 
 impl Scripted400 {
@@ -22,13 +22,13 @@ impl Scripted400 {
             state: std::sync::Arc::new(Scripted400State {
                 calls,
                 index: std::sync::atomic::AtomicUsize::new(0),
-                seen: std::sync::Mutex::new(Vec::new()),
+                seen: parking_lot::Mutex::new(Vec::new()),
             }),
         }
     }
 
     /// The captured per-call output caps (test assertion seam).
-    pub(crate) fn seen(&self) -> &std::sync::Mutex<Vec<Option<u64>>> {
+    pub(crate) fn seen(&self) -> &parking_lot::Mutex<Vec<Option<u64>>> {
         &self.state.seen
     }
 }
@@ -61,11 +61,7 @@ impl crate::provider::TurnProvider for Scripted400 {
         let script = state.calls.get(n).map(|(s, b)| (*s, b.clone()));
         let cap = request.max_output_tokens();
         Box::pin(async move {
-            state
-                .seen
-                .lock()
-                .expect("scripted-400 seen: no panic while the lock is held")
-                .push(cap);
+            state.seen.lock().push(cap);
             match script {
                 Some((status, body)) => {
                     Err(crate::provider::ProviderError::Status { status, body })
@@ -150,7 +146,7 @@ async fn over_budget_without_unobserved_material_is_refused() {
         "expected ContextOverflow, got {err:?}"
     );
     // The provider was never called: the refusal is pre-wire.
-    assert!(provider.seen().lock().unwrap().is_empty());
+    assert!(provider.seen().lock().is_empty());
     // The refusal is durable: a diagnostic record with prompt > budget. The
     // agent moved the store, so re-open the workspace file to inspect it.
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
@@ -191,7 +187,7 @@ async fn under_budget_is_not_refused() {
     // ~10k tokens: under the 15704 budget.
     agent.send("a".repeat(40000), Lane::FollowUp);
     agent.process().await.unwrap();
-    assert_eq!(provider.seen.lock().unwrap().len(), 1);
+    assert_eq!(provider.seen.lock().len(), 1);
 }
 
 /// #256: a provider context-length 400 is recoverable — one bounded retry
@@ -227,7 +223,7 @@ async fn context_400_retries_once_with_halved_max_output() {
 
     // The first call carried the full (window-clamped) cap; the retry the
     // halved one.
-    let seen = provider.seen().lock().unwrap();
+    let seen = provider.seen().lock();
     assert_eq!(seen.len(), 2, "one bounded retry: {seen:?}");
     assert_eq!(seen[0], Some(8000), "first call: full cap");
     assert_eq!(seen[1], Some(4000), "retry: halved");
@@ -258,11 +254,7 @@ async fn context_400_fails_loudly_after_one_retry() {
         ),
         "the rejection propagates: {err:?}"
     );
-    assert_eq!(
-        provider.seen().lock().unwrap().len(),
-        2,
-        "no loop: two calls"
-    );
+    assert_eq!(provider.seen().lock().len(), 2, "no loop: two calls");
     // The durable trace: a provider_rejected record with the status and body.
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
@@ -296,7 +288,7 @@ async fn non_context_400_is_not_retried() {
         "the rejection propagates: {err:?}"
     );
     assert_eq!(
-        provider.seen().lock().unwrap().len(),
+        provider.seen().lock().len(),
         1,
         "no retry for a 401-class 400"
     );

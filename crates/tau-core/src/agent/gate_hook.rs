@@ -18,10 +18,7 @@ impl AgentSession {
     ) -> Result<bool, AgentError> {
         // The gate config + cwd, read under the session lock.
         let (gates, cwd) = {
-            let inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let inner = self.inner.lock();
             (inner.gates.clone(), inner.cwd.clone())
         };
         let Some(gates) = gates else {
@@ -79,10 +76,7 @@ impl AgentSession {
 
     /// Set the live gate state (spec §5.3).
     pub(super) fn set_gate_failed(&self, failed: bool) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut inner = self.inner.lock();
         inner.gate_failed = failed;
     }
 }

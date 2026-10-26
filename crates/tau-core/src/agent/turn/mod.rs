@@ -26,13 +26,7 @@ impl AgentSession {
             if self.stop.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            let Some(starter) = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held")
-                .queue
-                .pop_front()
-            else {
+            let Some(starter) = self.inner.lock().queue.pop_front() else {
                 return Ok(());
             };
             self.append_user(starter)?;
@@ -46,7 +40,6 @@ impl AgentSession {
     fn child_quiesced(&self) -> bool {
         self.inner
             .lock()
-            .expect("agent inner: no panic while the lock is held")
             .child
             .as_ref()
             .is_some_and(|c| !c.is_running() || c.rest_requested())
@@ -79,10 +72,7 @@ impl AgentSession {
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
             let (delivered, queue_hook) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut inner = self.inner.lock();
                 let mut out = Vec::new();
                 inner.queue.retain(|m| {
                     if matches!(m.lane, Lane::Steering | Lane::Force) {
@@ -161,10 +151,7 @@ impl AgentSession {
             // The call's assistant entry is minted up front (ADR-0008):
             // the streamed snapshots and the final append share the one id.
             let (entry_id, parent, timestamp, upsert) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut inner = self.inner.lock();
                 let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
                 (
                     inner.store.mint_id(),
@@ -304,10 +291,7 @@ impl AgentSession {
         // `level_enabled!` folds to a compile-time const under a `max_level_*`
         // feature, so a release build skips it and `prev_len` stays 0.
         let prev_len = if tracing::level_enabled!(tracing::Level::DEBUG) {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             let prev = inner.prev_input_len;
             inner.prev_input_len = input.len();
             prev
@@ -407,10 +391,7 @@ impl AgentSession {
     /// session's entries are used as-is. Everything is read under one lock,
     /// then assembled purely.
     fn assemble(&self, plan_state: Option<&str>) -> Result<Assembled, AgentError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut inner = self.inner.lock();
         let base = inner.system_prompt.clone();
         let model = inner.model.clone();
         // A child session is labeled at assembly against its
@@ -465,12 +446,7 @@ impl AgentSession {
     /// not on every assembly, so a mid-turn plan-file edit can't churn the
     /// provider prefix cache for the rest of the turn.
     fn plan_state(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .plan_hook
-            .as_ref()
-            .and_then(|h| h())
+        self.inner.lock().plan_hook.as_ref().and_then(|h| h())
     }
 
     fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
@@ -532,12 +508,7 @@ impl AgentSession {
     }
 
     pub(super) fn append(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
-        let id = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .store
-            .mint_id();
+        let id = self.inner.lock().store.mint_id();
         self.append_id(&id, kind, payload)
     }
 
@@ -549,10 +520,7 @@ impl AgentSession {
         kind: EntryKind,
         payload: Value,
     ) -> Result<(), AgentError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut inner = self.inner.lock();
         // A fresh session has no leaf: the first entry starts the branch.
         // Any other failure is a storage error and propagates.
         let parent = match inner.store.leaf() {
@@ -565,18 +533,11 @@ impl AgentSession {
     }
 
     fn tool_batch_on_force(&self) -> ToolBatchPolicy {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .tool_batch_on_force
+        self.inner.lock().tool_batch_on_force
     }
 
     fn turn_config(&self) -> TurnConfig {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .turn
-            .clone()
+        self.inner.lock().turn.clone()
     }
 }
 

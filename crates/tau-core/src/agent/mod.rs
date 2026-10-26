@@ -12,12 +12,13 @@ use crate::provider::{
 };
 use crate::session::{Entry, EntryEventHook, SessionStore};
 use crate::tools;
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 #[cfg(test)]
 pub(crate) use tau_protocol::{Diagnostic, EntryKind};
 
@@ -391,21 +392,13 @@ impl AgentSession {
 
     /// The child-side link (a child session's `parent_notify` routing).
     pub(crate) fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .child
-            .clone()
+        self.inner.lock().child.clone()
     }
 
     /// This session's supervisor (None for a child session — children
     /// cannot spawn, so the supervisor is parent-side only).
     pub(crate) fn subagents(&self) -> Option<Arc<crate::subagent::Supervisor>> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .subagents
-            .clone()
+        self.inner.lock().subagents.clone()
     }
 
     /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
@@ -414,10 +407,7 @@ impl AgentSession {
     pub(crate) fn recall_scoped(&self, args: &Value) -> Result<String, String> {
         if args.get("scope").and_then(Value::as_str) == Some("parent") {
             let (link, cwd) = {
-                let inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let inner = self.inner.lock();
                 (inner.child.clone(), inner.cwd.clone())
             };
             match link {
@@ -442,10 +432,7 @@ impl AgentSession {
                 }
             }
         } else {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             let record = inner
                 .om
                 .as_ref()
@@ -458,30 +445,18 @@ impl AgentSession {
     /// The session's anchor registry handle (spec §5.4): the tool dispatch
     /// locks it per read/edit call.
     pub(crate) fn anchors(&self) -> Arc<std::sync::Mutex<crate::hashline::registry::Registry>> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .anchors
-            .clone()
+        self.inner.lock().anchors.clone()
     }
 
     /// The session's background job registry (#53): the tool dispatch reads
     /// it per bash call; the completion gate asks it whether a job is live.
     pub(crate) fn background_jobs(&self) -> Arc<crate::tools::bgjobs::BackgroundJobs> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .background_jobs
-            .clone()
+        self.inner.lock().background_jobs.clone()
     }
 
     /// The job-completion hook (#53): the dispatch passes it to the spawn.
     pub(crate) fn job_hook(&self) -> Option<crate::tools::bgjobs::JobCompletionHook> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .job_notify_hook
-            .clone()
+        self.inner.lock().job_notify_hook.clone()
     }
 }
 mod config;

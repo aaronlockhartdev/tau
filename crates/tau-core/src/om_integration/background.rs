@@ -4,7 +4,9 @@
 //! structurally invisible to the `ForwardingProvider` reconciliation that
 //! the `#82` fix depends on.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use crate::om::{
     OmConfig, generate_group_id, observer_system_prompt, parse_observer_output,
@@ -115,13 +117,7 @@ fn read_candidates(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     config: &OmConfig,
 ) -> Option<(Vec<crate::session::Entry>, u32, (String, String))> {
-    let mut g = match inner.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            tracing::error!("om: buffer cycle: session lock poisoned: {e}");
-            return None;
-        }
-    };
+    let mut g = inner.lock();
     let record = match OmState::load_record(&mut g.store) {
         Ok(record) => record,
         Err(e) => {
@@ -185,9 +181,7 @@ fn commit_chunk(
     text: String,
     boundary: u64,
 ) {
-    let Ok(mut g) = inner.lock() else {
-        return;
-    };
+    let mut g = inner.lock();
     let mut latest = match OmState::load_record(&mut g.store) {
         Ok(r) => r,
         Err(e) => {
@@ -232,9 +226,8 @@ fn commit_chunk(
 
 /// Clears the in-flight flag (the cycle's abort paths).
 fn clear_inflight(inner: &Arc<Mutex<crate::agent::Inner>>) {
-    if let Ok(mut g) = inner.lock() {
-        g.om_inflight = None;
-    }
+    let mut g = inner.lock();
+    g.om_inflight = None;
 }
 
 #[cfg(test)]

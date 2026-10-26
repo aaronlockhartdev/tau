@@ -25,10 +25,7 @@ impl AgentSession {
     /// context gate's qualification: fire only when there is material to
     /// compact, spec §4, ticket #210).
     pub(super) fn om_pending_tokens(&self) -> u32 {
-        let mut guard = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut guard = self.inner.lock();
         let Inner { om, store, .. } = &mut *guard;
         let Some(om) = om.as_mut() else {
             return 0;
@@ -50,10 +47,7 @@ impl AgentSession {
         // The OM model (global config, spec §4); empty = the session's
         // model. Resolved with the state clone, before the pass.
         let (state, model, hook) = {
-            let inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let inner = self.inner.lock();
             (
                 inner.om.clone(),
                 resolve_om_model(&inner.om_model, &inner.turn.request_address(&inner.model)),
@@ -68,10 +62,7 @@ impl AgentSession {
         // 60s bound: a cycle outliving it is fine, the write-back merge
         // below picks up its commit (D13.2) and the turn doesn't hang.
         let handle = {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             inner.om_inflight.take()
         };
         if let Some(handle) = handle {
@@ -88,10 +79,7 @@ impl AgentSession {
         // releases it before the next provider call.
         let mut with_store =
             |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), crate::om_integration::OmError>| {
-                let mut guard = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut guard = self.inner.lock();
                 f(&mut guard.store)
             };
         // The pass goes through the session's inner provider, not the
@@ -121,10 +109,7 @@ impl AgentSession {
         // join timed out) keeps its chunks; the pass's observation
         // fields win.
         {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             match crate::om_integration::OmState::load_record(&mut inner.store) {
                 Ok(fresh) => {
                     state.merge_turn_end(&fresh);
@@ -165,10 +150,7 @@ impl AgentSession {
     /// log.
     fn record_om_stall(&self) {
         let stalled = {
-            let mut guard = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut guard = self.inner.lock();
             let Inner {
                 om,
                 store,
@@ -200,10 +182,7 @@ impl AgentSession {
             // the next turn-end retries the record. A run in which every retry
             // fails ends up with the fact log-only — the trade, not an
             // oversight.
-            self.inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held")
-                .om_stall_recorded = false;
+            self.inner.lock().om_stall_recorded = false;
             tracing::warn!("om: the stalled-window record failed to append: {e}");
         }
     }
@@ -217,10 +196,7 @@ impl AgentSession {
     /// trigger never race on it. With `buffer_tokens = 0` (kill switch)
     /// this is a no-op and the pass keeps today's sync behavior.
     pub(super) fn om_mid_loop(&self) {
-        let mut guard = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut guard = self.inner.lock();
         let Inner {
             store,
             om,

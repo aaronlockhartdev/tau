@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::agent::testkit::*;
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One observed job completion: (job id, exit code).
@@ -26,7 +26,7 @@ fn agent_with_hook(
     let fired_clone = fired.clone();
     let done_clone = done.clone();
     agent.set_job_notify_hook(Some(Arc::new(move |id, code, _path| {
-        fired_clone.lock().unwrap().push((id.to_owned(), code));
+        fired_clone.lock().push((id.to_owned(), code));
         done_clone.store(true, Ordering::SeqCst);
     })));
     (agent, done, fired)
@@ -61,7 +61,7 @@ async fn a_background_bash_returns_immediately_and_wakes_on_exit() {
     agent.process().await.unwrap();
 
     // The tool entry is the immediate ack: job id + output path.
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let tool = entries.iter().find(|e| e.kind == EntryKind::Tool).unwrap();
     assert_eq!(tool.payload["name"], "bash");
     let output = tool.payload["output"].as_str().unwrap().to_owned();
@@ -79,7 +79,7 @@ async fn a_background_bash_returns_immediately_and_wakes_on_exit() {
     // wake) and clears the registry's live count.
     poll(&done, 15_000).await;
     assert!(!agent.background_jobs().has_live());
-    let fired = fired.lock().unwrap();
+    let fired = fired.lock();
     assert_eq!(fired[0].0, "1");
     assert_eq!(fired[0].1, Some(0));
 }
@@ -101,7 +101,7 @@ async fn the_completion_gate_skips_while_a_job_is_live() {
     let agent = make_agent(dir.path(), provider.clone());
     // A failing gate: with a live job the gate skips (no repair bounce).
     {
-        let mut inner = agent.inner.lock().unwrap();
+        let mut inner = agent.inner.lock();
         inner.gates = Some(crate::config::Gates {
             command: "exit 1".into(),
             ..crate::config::Gates::default()
@@ -112,7 +112,7 @@ async fn the_completion_gate_skips_while_a_job_is_live() {
     // The gate would have bounced a repair (a failing check) — with a live
     // job it skips, so the turn stands: two assistant entries, no gate
     // record.
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let assistants = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Assistant)
@@ -129,7 +129,7 @@ async fn the_completion_gate_skips_while_a_job_is_live() {
                 .is_some_and(|n| n.contains("completion gate"))
     }));
     // No second provider call happened: a bounced repair would have spent it.
-    assert_eq!(provider.seen.lock().unwrap().len(), 2);
+    assert_eq!(provider.seen.lock().len(), 2);
     agent.background_jobs().kill_all();
 }
 

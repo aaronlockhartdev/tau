@@ -12,7 +12,7 @@ async fn a_plain_turn_appends_user_then_assistant() {
     let agent = make_agent(dir.path(), provider);
     agent.send("hello", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     assert_eq!(
         entries.iter().map(|e| e.kind.clone()).collect::<Vec<_>>(),
         vec![EntryKind::User, EntryKind::Assistant]
@@ -32,7 +32,7 @@ async fn an_assistant_record_keeps_usage_as_concepts() {
     let agent = make_agent(dir.path(), provider);
     agent.send("hello", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let stored = entries
         .iter()
         .find(|e| e.kind == EntryKind::Assistant)
@@ -66,7 +66,7 @@ async fn a_chat_spelling_records_the_same_concepts() {
     let agent = make_agent(dir.path(), crate::provider::canned(body));
     agent.send("hello", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let stored = entries
         .iter()
         .find(|e| e.kind == EntryKind::Assistant)
@@ -100,7 +100,7 @@ async fn tool_calls_roundtrip_through_the_session() {
     let agent = make_agent(dir.path(), provider);
     agent.send("read n.txt", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let kinds: Vec<EntryKind> = entries.iter().map(|e| e.kind.clone()).collect();
     // One tool entry per call (ADR-0008): the call's line carries the
     // result's output.
@@ -131,7 +131,7 @@ async fn steering_lands_on_the_next_llm_call() {
     agent.send("start", Lane::FollowUp);
     agent.send("steer me", Lane::Steering);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     // The steering message rides the next LLM call: it is a user entry
     // delivered at the head of the same turn as its starter.
     let kinds: Vec<EntryKind> = entries.iter().map(|e| e.kind.clone()).collect();
@@ -185,7 +185,7 @@ async fn follow_up_lands_after_the_turn() {
     agent.send("first", Lane::FollowUp);
     agent.send("later", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let kinds: Vec<EntryKind> = entries.iter().map(|e| e.kind.clone()).collect();
     assert_eq!(
         kinds,
@@ -213,7 +213,7 @@ async fn force_kills_the_stream_and_keeps_the_partial() {
     let agent = make_agent(dir.path(), provider);
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let assistant = entries
         .iter()
         .find(|e| e.kind == EntryKind::Assistant)
@@ -247,7 +247,7 @@ async fn a_tool_call_response_that_omits_completed_is_not_interrupted() {
     let agent = make_agent(dir.path(), provider);
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let assistants: Vec<_> = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Assistant)
@@ -275,7 +275,7 @@ async fn force_preempts_a_queued_steering_at_the_head_of_the_queue() {
     // The force arrives mid-turn: kill + head of queue.
     agent.send("FORCE", Lane::Force);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let users: Vec<&str> = entries
         .iter()
         .filter(|e| e.kind == EntryKind::User)
@@ -318,7 +318,7 @@ async fn force_mid_stream_kills_the_stream_and_preempts_contemporaneous_steering
     };
     agent.process().await.unwrap();
     killer.await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let kinds: Vec<EntryKind> = entries.iter().map(|e| e.kind.clone()).collect();
     assert_eq!(
         kinds,
@@ -358,7 +358,7 @@ async fn append_propagates_storage_errors_not_a_new_root() {
     agent.process().await.unwrap();
     // Lose the file under the session: the next append must fail with a
     // storage error, not silently start a new root branch.
-    std::fs::remove_file(agent.inner.lock().unwrap().store.path()).unwrap();
+    std::fs::remove_file(agent.inner.lock().store.path()).unwrap();
     agent.send("again", Lane::FollowUp);
     assert!(agent.process().await.is_err());
 }
@@ -395,7 +395,7 @@ async fn kill_policy_completes_the_inflight_tool_batch() {
     agent.send("go", Lane::FollowUp);
     agent.send("FORCE", Lane::Force);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let kinds: Vec<EntryKind> = entries.iter().map(|e| e.kind.clone()).collect();
     // killed assistant + tool result + the final call, whose prompt head
     // carries the forced user entry alongside the tool result.
@@ -468,7 +468,7 @@ async fn parallel_edits_to_the_same_file_are_rejected() {
     );
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let tools: Vec<&Value> = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Tool)
@@ -532,7 +532,7 @@ async fn stop_cancels_an_inflight_bash() {
         elapsed < std::time::Duration::from_secs(2),
         "stop did not bound the in-flight bash: {elapsed:?}"
     );
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let tool = entries.iter().find(|e| e.kind == EntryKind::Tool).unwrap();
     assert_eq!(tool.payload["status"], "cancelled", "{tool:?}");
     assert!(
@@ -601,7 +601,7 @@ async fn stop_cancels_the_rest_of_the_tool_batch() {
         elapsed < std::time::Duration::from_secs(2),
         "stop did not bound the batch: {elapsed:?}"
     );
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let tools: Vec<&Value> = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Tool)
@@ -658,7 +658,7 @@ async fn double_stop_is_a_no_op() {
         elapsed < std::time::Duration::from_secs(2),
         "double stop must not stall the turn: {elapsed:?}"
     );
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let tools: Vec<&Value> = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Tool)
@@ -692,7 +692,7 @@ async fn a_stop_after_the_tool_finished_is_not_a_cancellation() {
     };
     agent.process().await.unwrap();
     stopper.await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let tool = entries.iter().find(|e| e.kind == EntryKind::Tool).unwrap();
     assert_eq!(tool.payload["status"], "ok", "{tool:?}");
     assert!(
