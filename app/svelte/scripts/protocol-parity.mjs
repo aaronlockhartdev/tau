@@ -344,6 +344,21 @@ function normTs(t) {
   return t;
 }
 const isLiteralUnion = (t) => t.split(' | ').every((s) => s.startsWith("'") && s.endsWith("'"));
+// A field Rust skips when empty is wire-absent, so its mirror marks it optional of
+// the inner type; `| null` describes a key the wire never sends. Only an Option
+// reads that way — a skip on a non-Option (a default-status skip) leaves the type
+// as written, mirrored required or optional. Returns the drift, or null when the
+// mirror is honest. Checked before any equality line: normRust renders `Option<T>`
+// as `T | null`, so a nullable mirror would match the Rust type and the wire-absent
+// half of the contract would go unexamined.
+function skipDrift(rustType, tsType, tsOptional) {
+  if (!rustType.includes('| null')) return null;
+  if (!tsOptional || tsType.includes('null')) {
+    return 'Rust skips it when empty, so TS marks it optional of the inner type, not nullable';
+  }
+  return sameType(stripNull(rustType), tsType) ? null : `Rust ${rustType} vs TS ${tsType}`;
+}
+
 function sameType(a, b) {
   if (a === b) return true;
   if (a === 'unknown' || a === 'unknown[]' || b === 'unknown' || b === 'unknown[]') return true;
@@ -404,14 +419,9 @@ function diffUnion(rustName, tsName = rustName) {
     for (const [n, ty, skip] of rfields) {
       const tf = tfields.find(([x]) => x === n);
       if (!tf) continue;
-      if (skip) {
-        // A skipped Option is wire-absent: the mirror marks it optional and names
-        // the inner type. `| null` describes a key the wire never sends.
-        if (!tf[2] || tf[1].includes('null')) {
-          errors.push(`${rustName}.${rv.tag}.${n}: Rust skips it when empty, so TS marks it optional of the inner type, not nullable`);
-        } else if (!sameType(stripNull(ty), tf[1])) {
-          errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tf[1]}`);
-        }
+      if (skip && ty.includes('| null')) {
+        const why = skipDrift(ty, tf[1], tf[2]);
+        if (why) errors.push(`${rustName}.${rv.tag}.${n}: ${why}`);
         continue;
       }
       if (sameType(ty, tf[1])) continue;
@@ -437,22 +447,12 @@ function diffStruct(rustName, tsName = rustName) {
     if (!tf) continue;
     const a = normRust(rf.type).replace(/\?$/, '');
     const b = normTs(tf.type);
-    // marks it optional of the inner type, never nullable. This is checked before
-    // the equality line because normRust renders `Option<T>` as `T | null`, so a
-    // nullable mirror would otherwise match the Rust type and the wire-absent half
-    // of the contract would go unexamined.
     if (rf.skip && a.includes('| null')) {
-      if (!tf.optional || b.includes('null')) {
-        errors.push(`${rustName}.${n}: Rust skips it when empty, so TS marks it optional of the inner type, not nullable`);
-      } else if (!sameType(stripNull(a), b)) {
-        errors.push(`${rustName}.${n}: Rust ${a} vs TS ${b}`);
-      }
+      const why = skipDrift(a, b, tf.optional);
+      if (why) errors.push(`${rustName}.${n}: ${why}`);
       continue;
     }
     if (a === b) continue;
-    // A skip on a non-Option (an empty-string or default-status skip) may still be
-    // mirrored as a field of its own type, optional or not.
-    if (rf.skip && sameType(stripNull(a), b)) continue;
     if (!sameType(a, b)) errors.push(`${rustName}.${n}: Rust ${a} vs TS ${b}`);
   }
 }
