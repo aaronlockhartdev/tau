@@ -243,12 +243,13 @@ finish it, and each keeps the existing tests as the harness.
 | **S10** | `thiserror` on the error enums | 10 files | §3 |
 | **S11** | `backon` for the OM retry policy | `om_integration/retry.rs` | §3 |
 | **S12** | Typed payload per `EntryKind`: the `json!` writers and `payload.get` readers become the derived payload types | 12 files with `json!` (`tools/mod.rs`, `subagent/*`, `session/file.rs`, …), 83 key reads | §2.2; one shape per kind, so a reader cannot guess a key and each kind gains exactly one legal append path |
+| **S13** | The prompt estimate anchors on the last recorded `usage.input_tokens`; only content appended after it is estimated. Bytes/4 rounded up, serialized tool arguments included | `provider/request.rs:385` (`estimate_prompt_tokens`), `om/mod.rs:292` (`token_count`) | §6.4: the provider's count is the authority for what was already sent, so the estimator only covers the delta — one tool output, not the whole conversation, is ever a guess |
 
 ## 5. Order of work
 
 1. **S1, S2, S9** — small, mechanical, no wire change. Do on the #306 branch,
    which owns the code they touch.
-2. **S6, S5, S3** — loop and store hygiene; S3 is the only one with real churn
+2. **S6, S5, S3, S13** — loop and store hygiene; S3 is the only one with real
    and it is where the app-wide stop lives.
 3. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
    `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.
@@ -276,8 +277,37 @@ finish it, and each keeps the existing tests as the harness.
 3. **`tau-hashline` stays workspace-internal.** No crates.io means no semver
    policy, no separate CI job, and no public-API discipline past the crate
    boundary.
-4. **No tokenizer.** `token_count`'s `chars() / 4` stays a soft estimator. The
-   gate's real fix is calibration against the `usage.prompt_tokens` every
-   assistant record already carries; a tokenizer would buy precision the gate
-   does not need, at the cost of a model-family dependency ADR-0003 rules out
-   for a provider-agnostic core.
+4. **No tokenizer — and the provider's number is the only recorded number.**
+   Any token count that is stored or displayed comes from the provider's `usage`
+   on the assistant record (`TurnUsage`, with its `prompt_tokens_details` cache
+   split), never from `token_count`. The estimator has exactly one job: the
+   decision taken before a response exists, the context gate and
+   `clamp_max_output`. Every comparable harness draws the same line:
+
+   - `pi` 1.4.0 (`core/compaction/compaction.js`): `calculateContextTokens` is
+     `usage.totalTokens`, falling back to `input + output + cacheRead +
+     cacheWrite`; `estimateContextTokens` takes the last assistant usage as the
+     base and estimates only the messages *after* it; `shouldCompact` compares
+     against `contextWindow - reserveTokens`.
+   - Codex (`codex-rs/core/src/context_manager/history.rs:650`): the running
+     total is the server-reported `last_token_usage.total_tokens` plus an
+     estimate for items appended since that response, and the estimator's own
+     comment calls it "a coarse lower bound, not a tokenizer-accurate count".
+     Its constant is `APPROX_BYTES_PER_TOKEN = 4` — bytes, not characters —
+     rounded up, and `with_serialization_allowance` adds 20% for JSON framing.
+   - aider's docs: it "never enforces token limits", it reports the provider's,
+     and its own counts are "estimates"; for the repo map it counts a *sample*
+     with a real tokenizer and scales it to the whole.
+   - An exact pre-flight count is something the provider sells, not something
+     you ship: Anthropic `POST /v1/messages/count_tokens` (tools, images and
+     documents included) and Gemini `count_tokens`. A per-adapter capability
+     flag gets accuracy without a vocabulary, which is the real answer to the
+     tokenizer question.
+
+   So the gate's fix is anchoring, not regression-fitting: prompt estimate = the
+   last recorded `usage.input_tokens` plus the estimate for whatever was
+   appended after it, which in practice is one tool output. Bytes over four,
+   rounded up, replaces characters over four — three times closer on CJK for
+   free — and the estimate counts serialized tool arguments, not just content
+   text. Tracked as S13. Sources: aider docs/troubleshooting/token-limits.html,
+   ai.google.dev/gemini-api/docs/tokens, Anthropic count-tokens API reference.
