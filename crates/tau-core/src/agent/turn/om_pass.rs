@@ -158,8 +158,9 @@ impl AgentSession {
     /// Record the stalled-window fact when a completed pass left the unobserved
     /// window at or past the activation threshold: OM runs but can no longer
     /// keep the prompt inside what it has observed (ADR-0034). Once per run —
-    /// `om_stall_recorded` mirrors the record, so a restart re-records the
-    /// stall it resumes into instead of re-scanning the log.
+    /// `om_stall_recorded` mirrors the record once the append lands, so a
+    /// restart re-records the stall it resumes into instead of re-scanning the
+    /// log.
     fn record_om_stall(&self) {
         let stalled = {
             let mut guard = self
@@ -192,8 +193,15 @@ impl AgentSession {
             pending: u64::from(stalled.0),
             activation: u64::from(stalled.1),
         }) {
-            // The record is the source of truth; a failed append is itself
-            // the fact worth knowing, and must not kill the turn.
+            // A stall worth recording is not worth killing the turn that
+            // reports it, so the failure goes to the log and the latch clears:
+            // the next turn-end retries the record. A run in which every retry
+            // fails ends up with the fact log-only — the trade, not an
+            // oversight.
+            self.inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held")
+                .om_stall_recorded = false;
             tracing::warn!("om: the stalled-window record failed to append: {e}");
         }
     }
