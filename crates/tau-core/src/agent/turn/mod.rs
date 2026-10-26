@@ -3,7 +3,8 @@ use super::{
     TurnConfig, TurnResult, Value, lane_name,
 };
 use crate::provider::ToolSpec;
-use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
+use assemble::{Assembled, input_items, repair_tool_call_arguments, with_plan_state};
+use estimate::{PromptAnchor, prompt_size, tool_fingerprint};
 use sink::StreamEntrySink;
 use tau_protocol::{Diagnostic, EntryKind};
 
@@ -70,6 +71,10 @@ impl AgentSession {
         // in the turn, so a mid-turn plan-file edit can't churn the provider
         // prefix cache; a mid-turn compaction re-captures it.
         let mut plan_state = self.plan_state();
+        // The prompt estimate walks toward the truth (plan §6.4): the provider's
+        // count for the request the turn last sent, so only material appended
+        // after it is ever a guess. It is set after the first completed call.
+        let mut anchor: Option<PromptAnchor> = None;
         loop {
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
@@ -104,8 +109,9 @@ impl AgentSession {
             // The context (spec §4): with OM enabled, the system prompt
             // carries the observation log and the raw window is the
             // unobserved entries; without it, the session's entries as-is.
-            let (mut system_prompt, mut input) = self.assemble(plan_state.as_deref())?;
-            let mut prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+            let mut assembled = self.assemble(plan_state.as_deref())?;
+            let tools_json = tool_fingerprint(&tools);
+            let mut prompt = prompt_size(anchor.as_ref(), &assembled, &tools, &tools_json);
             // The context gate (ticket #210, spec §4): when the assembled
             // prompt would exceed the safe budget and there is unobserved
             // material to compact, run the OM pass now so the call fits.
@@ -115,10 +121,16 @@ impl AgentSession {
             {
                 if self.om_pending_tokens() > 0 {
                     self.om_turn_end().await?;
+                    // The compaction replaced the prefix an anchored count
+                    // would describe, so this call is priced whole.
                     // A mid-turn compaction is a re-injection point (design).
                     plan_state = self.plan_state();
-                    (system_prompt, input) = self.assemble(plan_state.as_deref())?;
-                    prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+                    assembled = self.assemble(plan_state.as_deref())?;
+                    prompt = crate::provider::prompt_token_estimate(
+                        &assembled.instructions,
+                        &assembled.items,
+                        &tools,
+                    );
                     if prompt > budget {
                         tracing::warn!(
                             prompt,
@@ -138,7 +150,14 @@ impl AgentSession {
                     return Err(AgentError::ContextOverflow { prompt, budget });
                 }
             }
-            let request = self.build_request(&system_prompt, &input, &tools, &turn, prompt, None);
+            let request = self.build_request(
+                &assembled.instructions,
+                &assembled.items,
+                &tools,
+                &turn,
+                prompt,
+                None,
+            );
 
             // A force has already killed the stream it targeted; every
             // fresh call starts un-killed (spec §7).
@@ -177,8 +196,8 @@ impl AgentSession {
                     self.recover_from_provider_error(
                         e,
                         &mut sink,
-                        &system_prompt,
-                        &input,
+                        &assembled.instructions,
+                        &assembled.items,
                         &tools,
                         &turn,
                         prompt,
@@ -190,6 +209,17 @@ impl AgentSession {
             // the stored entry + echoed history are valid JSON.
             repair_tool_call_arguments(&mut result);
             self.append_assistant(&entry_id, &result, turn_killed && first_call)?;
+
+            // The next call anchors on what the provider charged for this one
+            // (plan §6.4). A call that never completed, or one whose provider
+            // reported no usage, leaves the estimate unanchored — the honest
+            // answer, since there is no recorded count to trust.
+            anchor = match (&result.usage, result.completed) {
+                (Some(usage), true) => {
+                    PromptAnchor::after_call(&assembled, &tools_json, usage.input_tokens)
+                }
+                _ => None,
+            };
             first_call = false;
 
             if !result.completed {
@@ -380,7 +410,7 @@ impl AgentSession {
     /// log and the input is the unobserved raw window; without it the
     /// session's entries are used as-is. Everything is read under one lock,
     /// then assembled purely.
-    fn assemble(&self, plan_state: Option<&str>) -> Result<(String, Vec<InputEntry>), AgentError> {
+    fn assemble(&self, plan_state: Option<&str>) -> Result<Assembled, AgentError> {
         let mut inner = self
             .inner
             .lock()
@@ -406,17 +436,27 @@ impl AgentSession {
         if let Some(om) = inner.om.as_mut() {
             let assembled = om.assemble_context(&base);
             let raw = om.raw_window_from(&entries, leaf_id.as_deref());
-            let input = assembled
+            let om_items = assembled.om_input_items.len();
+            let items = assembled
                 .om_input_items
                 .into_iter()
                 .chain(input_items(&raw, parent_session.as_deref()))
                 .collect();
-            Ok((with_plan_state(assembled.instructions, plan_state), input))
+            Ok(Assembled {
+                instructions: with_plan_state(assembled.instructions, plan_state),
+                items,
+                entries,
+                om_items,
+                parent_session,
+            })
         } else {
-            Ok((
-                with_plan_state(base, plan_state),
-                input_items(&entries, parent_session.as_deref()),
-            ))
+            Ok(Assembled {
+                instructions: with_plan_state(base, plan_state),
+                items: input_items(&entries, parent_session.as_deref()),
+                entries,
+                om_items: 0,
+                parent_session,
+            })
         }
     }
 
@@ -542,6 +582,7 @@ impl AgentSession {
 }
 
 mod assemble;
+mod estimate;
 mod om_pass;
 mod sink;
 mod tools;

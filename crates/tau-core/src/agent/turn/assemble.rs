@@ -42,6 +42,36 @@ pub(super) fn with_plan_state(mut instructions: String, plan: Option<&str>) -> S
     }
     instructions
 }
+/// One assembly's parts together with the branch they were read from. The
+/// entries travel with the items so the prompt estimate can anchor on the last
+/// request's provider count and price only what was appended after it (plan
+/// §6.9); `om_items` counts what the observation state contributed, since a
+/// compaction replaces raw entries with observed ones.
+pub(super) struct Assembled {
+    pub instructions: String,
+    pub items: Vec<InputEntry>,
+    pub entries: Vec<Entry>,
+    pub om_items: usize,
+    /// A child session's parent, whose name decorates its user entries
+    /// (ADR-0001 supplement); the tail estimate applies the same labels.
+    pub parent_session: Option<String>,
+}
+
+impl Assembled {
+    /// The entry the request this assembly produces ends at: the branch's leaf.
+    pub fn leaf(&self) -> Option<&str> {
+        self.entries.last().map(|e| e.id.as_str())
+    }
+
+    /// The branch entries appended after `leaf`, or None once the branch no
+    /// longer carries it — a compaction consumed it or a fork moved the branch.
+    pub fn tail_after(&self, leaf: &str) -> Option<&[Entry]> {
+        self.entries
+            .iter()
+            .rposition(|e| e.id == leaf)
+            .map(|i| &self.entries[i + 1..])
+    }
+}
 
 /// The session's entries (file order) mapped to responses-API input items:
 /// user messages, assistant text + calls, and tool results (spec §5.4).

@@ -314,3 +314,128 @@ fn a_diagnostic_record_costs_no_context() {
         "a diagnostic record changed the model's input"
     );
 }
+
+// --- the anchored prompt estimate (plan §6.4) ---
+
+fn assembled(instructions: &str, entries: Vec<Entry>) -> Assembled {
+    Assembled {
+        instructions: instructions.to_owned(),
+        items: input_items(&entries, None),
+        entries,
+        om_items: 0,
+        parent_session: None,
+    }
+}
+
+const NO_TOOLS: &[ToolSpec] = &[];
+
+fn history() -> Vec<Entry> {
+    vec![
+        user_entry("u1", &"long ".repeat(2_000), None),
+        tool_entry("t1", "c1", "ok"),
+    ]
+}
+
+/// The branch grew by one tool output; the anchored count covers everything up
+/// to the entry the anchored request ended at.
+fn grew_by(entries: Vec<Entry>, output: &str) -> Assembled {
+    let mut later = entries;
+    later.push(tool_entry("t2", "c2", output));
+    assembled("sys", later)
+}
+
+#[test]
+fn an_anchored_prompt_prices_only_what_was_appended() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let sent = assembled("sys", history());
+    let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
+    let next = grew_by(history(), &"y".repeat(400));
+    // The provider's 9,000 plus the one new 400-byte output — 100 tokens with
+    // the framing allowance — and nothing for history already counted.
+    assert_eq!(prompt_size(Some(&anchor), &next, NO_TOOLS, &tools), 9_120);
+    // The same tail on a branch with no long history prices the same: the
+    // provider's count, not a guess over the history, carries the weight.
+    let brief = vec![tool_entry("t1", "c1", "ok")];
+    let brief_anchor = PromptAnchor::after_call(&assembled("sys", brief.clone()), &tools, 9_000)
+        .expect("a branch anchors");
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
+        prompt_size(
+            Some(&brief_anchor),
+            &grew_by(brief, &"y".repeat(400)),
+            NO_TOOLS,
+            &tools
+        ),
+        "history the provider already counted was guessed again"
+    );
+}
+
+#[test]
+fn a_reinjected_plan_state_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    let mut next = grew_by(history(), "later");
+    next.instructions = "sys\n\n- [ ] the watcher's plan state".to_owned();
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
+        prompt_size(None, &next, NO_TOOLS, &tools),
+        "an injected plan state leaves the anchored count describing a different prompt"
+    );
+}
+
+#[test]
+fn a_changed_tool_surface_drops_the_anchor() {
+    let anchor = PromptAnchor::after_call(
+        &assembled("sys", history()),
+        &tool_fingerprint(NO_TOOLS),
+        9_000,
+    )
+    .expect("a branch anchors");
+    let next = grew_by(history(), "later");
+    let tools = tool_fingerprint(&[ToolSpec {
+        kind: "function".to_owned(),
+        name: "write".to_owned(),
+        description: "write a file".to_owned(),
+        parameters: Value::Object(serde_json::Map::new()),
+    }]);
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &[], &tools),
+        prompt_size(None, &next, &[], &tools),
+        "a tool added mid-session is prompt material the anchored count never carried"
+    );
+}
+
+#[test]
+fn a_compaction_that_ate_the_anchored_entry_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    // The compaction replaced the raw history the request ended at.
+    let next = assembled("sys\n\n[observed]", vec![tool_entry("t2", "c2", "later")]);
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
+        prompt_size(None, &next, NO_TOOLS, &tools),
+        "a branch that no longer carries the anchored entry has no tail to price"
+    );
+}
+
+#[test]
+fn a_changed_observation_item_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    let mut next = grew_by(history(), "later");
+    next.om_items = 1;
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
+        prompt_size(None, &next, NO_TOOLS, &tools),
+        "the observation state contributed an item the anchored request never carried"
+    );
+}
+
+#[test]
+fn a_request_with_no_history_has_no_anchor_to_keep() {
+    let empty = assembled("sys", vec![]);
+    assert!(PromptAnchor::after_call(&empty, &tool_fingerprint(NO_TOOLS), 10).is_none());
+}
