@@ -49,7 +49,8 @@ only one module should know the exhaustive list*)
    `&crate::agent::OmStatusHook`. The invariant "the store and the OM record move
    together" lives in a module that cannot see either owner.
 2. **Poison is inspected at four sites and ignored at four hundred.** Measured
-   census across `tau-core`'s 423 `.lock()` calls: 217 production
+   census across `tau-core`'s 423 `.lock()` calls — 428 in `tau-core` and 459
+   across the three lock-bearing crates by S3's parent commit; 217 production
    `.lock().expect("<invariant>")`, 196 `.unwrap()` in test and test-support
    code, and **four** sites that look at the `PoisonError` at all
    (`om_integration/background.rs:118,188`, `tools/surface.rs:78`, and one
@@ -263,7 +264,7 @@ finish it, and each keeps the existing tests as the harness.
 |---|---|---|---|
 | **S1** | One fact-append helper: `diagnostics::append_facts(&mut store, facts)` that re-reads the leaf between appends | `harness/launch.rs` (`record_model_at_open`), `harness/dispatch_sessions.rs:196-211`, used by `agent/config.rs:119` too | hazard 3: the chaining rule gets one owner instead of being re-derived at each call site; also drops the `leaf()`/`leaf_cached()` inconsistency |
 | **S2** | One truncation module (`bounded_head` char-boundary, `truncate_lines` line-boundary + marker) | `agent/turn/mod.rs:17`, `gate.rs:82`, `subagent/inspect.rs:198` | three helpers, two semantics, one concept; the frontend's `firstLine` mirrors the same idea |
-| **S3** | `std::sync::Mutex` → `parking_lot::Mutex`, and the `.expect("<invariant>")` clause disappears with the `Result`. Two guardrails come with it, as requirements: model-supplied text is parsed **outside** a critical section, and no guard is held across an await | 460 `.lock()` reads and 241 `.expect`/`.unwrap` clauses across `tau-core`, `tau-acp` and `tau-test`, over six commits. **Landed**: `tools::surface::lock_anchors`, its poison-recovery test, and the four `PoisonError` arms are gone; the OM cycle in `om_integration/background.rs` now reads a half-mutated `Inner` on faith where poisoning used to stop it — see §6.2's shipped note for what that costs and what it does not | §6.2; hazard 2. A lock stops being a thing that can wedge the process, and the code stops asserting an invariant it cannot keep |
+| **S3** | `std::sync::Mutex` → `parking_lot::Mutex`, and the `.expect("<invariant>")` clause disappears with the `Result`. Two guardrails come with it, as requirements: model-supplied text is parsed **outside** a critical section, and no guard is held across an await | 459 `.lock()` reads and 461 `.expect`/`.unwrap` clauses across `tau-core`, `tau-acp` and `tau-test`, over six commits. **Landed**: `tools::surface::lock_anchors`, its poison-recovery test, and the four `PoisonError` arms are gone; the OM cycle in `om_integration/background.rs` now reads a half-mutated `Inner` on faith where poisoning used to stop it; guardrail 1's one unmet site is accepted — see §6.2's shipped note | §6.2; hazard 2. A lock stops being a thing that can wedge the process, and the code stops asserting an invariant it cannot keep |
 | **S4** | Disperse `om_integration` per §2, ending with the port replacing `Arc<Mutex<agent::Inner>>` | `om_integration/*` | hazard 1; also the prerequisite for `tau-om` if that is ever revisited |
 | **S5** | Collapse the 7 `UNIX_EPOCH` conversions onto `jiff::Timestamp`, one `now_ms()` | `session/mod.rs:206`, `session/file.rs:315`, `harness/state.rs:531`, `hashline/pin_store/mod.rs:130`, `tools/impls.rs:393`, `om_integration/mod.rs:321` | already a dependency; two incompatible epoch idioms today |
 | **S6** | `context_gate_budget` and `gate_unavailable_reasons` computed from one function returning `Result<budget, reasons>` | `agent/mod.rs:110,124` | they must never disagree — #306 had to reconcile exactly that drift by hand |
@@ -331,8 +332,9 @@ finish it, and each keeps the existing tests as the harness.
    recommendation). What the rejection was protecting — the poison signal — was
    already being discarded at 419 of 423 sites, so std was selling a signal
    nobody read at the price of a process that stops forever after one bad turn.
-   The crate makes the implicit rule explicit, deletes 217 `.expect("<invariant>")`
-   clauses that assert something the code cannot guarantee, and buys 1-byte lock
+   The crate makes the implicit rule explicit, deletes the 217 `.expect("<invariant>")`
+   clauses (461 `.expect`/`.unwrap` clauses across all three crates by the time S3
+   landed) that assert something the code cannot guarantee, and buys 1-byte lock
    state with a single-atomic uncontended path. What is accepted in exchange: a
    struct mutated halfway through a panic is loadable, silently. Hence the two
    guardrails in S3 are requirements — untrusted text is parsed outside the
@@ -340,10 +342,10 @@ finish it, and each keeps the existing tests as the harness.
    `await_holding_lock` gate stays `-D warnings`. Worth remembering while hunting
    the "stopped" reports: `deadlock_detection` is an experimental feature flag,
    and a *hung* lock and a poisoned one look identical from the GUI.
-   Shipped (S3, measured at the tip): 460 lock reads over 241 `.expect`/`.unwrap`
-   clauses went across in six commits. The predicted cost never arrived — the
-   guard is still `!Send`, because `send_guard` is an off-by-default feature — so
-   std's spawn-boundary protection survived, and on top of it
+   Shipped (S3, measured at the tip): 459 `.lock()` reads and 461 deleted
+   `.expect`/`.unwrap` clauses went across in six commits. The predicted cost never
+   arrived — the guard is still `!Send`, because `send_guard` is an off-by-default
+   feature — so std's spawn-boundary protection survived, and on top of it
    `await_holding_lock` fires on a `parking_lot` guard held across an await on the
    pinned toolchain. What did change: the migration deleted the one helper that
    existed only to absorb poisoning (`tools::surface::lock_anchors`), the test
@@ -353,10 +355,15 @@ finish it, and each keeps the existing tests as the harness.
    the OM cycle included — takes on faith. That task already died on a panic (it
    is `tokio::spawn`ed and nothing catches unwinds); poisoning is what made every
    *later* acquirer die too, and that is the wedge hazard 2 was about.
-   Guardrail 1 is not met everywhere: `tools::surface.rs` still holds the
-   anchor-`Registry` guard across `read`/`edit`, so model-supplied text is parsed
-   inside a critical section there. What stands between that and a wedged session
-   is now the hashline fuzz target's totality oracle, not the shape of the code.
+   Guardrail 1 is not met everywhere, and that is **accepted**: `tools::surface.rs`
+   still holds the anchor-`Registry` guard across `read`/`edit`, so model-supplied
+   text is parsed
+   inside a critical section there, because the single guard is what makes the
+   read–resolve–patch–write sequence atomic against the served baseline; the
+   alternative — parse and patch outside, guard only the registry — opens a window
+   where the file and the registry diverge. What stands between that site and a
+   wedged session is the hashline fuzz target's totality oracle, not the shape of
+   the code; it stays the gate until a `read`/`edit` path actually panics.
 3. **`tau-hashline` stays workspace-internal.** No crates.io means no semver
    policy, no separate CI job, and no public-API discipline past the crate
    boundary.
