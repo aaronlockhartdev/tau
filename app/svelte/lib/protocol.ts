@@ -104,6 +104,41 @@ export type SubagentPayload =
   | { event: 'state'; state: 'stopped'; by: string }
   | { event: 'notify'; text: string; done: boolean; output?: Record<string, unknown>; waiting_on?: string };
 
+// How a provider stream ended (the wire spelling of the core's StreamEnd).
+export type StreamEnd =
+  | 'completed'
+  | 'length'
+  | 'idle_timeout'
+  | 'eof_without_done'
+  | 'mid_stream_error'
+  | 'killed';
+
+// The diagnostic codes this build knows (ADR-0034). Codes are append-only:
+// a code from a newer core arrives through the escape arm and still renders,
+// by its own name.
+export type DiagnosticCode =
+  | 'model_changed'
+  | 'gate_unavailable'
+  | 'context_overflow'
+  | 'gate_attempt'
+  | 'gate_failed'
+  | 'om_stalled'
+  | 'provider_rejected'
+  | 'turn_cutoff';
+
+// A fact the harness recorded about a session: the code is the discriminant
+// and the GUI composes the sentence, so no display string crosses the seam.
+export type Diagnostic =
+  | { code: 'model_changed'; from?: string; to: string }
+  | { code: 'gate_unavailable'; model: string; missing: string[] }
+  | { code: 'context_overflow'; prompt: number; budget: number }
+  | { code: 'gate_attempt'; command: string; retries: number; max: number; output: string }
+  | { code: 'gate_failed'; command: string; retries: number }
+  | { code: 'om_stalled'; pending: number; activation: number }
+  | { code: 'provider_rejected'; status: number; body: string }
+  | { code: 'turn_cutoff'; model: string; ended_by: StreamEnd; blocks: number }
+  | { code: string };
+
 // The flat card shape the transcript renders: a ViewEntry payload decoded
 // (or the snapshot's metadata skeleton before a paged read fills it in).
 // One variant per kind (C9); the last is the escape for a kind the card
@@ -116,6 +151,7 @@ export type Entry =
   | { id: string; kind: 'system'; text: string }
   | { id: string; kind: 'spawn-snapshot'; text: string }
   | { id: string; kind: 'subagent'; text: string; payload?: SubagentPayload }
+  | { id: string; kind: 'diagnostic'; text: string; diagnostic: Diagnostic }
   | AnyEntry;
 
 // A streamed assistant message in flight: the live slot until stream_end

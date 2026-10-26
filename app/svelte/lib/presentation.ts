@@ -5,14 +5,11 @@
 // mounting a component.
 
 import type { LucideIcon } from '@lucide/svelte';
-import type {
-  AnyEntry,
-  Entry,
-  SkillRef
-} from './protocol';
+import type { AnyEntry, Entry, SkillRef } from './protocol';
 import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
+import { diagnosticLabel } from './diagnostics';
 import { fmtK } from './format';
 
 // A structured key/value row: the field name on its own line with a colon,
@@ -456,6 +453,8 @@ export function present(
     case 'subagent':
       if (!text.trim()) return null;
       return { shells: [subagentShell(entry, ctx.parentLabel)] };
+    case 'diagnostic':
+      return { shells: [{ kind: 'stline', icon: Terminal, label: diagnosticLabel(entry) }] };
     default:
       // An unknown kind renders as a plain text block (no payload
       // interpretation).

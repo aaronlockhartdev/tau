@@ -3,6 +3,7 @@
 // decodes entry payloads here, nowhere else). Pure over wire data: the
 // dev seam (window.__tau) can feed it directly.
 import type {
+  Diagnostic,
   Entry,
   SubagentPayload,
   Usage,
@@ -141,6 +142,18 @@ export function decodeEntry(v: ViewEntry): Entry {
       return { id: v.id, kind: 'spawn-snapshot', text: typeof p.log === 'string' ? p.log : '' };
     case 'subagent':
       return { id: v.id, kind: 'subagent', text: JSON.stringify(p ?? v.id), payload: p as SubagentPayload };
+    case 'diagnostic':
+      // ADR-0034: the payload is the tagged fact; the card composes the
+      // sentence from the code. A code this build does not know keeps its
+      // name and renders generically.
+      return {
+        id: v.id,
+        kind: 'diagnostic',
+        // The card composes the sentence from the fact; `text` is only the
+        // code, so a list preview of an unknown code still says something.
+        text: typeof p.code === 'string' ? p.code : 'unknown',
+        diagnostic: typeof p.code === 'string' ? (p as unknown as Diagnostic) : { code: 'unknown' }
+      };
     default:
       return { id: v.id, kind: v.kind, text: JSON.stringify(p ?? v.id) };
   }

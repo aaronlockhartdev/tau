@@ -203,3 +203,67 @@ describe('toolStatus', () => {
     expect(toolStatus('bash', 'hello\nworld\n')).toBe('running');
   });
 });
+
+describe('a diagnostic entry (ADR-0034)', () => {
+  function diagnosticView(payload: unknown): ViewEntry {
+    return {
+      id: '9',
+      parent: null,
+      kind: 'diagnostic',
+      timestamp: 123,
+      payload,
+      blob: null,
+      first_kept: null
+    };
+  }
+
+  it('decodes the tagged payload into the typed fact', () => {
+    const e = decodeEntry(diagnosticView({
+      code: 'turn_cutoff',
+      model: 'dev/qwen3.8-flash',
+      ended_by: 'eof_without_done',
+      blocks: 2
+    }));
+    if (!('diagnostic' in e)) throw new Error('expected a diagnostic entry');
+    expect(e.diagnostic).toEqual({
+      code: 'turn_cutoff',
+      model: 'dev/qwen3.8-flash',
+      ended_by: 'eof_without_done',
+      blocks: 2
+    });
+    // The preview line carries the code, never a stored sentence.
+    expect(e.text).toBe('turn_cutoff');
+  });
+
+  it('a code this build does not know survives with its name', () => {
+    const e = decodeEntry(diagnosticView({ code: 'tool_stalled', reason: 'watchdog' }));
+    if (!('diagnostic' in e)) throw new Error('expected a diagnostic entry');
+    expect(e.diagnostic.code).toBe('tool_stalled');
+    expect(e.text).toBe('tool_stalled');
+  });
+
+  // The negative: a payload that is not a diagnostic map at all must still
+  // render something — never the blank card #306 is about.
+  it('a payload with no code decodes rather than blanking', () => {
+    const e = decodeEntry(diagnosticView({ prompt: 1200 }));
+    if (!('diagnostic' in e)) throw new Error('expected a diagnostic entry');
+    expect(e.diagnostic).toEqual({ code: 'unknown' });
+    expect(e.text).toBe('unknown');
+  });
+});
+
+// A kind this build does not know (ADR-0008 tolerance): the line still
+// decodes and says what it is, rather than vanishing from the transcript.
+it('an unknown kind renders its own name', () => {
+  const e = decodeEntry({
+    id: '10',
+    parent: null,
+    kind: 'quantum',
+    timestamp: 123,
+    payload: { note: 'from a newer core' },
+    blob: null,
+    first_kept: null
+  });
+  expect(e.kind).toBe('quantum');
+  expect(e.text ?? '').toContain('from a newer core');
+});
