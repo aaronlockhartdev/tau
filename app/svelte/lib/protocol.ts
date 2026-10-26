@@ -61,11 +61,25 @@ export interface SessionMeta {
 
 export type EntryStatus = 'ok' | 'interrupted';
 
+// EntryKind in Rust: the kinds v0 defines plus `Other`, which carries any other
+// kind verbatim — the `(string & {})` arm keeps completion for the known ones
+// while still admitting a kind an older client has never heard of.
+export type EntryKind =
+  | 'user'
+  | 'assistant'
+  | 'tool'
+  | 'system'
+  | 'om'
+  | 'subagent'
+  | 'spawn_snapshot'
+  | 'diagnostic'
+  | (string & {});
+
 // The snapshot's entry metadata: everything the entry tree needs, no payload.
 export interface EntryMeta {
   id: string;
   parent: string | null;
-  kind: string;
+  kind: EntryKind;
   timestamp: number;
   size: number;
   preview: string;
@@ -83,7 +97,7 @@ export interface BlobRef {
 export interface ViewEntry {
   id: string;
   parent: string | null;
-  kind: string;
+  kind: EntryKind;
   timestamp: number;
   payload: unknown;
   blob: BlobRef | null;
@@ -130,7 +144,7 @@ export type DiagnosticCode =
 // A fact the harness recorded about a session: the code is the discriminant
 // and the GUI composes the sentence, so no display string crosses the seam.
 export type Diagnostic =
-  | { code: 'model_changed'; from?: string; to: string }
+  | { code: 'model_changed'; from: string | null; to: string }
   | { code: 'gate_unavailable'; model: string; missing: string[] }
   | { code: 'context_overflow'; prompt: number; budget: number }
   | { code: 'gate_attempt'; command: string; retries: number; max: number; output: string }
@@ -138,6 +152,9 @@ export type Diagnostic =
   | { code: 'om_stalled'; pending: number; activation: number }
   | { code: 'provider_rejected'; status: number; body: string }
   | { code: 'turn_cutoff'; model: string; ended_by: StreamOutcome; blocks: number }
+  // What a core reads back when a stored code is not one it knows: the record
+  // on disk keeps its own code, this is the re-emitted form (Diagnostic::Unknown).
+  | { code: 'unknown'; unknown_code: string }
   | { code: string };
 
 // The flat card shape the transcript renders: a ViewEntry payload decoded

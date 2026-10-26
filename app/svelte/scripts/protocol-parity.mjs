@@ -351,7 +351,12 @@ function diffUnion(rustName, tsName = rustName) {
     return;
   }
   const rtags = r.variants.map((v) => v.tag);
-  const ttags = t.members.map((m) => m.tagFields[r.tag]).filter((x) => x !== undefined);
+  // A fieldless Rust enum mirrors a TS union of string literals: the arm is the
+  // tag. An unquoted arm — `(string & {})` — is the open-union escape for Rust's
+  // `Other`/`Unknown`, so it names no tag.
+  const ttags = t.members
+    .map((m) => m.tagFields[r.tag] ?? (/^['"].*['"]$/.test(m.named ?? '') ? m.named.slice(1, -1) : undefined))
+    .filter((x) => x !== undefined);
   for (const tag of rtags) if (!ttags.includes(tag)) errors.push(`${rustName}: missing TS tag '${tag}'`);
   for (const tag of ttags) if (!rtags.includes(tag)) errors.push(`${rustName}: TS-only tag '${tag}'`);
   for (const rv of r.variants) {
