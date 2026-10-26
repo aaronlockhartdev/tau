@@ -249,38 +249,42 @@ finish it, and each keeps the existing tests as the harness.
 | **S12** | Typed payload per `EntryKind`: the `json!` writers and `payload.get` readers become the derived payload types | 12 files with `json!` (`tools/mod.rs`, `subagent/*`, `session/file.rs`, …), 83 key reads | §2.2; one shape per kind, so a reader cannot guess a key and each kind gains exactly one legal append path |
 | **S13** | The prompt estimate anchors on the last recorded `usage.input_tokens`; only content appended after it is estimated. Bytes/4 rounded up, serialized tool arguments included | `provider/request.rs:385` (`estimate_prompt_tokens`), `om/mod.rs:292` (`token_count`) | §6.4: the provider's count is the authority for what was already sent, so the estimator only covers the delta — one tool output, not the whole conversation, is ever a guess |
 | **S14** | The usage **record** stops mirroring one API: stored fields become the concepts (`input_tokens`, `output_tokens`, `cached_input_tokens`), the Responses/chat spellings move into the provider adapter, the total becomes an accessor instead of a stored field, and `OutputTokensDetails` + `TurnUsage::reasoning_tokens()` are deleted (no production reader) | `tau-protocol/src/payload.rs`, `provider/usage.rs` (the wire decode that used to land straight on the record type), `harness/snapshot.rs` `usage_of` (one of the two readers of a stored usage) | §6.5/§6.6. **Landed**: no golden moved (the record-side goldens carry no usage, the usage goldens are event-side) and the store fixture carries no usage; the event-side `Usage` keeps its spelling because its goldens and the TS mirror pin it. `TurnUsage::from_record` is the one frozen read for records written before the change — two readers exist (`usage_of`, `subagent/inspect`), so the legacy shim lives on the record type, not in either caller |
-| **S15** | The real-app E2E legs run configs the audit channel correctly calls unhealthy, so they have been red since #306 landed: both legs declare models with no `context_window`/`max_output_tokens` (so a `gate_unavailable` record really is owed at open and at every model switch — the stress fixture grows 10050 → 10052, the mock leg's session 7 → 8, breaking entry-count and render-range assertions that predate #306), and the stress leg's OM pass runs against a provider with no script for the OM prompt, so each turn ends with an `om_stalled` record and the assistant message is no longer the tail | `app/wdio.conf.mjs` (`CANNED_CONFIG`, `makeWorkspaces`), `app/tests/e2e/stress.spec.mjs`, `app/tests/e2e/mock-multi.spec.mjs` | The legs assert a world where nothing is recorded while their configs describe a world where something is owed. Make the configs healthy — declare the window and the output cap on the E2E models, and take OM out of the stress leg (it measures windowing and the §8 perf bar, not compaction) — so a healthy open mints nothing, the invariant `a_healthy_reopen_mints_nothing` already pins in Rust. A leg that wants the ungated case should assert the record it mints |
+| **S15** | The real-app E2E legs run configs the audit channel correctly calls unhealthy, so they have been red since #306 landed: neither leg's models declare a `context_window`/`max_tokens`, so a `gate_unavailable` record really is owed at open, and the stress leg's OM pass runs against a provider with no script for the OM prompt, so each turn ends with an `om_stalled` record and the assistant message is no longer the tail. Both break entry-count and render-range assertions that predate #306 (the stress fixture grew 10050 → 10052) | `app/wdio.conf.mjs` (`CANNED_CONFIG`, `makeWorkspaces`), `app/tests/e2e/stress.spec.mjs`, `app/tests/e2e/mock-multi.spec.mjs` | The legs assert a world where nothing is recorded while their configs describe a world where something is owed. Make the configs healthy — declare the window and the cap on the E2E models, and take OM out of the stress leg (it measures windowing and the §8 perf bar, not compaction) — so a healthy open mints nothing, the invariant `a_healthy_reopen_mints_nothing` already pins in Rust. A leg that wants the ungated case asserts the record it mints, by code |
+| **S16** | A model id has two spellings and no resolution rule. The model menu sends `provider/key` (built in `ModelMenu.svelte` from `provider_list`); the config keys models by the bare `key` under a provider. `derive_turn` looks the session's id up with `provider.models.get(model)`, so after any menu switch the model's declared facts — `context_window`, `max_tokens`, `reasoning` — are dropped, the context gate goes Missing, and the audit channel records `gate_unavailable` for a model the config does describe. The same id goes into the request body (`ResponseRequest::new(self.model()…)`), so the endpoint is addressed as `dev/qwen3.8-…` instead of the model it hosts | `config/mod.rs` (one resolver over the provider maps), `harness/sessions.rs` `derive_turn`, `harness/launch.rs` (its default-model pick writes the bare spelling), `agent/turn/mod.rs` (the request's `model` field), `app/svelte/components/ModelMenu.svelte` | §6.7. Found from the legs: the mock leg's second open record is `gate_unavailable { model: "mock/mock-model-2", missing: [context_window, max_tokens] }` against a config declaring both. This is the incident family — switch model, lose the gate, run unbounded, get refused |
 
 ## 5. Order of work
 
 1. **S1, S2** — small, mechanical, no wire change. Done on the #306 branch,
    which owns the code they touch.
 2. **S6, S5** — loop and store hygiene, no wire change. Done.
-3. **S15** — the real-app E2E legs. They have been red since the audit channel
-   landed and their configs, not their code, are the cause (§4 S15); nothing
-   else on this branch can be verified against a green acceptance gate until
-   they say something true.
-4. **S14, then S13** — the usage record's shape first, because the anchored
+3. **S16** — one model-id resolution rule. The legs cannot say something true
+   without it: their `gate_unavailable` records are the audit channel correctly
+   reporting a switch that dropped a model's facts (§4 S16, §6.7), and a spec
+   that counted those records would be encoding the defect.
+4. **S15** — the real-app E2E legs on top of honest resolution: declare the
+   window and the cap on the E2E models, take OM out of the stress leg, and let
+   the specs name the one baseline record a pre-audit fixture owes at open.
+5. **S14, then S13** — the usage record's shape first, because the anchored
    estimate reads the fields S14 names (S14 landed: the record carries the
    concepts, the adapter carries the spellings, `from_record` is the one frozen
    read). Wire-visible, so one reviewable series:
    the protocol type, the adapter decode, the single record reader, then the
    goldens + the store fixture + the TS mirror together.
-5. **S3** — the `parking_lot` migration, alone in its own series: ~400 sites, no
+6. **S3** — the `parking_lot` migration, alone in its own series: ~400 sites, no
    semantics, one commit per module group. It must never share a commit with a
    behavior change, and it is where hazard 2 dies.
-6. **S9** — remove the supervisor seam from the production open path, then
+7. **S9** — remove the supervisor seam from the production open path, then
    re-point its three test callers.
-7. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
+8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
    `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.
-8. **S4** (disperse `om_integration`) — four commits, each behaviour-neutral.
-9. **S7, S8** — wire-visible; each needs goldens + the TS mirror + a protocol
+9. **S4** (disperse `om_integration`) — four commits, each behaviour-neutral.
+10. **S7, S8** — wire-visible; each needs goldens + the TS mirror + a protocol
    commit.
-10. **The ADR**, then `tau-tokens` → `tau-provider` → `tau-session` →
+11. **The ADR**, then `tau-tokens` → `tau-provider` → `tau-session` →
     `tau-hashline`, each its own commit series, each with `lto = "thin"` in the
     same PR as the first split.
-11. **S10, S11** last — dep additions are easy to review once the code is in the
-    shape the plan wants. S3's dep is the exception: it lands with step 5.
+12. **S10, S11** last — dep additions are easy to review once the code is in the
+    shape the plan wants. S3's dep is the exception: it lands with step 6.
 
 ## 6. Decided (2026-10-26)
 
@@ -361,3 +365,30 @@ finish it, and each keeps the existing tests as the harness.
    details struct and its accessor go, and the total is an accessor with one
    owner. The rule is not "no unused fields": it is that a stored field needs a
    reader, and a derived quantity needs exactly one.
+
+### 6.7 A model id is one string with one resolution rule
+
+The session's model id is the qualified form the menu offers — `provider/key` —
+because a workspace can reach several providers and the bare key does not say
+which one serves it. The config keeps declaring models under a provider table
+by bare key, because that is what a provider's model list is. So the id carries
+both halves and exactly one function splits it: a resolver over the merged
+config returning the provider, the key, and the declared facts. Everything that
+reads a model's facts — the context gate, the output cap, the reasoning level —
+and everything that addresses the provider, including the `model` field of the
+request body, goes through that one read. A bare id (what the open writes when
+it takes the provider's first model, and what every record predating this
+decision carries) resolves against the provider the session was opened on.
+
+Two spellings with no rule is how a model switch silently turns the gate off:
+the switch stores `dev/qwen3.8-flash-next`, the lookup wants
+`qwen3.8-flash-next`, and a miss is indistinguishable from an undeclared model.
+The audit channel made it visible — `gate_unavailable` naming a model the
+config describes — and the fix is the resolver, not a record that hushes the
+symptom.
+
+Out of scope: switching to a model on a *different* provider also needs the
+session's provider handle re-resolved — it is bound at open from the first
+provider, so a cross-provider switch today keeps calling the first. That stays
+with the multi-provider seam; the resolver makes it a visible next step rather
+than a second silent miss.
