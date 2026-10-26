@@ -157,7 +157,7 @@ impl Core {
                         let config = self.workspace_config(&ws);
                         if let Some((_, p)) = config.providers.iter().next() {
                             let turn = derive_turn(&config, p, &model, &session);
-                            let missing = turn.missing_gate_facts();
+                            let missing = turn.gate_unavailable_reasons();
                             live.agent.set_turn_config(turn);
                             if !missing.is_empty() {
                                 // The switch landed on a model with no gate

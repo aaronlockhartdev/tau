@@ -296,13 +296,20 @@ fn record_model_at_open(
     turn: &TurnConfig,
 ) -> Result<(), ProtocolError> {
     let Some(facts) = facts else {
-        return Ok(()); // a fresh session has nothing to have changed
+        // A fresh session has nothing to have changed, so it gains no
+        // `model_changed`. The gate gap is not recorded here either: a session
+        // created on an ungated model is recorded at its first reopen, which is
+        // the point a config edit or a stale model becomes visible.
+        return Ok(());
     };
     let fail = |e: crate::session::Error| ProtocolError::Other {
         message: e.to_string(),
     };
-    // Each record hangs off the one before it: the branch stays linear, so a
-    // later open projects the pair, not one record and an orphaned sibling.
+    // The session has no agent yet — `AgentSession::diagnostic` is the only
+    // writer once one exists, and this is the one place that appends the kind
+    // without it. Each record hangs off the one before it: the branch stays
+    // linear, so a later open projects the pair, not one record and an
+    // orphaned sibling.
     let mut record_fact = |fact: Diagnostic| -> Result<(), ProtocolError> {
         let leaf = store.leaf_cached().map_err(fail)?.map(|e| e.id);
         store
@@ -316,11 +323,11 @@ fn record_model_at_open(
             to: model.to_owned(),
         })?;
     }
-    if turn.context_gate_budget().is_none() && facts.gate_unavailable_for.as_deref() != Some(model)
-    {
+    let missing = turn.gate_unavailable_reasons();
+    if !missing.is_empty() && facts.last_gate_unavailable.as_deref() != Some(model) {
         record_fact(Diagnostic::GateUnavailable {
             model: model.to_owned(),
-            missing: turn.missing_gate_facts(),
+            missing,
         })?;
     }
     Ok(())

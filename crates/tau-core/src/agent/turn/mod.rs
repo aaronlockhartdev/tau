@@ -336,8 +336,8 @@ impl AgentSession {
     /// A provider rejection at call time: a context-length 400 gets one
     /// bounded retry at a halved `max_output_tokens` (#256) — the server
     /// computes the window remainder from that cap. Anything else (and a
-    /// second context 400) is recorded as a system entry with the provider's
-    /// status and body, then propagates.
+    /// second context 400) is recorded as a `provider_rejected` record with the
+    /// provider's status and body, then propagates.
     #[allow(clippy::too_many_arguments)] // the turn's parts, threaded once
     async fn recover_from_provider_error(
         &self,

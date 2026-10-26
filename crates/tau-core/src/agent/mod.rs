@@ -115,18 +115,24 @@ impl TurnConfig {
                 .and_then(|rest| rest.checked_sub(CONTEXT_GATE_MARGIN))
         })
     }
-    /// Which of the two facts the context gate needs this turn lacks; the
-    /// `gate_unavailable` record names them so the gap is actionable
-    /// (ADR-0034).
-    pub(crate) fn missing_gate_facts(&self) -> Vec<String> {
-        let mut missing = Vec::new();
+    /// Why this turn has no context gate, named (ADR-0034): the two facts the
+    /// gate needs by their config names, or `context_room` when both are
+    /// declared but the window leaves nothing once the output cap and the
+    /// margin are subtracted. Empty means the gate exists. Every
+    /// `gate_unavailable` record arms on this one predicate, so a record never
+    /// claims a gap the gate does not have.
+    pub(crate) fn gate_unavailable_reasons(&self) -> Vec<String> {
+        let mut reasons = Vec::new();
         if self.context_window.is_none() {
-            missing.push("context_window".to_owned());
+            reasons.push("context_window".to_owned());
         }
         if self.max_output_tokens.is_none() {
-            missing.push("max_tokens".to_owned());
+            reasons.push("max_tokens".to_owned());
         }
-        missing
+        if reasons.is_empty() && self.context_gate_budget().is_none() {
+            reasons.push("context_room".to_owned());
+        }
+        reasons
     }
 }
 

@@ -33,6 +33,19 @@ impl Scripted400 {
     }
 }
 
+/// A provider whose call dies in transport: no status, no body, nothing the
+/// provider answered.
+struct ScriptedIdle;
+
+impl crate::provider::TurnProvider for ScriptedIdle {
+    fn call<'a>(
+        &self,
+        _request: &ResponseRequest,
+        _sink: &'a mut dyn TurnSink,
+    ) -> crate::provider::ProviderTurn<'a> {
+        Box::pin(async { Err(crate::provider::ProviderError::IdleTimeout) })
+    }
+}
 impl crate::provider::TurnProvider for Scripted400 {
     fn call<'a>(
         &self,
@@ -82,7 +95,7 @@ fn over_budget_turn() -> TurnConfig {
 
 fn omless_agent(
     store: SessionStore,
-    provider: std::sync::Arc<Scripted400>,
+    provider: std::sync::Arc<dyn crate::provider::TurnProvider>,
     turn: TurnConfig,
     cwd: std::path::PathBuf,
 ) -> AgentSession {
@@ -250,7 +263,7 @@ async fn context_400_fails_loudly_after_one_retry() {
         2,
         "no loop: two calls"
     );
-    // The durable trace: a system entry with the provider's status and body.
+    // The durable trace: a provider_rejected record with the status and body.
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     assert!(
@@ -335,5 +348,61 @@ async fn a_huge_rejection_body_is_recorded_bounded() {
     assert!(
         page.starts_with(body.strip_suffix('…').unwrap_or_default()),
         "the head is the page's head"
+    );
+}
+
+/// The gate gap is actionable only if it names the real reason: the two facts
+/// by config name, or the room that is missing when both are declared
+/// (ADR-0034). One predicate serves both record sites.
+#[test]
+fn the_gate_gap_names_what_the_gate_lacks() {
+    let declared = |window, max_output| TurnConfig {
+        context_window: Some(window),
+        max_output_tokens: Some(max_output),
+        ..Default::default()
+    };
+    assert_eq!(
+        TurnConfig::default().gate_unavailable_reasons(),
+        ["context_window", "max_tokens"]
+    );
+    assert!(
+        declared(20_000, 200).gate_unavailable_reasons().is_empty(),
+        "a computable budget is no gap"
+    );
+    assert_eq!(
+        declared(8_192, 8_192).gate_unavailable_reasons(),
+        ["context_room"],
+        "facts can be declared and still leave no gate"
+    );
+}
+
+/// A transport failure is the turn's error to surface, not a fact the provider
+/// produced: nothing lands in the record channel (ADR-0034).
+#[tokio::test]
+async fn a_dead_stream_files_no_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = omless_agent(
+        session_in(dir.path()),
+        std::sync::Arc::new(ScriptedIdle),
+        over_budget_turn(),
+        dir.path().to_path_buf(),
+    );
+    agent.send("go", Lane::FollowUp);
+    let err = agent.process().await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AgentError::Provider(crate::provider::ProviderError::IdleTimeout)
+        ),
+        "the failure propagates: {err:?}"
+    );
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    assert!(
+        entries_of(&reopened)
+            .iter()
+            .all(|e| e.kind != EntryKind::Diagnostic),
+        "a dead stream is not a record: {:?}",
+        entries_of(&reopened)
     );
 }

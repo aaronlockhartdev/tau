@@ -22,10 +22,11 @@ pub struct Diagnostics {
     /// model was never changed has no such record — its model lives in the
     /// workspace config.
     pub model: Option<String>,
-    /// The model the record last said had no computable context gate. The
-    /// bracket is per model, so re-opening a session never re-records one it
-    /// already named (ADR-0034: transitions, not per-request spam).
-    pub gate_unavailable_for: Option<String>,
+    /// The last model a `gate_unavailable` record named. Re-opening a session
+    /// never re-records one it already named (ADR-0034: transitions, not
+    /// per-request spam); alternating between two ungated models re-records
+    /// each switch, which is right — each switch is a transition.
+    pub last_gate_unavailable: Option<String>,
 }
 
 /// Fold a branch's entries into session state (ADR-0034's one reader, in
@@ -81,7 +82,7 @@ impl Diagnostics {
     fn apply(&mut self, fact: Diagnostic) {
         match fact {
             Diagnostic::ModelChanged { to, .. } => self.set_model(to),
-            Diagnostic::GateUnavailable { model, .. } => self.gate_unavailable_for = Some(model),
+            Diagnostic::GateUnavailable { model, .. } => self.last_gate_unavailable = Some(model),
             Diagnostic::GateFailed { .. } => self.gate_failed = true,
             // The rest are facts about a moment, not state to carry.
             Diagnostic::GateAttempt { .. }

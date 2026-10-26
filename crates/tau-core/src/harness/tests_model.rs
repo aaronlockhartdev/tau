@@ -363,6 +363,53 @@ async fn a_model_that_declares_its_facts_records_no_gate_gap() {
 }
 
 #[tokio::test]
+async fn a_model_whose_window_leaves_no_room_records_the_gap() {
+    // Declared facts are not a gate: 8192 − 8192 − 4096 underflows, so the gap
+    // is the room, not an undeclared fact. The open path and the live switch
+    // arm on the same predicate, so neither can record a gap the other denies.
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider.models.insert(
+        "model".into(),
+        crate::config::ModelDef {
+            context_window: Some(8_192),
+            max_tokens: Some(8_192),
+            ..Default::default()
+        },
+    );
+    let mut providers = std::collections::BTreeMap::new();
+    providers.insert("dev".into(), provider);
+    let core = CoreBuilder::custom(providers).build().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let id = SessionStore::new_session_id();
+    {
+        let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+        store.create().unwrap();
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
+    core.dispatch(Command::SessionOpen {
+        session: id.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &id)),
+        vec![
+            Diagnostic::ModelChanged {
+                from: None,
+                to: "model".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "model".into(),
+                missing: vec!["context_room".into()],
+            },
+        ],
+        "the record names what is missing, and never comes out empty"
+    );
+}
+
+#[tokio::test]
 
 async fn session_set_model_survives_close_and_reopen() {
     let core = CoreBuilder::custom(providers()).build().unwrap();
