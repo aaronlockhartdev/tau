@@ -121,18 +121,19 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
         Ok((id, agent))
     }
 
-    // The gate's records: the system entries it wrote (the failure log).
-    fn gate_notes(store: &SessionStore) -> Vec<String> {
+    // The gate's records (ADR-0034): typed facts, so an acceptance suite can
+    // check the outcome without parsing a sentence.
+    fn gate_facts(store: &SessionStore) -> Vec<Diagnostic> {
         all_entries(store)
             .into_iter()
-            .filter(|e| e.kind == EntryKind::System)
-            .filter_map(|e| {
-                e.payload
-                    .get("note")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
+            .filter(|e| e.kind == EntryKind::Diagnostic)
+            .filter_map(|e| Diagnostic::from_value(&e.payload))
+            .filter(|d| {
+                matches!(
+                    d,
+                    Diagnostic::GateAttempt { .. } | Diagnostic::GateFailed { .. }
+                )
             })
-            .filter(|n| n.contains("completion gate"))
             .collect()
     }
     fn assistant_count(store: &SessionStore) -> usize {
@@ -157,16 +158,19 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
             "accept-gate: expected 5 assistant entries (2 tool + 3 final), saw {assistants}"
         ));
     }
-    let notes = gate_notes(&store);
-    if notes.len() != 3 {
+    let facts = gate_facts(&store);
+    if facts.len() != 3 {
         return Err(format!(
-            "accept-gate: expected 3 gate records (initial + 2 repairs), saw {notes:?}"
+            "accept-gate: expected 3 gate records (initial + 2 repairs), saw {facts:?}"
         ));
     }
-    if !notes.last().is_some_and(|n| n.contains("gate_failed")) {
+    if !matches!(facts.last(), Some(Diagnostic::GateFailed { .. })) {
         return Err(format!(
-            "accept-gate: the final record does not name gate_failed: {notes:?}"
+            "accept-gate: the final record is not a gate failure: {facts:?}"
         ));
+    }
+    if !tau_core::diagnostics::project(&all_entries(&store)).gate_failed {
+        return Err("accept-gate: the records leave the session not gate_failed".into());
     }
     println!("accept-gate: the failing check bounced 2 repairs and marked the session gate_failed");
 
@@ -185,10 +189,10 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
             "accept-gate (question): expected 2 assistant entries, saw {assistants}"
         ));
     }
-    let notes = gate_notes(&store);
-    if !notes.is_empty() {
+    let facts = gate_facts(&store);
+    if !facts.is_empty() {
         return Err(format!(
-            "accept-gate (question): the gate should be skipped, saw records {notes:?}"
+            "accept-gate (question): the gate should be skipped, saw records {facts:?}"
         ));
     }
     println!("accept-gate: the QUESTION:-ending turn skipped the gate");

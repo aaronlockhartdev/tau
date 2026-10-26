@@ -287,3 +287,43 @@ fn an_unknown_kind_never_enters_the_model_context() {
         "an unknown kind leaked into the model context: {items:?}"
     );
 }
+
+#[test]
+fn a_diagnostic_record_costs_no_context() {
+    // ADR-0034: the audit channel is a record, not raw input. `is_raw` governs
+    // prompt assembly and the OM window alike, so this pins both.
+    let record = Entry {
+        id: "e2".into(),
+        parent: None,
+        timestamp: 0,
+        kind: EntryKind::Diagnostic,
+        payload: Diagnostic::GateUnavailable {
+            model: "gpt-4o-mini".into(),
+            missing: vec!["context_window".into()],
+        }
+        .to_value(),
+        blob: None,
+        first_kept_entry_id: None,
+        crc: None,
+    };
+    let without = vec![user_entry("e1", "ask", None)];
+    let with = vec![user_entry("e1", "ask", None), record];
+    assert_eq!(
+        user_content(&input_items(&with, None)),
+        user_content(&input_items(&without, None)),
+        "a diagnostic record changed the model's input"
+    );
+}
+
+#[test]
+fn a_bounded_head_keeps_a_short_body_whole() {
+    assert_eq!(bounded_head("no such model", 20), "no such model");
+}
+
+#[test]
+fn a_bounded_head_cuts_a_long_body_and_marks_the_cut() {
+    let head = bounded_head("abcdefghij", 4);
+    assert_eq!(head, "abcd…");
+    // A cut lands on a character boundary, never inside a multi-byte char.
+    assert_eq!(bounded_head("héllo wörld", 3), "hél…");
+}

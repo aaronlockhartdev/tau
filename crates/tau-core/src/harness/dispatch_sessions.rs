@@ -3,10 +3,10 @@
 
 use super::{
     Arc, Command, CommandOutput, Core, Event, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, json,
-    last_model_note, model_note, running_turn_refusal,
+    SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, recorded_model,
+    running_turn_refusal,
 };
-use tau_protocol::EntryKind;
+use tau_protocol::{Diagnostic, EntryKind};
 
 impl Core {
     #[allow(clippy::too_many_lines)] // one command per arm; splitting is refactoring
@@ -136,6 +136,14 @@ impl Core {
                         .expect("session meta: no panic while the lock is held")
                         .model = Some(model.clone());
                     live.agent.set_model(model.clone());
+                    live.agent
+                        .diagnostic(&Diagnostic::ModelChanged {
+                            from: old,
+                            to: model.clone(),
+                        })
+                        .map_err(|e| ProtocolError::Other {
+                            message: e.to_string(),
+                        })?;
                     // #35: the model-specific options (output-cap clamp,
                     // reasoning level) track the active model —
                     // re-derived from the workspace config.
@@ -148,23 +156,29 @@ impl Core {
                     if let Ok(ws) = self.workspace(&ws_id) {
                         let config = self.workspace_config(&ws);
                         if let Some((_, p)) = config.providers.iter().next() {
-                            live.agent
-                                .set_turn_config(derive_turn(&config, p, &model, &session));
+                            let turn = derive_turn(&config, p, &model, &session);
+                            let missing = turn.missing_gate_facts();
+                            live.agent.set_turn_config(turn);
+                            if !missing.is_empty() {
+                                // The switch landed on a model with no gate
+                                // (ADR-0034): the record says so here, once,
+                                // instead of every request running unbounded.
+                                live.agent
+                                    .diagnostic(&Diagnostic::GateUnavailable {
+                                        model: model.clone(),
+                                        missing,
+                                    })
+                                    .map_err(|e| ProtocolError::Other {
+                                        message: e.to_string(),
+                                    })?;
+                            }
                         }
                     }
-                    live.agent
-                        .append_entry(
-                            EntryKind::System,
-                            json!({ "note": model_note(old.as_deref(), &model) }),
-                        )
-                        .map_err(|e| ProtocolError::Other {
-                            message: e.to_string(),
-                        })?;
                     Ok(CommandOutput::None)
                 }
                 // A closed session is a file: the header carries no
-                // model, so the quiet entries are the record — the
-                // last `model:` note on the branch is the current one.
+                // model, so the records are the trace — the last
+                // model_changed on the branch is the current one.
                 else {
                     let cwd = self
                         .owning_session(&session)
@@ -176,15 +190,19 @@ impl Core {
                     store.open().map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
                     })?;
-                    let old = last_model_note(&mut store);
+                    let old = recorded_model(&mut store);
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
                     let leaf = store.leaf().ok().flatten().map(|e| e.id);
                     store
                         .append(
-                            EntryKind::System,
-                            json!({ "note": model_note(old.as_deref(), &model) }),
+                            EntryKind::Diagnostic,
+                            Diagnostic::ModelChanged {
+                                from: old,
+                                to: model.clone(),
+                            }
+                            .to_value(),
                             leaf.as_deref(),
                         )
                         .map_err(|e| ProtocolError::Other {

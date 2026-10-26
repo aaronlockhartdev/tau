@@ -5,11 +5,23 @@ use super::{
 use crate::provider::ToolSpec;
 use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
 use sink::StreamEntrySink;
-use tau_protocol::EntryKind;
+use tau_protocol::{Diagnostic, EntryKind};
 
-/// Headroom reserved for the system prompt and framing overhead when
-/// computing the context gate's safe budget (ticket #210, spec §4).
-const CONTEXT_GATE_MARGIN: u32 = 4096;
+/// The cap on the provider's body inside a `provider_rejected` record. That
+/// body is an untrusted `response.text()` — a proxy's HTML error page is
+/// megabytes, and only its head distinguishes the failure. The gate caps its
+/// output for the same reason (`gate::MAX_OUTPUT`).
+pub(crate) const REJECTION_BODY_CAP: usize = 2_000;
+
+/// The first `cap` characters of `body`, marked with an ellipsis when cut.
+fn bounded_head(body: &str, cap: usize) -> String {
+    let head: String = body.chars().take(cap).collect();
+    if body.chars().count() > cap {
+        head + "…"
+    } else {
+        head
+    }
+}
 
 impl AgentSession {
     /// Run turns until the queue is empty. A stop (ticket #223) ends the
@@ -107,11 +119,7 @@ impl AgentSession {
             // The context gate (ticket #210, spec §4): when the assembled
             // prompt would exceed the safe budget and there is unobserved
             // material to compact, run the OM pass now so the call fits.
-            let budget = turn.context_window.and_then(|cw| {
-                let max_out = u32::try_from(turn.max_output_tokens?).ok()?;
-                cw.checked_sub(max_out)
-                    .and_then(|r| r.checked_sub(CONTEXT_GATE_MARGIN))
-            });
+            let budget = turn.context_gate_budget();
             if let Some(budget) = budget
                 && prompt > budget
             {
@@ -133,10 +141,10 @@ impl AgentSession {
                     // unobserved material to compact. Refuse loudly before
                     // the wire instead of sending a doomed 400, and leave a
                     // durable trace of the refusal.
-                    self.append(
-                        EntryKind::System,
-                        serde_json::json!({ "prompt": prompt, "budget": budget }),
-                    )?;
+                    self.diagnostic(&Diagnostic::ContextOverflow {
+                        prompt: u64::from(prompt),
+                        budget: u64::from(budget),
+                    })?;
                     return Err(AgentError::ContextOverflow { prompt, budget });
                 }
             }
@@ -226,7 +234,7 @@ impl AgentSession {
                 self.om_turn_end().await?;
                 // The completion gate (spec §5.3): a qualifying turn-end
                 // (≥1 tool call, no QUESTION: marker) runs the check. A
-                // pass stands the turn; a fail records a system entry,
+                // pass stands the turn; a fail records a gate_attempt,
                 // bounces a steering-lane repair turn, and — after
                 // max_retries — marks the session gate_failed.
                 let end = self
@@ -359,16 +367,21 @@ impl AgentSession {
         Err(AgentError::Provider(fatal))
     }
 
-    /// The durable trace of a rejected call (#256): a system entry carrying
-    /// the provider's status and body.
+    /// The durable trace of a rejected call (#256): a diagnostic record
+    /// carrying the provider's status and body.
     fn record_rejection(&self, e: &crate::provider::ProviderError) -> Result<(), AgentError> {
-        if let crate::provider::ProviderError::Status { status, body } = e {
-            self.append(
-                EntryKind::System,
-                serde_json::json!({ "note": "provider rejection", "status": status, "body": body }),
-            )
-        } else {
-            Ok(())
+        match e {
+            crate::provider::ProviderError::Status { status, body } => {
+                self.diagnostic(&Diagnostic::ProviderRejected {
+                    status: *status,
+                    body: bounded_head(body, REJECTION_BODY_CAP),
+                })
+            }
+            // A dead stream or a transport failure is the turn's error to
+            // surface; the record channel carries what the provider answered.
+            crate::provider::ProviderError::Request(_)
+            | crate::provider::ProviderError::IdleTimeout
+            | crate::provider::ProviderError::MalformedStream(_) => Ok(()),
         }
     }
 

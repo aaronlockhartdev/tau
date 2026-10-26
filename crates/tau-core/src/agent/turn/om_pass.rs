@@ -1,4 +1,5 @@
 use crate::agent::{AgentError, AgentSession, Inner, SessionStore, TurnProviderRef};
+use tau_protocol::Diagnostic;
 /// The OM model to use: the configured OM model, or the session's model when
 /// it is empty (spec §4).
 fn resolve_om_model(om_model: &str, model: &str) -> String {
@@ -148,7 +149,53 @@ impl AgentSession {
                 }
             }
         }
+        // A pass that leaves the window at or past activation is a fact the
+        // harness has to be able to see afterwards (ADR-0034): it is the
+        // condition that ends in a provider cutoff.
+        self.record_om_stall();
         Ok(())
+    }
+    /// Record the stalled-window fact when a completed pass left the unobserved
+    /// window at or past the activation threshold: OM runs but can no longer
+    /// keep the prompt inside what it has observed (ADR-0034). Once per run —
+    /// `om_stall_recorded` mirrors the record, so a restart re-records the
+    /// stall it resumes into instead of re-scanning the log.
+    fn record_om_stall(&self) {
+        let stalled = {
+            let mut guard = self
+                .inner
+                .lock()
+                .expect("agent inner: no panic while the lock is held");
+            let Inner {
+                om,
+                store,
+                om_stall_recorded,
+                ..
+            } = &mut *guard;
+            let Some(om) = om.as_mut() else {
+                return;
+            };
+            let Ok(unobserved) = om.unobserved(store) else {
+                return;
+            };
+            let pending = om.pending_tokens(&unobserved);
+            let activation = om
+                .config
+                .observe_threshold_for(om.record.observation_tokens);
+            if !om.activation_reached(pending) || *om_stall_recorded {
+                return;
+            }
+            *om_stall_recorded = true;
+            (pending, activation)
+        };
+        if let Err(e) = self.diagnostic(&Diagnostic::OmStalled {
+            pending: u64::from(stalled.0),
+            activation: u64::from(stalled.1),
+        }) {
+            // The record is the source of truth; a failed append is itself
+            // the fact worth knowing, and must not kill the turn.
+            tracing::warn!("om: the stalled-window record failed to append: {e}");
+        }
     }
     /// The mid-episode interval-boundary trigger (ticket #86 P2, D3/D4):
     /// runs after each tool round — the moment new unobserved tokens

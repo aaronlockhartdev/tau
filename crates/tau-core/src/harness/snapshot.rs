@@ -264,19 +264,24 @@ impl Core {
     }
 }
 /// The entry tree's one-line preview: the entry's first text line, cut at
-/// 80 chars (the snapshot carries previews, never payloads, spec §8). A
-/// tool's call-phase entry (recorded before dispatch, no output yet) falls
-/// back to the tool's name.
+/// 80 chars (the snapshot carries previews, never payloads, spec §8). The
+/// kind decides where that text lives; a diagnostic's sentence is composed in
+/// the GUI from typed fields, so its preview is the code name (ADR-0034).
 pub(crate) fn preview(entry: &Entry) -> String {
-    let text = entry
-        .payload
-        .get("text")
-        .or_else(|| entry.payload.get("note"))
-        .or_else(|| entry.payload.get("state"))
-        .or_else(|| entry.payload.get("output"))
-        .or_else(|| entry.payload.get("name"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let text = match &entry.kind {
+        EntryKind::Diagnostic => entry.payload.get("code").and_then(Value::as_str),
+        // A tool's call-phase entry (recorded before dispatch, no output yet)
+        // falls back to the tool's name.
+        _ => entry
+            .payload
+            .get("text")
+            .or_else(|| entry.payload.get("note"))
+            .or_else(|| entry.payload.get("state"))
+            .or_else(|| entry.payload.get("output"))
+            .or_else(|| entry.payload.get("name"))
+            .and_then(Value::as_str),
+    }
+    .unwrap_or_default();
     let first = text.lines().next().unwrap_or_default();
     let mut out: String = first.chars().take(80).collect();
     if first.len() > 80 {
@@ -316,41 +321,15 @@ pub(crate) fn usage_of(value: &Value) -> Option<Usage> {
     })
 }
 
-/// The quiet entry a model change appends: `model: <old> → <new>` (the
-/// first change of a session that had no model records `model: <new>`).
-pub(crate) fn model_note(old: Option<&str>, new: &str) -> String {
-    match old {
-        Some(o) => format!("model: {o} → {new}"),
-        None => format!("model: {new}"),
-    }
-}
-
-/// The session's current model from its file: the last `model:` note on the
-/// active branch (a closed session's header carries no model, so the quiet
-/// entries are the record).
-pub(crate) fn last_model_note(store: &mut SessionStore) -> Option<String> {
-    let entries: Vec<Entry> = store
-        .entries_range_cached(0, usize::MAX)
-        .ok()?
-        .into_iter()
-        .map(|(e, _)| e)
-        .collect();
-    let leaf = store.leaf_cached().ok()?.map(|e| e.id);
-    crate::om_integration::branch_entries(&entries, leaf.as_deref())
-        .iter()
-        .rev()
-        .find(|e| {
-            e.kind == EntryKind::System
-                && e.payload
-                    .get("note")
-                    .and_then(|n| n.as_str())
-                    .is_some_and(|n| n.starts_with("model: "))
-        })
-        .and_then(|e| {
-            let n = e.payload.get("note")?.as_str()?;
-            let rest = n.strip_prefix("model: ")?;
-            Some(rest.rsplit(" → ").next()?.to_owned())
-        })
+/// The model the record names as current: the last `model_changed` on the
+/// active branch (a closed session's header carries no model, so the record
+/// is the only trace — ADR-0034). Pre-#306 sessions are read through the
+/// projection's frozen shim.
+pub(crate) fn recorded_model(store: &mut SessionStore) -> Option<String> {
+    crate::diagnostics::project_store(store)
+        .ok()
+        .flatten()
+        .and_then(|record| record.model)
 }
 
 pub(crate) fn delete_session_files(cwd: &Path, session: &str) {

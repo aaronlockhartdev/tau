@@ -2,6 +2,22 @@ use super::*;
 
 use crate::harness::testkit::*;
 
+/// A session file's records, in append order.
+fn facts_in(file: &str) -> Vec<Diagnostic> {
+    file.lines()
+        .filter_map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).ok()?;
+            (v.get("type")?.as_str()? == "diagnostic")
+                .then(|| v.get("payload").and_then(Diagnostic::from_value))
+                .flatten()
+        })
+        .collect()
+}
+
+fn session_file(cwd: &Path, id: &str) -> String {
+    std::fs::read_to_string(cwd.join(".tau/sessions").join(format!("{id}.jsonl"))).unwrap()
+}
+
 /// `SessionNew`'s explicit title takes the rename's cap (the GUI always
 /// passes null, but the protocol is open): over the cap is refused
 /// before the session file is created, at the cap it is accepted.
@@ -209,24 +225,21 @@ async fn session_set_model_updates_the_live_meta_and_records_the_change() {
         other => panic!("expected snapshot: {other:?}"),
     };
     assert_eq!(snap.session.model.as_deref(), Some("other/model"));
-    let file = std::fs::read_to_string(
-        cwd.path()
-            .join(".tau/sessions")
-            .join(format!("{}.jsonl", live.id)),
-    )
-    .unwrap();
-    let notes: Vec<String> = file
-        .lines()
-        .filter_map(|l| {
-            let v: serde_json::Value = serde_json::from_str(l).ok()?;
-            if v.get("type")?.as_str()? == "system" {
-                v.get("payload")?.get("note")?.as_str().map(str::to_owned)
-            } else {
-                None
-            }
-        })
-        .collect();
-    assert_eq!(notes, vec![format!("model: {old} → other/model")]);
+    let facts = facts_in(&session_file(cwd.path(), &live.id));
+    assert_eq!(
+        facts,
+        vec![
+            Diagnostic::ModelChanged {
+                from: Some(old),
+                to: "other/model".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "other/model".into(),
+                missing: vec!["context_window".into(), "max_tokens".into()],
+            },
+        ],
+        "the change, then the gate its facts cannot compute"
+    );
 }
 
 #[tokio::test]
@@ -248,25 +261,105 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
         model: "m/new".into(),
     })
     .unwrap();
-    // The quiet entry is the record: the same model again is a no-op.
     core.dispatch(Command::SessionSetModel {
         session: id.clone(),
         model: "m/new".into(),
     })
     .unwrap();
-    let file =
-        std::fs::read_to_string(cwd.path().join(".tau/sessions").join(format!("{id}.jsonl")))
+    // The quiet entry is the record: the same model again is a no-op.
+    let facts = facts_in(&session_file(cwd.path(), &id));
+    assert_eq!(
+        facts,
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "m/new".into(),
+        }],
+        "one record, naming no predecessor"
+    );
+}
+
+#[tokio::test]
+async fn a_session_written_before_the_records_gains_one_baseline_at_open() {
+    // The migration path (ADR-0034): an old file is not re-interpreted. The
+    // first open states the model it runs and the gate its facts leave out;
+    // every later open reads those records and states nothing new.
+    let core = CoreBuilder::custom(providers()).build().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let id = SessionStore::new_session_id();
+    {
+        let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+        store.create().unwrap();
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
             .unwrap();
-    let notes: Vec<String> = file
-        .lines()
-        .filter_map(|l| {
-            let v: serde_json::Value = serde_json::from_str(l).ok()?;
-            (v.get("type")?.as_str()? == "system")
-                .then(|| v.get("payload")?.get("note")?.as_str().map(str::to_owned))
-                .flatten()
+    }
+    for _ in 0..2 {
+        core.dispatch(Command::SessionOpen {
+            session: id.clone(),
         })
-        .collect();
-    assert_eq!(notes, vec!["model: m/new".to_owned()]);
+        .unwrap();
+        core.dispatch(Command::SessionClose {
+            session: id.clone(),
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &id)),
+        vec![
+            Diagnostic::ModelChanged {
+                from: None,
+                to: "model".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "model".into(),
+                missing: vec!["context_window".into(), "max_tokens".into()],
+            },
+        ],
+        "two opens, one pair of records"
+    );
+}
+
+#[tokio::test]
+async fn a_model_that_declares_its_facts_records_no_gate_gap() {
+    // The negative half: declared Model facts make the gate computable, so the
+    // open states the model and nothing about the gate.
+    let mut facts = std::collections::BTreeMap::new();
+    facts.insert(
+        "model".into(),
+        crate::config::ModelDef {
+            context_window: Some(131_072),
+            max_tokens: Some(16_384),
+            ..Default::default()
+        },
+    );
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider.models = facts;
+    let mut providers = std::collections::BTreeMap::new();
+    providers.insert("dev".into(), provider);
+    let core = CoreBuilder::custom(providers).build().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let id = SessionStore::new_session_id();
+    {
+        let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+        store.create().unwrap();
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
+    core.dispatch(Command::SessionOpen {
+        session: id.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &id)),
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "model".into(),
+        }],
+        "a gated model records no gate gap"
+    );
 }
 
 #[tokio::test]

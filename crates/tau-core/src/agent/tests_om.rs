@@ -1,6 +1,21 @@
 use super::*;
 
 use crate::agent::testkit::*;
+use tau_protocol::Diagnostic;
+
+/// The `om_stalled` records a session file holds.
+fn stalled_in(dir: &std::path::Path) -> Vec<Diagnostic> {
+    let mut store = SessionStore::for_workspace(dir, "s1");
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Diagnostic)
+        .filter_map(|e| Diagnostic::from_value(&e.payload))
+        .filter(|d| matches!(d, Diagnostic::OmStalled { .. }))
+        .collect()
+}
 
 /// End-to-end OM (the ticket's acceptance bar): synthesized raw entries
 /// cross the observe threshold, the canned Observer fills the log past
@@ -384,6 +399,12 @@ async fn context_gate_fires_when_over_budget() {
         "raw window is empty after the gate: {:?}",
         seen[1].1
     );
+    // The window came back inside activation, so the stall stays unrecorded:
+    // the record is for what compaction could not fix (ADR-0034).
+    assert!(
+        stalled_in(dir.path()).is_empty(),
+        "a repaired window records no stall"
+    );
 }
 
 /// Context gate (ticket #210): a prompt under the safe budget does not
@@ -519,5 +540,12 @@ async fn context_gate_degraded_when_still_over_budget() {
             .is_some_and(|s| s.starts_with("be terse")),
         "main call: {:?}",
         seen[1].0
+    );
+    // Degraded is not silent (ADR-0034): the pass ran and the window stayed
+    // past activation, and that stays readable afterwards.
+    assert_eq!(
+        stalled_in(dir.path()).len(),
+        1,
+        "the stalled window is recorded once"
     );
 }

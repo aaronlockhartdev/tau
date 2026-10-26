@@ -105,16 +105,19 @@ fn omless_agent(
     })
 }
 
+/// The provider's rejection of a request, as the session recorded it.
 fn recorded_400(store: &SessionStore, want_body: &str) -> bool {
     entries_of(store).iter().any(|e| {
-        e.kind == EntryKind::System && e.payload["status"] == 400 && e.payload["body"] == want_body
+        e.kind == EntryKind::Diagnostic
+            && e.payload["status"] == 400
+            && e.payload["body"] == want_body
     })
 }
 
 /// #255 leg 2: the gate's blind spot — the prompt is over the safe budget
 /// and there is no unobserved material to compact (OM off). The turn is
 /// refused loudly before the provider is called: no doomed 400 on the
-/// wire, and the refusal leaves a durable system entry.
+/// wire, and the refusal leaves a durable diagnostic record.
 #[tokio::test]
 async fn over_budget_without_unobserved_material_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -135,17 +138,17 @@ async fn over_budget_without_unobserved_material_is_refused() {
     );
     // The provider was never called: the refusal is pre-wire.
     assert!(provider.seen().lock().unwrap().is_empty());
-    // The refusal is durable: a system entry with prompt > budget. The
+    // The refusal is durable: a diagnostic record with prompt > budget. The
     // agent moved the store, so re-open the workspace file to inspect it.
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     let entries = entries_of(&reopened);
     assert!(
         entries.iter().any(|e| {
-            e.kind == EntryKind::System
+            e.kind == EntryKind::Diagnostic
                 && e.payload["prompt"].as_u64().unwrap() > e.payload["budget"].as_u64().unwrap()
         }),
-        "a system entry records the overflow: {entries:?}"
+        "a diagnostic record names the overflow: {entries:?}"
     );
 }
 
@@ -289,4 +292,48 @@ async fn non_context_400_is_not_retried() {
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     assert!(recorded_400(&reopened, &auth_body), "the 400 is recorded");
+}
+
+#[tokio::test]
+async fn a_huge_rejection_body_is_recorded_bounded() {
+    // The record is a durable sink: a proxy's HTML error page lands in the
+    // session file only as its head. The error that propagates keeps all of it.
+    let dir = tempfile::tempdir().unwrap();
+    let page =
+        "<!DOCTYPE html>\n".to_string() + &"<p>gateway rejected the request</p>\n".repeat(2_000);
+    let provider = std::sync::Arc::new(Scripted400::new(vec![(400, page.clone())]));
+    let agent = omless_agent(
+        session_in(dir.path()),
+        provider.clone(),
+        over_budget_turn(),
+        dir.path().to_path_buf(),
+    );
+    agent.send("go", Lane::FollowUp);
+
+    let err = agent.process().await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            AgentError::Provider(crate::provider::ProviderError::Status { status: 400, body })
+                if body == &page
+        ),
+        "the caller still sees the whole body: {err:?}"
+    );
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    let recorded = entries_of(&reopened)
+        .into_iter()
+        .find(|e| e.kind == EntryKind::Diagnostic)
+        .expect("a provider_rejected record");
+    let body = recorded.payload["body"].as_str().unwrap_or_default();
+    assert!(
+        body.chars().count() <= super::turn::REJECTION_BODY_CAP + 1,
+        "the record carries a head, not the page: {} chars",
+        body.chars().count()
+    );
+    assert!(body.ends_with('…'), "the cut is marked");
+    assert!(
+        page.starts_with(body.strip_suffix('…').unwrap_or_default()),
+        "the head is the page's head"
+    );
 }

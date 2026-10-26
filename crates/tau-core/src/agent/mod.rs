@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 #[cfg(test)]
-pub(crate) use tau_protocol::EntryKind;
+pub(crate) use tau_protocol::{Diagnostic, EntryKind};
 
 /// A message lane (spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +98,38 @@ pub struct TurnConfig {
     pub image_max_pixels: Option<u64>,
 }
 
+/// The framing margin the context gate keeps against the model's declared
+/// window (spec §4): the system prompt, the tool schemas, the request envelope.
+const CONTEXT_GATE_MARGIN: u32 = 4096;
+
+impl TurnConfig {
+    /// The context gate's safe prompt budget (spec §4): the declared window
+    /// less the output cap and the margin. `None` means the model's facts
+    /// leave no budget computable, which is no gate at all (ADR-0034).
+    #[must_use]
+    pub(crate) fn context_gate_budget(&self) -> Option<u32> {
+        self.context_window.and_then(|window| {
+            let output = u32::try_from(self.max_output_tokens?).ok()?;
+            window
+                .checked_sub(output)
+                .and_then(|rest| rest.checked_sub(CONTEXT_GATE_MARGIN))
+        })
+    }
+    /// Which of the two facts the context gate needs this turn lacks; the
+    /// `gate_unavailable` record names them so the gap is actionable
+    /// (ADR-0034).
+    pub(crate) fn missing_gate_facts(&self) -> Vec<String> {
+        let mut missing = Vec::new();
+        if self.context_window.is_none() {
+            missing.push("context_window".to_owned());
+        }
+        if self.max_output_tokens.is_none() {
+            missing.push("max_tokens".to_owned());
+        }
+        missing
+    }
+}
+
 #[derive(Clone)]
 struct Queued {
     text: String,
@@ -168,6 +200,10 @@ pub(crate) struct Inner {
     /// boundary, ticket #86 P2); lost on restart, where the record's
     /// `last_buffered_at_tokens` takes over.
     pub(crate) om_buffer_boundary: u64,
+    /// Whether this run has already recorded an `om_stalled` fact: the flag
+    /// mirrors the record, so a restart re-records the stall it resumes into
+    /// rather than re-scanning the log (ADR-0034's `LiveState` mirror).
+    pub(crate) om_stall_recorded: bool,
     pub(crate) om_model: String,
     /// The OM-run observer (the app emits the protocol's `om_status` event
     /// from it): core is transport-free, so the hook takes the kind string,
@@ -279,6 +315,7 @@ impl AgentSession {
                 om: p.om,
                 om_inflight: None,
                 om_buffer_boundary: 0,
+                om_stall_recorded: false,
                 om_model: p.om_model,
                 om_status_hook: None,
                 entry_upsert_hook: None,

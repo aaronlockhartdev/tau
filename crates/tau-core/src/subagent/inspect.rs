@@ -151,8 +151,8 @@ pub(crate) fn read_activity(
 /// The raw tail's compact projection: role, the tool's name and verdict,
 /// and a truncated text slice — the GUI renders exactly this.
 fn project_entry(entry: &Entry) -> ActivityEntry {
-    match entry.kind.as_str() {
-        "tool" => {
+    match &entry.kind {
+        EntryKind::Tool => {
             let text = entry
                 .payload
                 .get("output")
@@ -182,7 +182,7 @@ fn project_entry(entry: &Entry) -> ActivityEntry {
                 .unwrap_or("")
                 .to_owned();
             ActivityEntry {
-                role: other.to_owned(),
+                role: other.as_str().to_owned(),
                 tool: None,
                 status: None,
                 text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),

@@ -260,13 +260,30 @@ async fn a_branch_of_a_running_session_is_refused() {
     drop(core);
 }
 
-/// The entries a `canned_body()` turn records: user, the assistant with its
-/// The entries a `canned_body()` turn records: user, the assistant with its
-/// one bash call, and the tool result.
+/// The conversation entries a `canned_body()` turn records: user, the
+/// assistant with its one bash call, and the tool result. `diagnostic`
+/// records are excluded: these guards watch for fabricated *turns*, and a
+/// diagnostic record is bookkeeping, not a turn (ADR-0034).
 fn entry_count(cwd: &Path, session: &str) -> usize {
     let mut store = SessionStore::for_workspace(cwd, session);
     store.open().unwrap();
-    store.entries_range(0, usize::MAX).unwrap().len()
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind != EntryKind::Diagnostic)
+        .count()
+}
+
+fn diagnostic_count(cwd: &Path, session: &str) -> usize {
+    let mut store = SessionStore::for_workspace(cwd, session);
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Diagnostic)
+        .count()
 }
 
 /// Bounded wait for a session's turn flag to clear (past the deadline the
@@ -408,6 +425,11 @@ async fn a_healthy_reopen_mints_nothing() {
     .unwrap();
     wait_settled(&core, &session_id).await;
     let healthy = entry_count(Path::new(&workspace.cwd), &session_id);
+    assert_eq!(
+        diagnostic_count(Path::new(&workspace.cwd), &session_id),
+        0,
+        "a session that ran with no model record mints nothing mid-run"
+    );
     core.dispatch(Command::SessionClose {
         session: session_id.clone(),
     })
@@ -419,7 +441,12 @@ async fn a_healthy_reopen_mints_nothing() {
     assert_eq!(
         entry_count(Path::new(&workspace.cwd), &session_id),
         healthy,
-        "the healthy file is untouched by the repair"
+        "the healthy file gains no conversation entry"
+    );
+    assert_eq!(
+        diagnostic_count(Path::new(&workspace.cwd), &session_id),
+        2,
+        "the reopen records the model it opens on, and that its facts leave no gate"
     );
     drop(core);
 }

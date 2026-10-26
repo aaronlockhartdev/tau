@@ -29,7 +29,7 @@ use tau_core::subagent::{
 };
 use tau_core::tools;
 use tau_mock_llm::server::MODEL_ID;
-use tau_protocol::EntryKind;
+use tau_protocol::{Diagnostic, EntryKind};
 
 mod tests_accept;
 

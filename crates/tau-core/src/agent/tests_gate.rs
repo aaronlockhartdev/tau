@@ -41,12 +41,19 @@ fn write_call(id: &str, path: &str) -> (String, String, String) {
     )
 }
 
-/// The system entries a turn recorded (the gate's failure record).
-fn system_notes(agent: &AgentSession) -> Vec<String> {
+/// The completion-gate records a run wrote, decoded back to typed facts
+/// (ADR-0034).
+fn gate_records(agent: &AgentSession) -> Vec<Diagnostic> {
     entries_of(&agent.inner.lock().unwrap().store)
         .into_iter()
-        .filter(|e| e.kind == EntryKind::System)
-        .filter_map(|e| e.payload["note"].as_str().map(str::to_owned))
+        .filter(|e| e.kind == EntryKind::Diagnostic)
+        .filter_map(|e| Diagnostic::from_value(&e.payload))
+        .filter(|f| {
+            matches!(
+                f,
+                Diagnostic::GateAttempt { .. } | Diagnostic::GateFailed { .. }
+            )
+        })
         .collect()
 }
 
@@ -68,7 +75,7 @@ async fn a_passing_gate_stands_the_turn() {
     // Two LLM calls (the tool round + the final), no repair bounce.
     assert_eq!(provider.seen.lock().unwrap().len(), 2);
     assert!(!agent.gate_failed());
-    assert!(system_notes(&agent).is_empty(), "a pass records nothing");
+    assert!(gate_records(&agent).is_empty(), "a pass records nothing");
     // The check is stated in the system prompt (the design: the model knows
     // what "done" is verified against).
     let seen = provider.seen.lock().unwrap();
@@ -98,9 +105,18 @@ async fn a_failing_gate_bounces_a_repair_that_passes() {
     assert_eq!(provider.seen.lock().unwrap().len(), 4);
     assert!(!agent.gate_failed(), "a pass on repair clears the gate");
     // One failure record (the first check); the pass records nothing.
-    let notes = system_notes(&agent);
-    assert_eq!(notes.len(), 1, "one failure record: {notes:?}");
-    assert!(notes[0].contains("failed"));
+    let records = gate_records(&agent);
+    assert_eq!(
+        records.len(),
+        1,
+        "one failed check is recorded: {records:?}"
+    );
+    assert!(
+        matches!(&records[0], Diagnostic::GateAttempt { command, retries: 1, .. }
+            if command == "test -f fixed.txt"),
+        "the record names the check that failed: {:?}",
+        records[0]
+    );
 }
 
 #[tokio::test]
@@ -125,10 +141,19 @@ async fn an_always_failing_gate_exhausts_retries_and_marks_gate_failed() {
     // Four LLM calls: the initial + one repair, then the turn ends.
     assert_eq!(provider.seen.lock().unwrap().len(), 4);
     assert!(agent.gate_failed(), "retries exhausted → gate_failed");
-    // Two records: the first failure and the final (retries-exhausted) note.
-    let notes = system_notes(&agent);
-    assert_eq!(notes.len(), 2, "two records: {notes:?}");
-    assert!(notes[1].contains("gate_failed"), "final note: {notes:?}");
+    // Two records: the failed check, then the exhaustion.
+    let records = gate_records(&agent);
+    assert_eq!(
+        records.len(),
+        2,
+        "the check and the exhaustion: {records:?}"
+    );
+    assert!(
+        matches!(&records[1], Diagnostic::GateFailed { command, retries: 1 }
+            if command == "false"),
+        "the exhaustion record names the check and the repairs spent: {:?}",
+        records[1]
+    );
 }
 
 #[tokio::test]
@@ -150,7 +175,7 @@ async fn a_question_ending_skips_the_gate() {
     // Two LLM calls: the gate is skipped, so no repair bounce.
     assert_eq!(provider.seen.lock().unwrap().len(), 2);
     assert!(!agent.gate_failed());
-    assert!(system_notes(&agent).is_empty(), "a skip records nothing");
+    assert!(gate_records(&agent).is_empty(), "a skip records nothing");
 }
 
 #[tokio::test]
@@ -169,7 +194,10 @@ async fn a_no_tool_turn_is_not_gated() {
     // One LLM call: the gate is not run, so no repair.
     assert_eq!(provider.seen.lock().unwrap().len(), 1);
     assert!(!agent.gate_failed());
-    assert!(system_notes(&agent).is_empty());
+    assert!(
+        gate_records(&agent).is_empty(),
+        "an ungated turn records nothing"
+    );
 }
 
 #[tokio::test]

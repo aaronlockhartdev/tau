@@ -2,7 +2,7 @@ use super::{AgentError, AgentSession, OmStatusHook, PlanStateHook, QueueEventHoo
 use crate::provider::ToolSpec;
 use crate::session::{EntryEventHook, SessionStore};
 use serde_json::Value;
-use tau_protocol::EntryKind;
+use tau_protocol::{Diagnostic, EntryKind};
 
 impl AgentSession {
     /// The session store's header timestamp (epoch ms).
@@ -111,6 +111,19 @@ impl AgentSession {
     /// lifecycle records, ticket #23).
     pub(crate) fn append_entry(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
         self.append(kind, payload)
+    }
+    /// Record a diagnostic fact about this session (ADR-0034). This is the
+    /// only writer of the channel: the entry is the durable record the GUI,
+    /// a closed session, and a restarted harness all read, and the log line
+    /// beside it is a mirror, never the source.
+    pub(crate) fn diagnostic(&self, fact: &Diagnostic) -> Result<(), AgentError> {
+        match fact {
+            Diagnostic::ModelChanged { .. } => {
+                tracing::info!(code = fact.code(), "session diagnostic");
+            }
+            other => tracing::warn!(code = other.code(), "session diagnostic"),
+        }
+        self.append_entry(EntryKind::Diagnostic, fact.to_value())
     }
 
     pub(crate) fn model(&self) -> String {
