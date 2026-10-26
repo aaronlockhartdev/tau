@@ -8,9 +8,10 @@ use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
     Mutex, OmStatusKind, Ordering, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
-    TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, recorded_model, tools,
+    TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, tools,
 };
 use crate::config::ToolBatchPolicy;
+use crate::diagnostics::Diagnostics;
 use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
@@ -237,7 +238,7 @@ impl AgentSession {
             }
             None => (d.system_prompt.clone(), None),
         };
-        let gate_failed = resume_gate_failed(&mut store)?;
+        let gate_failed = open_facts(&mut store)?.is_some_and(|f| f.gate_failed);
         let agent = Arc::new(Self::new(SessionParams {
             store,
             system_prompt,
@@ -274,21 +275,31 @@ fn wire_plan_hook(agent: &AgentSession, core: Option<Arc<Core>>, sid: &str) {
     }
 }
 
+/// What the session file already says, in one walk: `None` when the session
+/// has no entries yet, so there is nothing to have changed.
+fn open_facts(store: &mut SessionStore) -> Result<Option<Diagnostics>, ProtocolError> {
+    crate::diagnostics::project_store(store).map_err(|e| ProtocolError::Other {
+        message: e.to_string(),
+    })
+}
+
 /// Record the model a session opens with, and whether a context gate exists
 /// for it (ADR-0034). The effective model is the config's whenever the record
 /// names none, so this is where a config-level model change — invisible in the
 /// file before this ticket — leaves a record. A model whose declared facts
 /// leave no gate is recorded once per model, never once per request.
+/// `facts` is what the record already said, from [`open_facts`].
 fn record_model_at_open(
     store: &mut SessionStore,
+    facts: Option<&Diagnostics>,
     model: &str,
     turn: &TurnConfig,
 ) -> Result<(), ProtocolError> {
+    let Some(facts) = facts else {
+        return Ok(()); // a fresh session has nothing to have changed
+    };
     let fail = |e: crate::session::Error| ProtocolError::Other {
         message: e.to_string(),
-    };
-    let Some(record) = crate::diagnostics::project_store(store).map_err(fail)? else {
-        return Ok(()); // a fresh session has nothing to have changed
     };
     // Each record hangs off the one before it: the branch stays linear, so a
     // later open projects the pair, not one record and an orphaned sibling.
@@ -299,13 +310,13 @@ fn record_model_at_open(
             .map(|_| ())
             .map_err(fail)
     };
-    if record.model.as_deref() != Some(model) {
+    if facts.model.as_deref() != Some(model) {
         record_fact(Diagnostic::ModelChanged {
-            from: record.model.clone(),
+            from: facts.model.clone(),
             to: model.to_owned(),
         })?;
     }
-    if turn.context_gate_budget().is_none() && record.gate_unavailable_for.as_deref() != Some(model)
+    if turn.context_gate_budget().is_none() && facts.gate_unavailable_for.as_deref() != Some(model)
     {
         record_fact(Diagnostic::GateUnavailable {
             model: model.to_owned(),
@@ -313,14 +324,6 @@ fn record_model_at_open(
         })?;
     }
     Ok(())
-}
-
-/// The gate state a reopened session resumes from the record (spec §5.3):
-/// the newest terminal gate outcome on the branch.
-fn resume_gate_failed(store: &mut SessionStore) -> Result<bool, ProtocolError> {
-    crate::gate::initial_gate_failed(store).map_err(|e| ProtocolError::Other {
-        message: e.to_string(),
-    })
 }
 
 /// The plan wiring the supervisor-linked roles share (design: the plan
@@ -378,9 +381,15 @@ fn root_session(
                 message: format!("provider {name} has no models"),
             })?
     };
-    // A session that picked a model (session_set_model) keeps it across close
-    // and re-open: the record names it (a session with none takes the default).
-    let model = recorded_model(&mut store).unwrap_or(model);
+    // One projection of the session file answers every question the open
+    // asks (spec §8): the model it last named — a session that picked one
+    // keeps it across close and re-open, a session with none takes the config
+    // default — the gate state to resume, and the records this open owes.
+    let facts = open_facts(&mut store)?;
+    let model = facts
+        .as_ref()
+        .and_then(|f| f.model.clone())
+        .unwrap_or(model);
     // The turn's provider options (spec §12, #35): resolved from the
     // merged config + this model's facts, once, at registration.
     let turn = derive_turn(config, first, &model, store.id());
@@ -392,8 +401,8 @@ fn root_session(
     let record = OmState::load_record(&mut store).map_err(|e| ProtocolError::Other {
         message: e.to_string(),
     })?;
-    let gate_failed = resume_gate_failed(&mut store)?;
-    record_model_at_open(&mut store, &model, &turn)?;
+    let gate_failed = facts.as_ref().is_some_and(|f| f.gate_failed);
+    record_model_at_open(&mut store, facts.as_ref(), &model, &turn)?;
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.

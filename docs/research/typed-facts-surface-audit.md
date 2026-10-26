@@ -64,10 +64,21 @@ Deliberately left alone, so the audit does not become a licence to enum-ify ever
 
 | Ticket | Classes | Blast radius |
 | --- | --- | --- |
-| #306 (open) | 2 (three sites), 4 (`gate_failed` derivation), 5 | protocol + core + GUI |
+| #306 (implemented on this branch) | 2 (three sites), 4 (`gate_failed` derivation), 5 | protocol + core + GUI |
 | `StreamEnd` + `stop_reason` + `SseEvent` | 1, 3 | provider, turn loop, GUI badge |
 | Model facts resolved total + semantic config validation | 3 | config, harness, GUI warning |
 | Protocol de-flattening: `StateView`, `ActivityEntry`/`ActivityGroup`, `ContentBlock`, `ToolStatus` | 1 | tau-protocol, subagent projections, TS mirror |
 | Render-don't-store: OM group headings and boundary markers | 2 | om_integration, session fixtures |
 | Tool surface typing: `ToolTarget`, `ToolError`, `append(impl Serialize)`, `preview()` arms | 2, 4 | tools, harness, ACP mapper |
 | Wire goldens per protocol type + unknown-variant arms | 5 | tests, TS mirror |
+
+## Left open by #306
+
+- The audit channel pushed two harness files past the soft size limit:
+  `harness/launch.rs` (711 LOC) and `harness/dispatch_sessions.rs` (628).
+  `session/mod.rs` (1156) was already over the hard limit before this ticket.
+  They want a split alongside the next harness change, not a drive-by in the
+  middle of a typing migration.
+- `StreamEnd` is a protocol type with no writer yet: no `turn_cutoff` record is
+  emitted until the provider reports how the stream ended. That is the silent
+  stop the diagnosis started from, and it is the next ticket.

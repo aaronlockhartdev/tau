@@ -139,17 +139,6 @@ pub fn with_section(prompt: &mut String, gates: &Option<crate::config::Gates>) {
     }
 }
 
-/// The gate state a reopened session resumes (spec §5.3): the record is the
-/// single source of truth, so the state is derived through the diagnostic
-/// projection, never stored a second time. A pass records nothing, so a
-/// terminal gate failure on the active branch is the latest recorded outcome
-/// (ADR-0034).
-pub(crate) fn initial_gate_failed(
-    store: &mut crate::session::SessionStore,
-) -> Result<bool, crate::session::Error> {
-    Ok(crate::diagnostics::project_store(store)?.is_some_and(|d| d.gate_failed))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
