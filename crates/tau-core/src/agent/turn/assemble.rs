@@ -42,12 +42,16 @@ pub(super) fn with_plan_state(mut instructions: String, plan: Option<&str>) -> S
     }
     instructions
 }
+
 /// One assembly's parts together with the branch they were read from. The
 /// entries travel with the items so the prompt estimate can anchor on the last
 /// request's provider count and price only what was appended after it (plan
-/// §6.9); `om_items` counts what the observation state contributed, since a
-/// compaction replaces raw entries with observed ones.
+/// §6.9); `om_items` marks how many leading items the observation state
+/// contributed, since a compaction replaces raw entries with observed ones.
 pub(super) struct Assembled {
+    /// The model this request addresses, so a value resolved for another model
+    /// fails beside it (plan §6.8).
+    pub model: String,
     pub instructions: String,
     pub items: Vec<InputEntry>,
     pub entries: Vec<Entry>,
@@ -58,7 +62,8 @@ pub(super) struct Assembled {
 }
 
 impl Assembled {
-    /// The entry the request this assembly produces ends at: the branch's leaf.
+    /// The entry the request this assembly produces ends at: the last entry in
+    /// file order, which is the branch's leaf unless a branch adopt reordered it.
     pub fn leaf(&self) -> Option<&str> {
         self.entries.last().map(|e| e.id.as_str())
     }

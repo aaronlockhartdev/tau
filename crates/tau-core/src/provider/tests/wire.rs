@@ -175,7 +175,7 @@ fn prompt_estimate_counts_image_data_urls_and_text() {
             }),
         ]),
     })];
-    let est = prompt_token_estimate("sys", &input, &[]);
+    let est = prompt_token_estimate("sys", &input, "[]");
     // Bytes over four, rounded up, then the serialization allowance: the 4022-
     // byte URL is 1006, the note 1, the "sys" prompt 1, the empty tool list 1 —
     // 1009, plus a fifth for the request's JSON framing.
@@ -190,7 +190,7 @@ fn prompt_estimate_counts_text_call_outputs() {
         call_id: "c1".into(),
         output: CallOutput::Text("b".repeat(1200)),
     })];
-    let est = prompt_token_estimate("sys", &input, &[]);
+    let est = prompt_token_estimate("sys", &input, "[]");
     // 300 for the result, 1 for the "sys" prompt, 1 for the empty tool list,
     // plus a fifth.
     assert_eq!(est, 302 + 302 / 5);

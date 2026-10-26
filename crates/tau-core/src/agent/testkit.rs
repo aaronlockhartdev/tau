@@ -30,6 +30,17 @@ pub(crate) fn make_agent(dir: &std::path::Path, provider: TurnProviderRef) -> Ar
 }
 
 pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
+    sse_charged(text, calls, Some(1))
+}
+
+/// Like `sse()`, with the provider's charge set: `input_tokens` is the count a
+/// turn anchors its next estimate on (plan §6.9); None omits the usage object,
+/// the stream that reports no counts at all.
+pub(crate) fn sse_charged(
+    text: &str,
+    calls: &[(String, String, String)],
+    input_tokens: Option<u64>,
+) -> String {
     // (name, call_id, arguments-json)
     let mut body = String::new();
     for (name, call_id, args) in calls {
@@ -51,8 +62,16 @@ pub(crate) fn sse(text: &str, calls: &[(String, String, String)]) -> String {
             "data: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\n"
         );
     }
-    body.push_str(
-        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n",
+    let response = match input_tokens {
+        Some(n) => format!(
+            "{{\"usage\":{{\"input_tokens\":{n},\"output_tokens\":1,\"total_tokens\":{}}}}}",
+            n + 1
+        ),
+        None => "{}".to_owned(),
+    };
+    let _ = write!(
+        body,
+        "data: {{\"type\":\"response.completed\",\"response\":{response}}}\n\n",
     );
     body.push_str("data: [DONE]\n\n");
     body

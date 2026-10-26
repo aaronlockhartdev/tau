@@ -4,19 +4,24 @@ use crate::provider::ToolSpec;
 /// What the provider charged for one request the turn sent, held beside the
 /// parts of the assembly it priced: the estimate for the next call anchors on
 /// that count, so only material appended after the anchored request is ever a
-/// guess (spec §4, plan §6.4). The guard fields are what makes the anchor
-/// trustworthy — the count describes the request only while they are unchanged.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// guess (spec §4, plan §6.4). The guard fields carry the identity of what the
+/// count describes, so a stale anchor fails at the read rather than silently
+/// pricing a different prompt (plan §6.8).
+#[derive(Debug, Clone)]
 pub(super) struct PromptAnchor {
+    /// The model that answered, whose tokenizer produced the count. A session's
+    /// model can change while a turn runs.
+    model: String,
     /// The entry the anchored request ended at.
     leaf: String,
-    /// The instructions it carried: the observation log and the plan state live
-    /// here, so a compaction or a re-injection shows up as a change.
+    /// The instructions it carried: the plan state rides here.
     instructions: String,
     /// The tool specs it carried, as serialized.
     tools: String,
-    /// How many items the observation state contributed.
-    om_items: usize,
+    /// The observation items it carried, as serialized. The log rides the
+    /// request's items, not its instructions, and a reflector can rewrite it
+    /// without adding or removing an item, so the content is the guard.
+    om_items: String,
     /// The provider's own `usage.input_tokens` — never an estimate (plan §6.4:
     /// the provider's number is the recorded number).
     input_tokens: u64,
@@ -32,38 +37,47 @@ impl PromptAnchor {
         input_tokens: u64,
     ) -> Option<Self> {
         Some(Self {
+            model: assembled.model.clone(),
             leaf: assembled.leaf()?.to_owned(),
             instructions: assembled.instructions.clone(),
             tools: tools_json.to_owned(),
-            om_items: assembled.om_items,
+            om_items: fingerprint(&assembled.items[..assembled.om_items]),
             input_tokens,
         })
     }
 
     /// This assembly priced from the anchor: the provider's count plus the
     /// estimate for the entries appended since. None when this is not that
-    /// request with a tail — a compaction, a re-injection, a changed tool
-    /// surface, or a branch that no longer carries the entry it ended at.
+    /// request with a tail — a model switch, a compaction, a re-injection, a
+    /// changed tool surface, or a branch that no longer carries the entry it
+    /// ended at.
     fn price(&self, assembled: &Assembled, tools_json: &str) -> Option<u32> {
-        if self.instructions != assembled.instructions
+        if self.model != assembled.model
+            || self.instructions != assembled.instructions
             || self.tools != tools_json
-            || self.om_items != assembled.om_items
+            || self.om_items != fingerprint(&assembled.items[..assembled.om_items])
         {
             return None;
         }
         let tail = assembled.tail_after(&self.leaf)?;
         let items = input_items(tail, assembled.parent_session.as_deref());
         let delta = u64::from(crate::provider::items_token_estimate(&items));
-        // A prompt beyond u32::MAX is a prompt over any declared window: the
-        // gate reads the ceiling as "refuse", which is the honest answer.
-        u32::try_from(self.input_tokens.saturating_add(delta)).ok()
+        // A count beyond u32::MAX describes a prompt over any declared window,
+        // so it reads as the ceiling and the gate refuses. Falling back to the
+        // whole-prompt estimate here would under-state the one prompt that most
+        // needs refusing (plan §6.4's failure mode).
+        Some(u32::try_from(self.input_tokens.saturating_add(delta)).unwrap_or(u32::MAX))
     }
 }
 
 /// The tool specs as the request serializes them — computed once per call so
-/// the anchor's comparison and the estimate read the same string.
+/// the anchor compares the same string the whole-prompt estimate prices.
 pub(super) fn tool_fingerprint(tools: &[ToolSpec]) -> String {
-    serde_json::to_string(tools).unwrap_or_default()
+    fingerprint(tools)
+}
+
+fn fingerprint<T: serde::Serialize + ?Sized>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }
 
 /// The prompt's size for the gate and the output clamp: anchored when an anchor
@@ -72,12 +86,15 @@ pub(super) fn tool_fingerprint(tools: &[ToolSpec]) -> String {
 pub(super) fn prompt_size(
     anchor: Option<&PromptAnchor>,
     assembled: &Assembled,
-    tools: &[ToolSpec],
     tools_json: &str,
 ) -> u32 {
     anchor
         .and_then(|a| a.price(assembled, tools_json))
         .unwrap_or_else(|| {
-            crate::provider::prompt_token_estimate(&assembled.instructions, &assembled.items, tools)
+            crate::provider::prompt_token_estimate(
+                &assembled.instructions,
+                &assembled.items,
+                tools_json,
+            )
         })
 }

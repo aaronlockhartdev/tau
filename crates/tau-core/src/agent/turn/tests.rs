@@ -319,6 +319,7 @@ fn a_diagnostic_record_costs_no_context() {
 
 fn assembled(instructions: &str, entries: Vec<Entry>) -> Assembled {
     Assembled {
+        model: "test-model".to_owned(),
         instructions: instructions.to_owned(),
         items: input_items(&entries, None),
         entries,
@@ -344,6 +345,20 @@ fn grew_by(entries: Vec<Entry>, output: &str) -> Assembled {
     assembled("sys", later)
 }
 
+/// An assembly whose request also carried an observation log: the log rides the
+/// request's items, ahead of the entry items (plan §6.9).
+fn observed(mut a: Assembled, log: &str) -> Assembled {
+    a.items.insert(
+        0,
+        InputEntry::Message(crate::provider::InputMessage {
+            role: "system".to_owned(),
+            content: log.to_owned(),
+        }),
+    );
+    a.om_items = 1;
+    a
+}
+
 #[test]
 fn an_anchored_prompt_prices_only_what_was_appended() {
     let tools = tool_fingerprint(NO_TOOLS);
@@ -351,21 +366,10 @@ fn an_anchored_prompt_prices_only_what_was_appended() {
     let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
     let next = grew_by(history(), &"y".repeat(400));
     // The provider's 9,000 plus the one new 400-byte output — 100 tokens with
-    // the framing allowance — and nothing for history already counted.
-    assert_eq!(prompt_size(Some(&anchor), &next, NO_TOOLS, &tools), 9_120);
-    // The same tail on a branch with no long history prices the same: the
-    // provider's count, not a guess over the history, carries the weight.
-    let brief = vec![tool_entry("t1", "c1", "ok")];
-    let brief_anchor = PromptAnchor::after_call(&assembled("sys", brief.clone()), &tools, 9_000)
-        .expect("a branch anchors");
+    // the framing allowance — and nothing for the history already counted.
     assert_eq!(
-        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
-        prompt_size(
-            Some(&brief_anchor),
-            &grew_by(brief, &"y".repeat(400)),
-            NO_TOOLS,
-            &tools
-        ),
+        prompt_size(Some(&anchor), &next, &tools),
+        9_120,
         "history the provider already counted was guessed again"
     );
 }
@@ -378,8 +382,8 @@ fn a_reinjected_plan_state_drops_the_anchor() {
     let mut next = grew_by(history(), "later");
     next.instructions = "sys\n\n- [ ] the watcher's plan state".to_owned();
     assert_eq!(
-        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
-        prompt_size(None, &next, NO_TOOLS, &tools),
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
         "an injected plan state leaves the anchored count describing a different prompt"
     );
 }
@@ -400,8 +404,8 @@ fn a_changed_tool_surface_drops_the_anchor() {
         parameters: Value::Object(serde_json::Map::new()),
     }]);
     assert_eq!(
-        prompt_size(Some(&anchor), &next, &[], &tools),
-        prompt_size(None, &next, &[], &tools),
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
         "a tool added mid-session is prompt material the anchored count never carried"
     );
 }
@@ -414,8 +418,8 @@ fn a_compaction_that_ate_the_anchored_entry_drops_the_anchor() {
     // The compaction replaced the raw history the request ended at.
     let next = assembled("sys\n\n[observed]", vec![tool_entry("t2", "c2", "later")]);
     assert_eq!(
-        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
-        prompt_size(None, &next, NO_TOOLS, &tools),
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
         "a branch that no longer carries the anchored entry has no tail to price"
     );
 }
@@ -428,8 +432,8 @@ fn a_changed_observation_item_drops_the_anchor() {
     let mut next = grew_by(history(), "later");
     next.om_items = 1;
     assert_eq!(
-        prompt_size(Some(&anchor), &next, NO_TOOLS, &tools),
-        prompt_size(None, &next, NO_TOOLS, &tools),
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
         "the observation state contributed an item the anchored request never carried"
     );
 }
@@ -438,4 +442,57 @@ fn a_changed_observation_item_drops_the_anchor() {
 fn a_request_with_no_history_has_no_anchor_to_keep() {
     let empty = assembled("sys", vec![]);
     assert!(PromptAnchor::after_call(&empty, &tool_fingerprint(NO_TOOLS), 10).is_none());
+}
+
+/// A reflector rewrote the log in place: same number of items, different bytes,
+/// so only the content distinguishes the two requests.
+#[test]
+fn a_rewritten_observation_log_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let sent = observed(assembled("sys", history()), "the first observation");
+    let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
+    let next = observed(grew_by(history(), "later"), "the compressed observation");
+    assert_eq!(next.om_items, sent.om_items, "same shape, different bytes");
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "a rewritten log leaves the anchored count describing the old bytes"
+    );
+}
+
+/// The log untouched and the same shape is not a reason to re-estimate.
+#[test]
+fn an_unchanged_observation_log_keeps_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let sent = observed(assembled("sys", history()), "the observation log");
+    let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
+    let next = observed(grew_by(history(), &"y".repeat(400)), "the observation log");
+    assert_eq!(prompt_size(Some(&anchor), &next, &tools), 9_120);
+}
+
+/// A GUI model switch can land while a turn runs; the anchored count came from
+/// the other model's tokenizer.
+#[test]
+fn a_model_switch_mid_turn_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    let mut next = grew_by(history(), "later");
+    next.model = "other-model".to_owned();
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "a count from another model's tokenizer describes another prompt"
+    );
+}
+
+/// A charge past `u32::MAX` describes a prompt over any declared window: the
+/// ceiling is the honest answer, never a fresh and much smaller estimate.
+#[test]
+fn a_charge_past_the_u32_ceiling_reads_as_the_ceiling() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, u64::MAX)
+        .expect("a branch anchors");
+    let next = grew_by(history(), "later");
+    assert_eq!(prompt_size(Some(&anchor), &next, &tools), u32::MAX);
 }

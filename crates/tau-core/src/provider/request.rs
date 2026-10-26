@@ -376,18 +376,16 @@ pub struct InputImagePart {
 }
 
 /// Soft prompt size in tokens (the shared bytes/4 estimator, spec §4): the
-/// system prompt, every input item, and the serialized tool specs, with the
+/// system prompt, every input item, and the tool specs as serialized for the
 /// serialization allowance on top (plan §6.4).
 pub(crate) fn prompt_token_estimate(
     system_prompt: &str,
     input: &[InputEntry],
-    tools: &[ToolSpec],
+    tools_json: &str,
 ) -> u32 {
     let mut n = crate::om::token_count(system_prompt);
     n = n.saturating_add(items_estimate(input));
-    if let Ok(json) = serde_json::to_string(tools) {
-        n = n.saturating_add(crate::om::token_count(&json));
-    }
+    n = n.saturating_add(crate::om::token_count(tools_json));
     with_serialization_allowance(n)
 }
 

@@ -111,7 +111,7 @@ impl AgentSession {
             // unobserved entries; without it, the session's entries as-is.
             let mut assembled = self.assemble(plan_state.as_deref())?;
             let tools_json = tool_fingerprint(&tools);
-            let mut prompt = prompt_size(anchor.as_ref(), &assembled, &tools, &tools_json);
+            let mut prompt = prompt_size(anchor.as_ref(), &assembled, &tools_json);
             // The context gate (ticket #210, spec §4): when the assembled
             // prompt would exceed the safe budget and there is unobserved
             // material to compact, run the OM pass now so the call fits.
@@ -126,11 +126,7 @@ impl AgentSession {
                     // A mid-turn compaction is a re-injection point (design).
                     plan_state = self.plan_state();
                     assembled = self.assemble(plan_state.as_deref())?;
-                    prompt = crate::provider::prompt_token_estimate(
-                        &assembled.instructions,
-                        &assembled.items,
-                        &tools,
-                    );
+                    prompt = prompt_size(None, &assembled, &tools_json);
                     if prompt > budget {
                         tracing::warn!(
                             prompt,
@@ -416,6 +412,7 @@ impl AgentSession {
             .lock()
             .expect("agent inner: no panic while the lock is held");
         let base = inner.system_prompt.clone();
+        let model = inner.model.clone();
         // A child session is labeled at assembly against its
         // parent (the link names it); a plain session is not.
         let parent_session = inner.child.as_ref().map(|c| c.parent_session().to_owned());
@@ -443,6 +440,7 @@ impl AgentSession {
                 .chain(input_items(&raw, parent_session.as_deref()))
                 .collect();
             Ok(Assembled {
+                model,
                 instructions: with_plan_state(assembled.instructions, plan_state),
                 items,
                 entries,
@@ -451,6 +449,7 @@ impl AgentSession {
             })
         } else {
             Ok(Assembled {
+                model,
                 instructions: with_plan_state(base, plan_state),
                 items: input_items(&entries, parent_session.as_deref()),
                 entries,
