@@ -80,11 +80,49 @@ async fn a_stream_that_stops_by_itself_names_itself() {
     assert_eq!(cutoff["ended_by"], "eof_without_done");
 }
 
+#[tokio::test]
+async fn every_incomplete_reason_reads_as_no_completion() {
+    // A server may name a reason this build has never seen; none of them may
+    // read as a clean completion, with or without the [DONE] after it (#307).
+    for reason in ["", "\"content_filter\"", "\"made_up_by_a_newer_server\""] {
+        for done in [true, false] {
+            let details = if reason.is_empty() {
+                String::new()
+            } else {
+                format!("\"incomplete_details\":{{\"reason\":{reason}}},")
+            };
+            let mut body = concat!(
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"half\"}\n\n",
+                "data: {\"type\":\"response.incomplete\",\"response\":{",
+            )
+            .to_owned()
+                + &details
+                + "\"usage\":{\"input_tokens\":1,\"output_tokens\":2,\"total_tokens\":3}}}\n\n";
+            if done {
+                body.push_str("data: [DONE]\n\n");
+            }
+            let (_dir, entries) = cut_turn(body).await;
+            assert_eq!(
+                entries.iter().map(|e| e.kind.clone()).collect::<Vec<_>>(),
+                vec![EntryKind::User, EntryKind::Assistant, EntryKind::Diagnostic],
+                "reason {reason} done {done}"
+            );
+            assert_eq!(
+                entries[1].payload["stop_reason"], "eof_without_done",
+                "reason {reason} done {done}"
+            );
+            assert_eq!(
+                entries[2].payload["ended_by"], "eof_without_done",
+                "reason {reason} done {done}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_user_cut_outranks_a_provider_cut() {
-    // The two causes are decided apart, and one entry tells one cause: when a
-    // stop the user asked for coincides with a provider's ending, the entry
-    // already carries `interrupted` and the diagnostic stays silent (#307).
+    // One entry tells one cause: a stop the user asked for silences the
+    // diagnostic even when the provider also cut the turn (#307).
     use crate::agent::turn::reported_cutoff;
     use tau_protocol::StreamOutcome;
     assert_eq!(reported_cutoff(StreamOutcome::Length, true), None);

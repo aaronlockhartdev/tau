@@ -273,14 +273,18 @@ impl TurnProvider for SlowFirstProvider {
                 tokio::time::sleep(Duration::from_millis(2000)).await;
             }
             let mut result = TurnResult::default();
+            let mut accepted = 0usize;
             for event in &events {
                 if !sink.event(event.clone()) {
                     result.outcome = StreamOutcome::Killed;
                     break;
                 }
                 fold_event(event, &mut result);
+                accepted += 1;
             }
-            result.outcome = ending;
+            if accepted == events.len() {
+                result.outcome = ending;
+            }
             Ok(result)
         })
     }

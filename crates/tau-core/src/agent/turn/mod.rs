@@ -568,7 +568,7 @@ fn cutoff(outcome: StreamOutcome) -> Option<StreamOutcome> {
 /// The cutoff a turn reports to the record. A user's stop outranks a provider's
 /// ending: the entry already carries `interrupted`, and two entries naming one
 /// cause is how the record starts contradicting itself (#307, plan §6.11).
-pub(crate) fn reported_cutoff(outcome: StreamOutcome, cut_by_user: bool) -> Option<StreamOutcome> {
+pub(super) fn reported_cutoff(outcome: StreamOutcome, cut_by_user: bool) -> Option<StreamOutcome> {
     if cut_by_user { None } else { cutoff(outcome) }
 }
 

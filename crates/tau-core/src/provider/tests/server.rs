@@ -200,6 +200,18 @@ async fn a_later_error_frame_does_not_unname_a_completed_response() {
 }
 
 #[tokio::test]
+async fn an_incomplete_response_that_never_sends_done_names_itself() {
+    // The other half of the same shape: an incomplete frame with no reason,
+    // and no [DONE] after it (#307).
+    let result = one_turn(&[
+        r#"{"type":"response.output_text.delta","delta":"half"}"#,
+        r#"{"type":"response.incomplete","response":{}}"#,
+    ])
+    .await;
+    assert_eq!(result.outcome, StreamOutcome::EofWithoutDone);
+}
+
+#[tokio::test]
 async fn the_first_terminal_frame_names_the_ending() {
     // Two terminal frames is a server contradicting itself; the first is its
     // account of the ending and stands (#307).
@@ -558,6 +570,54 @@ impl TurnSink for StopAt {
     fn stop_signal(&mut self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(tokio::time::sleep_until(self.at.into()))
     }
+}
+
+#[tokio::test]
+async fn a_stop_after_an_error_frame_is_the_users_cut() {
+    // The provider said the stream went wrong, then the user stopped: the stop
+    // is the ending the record names, as a user cut outranks a provider cut
+    // there too (#307).
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt;
+        let Ok((mut sock, _)) = listener.accept().await else {
+            return;
+        };
+        let body = concat!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\n",
+            "data: {\"type\":\"error\",\"error\":{\"message\":\"upstream blew up\"}}\n\n"
+        );
+        let _ = sock.write_all(body.as_bytes()).await;
+        let _ = sock.flush().await;
+        // Silent after the error frame: only the stop ends the turn.
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    });
+    let result = stream_turn(
+        &reqwest::Client::new(),
+        &provider_for(&format!("http://{addr}")),
+        &Requests {
+            timeout_secs: 30,
+            retries: 2,
+            idle_timeout_secs: 30,
+            tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+        },
+        &ResponseRequest::new("m", None, vec![]),
+        &mut StopAt {
+            at: std::time::Instant::now() + Duration::from_millis(200),
+        },
+    )
+    .await
+    .expect("the request was accepted");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Killed,
+        "the user's stop is the ending"
+    );
+    assert!(
+        !result.mid_stream_errors.is_empty(),
+        "the error frame was still seen"
+    );
 }
 
 /// A stop during the prefill window (headers arrived, no token yet) aborts

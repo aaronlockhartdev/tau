@@ -141,9 +141,8 @@ pub(super) fn apply_frame(
             true
         }
         Frame::Error { error } => {
-            // A frame naming an error is the provider saying the stream went
-            // wrong. It does not end the stream — a later terminal frame still
-            // outranks it (#307).
+            // An error frame does not end the stream — a later terminal frame
+            // still outranks it (#307).
             ending.error();
             result.mid_stream_errors.push(
                 error
