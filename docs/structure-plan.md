@@ -268,9 +268,9 @@ finish it, and each keeps the existing tests as the harness.
 | **S4** | Disperse `om_integration` per §2, ending with the port replacing `Arc<Mutex<agent::Inner>>` | `om_integration/*` | hazard 1; also the prerequisite for `tau-om` if that is ever revisited |
 | **S5** | Collapse the 7 `UNIX_EPOCH` conversions onto `jiff::Timestamp`, one `now_ms()` | `session/mod.rs:206`, `session/file.rs:315`, `harness/state.rs:531`, `hashline/pin_store/mod.rs:130`, `tools/impls.rs:393`, `om_integration/mod.rs:321` | already a dependency; two incompatible epoch idioms today |
 | **S6** | `context_gate_budget` and `gate_unavailable_reasons` computed from one function returning `Result<budget, reasons>` | `agent/mod.rs:110,124` | they must never disagree — #306 had to reconcile exactly that drift by hand |
-| **S7** | `ToolTarget` enum (`Subagent { name }` / `Core`) replacing the prefix test | `tools/surface.rs:97` | §1.2; the audit already recorded a bug this shape caused |
+| **S7** | `ToolTarget` enum (`Subagent { name }` / `Core`) replacing the prefix test | `tools/surface.rs:97` | §1.2; the audit already recorded a bug this shape caused. `specs_for` also has no production caller — only `tools/tests_surface.rs` reads the role→specs table, and since S9 the root arm is shared (`Root | Seam`), so the mapping is pinned through `Seam` |
 | **S8** | `ChildStatus` typed in `OwnState`, and a `ToolOutcome` enum for `ToolResult` | `tau-protocol/src/snapshot.rs:179`, `tools/mod.rs:39` | §1.2; both are wire-visible, so they need a protocol commit + TS mirror + goldens |
-| **S9** | Remove the caller-supplied `Supervisor` from `SessionRole::Root` and the `root_with_supervisor` branch that exists for it; re-point the three test sites at the real open path | `harness/launch.rs` (the `root_with_supervisor` body, now deleted), `harness/tests_launch.rs`, `subagent/{testkit,tests_link,tests_gate}`, `tools/tests_surface.rs`, and `tau-test/tests_accept.rs:267,451,647` — **six** seam callers, not the three this row named; production (`harness/sessions.rs`) always passed `None` | a test seam living in the production open path. **Landed**: `Root` is total — it carries `core`, `workspace`, `config` and the resolved `first_provider` as plain fields, so an under-specified root is a type error — and the model and first-provider checks launch ran now run once, where the provider is resolved (`build_live`). The seam did not vanish: the acceptance driver builds a `Supervisor` around a mock bridge, an in-process notice recorder, and a parent-specific prompt the mock scenario matches on, and none of that can come from a `Core`. It became `SessionRole::Seam`, a role with a `Supervisor` and a `Core`-less constructor, holding the branch `launch` used to branch on (§6.10) |
+| **S9** | Remove the caller-supplied `Supervisor` from `SessionRole::Root` and the `root_with_supervisor` branch that exists for it; re-point the three test sites at the real open path | `harness/launch.rs` (the `root_with_supervisor` body, now deleted), `harness/tests_launch.rs`, `subagent/{testkit,tests_link,tests_gate}`, `tools/tests_surface.rs`, and `tau-test/tests_accept.rs:267,451,647` — **nine** seam call sites in five files, not the three this row named; production (`harness/sessions.rs`) always passed `None` | a test seam living in the production open path. **Landed**: `Root` is total — it carries `core`, `workspace`, `config` and the resolved `first_provider` as plain fields, so an under-specified root is a type error — and the `no providers configured` check `launch` duplicated now runs once, where the provider is resolved (`build_live`); the model check stays in the constructor, still pinned there. The seam did not vanish: the acceptance driver builds a `Supervisor` around a mock bridge, an in-process notice recorder, and a parent-specific prompt the mock scenario matches on, and none of that can come from a `Core`. It became `SessionRole::Seam`, a role with a `Supervisor` and a `Core`-less constructor, holding the branch `launch` used to branch on; the one line of that branch left unpinned by the move — replaying `gate_failed` from the record — was dropped (§6.10) |
 | **S10** | `thiserror` on the error enums | 10 files | §3 |
 | **S11** | `backon` for the OM retry policy | `om_integration/retry.rs` | §3 |
 | **S12** | Typed payload per `EntryKind`: the `json!` writers and `payload.get` readers become the derived payload types | 12 files with `json!` (`tools/mod.rs`, `subagent/*`, `session/file.rs`, …), 83 key reads | §2.2; one shape per kind, so a reader cannot guess a key and each kind gains exactly one legal append path |
@@ -303,7 +303,7 @@ finish it, and each keeps the existing tests as the harness.
    site still parsing model-supplied text under a guard is recorded in §6.2.
 7. ~~**S9** — remove the supervisor seam from the production open path, then
    re-point its three test callers.~~ — **done** (§6.10). The row's count was
-   wrong: six callers, and the acceptance driver cannot ride the real path. `Root`
+   wrong: nine call sites in five files, and the acceptance driver cannot ride the
    became total; the seam became its own role.
 8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
    `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.
@@ -524,12 +524,15 @@ acceptance driver's seam" — which handed in a pre-built `Supervisor` and skipp
 model resolution, config files, the skills catalogue, the bridge, the event
 wiring, and the open audit record. Every root built through it was a root the app
 never opens, and its two checks — `no providers configured`, `provider x has no
-models` — also ran where the provider is actually resolved, so each was pinned
-in two places.
+never opens, and its `no providers configured` check duplicated the one
+`build_live` runs where the provider is resolved.
 
 The plan's fix — re-point the seam's callers at the real open path — was written
-from a count of three and the real count was six. The extra three are the
-acceptance driver's subagent, reclaim, and sender-labels suites. They hand the
+from a count of three call sites; the real count was nine, in five files — three
+in `tests_launch`, three in the acceptance driver's subagent, reclaim, and
+sender-labels suites, one each in subagent's `testkit`, `tests_gate` and
+`tests_link`. A sixth file, `tools/tests_surface.rs`, built a core-less `Root` to
+read the tool table and now builds a `Seam`. The driver's three hand the
 `Supervisor` a mock bridge, an in-process recorder of reclaim and adopt notices,
 and a parent system prompt that differs from the supervisor's own because the
 mock-LLM scenario is chosen by matching request content (ADR-0010). None of that
@@ -546,11 +549,17 @@ would have cost the deterministic-LLM contract; faking it as a `Root` with four
 fabricated `expect()`s would have had a test invent a provider and a workspace to
 prove something about prompt wiring, which is how a fixture starts lying.
 
-What moved as a result is the part worth keeping. The provider checks now fire
-where the provider is resolved, so the pin for `no providers configured` moved to
-`session/new`, the call a user actually makes. The `gate_failed` re-open test
-reads its gate from a config file the way the app layers one, instead of a `Core`
-with the gate bolted on. The role→tool-spec table is pinned through `Seam`, the
-root-shaped role that builds without a core. What the branch itself did — adopt a
-supervisor, load the OM counters, replay the open facts, attach the parent — still
-runs, in the arm of `launch` that belongs to the role that asks for it.
+What moved as a result is the part worth keeping. The provider check `build_live`
+duplicated now fires where the provider is resolved, so the pin for `no providers
+configured` sits on `session/new`, the call a user actually makes. The
+`gate_failed` re-open test reads its gate from a config file the way the app
+layers one, instead of a `Core` with the gate bolted on. The role→tool-spec table
+is pinned through `Seam`, the root-shaped role that builds without a core.
+
+One line of the branch did not move. It read the session's records to restore
+`gate_failed` on a re-open, and the test that exercised it now drives the real
+path. Nothing exercises it on the seam, and nothing can: the seam's check rides
+the supervisor it adopts, and no fixture gives one a command, so its parent never
+ends in that state. The line went rather than stayed untested — a fixture role
+carries what its fixtures need, and a re-open that finds a failed check is what a
+real open does.
