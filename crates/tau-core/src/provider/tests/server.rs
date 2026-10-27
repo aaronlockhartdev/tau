@@ -118,8 +118,9 @@ async fn a_done_terminated_stream_without_completed_frame_is_complete() {
     .await
     .unwrap();
     assert_eq!(result.text, "hello");
-    assert!(
-        result.completed,
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Completed,
         "[DONE] ends the stream cleanly even without response.completed"
     );
 }
@@ -363,7 +364,11 @@ async fn a_healthy_long_stream_outlives_the_connect_deadline() {
     .await
     .expect("a healthy stream outlives the connect deadline");
     assert_eq!(result.text, "one two three");
-    assert!(result.completed, "the stream completed");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Completed,
+        "a stream slower than the connect deadline still completes"
+    );
 }
 
 /// A stream that goes silent past `timeout_secs` (idle) is cut (a dead
@@ -406,7 +411,11 @@ async fn a_dead_stream_is_cut_by_the_idle_timeout() {
         started.elapsed()
     );
     assert_eq!(result.text, "only");
-    assert!(!result.completed, "the cut stream is not completed");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::IdleTimeout,
+        "the idle deadline cut the stream"
+    );
 }
 
 /// A sink whose stop signal fires at a fixed instant: the shape of a user
@@ -475,7 +484,11 @@ async fn a_stop_during_prefill_aborts_the_in_flight_request() {
         started.elapsed()
     );
     assert!(result.text.is_empty(), "a prefill stop has no partial");
-    assert!(!result.completed, "a prefill stop is not a completion");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Killed,
+        "a stop in prefill is a kill, not a completion"
+    );
     assert_eq!(
         count.load(Ordering::SeqCst),
         1,
@@ -531,7 +544,11 @@ async fn a_stop_before_headers_aborts_the_in_flight_request() {
         started.elapsed()
     );
     assert!(result.text.is_empty(), "a pre-headers stop has no partial");
-    assert!(!result.completed, "a pre-headers stop is not a completion");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Killed,
+        "a stop before the headers is a kill, not a completion"
+    );
     assert_eq!(
         count.load(Ordering::SeqCst),
         1,

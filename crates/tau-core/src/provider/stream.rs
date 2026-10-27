@@ -1,6 +1,7 @@
 use super::{
-    Duration, Frame, FunctionCall, OutputItem, Provider, ProviderError, Requests, ResponseRequest,
-    SseParser, TurnEvent, TurnResult, TurnSink, Usage, endpoint_url, fold_event, resolve_key,
+    CompletedResponse, Duration, Frame, FunctionCall, OutputItem, Provider, ProviderError,
+    Requests, ResponseRequest, SseParser, StreamOutcome, TurnEvent, TurnResult, TurnSink, Usage,
+    endpoint_url, fold_event, resolve_key,
 };
 
 fn emit(sink: &mut dyn TurnSink, result: &mut TurnResult, event: &TurnEvent) -> bool {
@@ -45,30 +46,8 @@ pub(super) fn apply_frame(
             true
         }
         Frame::Completed { response } => {
-            result.completed = true;
-            // #224: the duration is the server's own measurement —
-            // completion minus creation. It is `None` when either timestamp
-            // is absent (the GUI then falls back to its wall-clock estimate).
-            let duration = response
-                .as_ref()
-                .and_then(|r| r.created_at)
-                .zip(*created_at)
-                .and_then(|(end, start)| {
-                    let secs = u64::try_from(end - start).ok()?;
-                    // A zero-length window means the server stamped created
-                    // and completed with the same second (vLLM does —
-                    // research/tps-server-timestamps.md); treat it as absent
-                    // so the GUI falls back to its wall-clock estimate.
-                    (secs > 0).then(|| Duration::from_secs(secs))
-                });
-            match response.and_then(|r| r.usage) {
-                Some(wire) => emit(
-                    sink,
-                    result,
-                    &TurnEvent::Completed(wire.into_usage(), duration),
-                ),
-                None => true,
-            }
+            result.outcome = StreamOutcome::Completed;
+            settle_turn(sink, result, created_at, response)
         }
         Frame::OutputTextDelta {
             delta,
@@ -119,6 +98,10 @@ pub(super) fn apply_frame(
             true
         }
         Frame::Error { error } => {
+            // A frame naming an error is the provider saying the stream went
+            // wrong. It does not end the stream — a later terminal frame still
+            // outranks it (#307).
+            result.outcome = StreamOutcome::MidStreamError;
             result.mid_stream_errors.push(
                 error
                     .message
@@ -127,15 +110,67 @@ pub(super) fn apply_frame(
             );
             true
         }
+        // Either terminal frame settles the call and carries its usage; they
+        // differ only in how the response ended.
+        Frame::Incomplete { response } => {
+            result.outcome = if output_cap(response.as_ref()) {
+                StreamOutcome::Length
+            } else {
+                StreamOutcome::EofWithoutDone
+            };
+            settle_turn(sink, result, created_at, response)
+        }
         Frame::InProgress | Frame::Other => true,
     }
+}
+
+/// Settle a terminal frame: the decode-window duration, then the usage the
+/// frame carries (#224). The duration is the server's own measurement —
+/// completion minus creation — and is `None` when either timestamp is absent
+/// (the GUI then falls back to its wall-clock estimate).
+fn settle_turn(
+    sink: &mut dyn TurnSink,
+    result: &mut TurnResult,
+    created_at: &mut Option<i64>,
+    response: Option<CompletedResponse>,
+) -> bool {
+    let duration = response
+        .as_ref()
+        .and_then(|r| r.created_at)
+        .zip(*created_at)
+        .and_then(|(end, start)| {
+            let secs = u64::try_from(end - start).ok()?;
+            // A zero-length window means the server stamped created
+            // and completed with the same second (vLLM does —
+            // research/tps-server-timestamps.md); treat it as absent
+            // so the GUI falls back to its wall-clock estimate.
+            (secs > 0).then(|| Duration::from_secs(secs))
+        });
+    match response.and_then(|r| r.usage) {
+        Some(wire) => emit(
+            sink,
+            result,
+            &TurnEvent::Completed(wire.into_usage(), duration),
+        ),
+        None => true,
+    }
+}
+
+/// Whether an incomplete response stopped at the output cap: the one stop
+/// reason the outcome vocabulary names.
+fn output_cap(response: Option<&CompletedResponse>) -> bool {
+    response
+        .and_then(|r| r.incomplete_details.as_ref())
+        .and_then(|d| d.reason.as_deref())
+        == Some("max_output_tokens")
 }
 
 /// Decode a canned SSE body into the event/call sequence the live path would
 /// produce (the canned provider's source; also the offline-decode utility).
 /// A canned stream: the events in order, plus each call with the event
-/// position it completed at.
-pub type CannedStream = (Vec<TurnEvent>, Vec<(usize, FunctionCall)>);
+/// position it completed at, and how the body ended (the ending a live
+/// provider would have reported for the same bytes).
+pub type CannedStream = (Vec<TurnEvent>, Vec<(usize, FunctionCall)>, StreamOutcome);
 
 pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
     struct RecordSink(Vec<TurnEvent>);
@@ -170,17 +205,19 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
     // A body that ended with [DONE] is a clean end: it stands as complete
     // even when the server omitted the response.completed frame (some do, on
     // tool-call responses). Synthesize the completion so the canned replay
-    // mirrors the live path's clean_end; a [DONE]-less cut body stays
-    // incomplete, as before.
-    if parser.terminated
-        && !sink
+    // mirrors the live path's clean_end; a [DONE]-less cut body reaches no
+    // completion, as before.
+    if parser.terminated && result.outcome == StreamOutcome::EofWithoutDone {
+        result.outcome = StreamOutcome::Completed;
+        if !sink
             .0
             .iter()
             .any(|e| matches!(e, TurnEvent::Completed(_, _)))
-    {
-        sink.0.push(TurnEvent::Completed(Usage::default(), None));
+        {
+            sink.0.push(TurnEvent::Completed(Usage::default(), None));
+        }
     }
-    Ok((sink.0, calls))
+    Ok((sink.0, calls, result.outcome))
 }
 
 /// One streamed `POST {base}/responses` turn (spec §6): typed SSE frames,
@@ -238,6 +275,39 @@ pub async fn stream_response(
     stream_turn(client, provider, requests, request, &mut Keep).await
 }
 
+/// The headers phase, apart from the body loop: the request answered, cut by
+/// a stop before any answer, or failed. A phase silent past the deadline is a
+/// dead endpoint: fail (and retry), like a connect timeout.
+enum Head {
+    Answered(reqwest::Response),
+    Cut,
+    Failed(ProviderError),
+}
+
+async fn open_head(
+    builder: reqwest::RequestBuilder,
+    sink: &mut dyn TurnSink,
+    head: Duration,
+) -> Head {
+    let mut sending = builder.send();
+    match tokio::select! {
+        sent = tokio::time::timeout_at(tokio::time::Instant::now() + head, &mut sending) => sent,
+        () = sink.stop_signal() => return Head::Cut,
+    } {
+        Ok(Ok(response)) => {
+            let status = response.status().as_u16();
+            if response.status().is_success() {
+                Head::Answered(response)
+            } else {
+                let body = response.text().await.unwrap_or_default();
+                Head::Failed(ProviderError::Status { status, body })
+            }
+        }
+        Ok(Err(e)) => Head::Failed(ProviderError::Request(e)),
+        Err(_) => Head::Failed(ProviderError::IdleTimeout),
+    }
+}
+
 async fn attempt_one_turn(
     client: &reqwest::Client,
     url: &str,
@@ -272,34 +342,29 @@ async fn attempt_one_turn(
     if let Some(key) = key {
         builder = builder.bearer_auth(key);
     }
-    // A connect/headers phase silent past the deadline is a dead
-    // endpoint: fail (and retry), like a connect timeout.
-    let mut sending = builder.send();
-    let response = match tokio::select! {
-        sent = tokio::time::timeout_at(tokio::time::Instant::now() + head, &mut sending) => sent,
+    let mut stream = match open_head(builder, sink, head).await {
+        Head::Answered(response) => response,
         // A stop before the headers tears the request down before it is
         // answered: nothing received, the empty partial stands (spec §7).
-        () = sink.stop_signal() => return Ok(TurnResult::default()),
-    } {
-        Ok(Ok(response)) => response,
-        Ok(Err(e)) => return Err(ProviderError::Request(e)),
-        Err(_) => return Err(ProviderError::IdleTimeout),
+        Head::Cut => {
+            return Ok(TurnResult {
+                outcome: StreamOutcome::Killed,
+                ..Default::default()
+            });
+        }
+        Head::Failed(e) => return Err(e),
     };
-    let status = response.status().as_u16();
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(ProviderError::Status { status, body });
-    }
     let mut parser = SseParser::new();
     let mut result = TurnResult::default();
     let mut created_at: Option<i64> = None;
-    let mut stream = response;
     let mut idle_deadline = tokio::time::Instant::now() + idle;
-    // A clean end (EOF / [DONE]) means the server finished the response: it
-    // stands as complete even when the server omitted the response.completed
-    // frame (some do, on tool-call responses) — otherwise `!completed` flags
-    // every normal agentic segment as interrupted.
-    let mut clean_end = false;
+    // How the body ended, below whatever frames arrived. [DONE] means the
+    // server finished the response, and that stands as complete even when it
+    // omitted the response.completed frame (some do, on tool-call responses) —
+    // otherwise every normal agentic segment would read as cut. A frame that
+    // names an ending outranks this (#307).
+    let mut body_end = StreamOutcome::EofWithoutDone;
+    let mut frame_named = false;
     let mut raw_response = String::new();
     'outer: while !parser.terminated {
         let chunk = match tokio::select! {
@@ -311,7 +376,10 @@ async fn attempt_one_turn(
             ) => got,
             // A stop during prefill (before the first token) aborts the
             // request: the partial — possibly empty — stands, like a kill.
-            () = sink.stop_signal() => break 'outer,
+            () = sink.stop_signal() => {
+                body_end = StreamOutcome::Killed;
+                break 'outer;
+            },
         } {
             Ok(Ok(Some(chunk))) => {
                 // A received chunk restarts the idle deadline.
@@ -326,8 +394,8 @@ async fn attempt_one_turn(
             // A bare EOF (no [DONE]) is byte-identical to a mid-body drop
             // with a graceful FIN, so it stays a cut (incomplete) — the
             // canned path's [DONE]-only semantics. A compliant Responses-API
-            // provider always ends with [DONE] (handled below), which sets
-            // clean_end; a provider omitting both [DONE] and
+            // provider always ends with [DONE] (handled below), which names
+            // the body's ending; a provider omitting both [DONE] and
             // response.completed is a contract violation and the safer
             // failure mode is an incomplete turn, not a fake-complete one.
             Ok(Ok(None)) => break,
@@ -350,22 +418,29 @@ async fn attempt_one_turn(
                 {
                     return Err(ProviderError::IdleTimeout);
                 }
+                body_end = StreamOutcome::IdleTimeout;
                 break;
             }
         };
         for payload in parser.feed(&chunk)? {
             if payload == "[DONE]" {
-                clean_end = true;
+                body_end = StreamOutcome::Completed;
                 break 'outer;
             }
+            let named = result.outcome;
             if !apply_frame(sink, &mut result, &mut created_at, &payload) {
-                // Killed: the partial stands (spec §7 force).
+                // Killed: the partial stands (spec §7 force) unless a frame
+                // already named how the response ended (#307).
+                if result.outcome == named {
+                    result.outcome = StreamOutcome::Killed;
+                }
                 return Ok(result);
             }
+            frame_named |= result.outcome != named;
         }
     }
-    if clean_end {
-        result.completed = true;
+    if !frame_named {
+        result.outcome = body_end;
     }
     super::wire::response(&raw_response);
     // `unwrap_or(MAX)`: a 584-year stream is a diagnostic-log sentinel, not a

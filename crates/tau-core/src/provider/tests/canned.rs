@@ -14,7 +14,7 @@ fn decode_stream_extracts_function_calls_and_reasoning_dialect() {
         r#"{"type":"response.completed","response":{"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
         "[DONE]",
     ]);
-    let (events, calls) = decode_stream(&body).unwrap();
+    let (events, calls, _) = decode_stream(&body).unwrap();
     assert_eq!(
         events,
         vec![
@@ -92,7 +92,7 @@ fn decode_stream_computes_duration_from_created_timestamps() {
         r#"{"type":"response.completed","response":{"created_at":1700000002,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
         "[DONE]",
     ]);
-    let (events, _calls) = decode_stream(&body).unwrap();
+    let (events, _calls, _) = decode_stream(&body).unwrap();
     assert_eq!(
         events.last(),
         Some(&TurnEvent::Completed(
@@ -117,7 +117,7 @@ fn decode_stream_same_second_timestamps_yield_no_duration() {
         r#"{"type":"response.completed","response":{"created_at":1700000000,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
         "[DONE]",
     ]);
-    let (events, _calls) = decode_stream(&body).unwrap();
+    let (events, _calls, _) = decode_stream(&body).unwrap();
     assert_eq!(
         events.last(),
         Some(&TurnEvent::Completed(
@@ -141,7 +141,7 @@ fn decode_stream_missing_created_timestamps_yield_no_duration() {
         r#"{"type":"response.completed","response":{"created_at":1700000002,"usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}"#,
         "[DONE]",
     ]);
-    let (events, _calls) = decode_stream(&body).unwrap();
+    let (events, _calls, _) = decode_stream(&body).unwrap();
     assert_eq!(
         events.last(),
         Some(&TurnEvent::Completed(
@@ -202,7 +202,11 @@ fn canned_cut_leaves_the_partial_incomplete() {
         })
     };
     assert_eq!(result.text, "par");
-    assert!(!result.completed, "a cut stream is not completed");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::EofWithoutDone,
+        "a stream cut before its end names no ending"
+    );
     assert!(
         result.usage.is_none(),
         "usage commits only from response.completed"
@@ -225,7 +229,7 @@ fn canned_cut_leaves_the_partial_incomplete() {
         })
     };
     assert_eq!(result.text, "partial");
-    assert!(result.completed);
+    assert_eq!(result.outcome, StreamOutcome::Completed);
 }
 
 #[tokio::test]
@@ -249,7 +253,7 @@ async fn sink_kill_stops_the_stream_with_a_partial() {
     .await
     .unwrap();
     assert_eq!(result.text, "abc");
-    assert!(!result.completed);
+    assert_eq!(result.outcome, StreamOutcome::Killed);
     assert!(result.usage.is_none());
 }
 
@@ -313,5 +317,9 @@ data: "
     .await
     .unwrap();
     assert_eq!(result.text, "survived");
-    assert!(!result.completed, "an early EOF is an incomplete turn");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::EofWithoutDone,
+        "an early EOF is an incomplete turn"
+    );
 }

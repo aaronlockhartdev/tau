@@ -30,10 +30,14 @@ impl TurnProvider for PanicOnceProvider {
         };
         Box::pin(async move {
             first.then(|| panic!("injected turn panic (#267)"));
-            let (events, calls) = provider::decode_stream(&body).unwrap();
-            let mut result = TurnResult::default();
+            let (events, calls, ending) = provider::decode_stream(&body).unwrap();
+            let mut result = TurnResult {
+                outcome: ending,
+                ..Default::default()
+            };
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = provider::StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(event, &mut result);

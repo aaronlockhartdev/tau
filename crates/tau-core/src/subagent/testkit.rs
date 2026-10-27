@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use super::*;
 use crate::harness::SessionRole;
-use crate::provider::{self, ResponseRequest, TurnSink};
+use crate::provider::{self, ResponseRequest, StreamOutcome, TurnSink};
 use crate::session::SessionStore;
 use serde_json::json;
 use std::time::Duration;
@@ -112,7 +112,7 @@ impl provider::TurnProvider for CannedChildProvider {
         let body = self.next();
         self.calls.fetch_add(1, Ordering::SeqCst);
         let delay = self.pre_delay;
-        let (events, calls) = provider::decode_stream(&body).unwrap();
+        let (events, calls, ending) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
             // The per-child pre-delay, once, before the first call (an
             // ordering margin for test-side file writes). The mid-stream
@@ -129,15 +129,14 @@ impl provider::TurnProvider for CannedChildProvider {
                     tokio::time::sleep(delay).await;
                 }
                 if !sink.event(event.clone()) {
+                    result.outcome = StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(&event, &mut result);
                 accepted += 1;
             }
             if accepted == events.len() {
-                result.completed = events
-                    .iter()
-                    .any(|e| matches!(e, provider::TurnEvent::Completed(_, _)));
+                result.outcome = ending;
             }
             result.calls = calls
                 .iter()

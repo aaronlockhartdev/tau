@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use super::{
-    Arc, FunctionCall, Future, Pin, Provider, ProviderError, Requests, ResponseRequest, TurnEvent,
-    TurnResult, TurnSink, decode_stream, fold_event, stream_turn,
+    Arc, FunctionCall, Future, Pin, Provider, ProviderError, Requests, ResponseRequest,
+    StreamOutcome, TurnEvent, TurnResult, TurnSink, decode_stream, fold_event, stream_turn,
 };
 
 /// The loop's provider seam (spec §6): a turn is a request in, a result out,
@@ -65,6 +65,9 @@ struct CannedProvider {
     events: Vec<TurnEvent>,
     /// Calls indexed by the event position they completed at.
     calls: Vec<(usize, FunctionCall)>,
+    /// How the decoded body ended: the replay reports the ending a live
+    /// provider would give the same bytes (#307).
+    ending: StreamOutcome,
     /// Cut the stream after this many events (the force-kill shape);
     /// `usize::MAX` = the full stream.
     cut_after: usize,
@@ -83,11 +86,12 @@ impl TurnProvider for CannedProvider {
         let events = self.events.clone();
         let calls = self.calls.clone();
         let cut_after = self.cut_after;
+        let ending = self.ending;
         Box::pin(async move {
             if served > 0 {
                 // Exhausted: an empty completed stream ends the turn.
                 return Ok(TurnResult {
-                    completed: true,
+                    outcome: StreamOutcome::Completed,
                     ..TurnResult::default()
                 });
             }
@@ -98,15 +102,15 @@ impl TurnProvider for CannedProvider {
                     break;
                 }
                 if !sink.event(event.clone()) {
+                    // The sink refused: a stop, not a truncated body.
+                    result.outcome = StreamOutcome::Killed;
                     break;
                 }
                 fold_event(event, &mut result);
                 accepted += 1;
             }
             if accepted == events.len() {
-                result.completed = events
-                    .iter()
-                    .any(|e| matches!(e, TurnEvent::Completed(_, _)));
+                result.outcome = ending;
             }
             result.calls = calls
                 .iter()
@@ -121,10 +125,11 @@ impl TurnProvider for CannedProvider {
 /// A canned provider replaying the full decoded stream.
 #[must_use]
 pub fn canned(body: &str) -> TurnProviderRef {
-    let (events, calls) = decode_stream(body).expect("canned SSE body must decode");
+    let (events, calls, ending) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(CannedProvider {
         events,
         calls,
+        ending,
         cut_after: usize::MAX,
         calls_served: std::sync::atomic::AtomicUsize::new(0),
     })
@@ -134,10 +139,11 @@ pub fn canned(body: &str) -> TurnProviderRef {
 /// force-kill produces (partial, `completed: false`).
 #[must_use]
 pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
-    let (events, calls) = decode_stream(body).expect("canned SSE body must decode");
+    let (events, calls, ending) = decode_stream(body).expect("canned SSE body must decode");
     Arc::new(CannedProvider {
         events,
         calls,
+        ending,
         cut_after: n,
         calls_served: std::sync::atomic::AtomicUsize::new(0),
     })
@@ -147,6 +153,7 @@ pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
 /// force-kill tests: the loop's kill flag, not a pre-cut, terminates it.
 struct SlowCannedProvider {
     events: Vec<TurnEvent>,
+    ending: StreamOutcome,
     delay_ms: u64,
 }
 
@@ -154,6 +161,7 @@ impl TurnProvider for SlowCannedProvider {
     fn call<'a>(&self, _request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let events = self.events.clone();
         let delay_ms = self.delay_ms;
+        let ending = self.ending;
         Box::pin(async move {
             let mut result = TurnResult::default();
             let mut accepted = 0usize;
@@ -166,9 +174,7 @@ impl TurnProvider for SlowCannedProvider {
                 tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
             }
             if accepted == events.len() {
-                result.completed = events
-                    .iter()
-                    .any(|e| matches!(e, TurnEvent::Completed(_, _)));
+                result.outcome = ending;
             }
             Ok(result)
         })
@@ -179,8 +185,12 @@ impl TurnProvider for SlowCannedProvider {
 /// force sent mid-stream cuts it (the loop's kill flag is the terminator).
 #[must_use]
 pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
-    let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
-    Arc::new(SlowCannedProvider { events, delay_ms })
+    let (events, _calls, ending) = decode_stream(body).expect("canned SSE body must decode");
+    Arc::new(SlowCannedProvider {
+        events,
+        ending,
+        delay_ms,
+    })
 }
 
 /// A canned provider that hangs in prefill: it sleeps `delay_ms` before its
@@ -188,14 +198,19 @@ pub fn canned_slow(body: &str, delay_ms: u64) -> TurnProviderRef {
 /// call before anything is emitted (issue #67's scenario).
 #[must_use]
 pub fn prefill_hang(body: &str, delay_ms: u64) -> TurnProviderRef {
-    let (events, _calls) = decode_stream(body).expect("canned SSE body must decode");
-    Arc::new(PrefillHangProvider { events, delay_ms })
+    let (events, _calls, ending) = decode_stream(body).expect("canned SSE body must decode");
+    Arc::new(PrefillHangProvider {
+        events,
+        ending,
+        delay_ms,
+    })
 }
 
 /// The prefill-hang seam: the sleep precedes the first event, so a stop
 /// during it aborts the call before the sink sees anything.
 struct PrefillHangProvider {
     events: Vec<TurnEvent>,
+    ending: StreamOutcome,
     delay_ms: u64,
 }
 
@@ -203,26 +218,31 @@ impl TurnProvider for PrefillHangProvider {
     fn call<'a>(&self, _request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let events = self.events.clone();
         let delay_ms = self.delay_ms;
+        let ending = self.ending;
         Box::pin(async move {
             // Prefill: a stop in this window tears the call down before any
             // event — the select mirrors the real provider's prefill half.
             tokio::select! {
                 () = tokio::time::sleep(std::time::Duration::from_millis(delay_ms)) => {}
-                () = sink.stop_signal() => return Ok(TurnResult::default()),
+                () = sink.stop_signal() => {
+                    return Ok(TurnResult {
+                        outcome: StreamOutcome::Killed,
+                        ..Default::default()
+                    })
+                },
             }
             let mut result = TurnResult::default();
             let mut accepted = 0usize;
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = StreamOutcome::Killed;
                     break;
                 }
                 fold_event(event, &mut result);
                 accepted += 1;
             }
             if accepted == events.len() {
-                result.completed = events
-                    .iter()
-                    .any(|e| matches!(e, TurnEvent::Completed(_, _)));
+                result.outcome = ending;
             }
             Ok(result)
         })
@@ -247,7 +267,7 @@ struct SlowFirstProvider {
 impl TurnProvider for SlowFirstProvider {
     fn call<'a>(&self, _req: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let first = self.index.fetch_add(1, Ordering::SeqCst) == 0;
-        let (events, _) = decode_stream(&script_plain()).expect("plain script decodes");
+        let (events, _, ending) = decode_stream(&script_plain()).expect("plain script decodes");
         Box::pin(async move {
             if first {
                 tokio::time::sleep(Duration::from_millis(2000)).await;
@@ -255,11 +275,12 @@ impl TurnProvider for SlowFirstProvider {
             let mut result = TurnResult::default();
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = StreamOutcome::Killed;
                     break;
                 }
                 fold_event(event, &mut result);
             }
-            result.completed = true;
+            result.outcome = ending;
             Ok(result)
         })
     }

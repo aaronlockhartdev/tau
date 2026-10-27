@@ -43,7 +43,7 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
         reasoning: "deciding what is worth remembering".into(),
         usage: None,
         duration: None,
-        completed: true,
+        outcome: crate::provider::StreamOutcome::Completed,
         calls: Vec::new(),
         blocks: Vec::new(),
         mid_stream_errors: Vec::new(),

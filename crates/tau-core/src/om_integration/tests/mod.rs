@@ -28,7 +28,7 @@ pub(crate) fn turn_result(text: &str) -> crate::provider::TurnResult {
         reasoning: String::new(),
         usage: None,
         duration: None,
-        completed: true,
+        outcome: crate::provider::StreamOutcome::Completed,
         calls: Vec::new(),
         blocks: Vec::new(),
         mid_stream_errors: Vec::new(),

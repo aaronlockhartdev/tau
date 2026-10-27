@@ -157,7 +157,7 @@ impl TurnProvider for CannedChild {
         } else {
             plain_body()
         };
-        let (events, calls) = provider::decode_stream(&body).unwrap();
+        let (events, calls, ending) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
             // The one-time pre-delay on the first call opens the window a
             // test needs to seed the child's state before its first turn
@@ -166,9 +166,13 @@ impl TurnProvider for CannedChild {
             if first {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-            let mut result = provider::TurnResult::default();
+            let mut result = provider::TurnResult {
+                outcome: ending,
+                ..Default::default()
+            };
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = provider::StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(event, &mut result);
@@ -202,10 +206,14 @@ impl TurnProvider for SlowChild {
         let body = self.body.clone();
         let delay = self.delay_ms;
         Box::pin(async move {
-            let (events, calls) = provider::decode_stream(&body).unwrap();
-            let mut result = provider::TurnResult::default();
+            let (events, calls, ending) = provider::decode_stream(&body).unwrap();
+            let mut result = provider::TurnResult {
+                outcome: ending,
+                ..Default::default()
+            };
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = provider::StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(event, &mut result);

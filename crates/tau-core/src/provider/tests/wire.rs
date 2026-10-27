@@ -309,7 +309,7 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
 
     // Positive — response line: ordered blocks plus usage, no raw bytes.
     let result = TurnResult {
-        completed: true,
+        outcome: StreamOutcome::Completed,
         usage: Some(Usage {
             input_tokens: 10,
             output_tokens: 5,
@@ -333,7 +333,7 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     assert_eq!(v["id"], "a1b2");
     assert_eq!(v["dir"], "res");
     assert_eq!(v["ms"], 42);
-    assert_eq!(v["completed"], true);
+    assert_eq!(v["ended_by"], "completed");
     assert_eq!(v["usage"]["output_tokens"], 5);
     assert!(v.get("raw").is_none(), "the raw SSE bytes stay at trace");
     // The blocks preserve the model's emission order.
@@ -354,7 +354,7 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     let result = TurnResult::default();
     let v = wire_json(&capture_debug(|| result.wire_response_jsonl("a1b2", 7)));
     assert_eq!(v["usage"], serde_json::Value::Null);
-    assert_eq!(v["completed"], false);
+    assert_eq!(v["ended_by"], "eof_without_done");
     assert!(v["blocks"].as_array().unwrap().is_empty());
 }
 
@@ -363,7 +363,7 @@ fn response_wire_line_consolidates_consecutive_blocks() {
     // Positive — consecutive same-kind blocks merge into one entry, in
     // place: a kind change starts a new one.
     let result = TurnResult {
-        completed: true,
+        outcome: StreamOutcome::Completed,
         blocks: vec![
             WireBlock::Reasoning { text: "hmm".into() },
             WireBlock::Reasoning {

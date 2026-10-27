@@ -2,7 +2,7 @@ use super::{
     AgentError, AgentSession, InputEntry, Lane, Ordering, Queued, ResponseRequest, ToolBatchPolicy,
     TurnConfig, TurnResult, Value, lane_name,
 };
-use crate::provider::ToolSpec;
+use crate::provider::{StreamOutcome, ToolSpec};
 use assemble::{Assembled, input_items, repair_tool_call_arguments, with_plan_state};
 use estimate::{PromptAnchor, prompt_size, tool_fingerprint};
 use sink::StreamEntrySink;
@@ -197,16 +197,17 @@ impl AgentSession {
             // (plan §6.4). A call that never completed, or one whose provider
             // reported no usage, leaves the estimate unanchored — the honest
             // answer, since there is no recorded count to trust.
-            anchor = match (&result.usage, result.completed) {
-                (Some(usage), true) => {
+            anchor = match (&result.usage, result.outcome) {
+                (Some(usage), StreamOutcome::Completed) => {
                     PromptAnchor::after_call(&assembled, &tools_json, usage.input_tokens)
                 }
                 _ => None,
             };
             first_call = false;
 
-            if !result.completed {
-                // A force-killed turn skips the OM pass: the Observer needs
+            if result.outcome != StreamOutcome::Completed {
+                // A turn the provider or the user cut short skips the OM pass:
+                // the Observer needs
                 // no tool batch in flight, and the interrupted material
                 // joins the next turn's unobserved window (v0).
                 // Per the policy, the in-flight tool batch is let to

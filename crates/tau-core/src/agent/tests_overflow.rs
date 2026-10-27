@@ -67,7 +67,7 @@ impl crate::provider::TurnProvider for Scripted400 {
                     Err(crate::provider::ProviderError::Status { status, body })
                 }
                 None => Ok(TurnResult {
-                    completed: true,
+                    outcome: crate::provider::StreamOutcome::Completed,
                     ..TurnResult::default()
                 }),
             }
