@@ -130,8 +130,9 @@ proptest! {
     // in-order walk and a maximal match part company.
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
-    /// The §7.3 bar: a read → edit → re-read re-labels no more lines than the
-    /// maximal in-order match allows. It is measured in the anchors a caller
+    /// #298's bar: a read → edit → re-read re-labels no more lines than the
+    /// maximal in-order match allows, `new.len() - LCS`, measured in the anchors a
+    /// caller
     /// actually receives, against the full dynamic program, because before
     /// #298 the app-write path and the registry path ran different algorithms
     /// and the same edit re-labelled a different number of lines depending on

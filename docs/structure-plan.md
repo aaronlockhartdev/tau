@@ -633,28 +633,39 @@ callers.
   lines keep their anchors, so a shorter common subsequence is pure churn: more
   re-anchoring for the model on the same edit. `the_carry_is_maximal` pins it
   against a brute-force oracle — the deleted table, kept in the test module for
-  exactly that job — and `properties.rs` pins the §7.3 bar in the anchors a
-  caller receives.
+  exactly that job — and `properties.rs` pins #298's bar in the anchors a caller
+  receives: `new.len() - LCS`.
 - **Linear space, because 10k-line files are real.** The alignment is built by
-  Hirschberg's divide and conquer: `O(n·m)` time, `O(min(n, m))` space. A full
-  table is 400 MB at 10k lines, which is the shape the session's largest files
-  reach — that was #300's complaint, settled by construction rather than by a
-  cap. The common prefix/suffix trim is what keeps the common case, a touched
-  window inside an otherwise unchanged file, cheap in time.
+  Hirschberg's divide and conquer: `O(n·m)` time, `O(new.len())` space. The full
+  table the registry used to build was 763 MiB at 10k lines — #300's number —
+  and no production path builds one now. Time is what the trade buys: the greedy
+  walk was `O(n + m)`, the alignment is quadratic in the window the prefix and
+  suffix trims leave, and the line limit the tool enforces (`HASH_SPACE`) bounds
+  the worst case. Measured on a release build at 10k lines: 101 µs for a
+  one-line edit, 298 ms for a wholesale rewrite. A cell-count bail like the
+  reference's is filed as G8 in the surface audit.
 - **The reference's cheaper trick does not transfer to every caller.** Pro
-  carries anchors *structurally* (`apply.ts:814-850`): its writer knows the
-  spans it edited, so lines outside a span keep their anchors by offset —
-  `O(spans + edited lines)`, no alignment at all. That is the right shape for
-  the app-write path and is filed as G7 in
+  carries anchors *structurally* (`anchor-registry.ts:809-857`, the carry at
+  842-850): its writer knows the spans it edited, so lines outside a span keep
+  their anchors by offset — `O(spans + edited lines)`, no alignment at all. That
+  is the right shape for the app-write path and is filed as G7 in
   `docs/research/hashline-surface-audit.md`; it does not retire `carry`, which
   answers the callers that have no span knowledge because the file changed out
   of band.
-- **Two trims must leave a window.** The prefix and suffix trims overlap on an
-  identical file, and a newline-terminated file's blank last line carries a
-  checksum like any other, so the suffix trim stops where the two trims meet
+- **A sub-alignment speaks in slice indices.** Hirschberg recurses on slices, so
+  the right half's matches are relative to the split and the middle window's are
+  relative to the prefix; both shifts are load-bearing and
+  `the_middle_window_reports_whole_file_indices` pins the second. The trims
+  themselves stay disjoint by construction — `common_suffix` is measured on what
+  the prefix left — and a blank last line carries a checksum like any other, so
+  a real last line must never be aligned onto it
   (`a_trailing_blank_line_is_not_matched_by_a_real_line`).
 - **A test file with no `mod` line is not a test file.** `hashline/properties.rs`
-  — the §7.3 properties — has carried no declaration since the split that
+  — the alignment's property tests — has carried no declaration since the split
   created it, so it was compiled, linted, and run by nothing. Registering it is
   part of this change. Silence from `cargo fmt` and `clippy` on a file is a
   signal to check, not a clean bill.
+- **This split is not finished.** `hashline/mod.rs` is 969 lines and
+  `registry.rs` 909; this change moved 10 lines out of the first. G7 and G8 in
+  the surface audit are the next moves, and both land in files that are already
+  over the 500-line soft limit.

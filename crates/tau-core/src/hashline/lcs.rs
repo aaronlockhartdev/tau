@@ -1,15 +1,18 @@
 //! The one sequence-alignment primitive in the crate (#298).
 //!
-//! Two callers need the same answer: given the checksums of an old file and
+//! Three callers need the same answer: given the checksums of an old file and
 //! the checksums of a new one, which new line carries which old line. The
 //! registry when a file is re-read after changing on disk, the pin store when
 //! it re-anchors its pins, and `mod.rs` when an edit re-anchors the lines that
 //! survived it. It used to be answered three times over two algorithms — a
 //! greedy cursor walk for the app-write path, a dynamic-programming table for
 //! the other two — and the two disagreed on 57,743 of 200,000 random pairs
-//! (#298, measured at `main` `bb4d9d9`), so the same content re-anchored
-//! differently depending on the path taken through it. This answers it once,
-//! maximally.
+//! (#298 measured that on `main` `bb4d9d9`; re-measured on a random edit
+//! script — files of ≤40 lines over a four-symbol alphabet, 10% of the lines
+//! each replaced, inserted, deleted — they disagree on 164,040 of 200,000, and
+//! the greedy walk leaves 1,631,979 lines unmatched that the maximal carry
+//! takes.) So the same content re-anchored differently depending on the path
+//! taken through it. This answers it once, maximally.
 
 /// The maximal in-order alignment of `old` to `new`: for each index of `new`,
 /// the index of the `old` line it carries, or `None` for a line that carries
@@ -23,8 +26,10 @@
 /// brute-force oracle; `properties.rs` pins what the registry makes of it.
 /// Space is `O(new.len())`: the alignment is built by Hirschberg's divide and
 /// conquer, which keeps only two score rows at a time. A full table would be
-/// `old.len() * new.len()` scores — 400 MB at 10k lines, which is the shape a
-/// session's largest files reach.
+/// `old.len() * new.len()` scores — 763 MiB at 10k lines, the shape a session's
+/// largest files reach and the number #300 carries. Time is `O(n·m)` on the
+/// window the trim leaves, which is the cost paid for the linear space.
+#[must_use]
 pub(crate) fn carry(old: &[String], new: &[String]) -> Vec<Option<usize>> {
     let mut matched = vec![None; new.len()];
     if old.is_empty() || new.is_empty() {
@@ -37,14 +42,9 @@ pub(crate) fn carry(old: &[String], new: &[String]) -> Vec<Option<usize>> {
     for (slot, i) in matched[..lead].iter_mut().zip(0..lead) {
         *slot = Some(i);
     }
-    let mut tail = common_suffix(&old[lead..], &new[lead..]);
-    // The trims can overlap. They must leave a middle window of at least one
-    // line per side, because each window's indices are set by its own start:
-    // an identical file, and a file whose blank last line a real last line
-    // matches, are the shapes that overrun.
-    tail = tail
-        .min((old.len() - lead).saturating_sub(1))
-        .min((new.len() - lead).saturating_sub(1));
+    // `common_suffix` is measured on the lines the prefix trim left, so the two
+    // trims stay disjoint: every middle window keeps at least one line per side.
+    let tail = common_suffix(&old[lead..], &new[lead..]);
     // A suffix line sits the same distance from the end of both sequences.
     for (k, slot) in matched[new.len() - tail..].iter_mut().enumerate() {
         *slot = Some(old.len() - tail + k);

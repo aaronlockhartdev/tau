@@ -95,10 +95,13 @@ paths; no ad-hoc strings cross the tool boundary.
 - **Served map scope.** Pro's `served` is session-global (pruned per file at
   `markServed`); tau's is per-file. With the allocation invariants (and change #2 above)
   anchors are session-unique, so the two behave the same on every reachable state.
-- **Edit re-anchoring.** Pro uses a true LCS (`Diff.diffArrays`, dimension 7); tau's
-  `lcs_reanchor` is a single-pass checksum walk. A changed line before a survivor can
-  cost the survivor its anchor on the edit path (re-reads use the true LCS via
-  `registry::match_anchors`). Unrelated to ambiguity; ported when dimension 7 lands.
+- **Edit re-anchoring.** Pro carries anchors structurally: its writer knows the
+  spans it edited, so lines outside a span keep their anchors by offset
+  (`anchor-registry.ts:809-857`). tau aligns the checksums of the whole file on
+  every path, the app-write re-anchor included, with one maximal in-order match
+  (`hashline/lcs.rs::carry`, #298). For a single-span edit the two agree on which
+  survivors keep their anchors; tau pays an alignment where pro pays a span walk
+  (G7 in `docs/research/hashline-surface-audit.md`). Unrelated to ambiguity.
 - **`swapReversedRanges` last-wins.** Pro's internal reversed-swap helper maps an
   anchor to its *last* line (`lineByHash.set` overwrites); the canonical resolution is
   first-occurrence, which is what tau now matches.

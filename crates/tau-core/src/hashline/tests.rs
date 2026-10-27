@@ -231,11 +231,16 @@ fn apply_edits_multiple_disjoint_ranges() {
     ];
     let edited = apply_edits(content, &edits).unwrap();
     assert_eq!(edited.content, "ONE\ntwo\nTHREE\nfour\nfive\n");
-    // The edited lines (0 and 2) get fresh anchors; the untouched lines 1 and
-    // 3 — which fall after the first edit point — are re-allocated by the LCS
-    // reanchor, so they do not keep the pre-edit anchors.
-    assert_ne!(edited.hashes[0], hashes[0]);
-    assert_ne!(edited.hashes[2], hashes[2]);
+    // Only the replaced lines are re-anchored. The survivors between the two
+    // ranges and after them keep the anchors they were served.
+    assert_ne!(edited.hashes[0], hashes[0], "the first replaced line");
+    assert_eq!(
+        edited.hashes[1], hashes[1],
+        "the survivor between the ranges"
+    );
+    assert_ne!(edited.hashes[2], hashes[2], "the second replaced line");
+    assert_eq!(edited.hashes[3], hashes[3], "a survivor after both ranges");
+    assert_eq!(edited.hashes[4], hashes[4], "a survivor after both ranges");
     // Removed lines are the union of both ranges, in order.
     assert_eq!(edited.removed_lines, vec!["one", "three"]);
 }
