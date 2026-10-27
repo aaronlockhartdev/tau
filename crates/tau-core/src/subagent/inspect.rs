@@ -42,6 +42,9 @@ impl Supervisor {
                 .ok()
                 .and_then(|()| store.leaf().ok().flatten())
                 .and_then(|leaf| {
+                    // The whole log by design (#302): the walk is the leaf's
+                    // branch, and the store reads by position or cursor, not
+                    // by parent chain (spec §3).
                     let entries = store.entries_range(0, usize::MAX).ok()?;
                     let branch = om_integration::branch_entries(&entries, Some(&leaf.id));
                     branch
@@ -100,6 +103,8 @@ pub(crate) fn read_activity(
     // than the entry list misses the position lookup and the raw window
     // falls back to the entire branch. Reading the list first biases the
     // mid-turn skew toward the harmless direction (a re-included fact).
+    // The whole log by design (#302): the raw window is the leaf's branch and
+    // the store has no branch read (spec §3).
     let entries = store.entries_range(0, usize::MAX).ok()?;
     let leaf = store.leaf().ok().and_then(|l| l)?;
     let record = OmState::load_record(&mut store).ok()?;

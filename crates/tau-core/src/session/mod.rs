@@ -46,8 +46,9 @@ struct Header {
 
 /// A session file: header + append-only entry lines (ADR-0005).
 ///
-/// One writer per session; reads are paged (`entries_range`, `entries_since`)
-/// — there is deliberately no full-dump read API (spec §3 protocol rule).
+/// One writer per session; reads are bounded (`entries_range`, `entries_since`,
+/// `entries_tail`) — there is deliberately no full-dump read API (spec §3
+/// protocol rule).
 pub(crate) type EntryEventHook = Arc<dyn Fn(&Entry) + Send + Sync>;
 
 pub struct SessionStore {
@@ -349,6 +350,38 @@ impl SessionStore {
                 entry.verify(i + 2)?;
                 out.push(entry);
             }
+        }
+        Ok(out)
+    }
+
+    /// The last `n` entries in append order (oldest first), taken from the
+    /// file's end: the lines are walked backwards so only the tail window is
+    /// parsed and CRC-verified (spec §3: tail reads stay cheap). `n` over the
+    /// log's length is the whole log; `n == 0` is empty. This is file order,
+    /// not the active branch — a forked session's abandoned branch can sit at
+    /// the file's end, so a branch caller walks from the leaf.
+    pub fn entries_tail(&self, n: usize) -> Result<Vec<Entry>, Error> {
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
+        let lines = Self::entry_lines(&raw);
+        let mut picked: Vec<(usize, &str)> = Vec::new();
+        for (i, line) in lines.iter().skip(1).enumerate().rev() {
+            if picked.len() == n {
+                break;
+            }
+            if line.is_empty() {
+                continue;
+            }
+            picked.push((i, &**line));
+        }
+        picked.reverse();
+        let mut out = Vec::with_capacity(picked.len());
+        for (i, line) in picked {
+            let entry: Entry = line.parse::<Entry>()?;
+            entry.verify(i + 2)?;
+            out.push(entry);
         }
         Ok(out)
     }

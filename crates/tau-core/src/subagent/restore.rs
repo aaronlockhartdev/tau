@@ -11,6 +11,20 @@ use crate::session::{Entry, SessionStore, list_workspace};
 use std::borrow::Cow;
 use std::path::Path;
 
+/// The head window that carries a child's spawn record (#302): a fresh or
+/// compacted child writes it as its first entry. A fork child's log is the
+/// parent's copied tree, so its record sits at the tail — the tail window is
+/// searched as well. Outside both windows the provenance falls back to
+/// `general`/`fresh`.
+pub(crate) const SPAWN_HEAD: usize = 8;
+
+/// The tail window that carries a child's last state record (#302): every
+/// drive opens with a `running` record and closes with a park, stop, fail or
+/// completion, so the records after the last state record are at most one
+/// interrupted turn's. Outside the window the child reads as parked — the
+/// #221 post-restart fallback — and re-adopt drops it.
+pub(crate) const STATE_TAIL: usize = 256;
+
 /// One of the parent's children as reconstructed from disk alone (the
 /// re-adopt's input, #250): the child's name (the file header's title), the
 /// minted handle (the parent's spawn records), the child session id, the
@@ -85,6 +99,9 @@ pub fn disk_children(cwd: &Path, parent: &str, parent_entries: Option<&[Entry]>)
     let spawn_records: Cow<'_, [Entry]> = if let Some(entries) = parent_entries {
         Cow::Borrowed(entries)
     } else {
+        // The whole parent log by design (#302): every spawn record in the
+        // parent's history names a child, and the store has no read narrower
+        // than a position range (spec §3).
         let mut pstore = SessionStore::for_workspace(cwd, parent);
         Cow::Owned(
             pstore
@@ -109,24 +126,26 @@ pub fn disk_children(cwd: &Path, parent: &str, parent_entries: Option<&[Entry]>)
         if m.archived || m.parent.as_deref() != Some(parent) {
             continue;
         }
-        // One open of the child file serves both the state check and the
-        // spawn provenance (issue #280: the fleet read used to open it
-        // twice).
+        // One open of the child file, two bounded reads: the spawn provenance
+        // sits at the log's head, its last state record at the tail (#302 —
+        // the fleet read never parses a child's whole file; #280's one open).
         let mut cstore = SessionStore::for_workspace(cwd, &m.id);
-        let Some(entries) = cstore
-            .open()
-            .and_then(|()| cstore.entries_range(0, usize::MAX))
-            .ok()
-        else {
+        if cstore.open().is_err() {
+            continue;
+        }
+        let Ok(head) = cstore.entries_range(0, SPAWN_HEAD) else {
             continue;
         };
-        let Some(state) = last_state_from(&entries) else {
+        let Ok(tail) = cstore.entries_tail(STATE_TAIL) else {
+            continue;
+        };
+        let Some(state) = last_state_from(&tail) else {
             continue;
         };
         if !state.is_terminal() {
             continue;
         }
-        let (agent_type, context_mode) = spawn_provenance(&entries);
+        let (agent_type, context_mode) = spawn_provenance(&head, &tail);
         let name = m.title.clone().unwrap_or_else(|| m.id.clone());
         let handle = handle_of
             .get(&m.id)
@@ -148,10 +167,16 @@ pub fn disk_children(cwd: &Path, parent: &str, parent_entries: Option<&[Entry]>)
 /// A child's spawn provenance (ADR-0001): the agent type and context mode
 /// from its spawn record. Absent (a hand-made file) → the
 /// `general`/`fresh` defaults.
-fn spawn_provenance(entries: &[Entry]) -> (String, ContextMode) {
-    let spawn = entries
+fn spawn_provenance(head: &[Entry], tail: &[Entry]) -> (String, ContextMode) {
+    // Fresh/compacted write the record at the log's head; a fork child's log
+    // is the parent's copied tree, so its record sits at the tail (#302).
+    let spawn = head
         .iter()
-        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn");
+        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn")
+        .or_else(|| {
+            tail.iter()
+                .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn")
+        });
     let agent_type = spawn
         .and_then(|e| e.payload["type"].as_str())
         .unwrap_or("general")

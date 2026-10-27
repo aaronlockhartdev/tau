@@ -135,6 +135,9 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
 
     let new: Vec<Entry> = match start {
         Some(cursor) => store.entries_since(&cursor).unwrap_or_default(),
+        // No cursor means the session's first turn: the whole log is its
+        // delta, and the store has no read wider than a cursor and narrower
+        // than a position range (#302, spec §3).
         None => store.entries_range(0, usize::MAX).unwrap_or_default(),
     };
 

@@ -390,6 +390,8 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Resu
     ) else {
         return Err("the group has no range".into());
     };
+    // The whole log by design (#302): the range names entry ids, located by
+    // position in the file, which is the log's own index (spec §3).
     let Ok(entries) = store.entries_range(0, usize::MAX) else {
         return Err("session read failed".into());
     };

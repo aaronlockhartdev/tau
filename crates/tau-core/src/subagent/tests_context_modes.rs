@@ -110,9 +110,9 @@ async fn a_compacted_child_recalls_the_parent_session() {
         .unwrap();
     let mut store = SessionStore::for_workspace(dir.path(), "parent");
     store.open().unwrap();
-    let entries = store.entries_range(0, usize::MAX).unwrap();
-    let first = entries[0].id.as_str();
-    let last = entries.last().unwrap().id.as_str();
+    // The range names the log's head and tail, so that is what is read (#302).
+    let first = store.entries_range(0, 1).unwrap()[0].id.clone();
+    let last = store.entries_tail(1).unwrap()[0].id.clone();
     let record = OmRecord {
         frozen_prefix: String::new(),
         active_observations: crate::om::wrap_in_observation_group(
