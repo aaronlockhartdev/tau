@@ -191,7 +191,22 @@ impl AgentSession {
             // ticket #70: repair malformed tool-call arguments at receipt, so
             // the stored entry + echoed history are valid JSON.
             repair_tool_call_arguments(&mut result);
-            self.append_assistant(&entry_id, &result, turn_killed && first_call)?;
+            // Two separate facts, decided apart: whether the *user* cut the turn
+            // (stop button, force send — #229) and how the *provider* ended the
+            // response (#307). A stop the user asked for already rides the entry
+            // as `interrupted`; only a cut nobody asked for is a cutoff.
+            let cut_by_user = (turn_killed && first_call)
+                || self.kill.load(Ordering::SeqCst)
+                || self.stop.load(Ordering::SeqCst)
+                || self.closed.load(Ordering::SeqCst);
+            self.append_assistant(&entry_id, &result, cut_by_user)?;
+            if let Some(ended_by) = cutoff(result.outcome).filter(|_| !cut_by_user) {
+                self.diagnostic(&Diagnostic::TurnCutoff {
+                    model: self.model(),
+                    ended_by,
+                    blocks: survived_blocks(&result),
+                })?;
+            }
 
             // The next call anchors on what the provider charged for this one
             // (plan §6.4). A call that never completed, or one whose provider
@@ -478,7 +493,7 @@ impl AgentSession {
         &self,
         id: &str,
         result: &TurnResult,
-        turn_forced: bool,
+        cut_by_user: bool,
     ) -> Result<(), AgentError> {
         // An empty, call-less assistant entry has nothing to record
         // (review N10), cut or completed: no content is no entry.
@@ -494,12 +509,11 @@ impl AgentSession {
                 // Interrupted means the user cut the turn (stop button or a
                 // force send) -- not that the provider omitted [DONE], which
                 // some do intermittently on tool-call segments of a turn that
-                // ran to completion. `turn_killed` covers a stop that landed
-                // before the turn; the live flags cover one mid-flight.
-                interrupted: turn_forced
-                    || self.kill.load(Ordering::SeqCst)
-                    || self.stop.load(Ordering::SeqCst)
-                    || self.closed.load(Ordering::SeqCst),
+                // ran to completion.
+                interrupted: cut_by_user,
+                // How the provider's response ended, recorded on every turn
+                // (#307): a cap or a dropped stream is visible on the record.
+                stop_reason: Some(result.outcome),
                 usage: result.usage.clone(),
                 duration_secs: result.duration.map(|d| d.as_secs_f64()),
                 calls: result.calls.clone(),
@@ -507,7 +521,6 @@ impl AgentSession {
             .to_value(),
         )
     }
-
     pub(super) fn append(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
         let id = self.inner.lock().store.mint_id();
         self.append_id(&id, kind, payload)
@@ -540,6 +553,24 @@ impl AgentSession {
     fn turn_config(&self) -> TurnConfig {
         self.inner.lock().turn.clone()
     }
+}
+
+/// The endings that are a provider-side cutoff: neither a clean completion nor
+/// a stop the user asked for (#307).
+fn cutoff(outcome: StreamOutcome) -> Option<StreamOutcome> {
+    match outcome {
+        StreamOutcome::Completed | StreamOutcome::Killed => None,
+        other => Some(other),
+    }
+}
+
+/// How much of the response reached the record: the text and reasoning runs,
+/// plus each call. `TurnResult::blocks` is a debug-build wire audit, so the
+/// count comes from what an assistant entry would actually carry.
+fn survived_blocks(result: &TurnResult) -> u64 {
+    u64::from(!result.text.is_empty())
+        + u64::from(!result.reasoning.is_empty())
+        + u64::try_from(result.calls.len()).unwrap_or(u64::MAX)
 }
 
 mod assemble;

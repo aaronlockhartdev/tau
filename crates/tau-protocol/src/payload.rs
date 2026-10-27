@@ -4,6 +4,8 @@
 //! writers construct and what the projections carry (the snapshot and
 //! `LiveState` shapes are built from them, never from raw maps).
 
+use crate::diagnostic::StreamOutcome;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -51,6 +53,16 @@ pub struct AssistantPayload {
     pub text: String,
     pub reasoning: String,
     pub interrupted: bool,
+    /// How the provider's response ended, per its own account (#307). This is
+    /// not `interrupted`: that is the user's intent for the turn, and it can be
+    /// true on a stream the provider finished cleanly.
+    /// How the provider's response ended, per its own account (#307), recorded
+    /// when the call settles. Not `interrupted`: that is the user's intent for
+    /// the turn and can be true on a stream the provider finished cleanly.
+    /// `None` says no ending is named yet — a streaming snapshot, or a record
+    /// written before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<StreamOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     /// Read a stored one with [`TurnUsage::from_record`], which also covers the
     /// shape written before the record stopped mirroring one API.

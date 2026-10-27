@@ -471,6 +471,8 @@ mod tests_address;
 #[cfg(test)]
 mod tests_bgjobs;
 #[cfg(test)]
+mod tests_cutoff;
+#[cfg(test)]
 mod tests_gate;
 #[cfg(test)]
 mod tests_om;

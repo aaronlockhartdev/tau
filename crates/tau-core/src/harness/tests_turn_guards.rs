@@ -309,6 +309,7 @@ fn append_dangling_assistant(cwd: &Path, session: &str) {
         text: String::new(),
         reasoning: String::new(),
         interrupted: true,
+        stop_reason: Some(tau_protocol::StreamOutcome::Killed),
         usage: None,
         duration_secs: None,
         calls: vec![tau_protocol::payload::FunctionCall {

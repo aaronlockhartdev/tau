@@ -86,6 +86,45 @@ async fn mid_stream_error_never_terminates_the_stream() {
     assert_eq!(result.text, "part1 part2");
     assert_eq!(result.mid_stream_errors, vec!["boom".to_string()]);
     assert_eq!(result.usage.unwrap().total_tokens(), 3);
+    // A completion frame after the error names the ending: the response made
+    // it to an end, whatever the mid-stream error was (#307).
+    assert_eq!(result.outcome, crate::provider::StreamOutcome::Completed);
+}
+
+#[tokio::test]
+async fn an_error_frame_with_nothing_after_it_names_the_ending() {
+    // The provider apologises mid-stream and the body then just stops: the
+    // break is the provider's error, not a silent EOF.
+    let body = ok_body(&[
+        r#"{"type":"response.created"}"#,
+        r#"{"type":"response.output_text.delta","delta":"part1"}"#,
+        r#"{"type":"error","error":{"message":"upstream died"}}"#,
+    ]);
+    let (base, _) = mock_server(vec![body]).await;
+    let request = ResponseRequest::new(
+        "m",
+        None,
+        vec![InputMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }]
+        .into_iter()
+        .map(InputEntry::Message)
+        .collect(),
+    );
+    let result = stream_response(
+        &reqwest::Client::new(),
+        &provider_for(&base),
+        &fast_requests(),
+        &request,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.text, "part1");
+    assert_eq!(
+        result.outcome,
+        crate::provider::StreamOutcome::MidStreamError
+    );
 }
 
 #[tokio::test]

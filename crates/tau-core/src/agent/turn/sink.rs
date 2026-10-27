@@ -73,6 +73,8 @@ impl StreamEntrySink {
                 text: self.text.clone(),
                 reasoning: self.reasoning.clone(),
                 interrupted: false,
+                // Mid-stream: the call has not settled, so no ending is named.
+                stop_reason: None,
                 usage: None,
                 duration_secs: None,
                 calls: vec![],

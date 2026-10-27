@@ -308,6 +308,16 @@ async fn open_head(
     }
 }
 
+/// The ending a break names when an error frame arrived and no terminal frame
+/// followed it: the provider's own error, not a bare EOF (#307).
+fn error_named_ending(body_end: StreamOutcome, errors: &[String]) -> StreamOutcome {
+    if body_end == StreamOutcome::EofWithoutDone && !errors.is_empty() {
+        StreamOutcome::MidStreamError
+    } else {
+        body_end
+    }
+}
+
 async fn attempt_one_turn(
     client: &reqwest::Client,
     url: &str,
@@ -440,7 +450,7 @@ async fn attempt_one_turn(
         }
     }
     if !frame_named {
-        result.outcome = body_end;
+        result.outcome = error_named_ending(body_end, &result.mid_stream_errors);
     }
     super::wire::response(&raw_response);
     // `unwrap_or(MAX)`: a 584-year stream is a diagnostic-log sentinel, not a

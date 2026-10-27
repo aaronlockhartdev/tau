@@ -285,6 +285,7 @@ mod payloads {
             text: "done".into(),
             reasoning: String::new(),
             interrupted: false,
+            stop_reason: Some(StreamOutcome::Completed),
             usage: None,
             duration_secs: None,
             calls: vec![FunctionCall {
