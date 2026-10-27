@@ -79,3 +79,32 @@ async fn a_stream_that_stops_by_itself_names_itself() {
     assert_eq!(cutoff["code"], "turn_cutoff");
     assert_eq!(cutoff["ended_by"], "eof_without_done");
 }
+
+#[test]
+fn a_user_cut_outranks_a_provider_cut() {
+    // The two causes are decided apart, and one entry tells one cause: when a
+    // stop the user asked for coincides with a provider's ending, the entry
+    // already carries `interrupted` and the diagnostic stays silent (#307).
+    use crate::agent::turn::reported_cutoff;
+    use tau_protocol::StreamOutcome;
+    assert_eq!(reported_cutoff(StreamOutcome::Length, true), None);
+    assert_eq!(
+        reported_cutoff(StreamOutcome::Length, false),
+        Some(StreamOutcome::Length),
+        "a cap nobody asked for is a cutoff"
+    );
+    assert_eq!(
+        reported_cutoff(StreamOutcome::MidStreamError, false),
+        Some(StreamOutcome::MidStreamError)
+    );
+    assert_eq!(
+        reported_cutoff(StreamOutcome::Completed, false),
+        None,
+        "a clean turn is no one's cut"
+    );
+    assert_eq!(
+        reported_cutoff(StreamOutcome::Killed, false),
+        None,
+        "a stop the sink named is not a provider cut"
+    );
+}

@@ -97,6 +97,19 @@ describe('present', () => {
     expect(cut.intmark).toBe('cut short · stream ended early');
   });
 
+  it('a cut the user asked for shows one mark, whatever the provider said', () => {
+    // The provider stopped at its cap and the user stopped the session: the
+    // entry's kind carries the user's cut, so the card says it once (#307).
+    const c = cardOf({
+      id: 'e1',
+      kind: 'interrupted',
+      text: 'half a sentence',
+      endedBy: 'length'
+    });
+    expect(c.cls).toBe('interrupted');
+    expect(c.intmark).toBe('interrupted');
+  });
+
   it('a bash tool call is a chip with summary, kv rows and the combined output', () => {
     const s = shells({
       id: 'e1',
@@ -448,7 +461,7 @@ describe('a diagnostic entry (ADR-0034)', () => {
         'context gate off for dev/x: the declared window leaves no room once the output cap and the margin are taken'
       );
     expect(line({ code: 'turn_cutoff', model: 'dev/x', ended_by: 'eof_without_done', blocks: 2 }))
-      .toBe('provider cut the turn (eof_without_done) after 2 block(s)');
+      .toBe('provider cut the turn (stream ended early) after 2 block(s)');
     expect(line({ code: 'om_stalled', pending: 24000, activation: 24000 }))
       .toBe('compaction stalled: 24.0k pending at activation 24.0k');
   });

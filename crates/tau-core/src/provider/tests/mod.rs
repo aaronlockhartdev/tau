@@ -112,7 +112,14 @@ fn reasoning_dialects_normalize_into_one_field() {
         );
         let mut result = TurnResult::default();
         let mut created_at: Option<i64> = None;
-        apply_frame(&mut Keep, &mut result, &mut created_at, &payload);
+        let mut ending = Ending::default();
+        apply_frame(
+            &mut Keep,
+            &mut result,
+            &mut created_at,
+            &mut ending,
+            &payload,
+        );
         assert_eq!(result.text, "answer", "dialect {field}");
         assert_eq!(result.reasoning, "thought", "dialect {field}");
     }
@@ -120,6 +127,13 @@ fn reasoning_dialects_normalize_into_one_field() {
         "reasoning_details": [{"text": "thought-a"}, {"text": "thought-b"}]}"#;
     let mut result = TurnResult::default();
     let mut created_at: Option<i64> = None;
-    apply_frame(&mut Keep, &mut result, &mut created_at, payload);
+    let mut ending = Ending::default();
+    apply_frame(
+        &mut Keep,
+        &mut result,
+        &mut created_at,
+        &mut ending,
+        payload,
+    );
     assert_eq!(result.reasoning, "thought-athought-b");
 }

@@ -6,6 +6,7 @@
 
 import type { LucideIcon } from '@lucide/svelte';
 import type { AnyEntry, Entry, SkillRef } from './protocol';
+import { asStreamOutcome, streamOutcomeLabels } from './protocol';
 import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
@@ -469,20 +470,13 @@ export function present(
   }
 }
 
-// What the provider did to end the response, in the operator's words (#307).
-// A clean end carries no badge, and a user's kill is already the entry's kind,
-// so neither reaches here.
+// What the provider did to end the response, in the operator's words, using the
+// same vocabulary the diagnostic card prints (#307). A clean end carries no
+// badge, and a user's kill is already the entry's kind, so neither reaches here.
 function cutoffMark(endedBy: unknown): string | null {
-  switch (endedBy) {
-    case 'length':
-      return 'cut short · output cap';
-    case 'idle_timeout':
-      return 'cut short · stream went quiet';
-    case 'eof_without_done':
-      return 'cut short · stream ended early';
-    case 'mid_stream_error':
-      return 'cut short · provider error mid-stream';
-    default:
-      return null;
+  const ending = asStreamOutcome(endedBy);
+  if (ending === undefined || ending === 'completed' || ending === 'killed') {
+    return null;
   }
+  return `cut short · ${streamOutcomeLabels[ending]}`;
 }

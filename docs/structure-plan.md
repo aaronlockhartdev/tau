@@ -581,6 +581,13 @@ Three decisions are in the shape:
   `response.completed` is the provider's own account and survives whatever the
   socket did afterwards; a bare EOF, an idle deadline, a transport drop, or a
   mid-stream error frame supply an ending only when no frame named one. The
+  ranking is fixed: the first terminal frame, then how the body ended (`[DONE]`,
+  an idle deadline, a stop), then an error frame, then the default. A later error
+  frame cannot unname a completed response, and a frame that names the same value
+  as the default still counts as naming one — during review, detecting a named
+  ending by *comparing values* let `response.incomplete` with an out-of-enum
+  reason be recorded as `completed`, which is the same silent cutoff this whole
+  change exists to close. The
   default is `eof_without_done`, not `completed` — a path that forgets to name
   its ending reads as cut, which is the direction an operator can act on.
   `response.incomplete` is decoded now; until then it fell into `Frame::Other`
@@ -599,6 +606,10 @@ Three decisions are in the shape:
   body was stopped. One field trying to say both is what made the old
   `completed: bool` wrong in both directions — a canned provider read it off the
   event list, and a capped turn settled without having completed.
+
+The card carries one mark. On a turn the provider capped *and* the user stopped,
+the badge shows the user's cut and the provider's ending stays on the record as
+`stop_reason`, where the diagnostics feed prints it.
 
 The diagnostic counts what survived from the settled `TurnResult`, not the
 wire-block vector that carries it: that vector is built only under

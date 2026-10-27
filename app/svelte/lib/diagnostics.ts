@@ -3,6 +3,7 @@
 // does not know renders by its own name, never as a blank card.
 
 import { fmtK } from './format';
+import { streamOutcomeLabels } from './protocol';
 import type { AnyEntry, Diagnostic, DiagnosticCode, Entry } from './protocol';
 
 // A card renders for an older build's spelling too (AnyEntry.kind is a
@@ -58,7 +59,7 @@ export function diagnosticLabel(entry: DiagnosticEntry): string {
     case 'provider_rejected':
       return `provider rejected (${d.status}): ${firstLine(d.body)}`;
     case 'turn_cutoff':
-      return `provider cut the turn (${d.ended_by}) after ${d.blocks} block(s)`;
+      return `provider cut the turn (${streamOutcomeLabels[d.ended_by]}) after ${d.blocks} block(s)`;
     default:
       // Unreachable while the list above covers every DiagnosticCode.
       return raw.code;

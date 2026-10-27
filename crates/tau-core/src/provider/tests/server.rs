@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::provider::StreamOutcome;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -125,6 +126,93 @@ async fn an_error_frame_with_nothing_after_it_names_the_ending() {
         result.outcome,
         crate::provider::StreamOutcome::MidStreamError
     );
+}
+
+/// One canned body through the live read loop: what a provider turn says about
+/// itself when the frames are served whole.
+async fn one_turn(frames: &[&str]) -> TurnResult {
+    let (base, _count) = mock_server(vec![ok_body(frames)]).await;
+    let request = ResponseRequest::new(
+        "m",
+        None,
+        vec![InputMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }]
+        .into_iter()
+        .map(InputEntry::Message)
+        .collect(),
+    );
+    stream_response(
+        &reqwest::Client::new(),
+        &provider_for(&base),
+        &fast_requests(),
+        &request,
+    )
+    .await
+    .expect("the body is served whole")
+}
+
+#[tokio::test]
+async fn a_capped_response_keeps_its_cap_past_a_clean_end() {
+    let result = one_turn(&[
+        r#"{"type":"response.created"}"#,
+        r#"{"type":"response.output_text.delta","delta":"trunc"}"#,
+        r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":2,"output_tokens":4}}}"#,
+        "[DONE]",
+    ])
+    .await;
+    assert_eq!(result.outcome, StreamOutcome::Length);
+    assert_eq!(
+        result.usage.unwrap().output_tokens,
+        4,
+        "a capped turn still spent tokens"
+    );
+}
+
+#[tokio::test]
+async fn an_incomplete_response_naming_no_cap_is_still_no_completion() {
+    // A content filter, a policy stop, or a server that omits the reason
+    // entirely: the provider stopped the response, and a following [DONE] does
+    // not make it complete (#307).
+    let result = one_turn(&[
+        r#"{"type":"response.created"}"#,
+        r#"{"type":"response.output_text.delta","delta":"refus"}"#,
+        r#"{"type":"response.incomplete","response":{"usage":{"input_tokens":2,"output_tokens":1}}}"#,
+        "[DONE]",
+    ])
+    .await;
+    assert_eq!(result.outcome, StreamOutcome::EofWithoutDone);
+}
+
+#[tokio::test]
+async fn a_later_error_frame_does_not_unname_a_completed_response() {
+    let result = one_turn(&[
+        r#"{"type":"response.created"}"#,
+        r#"{"type":"response.output_text.delta","delta":"whole"}"#,
+        r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}"#,
+        r#"{"type":"error","error":{"message":"trailing frame"}}"#,
+        "[DONE]",
+    ])
+    .await;
+    assert_eq!(result.outcome, StreamOutcome::Completed);
+    assert_eq!(result.mid_stream_errors, vec!["trailing frame".to_string()]);
+}
+
+#[tokio::test]
+async fn the_first_terminal_frame_names_the_ending() {
+    // Two terminal frames is a server contradicting itself; the first is its
+    // account of the ending and stands (#307).
+    let result = one_turn(&[
+        r#"{"type":"response.output_text.delta","delta":"half"}"#,
+        r#"{"type":"response.incomplete","response":{}}"#,
+        r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}"#,
+        "[DONE]",
+    ])
+    .await;
+    // The incomplete frame named no cap, so no completion — and the later
+    // completed frame cannot unname it.
+    assert_eq!(result.outcome, StreamOutcome::EofWithoutDone);
 }
 
 #[tokio::test]

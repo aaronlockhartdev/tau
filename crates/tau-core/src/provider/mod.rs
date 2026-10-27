@@ -438,8 +438,8 @@ impl Default for TurnResult {
 
 impl TurnResult {
     /// JSONL wire view of the response: one parseable JSON line — the
-    /// model's exact output as ordered `blocks`, plus `ms`/`completed` /
-    /// `usage` summary fields. `debug!` level (the #98 wire log's
+    /// model's exact output as ordered `blocks`, plus `ms`/`ended_by`/`usage`
+    /// summary fields. `debug!` level (the #98 wire log's
     /// parseable companion) — compiled out in release builds. The verbatim
     /// SSE bytes stay at `trace` (`wire::response`).
     pub fn wire_response_jsonl(&self, id: &str, ms: u64) {

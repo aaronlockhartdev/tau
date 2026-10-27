@@ -200,11 +200,11 @@ impl AgentSession {
                 || self.stop.load(Ordering::SeqCst)
                 || self.closed.load(Ordering::SeqCst);
             self.append_assistant(&entry_id, &result, cut_by_user)?;
-            if let Some(ended_by) = cutoff(result.outcome).filter(|_| !cut_by_user) {
+            if let Some(ended_by) = reported_cutoff(result.outcome, cut_by_user) {
                 self.diagnostic(&Diagnostic::TurnCutoff {
                     model: self.model(),
                     ended_by,
-                    blocks: survived_blocks(&result),
+                    blocks: settled_blocks(&result),
                 })?;
             }
 
@@ -521,6 +521,7 @@ impl AgentSession {
             .to_value(),
         )
     }
+
     pub(super) fn append(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
         let id = self.inner.lock().store.mint_id();
         self.append_id(&id, kind, payload)
@@ -564,10 +565,17 @@ fn cutoff(outcome: StreamOutcome) -> Option<StreamOutcome> {
     }
 }
 
+/// The cutoff a turn reports to the record. A user's stop outranks a provider's
+/// ending: the entry already carries `interrupted`, and two entries naming one
+/// cause is how the record starts contradicting itself (#307, plan §6.11).
+pub(crate) fn reported_cutoff(outcome: StreamOutcome, cut_by_user: bool) -> Option<StreamOutcome> {
+    if cut_by_user { None } else { cutoff(outcome) }
+}
+
 /// How much of the response reached the record: the text and reasoning runs,
 /// plus each call. `TurnResult::blocks` is a debug-build wire audit, so the
 /// count comes from what an assistant entry would actually carry.
-fn survived_blocks(result: &TurnResult) -> u64 {
+fn settled_blocks(result: &TurnResult) -> u64 {
     u64::from(!result.text.is_empty())
         + u64::from(!result.reasoning.is_empty())
         + u64::try_from(result.calls.len()).unwrap_or(u64::MAX)

@@ -51,6 +51,7 @@ fn decode_stream_records_blocks_in_stream_order() {
     }
     let mut result = TurnResult::default();
     let mut created_at: Option<i64> = None;
+    let mut ending = Ending::default();
     for payload in [
         r#"{"type":"response.reasoning_text.delta","delta":"the loop is off-by-one"}"#,
         r#"{"type":"response.output_item.done","item":{"id":"i1","type":"function_call","name":"edit","call_id":"c1","arguments":"{\"path\":\"a.rs\"}"}}"#,
@@ -58,7 +59,13 @@ fn decode_stream_records_blocks_in_stream_order() {
         r#"{"type":"response.reasoning_text.delta","delta":"double-checking"}"#,
         r#"{"type":"response.output_text.delta","delta":". looks right"}"#,
     ] {
-        apply_frame(&mut Keep, &mut result, &mut created_at, payload);
+        apply_frame(
+            &mut Keep,
+            &mut result,
+            &mut created_at,
+            &mut ending,
+            payload,
+        );
     }
     assert_eq!(
         result.blocks,

@@ -142,6 +142,17 @@ export function asStreamOutcome(value: unknown): StreamOutcome | undefined {
   return streamOutcomes.find((o) => o === value);
 }
 
+// What an ending reads like in prose: one vocabulary for the card's badge and
+// the diagnostic feed, so the same cut is spelled the same place to place (#307).
+export const streamOutcomeLabels: Record<StreamOutcome, string> = {
+  completed: 'finished cleanly',
+  length: 'output cap',
+  idle_timeout: 'stream went quiet',
+  eof_without_done: 'stream ended early',
+  mid_stream_error: 'provider error mid-stream',
+  killed: 'stopped'
+};
+
 // The diagnostic codes this build knows (ADR-0034). Codes are append-only:
 // a code from a newer core arrives through the escape arm and still renders,
 // by its own name.

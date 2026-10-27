@@ -12,16 +12,59 @@ fn emit(sink: &mut dyn TurnSink, result: &mut TurnResult, event: &TurnEvent) -> 
     true
 }
 
+/// How a response ended, as told by the frames and by the body. The first
+/// terminal frame is the provider's own account and wins; the body's own
+/// ending — `[DONE]`, a stop, an idle deadline — holds only where no frame
+/// named one; an error frame that neither ended the stream nor was followed by
+/// a terminal frame names a mid-stream error; and a body that simply stopped
+/// names nothing, which is `EofWithoutDone` (#307).
+#[derive(Default)]
+pub(super) struct Ending {
+    terminal: Option<StreamOutcome>,
+    body: Option<StreamOutcome>,
+    errored: bool,
+}
+
+impl Ending {
+    fn terminal(&mut self, ending: StreamOutcome) {
+        self.terminal.get_or_insert(ending);
+    }
+    fn body(&mut self, ending: StreamOutcome) {
+        if self.body.is_none() {
+            self.body = Some(ending);
+        }
+    }
+    fn error(&mut self) {
+        self.errored = true;
+    }
+
+    fn resolve(self) -> StreamOutcome {
+        if let Some(ending) = self.terminal {
+            return ending;
+        }
+        if let Some(ending) = self.body {
+            return ending;
+        }
+        if self.errored {
+            StreamOutcome::MidStreamError
+        } else {
+            StreamOutcome::EofWithoutDone
+        }
+    }
+}
+
 /// Consume one `data:` payload: accumulate into the result and forward the
 /// stream-delta events to the sink (false = kill, spec §7).
 /// `created_at` is the running `response.created` timestamp (#224), threaded
 /// by the caller: a per-payload function holds no cross-frame state, so the
 /// decode-window duration is computed here, at the `response.completed`
-/// frame, from the two server timestamps.
+/// frame, from the two server timestamps. `ending` records how the response
+/// ended, in the frames' own words where they have any.
 pub(super) fn apply_frame(
     sink: &mut dyn TurnSink,
     result: &mut TurnResult,
     created_at: &mut Option<i64>,
+    ending: &mut Ending,
     payload: &str,
 ) -> bool {
     // Undecodable frames are skipped rather than failing the turn: servers
@@ -46,7 +89,7 @@ pub(super) fn apply_frame(
             true
         }
         Frame::Completed { response } => {
-            result.outcome = StreamOutcome::Completed;
+            ending.terminal(StreamOutcome::Completed);
             settle_turn(sink, result, created_at, response)
         }
         Frame::OutputTextDelta {
@@ -101,7 +144,7 @@ pub(super) fn apply_frame(
             // A frame naming an error is the provider saying the stream went
             // wrong. It does not end the stream — a later terminal frame still
             // outranks it (#307).
-            result.outcome = StreamOutcome::MidStreamError;
+            ending.error();
             result.mid_stream_errors.push(
                 error
                     .message
@@ -113,11 +156,11 @@ pub(super) fn apply_frame(
         // Either terminal frame settles the call and carries its usage; they
         // differ only in how the response ended.
         Frame::Incomplete { response } => {
-            result.outcome = if output_cap(response.as_ref()) {
+            ending.terminal(if output_cap(response.as_ref()) {
                 StreamOutcome::Length
             } else {
                 StreamOutcome::EofWithoutDone
-            };
+            });
             settle_turn(sink, result, created_at, response)
         }
         Frame::InProgress | Frame::Other => true,
@@ -185,13 +228,20 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
     let mut sink = RecordSink(Vec::new());
     let mut result = TurnResult::default();
     let mut created_at: Option<i64> = None;
+    let mut ending = Ending::default();
     let mut calls = Vec::new();
     let mut seen_calls = 0usize;
     for payload in payloads {
         if payload == "[DONE]" {
             break;
         }
-        apply_frame(&mut sink, &mut result, &mut created_at, &payload);
+        apply_frame(
+            &mut sink,
+            &mut result,
+            &mut created_at,
+            &mut ending,
+            &payload,
+        );
         while result.calls.len() > seen_calls {
             let call = result
                 .calls
@@ -202,20 +252,22 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
             seen_calls += 1;
         }
     }
-    // A body that ended with [DONE] is a clean end: it stands as complete
-    // even when the server omitted the response.completed frame (some do, on
+    // A body that ended with [DONE] is a clean end: it stands as complete even
+    // when the server omitted the response.completed frame (some do, on
     // tool-call responses). Synthesize the completion so the canned replay
     // mirrors the live path's clean_end; a [DONE]-less cut body reaches no
     // completion, as before.
-    if parser.terminated && result.outcome == StreamOutcome::EofWithoutDone {
-        result.outcome = StreamOutcome::Completed;
-        if !sink
+    if parser.terminated {
+        ending.body(StreamOutcome::Completed);
+    }
+    result.outcome = ending.resolve();
+    if result.outcome == StreamOutcome::Completed
+        && !sink
             .0
             .iter()
             .any(|e| matches!(e, TurnEvent::Completed(_, _)))
-        {
-            sink.0.push(TurnEvent::Completed(Usage::default(), None));
-        }
+    {
+        sink.0.push(TurnEvent::Completed(Usage::default(), None));
     }
     Ok((sink.0, calls, result.outcome))
 }
@@ -308,16 +360,6 @@ async fn open_head(
     }
 }
 
-/// The ending a break names when an error frame arrived and no terminal frame
-/// followed it: the provider's own error, not a bare EOF (#307).
-fn error_named_ending(body_end: StreamOutcome, errors: &[String]) -> StreamOutcome {
-    if body_end == StreamOutcome::EofWithoutDone && !errors.is_empty() {
-        StreamOutcome::MidStreamError
-    } else {
-        body_end
-    }
-}
-
 async fn attempt_one_turn(
     client: &reqwest::Client,
     url: &str,
@@ -373,8 +415,7 @@ async fn attempt_one_turn(
     // omitted the response.completed frame (some do, on tool-call responses) —
     // otherwise every normal agentic segment would read as cut. A frame that
     // names an ending outranks this (#307).
-    let mut body_end = StreamOutcome::EofWithoutDone;
-    let mut frame_named = false;
+    let mut ending = Ending::default();
     let mut raw_response = String::new();
     'outer: while !parser.terminated {
         let chunk = match tokio::select! {
@@ -387,7 +428,7 @@ async fn attempt_one_turn(
             // A stop during prefill (before the first token) aborts the
             // request: the partial — possibly empty — stands, like a kill.
             () = sink.stop_signal() => {
-                body_end = StreamOutcome::Killed;
+                ending.body(StreamOutcome::Killed);
                 break 'outer;
             },
         } {
@@ -428,30 +469,25 @@ async fn attempt_one_turn(
                 {
                     return Err(ProviderError::IdleTimeout);
                 }
-                body_end = StreamOutcome::IdleTimeout;
+                ending.body(StreamOutcome::IdleTimeout);
                 break;
             }
         };
         for payload in parser.feed(&chunk)? {
             if payload == "[DONE]" {
-                body_end = StreamOutcome::Completed;
+                ending.body(StreamOutcome::Completed);
                 break 'outer;
             }
-            let named = result.outcome;
-            if !apply_frame(sink, &mut result, &mut created_at, &payload) {
-                // Killed: the partial stands (spec §7 force) unless a frame
-                // already named how the response ended (#307).
-                if result.outcome == named {
-                    result.outcome = StreamOutcome::Killed;
-                }
+            if !apply_frame(sink, &mut result, &mut created_at, &mut ending, &payload) {
+                // Stopped mid-body: the partial stands (spec §7 force) unless
+                // the provider named the ending first (#307).
+                ending.body(StreamOutcome::Killed);
+                result.outcome = ending.resolve();
                 return Ok(result);
             }
-            frame_named |= result.outcome != named;
         }
     }
-    if !frame_named {
-        result.outcome = error_named_ending(body_end, &result.mid_stream_errors);
-    }
+    result.outcome = ending.resolve();
     super::wire::response(&raw_response);
     // `unwrap_or(MAX)`: a 584-year stream is a diagnostic-log sentinel, not a
     // failure — `as u64` is a silent conversion, which clippy denies.

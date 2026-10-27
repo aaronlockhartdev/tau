@@ -53,9 +53,6 @@ pub struct AssistantPayload {
     pub text: String,
     pub reasoning: String,
     pub interrupted: bool,
-    /// How the provider's response ended, per its own account (#307). This is
-    /// not `interrupted`: that is the user's intent for the turn, and it can be
-    /// true on a stream the provider finished cleanly.
     /// How the provider's response ended, per its own account (#307), recorded
     /// when the call settles. Not `interrupted`: that is the user's intent for
     /// the turn and can be true on a stream the provider finished cleanly.
