@@ -67,7 +67,7 @@ describe('present', () => {
         sections: [{ type: 'md', text: 'the answer' }],
         reveal: null,
         expando: null,
-        intmark: false
+        intmark: null
       }
     ]);
   });
@@ -81,7 +81,20 @@ describe('present', () => {
   it('an interrupted entry carries the intmark even with empty text', () => {
     const c = cardOf({ id: 'e1', kind: 'interrupted', text: '' });
     expect(c.cls).toBe('interrupted');
-    expect(c.intmark).toBe(true);
+    expect(c.intmark).toBe('interrupted');
+  });
+
+  it('a provider cutoff badges the card with what ended it', () => {
+    const c = cardOf({ id: 'e1', kind: 'message', text: 'half a sentence', endedBy: 'length' });
+    expect(c.cls).toBe('cutoff');
+    expect(c.intmark).toBe('cut short · output cap');
+  });
+
+  it('a clean ending carries no badge, and an empty cut card still shows', () => {
+    expect(cardOf({ id: 'e1', kind: 'message', text: 'done', endedBy: 'completed' }).intmark).toBeNull();
+    const cut = cardOf({ id: 'e1', kind: 'message', text: '', endedBy: 'eof_without_done' });
+    expect(cut.cls).toBe('cutoff');
+    expect(cut.intmark).toBe('cut short · stream ended early');
   });
 
   it('a bash tool call is a chip with summary, kv rows and the combined output', () => {

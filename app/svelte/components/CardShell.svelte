@@ -4,7 +4,7 @@
   // and its toggles stay in EntryCard (the store map is the persistence
   // layer); this child is a stateless renderer over them.
   import type { ExpandSlot, KvRow, Section, Shell } from '../lib/presentation';
-  import { Zap } from '@lucide/svelte';
+  import { Scissors, Zap } from '@lucide/svelte';
   import ToolOutput from './ToolOutput.svelte';
   import Markdown from './Markdown.svelte';
 
@@ -116,6 +116,7 @@
     class="card2"
     class:obs={shell.cls === 'obs'}
     class:interrupted={shell.cls === 'interrupted'}
+    class:cutoff={shell.cls === 'cutoff'}
     class:collapsed={shell.collapseWhenClosed && !isOpen}
   >
     {#if shell.header}
@@ -178,7 +179,14 @@
       </button>
     {/if}
     {#if shell.intmark}
-      <div class="intmark"><Zap class="im" size={14} fill="currentColor" color="none" />interrupted</div>
+      <div class="intmark">
+        {#if shell.cls === 'cutoff'}
+          <Scissors class="im" size={14} />
+        {:else}
+          <Zap class="im" size={14} fill="currentColor" color="none" />
+        {/if}
+        {shell.intmark}
+      </div>
     {/if}
   </div>
 {/if}

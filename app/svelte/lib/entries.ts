@@ -9,6 +9,7 @@ import type {
   Usage,
   ViewEntry
 } from './protocol';
+import { asStreamOutcome } from './protocol';
 import { valueLinesOf } from './markdown';
 
 // A sub-agent's message to the parent (and a parent's message to a child)
@@ -78,6 +79,9 @@ export function decodeEntry(v: ViewEntry): Entry {
       return {
         id: v.id,
         kind: interrupted ? 'interrupted' : 'message',
+        // The provider's own account of how the response ended (#307). Only a
+        // cut nobody asked for earns a badge; the user's stop is the kind.
+        endedBy: asStreamOutcome(p.stop_reason),
         text: typeof p.text === 'string' ? p.text : '',
         reasoning: typeof p.reasoning === 'string' ? p.reasoning : undefined,
         calls: Array.isArray(p.calls)

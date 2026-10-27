@@ -65,7 +65,7 @@ export type Shell =
   | {
     kind: 'card';
     header: Header | null;
-    cls: 'obs' | 'interrupted' | null;
+    cls: 'obs' | 'interrupted' | 'cutoff' | null;
     openKey: ExpandSlot | null;
     // The body is hidden while the slot is closed (the observation card).
     collapseWhenClosed: boolean;
@@ -74,7 +74,9 @@ export type Shell =
     // observation-details shell.
     reveal: { sections: Section[]; group: boolean } | null;
     expando: { openKey: ExpandSlot; whenOpen: string; whenClosed: string } | null;
-    intmark: boolean;
+    // The badge under the body: what cut the turn short, in words; null shows
+    // no badge.
+    intmark: string | null;
   };
 
 export interface Presentation {
@@ -165,7 +167,7 @@ function card(over: Partial<Omit<Card, 'kind'>> & { sections: Section[] }): Shel
     collapseWhenClosed: false,
     reveal: null,
     expando: null,
-    intmark: false,
+    intmark: null,
     ...over
   };
 }
@@ -383,12 +385,16 @@ export function present(
           body: entry.reasoning.trim()
         });
       }
-      if (text.trim() || entry.kind === 'interrupted') {
+      // Two different cuts, two different badges: the user's stop is the entry's
+      // kind, the provider's ending is its stop_reason (#307).
+      const endedBy = 'endedBy' in entry ? entry.endedBy : undefined;
+      const mark = entry.kind === 'interrupted' ? 'interrupted' : cutoffMark(endedBy);
+      if (text.trim() || mark) {
         shells.push(
           card({
-            cls: entry.kind === 'interrupted' ? 'interrupted' : null,
+            cls: mark === null ? null : entry.kind === 'interrupted' ? 'interrupted' : 'cutoff',
             sections: [{ type: 'md', text: text.trim() }],
-            intmark: entry.kind === 'interrupted'
+            intmark: mark
           })
         );
       }
@@ -460,5 +466,23 @@ export function present(
       // interpretation).
       if (!text.trim()) return null;
       return { shells: [card({ sections: [{ type: 'md', text: text.trim() }] })] };
+  }
+}
+
+// What the provider did to end the response, in the operator's words (#307).
+// A clean end carries no badge, and a user's kill is already the entry's kind,
+// so neither reaches here.
+function cutoffMark(endedBy: unknown): string | null {
+  switch (endedBy) {
+    case 'length':
+      return 'cut short · output cap';
+    case 'idle_timeout':
+      return 'cut short · stream went quiet';
+    case 'eof_without_done':
+      return 'cut short · stream ended early';
+    case 'mid_stream_error':
+      return 'cut short · provider error mid-stream';
+    default:
+      return null;
   }
 }

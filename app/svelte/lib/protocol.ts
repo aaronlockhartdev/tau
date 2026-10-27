@@ -128,6 +128,20 @@ export type StreamOutcome =
   | 'mid_stream_error'
   | 'killed';
 
+const streamOutcomes: StreamOutcome[] = [
+  'completed',
+  'length',
+  'idle_timeout',
+  'eof_without_done',
+  'mid_stream_error',
+  'killed'
+];
+
+// A wire value read as a stream ending (#307); anything else is not one.
+export function asStreamOutcome(value: unknown): StreamOutcome | undefined {
+  return streamOutcomes.find((o) => o === value);
+}
+
 // The diagnostic codes this build knows (ADR-0034). Codes are append-only:
 // a code from a newer core arrives through the escape arm and still renders,
 // by its own name.
@@ -181,6 +195,9 @@ export type MessageEntry = {
   reasoning?: string;
   calls?: string[];
   usage?: Usage;
+  // How the provider's response ended, as the provider told it; absent on a
+  // record from before the field existed.
+  endedBy?: StreamOutcome;
 };
 
 // The escape variant: every variant's fields, all optional — kinds the

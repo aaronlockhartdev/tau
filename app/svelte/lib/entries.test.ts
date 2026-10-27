@@ -56,6 +56,33 @@ describe('upsertEntry (ADR-0008)', () => {
   });
 });
 
+describe('decodeEntry (how the response ended, #307)', () => {
+  const assistant = (payload: Record<string, unknown>): ViewEntry => ({
+    id: '00000001',
+    parent: null,
+    kind: 'assistant',
+    timestamp: 1,
+    payload,
+    blob: null,
+    first_kept: null
+  });
+
+  it('reads the ending the provider named', () => {
+    const e = decodeEntry(
+      assistant({ text: 'half', interrupted: false, stop_reason: 'length' })
+    ) as { kind: string; endedBy?: string };
+    expect(e.kind).toBe('message');
+    expect(e.endedBy).toBe('length');
+  });
+
+  it('an ending this build does not know is no ending', () => {
+    const e = decodeEntry(assistant({ text: 'x', stop_reason: 'exploded' })) as {
+      endedBy?: string;
+    };
+    expect(e.endedBy).toBeUndefined();
+  });
+});
+
 describe('decodeEntry (om)', () => {
   it('strips the observation-group wrapper tags from the text', () => {
     const e = decodeEntry(omView()) as { kind: string; text: string };

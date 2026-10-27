@@ -136,7 +136,7 @@ pub fn canned(body: &str) -> TurnProviderRef {
 }
 
 /// A canned provider whose stream is cut after `n` events — the shape a
-/// force-kill produces (partial, `completed: false`).
+/// force-kill produces (partial, an ending that is not `completed`).
 #[must_use]
 pub fn canned_cut(body: &str, n: usize) -> TurnProviderRef {
     let (events, calls, ending) = decode_stream(body).expect("canned SSE body must decode");

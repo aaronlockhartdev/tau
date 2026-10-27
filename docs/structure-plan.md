@@ -305,8 +305,10 @@ finish it, and each keeps the existing tests as the harness.
    re-point its three test callers.~~ — **done** (§6.10). The row's count was
    wrong: nine call sites in five files, and the acceptance driver cannot ride the
    became total; the seam became its own role.
-8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). Land the
-   `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.
+8. ~~Rename the `StreamEnd` collision~~ — done (§6.1). ~~Land the
+   `turn_cutoff`/`StreamOutcome`-on-`ProviderResult` ticket next.~~ — **done**
+   (#307, §6.11): the ending is named at the provider, rides every assistant
+   entry, and a cut nobody asked for writes its own diagnostic.
 9. **S4** (disperse `om_integration`) — four commits, each behaviour-neutral.
 10. **S7, S8** — wire-visible; each needs goldens + the TS mirror + a protocol
    commit.
@@ -329,7 +331,8 @@ finish it, and each keeps the existing tests as the harness.
    is now `StreamOutcome`; the TS mirror followed. `Event::StreamEnd` keeps its
    name — it is what the GUI subscribes to and its wire spelling is already
    pinned by goldens. The record type had no writers, so the rename cost four
-   Rust files and two TS lines and changed no bytes on the wire.
+   Rust files and two TS lines and changed no bytes on the wire. (#307 gave it
+   writers: the ending now rides every assistant entry — §6.11.)
 2. **`parking_lot` is adopted** (decided 2026-10-26, against the first
    recommendation). What the rejection was protecting — the poison signal — was
    already being discarded at 419 of 423 sites, so std was selling a signal
@@ -563,3 +566,41 @@ the supervisor it adopts, and no fixture gives one a command, so its parent neve
 ends in that state. The line went rather than stayed untested — a fixture role
 carries what its fixtures need, and a re-open that finds a failed check is what a
 real open does.
+
+### 6.11 A turn's ending is a typed fact; only an unwanted one is a diagnostic (taken 2026-10-26, #307)
+
+`StreamOutcome` had been renamed and still had no writer (§6.1). It has writers
+now: `TurnResult.outcome` names how each provider call's stream ended, and the
+assistant entry carries it as `stop_reason`. The failure that started this —
+turns that stopped early and left an ordinary entry behind — is now a recorded
+fact rather than an inference an operator makes from a missing tool call.
+
+Three decisions are in the shape:
+
+- **The terminal frame names the ending; the read loop only backs it up.**
+  `response.completed` is the provider's own account and survives whatever the
+  socket did afterwards; a bare EOF, an idle deadline, a transport drop, or a
+  mid-stream error frame supply an ending only when no frame named one. The
+  default is `eof_without_done`, not `completed` — a path that forgets to name
+  its ending reads as cut, which is the direction an operator can act on.
+  `response.incomplete` is decoded now; until then it fell into `Frame::Other`
+  and a turn the model stopped at its own output cap looked byte-for-byte like a
+  clean one, which is what #11 looked like from the GUI.
+- **A cutoff the user asked for is not a cutoff.** `interrupted` (turn-level
+  intent — stop, force) and `stop_reason` (response-level ending) are different
+  facts and both stay: a clean completion can still be interrupted, and a capped
+  turn is nobody's choice. `turn_cutoff` fires on the second alone — an ending
+  that is neither clean nor willed — and never on a turn a user cut, where the
+  entry already says so. Two entries claiming one cause is how the GUI ends up
+  contradicting itself.
+- **Settlement and ending are orthogonal.** A capped frame still settles the
+  call: the tokens were spent, the usage is real, and the usage chip needs it, so
+  `TurnEvent::Completed` fires for it while `outcome` separately records that the
+  body was stopped. One field trying to say both is what made the old
+  `completed: bool` wrong in both directions — a canned provider read it off the
+  event list, and a capped turn settled without having completed.
+
+The diagnostic counts what survived from the settled `TurnResult`, not the
+wire-block vector that carries it: that vector is built only under
+`debug_assertions`, so in a release build it would have reported every cutoff as
+cutting zero blocks.
