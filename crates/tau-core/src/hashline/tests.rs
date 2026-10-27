@@ -1,5 +1,7 @@
 use super::*;
 
+use proptest::prelude::*;
+
 #[test]
 fn encoding_is_a_bijection_over_the_full_space() {
     // 52^4 slots, 4 letters: encode every slot and require a lossless decode.
@@ -768,4 +770,52 @@ fn ownership_gates_render_their_e_codes() {
         msg.contains("\"AAAA\", \"BBBB\" are owned by other.rs"),
         "{msg}"
     );
+}
+
+proptest! {
+    /// The ack subtracts `kept = old - removed` from `new`, every count taken
+    /// from the tool's own line model. A batch's ranges are spans of the file,
+    /// so both subtractions are exact — the precondition that lets the ack use
+    /// plain arithmetic where it used to saturate (#301). This pins that
+    /// precondition, not the ack's wording.
+    #[test]
+    fn the_acks_added_count_is_exact_arithmetic(
+        (lines, payload, a, b) in (
+            prop::collection::vec("abc", 1..12),
+            prop::collection::vec("abc", 0..3),
+            0usize..12,
+            0usize..12,
+        ),
+        file_nl in prop::bool::weighted(0.5),
+        payload_nl in prop::bool::weighted(0.5),
+    ) {
+        let mut content = lines.join("\n");
+        if file_nl {
+            content.push('\n');
+        }
+        let hashes = line_hashes(&content).unwrap();
+        let from = a.min(lines.len() - 1);
+        let to = b.min(lines.len() - 1).max(from);
+        let mut body = payload.join("\n");
+        if payload_nl {
+            body.push('\n');
+        }
+        let edit = Edit {
+            from: hashes[from].clone(),
+            to: hashes[to].clone(),
+            content: body,
+        };
+        // A batch that empties the file is rejected, so it reports no counts.
+        let Ok(edited) = apply_edit(&content, &edit) else {
+            return Ok(());
+        };
+        let old = split_lines(&content).len();
+        let new = split_lines(&edited.content).len();
+        let removed = edited.removed_lines.len();
+        prop_assert!(
+            removed <= old && new + removed >= old,
+            "the ack's subtraction would underflow: new={new} removed={removed} old={old} content={content:?} payload={:?}",
+            edit.content
+        );
+    }
 }

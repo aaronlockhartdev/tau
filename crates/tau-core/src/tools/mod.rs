@@ -333,6 +333,8 @@ mod tests_bgjobs;
 #[cfg(test)]
 mod tests_edit;
 #[cfg(test)]
+mod tests_edit_ack;
+#[cfg(test)]
 mod tests_image;
 #[cfg(test)]
 mod tests_read;
