@@ -60,9 +60,9 @@ pub struct AssistantPayload {
     /// written before the field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_reason: Option<StreamOutcome>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     /// Read a stored one with [`TurnUsage::from_record`], which also covers the
     /// shape written before the record stopped mirroring one API.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<TurnUsage>,
     /// #224: the server's decode-window duration (seconds);
     /// `None` when the provider omitted the created/completed timestamps.

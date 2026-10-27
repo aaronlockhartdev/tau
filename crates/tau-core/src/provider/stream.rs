@@ -26,15 +26,15 @@ pub(super) struct Ending {
 }
 
 impl Ending {
-    fn terminal(&mut self, ending: StreamOutcome) {
+    fn note_terminal(&mut self, ending: StreamOutcome) {
         self.terminal.get_or_insert(ending);
     }
-    fn body(&mut self, ending: StreamOutcome) {
+    fn note_body(&mut self, ending: StreamOutcome) {
         if self.body.is_none() {
             self.body = Some(ending);
         }
     }
-    fn error(&mut self) {
+    fn note_error(&mut self) {
         self.errored = true;
     }
 
@@ -89,7 +89,7 @@ pub(super) fn apply_frame(
             true
         }
         Frame::Completed { response } => {
-            ending.terminal(StreamOutcome::Completed);
+            ending.note_terminal(StreamOutcome::Completed);
             settle_turn(sink, result, created_at, response)
         }
         Frame::OutputTextDelta {
@@ -143,7 +143,7 @@ pub(super) fn apply_frame(
         Frame::Error { error } => {
             // An error frame does not end the stream — a later terminal frame
             // still outranks it (#307).
-            ending.error();
+            ending.note_error();
             result.mid_stream_errors.push(
                 error
                     .message
@@ -155,7 +155,7 @@ pub(super) fn apply_frame(
         // Either terminal frame settles the call and carries its usage; they
         // differ only in how the response ended.
         Frame::Incomplete { response } => {
-            ending.terminal(if output_cap(response.as_ref()) {
+            ending.note_terminal(if output_cap(response.as_ref()) {
                 StreamOutcome::Length
             } else {
                 StreamOutcome::EofWithoutDone
@@ -257,7 +257,7 @@ pub fn decode_stream(body: &str) -> Result<CannedStream, ProviderError> {
     // mirrors the live path's clean_end; a [DONE]-less cut body reaches no
     // completion, as before.
     if parser.terminated {
-        ending.body(StreamOutcome::Completed);
+        ending.note_body(StreamOutcome::Completed);
     }
     result.outcome = ending.resolve();
     if result.outcome == StreamOutcome::Completed
@@ -427,7 +427,7 @@ async fn attempt_one_turn(
             // A stop during prefill (before the first token) aborts the
             // request: the partial — possibly empty — stands, like a kill.
             () = sink.stop_signal() => {
-                ending.body(StreamOutcome::Killed);
+                ending.note_body(StreamOutcome::Killed);
                 break 'outer;
             },
         } {
@@ -468,19 +468,19 @@ async fn attempt_one_turn(
                 {
                     return Err(ProviderError::IdleTimeout);
                 }
-                ending.body(StreamOutcome::IdleTimeout);
+                ending.note_body(StreamOutcome::IdleTimeout);
                 break;
             }
         };
         for payload in parser.feed(&chunk)? {
             if payload == "[DONE]" {
-                ending.body(StreamOutcome::Completed);
+                ending.note_body(StreamOutcome::Completed);
                 break 'outer;
             }
             if !apply_frame(sink, &mut result, &mut created_at, &mut ending, &payload) {
                 // Stopped mid-body: the partial stands (spec §7 force) unless
                 // the provider named the ending first (#307).
-                ending.body(StreamOutcome::Killed);
+                ending.note_body(StreamOutcome::Killed);
                 result.outcome = ending.resolve();
                 return Ok(result);
             }

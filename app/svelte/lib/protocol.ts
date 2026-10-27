@@ -153,6 +153,16 @@ export const streamOutcomeLabels: Record<StreamOutcome, string> = {
   killed: 'stopped'
 };
 
+// Whether an ending is a cut nobody asked for: neither clean nor willed. The
+// core decides the same way in `cutoff()` (#307, plan §6.11).
+export function providerCutoff(value: unknown): StreamOutcome | null {
+  const ending = asStreamOutcome(value);
+  if (ending === undefined || ending === 'completed' || ending === 'killed') {
+    return null;
+  }
+  return ending;
+}
+
 // The diagnostic codes this build knows (ADR-0034). Codes are append-only:
 // a code from a newer core arrives through the escape arm and still renders,
 // by its own name.

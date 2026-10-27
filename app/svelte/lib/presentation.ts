@@ -6,7 +6,7 @@
 
 import type { LucideIcon } from '@lucide/svelte';
 import type { AnyEntry, Entry, SkillRef } from './protocol';
-import { asStreamOutcome, streamOutcomeLabels } from './protocol';
+import { providerCutoff, streamOutcomeLabels } from './protocol';
 import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
@@ -470,13 +470,10 @@ export function present(
   }
 }
 
-// What the provider did to end the response, in the operator's words, using the
-// same vocabulary the diagnostic card prints (#307). A clean end carries no
-// badge, and a user's kill is already the entry's kind, so neither reaches here.
+// A cut the provider caused, in the operator's words: the classification sits
+// with the vocabulary in protocol.ts, the label is the one the diagnostic card
+// prints (#307).
 function cutoffMark(endedBy: unknown): string | null {
-  const ending = asStreamOutcome(endedBy);
-  if (ending === undefined || ending === 'completed' || ending === 'killed') {
-    return null;
-  }
-  return `cut short · ${streamOutcomeLabels[ending]}`;
+  const ending = providerCutoff(endedBy);
+  return ending === null ? null : `cut short · ${streamOutcomeLabels[ending]}`;
 }

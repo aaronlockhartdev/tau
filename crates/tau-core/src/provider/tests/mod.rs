@@ -1,6 +1,7 @@
 use super::*;
 
 mod canned;
+mod ending;
 mod models;
 mod server;
 mod wire;
