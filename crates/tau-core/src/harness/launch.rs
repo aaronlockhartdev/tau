@@ -19,7 +19,6 @@ use crate::session::Entry;
 /// The session's role: the wiring defaults `launch` applies.
 #[derive(Clone)]
 pub enum SessionRole {
-    /// A top-level session. With the core (and no pre-built supervisor)
     /// A top-level session: the constructor builds the supervisor from the
     /// config, wires the full event set, and resolves the model. A root without
     /// a core is not a half-built root — it is the other role, `Seam`.
@@ -37,9 +36,10 @@ pub enum SessionRole {
         /// bridge take it — no second resolution (ticket #43).
         first_provider: (String, crate::config::Provider),
     },
-    /// A root session around a caller-built supervisor: what the acceptance
-    /// driver needs, since its children run without a core. It adopts the
-    /// supervisor's values and wires no events. Production opens use `Root`.
+    /// A session around a caller-built supervisor, for tests that drive a
+    /// parent without a core. It skips what a real open does: model resolution,
+    /// config layering and context files, the skills catalogue, the bridge, the
+    /// event wiring, and the open audit record. Production opens use `Root`.
     Seam {
         supervisor: Arc<Supervisor>,
         provider: TurnProviderRef,
@@ -213,7 +213,6 @@ impl AgentSession {
                     }
                     None => (d.system_prompt.clone(), None),
                 };
-                let gate_failed = session_open::facts(&mut store)?.is_some_and(|f| f.gate_failed);
                 let agent = Arc::new(Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -224,7 +223,9 @@ impl AgentSession {
                     tool_batch_on_force: d.tool_batch_on_force,
                     turn: d.turn,
                     gates: d.gates,
-                    gate_failed,
+                    // No check to have failed: the seam's gate rides the
+                    // supervisor it adopts, and no fixture gives one a command.
+                    gate_failed: false,
                     om: Some(OmState::from_config(&d.om, record)),
                     om_model: d.om_model,
                     hashline: d.hashline,
