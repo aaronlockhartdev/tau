@@ -470,9 +470,8 @@ export function present(
   }
 }
 
-// A cut the provider caused, in the operator's words: the classification sits
-// with the vocabulary in protocol.ts, the label is the one the diagnostic card
-// prints (#307).
+// A cut the provider caused, in the operator's words: the label is the one the
+// diagnostic card prints, so the badge and the feed agree (#307).
 function cutoffMark(endedBy: unknown): string | null {
   const ending = providerCutoff(endedBy);
   return ending === null ? null : `cut short · ${streamOutcomeLabels[ending]}`;

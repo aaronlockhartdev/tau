@@ -153,8 +153,9 @@ export const streamOutcomeLabels: Record<StreamOutcome, string> = {
   killed: 'stopped'
 };
 
-// Whether an ending is a cut nobody asked for: neither clean nor willed. The
-// core decides the same way in `cutoff()` (#307, plan §6.11).
+// The cut nobody asked for, or null when the ending is neither: a cut is an
+// ending neither clean nor willed. The core decides the same way in `cutoff()`
+// (#307, plan §6.11).
 export function providerCutoff(value: unknown): StreamOutcome | null {
   const ending = asStreamOutcome(value);
   if (ending === undefined || ending === 'completed' || ending === 'killed') {

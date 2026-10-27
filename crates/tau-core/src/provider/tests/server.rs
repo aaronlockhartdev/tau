@@ -1,6 +1,4 @@
 use super::*;
-
-use crate::provider::StreamOutcome;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

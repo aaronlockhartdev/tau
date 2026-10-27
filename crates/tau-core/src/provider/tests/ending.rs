@@ -1,6 +1,5 @@
 use super::server::*;
 use super::*;
-use crate::provider::StreamOutcome;
 
 #[tokio::test]
 async fn mid_stream_error_never_terminates_the_stream() {
@@ -214,7 +213,12 @@ async fn a_stop_after_an_error_frame_is_the_users_cut() {
     let result = stream_turn(
         &reqwest::Client::new(),
         &provider_for(&format!("http://{addr}")),
-        &fast_requests(),
+        &Requests {
+            timeout_secs: 30,
+            retries: 2,
+            idle_timeout_secs: 30,
+            tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
+        },
         &ResponseRequest::new("m", None, vec![]),
         &mut StopAt {
             at: std::time::Instant::now() + Duration::from_millis(200),
