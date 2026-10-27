@@ -123,3 +123,72 @@ proptest! {
         }
     }
 }
+
+proptest! {
+    // 1000 cases: a two-symbol alphabet over short lines is chosen so the
+    // script produces repeated lines in swapped order — the shape where an
+    // in-order walk and a maximal match part company.
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
+    /// The §7.3 bar: a read → edit → re-read re-labels no more lines than the
+    /// maximal in-order match allows. It is measured in the anchors a caller
+    /// actually receives, against the full dynamic program, because before
+    /// #298 the app-write path and the registry path ran different algorithms
+    /// and the same edit re-labelled a different number of lines depending on
+    /// which path produced the read.
+    #[test]
+    fn a_re_read_relabels_no_more_lines_than_the_maximal_match(
+        (lines, from, to, replacement) in (
+            prop::collection::vec("[ab]{1,2}", 1..12),
+            0usize..12,
+            0usize..12,
+            prop::collection::vec("[ab]{1,2}", 0..4),
+        ),
+    ) {
+        let content = lines.join("\n");
+        let hashes = line_hashes(&content).unwrap();
+        let from = from.min(lines.len() - 1);
+        let to = to.min(lines.len() - 1).max(from);
+        let edit = Edit {
+            from: hashes[from].clone(),
+            to: hashes[to].clone(),
+            content: replacement.join("\n"),
+        };
+        let mut reg = registry::Registry::new();
+        let (before, _) = reg.allocate("f", &content).expect("first read");
+        let Ok(edited) = apply_edit(&content, &edit) else {
+            return Ok(());
+        };
+        let (after, _) = reg.allocate("f", &edited.content).expect("re-read");
+        let fresh = after.iter().filter(|a| !before.contains(*a)).count();
+        let maximal = fresh_lines_by_full_table(&content, &edited.content);
+        prop_assert!(
+            fresh <= maximal,
+            "{fresh} lines re-labelled; the maximal match leaves {maximal}"
+        );
+    }
+}
+
+/// How many lines of `after` a maximal in-order checksum match leaves fresh,
+/// computed by the full dynamic program — the independent oracle for the
+/// property above.
+fn fresh_lines_by_full_table(before: &str, after: &str) -> usize {
+    let sums = |content: &str| -> Vec<String> {
+        split_lines(content)
+            .iter()
+            .map(|l| line_checksum(l))
+            .collect()
+    };
+    let (old, new) = (sums(before), sums(after));
+    let mut table = vec![vec![0usize; new.len() + 1]; old.len() + 1];
+    for i in (0..old.len()).rev() {
+        for j in (0..new.len()).rev() {
+            table[i][j] = if old[i] == new[j] {
+                table[i + 1][j + 1] + 1
+            } else {
+                table[i + 1][j].max(table[i][j + 1])
+            };
+        }
+    }
+    new.len() - table[0][0]
+}

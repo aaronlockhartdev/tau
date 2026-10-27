@@ -615,3 +615,46 @@ The diagnostic counts what survived from the settled `TurnResult`, not the
 wire-block vector that carries it: that vector is built only under
 `debug_assertions`, so in a release build it would have reported every cutoff as
 cutting zero blocks.
+
+### 6.12 One alignment answers every re-anchor (taken 2026-10-27, #298)
+
+The same question was answered twice: given the checksums of a file before and
+after a change, which new line carries which old line. The app-write
+re-anchor answered it with a greedy cursor walk; the registry's re-read and the
+pin store's re-anchor answered it with a dynamic-programming LCS. They
+disagreed on 57,743 of 200,000 random line pairs, so the same content
+re-anchored differently depending on which path produced the read — an anchor
+served by an app-write read survived the next edit less often than one served
+by a registry re-read. The registry's answer was the correct one, and it is now
+the only one: `hashline/lcs.rs::carry`, maximal in-order alignment, three
+callers.
+
+- **Maximality is the contract, not an optimization.** The carry decides which
+  lines keep their anchors, so a shorter common subsequence is pure churn: more
+  re-anchoring for the model on the same edit. `the_carry_is_maximal` pins it
+  against a brute-force oracle — the deleted table, kept in the test module for
+  exactly that job — and `properties.rs` pins the §7.3 bar in the anchors a
+  caller receives.
+- **Linear space, because 10k-line files are real.** The alignment is built by
+  Hirschberg's divide and conquer: `O(n·m)` time, `O(min(n, m))` space. A full
+  table is 400 MB at 10k lines, which is the shape the session's largest files
+  reach — that was #300's complaint, settled by construction rather than by a
+  cap. The common prefix/suffix trim is what keeps the common case, a touched
+  window inside an otherwise unchanged file, cheap in time.
+- **The reference's cheaper trick does not transfer to every caller.** Pro
+  carries anchors *structurally* (`apply.ts:814-850`): its writer knows the
+  spans it edited, so lines outside a span keep their anchors by offset —
+  `O(spans + edited lines)`, no alignment at all. That is the right shape for
+  the app-write path and is filed as G7 in
+  `docs/research/hashline-surface-audit.md`; it does not retire `carry`, which
+  answers the callers that have no span knowledge because the file changed out
+  of band.
+- **Two trims must leave a window.** The prefix and suffix trims overlap on an
+  identical file, and a newline-terminated file's blank last line carries a
+  checksum like any other, so the suffix trim stops where the two trims meet
+  (`a_trailing_blank_line_is_not_matched_by_a_real_line`).
+- **A test file with no `mod` line is not a test file.** `hashline/properties.rs`
+  — the §7.3 properties — has carried no declaration since the split that
+  created it, so it was compiled, linted, and run by nothing. Registering it is
+  part of this change. Silence from `cargo fmt` and `clippy` on a file is a
+  signal to check, not a clean bill.
