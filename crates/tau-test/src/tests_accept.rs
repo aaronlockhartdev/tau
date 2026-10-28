@@ -121,24 +121,25 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
         Ok((id, agent))
     }
 
-    // The gate's records: the system entries it wrote (the failure log).
-    fn gate_notes(store: &SessionStore) -> Vec<String> {
+    // The gate's records (ADR-0034): typed facts, so an acceptance suite can
+    // check the outcome without parsing a sentence.
+    fn gate_facts(store: &SessionStore) -> Vec<Diagnostic> {
         all_entries(store)
             .into_iter()
-            .filter(|e| e.kind == tau_core::agent::KIND_SYSTEM)
-            .filter_map(|e| {
-                e.payload
-                    .get("note")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
+            .filter(|e| e.kind == EntryKind::Diagnostic)
+            .filter_map(|e| Diagnostic::from_value(&e.payload))
+            .filter(|d| {
+                matches!(
+                    d,
+                    Diagnostic::GateAttempt { .. } | Diagnostic::GateFailed { .. }
+                )
             })
-            .filter(|n| n.contains("completion gate"))
             .collect()
     }
     fn assistant_count(store: &SessionStore) -> usize {
         all_entries(store)
             .iter()
-            .filter(|e| e.kind == tau_core::agent::KIND_ASSISTANT)
+            .filter(|e| e.kind == EntryKind::Assistant)
             .count()
     }
 
@@ -157,16 +158,19 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
             "accept-gate: expected 5 assistant entries (2 tool + 3 final), saw {assistants}"
         ));
     }
-    let notes = gate_notes(&store);
-    if notes.len() != 3 {
+    let facts = gate_facts(&store);
+    if facts.len() != 3 {
         return Err(format!(
-            "accept-gate: expected 3 gate records (initial + 2 repairs), saw {notes:?}"
+            "accept-gate: expected 3 gate records (initial + 2 repairs), saw {facts:?}"
         ));
     }
-    if !notes.last().is_some_and(|n| n.contains("gate_failed")) {
+    if !matches!(facts.last(), Some(Diagnostic::GateFailed { .. })) {
         return Err(format!(
-            "accept-gate: the final record does not name gate_failed: {notes:?}"
+            "accept-gate: the final record is not a gate failure: {facts:?}"
         ));
+    }
+    if !tau_core::diagnostics::project(&all_entries(&store)).gate_failed {
+        return Err("accept-gate: the records leave the session not gate_failed".into());
     }
     println!("accept-gate: the failing check bounced 2 repairs and marked the session gate_failed");
 
@@ -185,10 +189,10 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
             "accept-gate (question): expected 2 assistant entries, saw {assistants}"
         ));
     }
-    let notes = gate_notes(&store);
-    if !notes.is_empty() {
+    let facts = gate_facts(&store);
+    if !facts.is_empty() {
         return Err(format!(
-            "accept-gate (question): the gate should be skipped, saw records {notes:?}"
+            "accept-gate (question): the gate should be skipped, saw records {facts:?}"
         ));
     }
     println!("accept-gate: the QUESTION:-ending turn skipped the gate");
@@ -200,13 +204,13 @@ impl SubagentBridge for AcceptanceBridge {
     fn spawned(&self, _n: &SpawnNotice) {}
     fn state(&self, _n: &StateNotice) {}
     fn reclaimed(&self, n: &ReclaimNotice) {
-        self.reclaims.lock().unwrap().push(n.clone());
+        self.reclaims.lock().push(n.clone());
     }
     fn re_adopted(&self, n: &ReadoptNotice) {
-        self.readopts.lock().unwrap().push(n.clone());
+        self.readopts.lock().push(n.clone());
     }
     fn wake(&self, n: &WakeNotice) {
-        let Some(p) = self.parent.lock().unwrap().upgrade() else {
+        let Some(p) = self.parent.lock().upgrade() else {
             return;
         };
         let text = match &n.output {
@@ -260,23 +264,18 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
             provider: prov,
-            supervisor: Some(sup),
+            supervisor: sup,
             // The parent's own prompt, explicitly: the supervisor's is the
             // child's (the mock scenario matches on it), so the seam takes
             // the parent's rather than adopting it.
             system_prompt: Some(SUBAGENT_PROMPT.into()),
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
     {
-        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+        *bridge.parent.lock() = Arc::downgrade(&agent);
     }
 
     agent
@@ -307,7 +306,7 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
                 all_entries(&store)
                     .iter()
                     .rev()
-                    .find(|e| e.kind == KIND_SUBAGENT)
+                    .find(|e| e.kind == EntryKind::Subagent)
                     .and_then(|e| e.payload.get("state").and_then(Value::as_str))
                     .map(|s| matches!(s, "done" | "failed" | "stopped"))
             })
@@ -348,7 +347,7 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     // child's id (a done/failed wake or an idle notification — both are
     // lifecycle notifications, spec §5.2).
     let wake = pentries.iter().any(|e| {
-        e.kind == tau_core::agent::KIND_USER
+        e.kind == EntryKind::User
             && e.payload.get("source").and_then(Value::as_str) == Some(child_id.as_str())
     });
     if !wake {
@@ -357,13 +356,13 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
     // The child's session carries its own record trail (state entries).
     let child_store = SessionStore::for_workspace(ws.path(), &child_id);
     let centries = all_entries(&child_store);
-    if !centries.iter().any(|e| e.kind == KIND_SUBAGENT) {
+    if !centries.iter().any(|e| e.kind == EntryKind::Subagent) {
         return Err("accept-subagent: the child's session has no lifecycle state entries".into());
     }
     let child_state = centries
         .iter()
         .rev()
-        .find(|e| e.kind == KIND_SUBAGENT)
+        .find(|e| e.kind == EntryKind::Subagent)
         .and_then(|e| e.payload.get("state").and_then(Value::as_str))
         .unwrap_or("");
     // Plan-file linkage (spec §5.3): the child's `done` is observed from
@@ -444,22 +443,17 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
             provider: prov,
-            supervisor: Some(sup.clone()),
+            supervisor: sup.clone(),
             // The parent's own prompt: the "reclaim scenario parent" marker
             // routes the parent's turns to the reclaim parent fixture.
             system_prompt: Some("reclaim scenario parent. You have the tools read, write, edit, bash, and the sub-agent tools (subagent_spawn, subagent_message, subagent_stop, subagent_state). Use them as instructed.".into()),
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .map_err(|e| format!("accept-reclaim: launch failed: {e:?}"))?;
     {
-        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+        *bridge.parent.lock() = Arc::downgrade(&agent);
     }
 
     agent
@@ -489,7 +483,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
                 all_entries(&s)
                     .iter()
                     .rev()
-                    .find(|e| e.kind == KIND_SUBAGENT)
+                    .find(|e| e.kind == EntryKind::Subagent)
                     .and_then(|e| e.payload.get("state").and_then(Value::as_str))
                     .is_some_and(|st| matches!(st, "done" | "failed" | "stopped"))
             })
@@ -506,7 +500,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
     // Two terminal children, soft bound 2: the fleet is at the bound, not
     // over it, so no reclamation has fired yet.
     {
-        let reclaims = bridge.reclaims.lock().unwrap();
+        let reclaims = bridge.reclaims.lock();
         if !reclaims.is_empty() {
             return Err(format!(
                 "accept-reclaim: unexpected early reclamation: {reclaims:?}"
@@ -525,7 +519,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
         )
         .map_err(|e| format!("accept-reclaim: the 3rd spawn failed: {e}"))?;
     let evicted = {
-        let reclaims = bridge.reclaims.lock().unwrap();
+        let reclaims = bridge.reclaims.lock();
         if reclaims.len() != 1 {
             return Err(format!(
                 "accept-reclaim: expected one reclamation, saw {reclaims:?}"
@@ -566,7 +560,7 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
         ));
     }
     {
-        let readopts = bridge.readopts.lock().unwrap();
+        let readopts = bridge.readopts.lock();
         if readopts.len() != 1 {
             return Err(format!(
                 "accept-reclaim: expected one re-adopt, saw {readopts:?}"
@@ -640,25 +634,20 @@ pub(crate) async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
             provider: prov,
-            supervisor: Some(sup.clone()),
+            supervisor: sup.clone(),
             // The parent's own prompt, explicitly: the supervisor's is the
             // child's (the mock scenario matches on it).
             system_prompt: Some(
                 "sender-labels parent: you are the parent; delegate with the sub-agent tools."
                     .into(),
             ),
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
     {
-        *bridge.parent.lock().unwrap() = Arc::downgrade(&agent);
+        *bridge.parent.lock() = Arc::downgrade(&agent);
     }
 
     // The parent spawns the child (the mock's `subagent_spawn` turn).
@@ -765,7 +754,11 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let mut parent_id: Option<String> = None;
     for i in 0..40 {
         let e = store
-            .append("user", json!({ "text": prose(i) }), parent_id.as_deref())
+            .append(
+                EntryKind::User,
+                json!({ "text": prose(i) }),
+                parent_id.as_deref(),
+            )
             .map_err(|e| e.to_string())?;
         parent_id = Some(e.id);
     }
@@ -817,10 +810,7 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
 
     let mut store = SessionStore::for_workspace(ws.path(), &id);
     let entries = all_entries(&store);
-    let om_entries: Vec<&Entry> = entries
-        .iter()
-        .filter(|e| e.kind == tau_core::om_integration::KIND_OM)
-        .collect();
+    let om_entries: Vec<&Entry> = entries.iter().filter(|e| e.kind == EntryKind::Om).collect();
     if om_entries.is_empty() {
         // No om entry at all: the observe call did not land.
         return Ok(None);
@@ -881,7 +871,7 @@ pub(crate) fn core_offline() -> Result<(), String> {
     for i in 0..3usize {
         let e = store
             .append(
-                "message",
+                EntryKind::User,
                 json!({ "text": format!("trunk {i}") }),
                 prev.as_deref(),
             )
@@ -893,11 +883,15 @@ pub(crate) fn core_offline() -> Result<(), String> {
     }
     // The branch: append to the second entry (a new parentId forks it).
     let b1 = store
-        .append("message", json!({ "text": "branch 1" }), second.as_deref())
+        .append(
+            EntryKind::User,
+            json!({ "text": "branch 1" }),
+            second.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
     let b2 = store
         .append(
-            "message",
+            EntryKind::User,
             json!({ "text": "branch 2" }),
             Some(b1.id.as_str()),
         )

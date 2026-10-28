@@ -43,6 +43,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use parking_lot::{Mutex, MutexGuard};
+
 use rusqlite::{Connection, params};
 
 mod record;
@@ -82,15 +84,13 @@ impl std::error::Error for StoreError {}
 #[derive(Debug)]
 pub struct PinStore {
     root: PathBuf,
-    conn: std::sync::Mutex<Option<Connection>>,
+    conn: Mutex<Option<Connection>>,
 }
 
 /// Epoch ms since the Unix epoch (0 on clock failure).
 fn now_ms() -> i64 {
-    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-        Ok(d) => i64::try_from(d.as_secs()).map_or(0, |s| s * 1000),
-        Err(_) => 0,
-    }
+    jiff::Timestamp::try_from(std::time::SystemTime::now())
+        .map_or(0, jiff::Timestamp::as_millisecond)
 }
 
 impl PinStore {
@@ -100,13 +100,10 @@ impl PinStore {
         let root = root.to_path_buf();
         let store = Self {
             root: root.clone(),
-            conn: std::sync::Mutex::new(None),
+            conn: Mutex::new(None),
         };
         {
-            let mut slot = store
-                .conn
-                .lock()
-                .expect("the mutex is not poisoned: a store is single-threaded");
+            let mut slot = store.conn.lock();
             if let Ok(c) = Self::open_store(&root) {
                 *slot = Some(c);
             }
@@ -230,10 +227,7 @@ impl PinStore {
         if !policy.gc_on_start {
             return;
         }
-        let guard = self
-            .conn
-            .lock()
-            .expect("the mutex is not poisoned: a store is single-threaded");
+        let guard = self.conn.lock();
         let Some(conn) = guard.as_ref() else {
             return;
         };
@@ -299,11 +293,8 @@ impl PinStore {
         }
     }
 
-    fn open_conn(&self) -> Result<std::sync::MutexGuard<'_, Option<Connection>>, StoreError> {
-        let mut guard = self
-            .conn
-            .lock()
-            .expect("the mutex is not poisoned: a store is single-threaded");
+    fn open_conn(&self) -> Result<MutexGuard<'_, Option<Connection>>, StoreError> {
+        let mut guard = self.conn.lock();
         if guard.is_none() {
             *guard = Some(Self::open_store(&self.root)?);
         }

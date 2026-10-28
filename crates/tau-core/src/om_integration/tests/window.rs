@@ -37,7 +37,7 @@ fn recall_browses_group_ranges_and_reports_missing_things() {
     // A long-text entry: the preview is capped at 200 chars.
     store
         .append(
-            "user",
+            EntryKind::User,
             json!({ "text": (0..50).map(|i| format!("l: {i:04}")).collect::<Vec<_>>().join("\n"), "lane": "follow-up" }),
             Some("00000005"),
         )
@@ -115,14 +115,18 @@ fn recall_previews_stop_at_a_line_boundary() {
     let mut store = SessionStore::for_workspace(dir.path(), "s-recall");
     store.create().unwrap();
     let first = store
-        .append("user", serde_json::json!({ "text": "one" }), None)
+        .append(EntryKind::User, serde_json::json!({ "text": "one" }), None)
         .unwrap();
     let big: String = (0..100)
         .map(|i| format!("line {i:03}"))
         .collect::<Vec<_>>()
         .join("\n");
     let long = store
-        .append("user", serde_json::json!({ "text": big }), Some(&first.id))
+        .append(
+            EntryKind::User,
+            serde_json::json!({ "text": big }),
+            Some(&first.id),
+        )
         .unwrap();
     let g = om::wrap_in_observation_group("obs", &format!("{}:{}", first.id, long.id), "e", None);
     let record = OmRecord {
@@ -165,10 +169,10 @@ fn raw_window_is_the_full_unobserved_tail() {
     // user (225 tokens), tool call, tool result, user (225): 452 total,
     // over the 230-token floor.
     let entries = vec![
-        ("user", "a".repeat(900)),
-        ("tool", "call".to_owned()),
-        ("tool", "result".to_owned()),
-        ("user", "c".repeat(900)),
+        (EntryKind::User, "a".repeat(900)),
+        (EntryKind::Tool, "call".to_owned()),
+        (EntryKind::Tool, "result".to_owned()),
+        (EntryKind::User, "c".repeat(900)),
     ];
     let mut parent: Option<String> = None;
     for (kind, text) in entries {
@@ -196,7 +200,7 @@ fn raw_window_is_the_full_unobserved_tail() {
     // No floor prune: the window is the full unobserved tail, the head
     // (the "task") included.
     assert_eq!(window.len(), 4, "{window:?}");
-    assert_eq!(window[0].kind, "user");
+    assert_eq!(window[0].kind, EntryKind::User);
     assert_eq!(window[0].payload["text"], "a".repeat(900));
     assert_eq!(window[3].payload["text"], "c".repeat(900));
 }
@@ -206,7 +210,10 @@ fn raw_window_retains_unsummarized_head_past_the_floor() {
     let mut store = SessionStore::for_workspace(dir.path(), "s1");
     store.create().unwrap();
     // Two 225-token user entries: 450 total, over the 230-token floor.
-    let entries = vec![("user", "a".repeat(900)), ("user", "b".repeat(900))];
+    let entries = vec![
+        (EntryKind::User, "a".repeat(900)),
+        (EntryKind::User, "b".repeat(900)),
+    ];
     let mut parent: Option<String> = None;
     for (kind, text) in entries {
         let e = store
@@ -244,18 +251,18 @@ fn raw_window_cuts_a_leading_orphaned_tool_run() {
     // user, assistant, tool call, tool result, user: the cursor lands on
     // the tool call, so its result would be orphaned at the window head.
     let entries = [
-        ("user", "a".repeat(900)),
-        ("assistant", "b".repeat(900)),
-        ("tool", "call X".to_owned()),
-        ("tool", "r".repeat(900)),
-        ("user", "c".repeat(900)),
+        (EntryKind::User, "a".repeat(900)),
+        (EntryKind::Assistant, "b".repeat(900)),
+        (EntryKind::Tool, "call X".to_owned()),
+        (EntryKind::Tool, "r".repeat(900)),
+        (EntryKind::User, "c".repeat(900)),
     ];
     let mut parent: Option<String> = None;
     let mut call_id = String::new();
     for (i, (kind, text)) in entries.iter().enumerate() {
         let e = store
             .append(
-                kind,
+                kind.clone(),
                 json!({ "text": text, "lane": "follow-up" }),
                 parent.as_deref(),
             )
@@ -289,7 +296,7 @@ fn raw_window_cuts_a_leading_orphaned_tool_run() {
     // The leading tool run is cut (the result would be orphaned from its
     // call); the final user entry is present.
     assert_eq!(window.len(), 1, "{window:?}");
-    assert_eq!(window[0].kind, "user");
+    assert_eq!(window[0].kind, EntryKind::User);
     assert_eq!(window[0].payload["text"], "c".repeat(900));
 }
 
@@ -438,11 +445,11 @@ fn the_suggested_response_is_injected_once_then_cleared() {
 }
 #[test]
 fn the_idle_gap_measures_the_pause_before_the_current_turn() {
-    let mk = |id: &str, parent: Option<&str>, ts: u64, kind: &str| Entry {
+    let mk = |id: &str, parent: Option<&str>, ts: u64, kind: EntryKind| Entry {
         id: id.to_owned(),
         parent: parent.map(str::to_owned),
         timestamp: ts,
-        kind: kind.to_owned(),
+        kind,
         payload: json!({ "text": "x" }),
         blob: None,
         first_kept_entry_id: None,
@@ -451,26 +458,26 @@ fn the_idle_gap_measures_the_pause_before_the_current_turn() {
     // Turn 1 (user + assistant), a 90-second pause, then the current
     // turn (user + assistant).
     let entries = vec![
-        mk("00000001", None, 1_000, "user"),
-        mk("00000002", Some("00000001"), 2_000, "assistant"),
-        mk("00000003", Some("00000002"), 92_000, "user"),
-        mk("00000004", Some("00000003"), 93_000, "assistant"),
+        mk("00000001", None, 1_000, EntryKind::User),
+        mk("00000002", Some("00000001"), 2_000, EntryKind::Assistant),
+        mk("00000003", Some("00000002"), 92_000, EntryKind::User),
+        mk("00000004", Some("00000003"), 93_000, EntryKind::Assistant),
     ];
     assert_eq!(idle_gap_secs(&entries, Some("00000004")), 90);
     // The gap uses the turn's FIRST user entry: a steering sent inside
     // the turn doesn't shrink the measured pause.
     let entries = vec![
-        mk("00000001", None, 1_000, "user"),
-        mk("00000002", Some("00000001"), 2_000, "assistant"),
-        mk("00000003", Some("00000002"), 92_000, "user"),
-        mk("00000004", Some("00000003"), 92_500, "user"),
-        mk("00000005", Some("00000004"), 93_000, "assistant"),
+        mk("00000001", None, 1_000, EntryKind::User),
+        mk("00000002", Some("00000001"), 2_000, EntryKind::Assistant),
+        mk("00000003", Some("00000002"), 92_000, EntryKind::User),
+        mk("00000004", Some("00000003"), 92_500, EntryKind::User),
+        mk("00000005", Some("00000004"), 93_000, EntryKind::Assistant),
     ];
     assert_eq!(idle_gap_secs(&entries, Some("00000005")), 90);
     // A fresh session (branch starts with the turn's user entry): zero.
     let fresh = vec![
-        mk("00000001", None, 1_000, "user"),
-        mk("00000002", Some("00000001"), 2_000, "assistant"),
+        mk("00000001", None, 1_000, EntryKind::User),
+        mk("00000002", Some("00000001"), 2_000, EntryKind::Assistant),
     ];
     assert_eq!(idle_gap_secs(&fresh, Some("00000002")), 0);
 }
@@ -503,7 +510,7 @@ fn seed_compacted_child_stores_the_snapshot_and_returns_the_frozen_prefix() {
     let entries = child_store.entries_range(0, usize::MAX).unwrap();
     let snap = entries
         .iter()
-        .find(|e| e.kind == KIND_SPAWN_SNAPSHOT)
+        .find(|e| e.kind == EntryKind::SpawnSnapshot)
         .expect("spawn-snapshot entry");
     assert_eq!(snap.payload["parentSession"], "parent");
     assert_eq!(snap.payload["range"], "00000000:00000001");

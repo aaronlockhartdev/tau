@@ -19,8 +19,12 @@ import { dumpEvlog } from './support/helpers.mjs';
 const ws = process.env.TAU_E2E_WS_STRESS;
 // The stress leg is always the full fixture with two streams (the config
 // only runs this spec in stress/all mode): 10k transcript entries plus
-// 50 compaction records, one per goal (#49).
-const entries = 10050;
+// 50 compaction records, one per goal (#49). The fixture session predates the
+// model records (#306), so its first open audits the model its config resolves
+// to — one `model_changed` on top of the fixture, and no gate gap because that
+// config declares the model's facts.
+const fixtureEntries = 10050;
+const entries = fixtureEntries + 1;
 const streams = 2;
 const fixtureSession = process.env.TAU_E2E_FIXTURE_SESSION ?? 'session';
 const artifacts = process.env.TAU_E2E_ARTIFACTS ?? path.join('..', 'target', 'e2e');
@@ -46,15 +50,22 @@ const storeState = () => {
     entries: cur ? ids.length : null,
     // This leg predates the store refactor (#39): a session no longer holds
     // a live-stream array — a user stream in flight is the turn field, and
-    // the streaming text lands in the last entry as it grows. The turn-end
-    // Observer/Reflector aftermath re-runs the turn too (the re-open test
-    // waits it out), so a non-idle om gauge is aftermath, not a user stream.
-    live: cur && cur.turn !== 'idle' && cur.om.kind === 'idle' ? 1 : 0,
+    // the streaming text lands in the last entry as it grows. OM is kept out
+    // of this leg by config — the canned provider cannot answer the OM prompt,
+    // so a pass would only retry to exhaustion — so the om gauge stays idle and
+    // a user stream is simply a turn in flight.
+    live: cur && cur.turn !== 'idle' ? 1 : 0,
     liveTexts: last ? [last.text.length] : [],
     turn: cur ? cur.turn : null,
-    omKind: cur ? cur.om.kind : null,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     subagents: cur ? cur.subagents.length : null,
+    // The audit records the session wrote, by code, in append order (#306).
+    diagnostics: ids
+      ? ids
+          .map((id) => cur.entries[id])
+          .filter((e) => e.kind === 'diagnostic')
+          .map((e) => String(e.diagnostic?.code ?? '?'))
+      : [],
     renderRange: s.renderRange,
     lastText: last ? last.text : null
   };
@@ -234,6 +245,15 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       `the ${entries}-entry session hydrates from its snapshot (${entries} metadata entries, no payloads)`,
       s.current === fixtureSession && s.entries === entries,
       `current=${s.current}, entries=${s.entries}`
+    );
+  });
+
+  it('the open audit names the model the fixture session never recorded', async () => {
+    const s = await readStore();
+    check(
+      'open wrote one model_changed and no gate gap',
+      s.diagnostics.join(',') === 'model_changed',
+      s.diagnostics
     );
   });
 
@@ -490,22 +510,9 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
       // Fire the re-open (it runs to completion in the webview even when
       // the W3C command times out — a 10k snapshot reload on a starved
       // display outlasts any command budget), then auto-wait the
-      // convergence with a 120 s-class deadline. First, let the turn-end
-      // Observer/Reflector aftermath finish: re-opening mid-aftermath
-      // hydrates a 'running' turn that the already-delivered stream events
-      // never correct, so the convergence would wedge on the turn field.
-      await waitUntil(
-        readStore,
-        (s) => s.omKind !== null && s.omKind !== 'idle',
-        60000,
-        `${label}: om aftermath started`
-      ).catch(() => {});
-      await waitUntil(
-        readStore,
-        (s) => s.omKind === 'idle',
-        120000,
-        `${label}: om aftermath done`
-      ).catch(() => {});
+      // convergence with a 120 s-class deadline. No OM pass runs in this leg,
+      // so the turn field is settled by the time the stream events land and the
+      // re-open cannot hydrate a 'running' turn.
       await sleep(500);
       browser
         .execute(

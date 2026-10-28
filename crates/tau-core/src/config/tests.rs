@@ -319,3 +319,26 @@ fn om_threshold_above_u32_max_is_rejected() {
         }
     }
 }
+
+/// §6.7: the model id a session carries may name its provider (the model menu
+/// spells it that way); the config declares models by bare key. A prefix naming
+/// a configured provider is that provider; anything else is the key itself.
+#[test]
+fn model_key_resolves_the_menu_spelling_to_the_config_key() {
+    let mut providers = BTreeMap::new();
+    providers.insert(
+        "dev".to_owned(),
+        crate::config::Provider::with_model("http://127.0.0.1:9/v1", "qwen"),
+    );
+    let config = Config {
+        providers,
+        ..Default::default()
+    };
+    assert_eq!(config.model_key("dev/qwen"), "qwen");
+    assert_eq!(config.model_key("qwen"), "qwen", "a bare key is its own");
+    // A gateway hosts models whose own names carry a `/`; the prefix is not a
+    // configured provider, so the key keeps it.
+    assert_eq!(config.model_key("openai/gpt-5"), "openai/gpt-5");
+    // Resolving a second time is a no-op: the address is stable.
+    assert_eq!(config.model_key(config.model_key("dev/qwen")), "qwen");
+}

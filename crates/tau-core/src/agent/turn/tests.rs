@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent::{CallOutput, Entry, FunctionCall, InputEntry, KIND_TOOL, KIND_USER};
+use crate::agent::{CallOutput, Entry, FunctionCall, InputEntry};
 
 fn tool_entry(id: &str, call_id: &str, output: &str) -> Entry {
     tool_entry_with_detail(id, call_id, output, None)
@@ -11,7 +11,7 @@ fn tool_entry_with_detail(id: &str, call_id: &str, output: &str, ui_detail: Opti
         id: id.to_owned(),
         parent: None,
         timestamp: 0,
-        kind: KIND_TOOL.to_owned(),
+        kind: EntryKind::Tool,
         payload: tau_protocol::payload::ToolPayload {
             call_id: call_id.to_owned(),
             name: "write".to_owned(),
@@ -33,7 +33,7 @@ fn user_entry(id: &str, text: &str, source: Option<&str>) -> Entry {
         id: id.to_owned(),
         parent: None,
         timestamp: 0,
-        kind: KIND_USER.to_owned(),
+        kind: EntryKind::User,
         payload: tau_protocol::payload::UserPayload {
             text: text.to_owned(),
             lane: "steering".to_owned(),
@@ -228,6 +228,19 @@ fn non_child_session_user_and_bare_are_untouched() {
     );
 }
 
+fn entry_of_kind(id: &str, kind: EntryKind, text: &str) -> Entry {
+    Entry {
+        id: id.to_owned(),
+        parent: None,
+        timestamp: 0,
+        kind,
+        payload: serde_json::json!({ "text": text }),
+        blob: None,
+        first_kept_entry_id: None,
+        crc: None,
+    }
+}
+
 #[test]
 fn ui_detail_never_enters_the_assembled_model_context() {
     // #243's structural guarantee: the GUI-only detail channel is on the wire
@@ -253,4 +266,233 @@ fn ui_detail_never_enters_the_assembled_model_context() {
         ),
         "ui_detail leaked into the model context: {items:?}"
     );
+}
+
+#[test]
+fn an_unknown_kind_never_enters_the_model_context() {
+    // ADR-0034: an entry kind this build does not know still loads and still
+    // renders, but it is not raw input — the prompt stays byte-stable.
+    let entries = vec![
+        user_entry("e1", "ask", None),
+        entry_of_kind(
+            "e2",
+            EntryKind::Other("quantum".into()),
+            "a newer build's kind",
+        ),
+    ];
+    let items = input_items(&entries, None);
+    assert_eq!(
+        user_content(&items),
+        vec!["ask".to_owned()],
+        "an unknown kind leaked into the model context: {items:?}"
+    );
+}
+
+#[test]
+fn a_diagnostic_record_costs_no_context() {
+    // ADR-0034: the audit channel is a record, not raw input. `is_raw` governs
+    // prompt assembly and the OM window alike, so this pins both.
+    let record = Entry {
+        id: "e2".into(),
+        parent: None,
+        timestamp: 0,
+        kind: EntryKind::Diagnostic,
+        payload: Diagnostic::GateUnavailable {
+            model: "gpt-4o-mini".into(),
+            missing: vec!["context_window".into()],
+        }
+        .to_value(),
+        blob: None,
+        first_kept_entry_id: None,
+        crc: None,
+    };
+    let without = vec![user_entry("e1", "ask", None)];
+    let with = vec![user_entry("e1", "ask", None), record];
+    assert_eq!(
+        user_content(&input_items(&with, None)),
+        user_content(&input_items(&without, None)),
+        "a diagnostic record changed the model's input"
+    );
+}
+
+// --- the anchored prompt estimate (plan §6.4) ---
+
+fn assembled(instructions: &str, entries: Vec<Entry>) -> Assembled {
+    Assembled {
+        model: "test-model".to_owned(),
+        instructions: instructions.to_owned(),
+        items: input_items(&entries, None),
+        entries,
+        om_items: 0,
+        parent_session: None,
+    }
+}
+
+const NO_TOOLS: &[ToolSpec] = &[];
+
+fn history() -> Vec<Entry> {
+    vec![
+        user_entry("u1", &"long ".repeat(2_000), None),
+        tool_entry("t1", "c1", "ok"),
+    ]
+}
+
+/// The branch grew by one tool output; the anchored count covers everything up
+/// to the entry the anchored request ended at.
+fn grew_by(entries: Vec<Entry>, output: &str) -> Assembled {
+    let mut later = entries;
+    later.push(tool_entry("t2", "c2", output));
+    assembled("sys", later)
+}
+
+/// An assembly whose request also carried an observation log: the log rides the
+/// request's items, ahead of the entry items (plan §6.9).
+fn observed(mut a: Assembled, log: &str) -> Assembled {
+    a.items.insert(
+        0,
+        InputEntry::Message(crate::provider::InputMessage {
+            role: "system".to_owned(),
+            content: log.to_owned(),
+        }),
+    );
+    a.om_items = 1;
+    a
+}
+
+#[test]
+fn an_anchored_prompt_prices_only_what_was_appended() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let sent = assembled("sys", history());
+    let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
+    let next = grew_by(history(), &"y".repeat(400));
+    // The provider's 9,000 plus the one new 400-byte output — 100 tokens with
+    // the framing allowance — and nothing for the history already counted.
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        9_120,
+        "history the provider already counted was guessed again"
+    );
+}
+
+#[test]
+fn a_reinjected_plan_state_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    let mut next = grew_by(history(), "later");
+    next.instructions = "sys\n\n- [ ] the watcher's plan state".to_owned();
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "an injected plan state leaves the anchored count describing a different prompt"
+    );
+}
+
+#[test]
+fn a_changed_tool_surface_drops_the_anchor() {
+    let anchor = PromptAnchor::after_call(
+        &assembled("sys", history()),
+        &tool_fingerprint(NO_TOOLS),
+        9_000,
+    )
+    .expect("a branch anchors");
+    let next = grew_by(history(), "later");
+    let tools = tool_fingerprint(&[ToolSpec {
+        kind: "function".to_owned(),
+        name: "write".to_owned(),
+        description: "write a file".to_owned(),
+        parameters: Value::Object(serde_json::Map::new()),
+    }]);
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "a tool added mid-session is prompt material the anchored count never carried"
+    );
+}
+
+#[test]
+fn a_compaction_that_ate_the_anchored_entry_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    // The compaction replaced the raw history the request ended at.
+    let next = assembled("sys\n\n[observed]", vec![tool_entry("t2", "c2", "later")]);
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "a branch that no longer carries the anchored entry has no tail to price"
+    );
+}
+
+#[test]
+fn a_changed_observation_item_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    let mut next = grew_by(history(), "later");
+    next.om_items = 1;
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "the observation state contributed an item the anchored request never carried"
+    );
+}
+
+#[test]
+fn a_request_with_no_history_has_no_anchor_to_keep() {
+    let empty = assembled("sys", vec![]);
+    assert!(PromptAnchor::after_call(&empty, &tool_fingerprint(NO_TOOLS), 10).is_none());
+}
+
+/// A reflector rewrote the log in place: same number of items, different bytes,
+/// so only the content distinguishes the two requests.
+#[test]
+fn a_rewritten_observation_log_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let sent = observed(assembled("sys", history()), "the first observation");
+    let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
+    let next = observed(grew_by(history(), "later"), "the compressed observation");
+    assert_eq!(next.om_items, sent.om_items, "same shape, different bytes");
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "a rewritten log leaves the anchored count describing the old bytes"
+    );
+}
+
+/// The log untouched and the same shape is not a reason to re-estimate.
+#[test]
+fn an_unchanged_observation_log_keeps_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let sent = observed(assembled("sys", history()), "the observation log");
+    let anchor = PromptAnchor::after_call(&sent, &tools, 9_000).expect("a branch anchors");
+    let next = observed(grew_by(history(), &"y".repeat(400)), "the observation log");
+    assert_eq!(prompt_size(Some(&anchor), &next, &tools), 9_120);
+}
+
+/// A GUI model switch can land while a turn runs; the anchored count came from
+/// the other model's tokenizer.
+#[test]
+fn a_model_switch_mid_turn_drops_the_anchor() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, 9_000)
+        .expect("a branch anchors");
+    let mut next = grew_by(history(), "later");
+    next.model = "other-model".to_owned();
+    assert_eq!(
+        prompt_size(Some(&anchor), &next, &tools),
+        prompt_size(None, &next, &tools),
+        "a count from another model's tokenizer describes another prompt"
+    );
+}
+
+/// A charge past `u32::MAX` describes a prompt over any declared window: the
+/// ceiling is the honest answer, never a fresh and much smaller estimate.
+#[test]
+fn a_charge_past_the_u32_ceiling_reads_as_the_ceiling() {
+    let tools = tool_fingerprint(NO_TOOLS);
+    let anchor = PromptAnchor::after_call(&assembled("sys", history()), &tools, u64::MAX)
+        .expect("a branch anchors");
+    let next = grew_by(history(), "later");
+    assert_eq!(prompt_size(Some(&anchor), &next, &tools), u32::MAX);
 }

@@ -23,6 +23,7 @@ clippy.dbg_macro = "deny"
 [dependencies]
 tau-core = { path = "../tau-core" }
 tau-mock-llm = { path = "../tau-mock-llm" }
+tau-protocol = { path = "../tau-protocol" }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 reqwest = { workspace = true }
@@ -31,4 +32,5 @@ tempfile = { workspace = true }
 # `tracing/max_level_off` — max_level features unify across the whole
 # workspace build, so that one silently stripped every crate's test events
 # too (the wire JSONL test caught it on CI).
-tracing = { version = "0.1" }
+tracing = { workspace = true }
+parking_lot = { workspace = true }

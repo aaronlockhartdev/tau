@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use serde_json::json;
 use tau_core::config::{Provider, Requests};
-use tau_core::provider::{self, InputEntry, InputMessage, ResponseRequest, TurnEvent, TurnSink};
+use tau_core::provider::{
+    self, InputEntry, InputMessage, ResponseRequest, StreamOutcome, TurnEvent, TurnSink,
+};
 use tau_mock_llm::scenario::{Call, Scenario, ScenarioSet, Turn, Usage};
 use tau_mock_llm::server;
 
@@ -83,8 +85,12 @@ async fn a_text_turn_streams_and_decodes_through_the_real_client() {
     .await
     .expect("the real client decodes the mock's stream");
     assert_eq!(result.text, "the mock answered the hello.");
-    assert!(result.completed, "the [DONE]-terminated stream is complete");
-    assert_eq!(result.usage.unwrap().total_tokens, 18);
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Completed,
+        "the [DONE]-terminated stream is complete"
+    );
+    assert_eq!(result.usage.unwrap().total_tokens(), 18);
     // The text arrived as deltas (streaming fidelity), not one lump.
     let deltas = sink
         .0
@@ -161,7 +167,11 @@ async fn an_unscripted_request_gets_the_fallback_and_terminates() {
     .await
     .expect("the fallback stream decodes and terminates");
     assert!(result.text.starts_with("mock fallback:"));
-    assert!(result.completed, "the fallback never hangs the stream");
+    assert_eq!(
+        result.outcome,
+        StreamOutcome::Completed,
+        "the fallback ends the stream"
+    );
 }
 
 #[tokio::test]

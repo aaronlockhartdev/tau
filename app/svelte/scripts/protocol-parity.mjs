@@ -14,8 +14,9 @@
 //   the same normalized fields (CommandOutput.file mirrors FileText inline).
 // - `#[serde(default)]` makes a field wire-optional; the TS mirror may carry
 //   it required (the writer always fills it).
-// - A field with `skip_serializing_if` is wire-absent; a TS optional field
-//   is its parity (an `Option<T>`, or a default-filled one).
+// - A field with `skip_serializing_if` is wire-absent; a TS optional field of
+//   the inner type is its parity (an `Option<T>`, or a default-filled one).
+//   A nullable mirror describes a key the wire never sends.
 // - Serde renames are the wire names: a `#[serde(rename)]`/`rename_all`
 //   field is checked under its renamed name (parentSession).
 // - `TurnUsage` (the payload module's usage) is name-parity with the TS
@@ -47,8 +48,6 @@ const SKIP_NOTES = {
   FileText: 'mirrored inline in the CommandOutput file variant',
   OmSnapshot: 'mirrored inline in the Snapshot om field',
   TurnUsage: 'name parity with the TS Usage (the field diff runs on lib.rs Usage)',
-  PromptTokensDetails: 'nested in TurnUsage; the TS Usage flattens it',
-  OutputTokensDetails: 'nested in TurnUsage; the TS Usage flattens it',
   Coalescer: 'Rust-internal (the 25 ms delta window); no wire shape',
   OmPayload: 'TS-only: mirrors tau-core\'s OmRecord, which the protocol crate does not carry',
   SubagentPayload: 'TS-only: the subagent entry record the core writes; the crate carries its events, not the record'
@@ -105,6 +104,17 @@ function topParts(body) {
   return parts;
 }
 
+// A hand-written Serialize names its wire tags in code instead of through a
+// serde attr, and the `as_str` arm is where the wire spelling lives.
+function wireTags(clean, name) {
+  const at = clean.indexOf(`impl ${name} {`);
+  if (at < 0) return {};
+  const tags = {};
+  const arms = /(?:Self|[A-Z]\w*)::(\w+)\s*(?:\([^)]*\))?\s*=>\s*"([^"]+)"/g;
+  for (const arm of bodyAfter(clean, at).matchAll(arms)) tags[arm[1]] ??= arm[2];
+  return tags;
+}
+
 function rustEnums(src) {
   const out = {};
   const clean = stripComments(src);
@@ -116,6 +126,15 @@ function rustEnums(src) {
     const tag = (attrs.find((a) => a.includes('tag')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
     const rename = (attrs.find((a) => a.includes('rename_all')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
     const variants = [];
+    // A hand-written Serialize spells its tags in code, not with a serde attr:
+    // the `as_str` arm is the wire spelling (EntryKind's is `spawn-snapshot`).
+    const handwritten = clean.includes(`impl Serialize for ${name} {`);
+    const wire = handwritten ? wireTags(clean, name) : {};
+    if (handwritten && Object.keys(wire).length === 0) {
+      // Falling back to snake_case here would re-introduce the very error this
+      // gate exists to catch: a hand-written Serialize whose tags live inline.
+      throw new Error(`${name}: impl Serialize is hand-written but names no tags to read`);
+    }
     for (const part of topParts(bodyAfter(clean, m.index))) {
       // Serde/allow attributes sit on their own line above a variant; they
       // must not glue into the variant part the field split sees.
@@ -127,14 +146,22 @@ function rustEnums(src) {
       const vm = p2.match(/^(\w+)(\s*\{[^]*\})?$/);
       if (!vm) continue;
       const fields = {};
-      if (vm[2]) {
-        const inner = vm[2].match(/\{([\s\S]*)\}/)[1];
-        for (const f of topParts(inner)) {
-          const fmm = f.match(/^(\w+)\s*:\s*([\s\S]+)$/);
-          if (fmm) fields[fmm[1]] = fmm[2].trim();
+      // The attrs live in the unstripped part: a field's serde attr says whether
+      // the key reaches the wire at all, which is what a TS optional mirrors.
+      const body = part.match(/\{([\s\S]*)\}/);
+      if (body) {
+        for (const f of topParts(body[1])) {
+          const attrs = [...f.matchAll(/#\[serde\(([^)]*)\)\]/g)].flatMap((a) => a[1].split(','));
+          const fmm = f
+            .replace(/^[^\S\n]*#[^\n]*$/gm, '')
+            .trim()
+            .match(/^(\w+)\s*:\s*([\s\S]+)$/);
+          if (!fmm) continue;
+          fields[fmm[1]] = { type: fmm[2].trim(), skip: attrs.some((a) => a.includes('skip')) };
         }
       }
-      variants.push({ name: vm[1], tag: rename === 'lowercase' ? vm[1].toLowerCase() : snake(vm[1]), fields });
+      const tag = wire[vm[1]] ?? (rename === 'lowercase' ? vm[1].toLowerCase() : snake(vm[1]));
+      variants.push({ name: vm[1], tag, fields });
     }
     out[name] = { tag: tag ?? 'kind', variants };
   }
@@ -297,6 +324,8 @@ function normRust(t) {
   if (ALIASES[t] ?? LOOSE_ALIASES[t]) return ALIASES[t] ?? LOOSE_ALIASES[t];
   return t;
 }
+const stripNull = (t) => t.replace(/\s*\|\s*null$/, '');
+
 function normTs(t) {
   t = t.trim().replace(/\s+/g, ' ');
   if (t.startsWith('{') && t.endsWith('}')) {
@@ -315,6 +344,21 @@ function normTs(t) {
   return t;
 }
 const isLiteralUnion = (t) => t.split(' | ').every((s) => s.startsWith("'") && s.endsWith("'"));
+// A field Rust skips when empty is wire-absent, so its mirror marks it optional of
+// the inner type; `| null` describes a key the wire never sends. Only an Option
+// reads that way — a skip on a non-Option (a default-status skip) leaves the type
+// as written, mirrored required or optional. Returns the drift, or null when the
+// mirror is honest. Checked before any equality line: normRust renders `Option<T>`
+// as `T | null`, so a nullable mirror would match the Rust type and the wire-absent
+// half of the contract would go unexamined.
+function skipDrift(rustType, tsType, tsOptional) {
+  if (!rustType.includes('| null')) return null;
+  if (!tsOptional || tsType.includes('null')) {
+    return 'Rust skips it when empty, so TS marks it optional of the inner type, not nullable';
+  }
+  return sameType(stripNull(rustType), tsType) ? null : `Rust ${rustType} vs TS ${tsType}`;
+}
+
 function sameType(a, b) {
   if (a === b) return true;
   if (a === 'unknown' || a === 'unknown[]' || b === 'unknown' || b === 'unknown[]') return true;
@@ -353,23 +397,35 @@ function diffUnion(rustName, tsName = rustName) {
     return;
   }
   const rtags = r.variants.map((v) => v.tag);
-  const ttags = t.members.map((m) => m.tagFields[r.tag]).filter((x) => x !== undefined);
+  // A fieldless Rust enum mirrors a TS union of string literals: the arm is the
+  // tag. An unquoted arm — `(string & {})` — is the open-union escape for Rust's
+  // `Other`/`Unknown`, so it names no tag.
+  const ttags = t.members
+    .map((m) => m.tagFields[r.tag] ?? (/^['"].*['"]$/.test(m.named ?? '') ? m.named.slice(1, -1) : undefined))
+    .filter((x) => x !== undefined);
   for (const tag of rtags) if (!ttags.includes(tag)) errors.push(`${rustName}: missing TS tag '${tag}'`);
   for (const tag of ttags) if (!rtags.includes(tag)) errors.push(`${rustName}: TS-only tag '${tag}'`);
   for (const rv of r.variants) {
     const tv = t.members.find((m) => m.tagFields[r.tag] === rv.tag);
     if (!tv) continue;
-    const rfields = Object.entries(rv.fields).map(([n, ty]) => [n, normRust(ty)]);
+    const rfields = Object.entries(rv.fields).map(([n, f]) => [n, normRust(f.type), f.skip]);
     const tfields = Object.entries(tv.fields)
       .filter(([n]) => n !== r.tag)
-      .map(([n, f]) => [n, normTs(f.type)]);
+      .map(([n, f]) => [n, normTs(f.type), f.optional]);
     const rnames = rfields.map(([n]) => n);
     const tnames = tfields.map(([n]) => n);
     for (const n of rnames) if (!tnames.includes(n)) errors.push(`${rustName}.${rv.tag}: missing TS field '${n}'`);
     for (const n of tnames) if (!rnames.includes(n)) errors.push(`${rustName}.${rv.tag}: TS-only field '${n}'`);
-    for (const [n, ty] of rfields) {
-      const tt = tfields.find(([x]) => x === n)?.[1];
-      if (tt !== undefined && !sameType(ty, tt)) errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tt}`);
+    for (const [n, ty, skip] of rfields) {
+      const tf = tfields.find(([x]) => x === n);
+      if (!tf) continue;
+      if (skip && ty.includes('| null')) {
+        const why = skipDrift(ty, tf[1], tf[2]);
+        if (why) errors.push(`${rustName}.${rv.tag}.${n}: ${why}`);
+        continue;
+      }
+      if (sameType(ty, tf[1])) continue;
+      errors.push(`${rustName}.${rv.tag}.${n}: Rust ${ty} vs TS ${tf[1]}`);
     }
   }
 }
@@ -391,10 +447,12 @@ function diffStruct(rustName, tsName = rustName) {
     if (!tf) continue;
     const a = normRust(rf.type).replace(/\?$/, '');
     const b = normTs(tf.type);
+    if (rf.skip && a.includes('| null')) {
+      const why = skipDrift(a, b, tf.optional);
+      if (why) errors.push(`${rustName}.${n}: ${why}`);
+      continue;
+    }
     if (a === b) continue;
-    // skip_serializing_if: the field is wire-absent (an Option, or a
-    // default-filled one) — a TS optional field is its parity.
-    if (rf.skip && tf.optional && sameType(a.replace(/\s*\|\s*null$/, ''), b)) continue;
     if (!sameType(a, b)) errors.push(`${rustName}.${n}: Rust ${a} vs TS ${b}`);
   }
 }

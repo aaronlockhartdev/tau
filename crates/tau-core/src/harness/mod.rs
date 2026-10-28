@@ -11,14 +11,17 @@
 //! turn loop re-emits the growing assistant entry frame-aligned, and the
 //! forwarding provider mirrors the turn's stream start/end.
 
+use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashMap};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Weak};
 use std::time::Duration;
+#[cfg(test)]
+pub(crate) use tau_protocol::{Diagnostic, EntryKind};
 
-use crate::agent::{AgentSession, Lane, SessionParams, TurnConfig};
+use crate::agent::{AgentSession, Lane, ModelAddress, SessionParams, TurnConfig};
 use crate::config::{self, Config};
 use crate::context;
 use crate::provider::{
@@ -50,6 +53,7 @@ mod forwarding;
 mod git;
 mod launch;
 pub mod pump;
+mod session_open;
 mod sessions;
 mod sessions_archive;
 pub(crate) use sessions::*;

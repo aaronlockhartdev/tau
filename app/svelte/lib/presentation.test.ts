@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { present, type Shell } from './presentation';
 import { Bot, File, Search, Terminal } from '@lucide/svelte';
-import type { Entry, MessageEntry } from './protocol';
+import type { Diagnostic, Entry, MessageEntry } from './protocol';
 
 const ctx = { sourceLabel: '', parentLabel: '', parentId: '' };
 
@@ -67,7 +67,7 @@ describe('present', () => {
         sections: [{ type: 'md', text: 'the answer' }],
         reveal: null,
         expando: null,
-        intmark: false
+        intmark: null
       }
     ]);
   });
@@ -81,7 +81,33 @@ describe('present', () => {
   it('an interrupted entry carries the intmark even with empty text', () => {
     const c = cardOf({ id: 'e1', kind: 'interrupted', text: '' });
     expect(c.cls).toBe('interrupted');
-    expect(c.intmark).toBe(true);
+    expect(c.intmark).toBe('interrupted');
+  });
+
+  it('a provider cutoff badges the card with what ended it', () => {
+    const c = cardOf({ id: 'e1', kind: 'message', text: 'half a sentence', endedBy: 'length' });
+    expect(c.cls).toBe('cutoff');
+    expect(c.intmark).toBe('cut short · output cap');
+  });
+
+  it('a clean ending carries no badge, and an empty cut card still shows', () => {
+    expect(cardOf({ id: 'e1', kind: 'message', text: 'done', endedBy: 'completed' }).intmark).toBeNull();
+    const cut = cardOf({ id: 'e1', kind: 'message', text: '', endedBy: 'eof_without_done' });
+    expect(cut.cls).toBe('cutoff');
+    expect(cut.intmark).toBe('cut short · stream ended early');
+  });
+
+  it('a cut the user asked for shows one mark, whatever the provider said', () => {
+    // The provider stopped at its cap and the user stopped the session: the
+    // entry's kind carries the user's cut, so the card says it once (#307).
+    const c = cardOf({
+      id: 'e1',
+      kind: 'interrupted',
+      text: 'half a sentence',
+      endedBy: 'length'
+    });
+    expect(c.cls).toBe('interrupted');
+    expect(c.intmark).toBe('interrupted');
   });
 
   it('a bash tool call is a chip with summary, kv rows and the combined output', () => {
@@ -413,5 +439,62 @@ describe('present', () => {
     expect(present({ id: 'e1', kind: 'message', text: '' }, ctx)).toBeNull();
     expect(present({ id: 'e1', kind: 'user', text: '   ' }, ctx)).toBeNull();
     expect(present({ id: 'e1', kind: 'om', text: '' }, ctx)).toBeNull();
+  });
+});
+
+describe('a diagnostic entry (ADR-0034)', () => {
+  function diagnostic(d: Diagnostic): Entry {
+    return { id: 'e1', kind: 'diagnostic', text: d.code, diagnostic: d };
+  }
+
+  function line(d: Diagnostic): string {
+    const [shell] = shells(diagnostic(d));
+    if (!shell || shell.kind !== 'stline') throw new Error('expected a state line');
+    return shell.label;
+  }
+
+  it('composes the sentence from the typed fact, not a stored note', () => {
+    expect(line({ code: 'gate_unavailable', model: 'dev/x', missing: ['context_window', 'max_tokens'] }))
+      .toBe('context gate off for dev/x: context_window undeclared; max_tokens undeclared');
+    expect(line({ code: 'gate_unavailable', model: 'dev/x', missing: ['context_room'] }))
+      .toBe(
+        'context gate off for dev/x: the declared window leaves no room once the output cap and the margin are taken'
+      );
+    expect(line({ code: 'turn_cutoff', model: 'dev/x', ended_by: 'eof_without_done', blocks: 2 }))
+      .toBe('provider cut the turn (stream ended early) after 2 block(s)');
+    expect(line({ code: 'om_stalled', pending: 24000, activation: 24000 }))
+      .toBe('compaction stalled: 24.0k pending at activation 24.0k');
+  });
+
+  // A windowed transcript holds snapshot metadata until a paged read hydrates
+  // the entry; the skeleton has no payload, so the card falls back to the
+  // preview, which the core sets to the code name.
+  it('an unhydrated row renders the code its preview carries', () => {
+    const skeleton: Entry = { id: 'e1', kind: 'diagnostic', text: 'gate_unavailable' };
+    const [shell] = shells(skeleton);
+    if (!shell || shell.kind !== 'stline') throw new Error('expected a state line');
+    expect(shell.label).toBe('gate_unavailable');
+  });
+
+  it('a model change names its predecessor, or says there is none', () => {
+    expect(line({ code: 'model_changed', from: 'a', to: 'b' })).toBe('model: a → b');
+    // A config-level change: the session never recorded a model to leave.
+    expect(line({ code: 'model_changed', to: 'b' })).toBe('model: b (no recorded predecessor)');
+  });
+
+  // The two gates are different things: the completion gate bounces the
+  // model with a check, the context gate refuses a request.
+  it('the completion gate names the check, the attempt, and the output head', () => {
+    expect(line({ code: 'gate_attempt', command: 'cargo nextest run', retries: 1, max: 2, output: 'test failed\nsecond line' }))
+      .toBe('completion gate: cargo nextest run failed (repair 1 of 2): test failed');
+    expect(line({ code: 'gate_failed', command: 'cargo nextest run', retries: 2 }))
+      .toBe('completion gate: cargo nextest run failed after 2 repairs — marked gate_failed');
+    expect(line({ code: 'context_overflow', prompt: 120000, budget: 110592 }))
+      .toBe('context gate refused: prompt 120.0k over budget 110.6k');
+  });
+
+  // The negative: a code from a newer core still renders, by its own name.
+  it('an unknown code renders its own name', () => {
+    expect(line({ code: 'tool_stalled' })).toBe('tool_stalled');
   });
 });

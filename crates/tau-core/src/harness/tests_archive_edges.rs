@@ -91,7 +91,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
     );
     // The parent is untouched: still live, file in place.
     assert!(
-        core.sessions.lock().unwrap().contains_key(&parent.id),
+        core.sessions.lock().contains_key(&parent.id),
         "the parent must not be left detached from the live map"
     );
     let root = Path::new(&workspace.cwd);
@@ -162,7 +162,7 @@ async fn an_archive_io_failure_keeps_the_session_live() {
         .unwrap_err();
     assert!(matches!(err, ProtocolError::Other { .. }), "{err:?}");
     assert!(
-        core.sessions.lock().unwrap().contains_key(&session.id),
+        core.sessions.lock().contains_key(&session.id),
         "the session must not be left detached from the live map"
     );
     drop(core);
@@ -185,11 +185,11 @@ async fn an_archive_turn_started_in_the_window_aborts_with_reinsertion() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let id = live.meta.lock().unwrap().id.clone();
+    let id = live.meta.lock().id.clone();
     // A wake that grabbed the Arc before the detach set the turn; the
     // detach removed the session from the live map.
     live.turn.store(true, Ordering::SeqCst);
-    core.sessions.lock().unwrap().remove(&id);
+    core.sessions.lock().remove(&id);
     let err = core.archive_turn_recheck(&id, &live).unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
@@ -202,13 +202,13 @@ async fn an_archive_turn_started_in_the_window_aborts_with_reinsertion() {
     // Exact re-insertion: the very Arc is back in the live map, and a
     // refused archive never sets the flag.
     {
-        let map = core.sessions.lock().unwrap();
+        let map = core.sessions.lock();
         assert!(
             Arc::ptr_eq(&map[&id], &live),
             "the same live session re-inserts"
         );
     }
-    assert!(!live.meta.lock().unwrap().archived, "the flag stays unset");
+    assert!(!live.meta.lock().archived, "the flag stays unset");
 }
 
 /// A send to an archived session is refused before it appends
@@ -323,12 +323,11 @@ async fn a_half_archived_session_converges_on_the_next_archive() {
     let flag = |id: &str| {
         core.sessions
             .lock()
-            .unwrap()
             .get(id)
-            .is_some_and(|l| l.meta.lock().unwrap().archived)
+            .is_some_and(|l| l.meta.lock().archived)
     };
     assert!(
-        core.sessions.lock().unwrap().contains_key(&parent.id),
+        core.sessions.lock().contains_key(&parent.id),
         "the parent is back in the live map"
     );
     assert!(
@@ -502,7 +501,7 @@ async fn a_delete_of_a_running_session_is_refused() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),

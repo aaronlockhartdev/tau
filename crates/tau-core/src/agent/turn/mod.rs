@@ -1,14 +1,18 @@
 use super::{
-    AgentError, AgentSession, InputEntry, KIND_ASSISTANT, KIND_SYSTEM, KIND_USER, Lane, Ordering,
-    Queued, ResponseRequest, ToolBatchPolicy, TurnConfig, TurnResult, Value, lane_name,
+    AgentError, AgentSession, InputEntry, Lane, Ordering, Queued, ResponseRequest, ToolBatchPolicy,
+    TurnConfig, TurnResult, Value, lane_name,
 };
-use crate::provider::ToolSpec;
-use assemble::{input_items, repair_tool_call_arguments, with_plan_state};
+use crate::provider::{StreamOutcome, ToolSpec};
+use assemble::{Assembled, input_items, repair_tool_call_arguments, with_plan_state};
+use estimate::{PromptAnchor, prompt_size, tool_fingerprint};
 use sink::StreamEntrySink;
+use tau_protocol::{Diagnostic, EntryKind};
 
-/// Headroom reserved for the system prompt and framing overhead when
-/// computing the context gate's safe budget (ticket #210, spec §4).
-const CONTEXT_GATE_MARGIN: u32 = 4096;
+/// The cap on the provider's body inside a `provider_rejected` record. That
+/// body is an untrusted `response.text()` — a proxy's HTML error page is
+/// megabytes, and only its head distinguishes the failure. The gate caps its
+/// output for the same reason (`gate::MAX_OUTPUT`).
+pub(crate) const REJECTION_BODY_CAP: usize = 2_000;
 
 impl AgentSession {
     /// Run turns until the queue is empty. A stop (ticket #223) ends the
@@ -22,13 +26,7 @@ impl AgentSession {
             if self.stop.load(Ordering::SeqCst) {
                 return Ok(());
             }
-            let Some(starter) = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held")
-                .queue
-                .pop_front()
-            else {
+            let Some(starter) = self.inner.lock().queue.pop_front() else {
                 return Ok(());
             };
             self.append_user(starter)?;
@@ -42,7 +40,6 @@ impl AgentSession {
     fn child_quiesced(&self) -> bool {
         self.inner
             .lock()
-            .expect("agent inner: no panic while the lock is held")
             .child
             .as_ref()
             .is_some_and(|c| !c.is_running() || c.rest_requested())
@@ -67,14 +64,15 @@ impl AgentSession {
         // in the turn, so a mid-turn plan-file edit can't churn the provider
         // prefix cache; a mid-turn compaction re-captures it.
         let mut plan_state = self.plan_state();
+        // The prompt estimate walks toward the truth (plan §6.4): the provider's
+        // count for the request the turn last sent, so only material appended
+        // after it is ever a guess. It is set after the first completed call.
+        let mut anchor: Option<PromptAnchor> = None;
         loop {
             // Steering and forced messages ride this LLM call (spec §7);
             // follow-ups wait for the turn boundary.
             let (delivered, queue_hook) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut inner = self.inner.lock();
                 let mut out = Vec::new();
                 inner.queue.retain(|m| {
                     if matches!(m.lane, Lane::Steering | Lane::Force) {
@@ -101,25 +99,24 @@ impl AgentSession {
             // The context (spec §4): with OM enabled, the system prompt
             // carries the observation log and the raw window is the
             // unobserved entries; without it, the session's entries as-is.
-            let (mut system_prompt, mut input) = self.assemble(plan_state.as_deref())?;
-            let mut prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+            let mut assembled = self.assemble(plan_state.as_deref())?;
+            let tools_json = tool_fingerprint(&tools);
+            let mut prompt = prompt_size(anchor.as_ref(), &assembled, &tools_json);
             // The context gate (ticket #210, spec §4): when the assembled
             // prompt would exceed the safe budget and there is unobserved
             // material to compact, run the OM pass now so the call fits.
-            let budget = turn.context_window.and_then(|cw| {
-                let max_out = u32::try_from(turn.max_output_tokens?).ok()?;
-                cw.checked_sub(max_out)
-                    .and_then(|r| r.checked_sub(CONTEXT_GATE_MARGIN))
-            });
+            let budget = turn.context_gate().budget();
             if let Some(budget) = budget
                 && prompt > budget
             {
                 if self.om_pending_tokens() > 0 {
                     self.om_turn_end().await?;
+                    // The compaction replaced the prefix an anchored count
+                    // would describe, so this call is priced whole.
                     // A mid-turn compaction is a re-injection point (design).
                     plan_state = self.plan_state();
-                    (system_prompt, input) = self.assemble(plan_state.as_deref())?;
-                    prompt = crate::provider::prompt_token_estimate(&system_prompt, &input, &tools);
+                    assembled = self.assemble(plan_state.as_deref())?;
+                    prompt = prompt_size(None, &assembled, &tools_json);
                     if prompt > budget {
                         tracing::warn!(
                             prompt,
@@ -132,14 +129,21 @@ impl AgentSession {
                     // unobserved material to compact. Refuse loudly before
                     // the wire instead of sending a doomed 400, and leave a
                     // durable trace of the refusal.
-                    self.append(
-                        KIND_SYSTEM,
-                        serde_json::json!({ "prompt": prompt, "budget": budget }),
-                    )?;
+                    self.diagnostic(&Diagnostic::ContextOverflow {
+                        prompt: u64::from(prompt),
+                        budget: u64::from(budget),
+                    })?;
                     return Err(AgentError::ContextOverflow { prompt, budget });
                 }
             }
-            let request = self.build_request(&system_prompt, &input, &tools, &turn, prompt, None);
+            let request = self.build_request(
+                &assembled.instructions,
+                &assembled.items,
+                &tools,
+                &turn,
+                prompt,
+                None,
+            );
 
             // A force has already killed the stream it targeted; every
             // fresh call starts un-killed (spec §7).
@@ -147,10 +151,7 @@ impl AgentSession {
             // The call's assistant entry is minted up front (ADR-0008):
             // the streamed snapshots and the final append share the one id.
             let (entry_id, parent, timestamp, upsert) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut inner = self.inner.lock();
                 let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
                 (
                     inner.store.mint_id(),
@@ -178,8 +179,8 @@ impl AgentSession {
                     self.recover_from_provider_error(
                         e,
                         &mut sink,
-                        &system_prompt,
-                        &input,
+                        &assembled.instructions,
+                        &assembled.items,
                         &tools,
                         &turn,
                         prompt,
@@ -190,11 +191,38 @@ impl AgentSession {
             // ticket #70: repair malformed tool-call arguments at receipt, so
             // the stored entry + echoed history are valid JSON.
             repair_tool_call_arguments(&mut result);
-            self.append_assistant(&entry_id, &result, turn_killed && first_call)?;
+            // Two separate facts, decided apart: whether the *user* cut the turn
+            // (stop button, force send — #229) and how the *provider* ended the
+            // response (#307). A stop the user asked for already rides the entry
+            // as `interrupted`; only a cut nobody asked for is a cutoff.
+            let cut_by_user = (turn_killed && first_call)
+                || self.kill.load(Ordering::SeqCst)
+                || self.stop.load(Ordering::SeqCst)
+                || self.closed.load(Ordering::SeqCst);
+            self.append_assistant(&entry_id, &result, cut_by_user)?;
+            if let Some(ended_by) = reported_cutoff(result.outcome, cut_by_user) {
+                self.diagnostic(&Diagnostic::TurnCutoff {
+                    model: self.model(),
+                    ended_by,
+                    blocks: settled_blocks(&result),
+                })?;
+            }
+
+            // The next call anchors on what the provider charged for this one
+            // (plan §6.4). A call that never completed, or one whose provider
+            // reported no usage, leaves the estimate unanchored — the honest
+            // answer, since there is no recorded count to trust.
+            anchor = match (&result.usage, result.outcome) {
+                (Some(usage), StreamOutcome::Completed) => {
+                    PromptAnchor::after_call(&assembled, &tools_json, usage.input_tokens)
+                }
+                _ => None,
+            };
             first_call = false;
 
-            if !result.completed {
-                // A force-killed turn skips the OM pass: the Observer needs
+            if result.outcome != StreamOutcome::Completed {
+                // A turn the provider or the user cut short skips the OM pass:
+                // the Observer needs
                 // no tool batch in flight, and the interrupted material
                 // joins the next turn's unobserved window (v0).
                 // Per the policy, the in-flight tool batch is let to
@@ -225,7 +253,7 @@ impl AgentSession {
                 self.om_turn_end().await?;
                 // The completion gate (spec §5.3): a qualifying turn-end
                 // (≥1 tool call, no QUESTION: marker) runs the check. A
-                // pass stands the turn; a fail records a system entry,
+                // pass stands the turn; a fail records a gate_attempt,
                 // bounces a steering-lane repair turn, and — after
                 // max_retries — marks the session gate_failed.
                 let end = self
@@ -279,20 +307,17 @@ impl AgentSession {
         // `level_enabled!` folds to a compile-time const under a `max_level_*`
         // feature, so a release build skips it and `prev_len` stays 0.
         let prev_len = if tracing::level_enabled!(tracing::Level::DEBUG) {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             let prev = inner.prev_input_len;
             inner.prev_input_len = input.len();
             prev
         } else {
             0
         };
-        let mut request =
-            ResponseRequest::new(self.model().clone(), Some(system_prompt), input.to_vec())
-                .with_tools(tools.to_vec())
-                .with_wire_delta(prev_len);
+        let address = turn.request_address(&self.model());
+        let mut request = ResponseRequest::new(address, Some(system_prompt), input.to_vec())
+            .with_tools(tools.to_vec())
+            .with_wire_delta(prev_len);
         if let Some(n) = max_output_override.or(turn.max_output_tokens) {
             request = request.with_max_output_tokens(crate::provider::clamp_max_output(
                 n,
@@ -327,8 +352,8 @@ impl AgentSession {
     /// A provider rejection at call time: a context-length 400 gets one
     /// bounded retry at a halved `max_output_tokens` (#256) — the server
     /// computes the window remainder from that cap. Anything else (and a
-    /// second context 400) is recorded as a system entry with the provider's
-    /// status and body, then propagates.
+    /// second context 400) is recorded as a `provider_rejected` record with the
+    /// provider's status and body, then propagates.
     #[allow(clippy::too_many_arguments)] // the turn's parts, threaded once
     async fn recover_from_provider_error(
         &self,
@@ -358,16 +383,21 @@ impl AgentSession {
         Err(AgentError::Provider(fatal))
     }
 
-    /// The durable trace of a rejected call (#256): a system entry carrying
-    /// the provider's status and body.
+    /// The durable trace of a rejected call (#256): a diagnostic record
+    /// carrying the provider's status and body.
     fn record_rejection(&self, e: &crate::provider::ProviderError) -> Result<(), AgentError> {
-        if let crate::provider::ProviderError::Status { status, body } = e {
-            self.append(
-                KIND_SYSTEM,
-                serde_json::json!({ "note": "provider rejection", "status": status, "body": body }),
-            )
-        } else {
-            Ok(())
+        match e {
+            crate::provider::ProviderError::Status { status, body } => {
+                self.diagnostic(&Diagnostic::ProviderRejected {
+                    status: *status,
+                    body: crate::truncate::head(body, REJECTION_BODY_CAP),
+                })
+            }
+            // A dead stream or a transport failure is the turn's error to
+            // surface; the record channel carries what the provider answered.
+            crate::provider::ProviderError::Request(_)
+            | crate::provider::ProviderError::IdleTimeout
+            | crate::provider::ProviderError::MalformedStream(_) => Ok(()),
         }
     }
 
@@ -376,12 +406,10 @@ impl AgentSession {
     /// log and the input is the unobserved raw window; without it the
     /// session's entries are used as-is. Everything is read under one lock,
     /// then assembled purely.
-    fn assemble(&self, plan_state: Option<&str>) -> Result<(String, Vec<InputEntry>), AgentError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+    fn assemble(&self, plan_state: Option<&str>) -> Result<Assembled, AgentError> {
+        let mut inner = self.inner.lock();
         let base = inner.system_prompt.clone();
+        let model = inner.model.clone();
         // A child session is labeled at assembly against its
         // parent (the link names it); a plain session is not.
         let parent_session = inner.child.as_ref().map(|c| c.parent_session().to_owned());
@@ -405,17 +433,29 @@ impl AgentSession {
         if let Some(om) = inner.om.as_mut() {
             let assembled = om.assemble_context(&base);
             let raw = om.raw_window_from(&entries, leaf_id.as_deref());
-            let input = assembled
+            let om_items = assembled.om_input_items.len();
+            let items = assembled
                 .om_input_items
                 .into_iter()
                 .chain(input_items(&raw, parent_session.as_deref()))
                 .collect();
-            Ok((with_plan_state(assembled.instructions, plan_state), input))
+            Ok(Assembled {
+                model,
+                instructions: with_plan_state(assembled.instructions, plan_state),
+                items,
+                entries,
+                om_items,
+                parent_session,
+            })
         } else {
-            Ok((
-                with_plan_state(base, plan_state),
-                input_items(&entries, parent_session.as_deref()),
-            ))
+            Ok(Assembled {
+                model,
+                instructions: with_plan_state(base, plan_state),
+                items: input_items(&entries, parent_session.as_deref()),
+                entries,
+                om_items: 0,
+                parent_session,
+            })
         }
     }
 
@@ -425,12 +465,7 @@ impl AgentSession {
     /// not on every assembly, so a mid-turn plan-file edit can't churn the
     /// provider prefix cache for the rest of the turn.
     fn plan_state(&self) -> Option<String> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .plan_hook
-            .as_ref()
-            .and_then(|h| h())
+        self.inner.lock().plan_hook.as_ref().and_then(|h| h())
     }
 
     fn append_user(&self, msg: Queued) -> Result<(), AgentError> {
@@ -452,8 +487,8 @@ impl AgentSession {
         // already fired): the line lands now, under that id, after the
         // in-flight entry it was queued behind (#148).
         match msg.entry_id {
-            Some(id) => self.append_id(&id, KIND_USER, payload),
-            None => self.append(KIND_USER, payload),
+            Some(id) => self.append_id(&id, EntryKind::User, payload),
+            None => self.append(EntryKind::User, payload),
         }
     }
 
@@ -461,7 +496,7 @@ impl AgentSession {
         &self,
         id: &str,
         result: &TurnResult,
-        turn_forced: bool,
+        cut_by_user: bool,
     ) -> Result<(), AgentError> {
         // An empty, call-less assistant entry has nothing to record
         // (review N10), cut or completed: no content is no entry.
@@ -470,19 +505,18 @@ impl AgentSession {
         }
         self.append_id(
             id,
-            KIND_ASSISTANT,
+            EntryKind::Assistant,
             tau_protocol::payload::AssistantPayload {
                 text: result.text.clone(),
                 reasoning: result.reasoning.clone(),
                 // Interrupted means the user cut the turn (stop button or a
                 // force send) -- not that the provider omitted [DONE], which
                 // some do intermittently on tool-call segments of a turn that
-                // ran to completion. `turn_killed` covers a stop that landed
-                // before the turn; the live flags cover one mid-flight.
-                interrupted: turn_forced
-                    || self.kill.load(Ordering::SeqCst)
-                    || self.stop.load(Ordering::SeqCst)
-                    || self.closed.load(Ordering::SeqCst),
+                // ran to completion.
+                interrupted: cut_by_user,
+                // How the provider's response ended, recorded on every turn
+                // (#307): a cap or a dropped stream is visible on the record.
+                stop_reason: Some(result.outcome),
                 usage: result.usage.clone(),
                 duration_secs: result.duration.map(|d| d.as_secs_f64()),
                 calls: result.calls.clone(),
@@ -491,23 +525,20 @@ impl AgentSession {
         )
     }
 
-    pub(super) fn append(&self, kind: &str, payload: Value) -> Result<(), AgentError> {
-        let id = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .store
-            .mint_id();
+    pub(super) fn append(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
+        let id = self.inner.lock().store.mint_id();
         self.append_id(&id, kind, payload)
     }
 
     /// Append under a pre-minted id (ADR-0008): the re-emitted item keeps
     /// the id its first emission carried.
-    pub(super) fn append_id(&self, id: &str, kind: &str, payload: Value) -> Result<(), AgentError> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+    pub(super) fn append_id(
+        &self,
+        id: &str,
+        kind: EntryKind,
+        payload: Value,
+    ) -> Result<(), AgentError> {
+        let mut inner = self.inner.lock();
         // A fresh session has no leaf: the first entry starts the branch.
         // Any other failure is a storage error and propagates.
         let parent = match inner.store.leaf() {
@@ -520,25 +551,47 @@ impl AgentSession {
     }
 
     fn tool_batch_on_force(&self) -> ToolBatchPolicy {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .tool_batch_on_force
+        self.inner.lock().tool_batch_on_force
     }
 
     fn turn_config(&self) -> TurnConfig {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .turn
-            .clone()
+        self.inner.lock().turn.clone()
     }
 }
 
+/// The endings that are a provider-side cutoff: neither a clean completion nor
+/// a stop the user asked for (#307).
+fn cutoff(outcome: StreamOutcome) -> Option<StreamOutcome> {
+    match outcome {
+        StreamOutcome::Completed | StreamOutcome::Killed => None,
+        other => Some(other),
+    }
+}
+
+/// The cutoff a turn reports to the record. A user's stop outranks a provider's
+/// ending: the entry already carries `interrupted`, and two entries naming one
+/// cause is how the record starts contradicting itself (#307, plan §6.11).
+pub(super) fn reported_cutoff(outcome: StreamOutcome, cut_by_user: bool) -> Option<StreamOutcome> {
+    if cut_by_user { None } else { cutoff(outcome) }
+}
+
+/// How much of the response reached the record: the text and reasoning runs,
+/// plus each call. `TurnResult::blocks` is a debug-build wire audit, so the
+/// count comes from what an assistant entry would actually carry.
+fn settled_blocks(result: &TurnResult) -> u64 {
+    u64::from(!result.text.is_empty())
+        + u64::from(!result.reasoning.is_empty())
+        + u64::try_from(result.calls.len()).unwrap_or(u64::MAX)
+}
+
 mod assemble;
+mod estimate;
 mod om_pass;
 mod sink;
 mod tools;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_anchor;

@@ -6,7 +6,7 @@ fn mk(id: &str, parent: Option<&str>, ts: u64, kind: &str, text: &str) -> Entry 
         id: id.to_owned(),
         parent: parent.map(str::to_owned),
         timestamp: ts,
-        kind: kind.to_owned(),
+        kind: EntryKind::parse(kind),
         payload: json!({ "text": text }),
         blob: None,
         first_kept_entry_id: None,

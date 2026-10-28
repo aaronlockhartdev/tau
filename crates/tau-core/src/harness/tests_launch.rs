@@ -2,15 +2,15 @@
 //! wiring defaults, without a dispatch round-trip.
 
 use super::{
-    AgentSession, Config, Core, CoreBuilder, Event, SessionRole, SessionStore,
+    AgentSession, Command, Core, CoreBuilder, EntryKind, Event, SessionRole, SessionStore,
     testkit::{collect_events, open_ws, providers},
 };
 use crate::agent_type::builtin_general;
-use crate::config::{Gates, Om, Provider, SubAgents, ToolBatchPolicy};
+use crate::config::{Om, Provider, SubAgents, ToolBatchPolicy};
 use crate::subagent::testkit::{CannedFactory, TestBridge, TestDriver};
 use crate::subagent::{Supervisor, SupervisorParams};
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 
 fn canned_provider() -> crate::provider::TurnProviderRef {
@@ -41,14 +41,12 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
-            core: Some(core.clone()),
-            workspace: Some(ws.clone()),
-            config: Some(config),
+            core: core.clone(),
+            workspace: ws.clone(),
+            config,
             provider: canned_provider(),
-            supervisor: None,
-            system_prompt: None,
             base_prompt: None,
-            first_provider: Some(first),
+            first_provider: first,
         },
     )
     .unwrap();
@@ -61,11 +59,11 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
     // The entry hook is wired: an append rides the channel as an
     // EntryUpsert (ADR-0008's file-line tee).
     agent
-        .append_entry("user", serde_json::json!({ "text": "hi" }))
+        .append_entry(EntryKind::User, serde_json::json!({ "text": "hi" }))
         .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let seen = collected.lock().unwrap().iter().any(
+        let seen = collected.lock().iter().any(
             |e| matches!(e, Event::EntryUpsert { session, .. } if session == &agent_sid(&agent)),
         );
         if seen {
@@ -86,29 +84,22 @@ fn agent_sid(agent: &AgentSession) -> String {
 }
 
 #[tokio::test]
-async fn launch_root_without_providers_is_a_config_error() {
+async fn session_new_without_providers_is_a_config_error() {
+    // The check lives where the provider is resolved (`build_live`), not in the
+    // constructor: a root role carries a resolved provider or no root at all.
     let core = CoreBuilder::custom(std::collections::BTreeMap::new())
         .build()
         .unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
-    let store = fresh_store(dir.path(), &SessionStore::new_session_id());
 
-    let err = AgentSession::launch(
-        store,
-        SessionRole::Root {
-            core: Some(core),
-            workspace: Some(ws),
-            config: Some(Config::default()),
-            provider: canned_provider(),
-            supervisor: None,
-            system_prompt: None,
+    let err = core
+        .dispatch(Command::SessionNew {
+            workspace: ws.id.clone(),
+            title: None,
             base_prompt: None,
-            first_provider: None,
-        },
-    )
-    .err()
-    .expect("launch fails without providers");
+        })
+        .expect_err("session/new fails without providers");
     assert!(
         matches!(
             err,
@@ -145,14 +136,12 @@ async fn launch_root_with_a_modelless_provider_names_it() {
     let err = AgentSession::launch(
         store,
         SessionRole::Root {
-            core: Some(core.clone()),
-            workspace: Some(ws),
-            config: Some(config),
+            core: core.clone(),
+            workspace: ws,
+            config,
             provider: canned_provider(),
-            supervisor: None,
-            system_prompt: None,
             base_prompt: None,
-            first_provider: Some(first),
+            first_provider: first,
         },
     )
     .err()
@@ -186,14 +175,12 @@ async fn launch_root_session_is_freed_when_dropped() {
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
-            core: Some(core.clone()),
-            workspace: Some(ws.clone()),
-            config: Some(config),
+            core: core.clone(),
+            workspace: ws.clone(),
+            config,
             provider: canned_provider(),
-            supervisor: None,
-            system_prompt: None,
             base_prompt: None,
-            first_provider: Some(first),
+            first_provider: first,
         },
     )
     .unwrap();
@@ -239,15 +226,10 @@ fn launch_seam_session_is_freed_when_dropped() {
     });
     let agent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
+            supervisor: sup,
             provider: canned_provider(),
-            supervisor: Some(sup.clone()),
             system_prompt: None,
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .unwrap();
@@ -261,39 +243,38 @@ fn launch_seam_session_is_freed_when_dropped() {
 async fn a_reopened_session_resumes_gate_failed_from_the_record() {
     // A session that ended `gate_failed` resumes that state on re-open: the
     // record is the single source of truth (spec §5.3).
+    // The gate is config, so the session opens on a core whose config file
+    // carries it — the same layering the app uses.
+    let sys = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join("config.toml"),
+        r#"[providers.dev]
+base_url = "http://127.0.0.1:9/v1"
+key_env = ""
+
+[providers.dev.models.model]
+
+[gates]
+command = "false"
+max_retries = 1
+"#,
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .build()
+        .unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let store = fresh_store(dir.path(), "parent");
-    let bridge: Arc<dyn crate::subagent::SubagentBridge> = Arc::new(TestBridge::default());
-    let sup = Supervisor::new(SupervisorParams {
-        parent_session: "parent".into(),
-        cwd: dir.path().to_path_buf(),
-        provider: Arc::new(CannedFactory {
-            scripts: vec![],
-            delays: vec![],
-            created: AtomicUsize::new(0),
-            calls: Arc::new(AtomicUsize::new(0)),
-            instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
-        }),
-        model: "test-model".into(),
-        system_prompt: "be terse".into(),
-        om: Om::default(),
-        om_model: String::new(),
-        tool_batch_on_force: ToolBatchPolicy::Complete,
-        turn: crate::agent::TurnConfig::default(),
-        gates: Some(Gates {
-            command: "false".into(),
-            max_retries: 1,
-            ..Gates::default()
-        }),
-        hashline: crate::hashline::pin_store::GcPolicy::default(),
-        caps: SubAgents::default(),
-        types: vec![builtin_general()],
-        depth: 0,
-        bridge,
-        driver: Arc::new(TestDriver),
-        core: None,
-        parent_entries: None,
-    });
+    let ws = open_ws(&core, dir.path()).await;
+    let config = core.system_config();
+    let first = config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, p)| (name.clone(), p.clone()))
+        .expect("the test config carries the dev provider");
     // The first life: the check fails through its one repair.
     let write = |id: &str| {
         crate::agent::testkit::sse(
@@ -312,16 +293,14 @@ async fn a_reopened_session_resumes_gate_failed_from_the_record() {
         crate::agent::testkit::sse("done", &[]),
     ]));
     let agent = AgentSession::launch(
-        store,
+        fresh_store(dir.path(), "parent"),
         SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+            core: core.clone(),
+            workspace: ws.clone(),
+            config: config.clone(),
             provider,
-            supervisor: Some(sup.clone()),
-            system_prompt: None,
             base_prompt: None,
-            first_provider: None,
+            first_provider: first.clone(),
         },
     )
     .unwrap();
@@ -334,18 +313,15 @@ async fn a_reopened_session_resumes_gate_failed_from_the_record() {
     let reopened = AgentSession::launch(
         SessionStore::for_workspace(dir.path(), "parent"),
         SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+            core,
+            workspace: ws,
+            config,
             provider: canned_provider(),
-            supervisor: Some(sup),
-            system_prompt: None,
             base_prompt: None,
-            first_provider: None,
+            first_provider: first,
         },
     )
     .unwrap();
-    assert!(reopened.gate_failed(), "gate_failed survives the re-open");
     assert!(reopened.gate_failed(), "gate_failed survives the re-open");
 }
 
@@ -368,7 +344,7 @@ fn blob_entry(dir: &tempfile::TempDir, id: &str, payload: &serde_json::Value) {
         id: id.into(),
         parent: None,
         timestamp: 1,
-        kind: "tool".into(),
+        kind: EntryKind::Tool,
         payload: serde_json::Value::Null,
         blob: Some(crate::session::BlobRef {
             id: id.into(),
@@ -412,7 +388,7 @@ fn upsert_leaves_a_small_entry_alone() {
         id: "e2".into(),
         parent: None,
         timestamp: 1,
-        kind: "user".into(),
+        kind: EntryKind::User,
         payload: payload.clone(),
         blob: None,
         first_kept_entry_id: None,
@@ -430,7 +406,7 @@ fn upsert_falls_through_when_the_blob_file_is_missing() {
         id: "e3".into(),
         parent: None,
         timestamp: 1,
-        kind: "tool".into(),
+        kind: EntryKind::Tool,
         payload: serde_json::Value::Null,
         blob: Some(crate::session::BlobRef {
             id: "e3".into(),
@@ -485,14 +461,12 @@ async fn root_session_system_md_replaces_the_default_and_append_composes() {
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
-            core: Some(core.clone()),
-            workspace: Some(ws),
-            config: Some(config),
+            core: core.clone(),
+            workspace: ws,
+            config,
             provider: canned_provider(),
-            supervisor: None,
-            system_prompt: None,
             base_prompt: None,
-            first_provider: Some(first),
+            first_provider: first,
         },
     )
     .unwrap();
@@ -535,14 +509,12 @@ async fn root_session_headless_frame_is_not_clobbered_by_system_md() {
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
-            core: Some(core),
-            workspace: Some(ws),
-            config: Some(config),
+            core,
+            workspace: ws,
+            config,
             provider: canned_provider(),
-            supervisor: None,
-            system_prompt: None,
             base_prompt: Some(FRAME.to_owned()),
-            first_provider: Some(first),
+            first_provider: first,
         },
     )
     .unwrap();

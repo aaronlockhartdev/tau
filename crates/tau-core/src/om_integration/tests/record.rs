@@ -105,7 +105,7 @@ fn a_record_over_the_blob_threshold_round_trips() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .into_iter()
-        .filter(|e| e.kind == KIND_OM)
+        .filter(|e| e.kind == EntryKind::Om)
         .collect();
     let newest = om_entries.last().unwrap();
     assert!(
@@ -120,25 +120,4 @@ fn a_record_over_the_blob_threshold_round_trips() {
         state.record.active_observations
     );
     assert_eq!(reloaded.cursor, state.record.cursor);
-}
-
-#[test]
-fn a_corrupt_duplicate_id_cycle_terminates() {
-    // A duplicate id makes the parent chain cyclic; the branch walk must
-    // terminate, not clone entries forever (the 80GB runaway's amplifier).
-    let a: Entry = serde_json::from_str(
-        r#"{"id":"00000001","parentId":"00000002","timestamp":1,"type":"user","payload":{"text":"a"}}"#,
-    )
-    .unwrap();
-    let b: Entry = serde_json::from_str(
-        r#"{"id":"00000002","parentId":"00000001","timestamp":2,"type":"user","payload":{"text":"b"}}"#,
-    )
-    .unwrap();
-    let entries = vec![a, b];
-    let branch = branch_entries(&entries, Some("00000001"));
-    assert!(
-        branch.len() <= entries.len(),
-        "the walk escaped the entry count: {} entries",
-        branch.len()
-    );
 }

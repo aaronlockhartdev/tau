@@ -12,10 +12,9 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
+pub use tau_protocol::StreamOutcome;
+pub use tau_protocol::payload::FunctionCall;
 pub use tau_protocol::payload::TurnUsage as Usage;
-pub use tau_protocol::payload::{
-    FunctionCall, OutputTokensDetails, PromptTokensDetails, TurnUsage,
-};
 
 /// A model as reported by the provider's `/models` endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -247,6 +246,11 @@ enum Frame {
     InProgress,
     #[serde(rename = "response.completed")]
     Completed { response: Option<CompletedResponse> },
+    /// The provider stopped the response short. Until #307 this frame fell
+    /// through to `Other`, which is why a turn cut at the output cap read as a
+    /// clean stop.
+    #[serde(rename = "response.incomplete")]
+    Incomplete { response: Option<CompletedResponse> },
     #[serde(rename = "response.output_text.delta")]
     OutputTextDelta {
         #[serde(default)]
@@ -329,11 +333,22 @@ impl Frame {
 #[derive(Debug, Deserialize)]
 struct CompletedResponse {
     #[serde(default)]
-    usage: Option<Usage>,
+    usage: Option<usage::UsageWire>,
     /// #224: the server's completion timestamp — pairs with `Frame::Created`
     /// to yield the decode-window duration.
     #[serde(default)]
     created_at: Option<i64>,
+    /// Why an incomplete response stopped short. `"max_output_tokens"` is the
+    /// output cap; any other reason still says the response reached no
+    /// completion.
+    #[serde(default)]
+    incomplete_details: Option<IncompleteDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct IncompleteDetails {
+    #[serde(default)]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -380,7 +395,7 @@ pub struct ToolSpec {
 }
 
 /// The assembled result of one turn.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TurnResult {
     pub text: String,
     pub reasoning: String,
@@ -389,9 +404,11 @@ pub struct TurnResult {
     /// (`completed.created_at − created.created_at`); `None` when the
     /// server omits either timestamp.
     pub duration: Option<Duration>,
-    /// `response.completed` arrived; a kill or an early EOF leaves this
-    /// false and the partial stands (spec §6/§7, #17 handoff gap b).
-    pub completed: bool,
+    /// How the provider's stream ended (#307, ADR-0034). A cutoff — any value
+    /// but `Completed` — leaves the partial standing (spec §6/§7, #17 handoff
+    /// gap b). The bool this replaces could not tell a provider cutoff from a
+    /// user force-send, which is why cut turns read as normal stops.
+    pub outcome: StreamOutcome,
     pub calls: Vec<FunctionCall>,
     /// The turn's blocks in stream-arrival order (the JSONL response line's
     /// `blocks`): reasoning, text, and tool calls interleaved as the model
@@ -401,10 +418,28 @@ pub struct TurnResult {
     pub mid_stream_errors: Vec<String>,
 }
 
+impl Default for TurnResult {
+    /// A result that got no further reached no completion signal: the
+    /// fail-closed ending, so a half-assembled turn never reads as a clean
+    /// stop (#307).
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            reasoning: String::new(),
+            usage: None,
+            duration: None,
+            outcome: StreamOutcome::EofWithoutDone,
+            calls: Vec::new(),
+            blocks: Vec::new(),
+            mid_stream_errors: Vec::new(),
+        }
+    }
+}
+
 impl TurnResult {
     /// JSONL wire view of the response: one parseable JSON line — the
-    /// model's exact output as ordered `blocks`, plus `ms`/`completed` /
-    /// `usage` summary fields. `debug!` level (the #98 wire log's
+    /// model's exact output as ordered `blocks`, plus `ms`/`ended_by`/`usage`
+    /// summary fields. `debug!` level (the #98 wire log's
     /// parseable companion) — compiled out in release builds. The verbatim
     /// SSE bytes stay at `trace` (`wire::response`).
     pub fn wire_response_jsonl(&self, id: &str, ms: u64) {
@@ -413,7 +448,7 @@ impl TurnResult {
                 "id": id,
                 "dir": "res",
                 "ms": ms,
-                "completed": self.completed,
+                "ended_by": self.outcome,
                 "usage": self.usage,
                 "blocks": self.consolidated_blocks(),
             }),
@@ -481,6 +516,7 @@ pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
 mod canned;
 mod request;
 mod stream;
+mod usage;
 mod wire;
 pub use canned::*;
 pub use request::*;

@@ -12,7 +12,7 @@ pub(crate) fn store_with_text_entries(
         let text = "w".repeat(chars_each);
         let entry = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": text, "lane": "follow-up" }),
                 parent.as_deref(),
             )
@@ -28,7 +28,7 @@ pub(crate) fn turn_result(text: &str) -> crate::provider::TurnResult {
         reasoning: String::new(),
         usage: None,
         duration: None,
-        completed: true,
+        outcome: crate::provider::StreamOutcome::Completed,
         calls: Vec::new(),
         blocks: Vec::new(),
         mid_stream_errors: Vec::new(),

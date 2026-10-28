@@ -5,7 +5,7 @@
 
 use super::super::{BufferedChunk, Cursor, OmError, OmState, SessionStore, boundary_ts, om};
 
-use crate::provider::TurnResult;
+use crate::provider::{StreamOutcome, TurnResult};
 
 /// The action a turn-end plan calls for. The provider call runs outside the
 /// session's write lock (the OM call is an LLM round-trip, not a user-facing
@@ -81,7 +81,9 @@ impl OmState {
                     self.changed = true;
                     self.save(store)?;
                     *action = TurnEndAction::Done;
-                } else if result.completed && result.mid_stream_errors.is_empty() {
+                } else if result.outcome == StreamOutcome::Completed
+                    && result.mid_stream_errors.is_empty()
+                {
                     // A well-formed completion that fails validation at
                     // this level: escalate (the cap is enforced here).
                     if *level < 4 {

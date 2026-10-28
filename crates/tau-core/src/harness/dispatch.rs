@@ -65,10 +65,7 @@ impl Core {
     /// cache hit is a map read; a miss runs the three-spawn snapshot once
     /// and stores the result — including `None` for non-git workspaces.
     fn git_snapshot(&self, workspace: &Workspace) -> Option<super::git::GitSnapshot> {
-        let mut cache = self
-            .git_snapshots
-            .lock()
-            .expect("git snapshots: no panic while the lock is held");
+        let mut cache = self.git_snapshots.lock();
         if let Some(v) = cache.get(&workspace.id) {
             return v.clone();
         }
@@ -125,13 +122,7 @@ impl Core {
                 workspace: self.open_workspace(&cwd)?,
             }),
             Command::WorkspaceList => Ok(CommandOutput::Workspaces {
-                workspaces: self
-                    .workspaces
-                    .lock()
-                    .expect("workspaces map: no panic while the lock is held")
-                    .values()
-                    .cloned()
-                    .collect(),
+                workspaces: self.workspaces.lock().values().cloned().collect(),
             }),
             Command::WorkspaceClose { workspace } => {
                 self.close_workspace(&workspace)?;

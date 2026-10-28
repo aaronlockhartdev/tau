@@ -29,7 +29,7 @@ async fn a_session_archives_and_lists_with_the_flag() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -51,7 +51,6 @@ async fn a_session_archives_and_lists_with_the_flag() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline

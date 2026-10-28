@@ -182,7 +182,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
     assert_eq!(spawned.agent.tools().len(), 1);
     assert_eq!(spawned.agent.tools()[0].name, "read");
     // An omitted context_mode falls back to the type's default (fresh
-    let children = sup.children.lock().unwrap();
+    let children = sup.children.lock();
     let child = children.get(&spawned.handle).unwrap();
     assert_eq!(child.context_mode, ContextMode::Fresh);
 }
@@ -454,7 +454,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         };
         es.iter()
             .filter(|e| {
-                e.kind == "subagent"
+                e.kind == EntryKind::Subagent
                     && e.payload["event"] == json!("state")
                     && e.payload["state"] == json!("idle")
             })
@@ -471,7 +471,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
     let rests = entries
         .iter()
         .filter(|e| {
-            e.kind == "subagent"
+            e.kind == EntryKind::Subagent
                 && e.payload["event"] == json!("state")
                 && e.payload["state"] == json!("idle")
         })

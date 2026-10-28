@@ -1,6 +1,7 @@
 //! The turn-option resolution (spec §12, #35): config + model facts →
 //! the session's `TurnConfig`.
 use super::*;
+use crate::agent::ContextGate;
 use crate::config::ThinkingLevel;
 
 fn setup(
@@ -146,4 +147,103 @@ fn an_off_level_omits_the_effort() {
     );
     let turn = derive_turn(&config, &provider, "m", "sess-1");
     assert_eq!(turn.reasoning, None);
+}
+
+/// §6.7: the model menu names a model `provider/key`, the config declares it by
+/// bare key. One read resolves the id, so the facts come from the key and the
+/// request is addressed by it.
+#[test]
+fn a_menu_qualified_id_resolves_to_the_declared_key() {
+    let def = crate::config::ModelDef {
+        context_window: Some(131_072),
+        max_tokens: Some(16_384),
+        ..Default::default()
+    };
+    let (config, provider) = setup(
+        def,
+        crate::config::Generation::default(),
+        crate::config::Thinking::default(),
+        crate::config::CacheRetention::None,
+    );
+    let turn = derive_turn(&config, &provider, "dev/m", "sess-1");
+    assert_eq!(
+        turn.context_window,
+        Some(131_072),
+        "the declared window is found under the menu's id"
+    );
+    assert_eq!(turn.max_output_tokens, Some(16_384));
+    assert_eq!(
+        turn.address
+            .as_ref()
+            .map(|a| (a.id.as_str(), a.key.as_str())),
+        Some(("dev/m", "m")),
+        "the endpoint is addressed by the key, not the menu's id"
+    );
+    assert_eq!(turn.request_address("dev/m"), "m");
+    assert!(
+        matches!(turn.context_gate(), ContextGate::Ready { .. }),
+        "a model whose facts are declared has a working gate"
+    );
+}
+
+/// The resolution does not invent facts: an id whose key the config never
+/// declared still reports the gate gap by name.
+#[test]
+fn a_menu_qualified_id_for_an_undeclared_key_still_names_the_gap() {
+    let (config, provider) = setup(
+        crate::config::ModelDef {
+            context_window: Some(131_072),
+            max_tokens: Some(16_384),
+            ..Default::default()
+        },
+        crate::config::Generation::default(),
+        crate::config::Thinking::default(),
+        crate::config::CacheRetention::None,
+    );
+    let turn = derive_turn(&config, &provider, "dev/ghost", "sess-1");
+    assert_eq!(turn.context_window, None);
+    assert_eq!(
+        turn.address
+            .as_ref()
+            .map(|a| (a.id.as_str(), a.key.as_str())),
+        Some(("dev/ghost", "ghost")),
+        "the address is the key even for a model nobody declared"
+    );
+    assert!(
+        matches!(
+            turn.context_gate(),
+            ContextGate::Missing { reasons }
+                if reasons == vec!["context_window".to_owned(), "max_tokens".to_owned()]
+        ),
+        "undeclared is undeclared, whatever spelling reached it"
+    );
+}
+
+/// A turn config is inherited by a subagent child, whose agent type can
+/// override its model; the parent's resolved key belongs to the parent's
+/// model, so it must never address the child's (§6.7).
+#[test]
+fn an_address_resolved_for_one_model_never_names_another() {
+    let (config, provider) = setup(
+        crate::config::ModelDef {
+            context_window: Some(131_072),
+            max_tokens: Some(16_384),
+            ..Default::default()
+        },
+        crate::config::Generation::default(),
+        crate::config::Thinking::default(),
+        crate::config::CacheRetention::None,
+    );
+    let turn = derive_turn(&config, &provider, "dev/m", "sess-1");
+    assert_eq!(turn.request_address("dev/m"), "m");
+    assert_eq!(
+        turn.request_address("review-model"),
+        "review-model",
+        "a model this config never resolved addresses itself"
+    );
+    // A hand-built config has no address at all: the id addresses itself.
+    assert_eq!(
+        crate::agent::TurnConfig::default().request_address("any/id"),
+        "any/id"
+    );
 }

@@ -2,7 +2,7 @@ use std::fmt::Write as _;
 
 use super::*;
 use crate::harness::SessionRole;
-use crate::provider::{self, ResponseRequest, TurnSink};
+use crate::provider::{self, ResponseRequest, StreamOutcome, TurnSink};
 use crate::session::SessionStore;
 use serde_json::json;
 use std::time::Duration;
@@ -18,19 +18,19 @@ pub(crate) struct TestBridge {
 
 impl SubagentBridge for TestBridge {
     fn spawned(&self, n: &SpawnNotice) {
-        self.spawns.lock().unwrap().push(n.clone());
+        self.spawns.lock().push(n.clone());
     }
     fn state(&self, n: &StateNotice) {
-        self.states.lock().unwrap().push(n.clone());
+        self.states.lock().push(n.clone());
     }
     fn reclaimed(&self, n: &ReclaimNotice) {
-        self.reclaims.lock().unwrap().push(n.clone());
+        self.reclaims.lock().push(n.clone());
     }
     fn re_adopted(&self, n: &ReadoptNotice) {
-        self.readopts.lock().unwrap().push(n.clone());
+        self.readopts.lock().push(n.clone());
     }
     fn wake(&self, n: &WakeNotice) {
-        self.wakes.lock().unwrap().push(n.clone());
+        self.wakes.lock().push(n.clone());
     }
 }
 
@@ -101,7 +101,7 @@ impl provider::TurnProvider for CannedChildProvider {
             // The request's `instructions` is private: capture it the way
             // the wire encodes it (the struct's Serialize).
             let captured = serde_json::to_value(req).unwrap();
-            self.instructions.lock().unwrap().push(
+            self.instructions.lock().push(
                 captured
                     .get("instructions")
                     .and_then(Value::as_str)
@@ -112,7 +112,7 @@ impl provider::TurnProvider for CannedChildProvider {
         let body = self.next();
         self.calls.fetch_add(1, Ordering::SeqCst);
         let delay = self.pre_delay;
-        let (events, calls) = provider::decode_stream(&body).unwrap();
+        let (events, calls, ending) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
             // The per-child pre-delay, once, before the first call (an
             // ordering margin for test-side file writes). The mid-stream
@@ -129,15 +129,14 @@ impl provider::TurnProvider for CannedChildProvider {
                     tokio::time::sleep(delay).await;
                 }
                 if !sink.event(event.clone()) {
+                    result.outcome = StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(&event, &mut result);
                 accepted += 1;
             }
             if accepted == events.len() {
-                result.completed = events
-                    .iter()
-                    .any(|e| matches!(e, provider::TurnEvent::Completed(_, _)));
+                result.outcome = ending;
             }
             result.calls = calls
                 .iter()
@@ -258,15 +257,10 @@ pub(crate) fn harness_full(
     // `Weak` (ticket #43 broke the v0 parent↔supervisor cycle).
     let parent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
+            supervisor: Arc::clone(&sup),
             provider: parent_provider,
-            supervisor: Some(Arc::clone(&sup)),
             system_prompt: None,
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .unwrap();
@@ -319,7 +313,7 @@ pub(crate) fn entry_by_event(
         .entries_range(0, usize::MAX)
         .unwrap()
         .into_iter()
-        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == json!(event))
+        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == json!(event))
 }
 
 pub(crate) fn wait_for(cond: impl Fn() -> bool) {

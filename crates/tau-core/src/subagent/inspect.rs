@@ -1,7 +1,8 @@
 use super::{ChildState, SessionStore, SubagentInfo, Supervisor, TurnUsage, WaitingOn};
 use crate::om;
-use crate::om_integration::{self, OmState};
+use crate::om_integration::OmState;
 use crate::session::Entry;
+use tau_protocol::EntryKind;
 use tau_protocol::payload::{ActivityEntry, ActivityGroup, ChildActivity};
 
 /// The activity window's tail cap: a 10k-entry child must stay cheap
@@ -17,12 +18,7 @@ const ACTIVITY_TEXT_LIMIT: usize = 400;
 impl Supervisor {
     /// All registered children (the snapshot's live-state handles).
     pub fn handles(&self) -> Vec<String> {
-        self.children
-            .lock()
-            .expect("children map: no panic while the lock is held")
-            .keys()
-            .cloned()
-            .collect()
+        self.children.lock().keys().cloned().collect()
     }
 
     /// A child's structured inspection (the `subagent_state` tool and the
@@ -37,23 +33,17 @@ impl Supervisor {
         };
         let usage = {
             let mut store = SessionStore::for_workspace(&self.cwd, &child.session_id);
-            store
-                .open()
-                .ok()
-                .and_then(|()| store.leaf().ok().flatten())
-                .and_then(|leaf| {
-                    // The whole log by design (#302): the walk is the leaf's
-                    // branch, and the store reads by position or cursor, not
-                    // by parent chain (spec §3).
-                    let entries = store.entries_range(0, usize::MAX).ok()?;
-                    let branch = om_integration::branch_entries(&entries, Some(&leaf.id));
-                    branch
-                        .iter()
-                        .rev()
-                        .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
-                        .and_then(|e| e.payload.get("usage"))
-                        .and_then(|u| serde_json::from_value::<TurnUsage>(u.clone()).ok())
-                })
+            store.open().ok().and_then(|()| {
+                // The whole log by design (#302): the walk is the leaf's
+                // branch, and the store reads by position (spec §3).
+                let branch = store.branch().ok()?;
+                branch
+                    .iter()
+                    .rev()
+                    .find(|e| e.kind == EntryKind::Assistant)
+                    .and_then(|e| e.payload.get("usage"))
+                    .and_then(TurnUsage::from_record)
+            })
         };
         // The child's plan file (spec §5.3): its open-step resume contract.
         let resume_contract =
@@ -67,11 +57,7 @@ impl Supervisor {
             context_mode: child.context_mode,
             state,
             waiting_on,
-            last_message: child
-                .last_message
-                .lock()
-                .expect("child last message: no panic while the lock is held")
-                .clone(),
+            last_message: child.last_message.lock().clone(),
             created: child.agent.store_created(),
             usage,
             resume_contract,
@@ -131,7 +117,7 @@ pub(crate) fn read_activity(
             id: g.id.clone(),
             range: g.range.clone(),
             kind: g.kind.clone(),
-            content: truncate_at(&g.content, ACTIVITY_TEXT_LIMIT),
+            content: crate::truncate::head_lines(g.content.trim(), ACTIVITY_TEXT_LIMIT),
         })
         .collect();
     let window = state.raw_window_from(&entries, Some(&leaf.id));
@@ -155,8 +141,8 @@ pub(crate) fn read_activity(
 /// The raw tail's compact projection: role, the tool's name and verdict,
 /// and a truncated text slice — the GUI renders exactly this.
 fn project_entry(entry: &Entry) -> ActivityEntry {
-    match entry.kind.as_str() {
-        "tool" => {
+    match &entry.kind {
+        EntryKind::Tool => {
             let text = entry
                 .payload
                 .get("output")
@@ -175,7 +161,7 @@ fn project_entry(entry: &Entry) -> ActivityEntry {
                     .get("status")
                     .and_then(|v| v.as_str())
                     .map(str::to_owned),
-                text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),
+                text: crate::truncate::head_lines(text.trim(), ACTIVITY_TEXT_LIMIT),
             }
         }
         other => {
@@ -186,38 +172,13 @@ fn project_entry(entry: &Entry) -> ActivityEntry {
                 .unwrap_or("")
                 .to_owned();
             ActivityEntry {
-                role: other.to_owned(),
+                role: other.as_str().to_owned(),
                 tool: None,
                 status: None,
-                text: truncate_at(&text, ACTIVITY_TEXT_LIMIT),
+                text: crate::truncate::head_lines(text.trim(), ACTIVITY_TEXT_LIMIT),
             }
         }
     }
-}
-
-/// A char-boundary-safe, line-boundary truncation (#219): over-limit text is
-/// cut to the last complete line that fits, with an ellipsis appended. A
-/// single line longer than the whole limit yields an empty prefix + ellipsis
-/// (the oversized-line case).
-fn truncate_at(text: &str, limit: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.len() <= limit {
-        return trimmed.to_owned();
-    }
-    let mut out = trimmed.to_owned();
-    let mut count = 0usize;
-    for (i, _) in out.char_indices() {
-        count += 1;
-        if count > limit {
-            let prefix = out.get(..i).expect("char_indices yields a boundary");
-            let cut = prefix.rfind('\n').map_or(0, |j| j + 1);
-            out.truncate(cut);
-            let _ = out.pop();
-            out.push('…');
-            break;
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -233,21 +194,21 @@ mod tests {
         store.create().unwrap();
         let user = store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "work the thing" }),
                 None,
             )
             .unwrap();
         let assistant = store
             .append(
-                "assistant",
+                EntryKind::Assistant,
                 serde_json::json!({ "text": "on it" }),
                 Some(&user.id),
             )
             .unwrap();
         store
             .append(
-                "tool",
+                EntryKind::Tool,
                 serde_json::json!({
                     "call_id": "c1",
                     "name": "bash",
@@ -308,10 +269,14 @@ mod tests {
         let mut store = SessionStore::for_workspace(tmp.path(), "child-2");
         store.create().unwrap();
         let one = store
-            .append("user", serde_json::json!({ "text": "one" }), None)
+            .append(EntryKind::User, serde_json::json!({ "text": "one" }), None)
             .unwrap();
         let two = store
-            .append("user", serde_json::json!({ "text": "two" }), Some(&one.id))
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "two" }),
+                Some(&one.id),
+            )
             .unwrap();
         // The record's cursor points at an entry the branch does not carry
         // (the skew direction: the record read is newer than the entry
@@ -327,14 +292,18 @@ mod tests {
             ..Default::default()
         };
         let om_entry = store
-            .append("om", serde_json::to_value(&record).unwrap(), Some(&two.id))
+            .append(
+                EntryKind::Om,
+                serde_json::to_value(&record).unwrap(),
+                Some(&two.id),
+            )
             .unwrap();
         // A raw entry after the `om` record: the branch's leaf is past the
         // record, so `load_record` walks to it and finds the record
         // (the degraded path needs a leaf newer than the record).
         store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "three" }),
                 Some(&om_entry.id),
             )
@@ -362,7 +331,7 @@ mod tests {
         for i in 0..total {
             let e = store
                 .append(
-                    "user",
+                    EntryKind::User,
                     serde_json::json!({ "text": format!("entry {i}") }),
                     parent_id.as_deref(),
                 )
@@ -381,7 +350,7 @@ mod tests {
         };
         store
             .append(
-                "om",
+                EntryKind::Om,
                 serde_json::to_value(&record).unwrap(),
                 parent_id.as_deref(),
             )
@@ -411,7 +380,7 @@ mod tests {
         store.create().unwrap();
         store
             .append(
-                "user",
+                EntryKind::User,
                 serde_json::json!({ "text": "x".repeat(ACTIVITY_TEXT_LIMIT + 10) }),
                 None,
             )
@@ -436,7 +405,7 @@ mod tests {
         let mut store = SessionStore::for_workspace(tmp.path(), "child-5");
         store.create().unwrap();
         store
-            .append("user", serde_json::json!({ "text": big }), None)
+            .append(EntryKind::User, serde_json::json!({ "text": big }), None)
             .unwrap();
         let activity = read_activity(tmp.path(), "child-5", &crate::config::Om::default()).unwrap();
         let text = &activity.live[0].text;

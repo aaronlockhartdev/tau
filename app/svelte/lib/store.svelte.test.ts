@@ -150,7 +150,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
       upsert('00000001', 'assistant', { text: 'hel', reasoning: 'thinking', interrupted: false }),
       upsert('00000001', 'assistant', { text: 'hello', reasoning: 'thinking', interrupted: false }),
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE }
     ]);
     expect(s.turn).toBe('idle');
     expect(s.usage).toEqual(USAGE);
@@ -179,7 +179,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     applyEvents([
       { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
       upsert('00000001', 'assistant', { text: 'ab', interrupted: true }),
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: true, usage: null, duration_secs: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: true, usage: null }
     ]);
     expect(s.entries['00000001']?.kind).toBe('interrupted');
   });
@@ -208,7 +208,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     applyEvents([upsert('00000001', 'assistant', { text: 'a', interrupted: false })]);
     await vi.advanceTimersByTimeAsync(1000);
     applyEvents([
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE }
     ]);
     // 10 tokens over the 1 s after the first delta — not 3.33 over the 3 s
     // wall clock that a stream-start base would give.
@@ -225,7 +225,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     // Usage arrived but no assistant delta ever did: no first-delta clock,
     // so no TPS (and no divide by zero).
     applyEvents([
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE }
     ]);
     expect(s.tps).toBe(0);
     vi.useRealTimers();
@@ -253,7 +253,7 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
       upsert('00000001', 'assistant', { text: 'run ls', interrupted: false }),
       upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' } }),
       upsert('00000002', 'tool', { call_id: 't1', name: 'bash', args: { command: 'ls' }, output: 'exit 0\n--- stdout ---\nok' }),
-      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null, duration_secs: null }
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: null }
     ]);
     const tools = Object.values(s.entries).filter((e) => e.kind === 'tool');
     expect(tools).toHaveLength(1);
@@ -375,7 +375,6 @@ describe('applyEvents: last_modified (#282/#283)', () => {
         session: 's1',
         call_id: 'c1',
         interrupted: false,
-        duration_secs: null,
         usage: null
       }
     ]);

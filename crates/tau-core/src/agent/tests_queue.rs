@@ -54,7 +54,7 @@ async fn a_stop_preempts_the_drain_and_a_send_resumes_it() {
     // button): the in-flight call is cut and the drain must stop there.
     agent.stop();
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     assert!(entries.is_empty(), "no turn ran: {entries:?}");
     // The queue is intact for the next explicit send.
     let items = agent.queued_items();
@@ -65,10 +65,10 @@ async fn a_stop_preempts_the_drain_and_a_send_resumes_it() {
     // The next explicit send clears the stop and resumes the drain.
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
-    let entries = entries_of(&agent.inner.lock().unwrap().store);
+    let entries = entries_of(&agent.inner.lock().store);
     let users: Vec<&str> = entries
         .iter()
-        .filter(|e| e.kind == KIND_USER)
+        .filter(|e| e.kind == EntryKind::User)
         .map(|e| e.payload["text"].as_str().unwrap())
         .collect();
     assert_eq!(users, vec!["one", "two", "three", "go"]);

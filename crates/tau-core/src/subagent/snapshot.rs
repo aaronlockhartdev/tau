@@ -9,10 +9,11 @@
 //! keeps the `Done` output out of the record, which the full `ChildState`
 //! serde would require.
 
+use super::ContextMode;
 use super::states::WaitingOn;
-use super::{ContextMode, KIND_SUBAGENT};
 use crate::session::{Entry, SessionStore, list_workspace};
 use std::path::Path;
+use tau_protocol::EntryKind;
 
 /// The parent's children from disk: every on-disk session whose header names
 /// `parent` (and is not archived), each carrying its last recorded lifecycle
@@ -60,10 +61,10 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
             // the `general`/`fresh` defaults.
             let spawn = head
                 .iter()
-                .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn")
+                .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn")
                 .or_else(|| {
                     tail.iter()
-                        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn")
+                        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn")
                 });
             let agent_type = spawn
                 .and_then(|e| e.payload["type"].as_str())
@@ -142,7 +143,7 @@ fn last_state(entries: &[Entry]) -> Option<ChildStateRef> {
     entries
         .iter()
         .rev()
-        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "state")
+        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "state")
         .and_then(|e| serde_json::from_value::<ChildStateRef>(e.payload.clone()).ok())
 }
 
@@ -205,7 +206,7 @@ mod tests {
             id: "e1".into(),
             parent: None,
             timestamp: 0,
-            kind: KIND_SUBAGENT.into(),
+            kind: EntryKind::Subagent,
             payload,
             blob: None,
             first_kept_entry_id: None,
@@ -245,7 +246,7 @@ mod tests {
             id: "e1".into(),
             parent: None,
             timestamp: 0,
-            kind: KIND_SUBAGENT.into(),
+            kind: EntryKind::Subagent,
             payload: serde_json::json!({ "event": "spawn" }),
             blob: None,
             first_kept_entry_id: None,
@@ -294,7 +295,11 @@ mod tests {
             }
             if let Some((state, extra)) = state {
                 store
-                    .append(KIND_SUBAGENT, state_entry(state, &extra).payload, None)
+                    .append(
+                        EntryKind::Subagent,
+                        state_entry(state, &extra).payload,
+                        None,
+                    )
                     .unwrap();
             }
         }
@@ -331,7 +336,11 @@ mod tests {
         child.set_parent("p").unwrap();
         // A spawn record, no state: the post-restart ground truth is idle.
         child
-            .append(KIND_SUBAGENT, serde_json::json!({ "event": "spawn" }), None)
+            .append(
+                EntryKind::Subagent,
+                serde_json::json!({ "event": "spawn" }),
+                None,
+            )
             .unwrap();
         let children = restore_children_from_disk(tmp.path(), "p");
         assert_eq!(children.len(), 1);

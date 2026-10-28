@@ -175,10 +175,11 @@ fn prompt_estimate_counts_image_data_urls_and_text() {
             }),
         ]),
     })];
-    let est = prompt_token_estimate("sys", &input, &[]);
-    // ~4 chars/token (the shared soft estimator, spec §4): 4022 chars / 4
-    // for the URL, 1 for the note ("sys" is under a token).
-    assert_eq!(est, 4022 / 4 + 1, "image and note both count");
+    let est = prompt_token_estimate("sys", &input, "[]");
+    // Bytes over four, rounded up, then the serialization allowance: the 4022-
+    // byte URL is 1006, the note 1, the "sys" prompt 1, the empty tool list 1 —
+    // 1009, plus a fifth for the request's JSON framing.
+    assert_eq!(est, 1009 + 1009 / 5, "image and note both count");
 }
 
 #[test]
@@ -189,16 +190,17 @@ fn prompt_estimate_counts_text_call_outputs() {
         call_id: "c1".into(),
         output: CallOutput::Text("b".repeat(1200)),
     })];
-    let est = prompt_token_estimate("sys", &input, &[]);
-    // The "sys" prompt is under a token: only the result counts.
-    assert_eq!(est, 1200 / 4);
+    let est = prompt_token_estimate("sys", &input, "[]");
+    // 300 for the result, 1 for the "sys" prompt, 1 for the empty tool list,
+    // plus a fifth.
+    assert_eq!(est, 302 + 302 / 5);
 }
 
 // --- JSONL wire view (the #98 wire log's parseable companion) ---
 
 /// One static buffer per test binary: `set_global_default` installs once,
 /// so every `llm wire` event lands here; each scenario drains it first.
-static CAPTURE: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+static CAPTURE: parking_lot::Mutex<String> = parking_lot::Mutex::new(String::new());
 
 /// A `MakeWriter` over the static buffer: the subscriber holds this unit
 /// struct, and each event locks the shared buffer.
@@ -208,13 +210,13 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapSource {
     type Writer = CapWriter<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        CapWriter(CAPTURE.lock().expect("capture poisoned"))
+        CapWriter(CAPTURE.lock())
     }
 }
 
 /// A `Write` view over one locked buffer: `MutexGuard<String>` is not
 /// itself a writer.
-struct CapWriter<'a>(std::sync::MutexGuard<'a, String>);
+struct CapWriter<'a>(parking_lot::MutexGuard<'a, String>);
 
 impl std::io::Write for CapWriter<'_> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -239,9 +241,9 @@ fn capture_debug(f: impl FnOnce()) -> String {
         .with_writer(CapSource)
         .finish();
     let _guard = tracing::subscriber::set_default(sub);
-    CAPTURE.lock().expect("capture poisoned").clear();
+    CAPTURE.lock().clear();
     f();
-    CAPTURE.lock().expect("capture poisoned").clone()
+    CAPTURE.lock().clone()
 }
 
 /// Pull the `line=...` field out of one fmt-rendered event and parse it as
@@ -307,11 +309,10 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
 
     // Positive — response line: ordered blocks plus usage, no raw bytes.
     let result = TurnResult {
-        completed: true,
+        outcome: StreamOutcome::Completed,
         usage: Some(Usage {
             input_tokens: 10,
             output_tokens: 5,
-            total_tokens: 15,
             ..Default::default()
         }),
         blocks: vec![
@@ -332,7 +333,7 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     assert_eq!(v["id"], "a1b2");
     assert_eq!(v["dir"], "res");
     assert_eq!(v["ms"], 42);
-    assert_eq!(v["completed"], true);
+    assert_eq!(v["ended_by"], "completed");
     assert_eq!(v["usage"]["output_tokens"], 5);
     assert!(v.get("raw").is_none(), "the raw SSE bytes stay at trace");
     // The blocks preserve the model's emission order.
@@ -353,7 +354,7 @@ fn wire_jsonl_lines_are_parseable_and_pair_req_with_res() {
     let result = TurnResult::default();
     let v = wire_json(&capture_debug(|| result.wire_response_jsonl("a1b2", 7)));
     assert_eq!(v["usage"], serde_json::Value::Null);
-    assert_eq!(v["completed"], false);
+    assert_eq!(v["ended_by"], "eof_without_done");
     assert!(v["blocks"].as_array().unwrap().is_empty());
 }
 
@@ -362,7 +363,7 @@ fn response_wire_line_consolidates_consecutive_blocks() {
     // Positive — consecutive same-kind blocks merge into one entry, in
     // place: a kind change starts a new one.
     let result = TurnResult {
-        completed: true,
+        outcome: StreamOutcome::Completed,
         blocks: vec![
             WireBlock::Reasoning { text: "hmm".into() },
             WireBlock::Reasoning {

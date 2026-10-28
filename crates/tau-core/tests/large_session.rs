@@ -5,6 +5,7 @@
 
 use std::time::Instant;
 use tau_core::session::SessionStore;
+use tau_protocol::EntryKind;
 
 /// Write `n` chained entries of ~200 B payloads and report the measured
 /// read times for a full open, a tail read, and a mid-file page.
@@ -19,7 +20,7 @@ fn run(n: u64) {
         let text = format!("entry {i:05} ") + &"p".repeat(150);
         let e = store
             .append(
-                "message",
+                EntryKind::User,
                 serde_json::json!({"role": "user", "text": text}),
                 prev.as_deref(),
             )

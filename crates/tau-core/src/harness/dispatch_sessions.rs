@@ -3,9 +3,10 @@
 
 use super::{
     Arc, Command, CommandOutput, Core, Event, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, json,
-    last_model_note, model_note, running_turn_refusal,
+    SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, recorded_model,
+    running_turn_refusal,
 };
+use tau_protocol::Diagnostic;
 
 impl Core {
     #[allow(clippy::too_many_lines)] // one command per arm; splitting is refactoring
@@ -19,21 +20,9 @@ impl Core {
                 let mut sessions = self
                     .sessions
                     .lock()
-                    .expect("sessions map: no panic while the lock is held")
                     .values()
-                    .filter(|s| {
-                        s.meta
-                            .lock()
-                            .expect("session meta: no panic while the lock is held")
-                            .workspace
-                            == workspace.id
-                    })
-                    .map(|s| {
-                        s.meta
-                            .lock()
-                            .expect("session meta: no panic while the lock is held")
-                            .clone()
-                    })
+                    .filter(|s| s.meta.lock().workspace == workspace.id)
+                    .map(|s| s.meta.lock().clone())
                     .collect::<Vec<_>>();
                 // The file is the record: sessions closed since boot (or
                 // from a previous run) still list, `archive/` included
@@ -73,10 +62,7 @@ impl Core {
                         // Keep the in-memory meta in sync; snapshot() and
                         // session_list() serve it, so a re-open must not
                         // revert the rename.
-                        l.meta
-                            .lock()
-                            .expect("session meta: no panic while the lock is held")
-                            .title = Some(title.clone());
+                        l.meta.lock().title = Some(title.clone());
                         let cwd = l.cwd.clone();
                         (Some(l), cwd)
                     }
@@ -116,12 +102,7 @@ impl Core {
                     });
                 }
                 if let Ok(live) = self.live(&session) {
-                    let old = live
-                        .meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .model
-                        .clone();
+                    let old = live.meta.lock().model.clone();
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
@@ -130,40 +111,46 @@ impl Core {
                     // session_list() serve, so a re-open must not
                     // revert the change; the agent's own model drives
                     // the next turn's calls.
-                    live.meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .model = Some(model.clone());
+                    live.meta.lock().model = Some(model.clone());
                     live.agent.set_model(model.clone());
-                    // #35: the model-specific options (output-cap clamp,
-                    // reasoning level) track the active model —
-                    // re-derived from the workspace config.
-                    let ws_id = live
-                        .meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .workspace
-                        .clone();
-                    if let Ok(ws) = self.workspace(&ws_id) {
-                        let config = self.workspace_config(&ws);
-                        if let Some((_, p)) = config.providers.iter().next() {
-                            live.agent
-                                .set_turn_config(derive_turn(&config, p, &model, &session));
-                        }
-                    }
                     live.agent
-                        .append_entry(
-                            crate::agent::KIND_SYSTEM,
-                            json!({ "note": model_note(old.as_deref(), &model) }),
-                        )
+                        .diagnostic(&Diagnostic::ModelChanged {
+                            from: old,
+                            to: model.clone(),
+                        })
                         .map_err(|e| ProtocolError::Other {
                             message: e.to_string(),
                         })?;
+                    // #35: the model-specific options (output-cap clamp,
+                    // reasoning level) track the active model —
+                    // re-derived from the workspace config.
+                    let ws_id = live.meta.lock().workspace.clone();
+                    if let Ok(ws) = self.workspace(&ws_id) {
+                        let config = self.workspace_config(&ws);
+                        if let Some((_, p)) = config.providers.iter().next() {
+                            let turn = derive_turn(&config, p, &model, &session);
+                            let gate = turn.context_gate();
+                            live.agent.set_turn_config(turn);
+                            if let crate::agent::ContextGate::Missing { reasons } = gate {
+                                // The switch landed on a model with no gate
+                                // (ADR-0034): the record says so here, once,
+                                // instead of every request running unbounded.
+                                live.agent
+                                    .diagnostic(&Diagnostic::GateUnavailable {
+                                        model: model.clone(),
+                                        missing: reasons,
+                                    })
+                                    .map_err(|e| ProtocolError::Other {
+                                        message: e.to_string(),
+                                    })?;
+                            }
+                        }
+                    }
                     Ok(CommandOutput::None)
                 }
                 // A closed session is a file: the header carries no
-                // model, so the quiet entries are the record — the
-                // last `model:` note on the branch is the current one.
+                // model, so the records are the trace — the last
+                // model_changed on the branch is the current one.
                 else {
                     let cwd = self
                         .owning_session(&session)
@@ -175,20 +162,20 @@ impl Core {
                     store.open().map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
                     })?;
-                    let old = last_model_note(&mut store);
+                    let old = recorded_model(&mut store);
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
-                    let leaf = store.leaf().ok().flatten().map(|e| e.id);
-                    store
-                        .append(
-                            crate::agent::KIND_SYSTEM,
-                            json!({ "note": model_note(old.as_deref(), &model) }),
-                            leaf.as_deref(),
-                        )
-                        .map_err(|e| ProtocolError::Other {
-                            message: e.to_string(),
-                        })?;
+                    crate::diagnostics::append_facts(
+                        &mut store,
+                        &[Diagnostic::ModelChanged {
+                            from: old,
+                            to: model.clone(),
+                        }],
+                    )
+                    .map_err(|e| ProtocolError::Other {
+                        message: e.to_string(),
+                    })?;
                     Ok(CommandOutput::None)
                 }
             }
@@ -204,7 +191,6 @@ impl Core {
                     let ws = self
                         .workspaces
                         .lock()
-                        .expect("workspaces map: no panic while the lock is held")
                         .values()
                         .find(|w| {
                             Path::new(&w.cwd)
@@ -235,17 +221,10 @@ impl Core {
                 // The remove's guard is scoped to the statement: a re-entrant sessions
                 // lock in the block below would deadlock (the mutex is
                 // non-reentrant).
-                let closed = self
-                    .sessions
-                    .lock()
-                    .expect("sessions map: no panic while the lock is held")
-                    .remove(&session);
+                let closed = self.sessions.lock().remove(&session);
                 // The plan state is a cache of the file (design): a closed
                 // session keeps no parallel state — the file is the record.
-                self.plans
-                    .lock()
-                    .expect("plan states: no panic while the lock is held")
-                    .remove(&session);
+                self.plans.lock().remove(&session);
                 if let Some(live) = closed {
                     // Closing a running CHILD session routes through the
                     // parent's supervisor (the terminal Stopped record and
@@ -274,21 +253,12 @@ impl Core {
                 // deleting it mid-turn tears it — and the turn's next
                 // write hits the gone file (the append refusal) instead
                 // of recording.
-                if let Some(live) = self
-                    .sessions
-                    .lock()
-                    .expect("sessions map: no panic while the lock is held")
-                    .get(&session)
+                if let Some(live) = self.sessions.lock().get(&session)
                     && live.turn.load(Ordering::SeqCst)
                 {
                     return Err(running_turn_refusal(&session));
                 }
-                let Some(live) = self
-                    .sessions
-                    .lock()
-                    .expect("sessions map: no panic while the lock is held")
-                    .remove(&session)
-                else {
+                let Some(live) = self.sessions.lock().remove(&session) else {
                     // Not in the live map (never opened, or closed since —
                     // includes archived sessions): delete is a pure file op.
                     return self.delete_closed(&session);
@@ -299,10 +269,7 @@ impl Core {
                 // abort if a turn started in the window — the file must
                 // not move mid-write.
                 if live.turn.load(Ordering::SeqCst) {
-                    self.sessions
-                        .lock()
-                        .expect("sessions map: no panic while the lock is held")
-                        .insert(session.clone(), live.clone());
+                    self.sessions.lock().insert(session.clone(), live.clone());
                     return Err(ProtocolError::Other {
                         message: format!(
                             "session {session} started a turn while deleting — stop it and retry"
@@ -331,10 +298,7 @@ impl Core {
                 // Only top-level sessions archive: a sub-agent archives with
                 // its parent (ADR-0005), so a child id is refused outright.
                 if live.agent.child_link().is_some() {
-                    let meta = live
-                        .meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held");
+                    let meta = live.meta.lock();
                     return Err(ProtocolError::Other {
                         message: self.archive_refusal_for_child(
                             &session,
@@ -354,13 +318,7 @@ impl Core {
                 // disk. One already archived stays archived. A running
                 // one is refused BEFORE anything is quiesced: a stop is
                 // terminal, so a refused request must mutate nothing.
-                let workspace = self.workspace(
-                    &live
-                        .meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .workspace,
-                )?;
+                let workspace = self.workspace(&live.meta.lock().workspace)?;
                 let mut children = std::collections::BTreeSet::new();
                 if let Some(sup) = live.agent.subagents() {
                     for handle in sup.handles() {
@@ -382,19 +340,8 @@ impl Core {
                         children.insert(info.child);
                     }
                 }
-                for (id, s) in self
-                    .sessions
-                    .lock()
-                    .expect("sessions map: no panic while the lock is held")
-                    .iter()
-                {
-                    if s.meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .parent
-                        .as_deref()
-                        == Some(session.as_str())
-                    {
+                for (id, s) in self.sessions.lock().iter() {
+                    if s.meta.lock().parent.as_deref() == Some(session.as_str()) {
                         children.insert(id.clone());
                     }
                 }
@@ -409,11 +356,7 @@ impl Core {
                     }
                 }
                 for child in &children {
-                    if let Some(cl) = self
-                        .sessions
-                        .lock()
-                        .expect("sessions map: no panic while the lock is held")
-                        .get(child)
+                    if let Some(cl) = self.sessions.lock().get(child)
                         && cl.turn.load(Ordering::SeqCst)
                     {
                         return Err(ProtocolError::Other {
@@ -454,28 +397,12 @@ impl Core {
                     cstore.unarchive().map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
                     })?;
-                    if let Some(cl) = self
-                        .sessions
-                        .lock()
-                        .expect("sessions map: no panic while the lock is held")
-                        .get(&m.id)
-                    {
-                        cl.meta
-                            .lock()
-                            .expect("session meta: no panic while the lock is held")
-                            .archived = false;
+                    if let Some(cl) = self.sessions.lock().get(&m.id) {
+                        cl.meta.lock().archived = false;
                     }
                 }
-                if let Some(pl) = self
-                    .sessions
-                    .lock()
-                    .expect("sessions map: no panic while the lock is held")
-                    .get(&session)
-                {
-                    pl.meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .archived = false;
+                if let Some(pl) = self.sessions.lock().get(&session) {
+                    pl.meta.lock().archived = false;
                 }
                 // The response is a fresh meta from the restored file (the
                 // list and any snapshot converge on it).
@@ -525,26 +452,14 @@ impl Core {
                 // (its in-memory log): it must see the new leaf too, or the
                 // next snapshot's cursor would lag the branch move.
                 live.agent.with_store(|s| s.adopt_leaf(&at));
-                live.meta
-                    .lock()
-                    .expect("session meta: no panic while the lock is held")
-                    .leaf = Some(at.clone());
+                live.meta.lock().leaf = Some(at.clone());
                 self.emit(Event::SessionEvent {
-                    workspace: live
-                        .meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .workspace
-                        .clone(),
+                    workspace: live.meta.lock().workspace.clone(),
                     session: session.clone(),
                     kind: tau_protocol::SessionEventKind::BranchMove { leaf: at },
                 });
                 Ok(CommandOutput::Session {
-                    session: live
-                        .meta
-                        .lock()
-                        .expect("session meta: no panic while the lock is held")
-                        .clone(),
+                    session: live.meta.lock().clone(),
                 })
             }
             Command::SessionSnapshot { session } => {

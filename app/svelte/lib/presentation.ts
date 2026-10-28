@@ -5,14 +5,12 @@
 // mounting a component.
 
 import type { LucideIcon } from '@lucide/svelte';
-import type {
-  AnyEntry,
-  Entry,
-  SkillRef
-} from './protocol';
+import type { AnyEntry, Entry, SkillRef } from './protocol';
+import { providerCutoff, streamOutcomeLabels } from './protocol';
 import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, valueLinesOf } from './markdown';
 import { splitJsonPayload } from './entries';
+import { diagnosticLabel } from './diagnostics';
 import { fmtK } from './format';
 
 // A structured key/value row: the field name on its own line with a colon,
@@ -68,7 +66,7 @@ export type Shell =
   | {
     kind: 'card';
     header: Header | null;
-    cls: 'obs' | 'interrupted' | null;
+    cls: 'obs' | 'interrupted' | 'cutoff' | null;
     openKey: ExpandSlot | null;
     // The body is hidden while the slot is closed (the observation card).
     collapseWhenClosed: boolean;
@@ -77,7 +75,9 @@ export type Shell =
     // observation-details shell.
     reveal: { sections: Section[]; group: boolean } | null;
     expando: { openKey: ExpandSlot; whenOpen: string; whenClosed: string } | null;
-    intmark: boolean;
+    // The badge under the body: what cut the turn short, in words; null shows
+    // no badge.
+    intmark: string | null;
   };
 
 export interface Presentation {
@@ -168,7 +168,7 @@ function card(over: Partial<Omit<Card, 'kind'>> & { sections: Section[] }): Shel
     collapseWhenClosed: false,
     reveal: null,
     expando: null,
-    intmark: false,
+    intmark: null,
     ...over
   };
 }
@@ -386,12 +386,16 @@ export function present(
           body: entry.reasoning.trim()
         });
       }
-      if (text.trim() || entry.kind === 'interrupted') {
+      // Two different cuts, two different badges: the user's stop is the entry's
+      // kind, the provider's ending is its stop_reason (#307).
+      const endedBy = 'endedBy' in entry ? entry.endedBy : undefined;
+      const mark = entry.kind === 'interrupted' ? 'interrupted' : cutoffMark(endedBy);
+      if (text.trim() || mark) {
         shells.push(
           card({
-            cls: entry.kind === 'interrupted' ? 'interrupted' : null,
+            cls: mark === null ? null : entry.kind === 'interrupted' ? 'interrupted' : 'cutoff',
             sections: [{ type: 'md', text: text.trim() }],
-            intmark: entry.kind === 'interrupted'
+            intmark: mark
           })
         );
       }
@@ -456,10 +460,19 @@ export function present(
     case 'subagent':
       if (!text.trim()) return null;
       return { shells: [subagentShell(entry, ctx.parentLabel)] };
+    case 'diagnostic':
+      return { shells: [{ kind: 'stline', icon: Terminal, label: diagnosticLabel(entry) }] };
     default:
       // An unknown kind renders as a plain text block (no payload
       // interpretation).
       if (!text.trim()) return null;
       return { shells: [card({ sections: [{ type: 'md', text: text.trim() }] })] };
   }
+}
+
+// A cut the provider caused, in the operator's words: the label is the one the
+// diagnostic card prints, so the badge and the feed agree (#307).
+function cutoffMark(endedBy: unknown): string | null {
+  const ending = providerCutoff(endedBy);
+  return ending === null ? null : `cut short · ${streamOutcomeLabels[ending]}`;
 }

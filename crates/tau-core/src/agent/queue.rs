@@ -1,6 +1,7 @@
-use super::{AgentSession, KIND_USER, Lane, Queued};
+use super::{AgentSession, Lane, Queued};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use tau_protocol::EntryKind;
 
 impl AgentSession {
     /// Queue `text` on `lane` (shared by `send`/`send_skill`): clears a
@@ -14,10 +15,7 @@ impl AgentSession {
         skill: Option<(String, String)>,
         source: Option<String>,
     ) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut inner = self.inner.lock();
         self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
             text: text.into(),
@@ -76,10 +74,7 @@ impl AgentSession {
     }
 
     fn queue_notified(&self, text: impl Into<String>, lane: Lane, source: String) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut inner = self.inner.lock();
         self.stop.store(false, Ordering::SeqCst);
         let text = text.into();
         let steering = matches!(lane, Lane::Steering);
@@ -94,7 +89,7 @@ impl AgentSession {
             let id = inner.store.mint_id();
             inner.store.upsert_event(
                 &id,
-                KIND_USER,
+                EntryKind::User,
                 tau_protocol::payload::UserPayload {
                     text: text.clone(),
                     lane: "steering".to_owned(),
@@ -129,10 +124,7 @@ impl AgentSession {
     /// when the index is out of bounds (the item was consumed first).
     #[must_use]
     pub fn remove_queued(&self, index: usize) -> Option<String> {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut inner = self.inner.lock();
         if index >= inner.queue.len() {
             return None;
         }
@@ -159,12 +151,7 @@ impl AgentSession {
     /// queued message is resumed by it, ADR-0001).
     #[must_use]
     pub fn has_pending(&self) -> bool {
-        !self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .queue
-            .is_empty()
+        !self.inner.lock().queue.is_empty()
     }
 
     /// The queued message at the head of the lane queue — for a
@@ -174,7 +161,6 @@ impl AgentSession {
     pub(crate) fn first_pending(&self) -> Option<(String, Lane)> {
         self.inner
             .lock()
-            .expect("agent inner: no panic while the lock is held")
             .queue
             .front()
             .map(|q| (q.text.clone(), q.lane))
@@ -184,10 +170,7 @@ impl AgentSession {
     /// projection of the loop's queue (the single source of truth), taken
     /// at emit time — the GUI keeps no second ledger of its own.
     pub(crate) fn queued_items(&self) -> Vec<tau_protocol::snapshot::QueuedItem> {
-        let inner = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let inner = self.inner.lock();
         inner
             .queue
             .iter()

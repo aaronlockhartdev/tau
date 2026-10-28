@@ -52,7 +52,7 @@ lacks it, port candidate (§3).
 | E11 | `E_RANGE_STALE` shape: count of mismatched lines, display **capped at 100** with "Retry with the fresh anchors above without a read." / read-with-offset continuation | `resolve.ts:430-450` | `mod.rs:199` — whole range, fresh anchors, no cap note | gap (minor, G5) |
 | E12 | Per-line line-ending preservation across the edited span | `line-endings.ts:66-120` `separatorsForSpans` | `line_endings.rs` (ported) | at parity |
 | E13 | No-op edit → "no change" report (not a silent success) | `apply.ts:60-75` `resToSpan` noop; `batch.ts:898` | `edit_diff.rs:16` `edited {path} (no change)`, guarded since #180/#235 | at parity |
-| E14 | Post-edit re-anchoring: unchanged lines keep anchors | true LCS (`Diff.diffArrays`) | greedy single-pass checksum walk (`mod.rs:531` `lcs_reanchor`) | intentional/known — set uniqueness preserved; LCS port separate (parity doc §4) |
+| E14 | Post-edit re-anchoring: unchanged lines keep anchors | true LCS (`Diff.diffArrays`) | one maximal in-order alignment: `hashline/lcs.rs` `carry` (the greedy walk and the registry's DP table are deleted, #298) | at parity (#298) — pro's structural carry is cheaper for app writes: G7 |
 | E15 | Post-edit diff: pro's model-facing diff carries anchors on `-`/` `/`+` rows ("rows the diff does not show keep their anchors") | `edit-common.ts:87` guideline; `replace-diff.ts` | model ack is counts; bounded diff (anchors on `+` rows only) rides the GUI detail channel (#243) | intentional — #243 channel split |
 | E16 | Literal `\uDDDD` in content → notice, no autocorrection | `resolve.ts:218-226` | none | **gap (G4)** — tiny |
 | E17 | Batching: pro batches same-file calls **across one message** (`In batch N (queued)` acks, combined diff, one undo, `[E_OP_ABORTED]` whole-batch abort); tau takes an `edits` **array per call** with per-member demotion | `batch.ts:516,587-595,617-632` | `impls.rs edit()` `edits` array + `[H_DEMOTED]` per member | intentional — different batch models; per-member demotion parity holds within a call (PR #285) |
@@ -118,6 +118,45 @@ accepts tau's own diff-preview shape (`+ AbCd│…` with a space after the sign
 and tau keeps its letters-only anchor alphabet (the block-shape `E_BAD_REF`
 names only parseable anchors). Tests: `hashline/tests_diag.rs` (G1–G5) and
 `tools/tests_read.rs` (G6).
+
+**E14 re-opened and closed (#298, 2026-10-27).** This audit accepted the greedy
+walk as `intentional/known` on the theory that a shorter common subsequence
+costs only churn. Measured, the theory fails: the greedy walk and the
+registry's dynamic program disagree on 57,743 of 200,000 random line pairs. The
+generator: files of ≤40 lines over a four-symbol alphabet, 10% of the lines each
+replaced, inserted and deleted; re-measured under that script they disagree on
+164,040 of 200,000, and the greedy walk leaves 1,631,979 lines unmatched that a
+maximal carry takes. The same content re-anchored differently depending on
+which path produced the
+read — an anchor served by an app-write read had a smaller chance of surviving
+the next edit than one served by a registry re-read. One primitive now answers
+all three callers: `hashline/lcs.rs::carry`, maximal, `O(n·m)` time and
+`O(new.len())` space (Hirschberg's divide and conquer). The greedy walk and the
+registry's full table are deleted; the table survives as the maximality oracle
+in `lcs.rs`'s tests and as `fresh_lines_by_full_table` in `properties.rs`, and
+`a_re_read_relabels_no_more_lines_than_the_maximal_match` pins that bar —
+`new.len() - LCS`, measured in the anchors a caller receives. Memory is settled:
+the table was 763 MiB at 10k lines, the number #300 carries, and no production
+path builds one any more. Time is the trade: the greedy walk was `O(n + m)`, the
+alignment is quadratic in the window the trim leaves, bounded by the line limit
+the tool enforces (`HASH_SPACE`) — G8.
+
+- **G7 — structural carry for app writes** (`anchor-registry.ts:809-857`,
+  the reference's writer knows the spans it edited, so lines outside a span keep
+  their anchors by offset and one line inside a span may carry the span's first
+  anchor under a checksum check — `O(spans + edited lines)`, aligning nothing.
+  tau re-derives the whole file through `carry`; the prefix/suffix trim keeps
+  the common case (a touched window inside an otherwise unchanged file) cheap,
+  with a quadratic worst case on a wholesale rewrite. Cheaper and exact for the
+  app-write path. The registry's path — content changed out of band, no span
+  knowledge — genuinely needs the alignment, so G7 does not retire `carry`.
+- **G8 — bound the alignment's work** (`anchor-registry.ts:797`): the reference
+  abandons an alignment whose middle window exceeds 4,000,000 cells and mints
+  fresh anchors for it. `carry` has no such bail. Measured on a release build at
+  10k lines: 101 µs for a one-line edit (the trim wins), 59 ms for a half-file
+  rewrite, 298 ms for a wholesale one. The line limit bounds the worst case and
+  G7 removes the cost on the path an agent drives; the out-of-band re-read is
+  where a bail would be felt.
 ## 5. Method
 
 Pro side: `read.ts`, `edit-common.ts`, `hashline/{parse,resolve,apply}.ts`,

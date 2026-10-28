@@ -4,7 +4,7 @@
 //! format) resolves unambiguously.
 
 use super::testkit::{CannedFactory, ScriptedProvider, TestBridge, TestDriver, sse, wait_for};
-use super::{ContextMode, SubagentBridge, Supervisor, SupervisorParams, route_parent};
+use super::{ContextMode, EntryKind, SubagentBridge, Supervisor, SupervisorParams, route_parent};
 use crate::agent::{AgentSession, Lane, TurnConfig};
 use crate::agent_type::builtin_general;
 use crate::config::{Om, SubAgents, ToolBatchPolicy};
@@ -27,7 +27,7 @@ fn sup_with_parent(
         delays: vec![],
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
-        instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
+        instructions: Arc::new(parking_lot::Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {
@@ -50,22 +50,17 @@ fn sup_with_parent(
         core: None,
         parent_entries: None,
     });
-    // A scripted parent loop (the parent is a full session): the
-    // constructor adopts the pre-built supervisor (the test seam).
+    // A scripted parent loop: the parent is a full session, and the `Seam`
+    // role adopts the supervisor built above without needing a core.
     let mut store = SessionStore::for_workspace(dir, parent_session);
     store.create().unwrap();
     let parent_provider = Arc::new(ScriptedProvider::new(vec![sse("parent", &[])]));
     let parent = AgentSession::launch(
         store,
-        SessionRole::Root {
-            core: None,
-            workspace: None,
-            config: None,
+        SessionRole::Seam {
+            supervisor: sup.clone(),
             provider: parent_provider,
-            supervisor: Some(sup.clone()),
             system_prompt: None,
-            base_prompt: None,
-            first_provider: None,
         },
     )
     .unwrap();
@@ -112,7 +107,7 @@ async fn a_handle_round_trips_with_a_hyphenated_parent_id() {
                 .unwrap_or_default()
                 .iter()
                 .any(|e| {
-                    e.kind == crate::agent::KIND_USER
+                    e.kind == EntryKind::User
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("hello")
                         && e.payload.get("source").is_none()
@@ -154,7 +149,7 @@ async fn a_subagent_message_stamps_the_parent_as_the_sender() {
                 .unwrap_or_default()
                 .iter()
                 .any(|e| {
-                    e.kind == crate::agent::KIND_USER
+                    e.kind == EntryKind::User
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("focus on the edge cases")
                         && e.payload.get("source") == Some(&json!("parent"))
@@ -194,7 +189,7 @@ async fn a_gui_send_to_a_child_stamps_the_user_as_the_sender() {
                 .unwrap_or_default()
                 .iter()
                 .any(|e| {
-                    e.kind == crate::agent::KIND_USER
+                    e.kind == EntryKind::User
                         && e.payload.get("text").and_then(serde_json::Value::as_str)
                             == Some("steer me")
                         && e.payload.get("source") == Some(&json!("user"))

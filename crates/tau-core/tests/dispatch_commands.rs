@@ -14,7 +14,7 @@ use tau_core::config::Provider;
 use tau_core::harness::{Core, CoreBuilder};
 use tau_core::provider;
 use tau_core::subagent::ChildProviderFactory;
-use tau_protocol::{Command, CommandOutput, ContextMode, MessageLane};
+use tau_protocol::{Command, CommandOutput, ContextMode, EntryKind, MessageLane};
 
 struct CannedChild {
     body: String,
@@ -654,7 +654,7 @@ async fn a_snapshot_falls_back_to_disk_when_the_live_build_fails() {
         CommandOutput::Snapshot { snapshot } => {
             assert_eq!(snapshot.session.id, session.id);
             assert_eq!(snapshot.entries.len(), 1);
-            assert_eq!(snapshot.entries[0].kind, "user");
+            assert_eq!(snapshot.entries[0].kind, EntryKind::User);
         }
         other => panic!("expected a snapshot: {other:?}"),
     }

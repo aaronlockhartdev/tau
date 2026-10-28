@@ -3,7 +3,9 @@
 //! stdout that is not a valid ACP message — every log line goes to stderr.
 
 use std::io::Write;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -46,10 +48,7 @@ impl Out {
     pub fn send(&self, msg: &Value) {
         let line = serde_json::to_string(msg)
             .expect("ACP messages are built from json! values and always serialize");
-        let mut guard = self
-            .w
-            .lock()
-            .expect("stdout writer: no panic while the lock is held");
+        let mut guard = self.w.lock();
         let _ = writeln!(guard, "{line}");
         let _ = guard.flush();
     }

@@ -43,7 +43,7 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
         reasoning: "deciding what is worth remembering".into(),
         usage: None,
         duration: None,
-        completed: true,
+        outcome: crate::provider::StreamOutcome::Completed,
         calls: Vec::new(),
         blocks: Vec::new(),
         mid_stream_errors: Vec::new(),
@@ -54,7 +54,7 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
     state.commit(&mut store, &mut action, &result).unwrap();
 
     let entries = store.entries_range(0, usize::MAX).unwrap();
-    let om = entries.iter().find(|e| e.kind == KIND_OM).unwrap();
+    let om = entries.iter().find(|e| e.kind == EntryKind::Om).unwrap();
     let p = &om.payload;
     // The raw observer input/reasoning must NOT be persisted (mastra parity);
     // only the functional suggested-response and the model name are.

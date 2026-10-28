@@ -2,6 +2,22 @@ use super::*;
 
 use crate::harness::testkit::*;
 
+/// A session file's records, in append order.
+fn facts_in(file: &str) -> Vec<Diagnostic> {
+    file.lines()
+        .filter_map(|l| {
+            let v: serde_json::Value = serde_json::from_str(l).ok()?;
+            (v.get("type")?.as_str()? == "diagnostic")
+                .then(|| v.get("payload").and_then(Diagnostic::from_value))
+                .flatten()
+        })
+        .collect()
+}
+
+fn session_file(cwd: &Path, id: &str) -> String {
+    std::fs::read_to_string(cwd.join(".tau/sessions").join(format!("{id}.jsonl"))).unwrap()
+}
+
 /// `SessionNew`'s explicit title takes the rename's cap (the GUI always
 /// passes null, but the protocol is open): over the cap is refused
 /// before the session file is created, at the cap it is accepted.
@@ -209,24 +225,21 @@ async fn session_set_model_updates_the_live_meta_and_records_the_change() {
         other => panic!("expected snapshot: {other:?}"),
     };
     assert_eq!(snap.session.model.as_deref(), Some("other/model"));
-    let file = std::fs::read_to_string(
-        cwd.path()
-            .join(".tau/sessions")
-            .join(format!("{}.jsonl", live.id)),
-    )
-    .unwrap();
-    let notes: Vec<String> = file
-        .lines()
-        .filter_map(|l| {
-            let v: serde_json::Value = serde_json::from_str(l).ok()?;
-            if v.get("type")?.as_str()? == "system" {
-                v.get("payload")?.get("note")?.as_str().map(str::to_owned)
-            } else {
-                None
-            }
-        })
-        .collect();
-    assert_eq!(notes, vec![format!("model: {old} → other/model")]);
+    let facts = facts_in(&session_file(cwd.path(), &live.id));
+    assert_eq!(
+        facts,
+        vec![
+            Diagnostic::ModelChanged {
+                from: Some(old),
+                to: "other/model".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "other/model".into(),
+                missing: vec!["context_window".into(), "max_tokens".into()],
+            },
+        ],
+        "the change, then the gate its facts cannot compute"
+    );
 }
 
 #[tokio::test]
@@ -240,7 +253,7 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
         let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
         store.create().unwrap();
         store
-            .append("user", json!({ "text": "hello" }), None)
+            .append(EntryKind::User, json!({ "text": "hello" }), None)
             .unwrap();
     }
     core.dispatch(Command::SessionSetModel {
@@ -248,25 +261,152 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
         model: "m/new".into(),
     })
     .unwrap();
-    // The quiet entry is the record: the same model again is a no-op.
     core.dispatch(Command::SessionSetModel {
         session: id.clone(),
         model: "m/new".into(),
     })
     .unwrap();
-    let file =
-        std::fs::read_to_string(cwd.path().join(".tau/sessions").join(format!("{id}.jsonl")))
+    // The quiet entry is the record: the same model again is a no-op.
+    let facts = facts_in(&session_file(cwd.path(), &id));
+    assert_eq!(
+        facts,
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "m/new".into(),
+        }],
+        "one record, naming no predecessor"
+    );
+}
+
+#[tokio::test]
+async fn a_session_written_before_the_records_gains_one_baseline_at_open() {
+    // The migration path (ADR-0034): an old file is not re-interpreted. The
+    // first open states the model it runs and the gate its facts leave out;
+    // every later open reads those records and states nothing new.
+    let core = CoreBuilder::custom(providers()).build().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let id = SessionStore::new_session_id();
+    {
+        let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+        store.create().unwrap();
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
             .unwrap();
-    let notes: Vec<String> = file
-        .lines()
-        .filter_map(|l| {
-            let v: serde_json::Value = serde_json::from_str(l).ok()?;
-            (v.get("type")?.as_str()? == "system")
-                .then(|| v.get("payload")?.get("note")?.as_str().map(str::to_owned))
-                .flatten()
+    }
+    for _ in 0..2 {
+        core.dispatch(Command::SessionOpen {
+            session: id.clone(),
         })
-        .collect();
-    assert_eq!(notes, vec!["model: m/new".to_owned()]);
+        .unwrap();
+        core.dispatch(Command::SessionClose {
+            session: id.clone(),
+        })
+        .unwrap();
+    }
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &id)),
+        vec![
+            Diagnostic::ModelChanged {
+                from: None,
+                to: "model".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "model".into(),
+                missing: vec!["context_window".into(), "max_tokens".into()],
+            },
+        ],
+        "two opens, one pair of records"
+    );
+}
+
+#[tokio::test]
+async fn a_model_that_declares_its_facts_records_no_gate_gap() {
+    // The negative half: declared Model facts make the gate computable, so the
+    // open states the model and nothing about the gate.
+    let mut facts = std::collections::BTreeMap::new();
+    facts.insert(
+        "model".into(),
+        crate::config::ModelDef {
+            context_window: Some(131_072),
+            max_tokens: Some(16_384),
+            ..Default::default()
+        },
+    );
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider.models = facts;
+    let mut providers = std::collections::BTreeMap::new();
+    providers.insert("dev".into(), provider);
+    let core = CoreBuilder::custom(providers).build().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let id = SessionStore::new_session_id();
+    {
+        let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+        store.create().unwrap();
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
+    core.dispatch(Command::SessionOpen {
+        session: id.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &id)),
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "model".into(),
+        }],
+        "a gated model records no gate gap"
+    );
+}
+
+#[tokio::test]
+async fn a_model_whose_window_leaves_no_room_records_the_gap() {
+    // Declared facts are not a gate: 8192 − 8192 − 4096 underflows, so the gap
+    // is the room, not an undeclared fact. The open path and the live switch
+    // arm on the same predicate, so neither can record a gap the other denies.
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider.models.insert(
+        "model".into(),
+        crate::config::ModelDef {
+            context_window: Some(8_192),
+            max_tokens: Some(8_192),
+            ..Default::default()
+        },
+    );
+    let mut providers = std::collections::BTreeMap::new();
+    providers.insert("dev".into(), provider);
+    let core = CoreBuilder::custom(providers).build().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let id = SessionStore::new_session_id();
+    {
+        let mut store = SessionStore::for_workspace(Path::new(&w.cwd), &id);
+        store.create().unwrap();
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
+    core.dispatch(Command::SessionOpen {
+        session: id.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &id)),
+        vec![
+            Diagnostic::ModelChanged {
+                from: None,
+                to: "model".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "model".into(),
+                missing: vec!["context_room".into()],
+            },
+        ],
+        "the record names what is missing, and never comes out empty"
+    );
 }
 
 #[tokio::test]
@@ -305,4 +445,176 @@ async fn session_set_model_survives_close_and_reopen() {
         other => panic!("expected snapshot: {other:?}"),
     };
     assert_eq!(snap.session.model.as_deref(), Some("other/model"));
+}
+
+/// §6.7: the model menu switches by `provider/key`, the config declares the
+/// model by bare key. A switch through the menu's spelling must find the model's
+/// facts — before one resolver read it missed the key, and the audit channel
+/// correctly recorded a gate gap for a model whose window was declared.
+#[tokio::test]
+async fn a_menu_qualified_switch_keeps_the_declared_facts() {
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider.models.insert(
+        "second".to_owned(),
+        crate::config::ModelDef {
+            context_window: Some(131_072),
+            max_tokens: Some(16_384),
+            ..Default::default()
+        },
+    );
+    let core = CoreBuilder::custom(BTreeMap::from([("dev".to_owned(), provider)]))
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    core.dispatch(Command::SessionSetModel {
+        session: live.id.clone(),
+        model: "dev/second".into(),
+    })
+    .unwrap();
+    let facts = facts_in(&session_file(cwd.path(), &live.id));
+    assert_eq!(
+        facts,
+        vec![Diagnostic::ModelChanged {
+            from: Some("model".into()),
+            to: "dev/second".into(),
+        }],
+        "a declared model has a working gate, so the switch records the change alone"
+    );
+    // The id the session carries is the one the user picked; the config key it
+    // resolves to is the request's address, not the session's name.
+    let snap = match core
+        .dispatch(Command::SessionOpen {
+            session: live.id.clone(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Snapshot { snapshot } => snapshot,
+        other => panic!("expected snapshot: {other:?}"),
+    };
+    assert_eq!(snap.session.model.as_deref(), Some("dev/second"));
+}
+
+/// A `generation.default_model` written the way the menu spells it opens on the
+/// model it names. Without §6.7's read on the config-supplied id, the prefixed
+/// name misses the bare-key map and the session silently opens on the provider's
+/// first model — a wrong model with nothing recorded about it.
+#[tokio::test]
+async fn a_prefixed_default_model_opens_on_the_model_it_names() {
+    // The config file, not a hand-built provider map: the default model is a
+    // config-supplied id, so the test travels the same layering production does.
+    let sys = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join("config.toml"),
+        r#"
+[providers.dev]
+base_url = "http://127.0.0.1:9/v1"
+key_env = ""
+
+[providers.dev.models.first]
+
+[providers.dev.models.second]
+context_window = 131_072
+max_tokens = 16_384
+
+[generation]
+default_model = "dev/second"
+"#,
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    assert_eq!(
+        live.model.as_deref(),
+        Some("dev/second"),
+        "the default is taken by name, not replaced by the map's first entry"
+    );
+    // The reopen is where the resolution shows, and only once the session has a
+    // branch to project: an empty session records nothing whatever the gate says.
+    // A default that had resolved to a name alone would leave its facts undeclared
+    // and owe a `gate_unavailable` beside the model it states.
+    {
+        let mut store = SessionStore::for_workspace(cwd.path(), &live.id);
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
+    core.dispatch(Command::SessionClose {
+        session: live.id.clone(),
+    })
+    .unwrap();
+    core.dispatch(Command::SessionOpen {
+        session: live.id.clone(),
+    })
+    .unwrap();
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &live.id)),
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "dev/second".into(),
+        }],
+        "the default resolved to a model that declares its facts"
+    );
+}
+
+/// The fallback survives the read: a default no provider declares opens on the
+/// first model, which is what the config's empty-value contract has always meant.
+#[tokio::test]
+async fn an_undeclared_default_model_falls_back_to_the_first_model() {
+    let sys = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join("config.toml"),
+        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"model\"]\n\n[generation]\ndefault_model = \"other/nope\"\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    // `other` is not a configured provider, so the id is not stripped and matches
+    // nothing: the fallback, not a guess at a same-named key.
+    assert_eq!(live.model.as_deref(), Some("model"));
 }

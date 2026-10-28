@@ -3,6 +3,7 @@ use super::*;
 use crate::harness::testkit::*;
 use crate::provider::TurnResult;
 use std::sync::atomic::AtomicBool;
+use tau_protocol::EntryKind;
 
 /// #267: the settlement guarantee is a `Drop` guard, so a `run_turn` task
 /// that panics mid-turn leaves `live.turn` cleared — the session is not
@@ -29,10 +30,14 @@ impl TurnProvider for PanicOnceProvider {
         };
         Box::pin(async move {
             first.then(|| panic!("injected turn panic (#267)"));
-            let (events, calls) = provider::decode_stream(&body).unwrap();
-            let mut result = TurnResult::default();
+            let (events, calls, ending) = provider::decode_stream(&body).unwrap();
+            let mut result = TurnResult {
+                outcome: ending,
+                ..Default::default()
+            };
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = provider::StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(event, &mut result);
@@ -52,7 +57,7 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     let cwd = tempfile::tempdir().unwrap();
     let workspace = open_ws(&core, cwd.path()).await;
     let live = manual_session(&core, &workspace, inner, TurnConfig::default());
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -65,7 +70,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -76,7 +80,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
         !core
             .sessions
             .lock()
-            .unwrap()
             .get(&session_id)
             .unwrap()
             .turn
@@ -94,7 +97,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -105,7 +107,6 @@ async fn a_panicking_turn_settles_the_turn_flag() {
         !core
             .sessions
             .lock()
-            .unwrap()
             .get(&session_id)
             .unwrap()
             .turn
@@ -129,7 +130,7 @@ async fn a_rename_of_a_running_session_is_refused() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -163,7 +164,6 @@ async fn a_rename_of_a_running_session_is_refused() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -197,7 +197,7 @@ async fn a_branch_of_a_running_session_is_refused() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -241,7 +241,6 @@ async fn a_branch_of_a_running_session_is_refused() {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(&session_id)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -259,13 +258,30 @@ async fn a_branch_of_a_running_session_is_refused() {
     drop(core);
 }
 
-/// The entries a `canned_body()` turn records: user, the assistant with its
-/// The entries a `canned_body()` turn records: user, the assistant with its
-/// one bash call, and the tool result.
+/// The conversation entries a `canned_body()` turn records: user, the
+/// assistant with its one bash call, and the tool result. `diagnostic`
+/// records are excluded: these guards watch for fabricated *turns*, and a
+/// diagnostic record is bookkeeping, not a turn (ADR-0034).
 fn entry_count(cwd: &Path, session: &str) -> usize {
     let mut store = SessionStore::for_workspace(cwd, session);
     store.open().unwrap();
-    store.entries_range(0, usize::MAX).unwrap().len()
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind != EntryKind::Diagnostic)
+        .count()
+}
+
+fn diagnostic_count(cwd: &Path, session: &str) -> usize {
+    let mut store = SessionStore::for_workspace(cwd, session);
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Diagnostic)
+        .count()
 }
 
 /// Bounded wait for a session's turn flag to clear (past the deadline the
@@ -275,7 +291,6 @@ async fn wait_settled(core: &Arc<Core>, session: &str) {
     while core
         .sessions
         .lock()
-        .unwrap()
         .get(session)
         .is_some_and(|l| l.turn.load(Ordering::SeqCst))
         && tokio::time::Instant::now() < deadline
@@ -294,6 +309,7 @@ fn append_dangling_assistant(cwd: &Path, session: &str) {
         text: String::new(),
         reasoning: String::new(),
         interrupted: true,
+        stop_reason: Some(tau_protocol::StreamOutcome::Killed),
         usage: None,
         duration_secs: None,
         calls: vec![tau_protocol::payload::FunctionCall {
@@ -304,7 +320,7 @@ fn append_dangling_assistant(cwd: &Path, session: &str) {
         }],
     };
     store
-        .append(crate::agent::KIND_ASSISTANT, payload.to_value(), None)
+        .append(EntryKind::Assistant, payload.to_value(), None)
         .unwrap();
 }
 
@@ -323,7 +339,7 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -352,7 +368,7 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
     recheck.open().unwrap();
     let entries = recheck.entries_range(0, usize::MAX).unwrap();
     let repaired = entries.iter().find(|e| {
-        e.kind == crate::agent::KIND_TOOL && e.payload.get("call_id").is_some_and(|c| c == "call_9")
+        e.kind == EntryKind::Tool && e.payload.get("call_id").is_some_and(|c| c == "call_9")
     });
     let repaired = repaired.expect("the repair minted the dangling call's tool entry");
     assert_eq!(
@@ -376,7 +392,6 @@ async fn a_reopened_session_repairs_dangling_tool_calls() {
         !core
             .sessions
             .lock()
-            .unwrap()
             .get(&session_id)
             .unwrap()
             .turn
@@ -398,7 +413,7 @@ async fn a_healthy_reopen_mints_nothing() {
         provider::canned(&canned_body()),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "work".into(),
@@ -407,6 +422,11 @@ async fn a_healthy_reopen_mints_nothing() {
     .unwrap();
     wait_settled(&core, &session_id).await;
     let healthy = entry_count(Path::new(&workspace.cwd), &session_id);
+    assert_eq!(
+        diagnostic_count(Path::new(&workspace.cwd), &session_id),
+        0,
+        "a session that ran with no model record mints nothing mid-run"
+    );
     core.dispatch(Command::SessionClose {
         session: session_id.clone(),
     })
@@ -418,7 +438,12 @@ async fn a_healthy_reopen_mints_nothing() {
     assert_eq!(
         entry_count(Path::new(&workspace.cwd), &session_id),
         healthy,
-        "the healthy file is untouched by the repair"
+        "the healthy file gains no conversation entry"
+    );
+    assert_eq!(
+        diagnostic_count(Path::new(&workspace.cwd), &session_id),
+        2,
+        "the reopen records the model it opens on, and that its facts leave no gate"
     );
     drop(core);
 }

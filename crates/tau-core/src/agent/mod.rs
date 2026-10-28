@@ -12,12 +12,15 @@ use crate::provider::{
 };
 use crate::session::{Entry, EntryEventHook, SessionStore};
 use crate::tools;
+use parking_lot::Mutex;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+#[cfg(test)]
+pub(crate) use tau_protocol::{Diagnostic, EntryKind};
 
 /// A message lane (spec §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,12 +29,6 @@ pub enum Lane {
     Steering,
     FollowUp,
 }
-
-/// The session entry kinds the loop defines on top of the storage (spec §3).
-pub const KIND_USER: &str = "user";
-pub const KIND_ASSISTANT: &str = "assistant";
-pub const KIND_TOOL: &str = "tool";
-pub const KIND_SYSTEM: &str = "system";
 
 /// A loop-level failure: session storage, the provider, or a prompt the
 /// gate's budget math already knows is over the window (a refusal that
@@ -77,6 +74,18 @@ impl From<crate::provider::ProviderError> for AgentError {
     }
 }
 
+/// The endpoint address for a model id: the config key the provider declares,
+/// resolved from the id the session carries (§6.7 — a menu switch sends
+/// `provider/key`, a launch writes the bare key, and the endpoint is addressed
+/// by the key).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelAddress {
+    /// The id as the session, its records and the GUI name the model.
+    pub id: String,
+    /// The key the request body's `model` field carries.
+    pub key: String,
+}
+
 /// Per-turn provider options, resolved from the merged config and the
 /// session's model facts at session build (spec §12, #35); re-resolved when
 /// the session's model changes.
@@ -91,6 +100,12 @@ pub struct TurnConfig {
     pub presence_penalty: Option<f32>,
     /// A stable cache key (the session id) plus the `cache.retention`.
     pub prompt_cache: Option<(String, crate::config::CacheRetention)>,
+    /// Where the endpoint is addressed, and the model id that resolution was
+    /// done for (§6.7). The pair travels together so a key resolved for one
+    /// model can never address another: a `.md` agent type overrides a child's
+    /// model while the child inherits its parent's turn config. `None` = no
+    /// config resolved this turn, so the id addresses itself.
+    pub address: Option<ModelAddress>,
     /// The model's declared context window (its facts); the clamp's ceiling.
     pub context_window: Option<u32>,
     /// The `limits.image.max_bytes` cap on a `read` of an image file (#36);
@@ -100,6 +115,75 @@ pub struct TurnConfig {
     /// image file (#257): above it, the image is downscaled, not refused.
     /// `None` falls back to the default budget.
     pub image_max_pixels: Option<u64>,
+}
+
+/// The framing margin the context gate keeps against the model's declared
+/// window (spec §4): the system prompt, the tool schemas, the request envelope.
+const CONTEXT_GATE_MARGIN: u32 = 4096;
+
+/// What the context gate knows about a turn (spec §4, ADR-0034). One predicate
+/// computes it, so the gate's own budget check and every `gate_unavailable`
+/// record read the same arm: a record cannot claim a gap the gate does not have.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ContextGate {
+    /// The safe prompt budget: the declared window less the output cap and the
+    /// framing margin.
+    Ready { budget: u32 },
+    /// No gate at all. `reasons` is never empty: the missing facts by their
+    /// config names, or `context_room` when both are declared and the
+    /// subtraction leaves nothing.
+    Missing { reasons: Vec<String> },
+}
+
+impl ContextGate {
+    #[must_use]
+    pub(crate) fn budget(&self) -> Option<u32> {
+        match self {
+            Self::Ready { budget } => Some(*budget),
+            Self::Missing { .. } => None,
+        }
+    }
+}
+
+impl TurnConfig {
+    /// §6.7: the model name a provider request carries. The session's id may
+    /// name the provider it was picked from; the endpoint is addressed by the
+    /// config key. An address applies only to the id it was resolved from, so a
+    /// turn config inherited by a session on another model addresses that model
+    /// itself.
+    #[must_use]
+    pub(crate) fn request_address(&self, model: &str) -> String {
+        self.address
+            .as_ref()
+            .filter(|address| address.id == model)
+            .map_or_else(|| model.to_owned(), |address| address.key.clone())
+    }
+
+    /// The context gate, from the model's declared facts (spec §4).
+    #[must_use]
+    pub(crate) fn context_gate(&self) -> ContextGate {
+        match (self.context_window, self.max_output_tokens) {
+            (Some(window), Some(max_output)) => u32::try_from(max_output)
+                .ok()
+                .and_then(|output| window.checked_sub(output))
+                .and_then(|rest| rest.checked_sub(CONTEXT_GATE_MARGIN))
+                .map_or_else(
+                    || ContextGate::Missing {
+                        reasons: vec!["context_room".to_owned()],
+                    },
+                    |budget| ContextGate::Ready { budget },
+                ),
+            (None, None) => ContextGate::Missing {
+                reasons: vec!["context_window".to_owned(), "max_tokens".to_owned()],
+            },
+            (None, Some(_)) => ContextGate::Missing {
+                reasons: vec!["context_window".to_owned()],
+            },
+            (Some(_), None) => ContextGate::Missing {
+                reasons: vec!["max_tokens".to_owned()],
+            },
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -172,6 +256,10 @@ pub(crate) struct Inner {
     /// boundary, ticket #86 P2); lost on restart, where the record's
     /// `last_buffered_at_tokens` takes over.
     pub(crate) om_buffer_boundary: u64,
+    /// Whether this run has already recorded an `om_stalled` fact: the flag
+    /// mirrors the record, so a restart re-records the stall it resumes into
+    /// rather than re-scanning the log (ADR-0034's `LiveState` mirror).
+    pub(crate) om_stall_recorded: bool,
     pub(crate) om_model: String,
     /// The OM-run observer (the app emits the protocol's `om_status` event
     /// from it): core is transport-free, so the hook takes the kind string,
@@ -197,7 +285,7 @@ pub(crate) struct Inner {
     /// the per-session owner of the read/edit anchor state — which anchors
     /// the session minted, and which it showed the model. In-memory for the
     /// session's lifetime; shared across tool calls via Arc.
-    anchors: Arc<std::sync::Mutex<crate::hashline::registry::Registry>>,
+    anchors: Arc<parking_lot::Mutex<crate::hashline::registry::Registry>>,
     /// The per-session background job registry (#53); `bash background:true`
     /// records here; `mark_closed` kills every live job.
     background_jobs: Arc<crate::tools::bgjobs::BackgroundJobs>,
@@ -283,6 +371,7 @@ impl AgentSession {
                 om: p.om,
                 om_inflight: None,
                 om_buffer_boundary: 0,
+                om_stall_recorded: false,
                 om_model: p.om_model,
                 om_status_hook: None,
                 entry_upsert_hook: None,
@@ -290,7 +379,7 @@ impl AgentSession {
                 plan_hook: None,
                 subagents: p.subagents,
                 child: p.child,
-                anchors: Arc::new(std::sync::Mutex::new(anchor_registry)),
+                anchors: Arc::new(parking_lot::Mutex::new(anchor_registry)),
                 background_jobs: Arc::new(crate::tools::bgjobs::BackgroundJobs::default()),
                 job_notify_hook: None,
             })),
@@ -303,21 +392,13 @@ impl AgentSession {
 
     /// The child-side link (a child session's `parent_notify` routing).
     pub(crate) fn child_link(&self) -> Option<Arc<crate::subagent::ChildLink>> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .child
-            .clone()
+        self.inner.lock().child.clone()
     }
 
     /// This session's supervisor (None for a child session — children
     /// cannot spawn, so the supervisor is parent-side only).
     pub(crate) fn subagents(&self) -> Option<Arc<crate::subagent::Supervisor>> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .subagents
-            .clone()
+        self.inner.lock().subagents.clone()
     }
 
     /// The `recall` tool (spec §4): a child's `scope: "parent"` browses
@@ -326,10 +407,7 @@ impl AgentSession {
     pub(crate) fn recall_scoped(&self, args: &Value) -> Result<String, String> {
         if args.get("scope").and_then(Value::as_str) == Some("parent") {
             let (link, cwd) = {
-                let inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let inner = self.inner.lock();
                 (inner.child.clone(), inner.cwd.clone())
             };
             match link {
@@ -354,10 +432,7 @@ impl AgentSession {
                 }
             }
         } else {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             let record = inner
                 .om
                 .as_ref()
@@ -369,31 +444,19 @@ impl AgentSession {
 
     /// The session's anchor registry handle (spec §5.4): the tool dispatch
     /// locks it per read/edit call.
-    pub(crate) fn anchors(&self) -> Arc<std::sync::Mutex<crate::hashline::registry::Registry>> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .anchors
-            .clone()
+    pub(crate) fn anchors(&self) -> Arc<parking_lot::Mutex<crate::hashline::registry::Registry>> {
+        self.inner.lock().anchors.clone()
     }
 
     /// The session's background job registry (#53): the tool dispatch reads
     /// it per bash call; the completion gate asks it whether a job is live.
     pub(crate) fn background_jobs(&self) -> Arc<crate::tools::bgjobs::BackgroundJobs> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .background_jobs
-            .clone()
+        self.inner.lock().background_jobs.clone()
     }
 
     /// The job-completion hook (#53): the dispatch passes it to the spawn.
     pub(crate) fn job_hook(&self) -> Option<crate::tools::bgjobs::JobCompletionHook> {
-        self.inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .job_notify_hook
-            .clone()
+        self.inner.lock().job_notify_hook.clone()
     }
 }
 mod config;
@@ -404,7 +467,11 @@ mod turn;
 #[cfg(test)]
 pub(crate) mod testkit;
 #[cfg(test)]
+mod tests_address;
+#[cfg(test)]
 mod tests_bgjobs;
+#[cfg(test)]
+mod tests_cutoff;
 #[cfg(test)]
 mod tests_gate;
 #[cfg(test)]

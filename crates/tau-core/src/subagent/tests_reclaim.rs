@@ -14,7 +14,7 @@ fn state_entry(state: &str, extra: &serde_json::Value) -> crate::session::Entry 
         id: "e1".into(),
         parent: None,
         timestamp: 0,
-        kind: KIND_SUBAGENT.into(),
+        kind: EntryKind::Subagent,
         payload,
         blob: None,
         first_kept_entry_id: None,
@@ -33,7 +33,7 @@ fn state_only_child(
     store.create().unwrap();
     store.set_parent(parent).unwrap();
     store
-        .append(KIND_SUBAGENT, state_entry(state, extra).payload, None)
+        .append(EntryKind::Subagent, state_entry(state, extra).payload, None)
         .unwrap();
 }
 
@@ -99,7 +99,7 @@ fn disk_children_reads_the_minted_handle_from_spawn_records() {
     p.create().unwrap();
     // The parent's spawn record names the child's minted handle.
     p.append(
-        KIND_SUBAGENT,
+        EntryKind::Subagent,
         serde_json::json!({
             "event": "spawn",
             "type": "general",
@@ -132,12 +132,8 @@ fn disk_children_read_the_provenance_of_a_fork_child_from_its_tail() {
     let mut p = SessionStore::for_workspace(dir, "p");
     p.create().unwrap();
     for i in 0..12 {
-        p.append(
-            crate::agent::KIND_USER,
-            json!({ "text": format!("p{i}") }),
-            None,
-        )
-        .unwrap();
+        p.append(EntryKind::User, json!({ "text": format!("p{i}") }), None)
+            .unwrap();
     }
     // fork = the parent's record copied wholesale (spec §5.1), so the child's
     // own spawn record lands at the end of the copied tree, not at the head.
@@ -145,7 +141,7 @@ fn disk_children_read_the_provenance_of_a_fork_child_from_its_tail() {
     c.set_parent("p").unwrap();
     let leaf = c.leaf().unwrap().map(|e| e.id);
     c.append(
-        KIND_SUBAGENT,
+        EntryKind::Subagent,
         json!({
             "event": "spawn",
             "type": "auditor",
@@ -159,7 +155,7 @@ fn disk_children_read_the_provenance_of_a_fork_child_from_its_tail() {
     .unwrap();
     let leaf = c.leaf().unwrap().map(|e| e.id);
     c.append(
-        KIND_SUBAGENT,
+        EntryKind::Subagent,
         state_entry("done", &json!({})).payload,
         leaf.as_deref(),
     )
@@ -192,7 +188,7 @@ fn a_state_record_past_the_tail_window_is_no_state_record() {
     for i in 0..restore::STATE_TAIL - 1 {
         leaf = Some(
             c.append(
-                crate::agent::KIND_USER,
+                EntryKind::User,
                 json!({ "text": format!("after {i}") }),
                 leaf.as_deref(),
             )
@@ -208,7 +204,7 @@ fn a_state_record_past_the_tail_window_is_no_state_record() {
     // One entry past the window: the record is out of reach, so the child
     // reads as parked and re-adopt drops it.
     c.append(
-        crate::agent::KIND_USER,
+        EntryKind::User,
         json!({ "text": "one past the window" }),
         leaf.as_deref(),
     )
@@ -400,7 +396,7 @@ async fn a_spawn_over_the_soft_bound_evicts_the_oldest_terminal() {
         .expect("spawn 2")
         .handle;
     // The reclamation notice names the evicted (oldest terminal) child.
-    let reclaims = bridge.reclaims.lock().unwrap().clone();
+    let reclaims = bridge.reclaims.lock().clone();
     assert_eq!(reclaims.len(), 1, "one child was reclaimed");
     assert_eq!(
         reclaims[0].handle, h0,
@@ -458,7 +454,7 @@ async fn a_parked_child_is_never_evicted() {
     // Two parked children, soft bound 1: over the bound, but neither is
     // terminal, so the reclamation evicts nothing.
     assert!(
-        bridge.reclaims.lock().unwrap().is_empty(),
+        bridge.reclaims.lock().is_empty(),
         "no parked child is ever reclaimed"
     );
     assert_eq!(sup.handles().len(), 2, "both parked children stay");

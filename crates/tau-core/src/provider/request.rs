@@ -375,37 +375,60 @@ pub struct InputImagePart {
     pub detail: &'static str,
 }
 
-/// Soft prompt size in tokens (the shared ~4-chars/token estimator, spec
-/// §4): the system prompt, every input item, and the serialized tool specs.
+/// Soft prompt size in tokens (the shared bytes/4 estimator, spec §4): the
+/// system prompt, every input item, and the tool specs as serialized, with the
+/// serialization allowance on top (plan §6.4).
 pub(crate) fn prompt_token_estimate(
     system_prompt: &str,
     input: &[InputEntry],
-    tools: &[ToolSpec],
+    tools_json: &str,
 ) -> u32 {
     let mut n = crate::om::token_count(system_prompt);
-    for entry in input {
-        n += match entry {
-            InputEntry::Message(m) => crate::om::token_count(&m.content),
-            InputEntry::Call(c) => crate::om::token_count(&c.arguments),
-            InputEntry::CallOutput(o) => match &o.output {
-                CallOutput::Text(s) => crate::om::token_count(s),
-                // #255: an image part's base64 data URL carries the payload
-                // (the #34 shape) — counting it keeps the gate's budget math
-                // honest, so an over-window image prompt is caught pre-wire.
-                CallOutput::Image(parts) => parts
-                    .iter()
-                    .map(|p| match p {
-                        InputCallPart::Text(t) => crate::om::token_count(t),
-                        InputCallPart::Image(img) => crate::om::token_count(&img.image_url),
-                    })
-                    .sum(),
-            },
-        };
+    n = n.saturating_add(items_estimate(input));
+    n = n.saturating_add(crate::om::token_count(tools_json));
+    with_serialization_allowance(n)
+}
+
+/// The estimate for input items alone — the whole conversation when no anchor
+/// covers it, one tool output when one does (plan §6.4: the provider's count is
+/// the authority for what was already sent, so only the delta is ever a guess).
+/// It carries its own framing allowance, since a delta rides a request whose
+/// rest is already counted.
+pub(crate) fn items_token_estimate(items: &[InputEntry]) -> u32 {
+    with_serialization_allowance(items_estimate(items))
+}
+
+fn items_estimate(items: &[InputEntry]) -> u32 {
+    items
+        .iter()
+        .fold(0u32, |n, item| n.saturating_add(item_token_estimate(item)))
+}
+
+/// JSON framing a content estimate never sees — the 20% the comparable
+/// harnesses add for serialization overhead (plan §6.4: Codex's
+/// `with_serialization_allowance`).
+fn with_serialization_allowance(estimate: u32) -> u32 {
+    estimate.saturating_add(estimate / 5)
+}
+
+/// One input item's content, the shape the request actually carries it in.
+fn item_token_estimate(item: &InputEntry) -> u32 {
+    match item {
+        InputEntry::Message(m) => crate::om::token_count(&m.content),
+        InputEntry::Call(c) => crate::om::token_count(&c.arguments),
+        InputEntry::CallOutput(o) => match &o.output {
+            CallOutput::Text(s) => crate::om::token_count(s),
+            // #255: an image part's base64 data URL carries the payload
+            // (the #34 shape) — counting it keeps the gate's budget math
+            // honest, so an over-window image prompt is caught pre-wire.
+            CallOutput::Image(parts) => parts.iter().fold(0u32, |n, p| {
+                n.saturating_add(match p {
+                    InputCallPart::Text(t) => crate::om::token_count(t),
+                    InputCallPart::Image(img) => crate::om::token_count(&img.image_url),
+                })
+            }),
+        },
     }
-    if let Ok(json) = serde_json::to_string(tools) {
-        n += crate::om::token_count(&json);
-    }
-    n
 }
 
 /// The output cap clamped to a model's declared context window

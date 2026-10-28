@@ -15,6 +15,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+pub(crate) use tau_protocol::EntryKind;
 
 /// Session file format version — a versioned surface separate from the
 /// protocol (spec §3, pi-style).
@@ -203,12 +204,7 @@ impl SessionStore {
     }
 
     fn now_ms() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| {
-                u64::try_from(d.as_millis())
-                    .expect("epoch milliseconds fit u64 with ~584 million years to spare")
-            })
+        crate::clock::now_ms()
     }
     pub(crate) fn now(&self) -> u64 {
         self.fixed_time.unwrap_or_else(Self::now_ms)
@@ -231,7 +227,7 @@ impl SessionStore {
     fn new_entry(
         &self,
         id: &str,
-        kind: &str,
+        kind: EntryKind,
         payload: Value,
         first_kept_entry_id: Option<String>,
     ) -> Entry {
@@ -239,7 +235,7 @@ impl SessionStore {
             id: id.to_owned(),
             parent: None,
             timestamp: self.now(),
-            kind: kind.to_owned(),
+            kind,
             payload,
             blob: None,
             first_kept_entry_id,
@@ -428,15 +424,19 @@ impl SessionStore {
     }
 }
 
+mod branch;
 mod entry;
 mod file;
 mod list;
 mod log;
 
+pub use branch::branch;
 pub use entry::{BlobRef, Entry};
 pub use list::list_workspace;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_branch;
 #[cfg(test)]
 mod tests_log;

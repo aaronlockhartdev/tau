@@ -13,7 +13,7 @@ pub(crate) struct Scripted400 {
 struct Scripted400State {
     calls: Vec<(u16, String)>,
     index: std::sync::atomic::AtomicUsize,
-    seen: std::sync::Mutex<Vec<Option<u64>>>,
+    seen: parking_lot::Mutex<Vec<Option<u64>>>,
 }
 
 impl Scripted400 {
@@ -22,17 +22,30 @@ impl Scripted400 {
             state: std::sync::Arc::new(Scripted400State {
                 calls,
                 index: std::sync::atomic::AtomicUsize::new(0),
-                seen: std::sync::Mutex::new(Vec::new()),
+                seen: parking_lot::Mutex::new(Vec::new()),
             }),
         }
     }
 
     /// The captured per-call output caps (test assertion seam).
-    pub(crate) fn seen(&self) -> &std::sync::Mutex<Vec<Option<u64>>> {
+    pub(crate) fn seen(&self) -> &parking_lot::Mutex<Vec<Option<u64>>> {
         &self.state.seen
     }
 }
 
+/// A provider whose call dies in transport: no status, no body, nothing the
+/// provider answered.
+struct ScriptedIdle;
+
+impl crate::provider::TurnProvider for ScriptedIdle {
+    fn call<'a>(
+        &self,
+        _request: &ResponseRequest,
+        _sink: &'a mut dyn TurnSink,
+    ) -> crate::provider::ProviderTurn<'a> {
+        Box::pin(async { Err(crate::provider::ProviderError::IdleTimeout) })
+    }
+}
 impl crate::provider::TurnProvider for Scripted400 {
     fn call<'a>(
         &self,
@@ -48,17 +61,13 @@ impl crate::provider::TurnProvider for Scripted400 {
         let script = state.calls.get(n).map(|(s, b)| (*s, b.clone()));
         let cap = request.max_output_tokens();
         Box::pin(async move {
-            state
-                .seen
-                .lock()
-                .expect("scripted-400 seen: no panic while the lock is held")
-                .push(cap);
+            state.seen.lock().push(cap);
             match script {
                 Some((status, body)) => {
                     Err(crate::provider::ProviderError::Status { status, body })
                 }
                 None => Ok(TurnResult {
-                    completed: true,
+                    outcome: crate::provider::StreamOutcome::Completed,
                     ..TurnResult::default()
                 }),
             }
@@ -82,7 +91,7 @@ fn over_budget_turn() -> TurnConfig {
 
 fn omless_agent(
     store: SessionStore,
-    provider: std::sync::Arc<Scripted400>,
+    provider: std::sync::Arc<dyn crate::provider::TurnProvider>,
     turn: TurnConfig,
     cwd: std::path::PathBuf,
 ) -> AgentSession {
@@ -105,16 +114,19 @@ fn omless_agent(
     })
 }
 
+/// The provider's rejection of a request, as the session recorded it.
 fn recorded_400(store: &SessionStore, want_body: &str) -> bool {
     entries_of(store).iter().any(|e| {
-        e.kind == KIND_SYSTEM && e.payload["status"] == 400 && e.payload["body"] == want_body
+        e.kind == EntryKind::Diagnostic
+            && e.payload["status"] == 400
+            && e.payload["body"] == want_body
     })
 }
 
 /// #255 leg 2: the gate's blind spot — the prompt is over the safe budget
 /// and there is no unobserved material to compact (OM off). The turn is
 /// refused loudly before the provider is called: no doomed 400 on the
-/// wire, and the refusal leaves a durable system entry.
+/// wire, and the refusal leaves a durable diagnostic record.
 #[tokio::test]
 async fn over_budget_without_unobserved_material_is_refused() {
     let dir = tempfile::tempdir().unwrap();
@@ -134,18 +146,18 @@ async fn over_budget_without_unobserved_material_is_refused() {
         "expected ContextOverflow, got {err:?}"
     );
     // The provider was never called: the refusal is pre-wire.
-    assert!(provider.seen().lock().unwrap().is_empty());
-    // The refusal is durable: a system entry with prompt > budget. The
+    assert!(provider.seen().lock().is_empty());
+    // The refusal is durable: a diagnostic record with prompt > budget. The
     // agent moved the store, so re-open the workspace file to inspect it.
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     let entries = entries_of(&reopened);
     assert!(
         entries.iter().any(|e| {
-            e.kind == KIND_SYSTEM
+            e.kind == EntryKind::Diagnostic
                 && e.payload["prompt"].as_u64().unwrap() > e.payload["budget"].as_u64().unwrap()
         }),
-        "a system entry records the overflow: {entries:?}"
+        "a diagnostic record names the overflow: {entries:?}"
     );
 }
 
@@ -175,7 +187,7 @@ async fn under_budget_is_not_refused() {
     // ~10k tokens: under the 15704 budget.
     agent.send("a".repeat(40000), Lane::FollowUp);
     agent.process().await.unwrap();
-    assert_eq!(provider.seen.lock().unwrap().len(), 1);
+    assert_eq!(provider.seen.lock().len(), 1);
 }
 
 /// #256: a provider context-length 400 is recoverable — one bounded retry
@@ -211,7 +223,7 @@ async fn context_400_retries_once_with_halved_max_output() {
 
     // The first call carried the full (window-clamped) cap; the retry the
     // halved one.
-    let seen = provider.seen().lock().unwrap();
+    let seen = provider.seen().lock();
     assert_eq!(seen.len(), 2, "one bounded retry: {seen:?}");
     assert_eq!(seen[0], Some(8000), "first call: full cap");
     assert_eq!(seen[1], Some(4000), "retry: halved");
@@ -242,12 +254,8 @@ async fn context_400_fails_loudly_after_one_retry() {
         ),
         "the rejection propagates: {err:?}"
     );
-    assert_eq!(
-        provider.seen().lock().unwrap().len(),
-        2,
-        "no loop: two calls"
-    );
-    // The durable trace: a system entry with the provider's status and body.
+    assert_eq!(provider.seen().lock().len(), 2, "no loop: two calls");
+    // The durable trace: a provider_rejected record with the status and body.
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     assert!(
@@ -280,7 +288,7 @@ async fn non_context_400_is_not_retried() {
         "the rejection propagates: {err:?}"
     );
     assert_eq!(
-        provider.seen().lock().unwrap().len(),
+        provider.seen().lock().len(),
         1,
         "no retry for a 401-class 400"
     );
@@ -289,4 +297,128 @@ async fn non_context_400_is_not_retried() {
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     assert!(recorded_400(&reopened, &auth_body), "the 400 is recorded");
+}
+
+#[tokio::test]
+async fn a_huge_rejection_body_is_recorded_bounded() {
+    // The record is a durable sink: a proxy's HTML error page lands in the
+    // session file only as its head. The error that propagates keeps all of it.
+    let dir = tempfile::tempdir().unwrap();
+    let page =
+        "<!DOCTYPE html>\n".to_string() + &"<p>gateway rejected the request</p>\n".repeat(2_000);
+    let provider = std::sync::Arc::new(Scripted400::new(vec![(400, page.clone())]));
+    let agent = omless_agent(
+        session_in(dir.path()),
+        provider.clone(),
+        over_budget_turn(),
+        dir.path().to_path_buf(),
+    );
+    agent.send("go", Lane::FollowUp);
+
+    let err = agent.process().await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            AgentError::Provider(crate::provider::ProviderError::Status { status: 400, body })
+                if body == &page
+        ),
+        "the caller still sees the whole body: {err:?}"
+    );
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    let recorded = entries_of(&reopened)
+        .into_iter()
+        .find(|e| e.kind == EntryKind::Diagnostic)
+        .expect("a provider_rejected record");
+    let body = recorded.payload["body"].as_str().unwrap_or_default();
+    assert!(
+        body.chars().count() <= super::turn::REJECTION_BODY_CAP + 1,
+        "the record carries a head, not the page: {} chars",
+        body.chars().count()
+    );
+    assert!(body.ends_with('…'), "the cut is marked");
+    assert!(
+        page.starts_with(body.strip_suffix('…').unwrap_or_default()),
+        "the head is the page's head"
+    );
+}
+
+/// The gate is either a budget or a named gap, never both and never neither:
+/// the two facts by config name, or the room that is missing when both are
+/// declared (ADR-0034). One predicate answers for the gate and both record
+/// sites, so a record cannot name a gap the gate does not have.
+#[test]
+fn the_gate_gap_names_what_the_gate_lacks() {
+    let declared = |window, max_output| TurnConfig {
+        context_window: Some(window),
+        max_output_tokens: Some(max_output),
+        ..Default::default()
+    };
+    assert_eq!(
+        TurnConfig::default().context_gate(),
+        ContextGate::Missing {
+            reasons: ["context_window".to_owned(), "max_tokens".to_owned()].into()
+        },
+        "an undeclared model names both facts"
+    );
+    assert_eq!(
+        declared(20_000, 200).context_gate(),
+        ContextGate::Ready { budget: 15_704 },
+        "a computable budget is no gap"
+    );
+    assert_eq!(
+        declared(8_192, 8_192).context_gate(),
+        ContextGate::Missing {
+            reasons: vec!["context_room".to_owned()]
+        },
+        "facts can be declared and still leave no gate"
+    );
+    assert_eq!(
+        TurnConfig {
+            max_output_tokens: Some(200),
+            ..Default::default()
+        }
+        .context_gate(),
+        ContextGate::Missing {
+            reasons: vec!["context_window".to_owned()]
+        },
+        "one declared fact names only the other"
+    );
+    assert_eq!(declared(20_000, 200).context_gate().budget(), Some(15_704));
+    assert_eq!(
+        declared(8_192, 8_192).context_gate().budget(),
+        None,
+        "no gate means no budget to enforce"
+    );
+}
+
+/// A transport failure is the turn's error to surface, not a fact the provider
+/// produced: nothing lands in the record channel (ADR-0034).
+#[tokio::test]
+async fn a_dead_stream_files_no_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = omless_agent(
+        session_in(dir.path()),
+        std::sync::Arc::new(ScriptedIdle),
+        over_budget_turn(),
+        dir.path().to_path_buf(),
+    );
+    agent.send("go", Lane::FollowUp);
+    let err = agent.process().await.unwrap_err();
+    assert!(
+        matches!(
+            err,
+            AgentError::Provider(crate::provider::ProviderError::IdleTimeout)
+        ),
+        "the failure propagates: {err:?}"
+    );
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    assert!(
+        entries_of(&reopened)
+            .iter()
+            .all(|e| e.kind != EntryKind::Diagnostic),
+        "a dead stream is not a record: {:?}",
+        entries_of(&reopened)
+    );
 }

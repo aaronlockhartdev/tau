@@ -4,7 +4,9 @@
 //! structurally invisible to the `ForwardingProvider` reconciliation that
 //! the `#82` fix depends on.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use crate::om::{
     OmConfig, generate_group_id, observer_system_prompt, parse_observer_output,
@@ -12,6 +14,7 @@ use crate::om::{
 };
 use crate::om_integration::{BufferedChunk, OmState};
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
+use tau_protocol::EntryKind;
 
 /// The effective buffer interval at a pending level (D5): the full
 /// `buffer_tokens` below the ramp point, `buffer_tokens / 2` from there
@@ -114,13 +117,7 @@ fn read_candidates(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     config: &OmConfig,
 ) -> Option<(Vec<crate::session::Entry>, u32, (String, String))> {
-    let mut g = match inner.lock() {
-        Ok(g) => g,
-        Err(e) => {
-            tracing::error!("om: buffer cycle: session lock poisoned: {e}");
-            return None;
-        }
-    };
+    let mut g = inner.lock();
     let record = match OmState::load_record(&mut g.store) {
         Ok(record) => record,
         Err(e) => {
@@ -153,8 +150,9 @@ fn read_candidates(
     let tokens = live.pending_tokens(&candidates);
     // The turn-end pass may have committed everything the spawn snapshot
     // saw (D4: the file cursor wins over the snapshot): nothing left to
-    // buffer. Consume the trigger and stop — a panic here would poison the
-    // session's inner lock.
+    // buffer. Consume the trigger and stop — a panic under the session's
+    // inner lock would leave a half-mutated `Inner` that no later reader
+    // could tell apart from a good one.
     let Some(range) = candidate_range(&candidates) else {
         g.om_inflight = None;
         return None;
@@ -184,9 +182,7 @@ fn commit_chunk(
     text: String,
     boundary: u64,
 ) {
-    let Ok(mut g) = inner.lock() else {
-        return;
-    };
+    let mut g = inner.lock();
     let mut latest = match OmState::load_record(&mut g.store) {
         Ok(r) => r,
         Err(e) => {
@@ -209,7 +205,7 @@ fn commit_chunk(
         if let Ok(payload) = serde_json::to_value(&latest) {
             let parent = g.store.leaf().ok().flatten().map(|e| e.id);
             if g.store
-                .append(crate::om_integration::KIND_OM, payload, parent.as_deref())
+                .append(EntryKind::Om, payload, parent.as_deref())
                 .is_err()
             {
                 // The chunk is lost (rework at the next trigger, not data
@@ -231,9 +227,8 @@ fn commit_chunk(
 
 /// Clears the in-flight flag (the cycle's abort paths).
 fn clear_inflight(inner: &Arc<Mutex<crate::agent::Inner>>) {
-    if let Ok(mut g) = inner.lock() {
-        g.om_inflight = None;
-    }
+    let mut g = inner.lock();
+    g.om_inflight = None;
 }
 
 #[cfg(test)]
@@ -297,8 +292,9 @@ mod tests {
     fn empty_candidate_batch_yields_no_range_not_a_panic() {
         // The turn-end pass may commit everything the spawn snapshot saw
         // before the cycle's phase-1 read (D4: the file cursor wins): an
-        // empty batch must degrade to `None`, never panic — a panic here
-        // poisons the session's inner lock.
+        // empty batch must degrade to `None`, never panic — a panic under
+        // the session's inner lock leaves a half-mutated `Inner` behind
+        // with nothing to signal it.
         assert_eq!(candidate_range(&[]), None);
         let a = entry("a", 1);
         let b = entry("b", 2);
@@ -313,7 +309,7 @@ mod tests {
             id: id.to_owned(),
             parent: None,
             timestamp: ts,
-            kind: "message".to_owned(),
+            kind: EntryKind::User,
             payload: serde_json::Value::Null,
             blob: None,
             first_kept_entry_id: None,

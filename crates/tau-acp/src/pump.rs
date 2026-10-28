@@ -14,7 +14,7 @@ use crate::transport::{self, Out};
 use serde_json::json;
 use tau_core::harness::Core;
 use tau_protocol::snapshot::ViewEntry;
-use tau_protocol::{Command, Event, MessageLane, SystemEventKind};
+use tau_protocol::{Command, EntryKind, Event, MessageLane, SystemEventKind};
 
 /// The four values every pump handler needs, named once: a future pump
 /// dependency (a clock, a policy) adds a field, not a parameter to `handle`
@@ -45,9 +45,7 @@ fn handle(ctx: &PumpCtx, event: &Event) {
     match event {
         Event::EntryUpsert { session, entry, .. } => {
             let updates = {
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
+                let mut guard = registry.lock();
                 track_last_assistant(&mut guard, session, entry);
                 guard
                     .get_mut(session)
@@ -65,9 +63,7 @@ fn handle(ctx: &PumpCtx, event: &Event) {
             ..
         } => {
             let usage_update = {
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
+                let mut guard = registry.lock();
                 guard.get_mut(session).and_then(|s| {
                     // Finalizes every in-flight assistant entry (the end is
                     // per-turn, #82); a StreamEnd alone never settles (the
@@ -99,9 +95,7 @@ fn handle(ctx: &PumpCtx, event: &Event) {
         }
         Event::Queue { session, items, .. } => {
             let (outcome, yolo) = {
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
+                let mut guard = registry.lock();
                 guard.get_mut(session).map_or((None, false), |s| {
                     (queue_settle(s, items.is_empty()), s.yolo)
                 })
@@ -110,9 +104,7 @@ fn handle(ctx: &PumpCtx, event: &Event) {
                 if yolo {
                     settle_headless(ctx, session, outcome);
                 } else {
-                    let mut guard = registry
-                        .lock()
-                        .expect("session registry: no panic while the lock is held");
+                    let mut guard = registry.lock();
                     sessions::settle(&mut guard, session, outcome);
                 }
             }
@@ -124,9 +116,7 @@ fn handle(ctx: &PumpCtx, event: &Event) {
             kind: SystemEventKind::Error { message },
             ..
         } => {
-            let mut guard = registry
-                .lock()
-                .expect("session registry: no panic while the lock is held");
+            let mut guard = registry.lock();
             let outcome = guard.get_mut(session).map(|s| {
                 // A cancel in flight turns the error into the spec-mandated
                 // `cancelled` response (N3).
@@ -176,9 +166,7 @@ fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
     let _ = out; // the response rides the pending oneshot, not the pump
     let decision = match &outcome {
         Outcome::EndTurn => {
-            let mut guard = registry
-                .lock()
-                .expect("session registry: no panic while the lock is held");
+            let mut guard = registry.lock();
             guard
                 .get_mut(session)
                 .map_or(crate::headless::Decision::Done(Outcome::EndTurn), |s| {
@@ -193,18 +181,14 @@ fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
     };
     match decision {
         crate::headless::Decision::Done(outcome) => {
-            let mut guard = registry
-                .lock()
-                .expect("session registry: no panic while the lock is held");
+            let mut guard = registry.lock();
             sessions::settle(&mut guard, session, outcome);
         }
         crate::headless::Decision::Continue(nudge) => {
             // Episode N+1: the turn flags reset for the new turn; the
             // prompt response stays pending until a real end.
             let cancelled = {
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
+                let mut guard = registry.lock();
                 // A cancel landing between the settle decision and this
                 // reset would be wiped: read it before the reset and honor
                 // it after.
@@ -218,9 +202,7 @@ fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
                 cancelled
             };
             if cancelled {
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
+                let mut guard = registry.lock();
                 sessions::settle(&mut guard, session, Outcome::Cancelled);
             }
             if !cancelled
@@ -233,9 +215,7 @@ fn settle_headless(ctx: &PumpCtx, session: &str, outcome: Outcome) {
                 // Refused before the turn started: settle now — never loop
                 // on a refused send.
                 let message = e.to_string();
-                let mut guard = registry
-                    .lock()
-                    .expect("session registry: no panic while the lock is held");
+                let mut guard = registry.lock();
                 sessions::settle(&mut guard, session, Outcome::Error(message));
             }
         }
@@ -249,7 +229,7 @@ fn track_last_assistant(
     session: &str,
     entry: &ViewEntry,
 ) {
-    if entry.kind != "assistant" {
+    if entry.kind != EntryKind::Assistant {
         return;
     }
     let Some(s) = sessions.get_mut(session) else {

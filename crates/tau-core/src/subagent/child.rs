@@ -1,9 +1,10 @@
-use super::KIND_SUBAGENT;
 use super::states::{ChildState, ContextMode, TurnOrigin, WaitingOn};
 use crate::agent::AgentSession;
+use parking_lot::Mutex;
 use serde_json::{Value, json};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use tau_protocol::EntryKind;
 
 /// One child's live record.
 pub struct Child {
@@ -55,17 +56,11 @@ pub struct Child {
 
 impl Child {
     pub(super) fn state(&self) -> ChildState {
-        self.state
-            .lock()
-            .expect("child state: no panic while the lock is held")
-            .clone()
+        self.state.lock().clone()
     }
 
     pub(super) fn set_state(&self, state: &ChildState) -> Result<(), String> {
-        *self
-            .state
-            .lock()
-            .expect("child state: no panic while the lock is held") = state.clone();
+        *self.state.lock() = state.clone();
         // The record carries the discriminant plus the non-output variant
         // fields only: done's output lives in the notify record (the
         // report), not twice.
@@ -90,32 +85,23 @@ impl Child {
             }),
         };
         self.agent
-            .append_entry(KIND_SUBAGENT, payload)
+            .append_entry(EntryKind::Subagent, payload)
             .map_err(|e| format!("subagent state entry failed: {e}"))
     }
 
     pub(super) fn set_last_message(&self, text: &str) {
-        *self
-            .last_message
-            .lock()
-            .expect("child last message: no panic while the lock is held") = Some(text.to_owned());
+        *self.last_message.lock() = Some(text.to_owned());
     }
 
     /// The turn origin (the wake routing's input, spec §5.2).
     #[must_use]
     pub(crate) fn origin(&self) -> TurnOrigin {
-        *self
-            .origin
-            .lock()
-            .expect("child origin: no panic while the lock is held")
+        *self.origin.lock()
     }
 
     /// Set the turn origin (each drive start: spawn or resume).
     pub(crate) fn set_origin(&self, origin: TurnOrigin) {
-        *self
-            .origin
-            .lock()
-            .expect("child origin: no panic while the lock is held") = origin;
+        *self.origin.lock() = origin;
     }
 
     /// A `done` declaration requests the turn's end (the fast path, spec
@@ -133,50 +119,32 @@ impl Child {
     /// Record the declared `done` output (the hint the observed rest
     /// consumes).
     pub(crate) fn declare_output(&self, output: Option<Value>) {
-        *self
-            .declared_output
-            .lock()
-            .expect("child declared output: no panic while the lock is held") = output;
+        *self.declared_output.lock() = output;
     }
 
     /// Take the declared output (the observed `done`'s payload): `None`
     /// when the rest is consumed or no declaration was made.
     #[must_use]
     pub(crate) fn take_declared_output(&self) -> Option<Value> {
-        self.declared_output
-            .lock()
-            .expect("child declared output: no panic while the lock is held")
-            .take()
+        self.declared_output.lock().take()
     }
 
     /// Record the declared `waiting_on` of a resting note.
     pub(crate) fn declare_waiting(&self, waiting_on: WaitingOn) {
-        *self
-            .declared_waiting
-            .lock()
-            .expect("child declared waiting: no panic while the lock is held") = Some(waiting_on);
+        *self.declared_waiting.lock() = Some(waiting_on);
     }
 
     /// Take the declared `waiting_on` (the observed `idle`'s badge hint).
     #[must_use]
     pub(crate) fn take_declared_waiting(&self) -> Option<WaitingOn> {
-        self.declared_waiting
-            .lock()
-            .expect("child declared waiting: no panic while the lock is held")
-            .take()
+        self.declared_waiting.lock().take()
     }
 
     /// A fresh work period (each drive start): the prior period's hints
     /// are gone — a stale declaration must not ride a later rest.
     pub(crate) fn reset_hints(&self) {
         self.rest_requested.store(false, Ordering::SeqCst);
-        *self
-            .declared_output
-            .lock()
-            .expect("child declared output: no panic while the lock is held") = None;
-        *self
-            .declared_waiting
-            .lock()
-            .expect("child declared waiting: no panic while the lock is held") = None;
+        *self.declared_output.lock() = None;
+        *self.declared_waiting.lock() = None;
     }
 }

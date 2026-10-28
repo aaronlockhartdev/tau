@@ -109,8 +109,7 @@ pub(crate) fn manual_session_om(
     });
     core.sessions
         .lock()
-        .unwrap()
-        .insert(live.meta.lock().unwrap().id.clone(), live.clone());
+        .insert(live.meta.lock().id.clone(), live.clone());
     live
 }
 
@@ -158,7 +157,7 @@ impl TurnProvider for CannedChild {
         } else {
             plain_body()
         };
-        let (events, calls) = provider::decode_stream(&body).unwrap();
+        let (events, calls, ending) = provider::decode_stream(&body).unwrap();
         Box::pin(async move {
             // The one-time pre-delay on the first call opens the window a
             // test needs to seed the child's state before its first turn
@@ -167,9 +166,13 @@ impl TurnProvider for CannedChild {
             if first {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
-            let mut result = provider::TurnResult::default();
+            let mut result = provider::TurnResult {
+                outcome: ending,
+                ..Default::default()
+            };
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = provider::StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(event, &mut result);
@@ -203,10 +206,14 @@ impl TurnProvider for SlowChild {
         let body = self.body.clone();
         let delay = self.delay_ms;
         Box::pin(async move {
-            let (events, calls) = provider::decode_stream(&body).unwrap();
-            let mut result = provider::TurnResult::default();
+            let (events, calls, ending) = provider::decode_stream(&body).unwrap();
+            let mut result = provider::TurnResult {
+                outcome: ending,
+                ..Default::default()
+            };
             for event in &events {
                 if !sink.event(event.clone()) {
+                    result.outcome = provider::StreamOutcome::Killed;
                     break;
                 }
                 provider::fold_event(event, &mut result);
@@ -282,7 +289,6 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
     let cwd = core
         .sessions
         .lock()
-        .unwrap()
         .get(parent_id)
         .map(|l| l.cwd.clone())
         .expect("the parent session is live");
@@ -320,7 +326,6 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
         let running = core
             .sessions
             .lock()
-            .unwrap()
             .get(parent_id)
             .is_some_and(|l| l.turn.load(Ordering::SeqCst));
         if running {
@@ -337,7 +342,6 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
         let running = core
             .sessions
             .lock()
-            .unwrap()
             .get(parent_id)
             .is_some_and(|l| l.turn.load(Ordering::SeqCst));
         if !running {
@@ -370,7 +374,7 @@ pub(crate) async fn wait_for_user_entry(workspace: &Workspace, session: &str) ->
     store.open().unwrap();
     for _ in 0..100 {
         let entries = store.entries_range(0, 100).unwrap();
-        if entries.iter().any(|e| e.kind == crate::agent::KIND_USER) {
+        if entries.iter().any(|e| e.kind == EntryKind::User) {
             return entries;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -384,7 +388,7 @@ pub(crate) fn collect_events(core: &Arc<Core>) -> Arc<Mutex<Vec<Event>>> {
     let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
     let sink = Arc::clone(&collected);
     tokio::spawn(crate::harness::pump::pump(Arc::clone(core), move |batch| {
-        sink.lock().unwrap().extend(batch.iter().cloned());
+        sink.lock().extend(batch.iter().cloned());
     }));
     collected
 }
@@ -398,18 +402,12 @@ pub(crate) async fn wait_for_skill_list_changed(
 ) -> Vec<SkillInfo> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(skills) = collected
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find_map(|e| match e {
-                Event::SkillListChanged { workspace, skills } if workspace == ws => {
-                    Some(skills.clone())
-                }
-                _ => None,
-            })
-            && ok(&skills)
+        if let Some(skills) = collected.lock().iter().rev().find_map(|e| match e {
+            Event::SkillListChanged { workspace, skills } if workspace == ws => {
+                Some(skills.clone())
+            }
+            _ => None,
+        }) && ok(&skills)
         {
             return skills;
         }
@@ -430,18 +428,12 @@ pub(crate) async fn wait_for_file_tree_changed(
 ) -> Vec<String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if let Some(changed) = collected
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .find_map(|e| match e {
-                Event::FileTreeChanged { workspace, changed } if workspace == ws => {
-                    Some(changed.clone())
-                }
-                _ => None,
-            })
-            && ok(&changed)
+        if let Some(changed) = collected.lock().iter().rev().find_map(|e| match e {
+            Event::FileTreeChanged { workspace, changed } if workspace == ws => {
+                Some(changed.clone())
+            }
+            _ => None,
+        }) && ok(&changed)
         {
             return changed;
         }

@@ -113,7 +113,22 @@ function checkMockScenarios() {
 // dir let the mock leg's config write clobber the shared project layer
 // and pin the stress session to the mock provider. The stress spec reads
 // TAU_E2E_WS_STRESS; the mock specs read TAU_E2E_WS_MOCK.
-const CANNED_CONFIG = ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', ''].join('\n');
+// Every model these legs drive declares the gate's two facts: a session over a
+// model the gate can compute for mints no gate record at open, the invariant
+// `a_model_that_declares_its_facts_records_no_gate_gap` pins in Rust. The open
+// still states the model it runs with a `model_changed`. The windows sit far above
+// anything these legs send, so declaring them changes no response; it stops the
+// audit channel from recording a gap that is an artifact of a test config rather
+// than a fact about the session.
+const MODEL_FACTS = 'context_window = 1000000\nmax_tokens = 8192';
+// The stress leg measures a 10k-entry session, not the OM round trip. The
+// canned provider replays one body for any prompt, so an OM call can never
+// return an OM envelope: it retries to exhaustion (~50s a turn) and records
+// om_stalled, which moves the session tail off the assistant entry. The
+// thresholds sit above anything the run accumulates, so the pass never runs;
+// they stay clear of the u32 ceiling the config validator enforces.
+const OM_OUT_OF_LEG = ['', '[om]', 'observe_threshold = 1000000000', 'reflect_threshold = 1000000000', 'buffer_increment = 1000000000', 'buffer_tokens = 0'].join('\n');
+const CANNED_CONFIG = ['[providers.canned]', 'base_url = "canned://text"', '', '[providers.canned.models."canned-model"]', MODEL_FACTS, '', OM_OUT_OF_LEG].join('\n');
 function makeWorkspaces() {
   const dirs = {};
   // The model menu lists the *system* layer only (harness ProviderList),
@@ -129,9 +144,10 @@ function makeWorkspaces() {
         `base_url = "http://127.0.0.1:${MOCK_PORT}/v1"`,
         '',
         '[providers.mock.models."mock-model"]',
+        MODEL_FACTS,
         '',
         '[providers.mock.models."mock-model-2"]',
-        ''
+        MODEL_FACTS,
       ].join('\n')
     );
   }
@@ -161,9 +177,10 @@ function makeWorkspaces() {
           `base_url = "http://127.0.0.1:${MOCK_PORT}/v1"`,
           '',
           '[providers.mock.models."mock-model"]',
+          MODEL_FACTS,
           '',
           '[providers.mock.models."mock-model-2"]',
-          ''
+          MODEL_FACTS
         ].join('\n')
       );
     }

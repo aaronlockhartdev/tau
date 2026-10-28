@@ -87,7 +87,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             delays: vec![],
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
-            instructions: Arc::new(std::sync::Mutex::new(Vec::new())),
+            instructions: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
@@ -130,18 +130,16 @@ fn the_role_specs_table_is_exact() {
     let dir = tempfile::tempdir().unwrap();
     let (_parent, sup, _child) = parent_child(dir.path());
 
-    let root = SessionRole::Root {
-        core: None,
-        workspace: None,
-        config: None,
+    // `Root` carries a resolved provider, workspace and core, so it cannot be
+    // built for a table lookup; `specs_for` keys off the role alone, and the
+    // root-shaped `Seam` is the role that builds without a core.
+    let root_shaped = SessionRole::Seam {
+        supervisor: sup.clone(),
         provider: canned_provider(),
-        supervisor: None,
         system_prompt: None,
-        base_prompt: None,
-        first_provider: None,
     };
     assert_eq!(
-        names(surface::specs_for(&root, None)),
+        names(surface::specs_for(&root_shaped, None)),
         vec![
             "read",
             "write",
@@ -199,7 +197,7 @@ fn the_role_specs_table_is_exact() {
             "the child sees {foreign}"
         );
     }
-    let root_names = names(surface::specs_for(&root, None));
+    let root_names = names(surface::specs_for(&root_shaped, None));
     assert!(
         !root_names.contains(&"parent_notify".to_owned()),
         "the root sees parent_notify"
@@ -273,25 +271,4 @@ async fn a_child_core_tool_is_not_swallowed_by_the_link() {
     let t = text(out);
     assert!(t.starts_with("exit 0"), "{t}");
     assert!(t.contains("surface"), "{t}");
-}
-
-#[test]
-fn poisoned_anchor_registry_lock_is_recovered() {
-    // A poisoned registry lock (an earlier panic while held) must not take
-    // the dispatch down: the lock's data is intact, and a panic here would
-    // kill the task and hang the turn on the in-flight tool call.
-    let m = std::sync::Arc::new(std::sync::Mutex::new(
-        crate::hashline::registry::Registry::new(),
-    ));
-    std::thread::spawn({
-        let m = std::sync::Arc::clone(&m);
-        move || {
-            let _guard = m.lock().expect("a fresh lock is not poisoned");
-            panic!("poison the lock");
-        }
-    })
-    .join()
-    .unwrap_err();
-    let guard = surface::lock_anchors(&m);
-    assert!(guard.served_map("never-read").is_none());
 }

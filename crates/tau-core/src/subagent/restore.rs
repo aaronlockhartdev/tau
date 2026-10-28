@@ -6,8 +6,10 @@
 //! `snapshot.rs`.
 
 use super::states::WaitingOn;
-use super::{ChildState, ContextMode, KIND_SUBAGENT};
+use super::{ChildState, ContextMode};
 use crate::session::{Entry, SessionStore, list_workspace};
+use tau_protocol::EntryKind;
+
 use std::borrow::Cow;
 use std::path::Path;
 
@@ -77,7 +79,7 @@ pub(crate) fn last_state_from(entries: &[Entry]) -> Option<ChildState> {
     entries
         .iter()
         .rev()
-        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "state")
+        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "state")
         .and_then(|e| serde_json::from_value::<ChildState>(e.payload.clone()).ok())
 }
 
@@ -111,7 +113,7 @@ pub fn disk_children(cwd: &Path, parent: &str, parent_entries: Option<&[Entry]>)
         )
     };
     for e in spawn_records.iter() {
-        if e.kind == KIND_SUBAGENT
+        if e.kind == EntryKind::Subagent
             && e.payload["event"] == "spawn"
             && let (Some(child), Some(handle)) = (
                 e.payload.get("child").and_then(|v| v.as_str()),
@@ -172,10 +174,10 @@ fn spawn_provenance(head: &[Entry], tail: &[Entry]) -> (String, ContextMode) {
     // is the parent's copied tree, so its record sits at the tail (#302).
     let spawn = head
         .iter()
-        .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn")
+        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn")
         .or_else(|| {
             tail.iter()
-                .find(|e| e.kind == KIND_SUBAGENT && e.payload["event"] == "spawn")
+                .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn")
         });
     let agent_type = spawn
         .and_then(|e| e.payload["type"].as_str())

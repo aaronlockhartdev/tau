@@ -137,9 +137,9 @@ pub fn file_checksum(checksums: &[String]) -> String {
 /// fresh anchor, not the freed one (#207 §2).
 #[must_use]
 pub fn reanchor(prev: &FilePins, checksums: &[String]) -> Vec<Option<usize>> {
-    use crate::hashline::registry::match_anchors;
+    use crate::hashline::lcs::carry;
     let prev_sums = prev.checksums();
-    match_anchors(&prev_sums, checksums)
+    carry(&prev_sums, checksums)
 }
 
 /// Build the next `FilePins` from a previous set and the re-anchor pairing:

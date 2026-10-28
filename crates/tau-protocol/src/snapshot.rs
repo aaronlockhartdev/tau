@@ -3,7 +3,7 @@
 //! bounded OM observation log + live state + a durable cursor. Built on
 //! demand by the core (app launch, tab open, reconnect); never a file.
 
-use crate::MessageLane;
+use crate::{EntryKind, MessageLane};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -46,7 +46,7 @@ pub struct SessionMeta {
 pub struct EntryMeta {
     pub id: String,
     pub parent: Option<String>,
-    pub kind: String,
+    pub kind: EntryKind,
     pub timestamp: u64,
     /// The serialized line size in bytes (the GUI's virtualization sizes).
     pub size: u64,
@@ -100,7 +100,7 @@ pub struct BlobRef {
 pub struct ViewEntry {
     pub id: String,
     pub parent: Option<String>,
-    pub kind: String,
+    pub kind: EntryKind,
     pub timestamp: u64,
     pub payload: Value,
     /// A sidecar pointer (ADR-0005) when the payload lives out-of-band.
@@ -222,7 +222,7 @@ mod tests {
         let meta = EntryMeta {
             id: "e1".into(),
             parent: None,
-            kind: "message".into(),
+            kind: EntryKind::Other("message".into()),
             timestamp: 1,
             size: 10,
             preview: "hi".into(),
@@ -292,7 +292,7 @@ mod tests {
         let entry = ViewEntry {
             id: "e1".into(),
             parent: Some("e0".into()),
-            kind: "assistant".into(),
+            kind: EntryKind::Assistant,
             timestamp: 7,
             payload: json!({ "text": "hi" }),
             blob: Some(blob),
@@ -394,7 +394,7 @@ mod tests {
             entries: vec![EntryMeta {
                 id: "e1".into(),
                 parent: None,
-                kind: "user".into(),
+                kind: EntryKind::User,
                 timestamp: 1,
                 size: 4,
                 preview: "hi".into(),

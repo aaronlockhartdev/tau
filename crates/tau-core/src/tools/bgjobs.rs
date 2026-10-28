@@ -7,12 +7,12 @@
 //! kills every live job; the completion gate skips while one is live.
 
 use crate::tools::impls::bash_path;
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// Fired when a background job exits: (job id, exit code — `None` when the
@@ -46,10 +46,7 @@ impl BackgroundJobs {
     /// Record a spawned job; the id is minted here, matching the output
     /// file the spawn named it with.
     pub(crate) fn insert(&self, job: Job) {
-        self.jobs
-            .lock()
-            .expect("jobs map: no panic while the lock is held")
-            .insert(job.id.clone(), job);
+        self.jobs.lock().insert(job.id.clone(), job);
     }
 
     /// The next job id (the spawn uses it to name the output file before
@@ -64,7 +61,6 @@ impl BackgroundJobs {
     pub(crate) fn has_live(&self) -> bool {
         self.jobs
             .lock()
-            .expect("jobs map: no panic while the lock is held")
             .values()
             .any(|j| j.live.load(Ordering::SeqCst))
     }
@@ -73,10 +69,7 @@ impl BackgroundJobs {
     /// the child (`kill_on_drop`); the hook then sees the kill as a
     /// `None`-code completion.
     pub(crate) fn kill_all(&self) {
-        let jobs = self
-            .jobs
-            .lock()
-            .expect("jobs map: no panic while the lock is held");
+        let jobs = self.jobs.lock();
         for j in jobs.values() {
             if j.live.load(Ordering::SeqCst) {
                 j.task.abort();

@@ -2,7 +2,8 @@
 //! mapper, the per-session turn lock, and the pending prompt response.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+
+use parking_lot::Mutex;
 
 use tokio::sync::oneshot;
 

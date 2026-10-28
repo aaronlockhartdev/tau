@@ -107,14 +107,13 @@ fn survivor_anchors_stay_put_across_an_edit() {
     };
     let edited = apply_edit(content, &edit).unwrap();
     assert_eq!(edited.content, "alpha\nBETA\ngamma\ndelta\n");
-    // The unchanged prefix (before the edit point) keeps its anchor; the
-    // edited line and the lines after it are re-allocated fresh (the LCS
-    // reanchor matches in order from the top, so a mid-file edit starts a new
-    // anchor sequence).
-    assert_eq!(edited.hashes[0], before[0]);
-    assert_ne!(edited.hashes[1], before[1]);
-    assert_ne!(edited.hashes[2], before[2]);
-    assert_ne!(edited.hashes[3], before[3]);
+    // A line the edit did not touch keeps its anchor wherever it sits; only
+    // the replaced line is re-anchored fresh. The greedy walk used to restart
+    // the anchor sequence at the edit point and relabel every later line.
+    assert_eq!(edited.hashes[0], before[0], "the survivor before the edit");
+    assert_ne!(edited.hashes[1], before[1], "the replaced line is fresh");
+    assert_eq!(edited.hashes[2], before[2], "a survivor after the edit");
+    assert_eq!(edited.hashes[3], before[3], "a survivor after the edit");
 }
 
 #[test]
@@ -234,11 +233,16 @@ fn apply_edits_multiple_disjoint_ranges() {
     ];
     let edited = apply_edits(content, &edits).unwrap();
     assert_eq!(edited.content, "ONE\ntwo\nTHREE\nfour\nfive\n");
-    // The edited lines (0 and 2) get fresh anchors; the untouched lines 1 and
-    // 3 — which fall after the first edit point — are re-allocated by the LCS
-    // reanchor, so they do not keep the pre-edit anchors.
-    assert_ne!(edited.hashes[0], hashes[0]);
-    assert_ne!(edited.hashes[2], hashes[2]);
+    // Only the replaced lines are re-anchored. The survivors between the two
+    // ranges and after them keep the anchors they were served.
+    assert_ne!(edited.hashes[0], hashes[0], "the first replaced line");
+    assert_eq!(
+        edited.hashes[1], hashes[1],
+        "the survivor between the ranges"
+    );
+    assert_ne!(edited.hashes[2], hashes[2], "the second replaced line");
+    assert_eq!(edited.hashes[3], hashes[3], "a survivor after both ranges");
+    assert_eq!(edited.hashes[4], hashes[4], "a survivor after both ranges");
     // Removed lines are the union of both ranges, in order.
     assert_eq!(edited.removed_lines, vec!["one", "three"]);
 }

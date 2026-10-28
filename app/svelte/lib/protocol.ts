@@ -61,11 +61,25 @@ export interface SessionMeta {
 
 export type EntryStatus = 'ok' | 'interrupted';
 
+// EntryKind in Rust: the kinds v0 defines plus `Other`, which carries any other
+// kind verbatim — the `(string & {})` arm keeps completion for the known ones
+// while still admitting a kind an older client has never heard of.
+export type EntryKind =
+  | 'user'
+  | 'assistant'
+  | 'tool'
+  | 'system'
+  | 'om'
+  | 'subagent'
+  | 'spawn-snapshot'
+  | 'diagnostic'
+  | (string & {});
+
 // The snapshot's entry metadata: everything the entry tree needs, no payload.
 export interface EntryMeta {
   id: string;
   parent: string | null;
-  kind: string;
+  kind: EntryKind;
   timestamp: number;
   size: number;
   preview: string;
@@ -83,7 +97,7 @@ export interface BlobRef {
 export interface ViewEntry {
   id: string;
   parent: string | null;
-  kind: string;
+  kind: EntryKind;
   timestamp: number;
   payload: unknown;
   blob: BlobRef | null;
@@ -104,6 +118,81 @@ export type SubagentPayload =
   | { event: 'state'; state: 'stopped'; by: string }
   | { event: 'notify'; text: string; done: boolean; output?: Record<string, unknown>; waiting_on?: string };
 
+// How a provider stream ended (ADR-0034 record vocabulary). Distinct from the
+// 'stream_end' event, which says a turn settled after the OM pass.
+export type StreamOutcome =
+  | 'completed'
+  | 'length'
+  | 'idle_timeout'
+  | 'eof_without_done'
+  | 'mid_stream_error'
+  | 'killed';
+
+const streamOutcomes: StreamOutcome[] = [
+  'completed',
+  'length',
+  'idle_timeout',
+  'eof_without_done',
+  'mid_stream_error',
+  'killed'
+];
+
+// A wire value read as a stream ending (#307); anything else is not one.
+export function asStreamOutcome(value: unknown): StreamOutcome | undefined {
+  return streamOutcomes.find((o) => o === value);
+}
+
+// What an ending reads like in prose: one vocabulary for the card's badge and
+// the diagnostic feed, so the same cut is spelled the same place to place (#307).
+export const streamOutcomeLabels: Record<StreamOutcome, string> = {
+  completed: 'finished cleanly',
+  length: 'output cap',
+  idle_timeout: 'stream went quiet',
+  eof_without_done: 'stream ended early',
+  mid_stream_error: 'provider error mid-stream',
+  killed: 'stopped'
+};
+
+// The cut nobody asked for, or null when the ending is neither: a cut is an
+// ending neither clean nor willed. The core decides the same way in `cutoff()`
+// (#307, plan §6.11).
+export function providerCutoff(value: unknown): StreamOutcome | null {
+  const ending = asStreamOutcome(value);
+  if (ending === undefined || ending === 'completed' || ending === 'killed') {
+    return null;
+  }
+  return ending;
+}
+
+// The diagnostic codes this build knows (ADR-0034). Codes are append-only:
+// a code from a newer core arrives through the escape arm and still renders,
+// by its own name.
+export type DiagnosticCode =
+  | 'model_changed'
+  | 'gate_unavailable'
+  | 'context_overflow'
+  | 'gate_attempt'
+  | 'gate_failed'
+  | 'om_stalled'
+  | 'provider_rejected'
+  | 'turn_cutoff';
+
+// A fact the harness recorded about a session: the code is the discriminant
+// and the GUI composes the sentence, so no display string crosses the seam.
+export type Diagnostic =
+  | { code: 'model_changed'; from?: string; to: string }
+  | { code: 'gate_unavailable'; model: string; missing: string[] }
+  | { code: 'context_overflow'; prompt: number; budget: number }
+  | { code: 'gate_attempt'; command: string; retries: number; max: number; output: string }
+  | { code: 'gate_failed'; command: string; retries: number }
+  | { code: 'om_stalled'; pending: number; activation: number }
+  | { code: 'provider_rejected'; status: number; body: string }
+  | { code: 'turn_cutoff'; model: string; ended_by: StreamOutcome; blocks: number }
+  // What a core reads back when a stored code is not one it knows: the record
+  // on disk keeps its own code, this is the re-emitted form (Diagnostic::Unknown).
+  | { code: 'unknown'; unknown_code: string }
+  | { code: string };
+
 // The flat card shape the transcript renders: a ViewEntry payload decoded
 // (or the snapshot's metadata skeleton before a paged read fills it in).
 // One variant per kind (C9); the last is the escape for a kind the card
@@ -116,6 +205,7 @@ export type Entry =
   | { id: string; kind: 'system'; text: string }
   | { id: string; kind: 'spawn-snapshot'; text: string }
   | { id: string; kind: 'subagent'; text: string; payload?: SubagentPayload }
+  | { id: string; kind: 'diagnostic'; text: string; diagnostic: Diagnostic }
   | AnyEntry;
 
 // A streamed assistant message in flight: the live slot until stream_end
@@ -127,6 +217,9 @@ export type MessageEntry = {
   reasoning?: string;
   calls?: string[];
   usage?: Usage;
+  // How the provider's response ended, as the provider told it; absent on a
+  // record from before the field existed.
+  endedBy?: StreamOutcome;
 };
 
 // The escape variant: every variant's fields, all optional — kinds the
@@ -212,14 +305,14 @@ export interface ChildActivity {
 export interface ActivityGroup {
   id: string;
   range: string;
-  kind: string | null;
+  kind?: string;
   content: string;
 }
 
 export interface ActivityEntry {
   role: string;
-  tool: string | null;
-  status: string | null;
+  tool?: string;
+  status?: string;
   text: string;
 }
 export type SubagentEventKind =
@@ -374,7 +467,7 @@ export type SystemEventKind =
 
 export type Event =
   | { type: 'stream_start'; workspace: string; session: string; call_id: string }
-  | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null; duration_secs: number | null }
+  | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null; duration_secs?: number }
   // A transcript entry is upserted: the exact file-line view the session log
   // holds (or will hold when finalized). The store sets map[id] = entry — the
   // only live transcript op (ADR-0008). Carries the streaming assistant entry

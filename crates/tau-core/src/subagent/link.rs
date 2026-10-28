@@ -62,7 +62,6 @@ impl ChildLink {
         self.supervisor
             .children
             .lock()
-            .expect("children map: no panic while the lock is held")
             .get(&self.handle)
             .is_some_and(|c| c.rest_requested())
     }

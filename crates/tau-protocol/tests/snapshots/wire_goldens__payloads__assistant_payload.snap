@@ -6,6 +6,7 @@ expression: p
   "text": "done",
   "reasoning": "",
   "interrupted": false,
+  "stop_reason": "completed",
   "calls": [
     {
       "id": "f1",

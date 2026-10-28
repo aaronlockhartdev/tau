@@ -1,9 +1,10 @@
 pub use self::commit::TurnEndAction;
 use super::{
-    Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore, boundary_ts,
-    branch_entries, entry_text, idle_gap_secs, is_raw, om, transcript,
+    Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore, boundary_ts, entry_text,
+    idle_gap_secs, is_raw, om, transcript,
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
+use tau_protocol::EntryKind;
 
 /// The assembled main-turn context: the stable `instructions` (system prompt)
 /// plus the OM-derived `input` items — the one-shot continuation hint today,
@@ -15,13 +16,11 @@ pub struct AssembledContext {
     pub om_input_items: Vec<InputEntry>,
 }
 
-/// The session's active branch: every entry, then the leaf's branch. The
-/// whole log by design (#302): the store reads by position or cursor, not by
-/// parent chain (spec §3).
+/// The session's active branch, walked by the log itself. The whole log by
+/// design (#302): the branch is the parent chain from the leaf, and the
+/// store reads by position (spec §3).
 fn branch_of(store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-    let all = store.entries_range(0, usize::MAX)?;
-    let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
-    Ok(branch_entries(&all, leaf.as_deref()))
+    store.branch().map_err(OmError::Session)
 }
 
 /// The raw entries strictly after `cursor_id` in `branch` (all of them when the
@@ -353,7 +352,7 @@ impl OmState {
     /// no result is orphaned from its call (spec §4).
     #[must_use]
     pub fn raw_window_from(&self, entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
-        let branch = branch_entries(entries, leaf_id);
+        let branch = crate::session::branch(entries, leaf_id);
         let unobserved = match self.record.cursor.as_ref() {
             Some(cursor) => match branch.iter().position(|e| e.id == cursor.entry_id) {
                 Some(i) => &branch[i + 1..],
@@ -366,7 +365,7 @@ impl OmState {
         // advance past the leading tool run (spec §4 cut rule). No floor prune:
         // unsummarized raw stays in the window until promotion advances the cursor.
         while let Some(entry) = raw.first() {
-            if entry.kind == "tool" {
+            if entry.kind == EntryKind::Tool {
                 raw.remove(0);
             } else {
                 break;

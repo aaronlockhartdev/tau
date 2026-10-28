@@ -15,10 +15,13 @@
 
 mod diagnostics;
 pub mod encoding;
+mod lcs;
 pub mod line_endings;
 pub mod pin_store;
 pub mod registry;
 
+#[cfg(test)]
+mod properties;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -614,7 +617,7 @@ fn lcs_reanchor(
 ) -> Result<Vec<String>, TooManyLines> {
     // The caller's anchor set (the registry snapshot) can be shorter than the
     // file when lines were appended out-of-band since the last app write;
-    // the walk must cover no more lines than there are anchors to re-use, or
+    // the carry must cover no more lines than there are anchors to re-use, or
     // `old_hashes[i]` below runs off the end.
     let old_sums: Vec<String> = old_lines
         .iter()
@@ -623,19 +626,9 @@ fn lcs_reanchor(
         .collect();
     let new_sums: Vec<String> = new_lines.iter().map(|l| line_checksum(l)).collect();
 
-    // In-order checksum matching (the LCS walk): for each new line, find the
-    // next old line (after the match cursor) with the same checksum.
-    let mut cursor = 0usize;
-    let mut matched: Vec<Option<usize>> = vec![None; new_lines.len()];
-    for (j, s) in new_sums.iter().enumerate() {
-        while cursor < old_sums.len() && old_sums[cursor] != *s {
-            cursor += 1;
-        }
-        if cursor < old_sums.len() && old_sums[cursor] == *s {
-            matched[j] = Some(cursor);
-            cursor += 1;
-        }
-    }
+    // The one alignment primitive (#298): the maximal in-order pairing, so an
+    // edit churns no more anchors than the change itself forces.
+    let matched = lcs::carry(&old_sums, &new_sums);
 
     let mut used = vec![false; HASH_SPACE];
     for h in old_hashes {

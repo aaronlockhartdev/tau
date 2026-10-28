@@ -1,7 +1,6 @@
-use crate::agent::{
-    AgentError, AgentSession, Entry, FunctionCall, KIND_TOOL, Ordering, Value, tools,
-};
+use crate::agent::{AgentError, AgentSession, Entry, FunctionCall, Ordering, Value, tools};
 use std::collections::{HashMap, HashSet};
+use tau_protocol::EntryKind;
 
 /// #186: the batch indices of `edit` calls whose target file is also
 /// targeted by another `edit` call in the same batch. They would share one
@@ -45,15 +44,10 @@ impl AgentSession {
     }
 
     fn cancelled_tool_entry(&self, call: &FunctionCall) -> Result<(), AgentError> {
-        let entry_id = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held")
-            .store
-            .mint_id();
+        let entry_id = self.inner.lock().store.mint_id();
         self.append_id(
             &entry_id,
-            KIND_TOOL,
+            EntryKind::Tool,
             tau_protocol::payload::ToolPayload {
                 call_id: call.call_id.clone(),
                 name: call.name.clone(),
@@ -81,15 +75,10 @@ impl AgentSession {
             if bad_edits.contains(&ci) {
                 // Same file already edited earlier in this batch: refuse
                 // before dispatch — the file is left untouched.
-                let entry_id = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held")
-                    .store
-                    .mint_id();
+                let entry_id = self.inner.lock().store.mint_id();
                 self.append_id(
                     &entry_id,
-                    KIND_TOOL,
+                    EntryKind::Tool,
                     tau_protocol::payload::ToolPayload {
                         call_id: call.call_id.clone(),
                         name: call.name.clone(),
@@ -118,10 +107,7 @@ impl AgentSession {
             // wire-only (empty output); the result persists the same id, so
             // the file keeps one line for the call.
             let (entry_id, parent, timestamp, upsert) = {
-                let mut inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut inner = self.inner.lock();
                 let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
                 (
                     inner.store.mint_id(),
@@ -134,7 +120,7 @@ impl AgentSession {
                 hook(&Entry {
                     id: entry_id.clone(),
                     parent: parent.clone(),
-                    kind: KIND_TOOL.to_owned(),
+                    kind: EntryKind::Tool,
                     timestamp,
                     payload: tau_protocol::payload::ToolPayload {
                         call_id: call.call_id.clone(),
@@ -172,10 +158,7 @@ impl AgentSession {
             // records a state entry; a spawn reads the parent's OM
             // record), and the lock is not reentrant.
             let (sup, link, cwd, image_max, image_pixels) = {
-                let inner = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let inner = self.inner.lock();
                 (
                     inner.subagents.clone(),
                     inner.child.clone(),
@@ -208,7 +191,7 @@ impl AgentSession {
             let status = result.status();
             self.append_id(
                 &entry_id,
-                KIND_TOOL,
+                EntryKind::Tool,
                 tau_protocol::payload::ToolPayload {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),

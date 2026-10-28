@@ -5,8 +5,10 @@
 
 pub mod agent;
 pub mod agent_type;
+mod clock;
 pub mod config;
 pub mod context;
+pub mod diagnostics;
 pub mod gate;
 pub mod harness;
 pub mod hashline;
@@ -18,3 +20,4 @@ pub mod session;
 pub mod skills;
 pub mod subagent;
 pub mod tools;
+mod truncate;

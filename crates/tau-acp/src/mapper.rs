@@ -7,10 +7,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde_json::{Value, json};
+use tau_protocol::EntryKind;
 use tau_protocol::snapshot::ViewEntry;
 
-const KIND_ASSISTANT: &str = "assistant";
-const KIND_TOOL: &str = "tool";
 const TITLE_CAP: usize = 80;
 
 #[derive(Default)]
@@ -31,15 +30,20 @@ pub struct Mapper {
 impl Mapper {
     /// The updates one entry upsert owes the client (empty when nothing new).
     pub fn on_entry(&mut self, entry: &ViewEntry) -> Vec<Value> {
-        match entry.kind.as_str() {
-            KIND_ASSISTANT => self.on_assistant(entry),
-            KIND_TOOL => self.on_tool(entry),
+        match entry.kind {
+            EntryKind::Assistant => self.on_assistant(entry),
+            EntryKind::Tool => self.on_tool(entry),
             // User entries surface (user_message_chunk): the headless
             // episode loop's continuation prompts are user entries and the
             // benchmark forensics (acp-events.jsonl) must see them.
-            "user" => Self::on_user(entry),
+            EntryKind::User => Self::on_user(entry),
             // system/subagent entries: no ACP v0 surface.
-            _ => Vec::new(),
+            EntryKind::System
+            | EntryKind::Om
+            | EntryKind::Subagent
+            | EntryKind::SpawnSnapshot
+            | EntryKind::Diagnostic
+            | EntryKind::Other(_) => Vec::new(),
         }
     }
 
@@ -186,7 +190,7 @@ mod tests {
         ViewEntry {
             id: id.to_owned(),
             parent: None,
-            kind: kind.to_owned(),
+            kind: EntryKind::parse(kind),
             timestamp: 1,
             payload,
             blob: None,

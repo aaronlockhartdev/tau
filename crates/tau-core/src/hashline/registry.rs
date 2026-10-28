@@ -129,7 +129,9 @@ impl Registry {
             .map(|fs| (fs.anchors.clone(), fs.checksums.clone()))
             .or_else(|| self.seed_from_store(path, &checksums));
         let matched = match &prev {
-            Some((_anchors, checksums_prev)) => match_anchors(checksums_prev, &checksums),
+            Some((_anchors, checksums_prev)) => {
+                crate::hashline::lcs::carry(checksums_prev, &checksums)
+            }
             None => vec![None; lines.len()],
         };
 
@@ -592,42 +594,6 @@ fn case_fold_hint(candidates: &[(String, String)]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(" Anchors are case-sensitive; {list} differs only in case.")
-}
-
-/// In-order LCS over line checksums: the indices of old lines that match new
-/// lines in order. Uses a standard DP table — a changed line in the middle
-/// does not prevent later unchanged lines from being matched. Shared with the
-/// pin store (`pin_store::reanchor`) so both re-anchor identically.
-pub(crate) fn match_anchors(prev_checksums: &[String], checksums: &[String]) -> Vec<Option<usize>> {
-    let n = prev_checksums.len();
-    let m = checksums.len();
-    if n == 0 || m == 0 {
-        return vec![None; m];
-    }
-    let mut table = vec![vec![0usize; m + 1]; n + 1];
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            table[i][j] = if prev_checksums[i] == checksums[j] {
-                table[i + 1][j + 1] + 1
-            } else {
-                table[i + 1][j].max(table[i][j + 1])
-            };
-        }
-    }
-    let mut matched: Vec<Option<usize>> = vec![None; m];
-    let (mut i, mut j) = (0usize, 0usize);
-    while i < n && j < m {
-        if prev_checksums[i] == checksums[j] {
-            matched[j] = Some(i);
-            i += 1;
-            j += 1;
-        } else if table[i + 1][j] >= table[i][j + 1] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    matched
 }
 
 #[cfg(test)]

@@ -389,9 +389,7 @@ fn write_atomic_bytes_inner(
         .unwrap_or_else(|| Path::new("."));
     let mut temp = dir.to_path_buf();
     {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_nanos());
+        let nanos = crate::clock::now_ns();
         temp = temp.join(format!(".tmp-{}-{nanos}", std::process::id()));
     }
     let mut file = std::fs::OpenOptions::new()

@@ -15,7 +15,7 @@ async fn a_queue_item_remove_deletes_and_re_projects_the_queue() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     // Two follow-ups queue behind the in-flight turn.
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
@@ -44,7 +44,7 @@ async fn a_queue_item_remove_deletes_and_re_projects_the_queue() {
     // The projection re-emitted by the command drops the deleted item.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let events = collected.lock().unwrap().clone();
+        let events = collected.lock().clone();
         let last = events
             .iter()
             .filter_map(|e| match e {
@@ -85,7 +85,7 @@ async fn an_out_of_bounds_queue_item_remove_is_an_error() {
         provider::canned_slow(&canned_body(), 600),
         TurnConfig::default(),
     );
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     // Empty queue: any index is out of bounds.
     let err = core
         .dispatch(Command::QueueItemRemove {
@@ -116,7 +116,7 @@ async fn a_stop_with_queued_messages_leaves_them_and_starts_no_new_turn() {
         TurnConfig::default(),
     );
     let collected = collect_events(&core);
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id.clone(),
         text: "hang".into(),
@@ -143,7 +143,7 @@ async fn a_stop_with_queued_messages_leaves_them_and_starts_no_new_turn() {
     .unwrap();
     // Let the in-flight turn settle and (in the bug) the drain run.
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-    let events = collected.lock().unwrap().clone();
+    let events = collected.lock().clone();
     // Both queued items are still queued.
     let last_queue = events
         .iter()

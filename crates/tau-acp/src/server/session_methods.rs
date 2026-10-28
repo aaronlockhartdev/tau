@@ -83,28 +83,24 @@ pub(super) async fn session_new(server: &Server, rpc: &Rpc) {
         result["configOptions"] = json!([model_option(&models, &current)]);
         context_window = server.config.context_window_for(cwd, &current).await;
     }
-    server
-        .registry
-        .lock()
-        .expect("session registry: no panic while the lock is held")
-        .insert(
-            session.id.clone(),
-            SessionState {
-                workspace: workspace.id,
-                cwd: cwd.to_owned(),
-                mapper: Mapper::default(),
-                in_flight: false,
-                pending: None,
-                saw_stream_end: false,
-                saw_interrupted: false,
-                cancel_requested: false,
-                yolo,
-                context_window,
-                task: None,
-                last_assistant: None,
-                headless: crate::headless::EpisodeState::default(),
-            },
-        );
+    server.registry.lock().insert(
+        session.id.clone(),
+        SessionState {
+            workspace: workspace.id,
+            cwd: cwd.to_owned(),
+            mapper: Mapper::default(),
+            in_flight: false,
+            pending: None,
+            saw_stream_end: false,
+            saw_interrupted: false,
+            cancel_requested: false,
+            yolo,
+            context_window,
+            task: None,
+            last_assistant: None,
+            headless: crate::headless::EpisodeState::default(),
+        },
+    );
     server.out.send(&transport::result(id, &result));
 }
 
@@ -200,10 +196,7 @@ pub(super) async fn session_prompt(server: &Server, rpc: &Rpc) {
     // response (the settle signal would find no pending sender).
     let (tx, rx) = oneshot::channel();
     {
-        let mut reg = server
-            .registry
-            .lock()
-            .expect("session registry: no panic while the lock is held");
+        let mut reg = server.registry.lock();
         let Some(state) = reg.get_mut(session_id) else {
             drop(reg);
             server.out.send(&transport::error(
@@ -263,10 +256,7 @@ pub(super) async fn session_prompt(server: &Server, rpc: &Rpc) {
             Outcome::Error(message) => transport::error(&id, INTERNAL_ERROR, &message),
         };
         waiter.out.send(&message);
-        let mut reg = waiter
-            .registry
-            .lock()
-            .expect("session registry: no panic while the lock is held");
+        let mut reg = waiter.registry.lock();
         if let Some(state) = reg.get_mut(&session_id) {
             state.in_flight = false;
         }
@@ -288,10 +278,7 @@ fn begin_headless_run(state: &mut crate::sessions::SessionState, text: &str) {
 /// Release the turn lock after a dispatch refusal: a refused send never
 /// settles, so the lock is released here instead of at the settle.
 fn release_turn_lock(server: &Server, session_id: &str) {
-    let mut reg = server
-        .registry
-        .lock()
-        .expect("session registry: no panic while the lock is held");
+    let mut reg = server.registry.lock();
     if let Some(state) = reg.get_mut(session_id) {
         state.in_flight = false;
         state.pending = None;
@@ -311,10 +298,7 @@ pub(super) async fn session_cancel(server: &Server, rpc: &Rpc) {
     // The cancel flag lands before the stop: a settle the abort surfaces
     // as a `System` error still answers `cancelled` (N3).
     {
-        let mut reg = server
-            .registry
-            .lock()
-            .expect("session registry: no panic while the lock is held");
+        let mut reg = server.registry.lock();
         if let Some(state) = reg.get_mut(session_id) {
             state.cancel_requested = true;
         }
@@ -364,10 +348,7 @@ pub(super) async fn set_config_option(server: &Server, rpc: &Rpc) {
         return;
     };
     let cwd = {
-        let reg = server
-            .registry
-            .lock()
-            .expect("session registry: no panic while the lock is held");
+        let reg = server.registry.lock();
         let Some(state) = reg.get(session_id) else {
             drop(reg);
             server.out.send(&transport::error(
@@ -398,10 +379,7 @@ pub(super) async fn set_config_option(server: &Server, rpc: &Rpc) {
         // `usage_update` sizes against the new model.
         let context_window = server.config.context_window_for(&cwd, value).await;
         {
-            let mut reg = server
-                .registry
-                .lock()
-                .expect("session registry: no panic while the lock is held");
+            let mut reg = server.registry.lock();
             if let Some(state) = reg.get_mut(session_id) {
                 state.context_window = context_window;
             }

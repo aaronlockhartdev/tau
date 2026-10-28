@@ -11,7 +11,7 @@ use crate::config::Gates;
 use std::path::Path;
 use std::time::Duration;
 
-/// The cap on the check output carried into the system entry and the repair
+/// The cap on the check output carried into the `gate_attempt` record and the
 /// message: a failing build/test suite can emit megabytes, and the record
 /// (and the model's context) only needs the head of it.
 const MAX_OUTPUT: usize = 4000;
@@ -72,51 +72,8 @@ pub async fn run(gates: &Gates, cwd: &Path) -> GateResult {
     }
     GateResult {
         passed: output.status.success(),
-        output: truncate(&text),
+        output: crate::truncate::head_lines(&text, MAX_OUTPUT),
     }
-}
-
-/// Truncate the check output to `MAX_OUTPUT` chars, marking the cut (#219:
-/// on a line boundary — the last visible line is complete, and the marker
-/// rides the end of it).
-fn truncate(s: &str) -> String {
-    if s.chars().count() <= MAX_OUTPUT {
-        return s.to_owned();
-    }
-    let mut out = s.to_owned();
-    let mut count = 0;
-    for (i, _) in out.char_indices() {
-        count += 1;
-        if count > MAX_OUTPUT {
-            let prefix = out.get(..i).expect("char_indices yields a boundary");
-            let cut = prefix.rfind('\n').map_or(0, |j| j + 1);
-            out.truncate(cut);
-            let _ = out.pop();
-            out.push('…');
-            break;
-        }
-    }
-    out
-}
-
-/// The system entry's note recording a failed check (the session's record).
-#[must_use]
-pub fn failure_note(gates: &Gates, result: &GateResult, attempt: u32) -> String {
-    format!(
-        "completion gate: check `{}` failed (attempt {attempt}): {}",
-        gates.command, result.output
-    )
-}
-
-/// The final system entry's note: the retries are exhausted and the session
-/// is marked `gate_failed`.
-#[must_use]
-pub fn failed_note(gates: &Gates, result: &GateResult, max_retries: u32) -> String {
-    format!(
-        "completion gate: check `{}` failed after {max_retries} repair attempts — the session \
-is marked gate_failed. Last output: {}",
-        gates.command, result.output
-    )
 }
 
 /// The steering-lane message that bounces the repair turn: the model sees the
@@ -157,34 +114,6 @@ pub fn with_section(prompt: &mut String, gates: &Option<crate::config::Gates>) {
         prompt.push_str("\n\n");
         prompt.push_str(&section(g));
     }
-}
-
-/// The gate state a reopened session resumes (spec §5.3): the record is
-/// the single source of truth, so the state is derived from the
-/// transcript, not stored a second time. A pass records nothing, so the
-/// newest terminal gate note (the retries-exhausted record) on the active
-/// branch is the session's latest terminal outcome.
-pub(crate) fn initial_gate_failed(
-    store: &mut crate::session::SessionStore,
-) -> Result<bool, crate::session::Error> {
-    let entries: Vec<crate::session::Entry> = store
-        .entries_range_cached(0, usize::MAX)?
-        .into_iter()
-        .map(|(e, _)| e)
-        .collect();
-    let leaf = store.leaf_cached()?.map(|e| e.id);
-    Ok(
-        crate::om_integration::branch_entries(&entries, leaf.as_deref())
-            .iter()
-            .rev()
-            .any(|e| {
-                e.kind == crate::agent::KIND_SYSTEM
-                    && e.payload
-                        .get("note")
-                        .and_then(|n| n.as_str())
-                        .is_some_and(|n| n.contains("marked gate_failed"))
-            }),
-    )
 }
 
 #[cfg(test)]
@@ -250,33 +179,6 @@ mod tests {
             "got: {:?}",
             result.output
         );
-    }
-
-    #[test]
-    fn the_output_is_truncated() {
-        let big = "x".repeat(MAX_OUTPUT + 100);
-        let out = truncate(&big);
-        assert!(out.chars().count() <= MAX_OUTPUT + 20);
-        assert!(out.ends_with('…'));
-        // Short output is untouched.
-        assert_eq!(truncate("short"), "short");
-    }
-
-    #[test]
-    fn the_output_is_truncated_at_a_line_boundary() {
-        // #219: the cut lands on a line boundary — the last visible line is
-        // complete and the marker follows on its own line.
-        let big = (0..600)
-            .map(|i| format!("line {i:03}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(big.chars().count() > MAX_OUTPUT);
-        let out = truncate(&big);
-        assert!(out.ends_with('…'));
-        let body = out.strip_suffix('…').expect("the marker");
-        assert!(!body.ends_with('\n'));
-        assert!(body.ends_with("line 443"), "last visible line: {out:?}");
-        assert!(out.chars().count() <= MAX_OUTPUT + 20);
     }
 
     #[test]

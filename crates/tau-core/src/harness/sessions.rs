@@ -3,10 +3,11 @@
 use super::thinking::thinking_adjusted_max_output;
 use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
-    MAX_TITLE_LEN, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta, SessionRole,
-    SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner, session_name,
-    skill_info, unique_name,
+    MAX_TITLE_LEN, ModelAddress, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
+    SessionRole, SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner,
+    session_name, skill_info, unique_name,
 };
+use tau_protocol::EntryKind;
 
 impl Core {
     /// The workspace's skill registry (ticket #28): the per-workspace
@@ -15,21 +16,11 @@ impl Core {
     /// slot between opens (ticket #31), so a stale list never outlives a
     /// change.
     pub(crate) fn skills_of(&self, ws: &Workspace) -> Vec<SkillInfo> {
-        if let Some(reg) = self
-            .skills
-            .lock()
-            .expect("skills registry: no panic while the lock is held")
-            .get(&ws.id)
-        {
+        if let Some(reg) = self.skills.lock().get(&ws.id) {
             return reg.clone();
         }
         self.refresh_skills(ws);
-        self.skills
-            .lock()
-            .expect("skills registry: no panic while the lock is held")
-            .get(&ws.id)
-            .cloned()
-            .unwrap_or_default()
+        self.skills.lock().get(&ws.id).cloned().unwrap_or_default()
     }
 
     /// Re-run discovery for `ws`, replace its registry slot, and emit the
@@ -46,10 +37,7 @@ impl Core {
             Path::new(&ws.cwd),
         );
         let reg: Vec<SkillInfo> = skills.iter().map(skill_info).collect();
-        self.skills
-            .lock()
-            .expect("skills registry: no panic while the lock is held")
-            .insert(ws.id.clone(), reg.clone());
+        self.skills.lock().insert(ws.id.clone(), reg.clone());
         self.emit(Event::SkillListChanged {
             workspace: ws.id.clone(),
             skills: reg,
@@ -75,13 +63,7 @@ impl Core {
             Some((n, a)) => (n, a.trim()),
             None => (rest, ""),
         };
-        let ws = self.workspace(
-            &live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held")
-                .workspace,
-        )?;
+        let ws = self.workspace(&live.meta.lock().workspace)?;
         let Some(skill) = self.skills_of(&ws).into_iter().find(|s| s.name == name) else {
             return Err(ProtocolError::Other {
                 message: format!("unknown skill '{name}' — the send was not recorded"),
@@ -119,16 +101,12 @@ impl Core {
     /// The (workspace, session-meta) pair owning a non-archived session,
     /// scanning every open workspace — the one home for that lookup.
     pub(crate) fn owning_session(&self, id: &str) -> Option<(Workspace, SessionMeta)> {
-        self.workspaces
-            .lock()
-            .expect("workspaces map: no panic while the lock is held")
-            .values()
-            .find_map(|w| {
-                Self::session_access(w)
-                    .into_iter()
-                    .find(|m| m.id == id && !m.archived)
-                    .map(|m| (w.clone(), m))
-            })
+        self.workspaces.lock().values().find_map(|w| {
+            Self::session_access(w)
+                .into_iter()
+                .find(|m| m.id == id && !m.archived)
+                .map(|m| (w.clone(), m))
+        })
     }
 
     /// A name free of collisions among the workspace's sessions (the file is
@@ -157,12 +135,7 @@ impl Core {
                 "session {child} is a sub-agent — archive its parent session to archive it"
             );
         };
-        if self
-            .sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .contains_key(parent)
-        {
+        if self.sessions.lock().contains_key(parent) {
             return format!(
                 "session {child} is a sub-agent — archive its parent session {parent} to archive it"
             );
@@ -205,7 +178,6 @@ impl Core {
         if live.turn.load(Ordering::SeqCst) {
             self.sessions
                 .lock()
-                .expect("sessions map: no panic while the lock is held")
                 .insert(session.to_owned(), live.clone());
             return Err(ProtocolError::Other {
                 message: format!(
@@ -309,14 +281,12 @@ impl Core {
         let agent = AgentSession::launch(
             store,
             SessionRole::Root {
-                core: Some(self_arc),
-                workspace: Some(workspace.clone()),
-                config: Some(config),
+                core: self_arc,
+                workspace: workspace.clone(),
+                config,
                 provider: provider.clone(),
-                supervisor: None,
-                system_prompt: None,
                 base_prompt,
-                first_provider: Some((name, first)),
+                first_provider: (name, first),
             },
         )?;
         let meta = SessionMeta {
@@ -338,22 +308,14 @@ impl Core {
             provider,
             cwd: PathBuf::from(&workspace.cwd),
         });
-        let id = live
-            .meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .id
-            .clone();
-        self.sessions
-            .lock()
-            .expect("sessions map: no panic while the lock is held")
-            .insert(id.clone(), live.clone());
+        let id = live.meta.lock().id.clone();
+        self.sessions.lock().insert(id.clone(), live.clone());
         Ok(meta)
     }
 }
 
 /// #267: mint `status: "error"` tool entries for a dangling assistant — one
-/// whose `calls` have no following `KIND_TOOL` entry per `call_id` (the turn
+/// whose `calls` have no following `EntryKind::Tool` entry per `call_id` (the turn
 /// died mid-execution). Runs at session re-open, before the store is
 /// handed to `build_live`, so the repaired file is what every later turn
 /// reads.
@@ -368,7 +330,7 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
         return Ok(());
     };
     let leaf = leaf.clone();
-    if leaf.kind != crate::agent::KIND_ASSISTANT {
+    if leaf.kind != EntryKind::Assistant {
         return Ok(());
     }
 
@@ -385,7 +347,7 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
         })?;
     let covered: std::collections::HashSet<&str> = after
         .iter()
-        .filter(|e| e.kind == crate::agent::KIND_TOOL)
+        .filter(|e| e.kind == EntryKind::Tool)
         .filter_map(|e| e.payload.get("call_id").and_then(Value::as_str))
         .collect();
     for call in &payload.calls {
@@ -396,7 +358,7 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
         store
             .append_entry(
                 &entry_id,
-                crate::agent::KIND_TOOL,
+                EntryKind::Tool,
                 ToolPayload {
                     call_id: call.call_id.clone(),
                     name: call.name.clone(),
@@ -427,11 +389,12 @@ pub(crate) fn derive_turn(
     model: &str,
     session: &str,
 ) -> TurnConfig {
-    let def = provider.models.get(model);
+    let key = config.model_key(model);
+    let def = provider.models.get(key);
     let level = config
         .thinking
         .levels
-        .get(model)
+        .get(key)
         .copied()
         .unwrap_or(config.thinking.level);
     let reasoning = match def.and_then(|d| d.reasoning) {
@@ -459,6 +422,12 @@ pub(crate) fn derive_turn(
         context_window: def.and_then(|d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
         image_max_pixels: Some(config.limits.image.max_pixels),
+        // Resolved here, applied at the request: the id the session carries and
+        // the key the endpoint is addressed by (§6.7).
+        address: Some(ModelAddress {
+            id: model.to_owned(),
+            key: key.to_owned(),
+        }),
     }
 }
 

@@ -9,14 +9,7 @@ use crate::om::{self, Cursor, OmConfig, OmRecord};
 use crate::session::{Entry, SessionStore};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// The session entry kind that carries the OM record (spec §4: the session
-/// file carries the record; the newest entry is the current state).
-pub const KIND_OM: &str = "om";
-
-/// The child session's first entry at a compacted spawn (ADR-0004): points
-/// at the parent session and the source range the frozen prefix covers.
-pub const KIND_SPAWN_SNAPSHOT: &str = "spawn-snapshot";
+pub(crate) use tau_protocol::EntryKind;
 
 /// Fixed idle timeout for buffered-chunk activation (spec §4: v0 uses a
 /// fixed idle timeout, not provider-cache-TTL auto-mapping).
@@ -94,22 +87,13 @@ impl OmState {
     /// maintained in place). A newest om entry that cannot be decoded
     /// (corrupt payload, missing sidecar) degrades to an empty record —
     pub fn load_record(store: &mut SessionStore) -> Result<OmRecord, OmError> {
-        // Snapshot consistency: resolve the leaf BEFORE the entry read. The
-        // walk runs over the entry list from that read, and the leaf's
-        // ancestors are all older entries — an append-only file guarantees
-        // they are in the list. Reading the leaf after the list lets a
-        // concurrent writer append a new leaf between the two reads, which
-        // strands the walk on an id the list does not contain.
-        let leaf = store.leaf_cached()?.map(|e| e.id);
-        let entries: Vec<Entry> = store
-            .entries_range_cached(0, usize::MAX)?
-            .into_iter()
-            .map(|(e, _)| e)
-            .collect();
-        Ok(branch_entries(&entries, leaf.as_deref())
+        // The walk's snapshot ordering — leaf before entries — is guaranteed
+        // by `SessionStore::branch`.
+        let branch = store.branch()?;
+        Ok(branch
             .into_iter()
             .rev()
-            .find(|e| e.kind == KIND_OM)
+            .find(|e| e.kind == EntryKind::Om)
             .and_then(|e| record_from_entry(store, &e).ok())
             .unwrap_or_default())
     }
@@ -140,7 +124,7 @@ impl OmState {
         let payload = serde_json::to_value(&self.record)
             .map_err(|e| crate::session::Error::Other(e.to_string()))?;
         store
-            .append(KIND_OM, payload, parent.as_deref())
+            .append(EntryKind::Om, payload, parent.as_deref())
             .map(|_| ())
     }
 
@@ -178,31 +162,6 @@ impl OmState {
         self.buffer_cursor = cursor;
         self.buffered = self.record.buffered_chunks.clone();
     }
-}
-
-/// The active branch, root to leaf: the leaf's parent chain walked over the
-/// file-order entries (the cursor is path-scoped, spec §4).
-#[must_use]
-pub fn branch_entries(entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
-    let by_id: std::collections::HashMap<&str, &Entry> =
-        entries.iter().map(|e| (e.id.as_str(), e)).collect();
-    let mut path = Vec::new();
-    let mut cur = leaf_id;
-    while let Some(id) = cur {
-        // Cycle guard: a legitimate chain visits each entry at most once, so
-        // a walk longer than the entry count means a corrupted file (duplicate
-        // ids) — stop instead of looping forever (the live-om 80GB regression).
-        if path.len() >= entries.len() {
-            break;
-        }
-        let Some(entry) = by_id.get(id) else {
-            break;
-        };
-        path.push((*entry).clone());
-        cur = entry.parent.as_deref();
-    }
-    path.reverse();
-    path
 }
 
 /// A fork copies the parent's record at the fork point (observations +
@@ -256,7 +215,7 @@ impl From<crate::session::Error> for OmError {
 /// A raw conversation entry (spec §4: raw = what the Observer observes);
 /// record entries (om, spawn-snapshot, system) are not raw.
 fn is_raw(entry: &Entry) -> bool {
-    matches!(entry.kind.as_str(), "user" | "assistant" | "tool")
+    entry.kind.is_raw()
 }
 
 /// The raw text of an entry for token accounting and transcripts: user and
@@ -314,13 +273,10 @@ fn transcript(entries: &[Entry]) -> String {
     out
 }
 
-/// Epoch millis for the boundary delimiter (no chrono in the dependency
-/// surface; the delimiter needs monotonicity, not a calendar).
+/// Epoch millis for the boundary delimiter: the delimiter needs monotonicity,
+/// not a calendar.
 fn boundary_ts() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis().to_string())
-        .unwrap_or_default()
+    crate::clock::now_ms().to_string()
 }
 
 /// The OM call's sink: OM calls are not user-facing — nothing kills them.
@@ -354,7 +310,7 @@ pub fn seed_compacted_child(
         }
         .to_value();
         let leaf = child.leaf()?.map(|e| e.id);
-        child.append(KIND_SPAWN_SNAPSHOT, payload, leaf.as_deref())?;
+        child.append(EntryKind::SpawnSnapshot, payload, leaf.as_deref())?;
     }
     Ok(OmRecord {
         frozen_prefix: log,
@@ -437,19 +393,24 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Resu
 /// entry (a fresh session).
 #[must_use]
 pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
-    let branch = branch_entries(all, leaf_id);
+    let branch = crate::session::branch(all, leaf_id);
     // Back over the current turn's model output (assistant + tool entries)
     // to its user run, then to the run's first entry. `om` entries are
     // skipped too: a background buffer cycle can commit one mid-episode,
     // after the turn's last model output (ticket #86 P2).
     let mut i = branch.len();
-    while i > 0 && matches!(branch[i - 1].kind.as_str(), "assistant" | "tool" | "om") {
+    while i > 0
+        && matches!(
+            branch[i - 1].kind,
+            EntryKind::Assistant | EntryKind::Tool | EntryKind::Om
+        )
+    {
         i -= 1;
     }
     if i == 0 {
         return 0;
     }
-    while i > 0 && branch[i - 1].kind == "user" {
+    while i > 0 && branch[i - 1].kind == EntryKind::User {
         i -= 1;
     }
     if i == 0 {

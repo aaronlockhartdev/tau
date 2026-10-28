@@ -102,7 +102,7 @@ async fn wake_kinds_follow_the_observed_state() {
         wait_for(|| !matches!(sup.state_info(h).unwrap().state, ChildState::Running));
     }
     // A: the observed done reports its kind and payload.
-    let wakes = bridge.wakes.lock().unwrap();
+    let wakes = bridge.wakes.lock();
     assert!(
         wakes.iter().any(|w| w.kind == WakeKind::Done
             && w.child == a.session_id
@@ -176,7 +176,7 @@ async fn a_message_origin_rest_is_silent_to_the_parent() {
             ChildState::Idle { .. }
         )
     });
-    let wakes_after_spawn_rest = { bridge.wakes.lock().unwrap().len() };
+    let wakes_after_spawn_rest = { bridge.wakes.lock().len() };
     // The direct message resumes the child; its next rest is a
     // message-origin rest: silent to the parent.
     sup.message(&s.handle, Some("hi".into()), Lane::Steering, None)
@@ -192,7 +192,7 @@ async fn a_message_origin_rest_is_silent_to_the_parent() {
         let idle = es
             .iter()
             .filter(|e| {
-                e.kind == KIND_SUBAGENT
+                e.kind == EntryKind::Subagent
                     && e.payload["event"] == json!("state")
                     && e.payload["state"] == json!("idle")
             })
@@ -200,7 +200,7 @@ async fn a_message_origin_rest_is_silent_to_the_parent() {
         idle >= 2
     });
     // No new wake: the message-origin rest is the badge, not a wake.
-    let wakes = bridge.wakes.lock().unwrap();
+    let wakes = bridge.wakes.lock();
     assert_eq!(
         wakes.len(),
         wakes_after_spawn_rest,
@@ -264,7 +264,7 @@ async fn a_done_rest_wakes_regardless_of_origin() {
         "the observed done carries the declared output"
     );
     // The message-origin done woke the parent with its payload.
-    let wakes = bridge.wakes.lock().unwrap();
+    let wakes = bridge.wakes.lock();
     assert!(
         wakes.iter().any(|w| w.kind == WakeKind::Done
             && w.child == s.session_id
@@ -321,7 +321,7 @@ async fn a_declared_done_wakes_without_plan_file() {
         "the declared done carries the output even without a plan file"
     );
     // The message-origin done woke the parent with its payload.
-    let wakes = bridge.wakes.lock().unwrap();
+    let wakes = bridge.wakes.lock();
     assert!(
         wakes.iter().any(|w| w.kind == WakeKind::Done
             && w.child == s.session_id

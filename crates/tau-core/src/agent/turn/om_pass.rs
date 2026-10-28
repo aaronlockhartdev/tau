@@ -1,9 +1,12 @@
 use crate::agent::{AgentError, AgentSession, Inner, SessionStore, TurnProviderRef};
-/// The OM model to use: the configured OM model, or the session's model when
-/// it is empty (spec §4).
-fn resolve_om_model(om_model: &str, model: &str) -> String {
+use tau_protocol::Diagnostic;
+/// The OM model to use: the configured OM model, or the model the session's
+/// requests address when it is empty (spec §4). The fallback is the address and
+/// not the session's id, so a menu-qualified id does not reach the endpoint with
+/// its provider still attached (§6.7).
+fn resolve_om_model(om_model: &str, address: &str) -> String {
     if om_model.is_empty() {
-        model.to_owned()
+        address.to_owned()
     } else {
         om_model.to_owned()
     }
@@ -22,10 +25,7 @@ impl AgentSession {
     /// context gate's qualification: fire only when there is material to
     /// compact, spec §4, ticket #210).
     pub(super) fn om_pending_tokens(&self) -> u32 {
-        let mut guard = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut guard = self.inner.lock();
         let Inner { om, store, .. } = &mut *guard;
         let Some(om) = om.as_mut() else {
             return 0;
@@ -47,13 +47,10 @@ impl AgentSession {
         // The OM model (global config, spec §4); empty = the session's
         // model. Resolved with the state clone, before the pass.
         let (state, model, hook) = {
-            let inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let inner = self.inner.lock();
             (
                 inner.om.clone(),
-                resolve_om_model(&inner.om_model, &inner.model),
+                resolve_om_model(&inner.om_model, &inner.turn.request_address(&inner.model)),
                 inner.om_status_hook.clone(),
             )
         };
@@ -65,10 +62,7 @@ impl AgentSession {
         // 60s bound: a cycle outliving it is fine, the write-back merge
         // below picks up its commit (D13.2) and the turn doesn't hang.
         let handle = {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             inner.om_inflight.take()
         };
         if let Some(handle) = handle {
@@ -85,10 +79,7 @@ impl AgentSession {
         // releases it before the next provider call.
         let mut with_store =
             |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), crate::om_integration::OmError>| {
-                let mut guard = self
-                    .inner
-                    .lock()
-                    .expect("agent inner: no panic while the lock is held");
+                let mut guard = self.inner.lock();
                 f(&mut guard.store)
             };
         // The pass goes through the session's inner provider, not the
@@ -118,10 +109,7 @@ impl AgentSession {
         // join timed out) keeps its chunks; the pass's observation
         // fields win.
         {
-            let mut inner = self
-                .inner
-                .lock()
-                .expect("agent inner: no panic while the lock is held");
+            let mut inner = self.inner.lock();
             match crate::om_integration::OmState::load_record(&mut inner.store) {
                 Ok(fresh) => {
                     state.merge_turn_end(&fresh);
@@ -148,7 +136,55 @@ impl AgentSession {
                 }
             }
         }
+        // A pass that leaves the window at or past activation is a fact the
+        // harness has to be able to see afterwards (ADR-0034): it is the
+        // condition that ends in a provider cutoff.
+        self.record_om_stall();
         Ok(())
+    }
+    /// Record the stalled-window fact when a completed pass left the unobserved
+    /// window at or past the activation threshold: OM runs but can no longer
+    /// keep the prompt inside what it has observed (ADR-0034). Once per run —
+    /// `om_stall_recorded` mirrors the record once the append lands, so a
+    /// restart re-records the stall it resumes into instead of re-scanning the
+    /// log.
+    fn record_om_stall(&self) {
+        let stalled = {
+            let mut guard = self.inner.lock();
+            let Inner {
+                om,
+                store,
+                om_stall_recorded,
+                ..
+            } = &mut *guard;
+            let Some(om) = om.as_mut() else {
+                return;
+            };
+            let Ok(unobserved) = om.unobserved(store) else {
+                return;
+            };
+            let pending = om.pending_tokens(&unobserved);
+            let activation = om
+                .config
+                .observe_threshold_for(om.record.observation_tokens);
+            if !om.activation_reached(pending) || *om_stall_recorded {
+                return;
+            }
+            *om_stall_recorded = true;
+            (pending, activation)
+        };
+        if let Err(e) = self.diagnostic(&Diagnostic::OmStalled {
+            pending: u64::from(stalled.0),
+            activation: u64::from(stalled.1),
+        }) {
+            // A stall worth recording is not worth killing the turn that
+            // reports it, so the failure goes to the log and the latch clears:
+            // the next turn-end retries the record. A run in which every retry
+            // fails ends up with the fact log-only — the trade, not an
+            // oversight.
+            self.inner.lock().om_stall_recorded = false;
+            tracing::warn!("om: the stalled-window record failed to append: {e}");
+        }
     }
     /// The mid-episode interval-boundary trigger (ticket #86 P2, D3/D4):
     /// runs after each tool round — the moment new unobserved tokens
@@ -160,10 +196,7 @@ impl AgentSession {
     /// trigger never race on it. With `buffer_tokens = 0` (kill switch)
     /// this is a no-op and the pass keeps today's sync behavior.
     pub(super) fn om_mid_loop(&self) {
-        let mut guard = self
-            .inner
-            .lock()
-            .expect("agent inner: no panic while the lock is held");
+        let mut guard = self.inner.lock();
         let Inner {
             store,
             om,
@@ -171,6 +204,7 @@ impl AgentSession {
             om_buffer_boundary,
             om_model,
             model,
+            turn,
             ..
         } = &mut *guard;
         let Some(om) = om.as_mut() else {
@@ -220,7 +254,7 @@ impl AgentSession {
         let inner = std::sync::Arc::clone(&self.inner);
         let config = om.config.clone();
         let provider = self.om_provider();
-        let model_owned = resolve_om_model(om_model, model);
+        let model_owned = resolve_om_model(om_model, &turn.request_address(model));
         *om_inflight = Some(tokio::spawn(
             crate::om_integration::background::buffer_cycle(
                 inner,

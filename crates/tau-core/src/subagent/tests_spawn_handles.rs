@@ -10,14 +10,7 @@ use std::time::Duration;
 /// tools in-loop (the tool dispatch records the spawn entries in the
 /// parent's session file).
 async fn sup_spawn_from_parent(sup: &Arc<Supervisor>) {
-    let parent = sup
-        .parent
-        .lock()
-        .unwrap()
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
+    let parent = sup.parent.lock().as_ref().unwrap().upgrade().unwrap();
     parent.send("go", Lane::FollowUp);
     parent.process().await.unwrap();
 }
@@ -134,9 +127,7 @@ async fn a_parent_without_spawn_records_starts_counting_from_one() {
         .entries_range(0, usize::MAX)
         .unwrap()
         .iter()
-        .filter(|e| {
-            e.kind == crate::agent::KIND_TOOL && e.payload["name"] == json!("subagent_spawn")
-        })
+        .filter(|e| e.kind == EntryKind::Tool && e.payload["name"] == json!("subagent_spawn"))
         .count();
     assert_eq!(spawns, 1, "the spawn record is the seed's source");
 }

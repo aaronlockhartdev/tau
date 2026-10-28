@@ -19,7 +19,7 @@ use std::sync::Arc;
 #[must_use]
 pub fn specs_for(role: &SessionRole, agent_tools: Option<&[String]>) -> Vec<ToolSpec> {
     match role {
-        SessionRole::Root { .. } => root_specs(),
+        SessionRole::Root { .. } | SessionRole::Seam { .. } => root_specs(),
         SessionRole::Child { .. } => child_specs(agent_tools),
         SessionRole::Bare { .. } => bare_specs(),
     }
@@ -69,17 +69,6 @@ pub struct DispatchCtx<'a> {
     pub supervisor: Option<Arc<Supervisor>>,
     pub child: Option<Arc<ChildLink>>,
 }
-/// Lock the session's anchor registry, recovering a poisoned lock instead
-/// of panicking: a poisoned lock's data is intact, and a panic here would
-/// kill the dispatch task and hang the turn on the in-flight tool call.
-pub(crate) fn lock_anchors(
-    anchors: &std::sync::Mutex<crate::hashline::registry::Registry>,
-) -> std::sync::MutexGuard<'_, crate::hashline::registry::Registry> {
-    match anchors.lock() {
-        Ok(g) => g,
-        Err(p) => p.into_inner(),
-    }
-}
 
 /// The routing table (R1): one owner for "where does a call go" — the
 /// scoped recall, the supervisor's sub-agent tools, the child's
@@ -107,7 +96,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
         // call; write and bash are stateless.
         "read" => {
             let anchors = ctx.session.anchors();
-            let mut reg = lock_anchors(&anchors);
+            let mut reg = anchors.lock();
             read(
                 ctx.cwd,
                 &call.args,
@@ -125,7 +114,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
                 // A write is a file drift: drop the served baseline so the
                 // next read re-anchors (item 3).
                 let anchors = ctx.session.anchors();
-                let mut reg = lock_anchors(&anchors);
+                let mut reg = anchors.lock();
                 reg.free(path);
             }
             res
@@ -137,7 +126,7 @@ pub async fn dispatch(ctx: DispatchCtx<'_>, call: &ToolCall) -> ToolResult {
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
             let anchors = ctx.session.anchors();
-            let mut reg = lock_anchors(&anchors);
+            let mut reg = anchors.lock();
             edit(ctx.cwd, &call.args, Some(&mut *reg), strict)
         }
         "bash" => {

@@ -1,8 +1,9 @@
 use crate::agent::{
     CallOutput, Entry, FunctionCallInput, FunctionCallOutputInput, InputEntry, InputMessage,
-    KIND_ASSISTANT, KIND_TOOL, KIND_USER, TurnResult, Value,
+    TurnResult, Value,
 };
 use std::collections::HashMap;
+use tau_protocol::EntryKind;
 
 /// ticket #70: repair malformed tool-call arguments at receipt. A call whose
 /// arguments fail a strict parse is run through `jsonrepair`; if that yields
@@ -42,6 +43,42 @@ pub(super) fn with_plan_state(mut instructions: String, plan: Option<&str>) -> S
     instructions
 }
 
+/// One assembly's parts together with the branch they were read from. The
+/// entries travel with the items so the prompt estimate can anchor on the last
+/// request's provider count and price only what was appended after it (plan
+/// §6.9); `om_items` is how many *leading* items the observation state
+/// contributed — assembly always prepends them, so `items[..om_items]` is that
+/// contribution, and a compaction is what makes it differ from zero.
+pub(super) struct Assembled {
+    /// The model this request addresses, so a value resolved for another model
+    /// fails beside it (plan §6.8).
+    pub model: String,
+    pub instructions: String,
+    pub items: Vec<InputEntry>,
+    pub entries: Vec<Entry>,
+    pub om_items: usize,
+    /// A child session's parent, whose name decorates its user entries
+    /// (ADR-0001 supplement); the tail estimate applies the same labels.
+    pub parent_session: Option<String>,
+}
+
+impl Assembled {
+    /// The entry the request this assembly produces ends at: the last entry in
+    /// file order, which is the branch's leaf unless a branch adopt reordered it.
+    pub fn leaf(&self) -> Option<&str> {
+        self.entries.last().map(|e| e.id.as_str())
+    }
+
+    /// The branch entries appended after `leaf`, or None once the branch no
+    /// longer carries it — a compaction consumed it or a fork moved the branch.
+    pub fn tail_after(&self, leaf: &str) -> Option<&[Entry]> {
+        self.entries
+            .iter()
+            .rposition(|e| e.id == leaf)
+            .map(|i| &self.entries[i + 1..])
+    }
+}
+
 /// The session's entries (file order) mapped to responses-API input items:
 /// user messages, assistant text + calls, and tool results (spec §5.4).
 ///
@@ -74,8 +111,8 @@ pub(super) fn input_items(entries: &[Entry], parent_session: Option<&str>) -> Ve
         .collect::<HashMap<_, _>>();
     let mut out = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
-        match entry.kind.as_str() {
-            KIND_USER => {
+        match entry.kind {
+            EntryKind::User => {
                 if let Some(text) = entry.payload.get("text").and_then(Value::as_str) {
                     // Sender attribution, applied at assembly time
                     // (ADR-0001 supplement): a child session labels the
@@ -99,7 +136,7 @@ pub(super) fn input_items(entries: &[Entry], parent_session: Option<&str>) -> Ve
                     }));
                 }
             }
-            KIND_ASSISTANT => {
+            EntryKind::Assistant => {
                 if let Some(text) = entry
                     .payload
                     .get("text")
@@ -111,35 +148,9 @@ pub(super) fn input_items(entries: &[Entry], parent_session: Option<&str>) -> Ve
                         content: text.to_owned(),
                     }));
                 }
-                if let Some(calls) = entry.payload.get("calls").and_then(Value::as_array) {
-                    for call in calls {
-                        out.push(InputEntry::Call(FunctionCallInput {
-                            kind: "function_call",
-                            id: call
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            call_id: call
-                                .get("call_id")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            name: call
-                                .get("name")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                            arguments: call
-                                .get("arguments")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned(),
-                        }));
-                    }
-                }
+                out.extend(call_inputs(entry).map(InputEntry::Call));
             }
-            KIND_TOOL => {
+            EntryKind::Tool => {
                 let (Some(call_id), Some(output)) = (
                     entry.payload.get("call_id").and_then(Value::as_str),
                     entry
@@ -161,8 +172,51 @@ pub(super) fn input_items(entries: &[Entry], parent_session: Option<&str>) -> Ve
                     output,
                 }));
             }
-            _ => {}
+            // Record kinds carry no prompt material; listed so a new kind
+            // forces a decision here rather than defaulting silently.
+            EntryKind::System
+            | EntryKind::Om
+            | EntryKind::Subagent
+            | EntryKind::SpawnSnapshot
+            | EntryKind::Diagnostic
+            | EntryKind::Other(_) => {}
         }
     }
     out
+}
+
+/// The assistant entry's recorded calls as `function_call` inputs. Fields the
+/// provider never supplied default to empty (a call with no id still needs a
+/// placeholder to pair with its output).
+fn call_inputs(entry: &Entry) -> impl Iterator<Item = FunctionCallInput> {
+    entry
+        .payload
+        .get("calls")
+        .and_then(Value::as_array)
+        .map(|calls| calls.iter())
+        .into_iter()
+        .flatten()
+        .map(|call| FunctionCallInput {
+            kind: "function_call",
+            id: call
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            call_id: call
+                .get("call_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            name: call
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            arguments: call
+                .get("arguments")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        })
 }

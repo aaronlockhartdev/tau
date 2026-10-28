@@ -7,6 +7,7 @@
 #![allow(clippy::unwrap_used, clippy::panic)]
 
 use serde_json::json;
+use tau_protocol::EntryKind;
 use tau_protocol::snapshot::{SessionMeta, ViewEntry, Workspace};
 
 fn ws() -> Workspace {
@@ -35,7 +36,7 @@ fn view_entry() -> ViewEntry {
     ViewEntry {
         id: "00000007".into(),
         parent: Some("00000006".into()),
-        kind: "assistant".into(),
+        kind: EntryKind::Assistant,
         timestamp: 1_700_000_000_123,
         payload: json!({ "text": "hello" }),
         blob: None,
@@ -190,7 +191,7 @@ mod outputs {
     use tau_protocol::snapshot::{
         EntryMeta, EntryStatus, LiveState, OmSnapshot, Snapshot, TurnState,
     };
-    use tau_protocol::{CommandOutput, ContextMode, SkillInfo, SubagentInfo};
+    use tau_protocol::{CommandOutput, ContextMode, EntryKind, SkillInfo, SubagentInfo};
 
     #[test]
     fn snapshot_output() {
@@ -201,7 +202,7 @@ mod outputs {
                 entries: vec![EntryMeta {
                     id: "00000007".into(),
                     parent: None,
-                    kind: "assistant".into(),
+                    kind: EntryKind::Assistant,
                     timestamp: 1_700_000_000_123,
                     size: 42,
                     preview: "hello".into(),
@@ -276,6 +277,7 @@ mod payloads {
     use tau_protocol::payload::{
         AssistantPayload, FunctionCall, ImageBlock, ResumeContract, ToolPayload,
     };
+    use tau_protocol::{Diagnostic, StreamOutcome};
 
     #[test]
     fn assistant_payload() {
@@ -283,6 +285,7 @@ mod payloads {
             text: "done".into(),
             reasoning: String::new(),
             interrupted: false,
+            stop_reason: Some(StreamOutcome::Completed),
             usage: None,
             duration_secs: None,
             calls: vec![FunctionCall {
@@ -319,6 +322,53 @@ mod payloads {
             next_action: "fix the parser".into(),
         };
         assert_json_snapshot!(c);
+    }
+
+    #[test]
+    fn diagnostic_payloads() {
+        // The code spellings are append-only (ADR-0034): this snapshot is the
+        // shape a GUI and a future core agree on.
+        assert_json_snapshot!(vec![
+            Diagnostic::ModelChanged {
+                from: Some("qwen3.8-27b".into()),
+                to: "qwen3.8-flash-next-iq3_s".into(),
+            },
+            Diagnostic::ModelChanged {
+                from: None,
+                to: "qwen3.8-flash-next-iq3_s".into(),
+            },
+            Diagnostic::GateUnavailable {
+                model: "qwen3.8-flash-next-iq3_s".into(),
+                missing: vec!["context_window".into(), "max_tokens".into()],
+            },
+            Diagnostic::ContextOverflow {
+                prompt: 120_000,
+                budget: 110_592,
+            },
+            Diagnostic::GateAttempt {
+                command: "cargo nextest run".into(),
+                retries: 1,
+                max: 2,
+                output: "test failed".into(),
+            },
+            Diagnostic::GateFailed {
+                command: "cargo nextest run".into(),
+                retries: 2,
+            },
+            Diagnostic::OmStalled {
+                pending: 24_000,
+                activation: 24_000,
+            },
+            Diagnostic::ProviderRejected {
+                status: 400,
+                body: "context length exceeded".into(),
+            },
+            Diagnostic::TurnCutoff {
+                model: "qwen3.8-flash-next-iq3_s".into(),
+                ended_by: StreamOutcome::EofWithoutDone,
+                blocks: 2,
+            },
+        ]);
     }
 }
 

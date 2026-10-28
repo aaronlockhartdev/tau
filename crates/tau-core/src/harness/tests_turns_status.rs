@@ -5,16 +5,16 @@ use crate::harness::testkit::*;
 /// Bounded wait for the result-phase tool entry (the one with a non-empty
 /// output) in a collected event stream.
 async fn result_tool_entry(
-    collected: &std::sync::Arc<std::sync::Mutex<Vec<Event>>>,
+    collected: &std::sync::Arc<parking_lot::Mutex<Vec<Event>>>,
 ) -> tau_protocol::snapshot::ViewEntry {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
-        let events = collected.lock().unwrap().clone();
+        let events = collected.lock().clone();
         if let Some(Event::EntryUpsert { entry, .. }) = events.iter().rev().find(|e| {
             matches!(
                 e,
                 Event::EntryUpsert { entry, .. }
-                    if entry.kind == "tool" && entry.payload["output"] != serde_json::json!("")
+                    if entry.kind == EntryKind::Tool && entry.payload["output"] != serde_json::json!("")
             )
         }) {
             return entry.clone();
@@ -39,7 +39,7 @@ async fn a_successful_tool_emits_status_ok_in_the_entry_payload() {
         TurnConfig::default(),
     );
     let collected = collect_events(&core);
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id,
         text: "go".into(),
@@ -73,7 +73,7 @@ async fn a_failing_tool_emits_status_error_in_the_entry_payload() {
         TurnConfig::default(),
     );
     let collected = collect_events(&core);
-    let session_id = live.meta.lock().unwrap().id.clone();
+    let session_id = live.meta.lock().id.clone();
     core.dispatch(Command::MessageSend {
         session: session_id,
         text: "go".into(),

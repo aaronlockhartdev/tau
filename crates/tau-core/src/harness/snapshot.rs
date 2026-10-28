@@ -4,16 +4,11 @@ use super::{
     Core, CoreUsage, Entry, EntryMeta, EntryStatus, LiveSession, LiveState, OmSnapshot, Ordering,
     Path, ProtocolError, SessionMeta, SessionStore, Snapshot, TurnState, Usage, Value, ViewEntry,
 };
+use tau_protocol::EntryKind;
 
 impl Core {
     pub(crate) fn snapshot(&self, live: &LiveSession) -> Result<Snapshot, ProtocolError> {
-        let workspace = self.workspace(
-            &live
-                .meta
-                .lock()
-                .expect("session meta: no panic while the lock is held")
-                .workspace,
-        )?;
+        let workspace = self.workspace(&live.meta.lock().workspace)?;
         // The live session's own store serves the snapshot from its
         // in-memory log (verified at open; only it appends to the file):
         // no file re-open per snapshot — one open serves it all.
@@ -34,21 +29,16 @@ impl Core {
         let usage = entries
             .iter()
             .rev()
-            .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
+            .find(|e| e.kind == EntryKind::Assistant)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
-        let meta = live
-            .meta
-            .lock()
-            .expect("session meta: no panic while the lock is held")
-            .clone();
+        let meta = live.meta.lock().clone();
         let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
         // The plan pane's data (spec §5.3): the watcher-parsed state;
         // a session with no observed plan renders empty.
         let plan = self
             .plans
             .lock()
-            .expect("plan states: no panic while the lock is held")
             .get(&meta.id)
             .cloned()
             .map(Into::into)
@@ -177,7 +167,7 @@ impl Core {
         let usage = entries
             .iter()
             .rev()
-            .find(|e| e.kind == crate::agent::KIND_ASSISTANT)
+            .find(|e| e.kind == EntryKind::Assistant)
             .and_then(|e| e.payload.get("usage"))
             .and_then(usage_of);
         let leaf = store.leaf_cached().map_err(|e| ProtocolError::Other {
@@ -263,19 +253,24 @@ impl Core {
     }
 }
 /// The entry tree's one-line preview: the entry's first text line, cut at
-/// 80 chars (the snapshot carries previews, never payloads, spec §8). A
-/// tool's call-phase entry (recorded before dispatch, no output yet) falls
-/// back to the tool's name.
+/// 80 chars (the snapshot carries previews, never payloads, spec §8). The
+/// kind decides where that text lives; a diagnostic's sentence is composed in
+/// the GUI from typed fields, so its preview is the code name (ADR-0034).
 pub(crate) fn preview(entry: &Entry) -> String {
-    let text = entry
-        .payload
-        .get("text")
-        .or_else(|| entry.payload.get("note"))
-        .or_else(|| entry.payload.get("state"))
-        .or_else(|| entry.payload.get("output"))
-        .or_else(|| entry.payload.get("name"))
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let text = match &entry.kind {
+        EntryKind::Diagnostic => entry.payload.get("code").and_then(Value::as_str),
+        // A tool's call-phase entry (recorded before dispatch, no output yet)
+        // falls back to the tool's name.
+        _ => entry
+            .payload
+            .get("text")
+            .or_else(|| entry.payload.get("note"))
+            .or_else(|| entry.payload.get("state"))
+            .or_else(|| entry.payload.get("output"))
+            .or_else(|| entry.payload.get("name"))
+            .and_then(Value::as_str),
+    }
+    .unwrap_or_default();
     let first = text.lines().next().unwrap_or_default();
     let mut out: String = first.chars().take(80).collect();
     if first.len() > 80 {
@@ -295,7 +290,7 @@ pub(crate) fn entry_meta(e: &Entry, size: u64) -> EntryMeta {
         size,
         preview: preview(e),
         first_kept: e.first_kept_entry_id.clone(),
-        status: if e.kind == crate::agent::KIND_ASSISTANT
+        status: if e.kind == EntryKind::Assistant
             && e.payload.get("interrupted") == Some(&Value::Bool(true))
         {
             EntryStatus::Interrupted
@@ -306,50 +301,24 @@ pub(crate) fn entry_meta(e: &Entry, size: u64) -> EntryMeta {
 }
 
 pub(crate) fn usage_of(value: &Value) -> Option<Usage> {
-    let u: CoreUsage = serde_json::from_value(value.clone()).ok()?;
+    let u = CoreUsage::from_record(value)?;
     Some(Usage {
         input_tokens: u.input_tokens,
         output_tokens: u.output_tokens,
-        total_tokens: u.total_tokens,
-        cached_prompt_tokens: u.prompt_tokens_details.map_or(0, |d| d.cached_tokens),
+        total_tokens: u.total_tokens(),
+        cached_prompt_tokens: u.cached_input_tokens.unwrap_or(0),
     })
 }
 
-/// The quiet entry a model change appends: `model: <old> → <new>` (the
-/// first change of a session that had no model records `model: <new>`).
-pub(crate) fn model_note(old: Option<&str>, new: &str) -> String {
-    match old {
-        Some(o) => format!("model: {o} → {new}"),
-        None => format!("model: {new}"),
-    }
-}
-
-/// The session's current model from its file: the last `model:` note on the
-/// active branch (a closed session's header carries no model, so the quiet
-/// entries are the record).
-pub(crate) fn last_model_note(store: &mut SessionStore) -> Option<String> {
-    let entries: Vec<Entry> = store
-        .entries_range_cached(0, usize::MAX)
-        .ok()?
-        .into_iter()
-        .map(|(e, _)| e)
-        .collect();
-    let leaf = store.leaf_cached().ok()?.map(|e| e.id);
-    crate::om_integration::branch_entries(&entries, leaf.as_deref())
-        .iter()
-        .rev()
-        .find(|e| {
-            e.kind == crate::agent::KIND_SYSTEM
-                && e.payload
-                    .get("note")
-                    .and_then(|n| n.as_str())
-                    .is_some_and(|n| n.starts_with("model: "))
-        })
-        .and_then(|e| {
-            let n = e.payload.get("note")?.as_str()?;
-            let rest = n.strip_prefix("model: ")?;
-            Some(rest.rsplit(" → ").next()?.to_owned())
-        })
+/// The model the record names as current: the last `model_changed` on the
+/// active branch (a closed session's header carries no model, so the record
+/// is the only trace — ADR-0034). Pre-#306 sessions are read through the
+/// projection's frozen shim.
+pub(crate) fn recorded_model(store: &mut SessionStore) -> Option<String> {
+    crate::diagnostics::project_store(store)
+        .ok()
+        .flatten()
+        .and_then(|record| record.model)
 }
 
 pub(crate) fn delete_session_files(cwd: &Path, session: &str) {
