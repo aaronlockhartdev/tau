@@ -84,14 +84,14 @@ pub(super) fn diff_output(path: &str, original: &str, planned: &Planned) -> Stri
 /// channel, never the model's context. Demotion notices stay model-facing:
 /// the model needs them to retry the skipped members.
 pub(super) fn model_ack(path: &str, original: &str, planned: &Planned) -> String {
-    // Added = the new lines that replace no old line: a same-length
-    // replacement reports both sides, a pure deletion reports 0 added.
-    let added = planned.lines.len().saturating_sub(
-        original
-            .lines()
-            .count()
-            .saturating_sub(planned.removed_lines.len()),
-    );
+    // Added = the lines the batch wrote beyond the lines it kept, both sides
+    // counted with the tool's own line model (`str::lines()` is a second model,
+    // and disagrees on the empty file — the one `read` shows as a single row).
+    // A batch's ranges are spans of the file, so the kept count is exact and
+    // nothing saturates; the_acks_added_count_is_exact_arithmetic pins that
+    // exactness (#301).
+    let kept = hashline::split_lines(original).len() - planned.removed_lines.len();
+    let added = planned.lines.len() - kept;
     let mut out = format!(
         "Successfully edited {path}. Added {added} line(s), removed {} line(s).",
         planned.removed_lines.len()
