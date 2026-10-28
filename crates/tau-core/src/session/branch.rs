@@ -43,6 +43,9 @@ impl SessionStore {
     /// does not contain.
     pub fn branch(&mut self) -> Result<Vec<Entry>, Error> {
         let leaf = self.leaf_cached()?.map(|e| e.id);
+        // The whole log by design (#302): the walk starts at the leaf and
+        // needs every loaded entry in reach — the store reads by position, not
+        // by parent chain.
         let entries: Vec<Entry> = self
             .entries_range_cached(0, usize::MAX)?
             .into_iter()

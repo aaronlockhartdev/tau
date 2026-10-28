@@ -6,6 +6,7 @@
 use crate::{EntryKind, MessageLane};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 /// A workspace as identity (spec §8: no local paths as identity; `cwd` is
 /// the on-host root the tools resolve relative paths against, §5.4).
@@ -202,7 +203,9 @@ pub struct OmSnapshot {
 pub struct Snapshot {
     pub workspace: Workspace,
     pub session: SessionMeta,
-    pub entries: Vec<EntryMeta>,
+    /// The skeleton, shared: the projection builds one row per record once
+    /// and hands the same rows to every snapshot that follows (#316).
+    pub entries: Arc<[EntryMeta]>,
     pub om: OmSnapshot,
     pub live: LiveState,
     /// The last entry id: a durable cursor for `entries-since` reads.
@@ -400,7 +403,8 @@ mod tests {
                 preview: "hi".into(),
                 first_kept: None,
                 status: EntryStatus::Ok,
-            }],
+            }]
+            .into(),
             om,
             live,
             cursor: "e9".into(),
@@ -447,7 +451,7 @@ mod tests {
                 usage: None,
                 archived: false,
             },
-            entries: vec![],
+            entries: Vec::new().into(),
             om: OmSnapshot::default(),
             live: LiveState {
                 queue: vec![],

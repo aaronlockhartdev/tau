@@ -73,6 +73,67 @@ impl SessionStore {
         Ok(out)
     }
 
+    /// Visit the loaded log's entries in file order with their line sizes,
+    /// borrowing each entry: a projection that reads an entry's identity and
+    /// metadata pays no payload clone (the delete sweep's blob enumeration,
+    /// `harness::Core::delete_session_files`).
+    /// The index space and the not-yet-opened fallback match
+    /// `entries_range_cached`.
+    pub fn visit_entries_cached(&self, mut visit: impl FnMut(&Entry, u64)) -> Result<(), Error> {
+        if !self.loaded {
+            for entry in self.entries_range(0, usize::MAX)? {
+                visit(&entry, 0);
+            }
+            return Ok(());
+        }
+        for (i, slot) in self.entries.iter().enumerate() {
+            if let Some(entry) = slot {
+                visit(
+                    entry,
+                    u64::try_from(self.entry_len[i]).expect("entry offset, well under u64::MAX"),
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The in-memory twin of `entries_tail`, oldest first. The caveat ticket
+    /// #302 names for a tail read applies here too: it is file order, not
+    /// branch order, so it is safe only where the record it seeks is the
+    /// file's tail, not a branch's.
+    pub fn entries_tail_cached(&self, n: usize) -> Result<Vec<Entry>, Error> {
+        if !self.loaded {
+            return self.entries_tail(n);
+        }
+        let mut out: Vec<Entry> = self
+            .entries
+            .iter()
+            .rev()
+            .flatten()
+            .take(n)
+            .cloned()
+            .collect();
+        out.reverse();
+        Ok(out)
+    }
+
+    /// The loaded log's slot count, the same index space as
+    /// `entries_range_cached`: a bounded read starts after it (the snapshot
+    /// skeleton's cursor, #316). A not-yet-opened store reports 0, so its
+    /// caller reads from the file's start.
+    #[must_use]
+    pub fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The store's load generation, bumped by every `open`. A cache of rows
+    /// built from the loaded log keys on it, so rows from one load never
+    /// describe the next file under the same session id (#316).
+    #[must_use]
+    pub fn load_seq(&self) -> u64 {
+        self.load_seq
+    }
+
     /// The in-memory twin of `entry` (the live session's read path).
     pub fn entry_cached(&self, id: &str) -> Result<Entry, Error> {
         if !self.loaded {

@@ -321,7 +321,8 @@
           kind
         }
       ]),
-    sessionSetModel: (session: string, model: string) => command({ type: 'session_set_model', session, model })
+    sessionSetModel: (session: string, model: string) => command({ type: 'session_set_model', session, model }),
+    snapshot: (session: string) => command({ type: 'session_snapshot', session })
   };
 
 

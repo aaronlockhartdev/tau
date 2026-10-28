@@ -4,8 +4,8 @@ use super::thinking::thinking_adjusted_max_output;
 use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
     MAX_TITLE_LEN, ModelAddress, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionRole, SessionStore, SkillInfo, TurnConfig, Value, ViewEntry, Workspace, session_inner,
-    session_name, skill_info, unique_name,
+    SessionRole, SessionStore, Skeleton, SkillInfo, TurnConfig, Value, ViewEntry, Workspace,
+    session_inner, session_name, skill_info, unique_name,
 };
 use tau_protocol::EntryKind;
 
@@ -307,6 +307,7 @@ impl Core {
             turn: AtomicBool::new(false),
             provider,
             cwd: PathBuf::from(&workspace.cwd),
+            skeleton: Mutex::new(Skeleton::default()),
         });
         let id = live.meta.lock().id.clone();
         self.sessions.lock().insert(id.clone(), live.clone());

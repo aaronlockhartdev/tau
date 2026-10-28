@@ -208,7 +208,8 @@ mod outputs {
                     preview: "hello".into(),
                     first_kept: None,
                     status: EntryStatus::Ok,
-                }],
+                }]
+                .into(),
                 om: OmSnapshot {
                     observation_tokens: 18_000,
                     pending_tokens: 1_000,

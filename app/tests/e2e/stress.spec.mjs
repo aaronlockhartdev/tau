@@ -248,6 +248,31 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
     );
   });
 
+  it(`snapshot projection: a poll of the ${entries}-entry session is bounded`, async () => {
+    // The projection is the harness's read behind every poll (#316): the first
+    // builds the skeleton's rows, the rest reuse them. The median of the run is
+    // the number that matters — a red here is the projection scaling with the
+    // log it grew, not a starved display (that shows in the rAF and round-trip
+    // bars below).
+    const r = await browser.execute(async (sid) => {
+      const ms = [];
+      let rows = -1;
+      for (let i = 0; i < 12; i++) {
+        const t0 = performance.now();
+        const out = await window.__tau.snapshot(sid);
+        ms.push(performance.now() - t0);
+        rows = out?.snapshot?.entries?.length ?? rows;
+      }
+      ms.sort((a, b) => a - b);
+      return { median: ms[Math.floor(ms.length / 2)], max: ms[ms.length - 1], rows };
+    }, fixtureSession);
+    const budget = 80;
+    check(
+      `snapshot projection: median of 12 polls of the ${entries}-entry session under ${budget} ms${strict ? '' : ' (informational)'}`,
+      !strict || r.median < budget,
+      `median ${r.median.toFixed(1)} ms, max ${r.max.toFixed(1)} ms, ${r.rows} rows`
+    );
+  });
   it('the open audit names the model the fixture session never recorded', async () => {
     // The audit record is appended at open, after the metadata-only hydration
     // paint, and its payload lands with the entry: a starved display flushes

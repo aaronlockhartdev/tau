@@ -1,8 +1,9 @@
 //! Snapshot + paged-read projections: the metadata skeleton, the page read, and the closed-session (file) path.
 
 use super::{
-    Core, CoreUsage, Entry, EntryMeta, EntryStatus, LiveSession, LiveState, OmSnapshot, Ordering,
-    Path, ProtocolError, SessionMeta, SessionStore, Snapshot, TurnState, Usage, Value, ViewEntry,
+    Arc, Core, CoreUsage, Entry, EntryMeta, EntryStatus, LiveSession, LiveState, OmSnapshot,
+    Ordering, Path, ProtocolError, SessionMeta, SessionStore, Snapshot, TurnState, Usage, Value,
+    ViewEntry,
 };
 use tau_protocol::EntryKind;
 
@@ -12,28 +13,25 @@ impl Core {
         // The live session's own store serves the snapshot from its
         // in-memory log (verified at open; only it appends to the file):
         // no file re-open per snapshot — one open serves it all.
-        let (sized, leaf) = live
+        // The header's `parent` flag decides whether the badge's tail read
+        // runs: a 10k-entry root session must not pay for a projection it
+        // never uses (ticket #221). Taken here so the store closure never
+        // holds the session-meta lock.
+        let child = live.meta.lock().parent.is_some();
+        let (projection, leaf) = live
             .agent
             .with_store(|store: &mut SessionStore| {
                 // An external writer (the 10k fixture) grows the file out
                 // from under the log: one re-open keeps the view current.
                 store.refresh_if_grown()?;
-                let sized = store.entries_range_cached(0, usize::MAX)?;
+                let projection = project(store, child, &mut live.skeleton.lock())?;
                 let leaf = store.leaf_cached()?;
-                Ok::<_, crate::session::Error>((sized, leaf))
+                Ok::<_, crate::session::Error>((projection, leaf))
             })
             .map_err(|e| ProtocolError::Other {
                 message: e.to_string(),
             })?;
-        let entries: Vec<Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
-        let usage = entries
-            .iter()
-            .rev()
-            .find(|e| e.kind == EntryKind::Assistant)
-            .and_then(|e| e.payload.get("usage"))
-            .and_then(usage_of);
         let meta = live.meta.lock().clone();
-        let entries = sized.iter().map(|(e, l)| entry_meta(e, *l)).collect();
         // The plan pane's data (spec §5.3): the watcher-parsed state;
         // a session with no observed plan renders empty.
         let plan = self
@@ -43,13 +41,13 @@ impl Core {
             .cloned()
             .map(Into::into)
             .unwrap_or_default();
-        // A child's own badge state (ticket #221): computed before the
-        // `meta` move below (the child flag is the header's `parent`).
-        let own_state = own_state_of(&meta, &sized);
         Ok(Snapshot {
             workspace,
-            session: SessionMeta { usage, ..meta },
-            entries,
+            session: SessionMeta {
+                usage: projection.usage,
+                ..meta
+            },
+            entries: projection.entries,
             om: live
                 .agent
                 .om_state()
@@ -71,7 +69,7 @@ impl Core {
                 gate_failed: live.agent.gate_failed(),
                 plan,
                 subagents: live_subagents(live),
-                own_state,
+                own_state: projection.own_state,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -93,20 +91,87 @@ fn live_subagents(live: &LiveSession) -> Vec<tau_protocol::SubagentInfo> {
     // children vanish from the snapshot until a restart.
     sup.fleet_view()
 }
+/// What a snapshot takes from a session's log: the metadata skeleton the
+/// transcript map needs, the last assistant record's usage, and — for a
+/// child — its own badge state.
+struct Projection {
+    entries: Arc<[EntryMeta]>,
+    usage: Option<Usage>,
+    own_state: Option<tau_protocol::snapshot::OwnState>,
+}
 
-/// A child session's own badge state (ticket #221): present only for a
-/// child (its header carries a `parent`), projected from the session's
-/// own in-memory log. A root session is `None` — it has no lifecycle
-/// state of its own; the badge is turn-derived.
-fn own_state_of(
-    meta: &SessionMeta,
-    sized: &[(crate::session::Entry, u64)],
-) -> Option<tau_protocol::snapshot::OwnState> {
-    // A root session has no lifecycle state of its own: skip the entry
-    // clone (a 10k-entry root must not pay for a projection it never uses).
-    meta.parent.as_ref()?;
-    let entries: Vec<crate::session::Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
-    crate::subagent::snapshot::own_state_for(&entries)
+/// The snapshot skeleton between polls (#316). The metadata rows are a
+/// function of the log's prefix, and the log only grows: a poll builds rows
+/// for the records newer than the last poll and reuses the rest. An idle
+/// poll pays nothing; a poll that saw growth pays the one copy that hands
+/// the wire an immutable share.
+///
+/// `count` is the log slots the rows cover, in `entries_range_cached`'s index
+/// space, and `load_seq` is the store's load generation: rows from one
+/// generation never describe the next file under that session's id.
+#[derive(Default)]
+pub(crate) struct Skeleton {
+    shared: Arc<[EntryMeta]>,
+    count: usize,
+    load_seq: u64,
+    last_assistant: Option<String>,
+}
+
+/// The projection, read from the store's loaded log through `cache`.
+/// Payloads are read only where a fact lives in one: the last assistant
+/// record's usage, and a child's state record from the log's tail.
+///
+/// `child` is the header's `parent` flag, taken by the caller so this read
+/// needs no session-meta lock.
+fn project(
+    store: &mut SessionStore,
+    child: bool,
+    cache: &mut Skeleton,
+) -> Result<Projection, crate::session::Error> {
+    let count = store.entry_count();
+    let load_seq = store.load_seq();
+    if cache.load_seq != load_seq || cache.count > count {
+        // A new load generation (the file was re-opened) or fewer slots than
+        // the rows cover: either way the rows describe a different file.
+        cache.shared = Arc::from(Vec::new());
+        cache.count = 0;
+        cache.load_seq = load_seq;
+        cache.last_assistant = None;
+    }
+    if cache.count < count {
+        let mut rows: Vec<EntryMeta> = cache.shared.to_vec();
+        for (entry, size) in store.entries_range_cached(cache.count, usize::MAX)? {
+            if entry.kind == EntryKind::Assistant {
+                cache.last_assistant = Some(entry.id.clone());
+            }
+            rows.push(entry_meta(&entry, size));
+        }
+        cache.shared = rows.into();
+        cache.count = count;
+    }
+    // The usage of the session's last assistant record; the skeleton records
+    // its id as it builds, so no payload is scanned for it.
+    let usage = cache
+        .last_assistant
+        .as_deref()
+        .and_then(|id| store.entry_cached(id).ok())
+        .and_then(|e| e.payload.get("usage").and_then(usage_of));
+    // A child's badge is its last lifecycle record, and ticket #302's tail
+    // window is the bound: a state record is appended when the child parks,
+    // stops, fails or completes, so at most one interrupted turn's records
+    // follow it. Deeper than the window reads as no state record — the
+    // pre-#221 fallback, which fails safe.
+    let own_state = if child {
+        let tail = store.entries_tail_cached(crate::subagent::restore::STATE_TAIL)?;
+        crate::subagent::snapshot::own_state_for(&tail)
+    } else {
+        None
+    };
+    Ok(Projection {
+        entries: cache.shared.clone(),
+        usage,
+        own_state,
+    })
 }
 
 impl Core {
@@ -157,19 +222,11 @@ impl Core {
         })?;
         // One open serves the projection: the in-memory log the open just
         // filled, not a second whole-file read.
-        let sized =
-            store
-                .entries_range_cached(0, usize::MAX)
-                .map_err(|e| ProtocolError::Other {
-                    message: e.to_string(),
-                })?;
-        let entries: Vec<Entry> = sized.iter().map(|(e, _)| e.clone()).collect();
-        let usage = entries
-            .iter()
-            .rev()
-            .find(|e| e.kind == EntryKind::Assistant)
-            .and_then(|e| e.payload.get("usage"))
-            .and_then(usage_of);
+        // A closed session keeps no cache: one open serves one projection.
+        let projection = project(&mut store, meta.parent.is_some(), &mut Skeleton::default())
+            .map_err(|e| ProtocolError::Other {
+                message: e.to_string(),
+            })?;
         let leaf = store.leaf_cached().map_err(|e| ProtocolError::Other {
             message: e.to_string(),
         })?;
@@ -185,15 +242,13 @@ impl Core {
         // registry is empty and there is no live log to read).
         let cwd = Path::new(&workspace.cwd);
         let subagents = crate::subagent::snapshot::restore_children_from_disk(cwd, id);
-        let own_state = if meta.parent.is_some() {
-            crate::subagent::snapshot::own_state_for(&entries)
-        } else {
-            None
-        };
         Ok(Snapshot {
             workspace,
-            session: SessionMeta { usage, ..meta },
-            entries: sized.iter().map(|(e, l)| entry_meta(e, *l)).collect(),
+            session: SessionMeta {
+                usage: projection.usage,
+                ..meta
+            },
+            entries: projection.entries,
             om: OmSnapshot::default(),
             live: LiveState {
                 queue: vec![],
@@ -201,7 +256,7 @@ impl Core {
                 gate_failed: false,
                 plan,
                 subagents,
-                own_state,
+                own_state: projection.own_state,
             },
             cursor: leaf.map(|e| e.id).unwrap_or_default(),
         })
@@ -328,16 +383,18 @@ pub(crate) fn delete_session_files(cwd: &Path, session: &str) {
     let root = cwd.join(".tau");
     let mut store = SessionStore::for_workspace(cwd, session);
     let blobs = if store.open().is_ok() {
+        // The whole log by design (#302): every entry's blob id is a delete
+        // target, so no window bounds this walk. The visit borrows each
+        // entry, so the walk pays no payload clone (#316).
+        let mut blobs: Vec<String> = Vec::new();
         store
-            .entries_range_cached(0, usize::MAX)
-            .map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|(e, _)| e)
-                    .filter_map(|e| e.blob.map(|b| b.id))
-                    .collect()
+            .visit_entries_cached(|e, _| {
+                if let Some(blob) = &e.blob {
+                    blobs.push(blob.id.clone());
+                }
             })
-            .unwrap_or_default()
+            .ok();
+        blobs
     } else {
         Vec::new()
     };

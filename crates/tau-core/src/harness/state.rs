@@ -3,8 +3,8 @@
 use super::{
     AgentSession, Arc, AtomicBool, AtomicU64, BTreeMap, ChildProviderFactory, Config, Duration,
     Event, ForwardingProvider, HashMap, Lane, MessageLane, Mutex, Ordering, Path, PathBuf,
-    ProtocolError, SessionMeta, SkillInfo, SystemEventKind, TurnProviderRef, Watcher, Weak,
-    Workspace, config, mpsc,
+    ProtocolError, SessionMeta, Skeleton, SkillInfo, SystemEventKind, TurnProviderRef, Watcher,
+    Weak, Workspace, config, mpsc,
 };
 
 /// The watcher's debounce window (design #30): a save burst (a temp-write
@@ -39,6 +39,9 @@ pub(crate) struct LiveSession {
     /// events); also the provider the loop runs against.
     pub(crate) provider: Arc<ForwardingProvider>,
     pub(crate) cwd: PathBuf,
+    /// The snapshot skeleton this session's polls reuse (#316); see
+    /// `super::Skeleton`.
+    pub(crate) skeleton: Mutex<Skeleton>,
 }
 
 /// The core's owned state: workspaces (identity, never paths) and the live
