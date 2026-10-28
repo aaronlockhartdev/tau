@@ -30,6 +30,24 @@ pub enum Lane {
     FollowUp,
 }
 
+/// One frame-aligned streaming delta of the in-progress assistant entry
+/// (#303): the text and reasoning appended since the previous delta, tagged
+/// with this stream's `seq`. Live view only — the committed entry is the
+/// record — and the point is that a flush costs the new characters, not a
+/// copy of the accumulated buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StreamDelta {
+    pub(crate) id: String,
+    pub(crate) seq: u64,
+    pub(crate) text: String,
+    pub(crate) reasoning: String,
+}
+
+/// The streaming-delta sink: the harness shapes this into the protocol's
+/// `StreamDelta` event. Core stays transport-free, so the hook takes the
+/// delta, not the event.
+pub(crate) type StreamDeltaHook = Arc<dyn Fn(&StreamDelta) + Send + Sync>;
+
 /// A loop-level failure: session storage, the provider, or a prompt the
 /// gate's budget math already knows is over the window (a refusal that
 /// never reaches the wire).
@@ -266,9 +284,13 @@ pub(crate) struct Inner {
     /// not the event. `None` = no observer (tests, children).
     om_status_hook: Option<OmStatusHook>,
     /// Wire-only entry upserts (ADR-0008): a re-emitted entry before its
-    /// file line lands (the streaming assistant, the tool's call phase);
-    /// the harness shapes it into the protocol's `EntryUpsert`.
+    /// file line lands (the tool's call phase, the discrete cards); the
+    /// harness shapes it into the protocol's `EntryUpsert`.
     entry_upsert_hook: Option<EntryEventHook>,
+    /// The streaming assistant's live growth (#303): each frame-aligned
+    /// delta of new text/reasoning, which the harness shapes into the
+    /// protocol's `StreamDelta`.
+    stream_delta_hook: Option<StreamDeltaHook>,
     /// Fired when the lane queue changes mid-turn (steering/force consumed)
     /// so the app can re-emit the queue snapshot (the GUI's queue pane).
     queue_event_hook: Option<QueueEventHook>,
@@ -375,6 +397,7 @@ impl AgentSession {
                 om_model: p.om_model,
                 om_status_hook: None,
                 entry_upsert_hook: None,
+                stream_delta_hook: None,
                 queue_event_hook: None,
                 plan_hook: None,
                 subagents: p.subagents,

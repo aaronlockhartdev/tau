@@ -110,6 +110,8 @@ mod tests_turns;
 #[cfg(test)]
 mod tests_turns_status;
 #[cfg(test)]
+mod tests_turns_stream;
+#[cfg(test)]
 mod tests_watcher;
 #[cfg(test)]
 mod tests_workspace_close;

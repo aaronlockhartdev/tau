@@ -74,6 +74,9 @@ pub(crate) fn manual_session_om(
         let up_tx = tx.clone();
         let up_ws = ws.clone();
         let up_sid = sid.clone();
+        let d_tx = up_tx.clone();
+        let d_ws = up_ws.clone();
+        let d_sid = up_sid.clone();
         agent.set_entry_event_hook(Some(Arc::new(move |entry: &crate::session::Entry| {
             let _ = tx.try_send(Event::EntryUpsert {
                 workspace: ws.clone(),
@@ -86,6 +89,16 @@ pub(crate) fn manual_session_om(
                 workspace: up_ws.clone(),
                 session: up_sid.clone(),
                 entry: super::sessions::entry_to_view(entry),
+            });
+        })));
+        agent.set_stream_delta_hook(Some(Arc::new(move |delta: &crate::agent::StreamDelta| {
+            let _ = d_tx.try_send(Event::StreamDelta {
+                workspace: d_ws.clone(),
+                session: d_sid.clone(),
+                id: delta.id.clone(),
+                seq: delta.seq,
+                text: delta.text.clone(),
+                reasoning: delta.reasoning.clone(),
             });
         })));
     }

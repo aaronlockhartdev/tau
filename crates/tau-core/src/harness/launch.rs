@@ -10,6 +10,7 @@ use super::{
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
     TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open, tools,
 };
+use crate::agent::StreamDelta;
 use crate::config::ToolBatchPolicy;
 use crate::om::OmRecord;
 use crate::om_integration::OmState;
@@ -469,9 +470,9 @@ fn gc_policy(config: &Config) -> crate::hashline::pin_store::GcPolicy {
     }
 }
 
-/// The root's four event hooks: the `om_status` kind-string shaping, the
-/// queue projection, and the two entry tees (ADR-0008's file-line
-/// upserts).
+/// The root's five event hooks: the `om_status` kind-string shaping, the
+/// queue projection, the streaming-delta tee (#303), and the two entry tees
+/// (ADR-0008's file-line upserts).
 pub(super) fn wire_events(
     core: &Arc<Core>,
     workspace_id: &str,
@@ -521,9 +522,9 @@ pub(super) fn wire_events(
                 items: q_agent.queued_items(),
             });
         })));
-        // The wire-only re-emissions (the streaming assistant, the
-        // tool's call phase) take the same mapping — same event, same
-        // channel.
+        // The tool's call phase and the discrete cards re-emit their entry on
+        // the wire; same mapping, same channel as the queue's events. The
+        // streaming assistant has its own delta hook above (#303).
         let u_tx = tx.clone();
         let u_ws = ws.clone();
         let u_sid = sid.clone();
@@ -537,6 +538,23 @@ pub(super) fn wire_events(
                 workspace: u_ws.clone(),
                 session: u_sid.clone(),
                 entry: upsert.entry(entry),
+            });
+        })));
+        // The streaming assistant's live growth (#303): one delta per frame,
+        // carrying the new characters. A pipe overflow drops a delta and the
+        // `seq` gap makes it visible to the consumer; the committed entry
+        // settles the card either way, so the record is never at stake.
+        let d_tx = tx.clone();
+        let d_ws = ws.clone();
+        let d_sid = sid.clone();
+        agent.set_stream_delta_hook(Some(Arc::new(move |delta: &StreamDelta| {
+            let _ = d_tx.try_send(Event::StreamDelta {
+                workspace: d_ws.clone(),
+                session: d_sid.clone(),
+                id: delta.id.clone(),
+                seq: delta.seq,
+                text: delta.text.clone(),
+                reasoning: delta.reasoning.clone(),
             });
         })));
         agent.set_entry_event_hook(Some(Arc::new(move |entry: &Entry| {

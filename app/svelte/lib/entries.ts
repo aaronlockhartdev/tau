@@ -163,6 +163,36 @@ export function decodeEntry(v: ViewEntry): Entry {
   }
 }
 
+// #303: a stream delta carries only the new characters, so the view owns the
+// accumulation. seq numbers the frames, and a delta applies only as the next
+// one in a run: a duplicate, a gap, and a frame that opens a run already past
+// its first are all refused, because appending them would repeat text or place
+// it out of order. A refused frame freezes its run — the view never guesses a
+// seq — and the entry's file line lands as an upsert, which is the recovery:
+// a lost frame costs visible text, never the record. Returns whether the delta
+// applied.
+export function applyDelta(
+  entries: Record<string, Entry>,
+  seqs: Map<string, number>,
+  ev: { id: string; seq: number; text: string; reasoning: string }
+): boolean {
+  const last = seqs.get(ev.id);
+  if (last === undefined ? ev.seq !== 1 : ev.seq !== last + 1) return false;
+  const card = entries[ev.id];
+  const live = card && (card.kind === 'message' || card.kind === 'interrupted') ? card : undefined;
+  const reasoning = (live?.reasoning ?? '') + ev.reasoning;
+  entries[ev.id] = {
+    id: ev.id,
+    kind: 'message',
+    text: (live?.text ?? '') + ev.text,
+    reasoning: reasoning || undefined,
+    calls: live?.calls,
+    usage: live?.usage
+  };
+  seqs.set(ev.id, ev.seq);
+  return true;
+}
+
 // Sidecar blob (ADR-0005): an oversized payload arrives null with a blob
 // pointer; the payload is fetched on demand and substituted before decode.
 // A fetch that fails keeps the pointer — one unreadable blob must not sink

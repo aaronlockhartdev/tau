@@ -134,6 +134,32 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
       entry: entryView(id, kind, payload)
     };
   }
+  // #303: one frame's growth of a streaming assistant entry.
+  function delta(id: string, seq: number, text: string, reasoning = '') {
+    return {
+      type: 'stream_delta' as const,
+      workspace: WS.id,
+      session: 's1',
+      id,
+      seq,
+      text,
+      reasoning
+    };
+  }
+
+  // The wire shape the app's production tee sends (harness/launch.rs), read
+  // as the protocol declares it: every frame of a run grows the card (#303).
+  it('grows a card from every frame of the wire event the app sends', () => {
+    const s = oneSession();
+    applyEvents([
+      { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
+      { type: 'stream_delta', workspace: WS.id, session: 's1', id: '00000001', seq: 1, text: 'li', reasoning: '' },
+      { type: 'stream_delta', workspace: WS.id, session: 's1', id: '00000001', seq: 2, text: 've', reasoning: '' }
+    ]);
+    const card = s.entries['00000001']!;
+    expect(card.kind).toBe('message');
+    if (card.kind === 'message') expect(card.text).toBe('live');
+  });
 
   it('a turn that fails before its first output leaves "starting" (no stuck running badge)', () => {
     const s = oneSession();
@@ -236,14 +262,67 @@ describe('applyEvents: streaming (entry_upsert, ADR-0008)', () => {
     vi.setSystemTime(0);
     const s = oneSession();
     applyEvents([{ type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' }]);
-    // 2 s prefill, then the first token opens the estimate's clock.
+    // 2 s prefill, then the first character opens the estimate's clock.
     await vi.advanceTimersByTimeAsync(2000);
-    applyEvents([upsert('00000001', 'assistant', { text: 'a', interrupted: false })]);
+    applyEvents([delta('00000001', 1, 'a')]);
     await vi.advanceTimersByTimeAsync(2000);
-    // ~2 s after the first delta, 80 chars ≈ 20 tokens → 10 tps.
-    applyEvents([upsert('00000001', 'assistant', { text: 'x'.repeat(80), interrupted: false })]);
+    // ~2 s after the first delta, 80 chars accumulated ≈ 20 tokens → 10 tps.
+    applyEvents([delta('00000001', 2, 'x'.repeat(79))]);
     expect(s.tps).toBeCloseTo(10);
     vi.useRealTimers();
+  });
+
+  it('the deltas of a stream grow one card in seq order', () => {
+    const s = oneSession();
+    applyEvents([
+      { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
+      delta('00000001', 1, 'hel', 'think'),
+      delta('00000001', 2, 'lo'),
+      delta('00000001', 3, ' world')
+    ]);
+    const e = s.entries['00000001']!;
+    expect(e.kind).toBe('message');
+    if (e.kind === 'message') {
+      expect(e.text).toBe('hello world');
+      expect(e.reasoning).toBe('think');
+    }
+  });
+
+  it('the committed entry replaces the card the deltas built, and carries the usage', () => {
+    const s = oneSession();
+    applyEvents([
+      { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
+      delta('00000001', 1, 'hel'),
+      delta('00000001', 2, 'lo'),
+      upsert('00000001', 'assistant', { text: 'hello world', interrupted: false, usage: USAGE }),
+      { type: 'stream_end', workspace: WS.id, session: 's1', call_id: 'c1', interrupted: false, usage: USAGE, duration_secs: 1 }
+    ]);
+    const e = s.entries['00000001']!;
+    if (e.kind === 'message') {
+      expect(e.text).toBe('hello world');
+      expect(e.usage).toEqual(USAGE);
+    }
+  });
+
+  it('a delta out of order is refused, and the file line recovers the text', () => {
+    const s = oneSession();
+    applyEvents([
+      { type: 'stream_start', workspace: WS.id, session: 's1', call_id: 'c1' },
+      delta('00000001', 1, 'one '),
+      delta('00000001', 3, 'three ')
+    ]);
+    const partial = s.entries['00000001']!;
+    if (partial.kind === 'message') expect(partial.text).toBe('one ');
+    // The dropped frame is not guessed at; the entry's line is the recovery.
+    applyEvents([upsert('00000001', 'assistant', { text: 'one two three', interrupted: false })]);
+    const e = s.entries['00000001']!;
+    if (e.kind === 'message') expect(e.text).toBe('one two three');
+  });
+
+  it('a delta for an unknown session changes nothing', () => {
+    oneSession();
+    applyEvents([{ ...delta('00000001', 1, 'orphan'), session: 's9' }]);
+    expect(store.sessions['s9']).toBeUndefined();
   });
 
   it('a tool call is one card: the call upsert starts it, the result upsert fills the output', () => {

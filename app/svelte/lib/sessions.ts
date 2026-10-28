@@ -26,7 +26,8 @@ export interface PendingMsg {
 export interface SessionState {
   meta: SessionMeta;
   // The materialized entry map (ADR-0008): id → decoded card, in creation
-  // order. entry_upsert is the only live op; paged reads fill the rest.
+  // order. entry_upsert carries a record; stream_delta grows a card between
+  // its frames and its record (#303); paged reads fill the rest.
   entries: Record<string, Entry>;
   usage: Usage | null;
   // Output tokens/second of the session's most recent turn (status bar).
