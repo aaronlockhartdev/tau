@@ -228,6 +228,8 @@ impl Supervisor {
         if let Some(entries) = entries {
             return count(entries);
         }
+        // The whole parent log by design (#302): the cap counts every
+        // `subagent_spawn` record the parent ever wrote, so no window bounds it.
         let mut store = SessionStore::for_workspace(cwd, parent_session);
         let Ok(()) = store.open() else {
             return 0;

@@ -123,6 +123,102 @@ fn disk_children_reads_the_minted_handle_from_spawn_records() {
     assert_eq!(children[0].handle, "child-session");
 }
 
+/// A fork child's spawn record is appended at the copied leaf — the parent's
+/// whole tree is its log — so the fleet read finds it in its tail window (#302).
+#[test]
+fn disk_children_read_the_provenance_of_a_fork_child_from_its_tail() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let mut p = SessionStore::for_workspace(dir, "p");
+    p.create().unwrap();
+    for i in 0..12 {
+        p.append(
+            crate::agent::KIND_USER,
+            json!({ "text": format!("p{i}") }),
+            None,
+        )
+        .unwrap();
+    }
+    // fork = the parent's record copied wholesale (spec §5.1), so the child's
+    // own spawn record lands at the end of the copied tree, not at the head.
+    let mut c = SessionStore::fork_from(&p, "cf").unwrap();
+    c.set_parent("p").unwrap();
+    let leaf = c.leaf().unwrap().map(|e| e.id);
+    c.append(
+        KIND_SUBAGENT,
+        json!({
+            "event": "spawn",
+            "type": "auditor",
+            "brief": "b",
+            "context_mode": "fork",
+            "parent": "p",
+            "call": "t0",
+        }),
+        leaf.as_deref(),
+    )
+    .unwrap();
+    let leaf = c.leaf().unwrap().map(|e| e.id);
+    c.append(
+        KIND_SUBAGENT,
+        state_entry("done", &json!({})).payload,
+        leaf.as_deref(),
+    )
+    .unwrap();
+
+    let children = restore::disk_children(dir, "p", None);
+    assert_eq!(children.len(), 1);
+    assert_eq!(
+        children[0].agent_type, "auditor",
+        "the fork child's spawn record sits at its log's tail"
+    );
+    assert!(
+        matches!(children[0].context_mode, ContextMode::Fork),
+        "a head-only lookup would have read the general/fresh defaults"
+    );
+}
+
+/// The fleet read's tail window is the bound its doc names: a state record
+/// past it reads as no state record, and the child is a re-adopt no-op.
+#[test]
+fn a_state_record_past_the_tail_window_is_no_state_record() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    let mut p = SessionStore::for_workspace(dir, "p");
+    p.create().unwrap();
+    state_only_child(dir, "c1", "p", "done", &json!({}));
+    let mut c = SessionStore::for_workspace(dir, "c1");
+    c.open().unwrap();
+    let mut leaf = c.leaf().unwrap().map(|e| e.id);
+    for i in 0..restore::STATE_TAIL - 1 {
+        leaf = Some(
+            c.append(
+                crate::agent::KIND_USER,
+                json!({ "text": format!("after {i}") }),
+                leaf.as_deref(),
+            )
+            .unwrap()
+            .id,
+        );
+    }
+    assert_eq!(
+        restore::disk_children(dir, "p", None).len(),
+        1,
+        "a full window of records after the state record still reads it"
+    );
+    // One entry past the window: the record is out of reach, so the child
+    // reads as parked and re-adopt drops it.
+    c.append(
+        crate::agent::KIND_USER,
+        json!({ "text": "one past the window" }),
+        leaf.as_deref(),
+    )
+    .unwrap();
+    assert!(
+        restore::disk_children(dir, "p", None).is_empty(),
+        "the window is the bound the doc names"
+    );
+}
+
 #[test]
 fn no_state_entry_is_none_not_a_guess() {
     assert!(restore::last_state_from(&[]).is_none());
