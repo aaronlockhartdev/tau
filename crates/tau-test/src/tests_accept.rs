@@ -716,20 +716,28 @@ pub(crate) async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
 
     // The child's scripted reply distinguished the two senders (the mock's
     // turn, driven by the labeled context it was given); it is recorded in
-    // the child's own session file.
-    let centries = all_entries(&SessionStore::for_workspace(ws.path(), &child_id));
-    if !centries.iter().any(|e| {
-        e.payload
-            .get("text")
-            .and_then(Value::as_str)
-            .is_some_and(|t| {
-                t.contains("Parent tightened the scope")
-                    && t.contains("User asked me to also check the logs")
-            })
-    }) {
-        return Err(
-            "accept-sender-labels: the child's reply did not distinguish the senders".into(),
-        );
+    // the child's own session file. The child's drive commits that record on
+    // its own schedule, so the read is polled: a single read races the commit.
+    let reply_landed = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let centries = all_entries(&SessionStore::for_workspace(ws.path(), &child_id));
+        if centries.iter().any(|e| {
+            e.payload
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|t| {
+                    t.contains("Parent tightened the scope")
+                        && t.contains("User asked me to also check the logs")
+                })
+        }) {
+            break;
+        }
+        if std::time::Instant::now() > reply_landed {
+            return Err(
+                "accept-sender-labels: the child's reply did not distinguish the senders".into(),
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
     Ok(())
 }

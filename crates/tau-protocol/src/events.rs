@@ -26,13 +26,34 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         duration_secs: Option<f64>,
     },
+    /// The streaming delta of an in-progress assistant entry (#303): the
+    /// live card grows by `text` and `reasoning`, applied in `seq` order per
+    /// `id`. A flush costs the new characters, not the whole buffer, so a turn
+    /// that streams n characters copies n bytes. Live view only (ADR-0008):
+    /// the call's committed `EntryUpsert` is the file line and replaces
+    /// whatever the consumer accumulated, so a lost delta costs visible text
+    /// until that entry lands, never the record.
+    StreamDelta {
+        workspace: String,
+        session: String,
+        /// The in-progress assistant entry's id: the `StreamStart`'s, and the
+        /// committed entry's (ADR-0008 mints the id up front).
+        id: String,
+        /// This stream's delta count for `id`, from 1: the consumer applies
+        /// each `seq` once, in order, so a repeat is dropped and a gap is
+        /// visible.
+        seq: u64,
+        text: String,
+        reasoning: String,
+    },
     /// A transcript entry is upserted: the exact file-line view the session
     /// log holds (or will hold when finalized). The GUI sets `map[id] = entry`
-    /// — the only live transcript op (ADR-0008). Carries the streaming
-    /// assistant entry (re-emitted frame-aligned as it grows), tool entries
-    /// (one id, call→result), and every discrete card (subagent/om/
-    /// steering). The GUI renders a card on first sight and updates it in
-    /// place; transcript order is fixed by the id.
+    /// — the live transcript op that carries a record (ADR-0008). Carries the
+    /// committed assistant entry (the stream's file line, which settles the
+    /// card its `StreamDelta`s grew), tool entries (one id, call→result), and
+    /// every discrete card (subagent/om/steering). The GUI renders a card on
+    /// first sight and updates it in place; transcript order is fixed by the
+    /// id.
     EntryUpsert {
         workspace: String,
         session: String,

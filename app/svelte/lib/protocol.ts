@@ -468,11 +468,20 @@ export type SystemEventKind =
 export type Event =
   | { type: 'stream_start'; workspace: string; session: string; call_id: string }
   | { type: 'stream_end'; workspace: string; session: string; call_id: string; interrupted: boolean; usage: Usage | null; duration_secs?: number }
+  // One frame's growth of a streaming assistant entry (#303): only the new
+  // characters ride, never the accumulation. seq numbers the frames, so the
+  // view concatenates in order and can tell a lost frame from the entry's
+  // file line, which lands as an upsert and is the recovery. A frame that is
+  // not the next one in its run is refused — including the first frame of a run
+  // this view has never seen — so a view that joins mid-turn reads the record
+  // (ADR-0008).
+  | { type: 'stream_delta'; workspace: string; session: string; id: string; seq: number; text: string; reasoning: string }
   // A transcript entry is upserted: the exact file-line view the session log
   // holds (or will hold when finalized). The store sets map[id] = entry — the
-  // only live transcript op (ADR-0008). Carries the streaming assistant entry
-  // (re-emitted frame-aligned as it grows), tool entries (one id, call→result),
-  // and every discrete card. The card renders on first sight, updates in place.
+  // live transcript op that carries a record (ADR-0008). Carries the committed
+  // assistant entry (its text arrived as stream_deltas, #303), tool entries
+  // (one id, call→result), and every discrete card. The card renders on first
+  // sight, updates in place.
   | { type: 'entry_upsert'; workspace: string; session: string; entry: ViewEntry }
   | { type: 'queue'; workspace: string; session: string; items: QueuedItem[] }
   | { type: 'session_event'; workspace: string; session: string; kind: SessionEventKind }

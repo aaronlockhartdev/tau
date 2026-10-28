@@ -2,7 +2,8 @@
 //! assistant entry. A tool that produces meaningful output before it completes
 //! reports it through a [`ToolProgress`]; the handle coalesces the reports into
 //! at most one wire-only re-upsert of the tool entry per display frame
-//! (ADR-0008's `EntryUpsert` lane, the streaming assistant entry's precedent).
+//! (ADR-0008's `EntryUpsert` lane — the tool is the only mid-stream re-upsert
+//! left; the assistant streams deltas, #303).
 //! The final result wins: the file line is written once, at completion, under
 //! the same id (order-preservation rule #148 untouched — progress upserts are
 //! wire-only).
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 use tau_protocol::EntryKind;
 
 /// The display-frame cadence: at most one in-flight re-upsert per frame
-/// (ADR-0008, the streaming assistant entry's [`StreamEntrySink`] interval).
+/// (ADR-0008, the same display-frame window the assistant's sink streams by).
 const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(16);
 
 /// One tool call's in-flight output, streamed to the entry upsert hook.

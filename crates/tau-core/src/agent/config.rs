@@ -1,4 +1,7 @@
-use super::{AgentError, AgentSession, OmStatusHook, PlanStateHook, QueueEventHook, TurnConfig};
+use super::{
+    AgentError, AgentSession, OmStatusHook, PlanStateHook, QueueEventHook, StreamDeltaHook,
+    TurnConfig,
+};
 use crate::provider::ToolSpec;
 use crate::session::{EntryEventHook, SessionStore};
 use serde_json::Value;
@@ -57,6 +60,13 @@ impl AgentSession {
     /// The wire-only upsert sink (ADR-0008); `None` clears it.
     pub(crate) fn set_entry_upsert_hook(&self, hook: Option<EntryEventHook>) {
         self.inner.lock().entry_upsert_hook = hook;
+    }
+
+    /// The streaming assistant's delta sink (#303); `None` clears it — the
+    /// turn then streams with no live growth, and the committed entry is the
+    /// first sight of the text.
+    pub(crate) fn set_stream_delta_hook(&self, hook: Option<StreamDeltaHook>) {
+        self.inner.lock().stream_delta_hook = hook;
     }
 
     /// The session's model for the next turn's calls (the `session_set_model`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEntry, resolveBlobs, toolStatus, upsertEntry } from './entries';
+import { applyDelta, decodeEntry, resolveBlobs, toolStatus, upsertEntry } from './entries';
 import type { Entry, ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
@@ -80,6 +80,102 @@ describe('decodeEntry (how the response ended, #307)', () => {
       endedBy?: string;
     };
     expect(e.endedBy).toBeUndefined();
+  });
+});
+
+// #303: the wire carries only the new characters, so the view owns the
+// accumulation and the seq numbers decide what applies.
+const view = (entries: Record<string, Entry>, seqs: Map<string, number>, seq: number, text: string, reasoning = '', id = '00000001') =>
+  applyDelta(entries, seqs, { id, seq, text, reasoning });
+
+describe('applyDelta (#303)', () => {
+  it('a run of deltas tiles the stream into one card', () => {
+    const entries: Record<string, Entry> = {};
+    const seqs = new Map<string, number>();
+    expect(view(entries, seqs, 1, 'hel', 'thin')).toBe(true);
+    expect(view(entries, seqs, 2, 'lo')).toBe(true);
+    expect(view(entries, seqs, 3, ' — done', 'k')).toBe(true);
+    const e = entries['00000001']!;
+    expect(e.kind).toBe('message');
+    if (e.kind === 'message') {
+      expect(e.text).toBe('hello — done');
+      expect(e.reasoning).toBe('think');
+    }
+    expect(Object.keys(entries)).toEqual(['00000001']);
+  });
+
+  it('the first delta creates the card the file line later replaces', () => {
+    const entries: Record<string, Entry> = {};
+    const seqs = new Map<string, number>();
+    view(entries, seqs, 1, 'first');
+    expect(entries['00000001']?.kind).toBe('message');
+    upsertEntry(entries, {
+      id: '00000001',
+      parent: null,
+      kind: 'assistant',
+      timestamp: 9,
+      payload: { text: 'first line', interrupted: false, usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } },
+      blob: null,
+      first_kept: null
+    });
+    const e = entries['00000001']!;
+    if (e.kind === 'message') {
+      expect(e.text).toBe('first line');
+      expect(e.usage?.total_tokens).toBe(3);
+    }
+  });
+
+  it('a gap is refused: the missing frame is not papered over', () => {
+    const entries: Record<string, Entry> = {};
+    const seqs = new Map<string, number>();
+    view(entries, seqs, 1, 'one ');
+    expect(view(entries, seqs, 3, 'three ')).toBe(false);
+    expect((entries['00000001'] as Entry & { text: string }).text).toBe('one ');
+    // The run stays frozen: the view never guesses a seq, and the entry's
+    // file line is the recovery for everything the gap lost.
+    expect(view(entries, seqs, 4, 'four ')).toBe(false);
+  });
+
+  it('a duplicate seq is refused: the text never repeats', () => {
+    const entries: Record<string, Entry> = {};
+    const seqs = new Map<string, number>();
+    view(entries, seqs, 1, 'once');
+    expect(view(entries, seqs, 1, 'once')).toBe(false);
+    expect((entries['00000001'] as Entry & { text: string }).text).toBe('once');
+  });
+
+  it('a stream that opens mid-run creates no card', () => {
+    const entries: Record<string, Entry> = {};
+    const seqs = new Map<string, number>();
+    expect(view(entries, seqs, 2, 'fragment')).toBe(false);
+    expect(Object.keys(entries)).toEqual([]);
+  });
+
+  it('a delta for an entry the view already committed is refused', () => {
+    const entries: Record<string, Entry> = {};
+    // The committed file line: the store cleared the tracker when it landed.
+    upsertEntry(entries, {
+      id: '00000001',
+      parent: null,
+      kind: 'assistant',
+      timestamp: 9,
+      payload: { text: 'the record', interrupted: true },
+      blob: null,
+      first_kept: null
+    });
+    const seqs = new Map<string, number>();
+    expect(view(entries, seqs, 4, 'late')).toBe(false);
+    expect(entries['00000001']?.kind).toBe('interrupted');
+    expect((entries['00000001'] as Entry & { text: string }).text).toBe('the record');
+  });
+
+  it('a reasoning-only delta leaves the text empty, not absent', () => {
+    const entries: Record<string, Entry> = {};
+    const seqs = new Map<string, number>();
+    expect(view(entries, seqs, 1, '', 'thinking')).toBe(true);
+    const e = entries['00000001'] as Entry & { text: string; reasoning?: string };
+    expect(e.text).toBe('');
+    expect(e.reasoning).toBe('thinking');
   });
 });
 

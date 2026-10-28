@@ -149,28 +149,17 @@ impl AgentSession {
             // fresh call starts un-killed (spec §7).
             self.kill.store(false, Ordering::SeqCst);
             // The call's assistant entry is minted up front (ADR-0008):
-            // the streamed snapshots and the final append share the one id.
-            let (entry_id, parent, timestamp, upsert) = {
+            // the streamed deltas and the final append share the one id.
+            let (entry_id, delta) = {
                 let mut inner = self.inner.lock();
-                let parent = inner.store.leaf().ok().flatten().map(|e| e.id);
-                (
-                    inner.store.mint_id(),
-                    parent,
-                    inner.store.now(),
-                    inner.entry_upsert_hook.clone(),
-                )
+                (inner.store.mint_id(), inner.stream_delta_hook.clone())
             };
-            let mut sink = StreamEntrySink {
-                kill: self.kill.clone(),
-                stop: self.stop.clone(),
-                id: entry_id.clone(),
-                parent,
-                timestamp,
-                upsert,
-                text: String::new(),
-                reasoning: String::new(),
-                last: None,
-            };
+            let mut sink = StreamEntrySink::new(
+                entry_id.clone(),
+                self.kill.clone(),
+                self.stop.clone(),
+                delta,
+            );
             let mut result = match self.provider.call(&request, &mut sink).await {
                 Ok(result) => result,
                 // A prefill rejection: the sink is untouched, so the same

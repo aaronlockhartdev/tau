@@ -1,5 +1,5 @@
 //! The turn-end sequence (R4) driven through `settle_turn` — the actual
-//! turn-end entry point, not just `branch_entries`.
+//! turn-end entry point, not just `session::branch`.
 
 use super::*;
 

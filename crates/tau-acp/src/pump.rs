@@ -1,17 +1,18 @@
 //! The dedicated event pump: the single consumer of `Core::events()`,
 //! mapping core events to ACP `session/update` notifications and driving
-//! the settle rule. At the 16 ms snapshot cadence (ADR-0008) the bounded
-//! pipe is effectively lossless for a consumer whose only job is this; a
-//! stall long enough to drop events surfaces as a `System` overflow error,
-//! which settles the affected turn (the journal-resync repair is the
-//! post-v0 follow-up, research doc §5.1).
+//! the settle rule. At the display's frame cadence (ADR-0008) the bounded pipe
+//! is effectively lossless for a consumer whose only job is this; a stall long
+//! enough to drop events surfaces as a `System` overflow error, which settles
+//! the affected turn (the journal-resync repair is the post-v0 follow-up,
+//! research doc §5.1). A dropped stream frame is the one loss the stream
+//! survives: its entry's record carries the text (#303).
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::sessions::{self, Outcome, Registry};
 use crate::transport::{self, Out};
-use serde_json::json;
+use serde_json::{Value, json};
 use tau_core::harness::Core;
 use tau_protocol::snapshot::ViewEntry;
 use tau_protocol::{Command, EntryKind, Event, MessageLane, SystemEventKind};
@@ -40,6 +41,47 @@ pub async fn run(core: Arc<Core>, out: Out, registry: Arc<Registry>) {
     }
 }
 
+/// Forward one core delta (#303) to the ACP client: the producer cut the text
+/// to its new characters, so the mapper's chunks ride out as they are. The
+/// `let`-`else` is the pattern the pump's own arm already matched; the 100-line
+/// ceiling on `handle` rules out destructuring it there.
+fn forward_delta(ctx: &PumpCtx, event: &Event) {
+    let Event::StreamDelta {
+        session,
+        id,
+        seq,
+        text,
+        reasoning,
+        ..
+    } = event
+    else {
+        return;
+    };
+    let chunks = delta_chunks(ctx.registry, session, id, *seq, text, reasoning);
+    for update in chunks {
+        ctx.out.send(&transport::session_update(session, &update));
+    }
+}
+
+/// The ACP chunks a core delta becomes (#303): the producer cut the delta, so
+/// the mapper forwards it and the counters it advances keep the entry's file
+/// line from repeating the text. A session the registry does not know owes
+/// nothing.
+fn delta_chunks(
+    registry: &Registry,
+    session: &str,
+    id: &str,
+    seq: u64,
+    text: &str,
+    reasoning: &str,
+) -> Vec<Value> {
+    registry
+        .lock()
+        .get_mut(session)
+        .map(|s| s.mapper.on_delta(id, seq, text, reasoning))
+        .unwrap_or_default()
+}
+
 fn handle(ctx: &PumpCtx, event: &Event) {
     let PumpCtx { out, registry, .. } = ctx;
     match event {
@@ -56,6 +98,9 @@ fn handle(ctx: &PumpCtx, event: &Event) {
                 out.send(&transport::session_update(session, &update));
             }
         }
+        // The streaming delta (#303): the chunk is already cut, so the pump
+        // forwards it and never sees the accumulation.
+        Event::StreamDelta { .. } => forward_delta(ctx, event),
         Event::StreamEnd {
             session,
             interrupted,

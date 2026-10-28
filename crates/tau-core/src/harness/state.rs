@@ -346,6 +346,9 @@ fn event_route(event: &Event) -> (String, Option<String>) {
         Event::StreamStart {
             workspace, session, ..
         }
+        | Event::StreamDelta {
+            workspace, session, ..
+        }
         | Event::StreamEnd {
             workspace, session, ..
         }

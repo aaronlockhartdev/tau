@@ -41,6 +41,7 @@
   };
   import { presentation } from './presentation.svelte';
   import { resolveBlobs, upsertEntry } from './entries';
+  import { streamClock } from './stream.svelte';
   import {
     applySessionList,
     applySubagentEvent,
@@ -235,14 +236,6 @@
       workspaces: store.workspaces
     });
   }
-
-  // Per-session first-delta clock (ms epoch) by session id: the base for
-  // TPS measurement. Set once on the first assistant entry_upsert of a
-  // stream (#224: excludes prefill, which a stream-start clock would
-  // wrongly include). The exact output token count lands at stream_end;
-  // until then the status bar's gauge runs on a text-length estimate over
-  // the same first-delta window.
-  let firstDeltaMs = new Map<string, number>();
 
   function sessionOf(sid: string): SessionState {
     const s = store.sessions[sid];
@@ -896,7 +889,7 @@
       const now = Date.now();
       switch (ev.type) {
         case 'stream_start': {
-          firstDeltaMs.delete(ev.session);
+          streamClock.clearStream(ev.session);
           s.tps = 0;
           s.turn = 'running';
           if (now > s.last_modified) s.last_modified = now;
@@ -905,17 +898,25 @@
         case 'stream_end': {
           if (ev.usage) {
             s.usage = ev.usage;
-            // #224: prefer the server's decode-window duration when the
-            // endpoint provides one; otherwise measure from the first
-            // assistant delta (excludes prefill). No delta means no tps.
-            const first = firstDeltaMs.get(ev.session);
-            const secs =
-              ev.duration_secs ?? (first !== undefined ? (Date.now() - first) / 1000 : null);
-            if (secs !== null && secs > 0.2) s.tps = ev.usage.output_tokens / secs;
+            // #224: the endpoint's decode-window duration wins when it gives
+            // one; otherwise the window runs from the first live output. No
+            // window, no rate.
+            s.tps = streamClock.rate(ev.session, ev.usage, ev.duration_secs);
           }
-          firstDeltaMs.delete(ev.session);
+          streamClock.clearStream(ev.session);
           // No tail re-read: the finalized lines already landed as upserts.
           s.turn = 'idle';
+          if (now > s.last_modified) s.last_modified = now;
+          break;
+        }
+        case 'stream_delta': {
+          // #303: only the new characters cross the wire; the view appends
+          // them in seq order and refuses an out-of-order delta. The entry's
+          // file line, which lands as an upsert, is the recovery.
+          if (!streamClock.apply(s.entries, ev)) break;
+          // #224: the stream's first live text opens the TPS clock; the live
+          // gauge runs on the accumulated card, not the one delta.
+          s.tps = streamClock.gauge(ev.session, s.entries[ev.id]);
           if (now > s.last_modified) s.last_modified = now;
           break;
         }
@@ -923,21 +924,19 @@
           upsertEntry(s.entries, ev.entry);
           // A tool call is the model's first output: leave 'starting'.
           if (s.turn === 'starting' && ev.entry.kind === 'tool') s.turn = 'running';
-          // #224: the first assistant delta opens the TPS clock; the live
-          // estimate and the final value both measure from here (excludes
-          // prefill, which a stream-start clock would include).
+          // The entry's file line is the record: it replaces whatever the
+          // deltas accumulated, so the seq tracker for this id is done.
+          streamClock.settle(ev.session, ev.entry.id);
+          // #224: a stream that streamed opened its TPS clock on the first
+          // delta; a call that streamed no text (a tool-only call) opens it
+          // here, measured from the first thing the model produced, so
+          // stream_end's exact TPS has a base. No live gauge to estimate on.
           if (
             ev.entry.kind === 'assistant' &&
-            (s.turn === 'running' || s.turn === 'starting')
+            (s.turn === 'running' || s.turn === 'starting') &&
+            streamClock.firstDeltaAt(ev.session) === undefined
           ) {
-            let first = firstDeltaMs.get(ev.session);
-            if (first === undefined) {
-              first = Date.now();
-              firstDeltaMs.set(ev.session, first);
-            }
-            const secs = (Date.now() - first) / 1000;
-            const text = ((ev.entry.payload as { text?: string } | null) ?? {}).text ?? '';
-            if (secs > 0.2) s.tps = Math.max(1, Math.round(text.length / 4)) / secs;
+            streamClock.open(ev.session);
           }
           if (now > s.last_modified) s.last_modified = now;
           break;
