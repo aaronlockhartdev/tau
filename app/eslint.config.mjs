@@ -33,19 +33,33 @@ export default [
   ...tseslint.configs.recommendedTypeChecked,
   {
     // tsc limitation, not a strictness choice: the ESLint project service
-    // cannot parse .svelte modules, so .svelte files — and .ts files that
-    // import store.svelte — see error-typed imports and no-unsafe-* fires on
-    // every use ("a type that cannot be resolved"). svelte-check (svelte2tsx)
-    // types these files correctly; the typed rules are enforced everywhere else.
+    // cannot parse .svelte modules, so .svelte files — and the .ts files that
+    // import them — see error-typed imports and no-unsafe-* fires on every use
+    // ("a type that cannot be resolved"). The store's $state bag lives in
+    // state.svelte, so every feature module and store test suite is an importer.
+    // svelte-check (svelte2tsx) types these files correctly; the typed rules
+    // are enforced everywhere else.
     files: [
       '**/*.svelte',
       '**/*.mjs',
       'svelte/lib/commands.ts',
+      // The six feature modules that import the state bag.
+      'svelte/lib/workspace.svelte.ts',
+      'svelte/lib/files-pane.svelte.ts',
+      'svelte/lib/viewer.svelte.ts',
+      'svelte/lib/transcript.svelte.ts',
+      'svelte/lib/composer.svelte.ts',
+      'svelte/lib/events.svelte.ts',
+      // The suites that import a .svelte module.
       'svelte/lib/commands.test.ts',
-      'svelte/lib/store.svelte.test.ts',
-      'svelte/lib/store.window.test.ts',
+      'svelte/lib/store.boot.test.ts',
       'svelte/lib/store.commands.test.ts',
+      'svelte/lib/store.events.test.ts',
+      'svelte/lib/store.files.test.ts',
       'svelte/lib/store.sessions.test.ts',
+      'svelte/lib/store.stream.test.ts',
+      'svelte/lib/store.window.test.ts',
+      'svelte/lib/store.workspace.test.ts',
       'svelte/lib/testing/store-harness.ts',
       'svelte/lib/presentation.svelte.test.ts',
       'svelte/components/Transcript.test.ts',
