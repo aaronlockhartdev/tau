@@ -58,6 +58,10 @@ Do (delete the banner, keep any why-text):
   L447/465/493/522/531/535/560 (strip the dashes, keep the why-text where it carries a regression name)
 - `app/svelte/lib/store.svelte` L406
 
+> The 2026-10-28 store split (#320) cut `store.svelte` into `state.svelte` and six feature
+> modules, so the `store.svelte` line numbers in section A are the pre-split file: re-locate
+> each in the module that owns the seam before acting.
+
 Rewrite-as-why (not delete): `store.svelte` L212–213 → `// TPS = a call's output tokens over its own stream
 duration (the status bar's metric)`.
 
@@ -402,7 +406,7 @@ lands when the last hard-limit split lands (no grandfathering).
 | `crates/tau-core/src/om_integration.rs` | 1,238 | split here |
 | `crates/tau-core/src/session.rs` | 1,195 | split here |
 | `crates/tau-core/src/task.rs` | 1,158 | split here |
-| `app/svelte/lib/store.svelte` | 1,106 | C3 |
+| `app/svelte/lib/store.svelte` | 1,106 → 108 | C3 done (#320: `state.svelte` + six feature modules) |
 | `app/scripts/verify-demo.mjs` | 1,124 | G (retires it) |
 
 **Over the soft 500 limit (investigate; split only if the cut improves readability):** `tau-protocol/src/lib.rs`

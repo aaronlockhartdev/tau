@@ -1,12 +1,13 @@
 // The session-command cluster (F5, out of store.svelte, ticket #42): the
 // clear-banner → invoke → refetch → reapply dance, spelled once. The store
-// re-exports these so the components' imports are unchanged. Imports the
-// store (a module cycle) — safe because every use is lazy, inside a function
-// the store itself calls.
+// facade re-exports these so the components' imports are unchanged; the
+// state it mutates comes from state.svelte, the viewer's tab reset from
+// viewer.svelte (#320), so no import cycle reaches the facade.
 import { command, type Command, type CommandOutput, type SessionMeta } from './protocol';
 import { applySessionList, openSession, setArchived } from './sessions';
 import { errText } from './errors';
-import { pane, reconcileActiveFile, store } from './store.svelte';
+import { pane, store } from './state.svelte';
+import { reconcileActiveFile } from './viewer.svelte';
 
 // Session-command convergence (F5): the clear-banner → invoke → on-failure
 // banner core, spelled once. The per-command follow-up (reapply, and for the
