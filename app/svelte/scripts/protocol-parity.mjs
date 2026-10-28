@@ -7,6 +7,8 @@
 // Parity allowances, each a deliberate narrowing direction:
 // - Rust `Value` (and `Vec<Value>`) is the wire's free-form floor (ADR-0005);
 //   it is parity with any TS type — the C9 typed layer sits on top of it.
+// - Rust `Arc<[T]>` is a shared array: the wire is a JSON array, so it mirrors
+//   `T[]` exactly as `Vec<T>` does (the sharing is Rust's, not the wire's).
 // - Rust `String` is parity with a TS union of string literals, named or
 //   inline (the mirror names the known values; the wire stays a string —
 //   MessageLane).
@@ -319,7 +321,7 @@ function normRust(t) {
     if (inner === 'unknown') return 'unknown';
     return `${inner} | null`;
   }
-  const vec = t.match(/^Vec<(.+)>$/);
+  const vec = t.match(/^Vec<(.+)>$/) ?? t.match(/^Arc<\[(.+)\]>$/);
   if (vec) return `${normRust(vec[1])}[]`;
   if (ALIASES[t] ?? LOOSE_ALIASES[t]) return ALIASES[t] ?? LOOSE_ALIASES[t];
   return t;

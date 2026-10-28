@@ -78,6 +78,10 @@ pub struct SessionStore {
     /// (an external writer — the 10k fixture test), so a live read never
     /// serves a stale log.
     file_len: u64,
+    /// The load generation: `open` bumps it, so a caller's cache of loaded-log
+    /// rows can tell one file from the next under the same session id
+    /// (`Skeleton`'s identity, #316).
+    load_seq: u64,
     /// A live entry sink (the app maps each appended entry to a protocol
     /// event). Set by the owning session; `None` for stores with no live
     /// surface. Fired at the append choke point so every write path — the
@@ -157,6 +161,7 @@ impl SessionStore {
             entries: Vec::new(),
             entry_len: Vec::new(),
             file_len: 0,
+            load_seq: 0,
             entry_event_hook: None,
         }
     }
@@ -272,6 +277,7 @@ impl SessionStore {
     /// the read path never rewrites the file (the writer settles the tail
     /// at the next append); any other bad line is corruption.
     pub fn open(&mut self) -> Result<(), Error> {
+        self.load_seq += 1;
         let raw = fs::read_to_string(self.path()).map_err(|e| Error::Other(e.to_string()))?;
         self.file_len = u64::try_from(raw.len()).expect("file length, well under u64::MAX");
         let lines = Self::entry_lines(&raw);

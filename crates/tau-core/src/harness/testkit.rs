@@ -119,6 +119,7 @@ pub(crate) fn manual_session_om(
         turn: AtomicBool::new(false),
         provider,
         cwd,
+        skeleton: Mutex::new(Skeleton::default()),
     });
     core.sessions
         .lock()

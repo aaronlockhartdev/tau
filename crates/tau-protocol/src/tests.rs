@@ -187,7 +187,7 @@ fn command_output_variants_roundtrip() {
     let snap = snapshot::Snapshot {
         workspace: ws.clone(),
         session: meta.clone(),
-        entries: vec![],
+        entries: Vec::new().into(),
         om: snapshot::OmSnapshot {
             observation_tokens: 18_000,
             pending_tokens: 1_000,

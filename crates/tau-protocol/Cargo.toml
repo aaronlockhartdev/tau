@@ -8,7 +8,8 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-serde = { workspace = true }
+# "rc": the snapshot's shared skeleton is an Arc<[EntryMeta]> (#316)
+serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]

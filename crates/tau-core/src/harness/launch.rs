@@ -423,6 +423,10 @@ fn root_session(
             core: Arc::downgrade(core),
         }),
         core: Some(Arc::downgrade(core)),
+        // The whole log by design (#302): these are the spawn-provenance
+        // records of this session's children, and a spawn record lives on the
+        // branch that was current when the child spawned — a parent that
+        // forked afterwards leaves that record off the active chain.
         parent_entries: Some(
             store
                 .entries_range_cached(0, usize::MAX)
