@@ -72,14 +72,35 @@ fn load_missing_is_none_not_err() {
 }
 
 #[test]
-fn remove_drops_the_record() {
+fn retire_marks_every_slot_retired_and_keeps_the_record() {
     let dir = ws("rm");
     cleanup(&dir);
     let s = store(&dir, no_gc());
-    s.save(&pins("gone.rs", &["ABCD"], &["c1"])).expect("save");
-    s.remove("gone.rs");
-    assert!(s.load("gone.rs").is_none());
-    assert!(s.paths().is_empty());
+    s.save(&pins("gone.rs", &["ABCD", "EFGH"], &["c1", "c2"]))
+        .expect("save");
+    s.retire("gone.rs");
+    let retired = s.load("gone.rs").expect("the record survives a retire");
+    assert!(
+        retired.pins.iter().all(|p| p.tombstone),
+        "a write retires every slot"
+    );
+    assert!(retired.anchors().is_empty(), "a retired slot seeds no line");
+    assert!(retired.checksums().is_empty());
+    assert_eq!(
+        retired.retired_anchors(),
+        vec!["ABCD".to_string(), "EFGH".to_string()],
+        "the freed anchors stay in the record, claimed"
+    );
+    cleanup(&dir);
+}
+
+#[test]
+fn retire_without_a_record_is_a_no_op() {
+    let dir = ws("rm-absent");
+    cleanup(&dir);
+    let s = store(&dir, no_gc());
+    s.retire("absent.rs");
+    assert!(s.load("absent.rs").is_none());
     cleanup(&dir);
 }
 
@@ -361,4 +382,79 @@ fn file_checksum_is_content_and_order_sensitive() {
     assert_eq!(a, same);
     assert_ne!(a, reordered);
     assert_ne!(a, changed);
+}
+
+#[test]
+fn anchors_and_checksums_skip_retired_slots() {
+    let mut set = pins("a.rs", &["AAAA", "BBBB"], &["c1", "c2"]);
+    set.pins.push(Pin {
+        anchor: "CCCC".into(),
+        checksum: "c3".into(),
+        tombstone: true,
+    });
+    assert_eq!(
+        set.anchors(),
+        vec!["AAAA".to_string(), "BBBB".to_string()],
+        "the freed slot is not a line"
+    );
+    assert_eq!(set.checksums(), vec!["c1".to_string(), "c2".to_string()]);
+    assert_eq!(set.retired_anchors(), vec!["CCCC".to_string()]);
+}
+
+#[test]
+fn reanchor_offers_a_retired_slot_to_no_line() {
+    // "c2" was deleted and its slot retired. A line reintroduced with that
+    // content takes a fresh anchor, never the freed one.
+    let mut prev = pins("a.rs", &["AAAA"], &["c1"]);
+    prev.pins.push(Pin {
+        anchor: "FREE".into(),
+        checksum: "c2".into(),
+        tombstone: true,
+    });
+    let paired = reanchor(&prev, &["c1".into(), "c2".into()]);
+    assert_eq!(paired[0], Some(0), "the live slot pairs in order");
+    assert_eq!(paired[1], None, "the freed slot is not a candidate");
+}
+
+#[test]
+fn next_pins_carries_retired_slots_forward() {
+    let mut prev = pins("a.rs", &["AAAA", "BBBB"], &["c1", "c2"]);
+    prev.pins.push(Pin {
+        anchor: "FREE".into(),
+        checksum: "c9".into(),
+        tombstone: true,
+    });
+    // c1 survives; c2's line is deleted this round.
+    let next = next_pins(&prev, &[Some(0)], &[], &["c1".into()]);
+    assert_eq!(next.anchors(), vec!["AAAA".to_string()]);
+    assert_eq!(
+        next.retired_anchors(),
+        vec!["BBBB".to_string(), "FREE".to_string()],
+        "the newly freed slot and the slot retired a generation earlier both stay claimed"
+    );
+}
+
+#[test]
+fn next_pairs_survivors_with_live_slots_when_retired_slots_sit_between() {
+    // A hand-built record: `FilePins.pins` is public, so a retired slot need not
+    // trail the live ones. The pairing indexes live pins, so a survivor must
+    // never land on a retired slot and claim a freed anchor.
+    let mut prev = pins("a.rs", &["AAAA"], &["c1"]);
+    prev.pins.push(Pin {
+        anchor: "FREE".into(),
+        checksum: "c9".into(),
+        tombstone: true,
+    });
+    prev.pins.push(Pin {
+        anchor: "BBBB".into(),
+        checksum: "c2".into(),
+        tombstone: false,
+    });
+    let next = next_pins(&prev, &[Some(0), Some(1)], &[], &["c1".into(), "c2".into()]);
+    assert_eq!(
+        next.anchors(),
+        vec!["AAAA".to_string(), "BBBB".to_string()],
+        "the live slots keep their own anchors; no survivor inherits a freed one"
+    );
+    assert_eq!(next.retired_anchors(), vec!["FREE".to_string()]);
 }

@@ -75,16 +75,34 @@ pub struct FilePins {
 }
 
 impl FilePins {
-    /// The per-line checksums in file order — the re-anchor base.
-    #[must_use]
-    pub fn checksums(&self) -> Vec<String> {
-        self.pins.iter().map(|p| p.checksum.clone()).collect()
+    /// The live slots, in file order. A tombstone is a freed slot: it points
+    /// at no line, so it is neither a seed line nor a re-anchor candidate
+    /// (#207 §2).
+    pub fn live(&self) -> impl Iterator<Item = &Pin> {
+        self.pins.iter().filter(|p| !p.tombstone)
     }
 
-    /// The per-line anchors in file order.
+    /// The live slots' per-line checksums, in file order — the re-anchor base.
+    #[must_use]
+    pub fn checksums(&self) -> Vec<String> {
+        self.live().map(|p| p.checksum.clone()).collect()
+    }
+
+    /// The live slots' anchors, in file order — what a first read seeds from.
     #[must_use]
     pub fn anchors(&self) -> Vec<String> {
-        self.pins.iter().map(|p| p.anchor.clone()).collect()
+        self.live().map(|p| p.anchor.clone()).collect()
+    }
+
+    /// The retired slots' anchors: claimed, pointing at nothing. Minting skips
+    /// these for as long as the record is durable (#207 §2).
+    #[must_use]
+    pub fn retired_anchors(&self) -> Vec<String> {
+        self.pins
+            .iter()
+            .filter(|p| p.tombstone)
+            .map(|p| p.anchor.clone())
+            .collect()
     }
 }
 
@@ -401,18 +419,20 @@ impl PinStore {
         .map_err(|e| StoreError(e.to_string()))
     }
 
-    /// Drop `path`'s row (a `write` voids every anchor).
-    pub fn remove(&self, path: &str) {
-        let Ok(guard) = self.open_conn() else {
+    /// Retire `path`'s pins: a `write` voids every anchor, so each slot
+    /// becomes a tombstone. The row stays — the record is what keeps those
+    /// anchors claimed (#207 §2).
+    pub fn retire(&self, path: &str) {
+        let Some(mut pins) = self.load(path) else {
             return;
         };
-        let Some(conn) = guard.as_ref() else {
-            return;
-        };
-        let _ = conn.execute(
-            "DELETE FROM anchors WHERE path = ?1",
-            rusqlite::params![path],
-        );
+        for p in &mut pins.pins {
+            p.tombstone = true;
+        }
+        // Best-effort, like every persist here: a save that does not land
+        // leaves the durable claim unrecorded, and the seeding session's
+        // `freed` set is what keeps the mint off these anchors meanwhile.
+        let _ = self.save(&pins);
     }
 
     /// Every path this store has a row for (for tests / tooling).
@@ -448,12 +468,14 @@ pub fn file_checksum(checksums: &[String]) -> String {
 }
 
 /// Re-anchor a new file's lines against a previous pin set: a line whose
-/// checksum matches a previous pin **in order** pairs with that pin (the
+/// checksum matches a previous live pin **in order** pairs with that pin (the
 /// content-addressed, position-independent identity); every other line is
-/// fresh. Returns the in-order LCS pairing — the previous pin index for each
-/// new line, `None` where the line is fresh. The pairing (not a
+/// fresh. Returns the in-order LCS pairing — the previous live pin index for
+/// each new line, `None` where the line is fresh. The pairing (not a
 /// per-checksum lookup) is what keeps repeated lines unique: two new copies
-/// of one old line pair with two *distinct* previous pins.
+/// of one old line pair with two *distinct* previous pins. Retired slots are
+/// not in the base: a line reintroduced with a deleted line's content takes a
+/// fresh anchor, not the freed one (#207 §2).
 #[must_use]
 pub fn reanchor(prev: &FilePins, checksums: &[String]) -> Vec<Option<usize>> {
     use crate::hashline::registry::match_anchors;
@@ -463,10 +485,10 @@ pub fn reanchor(prev: &FilePins, checksums: &[String]) -> Vec<Option<usize>> {
 
 /// Build the next `FilePins` from a previous set and the re-anchor pairing:
 /// survivors keep the anchor of their paired previous pin, fresh lines get
-/// `minted[j]`, and a pin whose checksum vanished is tombstoned (kept, not
-/// recycled). `paired` must be index-aligned with `checksums`: `Some(i)`
-/// marks new index j as a survivor keeping pin i's anchor, `None` takes
-/// `minted[j]`.
+/// `minted[j]`, and a live pin the pairing did not reach is tombstoned (kept,
+/// not recycled) alongside the slots already retired. `paired` must be
+/// index-aligned with `checksums`: `Some(i)` marks new index j as a survivor
+/// keeping the anchor of live pin `i`, `None` takes `minted[j]`.
 #[must_use]
 pub fn next_pins(
     prev: &FilePins,
@@ -474,15 +496,15 @@ pub fn next_pins(
     minted: &[String],
     checksums: &[String],
 ) -> FilePins {
+    let live: Vec<&Pin> = prev.live().collect();
     let mut pins = Vec::with_capacity(checksums.len());
     let mut used_prev: std::collections::HashSet<usize> = std::collections::HashSet::new();
     for (j, sum) in checksums.iter().enumerate() {
         let pin = match &paired[j] {
             Some(i) => {
                 used_prev.insert(*i);
-                let p = &prev.pins[*i];
                 Pin {
-                    anchor: p.anchor.clone(),
+                    anchor: live[*i].anchor.clone(),
                     checksum: sum.clone(),
                     tombstone: false,
                 }
@@ -495,10 +517,19 @@ pub fn next_pins(
         };
         pins.push(pin);
     }
-    // Tombstone the pins whose checksum is gone (their line was deleted):
-    // kept in the set, flagged, and never re-minted.
-    for (i, p) in prev.pins.iter().enumerate() {
-        if !used_prev.contains(&i) && !p.tombstone {
+    // A live slot the pairing did not reach is freed: tombstone it. A slot
+    // already retired stays retired — its anchor is claimed for the record's
+    // lifetime, not for one generation (#207 §2).
+    let mut live_i = 0usize;
+    for p in &prev.pins {
+        let freed = if p.tombstone {
+            true
+        } else {
+            let vanished = !used_prev.contains(&live_i);
+            live_i += 1;
+            vanished
+        };
+        if freed {
             pins.push(Pin {
                 anchor: p.anchor.clone(),
                 checksum: p.checksum.clone(),
