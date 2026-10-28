@@ -1,4 +1,4 @@
-// Shared harness for the store.*.test.ts suites: the workspace fixture,
+// Shared harness for the store suites: the workspace fixture,
 // the snapshot/entry builders, and the default IPC route table. Each test
 // file keeps its own hoisted mockInvoke and hands it to bindIPC().
 import type { Mock } from 'vitest';
@@ -12,7 +12,7 @@ import type {
   ViewEntry,
   Workspace
 } from '../protocol';
-import { store } from '../store.svelte';
+import { store } from '../store/store.svelte';
 
 export const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
 

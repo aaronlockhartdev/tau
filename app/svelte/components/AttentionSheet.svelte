@@ -2,7 +2,7 @@
   // The attention sheet (workbench P5): the bell's overlay. A short list of
   // everything parked on the user, across all open workspaces; a jump opens
   // the session (the workspace context follows the session).
-  import { store, attention, switchSession } from '../lib/store.svelte';
+  import { store, attention, switchSession } from '../lib/store/store.svelte';
   import { fmtAgo } from '../lib/format';
   import Overlay from './Overlay.svelte';
 

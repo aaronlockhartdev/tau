@@ -10,7 +10,7 @@ import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/m
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) as Promise<unknown> }));
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

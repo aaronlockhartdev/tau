@@ -2,7 +2,7 @@
   // The fleet list (workbench P6, ⌘\): a compact overlay of every session
   // across all open workspaces — state dot, name, workspace, latest line,
   // tokens. A list, deliberately: the fleet scales as rows, not a board.
-  import { store, switchSession } from '../lib/store.svelte';
+  import { store, switchSession } from '../lib/store/store.svelte';
   import { fmtK } from '../lib/format';
   import Overlay from './Overlay.svelte';
 

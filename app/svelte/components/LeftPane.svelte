@@ -6,7 +6,7 @@
   // rule: top-level rows are badged `running` only while the model is
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
-  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, type PaneState } from '../lib/store/store.svelte';
   import { onActivate } from '../lib/ui';
   import SessionNode from './SessionNode.svelte';
   import { groupIsOpen } from '../lib/sessions';

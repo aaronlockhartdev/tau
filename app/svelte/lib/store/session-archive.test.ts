@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// Session archive / restore / permanent-delete convergence (split from
-// store.svelte.test.ts to keep both files under the 1000-line CI gate).
+// Session archive / restore / permanent-delete convergence: the archive flag's
+// authority is the session_list read, so each command re-applies the list.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -8,8 +8,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 
-import type { Command, CommandOutput, SessionMeta, Workspace } from './protocol';
-import { applySessionList } from './sessions';
+import type { Command, CommandOutput, SessionMeta, Workspace } from '../protocol';
+import { applySessionList } from '../sessions';
 import { archiveSession, deleteSession, restoreSession, store } from './store.svelte';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };

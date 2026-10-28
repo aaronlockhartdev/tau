@@ -20,7 +20,7 @@
   import FocusRails from './components/FocusRails.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setCenterMode, pane, switchSession } from './lib/store.svelte';
+  import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setCenterMode, pane, switchSession } from './lib/store/store.svelte';
   import { FileText, TriangleAlert } from '@lucide/svelte';
   import { isTauri } from './lib/protocol';
   // #195: markdown links open externally instead of navigating the webview.

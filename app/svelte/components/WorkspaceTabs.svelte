@@ -15,7 +15,7 @@
     closeWorkspace,
     closeWorkspaces,
     tabSelect
-  } from '../lib/store.svelte';
+  } from '../lib/store/store.svelte';
   import TauLogo from './TauLogo.svelte';
   import type { Workspace } from '../lib/protocol';
   import { useContextMenu } from '../lib/useContextMenu.svelte';

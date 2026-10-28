@@ -7,7 +7,7 @@
   // the session's own parsed plan file (spec §5.3). Last-modified sorted;
   // the panel renders a tree (nesting supported) — double-click opens the
   // sub-agent's session, which is an ordinary session (a tab opens for it).
-  import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store.svelte';
+  import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store/store.svelte';
   import { fmtK } from '../lib/format';
   import { onActivate } from '../lib/ui';
   import { ChevronDown } from '@lucide/svelte';

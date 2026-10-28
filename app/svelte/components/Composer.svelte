@@ -14,7 +14,7 @@
   // /model and /help): arrows navigate, Enter completes, Tab completes,
   // Esc dismisses; completion is plain text until send, and the /skill:
   // expansion happens at the message_send boundary, not here.
-  import { store, send, stop, currentSession, type PendingMsg } from '../lib/store.svelte';
+  import { store, send, stop, currentSession, type PendingMsg } from '../lib/store/store.svelte';
   import type { SkillInfo } from '../lib/protocol';
   import { Archive, ArrowUp, Bot, ChevronDown, Square, Zap } from '@lucide/svelte';
   import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';

@@ -6,7 +6,7 @@
   // Items are deletable; the core's queue events are the source of truth,
   // so deletion is optimistic with resync.
 
-  import { deleteQueueItem, currentSession } from '../lib/store.svelte';
+  import { deleteQueueItem, currentSession } from '../lib/store/store.svelte';
   import type { PendingMsg } from '../lib/sessions';
 
   const s = $derived(currentSession());

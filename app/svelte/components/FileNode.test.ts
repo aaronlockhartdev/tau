@@ -8,7 +8,7 @@ import type { FileEntry } from '../lib/protocol';
 import FileNode from './FileNode.svelte';
 import { mockStore, resetMockStore, retryDirFetch, toggleFileDir } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

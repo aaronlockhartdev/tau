@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 // Windowing / hydration suite: paged reads (fetchWindow), the tab round-trip
-// in-flight dedupe, and tool-status decoding — split out of
-// store.svelte.test.ts to keep that file under the size gate.
+// in-flight dedupe, and tool-status decoding (#320).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
@@ -9,9 +8,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 
-import type { Command, CommandOutput, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from './protocol';
-import { applySessionList, openSession } from './sessions';
-import { decodeEntry } from './entries';
+import type { Command, CommandOutput, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from '../protocol';
+import { applySessionList, openSession } from '../sessions';
+import { decodeEntry } from '../entries';
 import { fetchWindow, openWorkspace, store } from './store.svelte';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
@@ -33,7 +32,7 @@ function meta(id: string, workspace = WS.id, extra: Partial<SessionMeta> = {}): 
 
 function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Partial<LiveState> } = {}): {
   kind: 'snapshot';
-  snapshot: import('./protocol').Snapshot;
+  snapshot: import('../protocol').Snapshot;
 } {
   return {
     kind: 'snapshot',

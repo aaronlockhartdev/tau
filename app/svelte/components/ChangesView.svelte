@@ -5,7 +5,7 @@
   // live — the store re-fetches it on file_tree_changed. The center column
   // toggles between this and the transcript (pane.center); the "chat" control
   // and Esc leave the viewer without closing any file.
-  import { store, closeFile, selectFile, setCenterMode } from '../lib/store.svelte';
+  import { store, closeFile, selectFile, setCenterMode } from '../lib/store/store.svelte';
   import { buildDiffLines, assemble, langFor, type RenderLine } from '../lib/diffview';
   import { highlightLines } from '../lib/highlight';
   import CodeLines from './CodeLines.svelte';

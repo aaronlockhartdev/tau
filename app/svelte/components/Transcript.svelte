@@ -8,7 +8,7 @@
   import { Virtualizer, type VirtualizerHandle } from 'virtua/svelte';
   import EntryCard from './EntryCard.svelte';
   import SubagentBlock from './SubagentBlock.svelte';
-  import { store, fetchWindow, currentSession, setFollow, switchSession } from '../lib/store.svelte';
+  import { store, fetchWindow, currentSession, setFollow, switchSession } from '../lib/store/store.svelte';
   import { claimCrew, crewView, spawnRefsOf } from '../lib/subagent-view';
   import type { SubagentInfo } from '../lib/protocol';
   import {

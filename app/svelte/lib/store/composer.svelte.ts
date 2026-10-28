@@ -1,8 +1,8 @@
 // The composer's round-trips (ticket #25): send, stop, and the queued
 // message's removal. The state lives in the bag (state.svelte).
-import { command } from './protocol';
-import { errText } from './errors';
-import { type PendingMsg } from './sessions';
+import { command } from '../protocol';
+import { errText } from '../errors';
+import { type PendingMsg } from '../sessions';
 import { clearError, sessionOf, store } from './state.svelte';
 
 export async function send(text: string, lane: PendingMsg['lane']): Promise<void> {

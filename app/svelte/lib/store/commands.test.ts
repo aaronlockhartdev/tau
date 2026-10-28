@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-// The session-command cluster (lib/commands.ts, ticket #42): the F5
+// The session-command cluster (store/commands.ts, ticket #42): the F5
 // clear-banner → invoke → refetch → reapply dance and the commands spelled
 // over it (newSession, rename).
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 
-import { type Command, type CommandOutput, type SessionMeta, type Workspace } from './protocol';
-import { openSession } from './sessions';
+import { type Command, type CommandOutput, type SessionMeta, type Workspace } from '../protocol';
+import { openSession } from '../sessions';
 import { store } from './store.svelte';
 import {
   newSession,

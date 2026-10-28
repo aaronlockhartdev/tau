@@ -7,10 +7,10 @@ const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
-import { type Command } from './protocol';
-import { openSession } from './sessions';
+import { type Command } from '../protocol';
+import { openSession } from '../sessions';
 import { applyEvents, send, store } from './store.svelte';
-import { WS, bindIPC, entryView, freshStore, snap, sub } from './testing/store-harness';
+import { WS, bindIPC, entryView, freshStore, snap, sub } from '../testing/store-harness';
 
 const { defaultIPC } = bindIPC(mockInvoke);
 beforeEach(() => {

@@ -4,7 +4,7 @@
   // is the generic renderer over that shape — no per-kind branching. The
   // expanded card shells (tool chip, card) render in CardShell (#40).
 
-  import { store } from '../lib/store.svelte';
+  import { store } from '../lib/store/store.svelte';
   import { present, type ExpandSlot, type Shell } from '../lib/presentation';
   import type { Entry } from '../lib/protocol';
   import CardShell from './CardShell.svelte';

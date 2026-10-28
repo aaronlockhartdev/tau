@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 import { applyEvents, retryDirFetch, store, toggleFileDir } from './store.svelte';
-import { WS, bindIPC, freshStore } from './testing/store-harness';
+import { WS, bindIPC, freshStore } from '../testing/store-harness';
 
 const { mockIPC } = bindIPC(mockInvoke);
 beforeEach(() => {

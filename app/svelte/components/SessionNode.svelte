@@ -14,7 +14,7 @@
     restoreSession,
     deleteSession,
     type SessionState
-  } from '../lib/store.svelte';
+  } from '../lib/store/store.svelte';
   import { groupIsOpen } from '../lib/sessions';
   import { nextSelection } from '../lib/selection';
   import { tick } from 'svelte';

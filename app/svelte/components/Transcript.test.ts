@@ -12,7 +12,7 @@ import Transcript from './Transcript.svelte';
 import { drives } from '../lib/testing/VirtualizerMock.svelte';
 import { fetchWindow, mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

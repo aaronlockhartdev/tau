@@ -5,7 +5,7 @@
   // current model dot-highlighted. The composer's model chip and the
   // /model command both open it.
   import { onMount } from 'svelte';
-  import { store, setModel, currentSession } from '../lib/store.svelte';
+  import { store, setModel, currentSession } from '../lib/store/store.svelte';
   import { command, type ProviderInfo } from '../lib/protocol';
 
   let providers = $state<ProviderInfo[] | null>(null);

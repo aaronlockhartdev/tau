@@ -10,7 +10,7 @@ import type { Entry } from '../lib/protocol';
 import EntryCard from './EntryCard.svelte';
 import { resetMockStore } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

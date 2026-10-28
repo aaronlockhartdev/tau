@@ -17,13 +17,13 @@
     type GitStatus,
     type SkillInfo,
     type Workspace
-  } from './protocol';
-  import { presentation } from './presentation.svelte';
-  import { windowTitle as windowTitleOf, type SessionState } from './sessions';
-  import { type FilesCache } from './files';
-  import { defaultPane, paneOf, type PaneState } from './panes';
-  import { type OpenFiles } from './openfiles';
-  import { attentionOf, type AttentionItem } from './attention';
+  } from '../protocol';
+  import { presentation } from '../presentation.svelte';
+  import { windowTitle as windowTitleOf, type SessionState } from '../sessions';
+  import { type FilesCache } from '../files';
+  import { defaultPane, paneOf, type PaneState } from '../panes';
+  import { type OpenFiles } from '../openfiles';
+  import { attentionOf, type AttentionItem } from '../attention';
   import { getCurrentWindow } from '@tauri-apps/api/window';
 
   export const store = $state({

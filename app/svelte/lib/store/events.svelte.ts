@@ -1,10 +1,10 @@
 // The event application (ADR-0006): the wire's batches folded into the state
 // bag (state.svelte). The live-stream clock lives in stream.svelte.ts; the
 // subagent fold in sessions.ts.
-import { type Event } from './protocol';
-import { streamClock } from './stream.svelte';
-import { upsertEntry } from './entries';
-import { applySubagentEvent, laneOf } from './sessions';
+import { type Event } from '../protocol';
+import { streamClock } from '../stream.svelte';
+import { upsertEntry } from '../entries';
+import { applySubagentEvent, laneOf } from '../sessions';
 import { store } from './state.svelte';
 import { refreshGitStatus, scheduleRefetch } from './files-pane.svelte';
 import { fetchActiveFile } from './viewer.svelte';
