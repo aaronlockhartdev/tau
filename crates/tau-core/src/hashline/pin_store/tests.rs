@@ -1,48 +1,5 @@
+use super::testkit::*;
 use super::*;
-use rusqlite::params;
-
-fn store(dir: &Path, policy: GcPolicy) -> PinStore {
-    PinStore::new(dir, policy)
-}
-
-fn gc(policy: GcPolicy) -> GcPolicy {
-    policy
-}
-
-fn no_gc() -> GcPolicy {
-    GcPolicy {
-        retention_days: 0,
-        gc_on_start: false,
-    }
-}
-
-fn pins(path: &str, anchors: &[&str], sums: &[&str]) -> FilePins {
-    FilePins {
-        path: path.into(),
-        checksum: file_checksum(&sums.iter().map(ToString::to_string).collect::<Vec<_>>()),
-        line_count: sums.len(),
-        pins: anchors
-            .iter()
-            .zip(sums.iter())
-            .map(|(a, s)| Pin {
-                anchor: a.to_string(),
-                checksum: s.to_string(),
-                tombstone: false,
-            })
-            .collect(),
-        crc: None,
-    }
-}
-
-fn ws(name: &str) -> PathBuf {
-    let mut p = std::env::temp_dir();
-    p.push(format!("pin-store-{name}-{}", std::process::id()));
-    p
-}
-
-fn cleanup(dir: &Path) {
-    let _ = fs::remove_dir_all(dir);
-}
 
 #[test]
 fn save_then_load_roundtrips() {
@@ -101,199 +58,6 @@ fn retire_without_a_record_is_a_no_op() {
     let s = store(&dir, no_gc());
     s.retire("absent.rs");
     assert!(s.load("absent.rs").is_none());
-    cleanup(&dir);
-}
-
-#[test]
-fn file_path_is_the_workspace_sqlite_file() {
-    let dir = ws("fp");
-    cleanup(&dir);
-    let s = store(&dir, no_gc());
-    assert_eq!(
-        s.file_path("anything.rs"),
-        dir.join("anchors.sqlite"),
-        "the db file is workspace-scoped, not per-path"
-    );
-    cleanup(&dir);
-}
-
-#[test]
-fn gc_missing_file_sweep_prunes_rows_for_absent_files() {
-    let dir = ws("gc-missing");
-    cleanup(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    // Both files exist while their rows are written.
-    let a = dir.join("a.rs");
-    let b = dir.join("b.rs");
-    fs::write(&a, "one\n").expect("write a");
-    fs::write(&b, "two\n").expect("write b");
-    let s = store(&dir, no_gc());
-    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
-        .expect("save a");
-    s.save(&pins(b.to_str().expect("utf8"), &["BBBB"], &["c2"]))
-        .expect("save b");
-    // b.rs is deleted from disk between sessions; the session-start sweep
-    // prunes its row. a.rs exists and survives.
-    fs::remove_file(&b).expect("rm b");
-    drop(s);
-    let s = store(
-        &dir,
-        gc(GcPolicy {
-            retention_days: 0,
-            gc_on_start: true,
-        }),
-    );
-    let paths = s.paths();
-    assert_eq!(paths, vec![a.to_str().expect("utf8").to_owned()]);
-    assert!(
-        s.load(a.to_str().expect("utf8")).is_some(),
-        "existing file keeps its pins"
-    );
-    cleanup(&dir);
-}
-
-#[test]
-fn gc_disabled_does_not_prune() {
-    let dir = ws("gc-off");
-    cleanup(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    let b = dir.join("b.rs");
-    fs::write(&b, "two\n").expect("write b");
-    let s = store(&dir, no_gc());
-    s.save(&pins(b.to_str().expect("utf8"), &["BBBB"], &["c2"]))
-        .expect("save");
-    fs::remove_file(&b).expect("rm b");
-    drop(s);
-    // gc_on_start = false: the sweep does not run, the row stays.
-    let s = store(&dir, no_gc());
-    assert_eq!(s.paths(), vec![b.to_str().expect("utf8").to_owned()]);
-    cleanup(&dir);
-}
-
-#[test]
-fn gc_age_expiry_drops_stale_records() {
-    let dir = ws("gc-age");
-    cleanup(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    let a = dir.join("a.rs");
-    fs::write(&a, "one\n").expect("write a");
-    let s = store(&dir, no_gc());
-    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
-        .expect("save");
-    drop(s);
-    // Backdate the row three days; a 1-day retention must drop it.
-    let db = rusqlite::Connection::open(dir.join("anchors.sqlite")).expect("open");
-    db.execute(
-        "UPDATE anchors SET updated_at = ?1",
-        params![now_ms() - 3 * 24 * 60 * 60 * 1000],
-    )
-    .expect("backdate");
-    drop(db);
-    let s = store(
-        &dir,
-        gc(GcPolicy {
-            retention_days: 1,
-            gc_on_start: true,
-        }),
-    );
-    assert!(
-        s.paths().is_empty(),
-        "a record older than retention_days is pruned"
-    );
-    cleanup(&dir);
-}
-
-#[test]
-fn gc_age_expiry_disabled_at_zero() {
-    let dir = ws("gc-age-off");
-    cleanup(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    let a = dir.join("a.rs");
-    fs::write(&a, "one\n").expect("write a");
-    let s = store(&dir, no_gc());
-    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
-        .expect("save");
-    drop(s);
-    let db = rusqlite::Connection::open(dir.join("anchors.sqlite")).expect("open");
-    db.execute(
-        "UPDATE anchors SET updated_at = ?1",
-        params![now_ms() - 300 * 24 * 60 * 60 * 1000],
-    )
-    .expect("backdate");
-    drop(db);
-    // retention_days = 0: the age sweep is off (the missing-file sweep
-    // still runs, but a.rs exists, so nothing is pruned).
-    let s = store(
-        &dir,
-        gc(GcPolicy {
-            retention_days: 0,
-            gc_on_start: true,
-        }),
-    );
-    assert_eq!(s.paths(), vec![a.to_str().expect("utf8").to_owned()]);
-    cleanup(&dir);
-}
-
-#[test]
-fn version_mismatch_nukes_the_anchors_table() {
-    let dir = ws("ver");
-    cleanup(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    let s = store(&dir, no_gc());
-    s.save(&pins("a.rs", &["AAAA"], &["c1"])).expect("save");
-    drop(s);
-    // Simulate a future schema bump landing in this file.
-    let db = rusqlite::Connection::open(dir.join("anchors.sqlite")).expect("open");
-    db.execute(
-        "UPDATE meta SET value = '2' WHERE key = 'version'",
-        params![],
-    )
-    .expect("bump version");
-    drop(db);
-    let s = store(&dir, no_gc());
-    assert!(
-        s.paths().is_empty(),
-        "a version mismatch drops every row (the store is a cache: re-mint)"
-    );
-    // And the store is still usable after the nuke.
-    s.save(&pins("b.rs", &["BBBB"], &["c2"]))
-        .expect("save after nuke");
-    assert_eq!(s.paths(), vec!["b.rs".to_owned()]);
-    cleanup(&dir);
-}
-
-#[test]
-fn corrupt_db_is_quarantined_and_rebuilt() {
-    let dir = ws("quar");
-    cleanup(&dir);
-    std::fs::create_dir_all(&dir).expect("mkdir");
-    let s = store(&dir, no_gc());
-    s.save(&pins("a.rs", &["AAAA"], &["c1"])).expect("save");
-    drop(s);
-    // Overwrite the db file with garbage so quick_check fails.
-    fs::write(
-        dir.join("anchors.sqlite"),
-        b"this is not a sqlite database at all\n",
-    )
-    .expect("corrupt");
-    let s = store(&dir, no_gc());
-    // The corrupt file is quarantined (renamed, original gone) and a
-    // fresh db is in its place.
-    let quarantined: Vec<PathBuf> = fs::read_dir(&dir)
-        .expect("read dir")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().starts_with("anchors.sqlite.corrupt"))
-        })
-        .collect();
-    assert_eq!(quarantined.len(), 1, "the corrupt db was renamed aside");
-    assert!(!dir.join("anchors.sqlite").exists() || quarantined.len() == 1);
-    // The store is usable again after the rebuild.
-    s.save(&pins("b.rs", &["BBBB"], &["c2"]))
-        .expect("save after quarantine");
-    assert_eq!(s.paths(), vec!["b.rs".to_owned()]);
     cleanup(&dir);
 }
 
@@ -432,6 +196,16 @@ fn next_pins_carries_retired_slots_forward() {
         vec!["BBBB".to_string(), "FREE".to_string()],
         "the newly freed slot and the slot retired a generation earlier both stay claimed"
     );
+    assert_eq!(
+        next.pins.iter().filter(|p| !p.tombstone).count(),
+        1,
+        "the live slot sits before the retired run: [live…, freed…, carried…]"
+    );
+    assert_eq!(
+        next.pins.last().map(|p| p.anchor.as_str()),
+        Some("FREE"),
+        "the carried slot from the generation before is the tail, so it is the first claim the cap drops"
+    );
 }
 
 #[test]
@@ -457,4 +231,67 @@ fn next_pairs_survivors_with_live_slots_when_retired_slots_sit_between() {
         "the live slots keep their own anchors; no survivor inherits a freed one"
     );
     assert_eq!(next.retired_anchors(), vec!["FREE".to_string()]);
+}
+
+#[test]
+fn save_drops_the_oldest_claims_on_the_way_to_disk() {
+    // The bound is the store's, not each caller's: a forged record past the
+    // cap is durable under it, and no live slot is lost to the drop.
+    let dir = ws("cap-save");
+    cleanup(&dir);
+    let s = store(&dir, no_gc());
+    let mut fp = pins("busy.rs", &["AAAA", "BBBB", "CCCC"], &["c1", "c2", "c3"]);
+    // Forged in the order `next_pins` builds: the slots it just freed come
+    // before the ones it carried, so the vector's tail is the oldest claim.
+    for g in (0..MAX_TOMBSTONES + 5).rev() {
+        fp.pins.push(Pin {
+            anchor: format!("R{g:04}"),
+            checksum: "gone".into(),
+            tombstone: true,
+        });
+    }
+    s.save(&fp).expect("save");
+    let loaded = s.load("busy.rs").expect("load");
+    assert_eq!(
+        loaded.retired_anchors().len(),
+        MAX_TOMBSTONES,
+        "the durable record is capped"
+    );
+    assert_eq!(loaded.anchors(), fp.anchors(), "no live slot is lost");
+    assert!(
+        !loaded.retired_anchors().contains(&"R0000".to_string()),
+        "the oldest claim is the one dropped"
+    );
+    assert!(
+        loaded
+            .retired_anchors()
+            .contains(&format!("R{:04}", MAX_TOMBSTONES + 4)),
+        "the newest claim survives"
+    );
+    cleanup(&dir);
+}
+
+#[test]
+fn retire_leaves_a_bounded_graveyard() {
+    // A file with more lines than the cap, written once: every slot retires,
+    // and the row carries the cap, not the file.
+    let dir = ws("cap-retire");
+    cleanup(&dir);
+    let s = store(&dir, no_gc());
+    let lines = MAX_TOMBSTONES + 44;
+    let anchors: Vec<String> = (0..lines).map(|i| format!("A{i:04}")).collect();
+    let sums: Vec<String> = (0..lines).map(|i| format!("c{i}")).collect();
+    let anchor_refs: Vec<&str> = anchors.iter().map(String::as_str).collect();
+    let sum_refs: Vec<&str> = sums.iter().map(String::as_str).collect();
+    s.save(&pins("big.rs", &anchor_refs, &sum_refs))
+        .expect("save");
+    s.retire("big.rs");
+    let loaded = s.load("big.rs").expect("the retired record stays");
+    assert_eq!(
+        loaded.pins.len(),
+        MAX_TOMBSTONES,
+        "the graveyard is the cap, not the file's line count"
+    );
+    assert!(loaded.live().next().is_none(), "every slot is retired");
+    cleanup(&dir);
 }

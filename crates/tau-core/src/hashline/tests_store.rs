@@ -95,3 +95,41 @@ fn a_retired_anchor_is_never_minted_by_a_later_session() {
         );
     }
 }
+
+#[test]
+fn a_file_written_every_round_keeps_its_record_bounded() {
+    // The #310 outcome end-to-end: the registry's write path (persist →
+    // retire) over a file that never stops changing must not grow the row.
+    let dir = tempfile::tempdir().unwrap();
+    let mut reg = Registry::with_store(store(dir.path()));
+    for round in 0..600u32 {
+        let content = format!("one\ntwo\ntail {round}\n");
+        let (hashes, _) = reg.allocate("a.rs", &content).expect("allocate");
+        reg.refresh_owned("a.rs", &content, &hashes);
+        reg.free("a.rs");
+    }
+    // One writer at a time over the store file: the inspection handle opens
+    // once the registry's connection is closed.
+    drop(reg);
+    // GC off: the sweep deletes rows whose file is absent from disk, and this
+    // fixture's "a.rs" is a store key, not a file on disk.
+    let record = PinStore::new(
+        dir.path(),
+        GcPolicy {
+            retention_days: 0,
+            gc_on_start: false,
+        },
+    )
+    .load("a.rs")
+    .expect("the record survives every round");
+    assert!(
+        record
+            .retired_anchors()
+            .len()
+            .saturating_add(record.live().count())
+            <= super::pin_store::MAX_TOMBSTONES,
+        "600 rounds of write-and-retire left {} slots in the record",
+        record.pins.len()
+    );
+    assert!(record.live().next().is_none(), "the file is unowned");
+}
