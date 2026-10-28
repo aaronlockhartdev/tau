@@ -495,3 +495,145 @@ fn an_unknown_kind_survives_the_file_round_trip() {
         .expect("the unknown-kind line");
     assert_eq!(unknown.payload["text"], "from a newer build");
 }
+
+#[test]
+fn the_tail_is_the_last_n_entries_in_append_order() {
+    // #302: the read the callers actually want — the end of the log, bounded.
+    let dir = tempfile::tempdir().unwrap();
+    let (s, entries) = seeded(dir.path());
+    assert_eq!(
+        s.entries_tail(2).unwrap(),
+        vec![entries[1].clone(), entries[2].clone()]
+    );
+}
+
+#[test]
+fn a_tail_wider_than_the_log_is_the_whole_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, entries) = seeded(dir.path());
+    assert_eq!(s.entries_tail(99).unwrap(), entries);
+}
+
+#[test]
+fn an_empty_tail_reads_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _) = seeded(dir.path());
+    assert!(s.entries_tail(0).unwrap().is_empty());
+}
+
+#[test]
+fn the_tail_of_a_fresh_session_is_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut s = store(dir.path(), "s1");
+    s.create().unwrap();
+    assert!(s.entries_tail(8).unwrap().is_empty());
+}
+
+#[test]
+fn a_tail_agrees_with_the_range_read_of_the_same_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let (s, entries) = seeded(dir.path());
+    let whole = s.entries_range(0, usize::MAX).unwrap();
+    assert_eq!(s.entries_tail(2).unwrap(), whole[1..]);
+    assert_eq!(s.entries_tail(3).unwrap(), entries);
+}
+
+#[test]
+fn a_tail_crossing_a_fork_reads_the_file_end_not_the_branch() {
+    // The tail is file order (append order), not the active branch: a forked
+    // session's abandoned branch can sit at the file's end. The tail answers
+    // "what was written last"; a caller that needs the branch walks from the leaf.
+    let dir = tempfile::tempdir().unwrap();
+    let (mut s, entries) = seeded(dir.path());
+    let sibling = s
+        .append(
+            EntryKind::User,
+            serde_json::json!({"role": "user", "text": "sibling"}),
+            Some(&entries[0].id),
+        )
+        .unwrap();
+    // The header's branch choice is the older entry, so the branch and the
+    // file's end differ: the tail follows the file.
+    s.adopt_leaf(&entries[2].id);
+    assert_eq!(s.leaf().unwrap().unwrap().id, entries[2].id);
+    assert_eq!(s.entries_tail(1).unwrap(), vec![sibling]);
+}
+
+#[test]
+fn a_tail_verifies_the_entries_it_parses() {
+    // Negative: the tail's entries carry the log's CRC check — a torn tail
+    // line is an error, not a silent entry.
+    let dir = tempfile::tempdir().unwrap();
+    let (s, _) = seeded(dir.path());
+    let raw = fs::read_to_string(s.path()).unwrap();
+    let mut lines: Vec<String> = raw.lines().map(str::to_owned).collect();
+    let last = lines.len() - 1;
+    lines[last] = lines[last].replace("three", "threx");
+    fs::write(s.path(), format!("{}\n", lines.join("\n"))).unwrap();
+    let tail = s.entries_tail(2);
+    assert!(
+        matches!(tail, Err(Error::Corrupt { .. })),
+        "a torn tail line must not read as an entry: {tail:?}"
+    );
+}
+
+/// Damages one of the file's lines (1-based) by renaming a token in it.
+fn damage_line(path: &Path, line: usize, find: &str) {
+    let raw = fs::read_to_string(path).unwrap();
+    let mut lines: Vec<String> = raw.lines().map(str::to_owned).collect();
+    lines[line - 1] = lines[line - 1].replace(find, "damaged");
+    fs::write(path, format!("{}\n", lines.join("\n"))).unwrap();
+}
+
+/// Writes `n` entries in one line, returning the last id.
+fn append_lines(store: &mut SessionStore, n: usize) -> Option<String> {
+    let mut parent = None;
+    for i in 0..n {
+        let e = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": format!("e{i}") }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id);
+    }
+    parent
+}
+
+/// The bound is the API: a record outside the window is never parsed, so its
+/// damage is invisible to the tail read while the whole-log read refuses it.
+#[test]
+fn damage_outside_the_window_is_not_the_tail_reads_problem() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = store(tmp.path(), "bound");
+    store.create().unwrap();
+    append_lines(&mut store, 6);
+    // The file's line 3 is the second entry: the last two lines sit past it.
+    damage_line(&store.path(), 3, "e1");
+    let tail = store.entries_tail(2).unwrap();
+    assert_eq!(tail.len(), 2, "the window starts after the damaged line");
+    assert!(
+        matches!(
+            store.entries_range(0, usize::MAX),
+            Err(Error::Corrupt { .. })
+        ),
+        "the whole-log read still sees the damage"
+    );
+}
+
+/// The window is verified with the file's own line numbering, so a corruption
+/// names the real line (#302).
+#[test]
+fn a_tail_corruption_names_the_files_line() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = store(tmp.path(), "lines");
+    store.create().unwrap();
+    append_lines(&mut store, 6);
+    // The 6th entry is the file's line 7 (the header is line 1).
+    damage_line(&store.path(), 7, "e5");
+    assert!(matches!(
+        store.entries_tail(1),
+        Err(Error::Corrupt { line: 7, .. })
+    ));
+}

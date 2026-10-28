@@ -121,6 +121,8 @@ impl AgentSession {
     /// `None` when the branch has no assistant entry or the read fails.
     #[must_use]
     pub(crate) fn last_assistant_text(&self) -> Option<String> {
+        // The whole log by design (#302): the answer is the leaf's last
+        // assistant entry, and the walk is the branch (spec §3).
         let mut inner = self.inner.lock();
         let branch = inner.store.branch().ok()?;
         branch

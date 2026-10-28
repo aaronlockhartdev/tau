@@ -16,20 +16,24 @@
 //! `meta` version row with nuke-on-mismatch. The JSONL sidecar and its
 //! per-record CRC32 are retired with this migration.
 //!
-//! **Pin identity (the last churn source, #207 §2).** A pin is
-//! *content-addressed*: a line's anchor is tied to its line checksum
-//! (xxh64 of the canon), not to its position. Re-anchoring after an edit
-//! matches the new file's lines against the previous pins **by checksum, in
-//! order** (the same LCS-over-checksums the registry uses, item 6): an
-//! unchanged line keeps its exact anchor no matter where it moved; a changed
-//! line gets a fresh anchor; a deleted line's slot is tombstoned, not
-//! recycled. Inserting or deleting a line shifts the *positions* after it,
-//! but the surviving pins do so by content, so the shift does not churn them.
+//! **Pin identity, the record, and its generation math** live in `record`:
+//! content-addressed pins, re-anchored by checksum in order (#207 §2).
+//!
+//! **The record is bounded (#310).** Every generation appends the slots it
+//! freed, and #304 made that claim last as long as the record does, so
+//! `save` caps the graveyard on the way to disk: at most `MAX_TOMBSTONES`
+//! retired slots, oldest claims first out. A row refreshed by every write is
+//! invisible to the retention sweep, so this cap — not the sweep — is what
+//! keeps a file rewritten a thousand times from carrying a million pins.
+//! Rows written before the cap keep their size until the file is written
+//! again.
 //!
 //! **Garbage collection (#225).** At session start the store sweeps rows
 //! whose file no longer exists on disk (always on) and, when configured,
-//! rows untouched for longer than the retention window. Best-effort: a
-//! sweep error is logged and the session proceeds.
+//! rows untouched for longer than the retention window. A retired record
+//! ages out on that sweep: the retire refreshes its row, and a file nobody
+//! writes to any more stops refreshing it. Best-effort: a sweep error is
+//! logged and the session proceeds.
 //!
 //! **Placement:** one database file per workspace (`{workspace}/.tau/
 //! anchors.sqlite`), the workspace scope the session store uses
@@ -42,53 +46,9 @@ use std::path::{Path, PathBuf};
 use parking_lot::{Mutex, MutexGuard};
 
 use rusqlite::{Connection, params};
-use serde::{Deserialize, Serialize};
-use xxhash_rust::xxh3::xxh3_64;
 
-/// One pinned anchor: the 4-letter anchor, the checksum of the line it was
-/// minted for (the pin's content identity), and a tombstone flag — a freed
-/// slot is kept (not recycled) for the session/file lifetime (#207 §2).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Pin {
-    pub anchor: String,
-    pub checksum: String,
-    /// The slot was freed (its line deleted) and must not be re-minted.
-    #[serde(default)]
-    pub tombstone: bool,
-}
-
-/// A file's pinned anchor set: one record in the store.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FilePins {
-    /// Path (as the tool layer keys it) the pins belong to.
-    pub path: String,
-    /// Checksum of the whole file content the pins were computed for; a
-    /// mismatch means the file drifted and the pins must re-anchor.
-    pub checksum: String,
-    pub line_count: usize,
-    pub pins: Vec<Pin>,
-    /// The JSONL sidecar's CRC32 field; kept so the serde shape is stable
-    /// for the in-memory flow — the SQLite row carries no integrity field
-    /// (WAL + atomic page writes replace the per-record CRC).
-    #[serde(default)]
-    pub crc: Option<String>,
-}
-
-impl FilePins {
-    /// The per-line checksums in file order — the re-anchor base.
-    #[must_use]
-    pub fn checksums(&self) -> Vec<String> {
-        self.pins.iter().map(|p| p.checksum.clone()).collect()
-    }
-
-    /// The per-line anchors in file order.
-    #[must_use]
-    pub fn anchors(&self) -> Vec<String> {
-        self.pins.iter().map(|p| p.anchor.clone()).collect()
-    }
-}
+mod record;
+pub use record::{FilePins, MAX_TOMBSTONES, Pin, file_checksum, next_pins, reanchor};
 
 /// The GC policy a store runs at session start (#225, the `[hashline]`
 /// config section): `gc_on_start` gates both sweeps, `retention_days` the
@@ -368,10 +328,17 @@ impl PinStore {
     /// Persist `pins` for `path`: an upsert (one row per file, last write
     /// wins) — SQLite's transactional pages are the crash-safety the JSONL
     /// atomic rename used to provide.
+    ///
+    /// The bound lives here, on the way to disk: the retired slots past
+    /// `MAX_TOMBSTONES` are dropped as the record is saved, so no caller can
+    /// persist an unbounded record (#310).
     pub fn save(&self, pins: &FilePins) -> Result<(), StoreError> {
         let guard = self.open_conn()?;
         let conn = guard.as_ref().expect("open_conn leaves the connection set");
-        let pins_json = serde_json::to_string(&pins.pins).expect("Vec<Pin> is always serializable");
+        let mut durable = pins.clone();
+        durable.cap_retired();
+        let pins_json =
+            serde_json::to_string(&durable.pins).expect("Vec<Pin> is always serializable");
         conn.execute(
             "INSERT INTO anchors (path, checksum, line_count, pins, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -381,9 +348,9 @@ impl PinStore {
                  pins = excluded.pins,
                  updated_at = excluded.updated_at",
             rusqlite::params![
-                pins.path,
-                pins.checksum,
-                i64::try_from(pins.line_count).unwrap_or(i64::MAX),
+                durable.path,
+                durable.checksum,
+                i64::try_from(durable.line_count).unwrap_or(i64::MAX),
                 pins_json,
                 now_ms()
             ],
@@ -392,18 +359,21 @@ impl PinStore {
         .map_err(|e| StoreError(e.to_string()))
     }
 
-    /// Drop `path`'s row (a `write` voids every anchor).
-    pub fn remove(&self, path: &str) {
-        let Ok(guard) = self.open_conn() else {
+    /// Retire `path`'s pins: a `write` voids every anchor, so each slot
+    /// becomes a tombstone. The row stays — the record is what keeps those
+    /// anchors claimed (#207 §2) — and it stays bounded: `save` caps the
+    /// graveyard at `MAX_TOMBSTONES` claims, oldest claims first out (#310).
+    pub fn retire(&self, path: &str) {
+        let Some(mut pins) = self.load(path) else {
             return;
         };
-        let Some(conn) = guard.as_ref() else {
-            return;
-        };
-        let _ = conn.execute(
-            "DELETE FROM anchors WHERE path = ?1",
-            rusqlite::params![path],
-        );
+        for p in &mut pins.pins {
+            p.tombstone = true;
+        }
+        // Best-effort, like every persist here: a save that does not land
+        // leaves the durable claim unrecorded, and the seeding session's
+        // `freed` set is what keeps the mint off these anchors meanwhile.
+        let _ = self.save(&pins);
     }
 
     /// Every path this store has a row for (for tests / tooling).
@@ -429,83 +399,11 @@ impl PinStore {
     }
 }
 
-/// The whole-file checksum a pin set is computed for: xxh3-64 over the
-/// per-line checksums in order (content-addressed, position-sensitive — any
-/// line change moves it).
-#[must_use]
-pub fn file_checksum(checksums: &[String]) -> String {
-    let joined = checksums.join("\n");
-    format!("{:16x}", xxh3_64(joined.as_bytes()))
-}
-
-/// Re-anchor a new file's lines against a previous pin set: a line whose
-/// checksum matches a previous pin **in order** pairs with that pin (the
-/// content-addressed, position-independent identity); every other line is
-/// fresh. Returns the in-order LCS pairing — the previous pin index for each
-/// new line, `None` where the line is fresh. The pairing (not a
-/// per-checksum lookup) is what keeps repeated lines unique: two new copies
-/// of one old line pair with two *distinct* previous pins.
-#[must_use]
-pub fn reanchor(prev: &FilePins, checksums: &[String]) -> Vec<Option<usize>> {
-    use crate::hashline::lcs::carry;
-    let prev_sums = prev.checksums();
-    carry(&prev_sums, checksums)
-}
-
-/// Build the next `FilePins` from a previous set and the re-anchor pairing:
-/// survivors keep the anchor of their paired previous pin, fresh lines get
-/// `minted[j]`, and a pin whose checksum vanished is tombstoned (kept, not
-/// recycled). `paired` must be index-aligned with `checksums`: `Some(i)`
-/// marks new index j as a survivor keeping pin i's anchor, `None` takes
-/// `minted[j]`.
-#[must_use]
-pub fn next_pins(
-    prev: &FilePins,
-    paired: &[Option<usize>],
-    minted: &[String],
-    checksums: &[String],
-) -> FilePins {
-    let mut pins = Vec::with_capacity(checksums.len());
-    let mut used_prev: std::collections::HashSet<usize> = std::collections::HashSet::new();
-    for (j, sum) in checksums.iter().enumerate() {
-        let pin = match &paired[j] {
-            Some(i) => {
-                used_prev.insert(*i);
-                let p = &prev.pins[*i];
-                Pin {
-                    anchor: p.anchor.clone(),
-                    checksum: sum.clone(),
-                    tombstone: false,
-                }
-            }
-            None => Pin {
-                anchor: minted[j].clone(),
-                checksum: sum.clone(),
-                tombstone: false,
-            },
-        };
-        pins.push(pin);
-    }
-    // Tombstone the pins whose checksum is gone (their line was deleted):
-    // kept in the set, flagged, and never re-minted.
-    for (i, p) in prev.pins.iter().enumerate() {
-        if !used_prev.contains(&i) && !p.tombstone {
-            pins.push(Pin {
-                anchor: p.anchor.clone(),
-                checksum: p.checksum.clone(),
-                tombstone: true,
-            });
-        }
-    }
-    FilePins {
-        path: prev.path.clone(),
-        checksum: file_checksum(checksums),
-        line_count: checksums.len(),
-        pins,
-        crc: None,
-    }
-}
-
+#[cfg(test)]
+mod testkit;
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "tests_gc.rs"]
+mod tests_gc;

@@ -413,6 +413,9 @@ impl AgentSession {
         // A child session is labeled at assembly against its
         // parent (the link names it); a plain session is not.
         let parent_session = inner.child.as_ref().map(|c| c.parent_session().to_owned());
+        // The whole log by design (#302): context assembly walks the active
+        // branch from its head, and the store reads by position or cursor,
+        // not by parent chain (spec §3).
         let entries = inner
             .store
             .entries_range(0, usize::MAX)

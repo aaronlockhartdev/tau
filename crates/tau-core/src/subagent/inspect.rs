@@ -34,6 +34,8 @@ impl Supervisor {
         let usage = {
             let mut store = SessionStore::for_workspace(&self.cwd, &child.session_id);
             store.open().ok().and_then(|()| {
+                // The whole log by design (#302): the walk is the leaf's
+                // branch, and the store reads by position (spec §3).
                 let branch = store.branch().ok()?;
                 branch
                     .iter()
@@ -87,6 +89,8 @@ pub(crate) fn read_activity(
     // than the entry list misses the position lookup and the raw window
     // falls back to the entire branch. Reading the list first biases the
     // mid-turn skew toward the harmless direction (a re-included fact).
+    // The whole log by design (#302): the raw window is the leaf's branch and
+    // the store has no branch read (spec §3).
     let entries = store.entries_range(0, usize::MAX).ok()?;
     let leaf = store.leaf().ok().and_then(|l| l)?;
     let record = OmState::load_record(&mut store).ok()?;

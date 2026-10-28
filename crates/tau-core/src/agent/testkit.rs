@@ -148,6 +148,8 @@ impl crate::provider::TurnProvider for ScriptedProvider {
     }
 }
 
+// The whole log by design (#302): a test asks what the session recorded, and
+// the fork child's records include the parent's copied tree (spec §3).
 pub(crate) fn entries_of(store: &SessionStore) -> Vec<Entry> {
     store.entries_range(0, usize::MAX).unwrap()
 }

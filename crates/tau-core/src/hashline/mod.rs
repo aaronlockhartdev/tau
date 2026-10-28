@@ -26,6 +26,8 @@ mod properties;
 mod tests;
 #[cfg(test)]
 mod tests_diag;
+#[cfg(test)]
+mod tests_store;
 
 use std::collections::HashMap;
 use std::fmt;

@@ -28,14 +28,20 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
         .filter(|m| !m.archived && m.parent.as_deref() == Some(parent))
         .map(|m| {
             let mut store = SessionStore::for_workspace(cwd, &m.id);
-            let entries = store
+            // Two bounded reads (#302): the spawn record sits at the child's
+            // log head, its last state record at the tail — the fleet read
+            // never parses a child's whole file.
+            let head = store
                 .open()
-                .and_then(|()| store.entries_range(0, usize::MAX))
+                .and_then(|()| store.entries_range(0, super::restore::SPAWN_HEAD))
+                .unwrap_or_default();
+            let tail = store
+                .entries_tail(super::restore::STATE_TAIL)
                 .unwrap_or_default();
             // The child's post-restart state: a `running` record is a
             // restart artifact (the process is gone) and reads back as a
             // parked child (ticket #221's negative bar).
-            let state = last_state(&entries).map_or(
+            let state = last_state(&tail).map_or(
                 ChildStateRef::Idle {
                     waiting_on: WaitingOn::Parent,
                 },
@@ -49,11 +55,17 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
                 _ => None,
             };
             // The spawn record is the child's provenance (ADR-0001):
-            // agent type + context mode. Absent (a hand-made file) →
+            // agent type + context mode. A fresh/compacted child writes it at
+            // its log's head, a fork child appends it to the copied parent
+            // tree, so both windows are searched. Absent (a hand-made file) →
             // the `general`/`fresh` defaults.
-            let spawn = entries
+            let spawn = head
                 .iter()
-                .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn");
+                .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn")
+                .or_else(|| {
+                    tail.iter()
+                        .find(|e| e.kind == EntryKind::Subagent && e.payload["event"] == "spawn")
+                });
             let agent_type = spawn
                 .and_then(|e| e.payload["type"].as_str())
                 .unwrap_or("general")

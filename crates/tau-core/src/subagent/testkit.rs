@@ -300,6 +300,8 @@ pub(crate) fn spawn_args(brief: &str, mode: &str) -> Value {
     json!({ "type": "general", "brief": brief, "context_mode": mode })
 }
 
+// The whole log by design (#302): the event is looked for anywhere in the
+// session, and a fork child's log starts as the parent's copied tree (spec §3).
 pub(crate) fn entry_by_event(
     dir: &std::path::Path,
     session: &str,

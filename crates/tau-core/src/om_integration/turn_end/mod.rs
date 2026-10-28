@@ -16,7 +16,9 @@ pub struct AssembledContext {
     pub om_input_items: Vec<InputEntry>,
 }
 
-/// The session's active branch, walked by the log itself.
+/// The session's active branch, walked by the log itself. The whole log by
+/// design (#302): the branch is the parent chain from the leaf, and the
+/// store reads by position (spec §3).
 fn branch_of(store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
     store.branch().map_err(OmError::Session)
 }
@@ -158,6 +160,8 @@ impl OmState {
         // timeout with pending chunks (spec §4).
         let mut idle = 0u64;
         with_store(&mut |store| {
+            // The whole log by design (#302): the idle gap is measured over
+            // the leaf's branch (spec §3).
             let all = store.entries_range(0, usize::MAX)?;
             let leaf = store.leaf().map_err(OmError::Session)?.map(|e| e.id);
             idle = idle_gap_secs(&all, leaf.as_deref());

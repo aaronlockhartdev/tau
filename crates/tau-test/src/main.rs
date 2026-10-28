@@ -82,6 +82,8 @@ fn new_session(cwd: &Path) -> (String, SessionStore) {
     (id, store)
 }
 
+// The whole log by design (#302): the harness reports every tool call the
+// session recorded, so it walks from the head (spec §3).
 fn all_entries(store: &SessionStore) -> Vec<Entry> {
     store.entries_range(0, usize::MAX).expect("read entries")
 }

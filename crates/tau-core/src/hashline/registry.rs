@@ -60,6 +60,12 @@ pub struct Registry {
     file_hint: HashMap<String, usize>,
     /// Anchors reclaimed most recently, drained by `take_reclaimed`.
     reclaimed: VecDeque<String>,
+    /// Anchors this session retired: the retired slots of every record it
+    /// seeded, plus the anchors of a file whose pins a `write` voided while the
+    /// store had a record for it. The mint never hands one out again (#207 §2);
+    /// `evict_path` keeps them, because the claim is the session's, not one
+    /// read's. It only grows — the pool it spends from is `HASH_SPACE` slots.
+    freed: HashSet<String>,
     /// The persistent pin store: seeds a file's first read with its pinned
     /// anchors (cross-session stability, #207) and persists refreshed pins
     /// after an edit. `None` in tests and the ACP path (no workspace root).
@@ -290,20 +296,28 @@ impl Registry {
     }
 
     /// Free a file's anchors (after a `write`, which voids every anchor): the
-    /// in-memory set is evicted and the store's record for the file is dropped
-    /// (its pins no longer point at anything).
+    /// in-memory set is evicted and the store's record is retired, so its
+    /// anchors stay claimed for the rest of the session, even though they point
+    /// at nothing (#207 §2). `freed` is filled from the record before the
+    /// retire: `retire`'s save is best-effort, and if it does not land, this
+    /// session's claim is the only one left.
     pub fn free(&mut self, path: &str) {
         self.evict_path(path);
-        if let Some(store) = self.store.as_mut() {
-            store.remove(path);
+        if let Some(store) = self.store.as_ref() {
+            if let Some(record) = store.load(path) {
+                self.freed
+                    .extend(record.pins.iter().map(|p| p.anchor.clone()));
+            }
+            store.retire(path);
         }
     }
 
     /// Mint one free anchor. With a `line` (the usual path) the probe starts
     /// at the line's content-derived base slot and walks forward by stride —
     /// the same walk the pure allocator takes — against the registry's
-    /// global `owned` set plus this read's `fresh` mints (uniqueness is
-    /// session-wide and per-read, the base is content-local). Without a
+    /// global `owned` set, the `freed` set of anchors a `write` voided, and
+    /// this read's `fresh` mints (uniqueness is session-wide and per-read, the
+    /// base is content-local). Without a
     /// `line` it falls back to the file's running hint, then the monotonic
     /// probe cursor (slot 0 stays untouchable).
     fn mint(
@@ -316,8 +330,9 @@ impl Registry {
         // base when free, the file's running hint when the base is owned
         // (collisions continue where the file left off), else the global
         // cursor (the no-line fallback).
-        let taken =
-            |this: &Self, anchor: &str| this.owned.contains_key(anchor) || fresh.contains(anchor);
+        let taken = |this: &Self, anchor: &str| {
+            this.owned.contains_key(anchor) || this.freed.contains(anchor) || fresh.contains(anchor)
+        };
         let start = match line {
             Some(l) => {
                 let base = crate::hashline::line_base_idx(l);
@@ -357,13 +372,22 @@ impl Registry {
     /// in this session (#207): the store's pinned anchors are the `prev`
     /// allocation the LCS re-anchor matches against, so a line unchanged since
     /// a previous session keeps its exact anchor. `None` when there is no
-    /// store, no record, or a corrupt record (the caller then mints fresh).
+    /// store, no record, or a corrupt record (the caller then mints fresh). A
+    /// record's retired anchors are recorded in `freed`, ahead of the drift
+    /// check, so the mint skips a freed slot even when the pins went stale, and
+    /// the claim outlives the read it seeds (#207 §2).
     fn seed_from_store(
         &mut self,
         path: &str,
         checksums: &[String],
     ) -> Option<(Vec<String>, Vec<String>)> {
         let prev = self.store.as_ref()?.load(path)?;
+        // Retired slots point at no line, so they seed no line — but they are
+        // recorded as freed here, ahead of the drift check: a file whose pins
+        // went stale must not hand its freed anchors back to the mint (#207 §2).
+        for anchor in prev.retired_anchors() {
+            self.freed.insert(anchor);
+        }
         // Reuse only pins whose checksum matches a current line; the caller's
         // LCS decides which in-order. A drifted file (checksum mismatch) seeds
         // nothing — its pins are stale.
