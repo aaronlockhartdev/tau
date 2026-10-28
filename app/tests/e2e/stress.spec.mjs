@@ -249,6 +249,16 @@ describe('real-app E2E stress: the 10k generated fixture (windowing, streams, pe
   });
 
   it('the open audit names the model the fixture session never recorded', async () => {
+    // The audit record is appended at open, after the metadata-only hydration
+    // paint, and its payload lands with the entry: a starved display flushes
+    // that last. The wait is for the payloads, not for the verdict — a gate
+    // gap lands as a second code and still reddens the check below.
+    await waitUntil(
+      readStore,
+      (s) => s.diagnostics.length > 0 && s.diagnostics.every((d) => d !== '?'),
+      30000,
+      'the open audit record lands with its payload'
+    );
     const s = await readStore();
     check(
       'open wrote one model_changed and no gate gap',
