@@ -369,7 +369,6 @@ pub(crate) fn open_route(
     let owner = config.route_model(&model, first)?;
     Ok(Route {
         model,
-        name: owner.name.to_owned(),
         provider: owner.provider.clone(),
     })
 }
@@ -387,11 +386,7 @@ pub(crate) fn switch_route<'c>(
 ) -> Result<ProviderRef<'c>, ProtocolError> {
     let first = first_provider(config)?;
     let current = config.provider_for(previous).unwrap_or(first);
-    config
-        .route_model(model, current)
-        .map_err(|unowned| ProtocolError::Other {
-            message: format!("model {model}: {unowned}"),
-        })
+    config.route_model(model, current).map_err(Into::into)
 }
 
 /// #267: mint `status: "error"` tool entries for a dangling assistant — one

@@ -78,9 +78,12 @@ mod testkit;
 #[cfg(test)]
 mod tests_archive;
 #[cfg(test)]
+#[cfg(test)]
 mod tests_archive_disk;
 #[cfg(test)]
 mod tests_archive_edges;
+#[cfg(test)]
+mod tests_child_route;
 #[cfg(test)]
 mod tests_dispatch;
 #[cfg(test)]

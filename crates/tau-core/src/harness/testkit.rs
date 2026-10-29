@@ -19,7 +19,6 @@ pub(crate) fn providers() -> BTreeMap<String, crate::config::Provider> {
 pub(crate) fn route(config: &crate::config::Config, model: &str) -> crate::config::Route {
     crate::config::Route {
         model: model.to_owned(),
-        name: "dev".into(),
         provider: config
             .providers
             .get("dev")

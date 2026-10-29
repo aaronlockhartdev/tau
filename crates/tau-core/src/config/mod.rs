@@ -387,8 +387,6 @@ pub struct Config {
 pub struct Route {
     /// The model id, spelled as the session's record names it.
     pub model: String,
-    /// The provider's name, as the config declares it.
-    pub name: String,
     /// The provider that owns the id.
     pub provider: Provider,
 }
@@ -430,9 +428,9 @@ impl Config {
     /// remainder is its key; any other id — a bare key, or a gateway key that
     /// carries `/` itself under a provider nobody declared — is its own key.
     pub(crate) fn model_key<'a>(&self, id: &'a str) -> &'a str {
-        match id.split_once('/') {
-            Some((provider, key)) if self.providers.contains_key(provider) => key,
-            _ => id,
+        match self.provider_for(id) {
+            Some(owner) => Self::model_key_for(owner.name, id),
+            None => id,
         }
     }
 

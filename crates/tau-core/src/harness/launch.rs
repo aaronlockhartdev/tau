@@ -295,9 +295,13 @@ fn root_session(
     provider: TurnProviderRef,
     base_prompt: Option<&str>,
 ) -> Result<Arc<AgentSession>, ProtocolError> {
-    // One projection of the session file answers every question the open
-    // asks (spec §8): the gate state to resume, and the records this open
-    // owes. Its model is the one `build_live` routed (#336).
+    // The open walks the session file twice. `build_live` projected it once to
+    // route the model (#336); this projection answers the two questions only
+    // the assembly asks: the gate state to resume, and the records this open
+    // owes (`record_at_open` below, spec §8). The repeat is cheap: a loaded
+    // store serves `branch` from the in-memory log `open` filled
+    // (`session/log.rs`), so the second projection is a list walk, not a
+    // re-parse of the file. Its model is the one `build_live` routed.
     let facts = session_open::facts(&mut store)?;
     // The turn's provider options (spec §12, #35): resolved from the merged
     // config and this model's facts on the provider that declares them, once,
