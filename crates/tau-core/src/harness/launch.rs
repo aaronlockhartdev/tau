@@ -11,7 +11,7 @@ use super::{
     TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open, tools,
 };
 use crate::agent::StreamDelta;
-use crate::config::ToolBatchPolicy;
+use crate::config::{Route, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
@@ -31,11 +31,13 @@ pub enum SessionRole {
         /// Replace the root session's base prompt line (the headless frame
         /// seam, `session/new` `base_prompt`); `None` keeps the default.
         base_prompt: Option<String>,
-        /// The config's first provider, resolved by the caller (`build_live`
-        /// resolves it for the live shell, and its no-providers error is the
-        /// one `session/new` returns); the supervisor's child factory and
-        /// bridge take it — no second resolution (ticket #43).
-        first_provider: (String, crate::config::Provider),
+        /// The model this session opens on and the provider its id names,
+        /// resolved by the caller (#336): `build_live` takes the record's last
+        /// switch, else the config default, and routes that id. The endpoint,
+        /// the model's facts, and the child factory all follow this route —
+        /// never the provider the config's map sorts first. Resolved once for
+        /// the live shell (ticket #43's one-resolution rule).
+        route: Route,
     },
     /// A session around a caller-built supervisor, for tests that drive a
     /// parent without a core. It skips what a real open does: model resolution,
@@ -183,12 +185,12 @@ impl AgentSession {
                 config,
                 provider,
                 base_prompt,
-                first_provider,
+                route,
             } => root_session(
                 &core,
                 &workspace,
                 &config,
-                &first_provider,
+                &route,
                 store,
                 provider,
                 base_prompt.as_deref(),
@@ -279,51 +281,29 @@ fn plan_wiring(
     (sectioned, core)
 }
 
-/// The root assembly: the model resolution, the prompt, the
-/// bridge↔supervisor cycle, the session, and the four event hooks. The
-/// first provider arrives pre-resolved — the caller already resolved it
-/// (ticket #43).
+/// The root assembly: the prompt, the bridge↔supervisor cycle, the session,
+/// and the event hooks. The model and the provider its id names arrive
+/// pre-resolved: `build_live` routes once for the live shell (#336, on ticket
+/// #43's one-resolution rule).
 #[allow(clippy::too_many_lines)] // one root-assembly path; splitting is refactoring
 fn root_session(
     core: &Arc<Core>,
     workspace: &Workspace,
     config: &Config,
-    first: &(String, crate::config::Provider),
+    route: &Route,
     mut store: SessionStore,
     provider: TurnProviderRef,
     base_prompt: Option<&str>,
 ) -> Result<Arc<AgentSession>, ProtocolError> {
-    let (name, first) = first;
-    // `generation.default_model` wins; an empty or unknown value falls
-    // back to the provider's first model (BTreeMap order). A default written
-    // with its provider's prefix is looked up by its key — §6.7's one rule
-    // applies to config-supplied ids too, or a prefixed default silently
-    // becomes the first model.
-    let default = config.generation.default_model.clone();
-    let model = if !default.is_empty() && first.models.contains_key(config.model_key(&default)) {
-        default
-    } else {
-        first
-            .models
-            .keys()
-            .next()
-            .cloned()
-            .ok_or_else(|| ProtocolError::Other {
-                message: format!("provider {name} has no models"),
-            })?
-    };
     // One projection of the session file answers every question the open
-    // asks (spec §8): the model it last named — a session that picked one
-    // keeps it across close and re-open, a session with none takes the config
-    // default — the gate state to resume, and the records this open owes.
+    // asks (spec §8): the gate state to resume, and the records this open
+    // owes. Its model is the one `build_live` routed (#336).
     let facts = session_open::facts(&mut store)?;
-    let model = facts
-        .as_ref()
-        .and_then(|f| f.model.clone())
-        .unwrap_or(model);
-    // The turn's provider options (spec §12, #35): resolved from the
-    // merged config + this model's facts, once, at registration.
-    let turn = derive_turn(config, first, &model, store.id());
+    // The turn's provider options (spec §12, #35): resolved from the merged
+    // config and this model's facts on the provider that declares them, once,
+    // at registration.
+    let model = route.model.as_str();
+    let turn = derive_turn(config, &route.provider, model, store.id());
 
     let cwd = PathBuf::from(&workspace.cwd);
 
@@ -333,7 +313,7 @@ fn root_session(
         message: e.to_string(),
     })?;
     let gate_failed = facts.as_ref().is_some_and(|f| f.gate_failed);
-    session_open::record_at_open(&mut store, facts.as_ref(), &model, &turn)?;
+    session_open::record_at_open(&mut store, facts.as_ref(), model, &turn)?;
 
     // The loop assembles no context of its own: base prompt + context
     // files (spec §10) are built here, once, at session creation.
@@ -384,7 +364,8 @@ fn root_session(
     } else {
         let forwarding = Arc::new(ForwardingChildFactory {
             client: core.client.clone(),
-            provider: first.clone(),
+            config: config.clone(),
+            provider: route.provider.clone(),
             requests: config.requests.clone(),
             tx: core.events_tx.clone(),
             pipe: core.pipe.clone(),
@@ -397,7 +378,7 @@ fn root_session(
         core: Arc::clone(core),
         workspace: workspace.id.clone(),
         client: core.client.clone(),
-        provider: first.clone(),
+        provider: route.provider.clone(),
         requests: config.requests.clone(),
         sup: Mutex::new(None),
         factory: bridge_factory,
@@ -407,7 +388,7 @@ fn root_session(
         parent_session: store.id().to_owned(),
         cwd: cwd.clone(),
         provider: factory,
-        model: model.clone(),
+        model: model.to_owned(),
         system_prompt: system_prompt.clone(),
         om: config.om.clone(),
         om_model: config.om.om_model.clone(),
@@ -441,7 +422,7 @@ fn root_session(
     let agent = Arc::new(AgentSession::new(SessionParams {
         store,
         system_prompt,
-        model,
+        model: model.to_owned(),
         tools: tools::surface::root_specs(),
         cwd,
         provider,

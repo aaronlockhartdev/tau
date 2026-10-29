@@ -22,7 +22,7 @@ struct CannedChild {
 }
 
 impl ChildProviderFactory for CannedChild {
-    fn create(&self, _child_session_id: &str) -> provider::TurnProviderRef {
+    fn create(&self, _child_session_id: &str, _model: &str) -> provider::TurnProviderRef {
         if self.slow_ms > 0 {
             provider::canned_slow(&self.body, self.slow_ms)
         } else {

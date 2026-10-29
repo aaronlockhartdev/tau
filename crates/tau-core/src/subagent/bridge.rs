@@ -9,9 +9,11 @@ use tau_protocol::payload::ResumeContract;
 
 /// The provider a child's loop runs against, created per child session id
 /// (the dispatch implements this to wrap the production provider in its
-/// stream-forwarding seam; tests return canned providers).
+/// stream-forwarding seam; tests return canned providers). `model` is the
+/// child's model id, so the factory can route the child to the provider that
+/// id names (#336) instead of the one its parent happens to address.
 pub trait ChildProviderFactory: Send + Sync {
-    fn create(&self, child_session_id: &str) -> TurnProviderRef;
+    fn create(&self, child_session_id: &str, model: &str) -> TurnProviderRef;
 }
 
 /// The parent-side notice for a child state transition: the GUI badge and

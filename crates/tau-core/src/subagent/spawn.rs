@@ -140,7 +140,6 @@ impl Supervisor {
         store
             .set_title(&name)
             .map_err(|e| format!("subagent_spawn: {e}"))?;
-        let provider = self.provider.create(&session_id);
         // The type configures the child (spec §5.5): `general` inherits
         // the session's prompt, tools, and model; a `.md` type brings its
         // own prompt and, optionally, a tool subset and model.
@@ -155,7 +154,11 @@ impl Supervisor {
             crate::gate::with_section(&mut body, &self.gates);
             body
         };
+        // The child's model is resolved before its provider, which the
+        // factory routes by that id (#336): a `.md` type naming another
+        // provider's model is addressed there, not at its parent's endpoint.
         let child_model = ty.model.clone().unwrap_or_else(|| self.model.clone());
+        let provider = self.provider.create(&session_id, &child_model);
         let child_tools = tools::surface::child_specs(ty.tools.as_deref());
         // The role carries the child's wiring (R2); the spawn keeps the
         // context-mode and agent-type resolution.

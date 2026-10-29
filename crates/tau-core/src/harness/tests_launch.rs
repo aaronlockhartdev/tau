@@ -3,7 +3,7 @@
 
 use super::{
     AgentSession, Command, Core, CoreBuilder, EntryKind, Event, SessionRole, SessionStore,
-    testkit::{collect_events, open_ws, providers},
+    testkit::{collect_events, open_ws, providers, route},
 };
 use crate::agent_type::builtin_general;
 use crate::config::{Om, Provider, SubAgents, ToolBatchPolicy};
@@ -32,21 +32,15 @@ async fn launch_root_builds_the_supervisor_and_wires_the_events() {
     let collected = collect_events(&core);
 
     let config = core.system_config();
-    let first = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .expect("the test config carries the dev provider");
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
             core: core.clone(),
             workspace: ws.clone(),
-            config,
+            config: config.clone(),
             provider: canned_provider(),
             base_prompt: None,
-            first_provider: first,
+            route: route(&config, "model"),
         },
     )
     .unwrap();
@@ -110,8 +104,10 @@ async fn session_new_without_providers_is_a_config_error() {
     );
 }
 
+/// A provider that declares no models is refused at the open, and the refusal
+/// names it: the route resolver has nothing to fall back to.
 #[tokio::test]
-async fn launch_root_with_a_modelless_provider_names_it() {
+async fn a_modelless_provider_names_it() {
     let mut providers = std::collections::BTreeMap::new();
     providers.insert(
         "dev".to_owned(),
@@ -124,28 +120,13 @@ async fn launch_root_with_a_modelless_provider_names_it() {
     let core = CoreBuilder::custom(providers).build().unwrap();
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
-    let store = fresh_store(dir.path(), &SessionStore::new_session_id());
-
-    let config = core.system_config();
-    let first = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .expect("the test config carries the dev provider");
-    let err = AgentSession::launch(
-        store,
-        SessionRole::Root {
-            core: core.clone(),
-            workspace: ws,
-            config,
-            provider: canned_provider(),
+    let err = core
+        .dispatch(Command::SessionNew {
+            workspace: ws.id,
+            title: None,
             base_prompt: None,
-            first_provider: first,
-        },
-    )
-    .err()
-    .expect("launch fails with a modelless provider");
+        })
+        .expect_err("a provider with no models opens no session");
     assert!(
         matches!(
             err,
@@ -166,21 +147,15 @@ async fn launch_root_session_is_freed_when_dropped() {
     let ws = open_ws(&core, dir.path()).await;
     let store = fresh_store(dir.path(), &SessionStore::new_session_id());
     let config = core.system_config();
-    let first = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .expect("the test config carries the dev provider");
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
             core: core.clone(),
             workspace: ws.clone(),
-            config,
+            config: config.clone(),
             provider: canned_provider(),
             base_prompt: None,
-            first_provider: first,
+            route: route(&config, "model"),
         },
     )
     .unwrap();
@@ -269,12 +244,6 @@ max_retries = 1
     let dir = tempfile::tempdir().unwrap();
     let ws = open_ws(&core, dir.path()).await;
     let config = core.system_config();
-    let first = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .expect("the test config carries the dev provider");
     // The first life: the check fails through its one repair.
     let write = |id: &str| {
         crate::agent::testkit::sse(
@@ -300,7 +269,7 @@ max_retries = 1
             config: config.clone(),
             provider,
             base_prompt: None,
-            first_provider: first.clone(),
+            route: route(&config, "model"),
         },
     )
     .unwrap();
@@ -315,10 +284,10 @@ max_retries = 1
         SessionRole::Root {
             core,
             workspace: ws,
-            config,
+            config: config.clone(),
             provider: canned_provider(),
             base_prompt: None,
-            first_provider: first,
+            route: route(&config, "model"),
         },
     )
     .unwrap();
@@ -452,21 +421,15 @@ async fn root_session_system_md_replaces_the_default_and_append_composes() {
     let ws = open_ws(&core, &cwd).await;
     let store = fresh_store(&cwd, &SessionStore::new_session_id());
     let config = core.system_config();
-    let first = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .expect("the test config carries the dev provider");
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
             core: core.clone(),
             workspace: ws,
-            config,
+            config: config.clone(),
             provider: canned_provider(),
             base_prompt: None,
-            first_provider: first,
+            route: route(&config, "model"),
         },
     )
     .unwrap();
@@ -500,21 +463,15 @@ async fn root_session_headless_frame_is_not_clobbered_by_system_md() {
     let ws = open_ws(&core, &cwd).await;
     let store = fresh_store(&cwd, &SessionStore::new_session_id());
     let config = core.system_config();
-    let first = config
-        .providers
-        .iter()
-        .next()
-        .map(|(name, p)| (name.clone(), p.clone()))
-        .expect("the test config carries the dev provider");
     let agent = AgentSession::launch(
         store,
         SessionRole::Root {
-            core,
+            core: core.clone(),
             workspace: ws,
-            config,
+            config: config.clone(),
             provider: canned_provider(),
             base_prompt: Some(FRAME.to_owned()),
-            first_provider: first,
+            route: route(&config, "model"),
         },
     )
     .unwrap();

@@ -379,6 +379,49 @@ pub struct Config {
     pub hashline: Hashline,
 }
 
+/// A model id's route, owned: the id a session carries and the provider its id
+/// names (§6.7, #336). `build_live` resolves it once at the open; the endpoint,
+/// the turn's model facts, and the child factory all follow it — never the
+/// provider the config's map sorts first.
+#[derive(Debug, Clone)]
+pub struct Route {
+    /// The model id, spelled as the session's record names it.
+    pub model: String,
+    /// The provider's name, as the config declares it.
+    pub name: String,
+    /// The provider that owns the id.
+    pub provider: Provider,
+}
+
+/// The provider a model id resolves to: its configured name and entry.
+#[derive(Debug, Clone, Copy)]
+pub struct ProviderRef<'c> {
+    /// The provider's name, as the config declares it.
+    pub name: &'c str,
+    /// The provider's entry.
+    pub provider: &'c Provider,
+}
+/// Why a model id routes nowhere: its prefix names no configured provider, so
+/// the id addresses no endpoint (§6.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnownedPrefix(pub String);
+
+impl fmt::Display for UnownedPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "model names no configured provider '{}'", self.0)
+    }
+}
+
+impl std::error::Error for UnownedPrefix {}
+
+impl From<UnownedPrefix> for tau_protocol::ProtocolError {
+    fn from(unowned: UnownedPrefix) -> Self {
+        Self::Other {
+            message: unowned.to_string(),
+        }
+    }
+}
+
 impl Config {
     /// §6.7: the one read of a model id. A model menu names a model as
     /// `provider/key`, because a workspace can reach several providers; the
@@ -391,6 +434,67 @@ impl Config {
             Some((provider, key)) if self.providers.contains_key(provider) => key,
             _ => id,
         }
+    }
+
+    /// §6.7: the provider entry an id's prefix names, when the prefix is a
+    /// configured provider; `None` for a bare key.
+    pub(crate) fn provider_for(&self, id: &str) -> Option<ProviderRef<'_>> {
+        let (prefix, _) = id.split_once('/')?;
+        self.providers
+            .get_key_value(prefix)
+            .map(|(name, provider)| ProviderRef { name, provider })
+    }
+
+    /// §6.7: the provider a model id is addressed to. A prefix naming a
+    /// configured provider owns the id. A bare key belongs to the one provider
+    /// that declares it; a key several providers declare — and one no provider
+    /// declares — stays with `current`, the provider the session already
+    /// addresses, because the prefix is what disambiguates between providers and
+    /// the core never guesses across them. A prefix naming no configured
+    /// provider is a refusal, never a silent route to whichever provider the
+    /// config's map sorts first. The key that provider declares is
+    /// [`Config::model_key_for`].
+    pub(crate) fn route_model<'c>(
+        &'c self,
+        id: &str,
+        current: ProviderRef<'c>,
+    ) -> Result<ProviderRef<'c>, UnownedPrefix> {
+        if let Some(owner) = self.provider_for(id) {
+            return Ok(owner);
+        }
+        if let Some((prefix, _)) = id.split_once('/') {
+            return Err(UnownedPrefix(prefix.to_owned()));
+        }
+        let mut declaring = self
+            .providers
+            .iter()
+            .filter(|(_, p)| p.models.contains_key(id))
+            .map(|(name, provider)| ProviderRef { name, provider });
+        match (declaring.next(), declaring.next()) {
+            (Some(owner), None) => Ok(owner),
+            _ => Ok(current),
+        }
+    }
+
+    /// §6.7: the provider a child is addressed at (#336). A child's model id
+    /// routes like any other; an id that names no provider keeps `current`, the
+    /// parent's entry — the spawn already resolved that id against it, so there
+    /// is nothing to refuse.
+    pub(crate) fn route_child<'c>(&'c self, id: &str, current: ProviderRef<'c>) -> &'c Provider {
+        match self.route_model(id, current) {
+            Ok(owner) => owner.provider,
+            Err(_) => current.provider,
+        }
+    }
+
+    /// §6.7: the key the provider named `name` declares for `id` — the id with
+    /// that provider's prefix stripped, and the id itself for every other
+    /// spelling (a bare key, or a gateway key carrying `/` under a foreign
+    /// prefix).
+    pub(crate) fn model_key_for<'a>(name: &str, id: &'a str) -> &'a str {
+        id.strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or(id)
     }
 }
 
