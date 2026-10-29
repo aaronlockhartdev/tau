@@ -3,8 +3,8 @@
 // does not know renders by its own name, never as a blank card.
 
 import { fmtK } from './format';
-import { streamOutcomeLabels } from './protocol';
-import type { AnyEntry, Diagnostic, DiagnosticCode, Entry } from './protocol';
+import { streamOutcomeLabels } from '../wire/protocol';
+import type { AnyEntry, Diagnostic, DiagnosticCode, Entry } from '../wire/protocol';
 
 // A card renders for an older build's spelling too (AnyEntry.kind is a
 // free-form string), so the helper takes the union.

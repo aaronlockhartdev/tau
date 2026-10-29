@@ -3,7 +3,7 @@
 // current step (first open item), the gate badge, and the empty state.
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import type { Plan } from '../lib/protocol';
+import type { Plan } from '../lib/wire/protocol';
 import PlanView from './PlanView.svelte';
 
 const plan = (over: Partial<Plan> = {}): Plan => ({

@@ -3,7 +3,7 @@
   // name · the om gauge) and a right cost group (in · out · cache, and
   // tps).
   import { store, currentSession } from '../lib/store/store.svelte';
-  import { fmtK } from '../lib/format';
+  import { fmtK } from '../lib/display/format';
 
   const s = $derived(currentSession());
   const running = $derived(s?.turn === 'running' || s?.turn === 'starting');

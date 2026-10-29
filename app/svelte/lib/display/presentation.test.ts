@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { present, type Shell } from './presentation';
 import { Bot, File, Search, Terminal } from '@lucide/svelte';
-import type { Diagnostic, Entry, MessageEntry } from './protocol';
+import type { Diagnostic, Entry, MessageEntry } from '../wire/protocol';
 
 const ctx = { sourceLabel: '', parentLabel: '', parentId: '' };
 

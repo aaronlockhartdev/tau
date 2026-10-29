@@ -6,7 +6,7 @@ import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { Entry } from '../lib/protocol';
+import type { Entry } from '../lib/wire/protocol';
 import EntryCard from './EntryCard.svelte';
 import { resetMockStore } from '../lib/testing/mock-store.svelte.ts';
 

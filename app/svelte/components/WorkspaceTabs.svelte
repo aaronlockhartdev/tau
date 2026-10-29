@@ -17,8 +17,8 @@
     tabSelect
   } from '../lib/store/store.svelte';
   import TauLogo from './TauLogo.svelte';
-  import type { Workspace } from '../lib/protocol';
-  import { useContextMenu } from '../lib/useContextMenu.svelte';
+  import type { Workspace } from '../lib/wire/protocol';
+  import { useContextMenu } from '../lib/display/useContextMenu.svelte';
   import { Bell, Maximize2 } from '@lucide/svelte';
 
   // The right-click menu: its position plus the selection it acts on.

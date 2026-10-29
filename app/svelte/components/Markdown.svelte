@@ -3,7 +3,7 @@
   // shows immediately, and an async pass upgrades every fenced block with
   // a known language label to shiki's colored spans. A stale highlight
   // never clobbers a newer render: the generation guard drops late results.
-  import { md, mdHighlight } from '../lib/markdown';
+  import { md, mdHighlight } from '../lib/display/markdown';
 
   let { text }: { text: string } = $props();
 

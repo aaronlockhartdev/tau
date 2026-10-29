@@ -8,8 +8,8 @@ const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
-import { type SkillInfo, type Workspace } from '../protocol';
-import { applySessionList, openSession, touchChild } from '../sessions';
+import { type SkillInfo, type Workspace } from '../wire/protocol';
+import { applySessionList, openSession, touchChild } from '../rules/sessions';
 import {
   applyEvents,
   closeWorkspace,

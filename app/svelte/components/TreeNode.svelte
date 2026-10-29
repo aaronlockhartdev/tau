@@ -4,7 +4,7 @@
   // content and its behavior (open, toggle, rename) come from the caller;
   // the recursion stays with each tree.
   import type { Snippet } from 'svelte';
-  import { isActivateKey } from '../lib/ui';
+  import { isActivateKey } from '../lib/display/ui';
   import { ChevronDown } from '@lucide/svelte';
 
   let {

@@ -1,7 +1,7 @@
 // The plan pane's pure projections over a parsed plan (spec §5.3): the
 // N/M progress, the "current step" (the design: the first open item), and
 // the fleet projection's gate verdict for one child.
-import type { Plan } from './protocol';
+import type { Plan } from '../wire/protocol';
 
 export interface PlanProgress {
   // The checked-off step count.

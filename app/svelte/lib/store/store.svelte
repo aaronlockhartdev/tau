@@ -10,7 +10,7 @@
   // The transcript is an id-keyed map — entry_upsert carries the file's
   // own line, paged reads materialize the rest (spec §8).
 
-  import { command } from '../protocol';
+  import { command } from '../wire/protocol';
   import {
     archiveSession,
     deleteSession,
@@ -76,8 +76,8 @@
     toggleFileDir,
     windowTitle
   };
-  export type { PendingMsg, SessionState } from '../sessions';
-  export type { PaneState } from '../panes';
+  export type { PendingMsg, SessionState } from '../rules/sessions';
+  export type { PaneState } from '../rules/panes';
 
   // Verification seam (the dev rig): feed wire-shaped events through
   // applyEvents and read the current session's live-stream lengths (store level — the

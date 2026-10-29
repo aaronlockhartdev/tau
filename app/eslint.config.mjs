@@ -61,7 +61,7 @@ export default [
       'svelte/lib/store/window.test.ts',
       'svelte/lib/store/workspace.test.ts',
       'svelte/lib/testing/store-harness.ts',
-      'svelte/lib/presentation.svelte.test.ts',
+      'svelte/lib/display/presentation.svelte.test.ts',
       'svelte/components/Transcript.test.ts',
       'svelte/main.ts'
     ],

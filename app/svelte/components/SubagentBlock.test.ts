@@ -6,8 +6,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SubagentInfo } from '../lib/protocol';
-import { crewView, type SpawnRef } from '../lib/subagent-view';
+import type { SubagentInfo } from '../lib/wire/protocol';
+import { crewView, type SpawnRef } from '../lib/display/subagent-view';
 import SubagentBlock from './SubagentBlock.svelte';
 
 const ref: SpawnRef = {

@@ -6,7 +6,7 @@
 // entry (the spawn point) correlated to the live SubagentInfo by
 // (agent_type, context_mode), spawn order breaking multiplicity ties.
 
-import type { SubagentInfo } from './protocol';
+import type { SubagentInfo } from '../wire/protocol';
 
 // One spawn point in the parent transcript (a subagent_spawn tool entry).
 export interface SpawnRef {

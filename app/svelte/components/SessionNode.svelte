@@ -15,12 +15,12 @@
     deleteSession,
     type SessionState
   } from '../lib/store/store.svelte';
-  import { groupIsOpen } from '../lib/sessions';
-  import { nextSelection } from '../lib/selection';
+  import { groupIsOpen } from '../lib/rules/sessions';
+  import { nextSelection } from '../lib/rules/selection';
   import { tick } from 'svelte';
   import { Archive } from '@lucide/svelte';
-  import { useContextMenu } from '../lib/useContextMenu.svelte';
-  import { fmtAgo } from '../lib/format';
+  import { useContextMenu } from '../lib/display/useContextMenu.svelte';
+  import { fmtAgo } from '../lib/display/format';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
 

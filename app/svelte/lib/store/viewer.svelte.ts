@@ -1,9 +1,9 @@
 // The file viewer (open-files model): the per-workspace set of open files,
 // the active tab, and the content + git base that feeds the diff. The state
 // lives in the bag (state.svelte); this module owns the tab lifecycle.
-import { command } from '../protocol';
-import { errText } from '../errors';
-import { closeIn, openIn } from '../openfiles';
+import { command } from '../wire/protocol';
+import { errText } from '../wire/errors';
+import { closeIn, openIn } from '../rules/openfiles';
 import { ensurePane, store } from './state.svelte';
 
 // Open a file in the viewer: adds it to the workspace's open set (a no-op if

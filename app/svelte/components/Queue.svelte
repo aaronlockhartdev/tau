@@ -7,7 +7,7 @@
   // so deletion is optimistic with resync.
 
   import { deleteQueueItem, currentSession } from '../lib/store/store.svelte';
-  import type { PendingMsg } from '../lib/sessions';
+  import type { PendingMsg } from '../lib/rules/sessions';
 
   const s = $derived(currentSession());
   const reports = $derived(s ? s.pending.filter((p) => p.source && p.source !== 'user') : []);

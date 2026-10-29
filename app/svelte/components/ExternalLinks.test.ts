@@ -6,7 +6,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import CardShell from './CardShell.svelte';
-import type { Shell } from '../lib/presentation';
+import type { Shell } from '../lib/display/presentation';
 
 // The real module imports the Tauri opener plugin; the tests spy on it.
 const openUrl = vi.fn((_u: string) => Promise.resolve());
@@ -44,7 +44,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('intercepts an http link in rendered markdown: opens externally, no webview navigation', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     const { prevented } = clickAnchor('https://example.com/a', document.body);
     expect(prevented).toBe(true);
@@ -53,7 +53,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('intercepts an https link too', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     clickAnchor('https://example.com/b', document.body);
     expect(openUrl).toHaveBeenCalledWith('https://example.com/b');
@@ -61,7 +61,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('leaves mailto links alone (native mail client handling)', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     const { prevented } = clickAnchor('mailto:a@example.com', document.body);
     expect(prevented).toBe(false);
@@ -70,7 +70,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('leaves #anchor links alone (in-page navigation)', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     const { prevented } = clickAnchor('#section', document.body);
     expect(prevented).toBe(false);
@@ -79,7 +79,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('leaves relative links alone', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     const { prevented } = clickAnchor('/some/page', document.body);
     expect(prevented).toBe(false);
@@ -88,7 +88,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('ignores clicks that are not on a link', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     const div = document.createElement('div');
     document.body.appendChild(div);
@@ -99,7 +99,7 @@ describe('externalLinks (#195)', () => {
 
   it('stays inert outside Tauri (plain browser demo/dev)', async () => {
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__'];
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     const { prevented } = clickAnchor('https://example.com/a', document.body);
     expect(prevented).toBe(false);
@@ -108,7 +108,7 @@ describe('externalLinks (#195)', () => {
   });
 
   it('detach removes the listener', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     detach();
     const { prevented } = clickAnchor('https://example.com/a', document.body);
@@ -138,7 +138,7 @@ describe('CardShell markdown links (#195)', () => {
   });
 
   it('a click on the markdown link opens externally instead of navigating the webview', async () => {
-    const { attachExternalLinkHandler } = await import('../lib/externalLinks');
+    const { attachExternalLinkHandler } = await import('../lib/display/externalLinks');
     const detach = attachExternalLinkHandler();
     render(CardShell, {
       props: {
@@ -157,7 +157,7 @@ describe('CardShell markdown links (#195)', () => {
   });
 
   it('the handler module exposes attach/detach (App.svelte wires it in onMount/onDestroy)', async () => {
-    const mod = await import('../lib/externalLinks');
+    const mod = await import('../lib/display/externalLinks');
     expect(typeof mod.attachExternalLinkHandler).toBe('function');
   });
 });

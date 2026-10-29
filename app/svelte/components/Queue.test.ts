@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SessionMeta } from '../lib/protocol';
+import type { SessionMeta } from '../lib/wire/protocol';
 import Queue from './Queue.svelte';
 import { deleteQueueItem, mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte.ts';
 

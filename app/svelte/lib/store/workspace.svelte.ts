@@ -6,14 +6,14 @@ import {
   isTauri,
   type SessionMeta,
   type Workspace
-} from '../protocol';
-import { errText } from '../errors';
+} from '../wire/protocol';
+import { errText } from '../wire/errors';
 import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
-import { applySessionList } from '../sessions';
+import { applySessionList } from '../rules/sessions';
 import { switchSession } from './commands';
-import { ensureWorkspace, removeWorkspace } from '../files';
-import { applyTabSelect } from '../panes';
+import { ensureWorkspace, removeWorkspace } from '../rules/files';
+import { applyTabSelect } from '../rules/panes';
 import { clearError, store } from './state.svelte';
 import { fetchDir, refreshGitStatus } from './files-pane.svelte';
 import { resetActiveFile } from './viewer.svelte';

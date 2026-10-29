@@ -11,7 +11,7 @@ import type {
   Usage,
   ViewEntry,
   Workspace
-} from '../protocol';
+} from '../wire/protocol';
 import { store } from '../store/store.svelte';
 
 export const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
@@ -33,7 +33,7 @@ export function meta(id: string, workspace = WS.id, extra: Partial<SessionMeta> 
 
 export function snap(sid: string, extra: { session?: Partial<SessionMeta>; live?: Partial<LiveState> } = {}): {
   kind: 'snapshot';
-  snapshot: import('../protocol').Snapshot;
+  snapshot: import('../wire/protocol').Snapshot;
 } {
   return {
     kind: 'snapshot',

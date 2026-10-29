@@ -5,8 +5,8 @@ import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SessionMeta, SubagentInfo } from '../lib/protocol';
-import type { SessionState } from '../lib/sessions';
+import type { SessionMeta, SubagentInfo } from '../lib/wire/protocol';
+import type { SessionState } from '../lib/rules/sessions';
 import RightPane from './RightPane.svelte';
 import {
   mockStore,

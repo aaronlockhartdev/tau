@@ -8,7 +8,7 @@ const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
-import { openSession } from '../sessions';
+import { openSession } from '../rules/sessions';
 import { applyEvents, store } from './store.svelte';
 import { USAGE, WS, entryView, freshStore, snap } from '../testing/store-harness';
 

@@ -2,8 +2,8 @@
 // store snapshot plus the actions the palette may fire, so the grouping and
 // filtering are unit-testable without mounting the overlay.
 
-import type { SessionState } from './sessions';
-import type { SubagentInfo } from './protocol';
+import type { SessionState } from '../rules/sessions';
+import type { SubagentInfo } from '../wire/protocol';
 
 export interface PaletteItem {
   group: 'sessions' | 'crew' | 'actions';

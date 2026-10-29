@@ -1,4 +1,4 @@
-import type { SkillInfo } from './protocol';
+import type { SkillInfo } from '../wire/protocol';
 
 export type Suggestion = {
   id: string;

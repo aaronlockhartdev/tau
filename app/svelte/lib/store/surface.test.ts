@@ -10,8 +10,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: (...args: unknown[]) => openFolder(...args) }));
 
-import { type Command, type CommandOutput, type FileEntry, type SessionMeta, type LiveState, type Workspace } from '../protocol';
-import { openSession } from '../sessions';
+import { type Command, type CommandOutput, type FileEntry, type SessionMeta, type LiveState, type Workspace } from '../wire/protocol';
+import { openSession } from '../rules/sessions';
 import {
   applyEvents,
   closeWorkspace,

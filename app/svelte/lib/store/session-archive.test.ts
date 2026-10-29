@@ -8,8 +8,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
 
-import type { Command, CommandOutput, SessionMeta, Workspace } from '../protocol';
-import { applySessionList } from '../sessions';
+import type { Command, CommandOutput, SessionMeta, Workspace } from '../wire/protocol';
+import { applySessionList } from '../rules/sessions';
 import { archiveSession, deleteSession, restoreSession, store } from './store.svelte';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };

@@ -14,7 +14,7 @@ import type {
   Plan,
   Usage,
   Workspace
-} from './protocol';
+} from '../wire/protocol';
 
 export interface PendingMsg {
   text: string;

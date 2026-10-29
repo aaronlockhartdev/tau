@@ -5,8 +5,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SessionMeta, SkillInfo } from '../lib/protocol';
-import type { SessionState } from '../lib/sessions';
+import type { SessionMeta, SkillInfo } from '../lib/wire/protocol';
+import type { SessionState } from '../lib/rules/sessions';
 import Composer from './Composer.svelte';
 import {
   mockStore,

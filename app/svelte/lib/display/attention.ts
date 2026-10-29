@@ -2,7 +2,7 @@
 // core already tracks — no protocol change. A session needs you when a
 // child is parked on the user.
 
-import type { SessionState } from './sessions';
+import type { SessionState } from '../rules/sessions';
 
 export interface AttentionItem {
   session: string;

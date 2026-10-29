@@ -1,7 +1,7 @@
 // The transcript's paged read (spec §8): the GUI decides the window, the core
 // serves the slice. The state lives in the bag (state.svelte).
-import { command } from '../protocol';
-import { resolveBlobs, upsertEntry } from '../entries';
+import { command } from '../wire/protocol';
+import { resolveBlobs, upsertEntry } from '../wire/entries';
 import { store } from './state.svelte';
 
 // Views keep the file's own id — the snapshot and this paged read must share

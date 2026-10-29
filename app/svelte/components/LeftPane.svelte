@@ -7,9 +7,9 @@
   // generating or a sub-agent is running (inactive = untagged); sub-agent
   // rows keep their full lifecycle tags.
   import { store, pane, ensurePane, newSession, retryDirFetch, currentSession, fileCache, attention, type PaneState } from '../lib/store/store.svelte';
-  import { onActivate } from '../lib/ui';
+  import { onActivate } from '../lib/display/ui';
   import SessionNode from './SessionNode.svelte';
-  import { groupIsOpen } from '../lib/sessions';
+  import { groupIsOpen } from '../lib/rules/sessions';
   import { ChevronDown, Plus } from '@lucide/svelte';
   import FileNode from './FileNode.svelte';
 

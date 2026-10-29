@@ -5,11 +5,11 @@
 // mounting a component.
 
 import type { LucideIcon } from '@lucide/svelte';
-import type { AnyEntry, Entry, SkillRef } from './protocol';
-import { providerCutoff, streamOutcomeLabels } from './protocol';
+import type { AnyEntry, Entry, SkillRef } from '../wire/protocol';
+import { providerCutoff, streamOutcomeLabels } from '../wire/protocol';
 import { Book, Bot, File, Search, Terminal, User } from '@lucide/svelte';
 import { argsLines, valueLinesOf } from './markdown';
-import { splitJsonPayload } from './entries';
+import { splitJsonPayload } from '../wire/entries';
 import { diagnosticLabel } from './diagnostics';
 import { fmtK } from './format';
 

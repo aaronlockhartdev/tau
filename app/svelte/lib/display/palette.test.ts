@@ -1,8 +1,8 @@
 // The palette item builder: grouping and filtering, no DOM.
 import { describe, expect, it } from 'vitest';
 import { paletteItems, filterItems, type PaletteSource } from './palette';
-import { seedState } from './testing/mock-store.svelte.ts';
-import type { SessionMeta } from './protocol';
+import { seedState } from '../testing/mock-store.svelte.ts';
+import type { SessionMeta } from '../wire/protocol';
 
 const meta = (id: string, over: Partial<SessionMeta> = {}): SessionMeta => ({
   id,

@@ -8,7 +8,7 @@ import { render } from '@testing-library/svelte';
 import ToolOutput from './ToolOutput.svelte';
 
 // Decouple from shiki's WASM engine: one plain (uncolored) token per line.
-vi.mock('../lib/highlight', () => ({
+vi.mock('../lib/display/highlight', () => ({
   highlightLines: (code: string) => Promise.resolve(code.split('\n').map((l) => [{ content: l }]))
 }));
 

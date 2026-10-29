@@ -3,7 +3,7 @@
 // the opener plugin; everything else (mailto, #anchor, relative) keeps its
 // native behavior.
 import { openUrl } from '@tauri-apps/plugin-opener';
-import { isTauri } from './protocol';
+import { isTauri } from '../wire/protocol';
 
 export function attachExternalLinkHandler(): () => void {
   const on = (e: MouseEvent) => {

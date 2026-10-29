@@ -15,9 +15,9 @@
   // Esc dismisses; completion is plain text until send, and the /skill:
   // expansion happens at the message_send boundary, not here.
   import { store, send, stop, currentSession, type PendingMsg } from '../lib/store/store.svelte';
-  import type { SkillInfo } from '../lib/protocol';
+  import type { SkillInfo } from '../lib/wire/protocol';
   import { Archive, ArrowUp, Bot, ChevronDown, Square, Zap } from '@lucide/svelte';
-  import { filterSuggestions, slashToken, type Suggestion } from '../lib/autocomplete';
+  import { filterSuggestions, slashToken, type Suggestion } from '../lib/display/autocomplete';
 
   let text = $state('');
   // This WebKit build does not match :focus-within (verified: an ancestor

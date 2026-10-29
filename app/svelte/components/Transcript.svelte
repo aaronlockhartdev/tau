@@ -9,16 +9,16 @@
   import EntryCard from './EntryCard.svelte';
   import SubagentBlock from './SubagentBlock.svelte';
   import { store, fetchWindow, currentSession, setFollow, switchSession } from '../lib/store/store.svelte';
-  import { claimCrew, crewView, spawnRefsOf } from '../lib/subagent-view';
-  import type { SubagentInfo } from '../lib/protocol';
+  import { claimCrew, crewView, spawnRefsOf } from '../lib/display/subagent-view';
+  import type { SubagentInfo } from '../lib/wire/protocol';
   import {
     makeWindowingState,
     openFetches,
     scrollFetches,
     turnEndFetches,
     type TurnState
-  } from '../lib/windowing';
-  import type { Entry } from '../lib/protocol';
+  } from '../lib/rules/windowing';
+  import type { Entry } from '../lib/wire/protocol';
 
   // Sub-pixel tolerance at fractional devicePixelRatio (the Chat story's).
   const STICK_TOLERANCE = -1.5;
@@ -170,7 +170,7 @@
   });
 
   // Paged read around the visible window (spec §8): virtua's range drives
-  // fetchWindow through the windowing policy (lib/windowing.ts).
+  // fetchWindow through the windowing policy (lib/rules/windowing.ts).
   // The windowing policy's bookkeeping (F1): last-fetched per session (the
   // hysteresis) and the ranges hydrated while a turn was in flight (the
   // mid-turn union the turn-end effect re-reads). Plain maps — the policy's

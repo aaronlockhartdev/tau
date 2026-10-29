@@ -4,7 +4,7 @@ import { render, screen, cleanup } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import CommandPalette from './CommandPalette.svelte';
 import { mockStore as store, switchSession, resetMockStore, seedState } from '../lib/testing/mock-store.svelte';
-import type { SessionMeta } from '../lib/protocol';
+import type { SessionMeta } from '../lib/wire/protocol';
 
 vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');

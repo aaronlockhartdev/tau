@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/protocol';
+import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/wire/protocol';
 import ModelMenu from './ModelMenu.svelte';
 import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/mock-store.svelte.ts';
 

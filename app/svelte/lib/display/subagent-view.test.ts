@@ -2,7 +2,7 @@
 // to live SubagentInfo, and the block's display view across the lifecycle.
 
 import { describe, expect, it } from 'vitest';
-import type { SubagentInfo } from './protocol';
+import type { SubagentInfo } from '../wire/protocol';
 import { claimCrew, crewView, spawnRefsOf, type SpawnRef } from './subagent-view';
 
 function spawn(over: Partial<SpawnRef> = {}): SpawnRef {

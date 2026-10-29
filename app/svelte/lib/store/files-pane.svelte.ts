@@ -1,9 +1,9 @@
 // The files pane (ticket #32): directory listings, their change-driven
 // refetch wave, and the git status that tints the tree. The state lives in the
 // bag (state.svelte); this module owns the round-trips that fill it.
-import { command } from '../protocol';
-import { errText } from '../errors';
-import { putListing, scheduleRefetch as queueRefetch, toggleDir, waveDirs } from '../files';
+import { command } from '../wire/protocol';
+import { errText } from '../wire/errors';
+import { putListing, scheduleRefetch as queueRefetch, toggleDir, waveDirs } from '../rules/files';
 import { store } from './state.svelte';
 
 // One directory's listing into the store. The change guard keeps an

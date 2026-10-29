@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import type { Plan } from './protocol';
+import type { Plan } from '../wire/protocol';
 import { fleetGate, planProgress } from './plan';
 
 const plan = (over: Partial<Plan> = {}): Plan => ({

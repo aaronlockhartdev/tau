@@ -22,9 +22,9 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { store, toggleAllReasoning, newSession, windowTitle, currentSession, setCenterMode, pane, switchSession } from './lib/store/store.svelte';
   import { FileText, TriangleAlert } from '@lucide/svelte';
-  import { isTauri } from './lib/protocol';
+  import { isTauri } from './lib/wire/protocol';
   // #195: markdown links open externally instead of navigating the webview.
-  import { attachExternalLinkHandler } from './lib/externalLinks';
+  import { attachExternalLinkHandler } from './lib/display/externalLinks';
   // The dynamic window title (the center header was deleted): the session's
   // name lives in the title bar and the status bar, not a header row.
   $effect(() => {

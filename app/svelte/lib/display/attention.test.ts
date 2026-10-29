@@ -1,8 +1,8 @@
 // The attention fold: a pure projection over session state.
 import { describe, expect, it } from 'vitest';
 import { attentionOf } from './attention';
-import { seedState } from './testing/mock-store.svelte.ts';
-import type { SessionMeta, SubagentInfo } from './protocol';
+import { seedState } from '../testing/mock-store.svelte.ts';
+import type { SessionMeta, SubagentInfo } from '../wire/protocol';
 
 function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   return {

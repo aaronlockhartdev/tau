@@ -8,11 +8,11 @@
   // the panel renders a tree (nesting supported) — double-click opens the
   // sub-agent's session, which is an ordinary session (a tab opens for it).
   import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store/store.svelte';
-  import { fmtK } from '../lib/format';
-  import { onActivate } from '../lib/ui';
+  import { fmtK } from '../lib/display/format';
+  import { onActivate } from '../lib/display/ui';
   import { ChevronDown } from '@lucide/svelte';
-  import type { SubagentInfo } from '../lib/protocol';
-  import { fleetGate, planProgress } from '../lib/plan';
+  import type { SubagentInfo } from '../lib/wire/protocol';
+  import { fleetGate, planProgress } from '../lib/display/plan';
   import PlanView from './PlanView.svelte';
 
   const cur = $derived(currentSession());

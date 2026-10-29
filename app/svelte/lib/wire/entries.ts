@@ -10,7 +10,7 @@ import type {
   ViewEntry
 } from './protocol';
 import { asStreamOutcome } from './protocol';
-import { valueLinesOf } from './markdown';
+import { valueLinesOf } from '../display/markdown';
 
 // A sub-agent's message to the parent (and a parent's message to a child)
 // conventionally carries a JSON payload after the prose ("hi — {"word":"hi"}").

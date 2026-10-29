@@ -11,7 +11,7 @@ import {
   windowTitle,
   type SessionMap
 } from './sessions';
-import type { SessionMeta, Snapshot, SubagentInfo, Workspace } from './protocol';
+import type { SessionMeta, Snapshot, SubagentInfo, Workspace } from '../wire/protocol';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
 

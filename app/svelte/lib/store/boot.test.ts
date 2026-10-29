@@ -7,7 +7,7 @@ const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(() => () => {}) }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(null)) }));
-import { type Command, type Workspace } from '../protocol';
+import { type Command, type Workspace } from '../wire/protocol';
 import { init, openWorkspace, store } from './store.svelte';
 import { WS, bindIPC, freshStore, meta, snap } from '../testing/store-harness';
 

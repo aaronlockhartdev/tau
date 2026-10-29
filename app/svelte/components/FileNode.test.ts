@@ -4,7 +4,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { FileEntry } from '../lib/protocol';
+import type { FileEntry } from '../lib/wire/protocol';
 import FileNode from './FileNode.svelte';
 import { mockStore, resetMockStore, retryDirFetch, toggleFileDir } from '../lib/testing/mock-store.svelte.ts';
 

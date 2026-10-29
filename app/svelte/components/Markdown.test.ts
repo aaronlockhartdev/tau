@@ -13,7 +13,7 @@ const { highlightHtml, esc } = vi.hoisted(() => {
   );
   return { highlightHtml, esc };
 });
-vi.mock('../lib/highlight', () => ({ highlightHtml, esc }));
+vi.mock('../lib/display/highlight', () => ({ highlightHtml, esc }));
 
 afterEach(() => {
   vi.clearAllMocks();

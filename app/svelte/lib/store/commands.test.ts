@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) }));
 
-import { type Command, type CommandOutput, type SessionMeta, type Workspace } from '../protocol';
-import { openSession } from '../sessions';
+import { type Command, type CommandOutput, type SessionMeta, type Workspace } from '../wire/protocol';
+import { openSession } from '../rules/sessions';
 import { store } from './store.svelte';
 import {
   newSession,

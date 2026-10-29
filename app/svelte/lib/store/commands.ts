@@ -3,9 +3,9 @@
 // facade re-exports these so the components' imports are unchanged; the
 // state it mutates comes from state.svelte, the viewer's tab reset from
 // viewer.svelte (#320), so no import cycle reaches the facade.
-import { command, type Command, type CommandOutput, type SessionMeta } from '../protocol';
-import { applySessionList, openSession, setArchived } from '../sessions';
-import { errText } from '../errors';
+import { command, type Command, type CommandOutput, type SessionMeta } from '../wire/protocol';
+import { applySessionList, openSession, setArchived } from '../rules/sessions';
+import { errText } from '../wire/errors';
 import { pane, store } from './state.svelte';
 import { reconcileActiveFile } from './viewer.svelte';
 

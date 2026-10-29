@@ -10,8 +10,8 @@
     langFor,
     parseEditDiff,
     type RenderLine
-  } from '../lib/diffview';
-  import { highlightLines } from '../lib/highlight';
+  } from '../lib/display/diffview';
+  import { highlightLines } from '../lib/display/highlight';
   import CodeLines from './CodeLines.svelte';
 
   let { text, name, path }: { text: string; name: string; path?: string } = $props();

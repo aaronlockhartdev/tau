@@ -2,7 +2,7 @@
 // expansion, and the change-coalesced refetch wave. The store keeps the
 // file_list command and hands results in; the wave rechecks listing state
 // at flush time so a dir collapsed inside the 300 ms window drops out.
-import type { FileEntry } from './protocol';
+import type { FileEntry } from '../wire/protocol';
 import type { LucideIcon } from '@lucide/svelte';
 import { File, FileCog, FileCode, FileJson, FileText, Folder, GitBranch, Image } from '@lucide/svelte';
 
