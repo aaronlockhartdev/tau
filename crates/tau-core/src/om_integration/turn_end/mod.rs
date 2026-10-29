@@ -7,22 +7,37 @@ use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef
 use tau_protocol::EntryKind;
 
 /// The assembled main-turn context: the stable `instructions` (system prompt)
-/// plus the OM-derived `input` items — the one-shot continuation hint today,
-/// per-chunk observation messages in the follow-up (#96). `om_input_items` is
-/// a `Vec` so #96 appends items without reshaping this seam.
+/// plus the OM-derived `input` items — the continuation hint and, per
+/// assembly, the observation groups (#96). `om_input_items` is a `Vec` so the
+/// groups append without reshaping this seam.
 #[derive(Debug, Clone, Default)]
 pub struct AssembledContext {
     pub instructions: String,
     pub om_input_items: Vec<InputEntry>,
 }
 
-/// The session's active branch, walked by the log itself. The whole log by
-/// design (#302): the branch is the parent chain from the leaf, and the
-/// store reads by position (spec §3).
+/// The raw window: the material a main-turn assembly sends after the OM
+/// items. `tail` is the unobserved raw (the live compaction unit); `anchor` is
+/// the newest user entry on the branch, present only when `tail` does not
+/// already carry it (#334).
+#[derive(Debug, Clone, Default)]
+pub struct RawWindow {
+    /// The leading user anchor — the entry that keeps the request answering a
+    /// query. `None` when `tail` carries the newest user entry itself.
+    pub anchor: Option<Entry>,
+    /// The unobserved raw tail, §4 leading-tool-run cut applied.
+    pub tail: Vec<Entry>,
+}
+
+/// The active-branch's newest user entry (file order): the live instruction
+/// OM must never drop from a request (#334).
+fn newest_user(branch: &[Entry]) -> Option<&Entry> {
+    branch.iter().rev().find(|e| e.kind == EntryKind::User)
+}
+
 fn branch_of(store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
     store.branch().map_err(OmError::Session)
 }
-
 /// The raw entries strictly after `cursor_id` in `branch` (all of them when the
 /// cursor is absent or not on the branch).
 fn raw_after(branch: &[Entry], cursor_id: Option<&str>) -> Vec<Entry> {
@@ -108,7 +123,6 @@ impl OmState {
         // (their text appended to the log a second time) on the next
         // activation.
         self.record.buffered_chunks.drain(0..count);
-        self.changed = true;
         self.save(store)?;
         Ok(true)
     }
@@ -294,10 +308,12 @@ impl OmState {
     /// volatile observation content is NOT in `instructions` — each
     /// observation group rides as its own `role: system` item in
     /// `om_input_items` (#96), so the prompt stays byte-stable across appends and
-    /// reflector rewrites. The one-shot continuation hint is the trailing
-    /// `role: user` item (#97). Pure over the record (no store access), so the
-    /// one-shot `changed` flip sticks when the loop runs it on the persistent
-    /// state under the lock.
+    /// reflector rewrites. The continuation hint is the trailing `role: user`
+    /// item, carried on every assembly once observations exist (#97, #334:
+    /// mastra's gate — the stable user item is the request's query anchor).
+    /// Pure over the record (no store access), so the `om_suggested_response`
+    /// consumption sticks when the loop runs it on the persistent state under
+    /// the lock.
     pub fn assemble_context(&mut self, base: &str) -> AssembledContext {
         let mut instructions = base.to_owned();
         let observations = self.record.agent_observations();
@@ -308,8 +324,8 @@ impl OmState {
             instructions.push_str(om::OBSERVATION_CONTEXT_INSTRUCTIONS);
         }
         // One `role: system` message per observation group (mastra parity,
-        // #96), pushed before the one-shot hint so its "messages following are
-        // newer" framing stays true.
+        // #96), pushed before the hint so its "messages following are newer"
+        // framing stays true.
         let mut om_input_items = Vec::new();
         for group in om::parse_observation_groups(&observations) {
             om_input_items.push(InputEntry::Message(InputMessage {
@@ -317,11 +333,16 @@ impl OmState {
                 content: group.content,
             }));
         }
-        // The one-shot continuation hint is the trailing `role: user` item
-        // (#97): the stable `instructions` prefix never churns, so the vLLM
-        // prefix cache survives the hint's appear and clear.
-        if self.changed && !observations.is_empty() {
-            self.changed = false;
+        // The continuation hint rides as a `role: user` item on every assembly
+        // that has observations — mastra's form (their `om-continuation`
+        // message, gated on `activeObservations`). Two jobs, one item: the model
+        // must not react to the raw history vanishing (#97), and the request
+        // must always answer a query — a chat template that finds no user
+        // message once the observations (system) and tool calls are pruned
+        // rejects the request (#334). Per-assembly is what makes the second job
+        // structural; the text is constant, so the vLLM prefix cache survives,
+        // and only the suggested response varies — consumed once below.
+        if !observations.is_empty() {
             // One-shot steering: hand the observer's suggested-response to the
             // model alongside the hint (which says to follow it), then clear it
             // so a later reflect/promote can't re-inject a stale signal.
@@ -344,14 +365,16 @@ impl OmState {
             om_input_items,
         }
     }
-
     /// The raw window over already-read entries (pure — no store
     /// access): the active-branch raw entries after the cursor (the
     /// unobserved tail), bounded by the observe threshold via promotion,
     /// not by a per-assembly floor prune. A leading tool run is cut so
-    /// no result is orphaned from its call (spec §4).
+    /// no result is orphaned from its call (spec §4). The newest user entry
+    /// leads the window as `anchor` when the tail no longer carries one
+    /// (#334): the cursor advances past it freely, the entry never leaves
+    /// the request.
     #[must_use]
-    pub fn raw_window_from(&self, entries: &[Entry], leaf_id: Option<&str>) -> Vec<Entry> {
+    pub fn raw_window_from(&self, entries: &[Entry], leaf_id: Option<&str>) -> RawWindow {
         let branch = crate::session::branch(entries, leaf_id);
         let unobserved = match self.record.cursor.as_ref() {
             Some(cursor) => match branch.iter().position(|e| e.id == cursor.entry_id) {
@@ -360,18 +383,28 @@ impl OmState {
             },
             None => &branch[..],
         };
-        let mut raw: Vec<Entry> = unobserved.iter().filter(|e| is_raw(e)).cloned().collect();
+        let mut tail: Vec<Entry> = unobserved.iter().filter(|e| is_raw(e)).cloned().collect();
         // A window starting at a tool result would orphan it from its call:
         // advance past the leading tool run (spec §4 cut rule). No floor prune:
         // unsummarized raw stays in the window until promotion advances the cursor.
-        while let Some(entry) = raw.first() {
+        while let Some(entry) = tail.first() {
             if entry.kind == EntryKind::Tool {
-                raw.remove(0);
+                tail.remove(0);
             } else {
                 break;
             }
         }
-        raw
+        // A fallback, never a duplicate: when the tail carries a user entry that
+        // entry is the request's query, so nothing is prepended; a tail of only
+        // tool calls pulls the branch's newest user entry forward. The cut runs
+        // first, so the anchor cannot orphan a tool result, and older user
+        // entries stay observed (re-anchoring them would undo the §4 prune).
+        let anchor = if tail.iter().any(|e| e.kind == EntryKind::User) {
+            None
+        } else {
+            newest_user(&branch).cloned()
+        };
+        RawWindow { anchor, tail }
     }
 }
 

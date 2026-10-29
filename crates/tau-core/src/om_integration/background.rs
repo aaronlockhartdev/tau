@@ -131,7 +131,6 @@ fn read_candidates(
         config: config.clone(),
         buffered: Vec::new(),
         buffer_cursor: None,
-        changed: false,
     };
     live.buffered = live.record.buffered_chunks.clone();
     live.buffer_cursor = live

@@ -63,8 +63,20 @@ pub(super) struct Assembled {
 }
 
 impl Assembled {
+    /// Whether the assembled input answers a query: at least one `role: user`
+    /// item (#334). A chat template is allowed to refuse a request with none —
+    /// the string is a template rule, not a wire-protocol rule — so the
+    /// harness owns this check, not the provider.
+    #[must_use]
+    pub fn has_user_query(&self) -> bool {
+        self.items
+            .iter()
+            .any(|item| matches!(item, InputEntry::Message(m) if m.role == "user"))
+    }
+
     /// The entry the request this assembly produces ends at: the last entry in
     /// file order, which is the branch's leaf unless a branch adopt reordered it.
+    #[must_use]
     pub fn leaf(&self) -> Option<&str> {
         self.entries.last().map(|e| e.id.as_str())
     }

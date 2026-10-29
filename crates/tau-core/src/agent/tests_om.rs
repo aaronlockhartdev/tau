@@ -20,10 +20,10 @@ fn stalled_in(dir: &std::path::Path) -> Vec<Diagnostic> {
 /// End-to-end OM (the ticket's acceptance bar): synthesized raw entries
 /// cross the observe threshold, the canned Observer fills the log past
 /// the reflect threshold, the canned Reflector rewrites the suffix —
-/// and the continuation hint is injected exactly once across the run
-/// (B2 at the agent level).
+/// and every request the run sends answers a user query (#334), the hint
+/// riding on each assembly once observations exist (B2 at the agent level).
 #[tokio::test]
-async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
+async fn om_crosses_observe_and_reflect_and_every_request_carries_a_user_query() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path());
     // Real content accumulation: 5 synthesized entries cross the
@@ -106,10 +106,28 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
     assert_eq!(state.record.generation, 1);
     assert!(state.record.active_observations.contains("condensed"));
     assert!(!state.record.active_observations.contains("<observations>"));
-    // The continuation hint: exactly one assembled context in the whole
-    // run carries it — the turn-2 assembly, right after the observe.
+    // The user-query invariant (#334): every request the run sent — main turns
+    // and OM calls alike — carries at least one `role: user` item. A run where
+    // the last user entry is observed and the tail is tool calls used to send a
+    // request with none, and a chat template answered 400 "No user query found
+    // in messages".
+    let userless: Vec<usize> = provider
+        .user_contents
+        .lock()
+        .iter()
+        .enumerate()
+        .filter(|(_, users)| users.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        userless.is_empty(),
+        "requests without a user query: {userless:?}"
+    );
+    // The hint rides the assemblies made after the observe, so a request has a
+    // user item beyond the raw window's; the per-assembly gate itself is pinned
+    // at the assembly seam (window.rs).
     let seen = provider.seen.lock();
-    let hints = seen
+    let with_hint = seen
         .iter()
         .filter(|(_, first_input)| {
             first_input
@@ -117,7 +135,7 @@ async fn om_crosses_observe_and_reflect_and_the_hint_is_one_shot() {
                 .is_some_and(|i| i.contains(crate::om::OBSERVATION_CONTINUATION_HINT))
         })
         .count();
-    assert_eq!(hints, 1, "the hint is one-shot: {seen:?}");
+    assert!(with_hint >= 1, "the hint never reached a request: {seen:?}");
 }
 
 /// The OM-run status hook (the app's `om_status` emitter): each run

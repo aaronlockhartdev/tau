@@ -64,7 +64,6 @@ fn promote_moves_the_chunks_to_the_log_and_advances_the_cursor() {
     );
     assert_eq!(state.record.pending_tokens, 0);
     assert!(state.buffered.is_empty());
-    assert!(state.changed);
     // The promoted record persists in the session file.
     let reloaded = OmState::load_record(&mut store).unwrap();
     assert_eq!(reloaded.cursor, state.record.cursor);

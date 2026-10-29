@@ -175,6 +175,7 @@ export type DiagnosticCode =
   | 'gate_failed'
   | 'om_stalled'
   | 'provider_rejected'
+  | 'missing_user_query'
   | 'turn_cutoff';
 
 // A fact the harness recorded about a session: the code is the discriminant
@@ -187,6 +188,7 @@ export type Diagnostic =
   | { code: 'gate_failed'; command: string; retries: number }
   | { code: 'om_stalled'; pending: number; activation: number }
   | { code: 'provider_rejected'; status: number; body: string }
+  | { code: 'missing_user_query'; items: number }
   | { code: 'turn_cutoff'; model: string; ended_by: StreamOutcome; blocks: number }
   // What a core reads back when a stored code is not one it knows: the record
   // on disk keeps its own code, this is the re-emitted form (Diagnostic::Unknown).

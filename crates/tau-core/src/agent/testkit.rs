@@ -89,10 +89,13 @@ pub(crate) fn sse_json(text: &str) -> String {
 
 /// A canned provider scripted per call: each entry is (sse body, calls).
 /// `seen` captures (instructions, all input message contents joined) per call.
+/// `user_contents` captures the `role: user` message contents per call — the
+/// seam the "every request carries a user query" assertions read (#334).
 pub(crate) struct ScriptedProvider {
     calls: Vec<String>,
     index: std::sync::atomic::AtomicUsize,
     pub(crate) seen: parking_lot::Mutex<Vec<(Option<String>, Option<String>)>>,
+    pub(crate) user_contents: parking_lot::Mutex<Vec<Vec<String>>>,
     /// The `model` field of each request body as it went on the wire (§6.7).
     pub(crate) models: parking_lot::Mutex<Vec<String>>,
 }
@@ -103,6 +106,7 @@ impl ScriptedProvider {
             calls,
             index: std::sync::atomic::AtomicUsize::new(0),
             seen: parking_lot::Mutex::new(Vec::new()),
+            user_contents: parking_lot::Mutex::new(Vec::new()),
             models: parking_lot::Mutex::new(Vec::new()),
         }
     }
@@ -143,6 +147,20 @@ impl crate::provider::TurnProvider for ScriptedProvider {
                         .join("\n")
                 }),
         ));
+        self.user_contents.lock().push(
+            captured
+                .get("input")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter(|i| i.get("role").and_then(Value::as_str) == Some("user"))
+                        .filter_map(|i| i.get("content").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        );
         let provider = canned(&body);
         provider.call(request, sink)
     }

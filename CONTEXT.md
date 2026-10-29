@@ -56,6 +56,10 @@ _Avoid_: summarization, truncation
 The memory model introduced by Mastra that tau's compaction is built on (ADR-0004): an Observer LLM converts raw messages into a dense, append-only, date-grouped observation log; a Reflector LLM rewrites the log to keep it bounded; raw messages stay in storage, recoverable via `recall`.
 _Avoid_: "the OM feature", "memory feature"
 
+**User query**:
+The `role: user` item a model request must carry to be answerable. OM compaction can prune it away, so the raw window anchors the newest user entry of the active branch and a harness assembly with none is refused before the wire (#334).
+_Avoid_: prompt (the whole request), instruction (a declared directive), filler (the string tau refuses to invent)
+
 **Context gate**:
 The check, before a model request goes out, that the assembled prompt fits the model's context window with room left for its answer; over budget it triggers compaction, and with nothing left to compact it refuses the call (spec §4, ADR-0034). A gate whose threshold cannot be computed is not a lenient gate — it is no gate.
 _Avoid_: budget (that is its threshold), pressure valve, overflow (the outcome it prevents)

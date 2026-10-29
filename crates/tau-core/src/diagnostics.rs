@@ -97,6 +97,7 @@ impl Diagnostics {
             // The rest are facts about a moment, not state to carry.
             Diagnostic::GateAttempt { .. }
             | Diagnostic::ContextOverflow { .. }
+            | Diagnostic::MissingUserQuery { .. }
             | Diagnostic::OmStalled { .. }
             | Diagnostic::ProviderRejected { .. }
             | Diagnostic::TurnCutoff { .. }

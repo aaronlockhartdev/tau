@@ -15,7 +15,7 @@ export type DiagnosticEntry = Extract<Entry, { kind: 'diagnostic' }> | AnyEntry;
 // `context_overflow`/`gate_unavailable` are the Context gate (#227/#233).
 const KNOWN_DIAGNOSTIC_CODES: DiagnosticCode[] = [
   'model_changed', 'gate_unavailable', 'context_overflow', 'gate_attempt',
-  'gate_failed', 'om_stalled', 'provider_rejected', 'turn_cutoff'
+  'gate_failed', 'om_stalled', 'provider_rejected', 'missing_user_query', 'turn_cutoff'
 ];
 
 // A gate_unavailable record names what the gate lacks; the card says what that
@@ -58,6 +58,8 @@ export function diagnosticLabel(entry: DiagnosticEntry): string {
       return `compaction stalled: ${fmtK(d.pending)} pending at activation ${fmtK(d.activation)}`;
     case 'provider_rejected':
       return `provider rejected (${d.status}): ${firstLine(d.body)}`;
+    case 'missing_user_query':
+      return `refused: assembled input has no user query (${d.items} item(s))`;
     case 'turn_cutoff':
       return `provider cut the turn (${streamOutcomeLabels[d.ended_by]}) after ${d.blocks} block(s)`;
     default:

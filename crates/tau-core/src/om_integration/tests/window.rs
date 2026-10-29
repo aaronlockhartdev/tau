@@ -2,8 +2,8 @@ use super::*;
 use serde_json::json;
 
 /// The joined content of the OM-derived `role: user` input items — the seam
-/// the one-shot continuation-hint assertions read (the hint rides as a
-/// synthetic user message, #97).
+/// the continuation-hint assertions read (the hint rides as a synthetic user
+/// message, #97; it is per-assembly, #334).
 fn om_user_content(items: &[crate::provider::InputEntry]) -> String {
     items
         .iter()
@@ -198,11 +198,13 @@ fn raw_window_is_the_full_unobserved_tail() {
     let state = OmState::from_config(&cfg, OmRecord::default());
     let window = state.raw_window_from(&all, leaf.as_deref());
     // No floor prune: the window is the full unobserved tail, the head
-    // (the "task") included.
-    assert_eq!(window.len(), 4, "{window:?}");
-    assert_eq!(window[0].kind, EntryKind::User);
-    assert_eq!(window[0].payload["text"], "a".repeat(900));
-    assert_eq!(window[3].payload["text"], "c".repeat(900));
+    // (the "task") included. The newest user entry is the tail's last item,
+    // so no separate anchor is emitted (#334).
+    assert!(window.anchor.is_none(), "{window:?}");
+    assert_eq!(window.tail.len(), 4, "{window:?}");
+    assert_eq!(window.tail[0].kind, EntryKind::User);
+    assert_eq!(window.tail[0].payload["text"], "a".repeat(900));
+    assert_eq!(window.tail[3].payload["text"], "c".repeat(900));
 }
 #[test]
 fn raw_window_retains_unsummarized_head_past_the_floor() {
@@ -238,9 +240,10 @@ fn raw_window_retains_unsummarized_head_past_the_floor() {
     let state = OmState::from_config(&cfg, OmRecord::default());
     let window = state.raw_window_from(&all, leaf.as_deref());
     // No floor prune: the unsummarized head (the "task") survives past
-    // the retention floor.
-    assert_eq!(window.len(), 2, "{window:?}");
-    assert_eq!(window[0].payload["text"], "a".repeat(900));
+    // the retention floor, and it is in the tail, so no anchor.
+    assert!(window.anchor.is_none(), "{window:?}");
+    assert_eq!(window.tail.len(), 2, "{window:?}");
+    assert_eq!(window.tail[0].payload["text"], "a".repeat(900));
 }
 
 #[test]
@@ -294,14 +297,134 @@ fn raw_window_cuts_a_leading_orphaned_tool_run() {
     );
     let window = state.raw_window_from(&all, leaf.as_deref());
     // The leading tool run is cut (the result would be orphaned from its
-    // call); the final user entry is present.
-    assert_eq!(window.len(), 1, "{window:?}");
-    assert_eq!(window[0].kind, EntryKind::User);
-    assert_eq!(window[0].payload["text"], "c".repeat(900));
+    // call); the surviving user entry is the newest, so it anchors nothing
+    // and appears exactly once (#334's dedupe rule).
+    assert!(window.anchor.is_none(), "{window:?}");
+    assert_eq!(window.tail.len(), 1, "{window:?}");
+    assert_eq!(window.tail[0].kind, EntryKind::User);
+    assert_eq!(window.tail[0].payload["text"], "c".repeat(900));
 }
 
 #[test]
-fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
+fn raw_window_anchors_the_newest_user_entry_when_the_tail_is_all_tool_calls() {
+    // #334: the cursor advances past the newest user entry into a tool run,
+    // the §4 cut drops that run, and the window would carry no user entry at
+    // all — the shape that makes the provider answer "No user query found in
+    // messages". The newest user entry rides as the anchor instead.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+    let entries = [
+        (EntryKind::User, "a".repeat(900)),
+        (EntryKind::Assistant, "b".repeat(900)),
+        (EntryKind::Tool, "call X".to_owned()),
+        (EntryKind::Tool, "r".repeat(900)),
+    ];
+    let ids = append_chain(&mut store, &entries);
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    let state = state_with_cursor_on(&ids[1]);
+    let window = state.raw_window_from(&all, leaf.as_deref());
+    assert!(window.tail.is_empty(), "{window:?}");
+    let anchor = window.anchor.expect("the newest user entry anchors");
+    assert_eq!(anchor.kind, EntryKind::User);
+    assert_eq!(anchor.payload["text"], "a".repeat(900));
+    assert_eq!(anchor.id, ids[0], "the ENTRY is pinned, not the range");
+}
+
+#[test]
+fn raw_window_anchors_the_newest_user_entry_not_an_older_one() {
+    // Sessions carry many user entries (steering, follow-ups, parent
+    // messages). The anchor is the newest, so the model is pinned to the
+    // instruction it is working on, and no older entry is re-anchored.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+    let entries = [
+        (EntryKind::User, "brief".repeat(300)),
+        (EntryKind::Assistant, "b".repeat(900)),
+        (EntryKind::User, "steer".repeat(300)),
+        (EntryKind::Assistant, "d".repeat(900)),
+        (EntryKind::Tool, "call X".to_owned()),
+        (EntryKind::Tool, "r".repeat(900)),
+    ];
+    let ids = append_chain(&mut store, &entries);
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    let state = state_with_cursor_on(&ids[3]);
+    let window = state.raw_window_from(&all, leaf.as_deref());
+    assert!(window.tail.is_empty(), "{window:?}");
+    let anchor = window.anchor.expect("the newest user entry anchors");
+    assert_eq!(anchor.id, ids[2], "the newest, not the brief");
+    assert_eq!(anchor.payload["text"], "steer".repeat(300));
+}
+
+#[test]
+fn raw_window_anchor_never_orphans_a_tool_result() {
+    // The §4 cut runs on the tail before the anchor is chosen, so an anchored
+    // window opens on a user message: the tool run the cursor advanced into is
+    // dropped, not carried behind the anchor separated from its call.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+    let entries = [
+        (EntryKind::User, "a".repeat(900)),
+        (EntryKind::User, "c".repeat(900)),
+        (EntryKind::Assistant, "d".repeat(900)),
+        (EntryKind::Tool, "call X".to_owned()),
+        (EntryKind::Tool, "e".repeat(900)),
+    ];
+    let ids = append_chain(&mut store, &entries);
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    // The cursor sits on the assistant entry, so the whole tail is a tool run.
+    let state = state_with_cursor_on(&ids[2]);
+    let window = state.raw_window_from(&all, leaf.as_deref());
+    assert!(window.tail.is_empty(), "the tool run is cut: {window:?}");
+    let anchor = window.anchor.expect("the newest user entry anchors");
+    assert_eq!(anchor.id, ids[1]);
+}
+
+fn append_chain(store: &mut SessionStore, entries: &[(EntryKind, String)]) -> Vec<String> {
+    let mut parent: Option<String> = None;
+    let mut ids = Vec::new();
+    for (kind, text) in entries {
+        let e = store
+            .append(
+                kind.clone(),
+                json!({ "text": text, "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id.clone());
+        ids.push(e.id);
+    }
+    ids
+}
+
+fn state_with_cursor_on(entry_id: &str) -> OmState {
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1000,
+        reflect_threshold: 2000,
+        buffer_increment: 230,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
+    };
+    OmState::from_config(
+        &cfg,
+        OmRecord {
+            cursor: Some(Cursor {
+                entry_id: entry_id.to_owned(),
+                timestamp: 1,
+            }),
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn the_assembly_is_bounded_and_the_continuation_hint_is_per_assembly() {
     let cfg = crate::config::Om {
         om_model: String::new(),
         observe_threshold: 1000,
@@ -322,7 +445,6 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
             ..Default::default()
         },
     );
-    state.changed = true;
     let first = state.assemble_context("base prompt");
     assert!(first.instructions.starts_with("base prompt"));
     // The observation content rides as `role: system` items, not in
@@ -337,9 +459,17 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_one_shot() {
             .contains(om::OBSERVATION_CONTINUATION_HINT)
     );
     assert!(om_user_content(&first.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
-    // The one-shot flip: a second assembly carries no hint.
+    // Mastra's shape (#334): the hint rides on every assembly while
+    // observations exist, so the request always carries a `role: user` item
+    // even when the raw window is all tool calls.
     let second = state.assemble_context("base prompt");
-    assert!(!om_user_content(&second.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(om_user_content(&second.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
+    // Negative: with no observations there is no hint to carry.
+    let mut bare = OmState::from_config(&cfg, OmRecord::default());
+    assert!(
+        !om_user_content(&bare.assemble_context("base prompt").om_input_items)
+            .contains(om::OBSERVATION_CONTINUATION_HINT)
+    );
     // A demoted prefix drops out of the live context.
     let mut state3 = OmState::from_config(
         &cfg,
@@ -393,7 +523,6 @@ fn the_main_agent_view_has_no_boundary_markers() {
     assert!(clean.contains("<observation-group"), "{clean}");
     // And the assembled main-agent context is clean end-to-end.
     let mut state = OmState::from_config(&cfg, record);
-    state.changed = true;
     let ctx = state.assemble_context("base prompt");
     assert!(
         !ctx.instructions.contains("--- message boundary ("),
@@ -424,16 +553,14 @@ fn the_suggested_response_is_injected_once_then_cleared() {
             ..Default::default()
         },
     );
-    state.changed = true;
     let first = state.assemble_context("base prompt");
     // The steering signal is handed to the model alongside the hint...
     let first_om = om_user_content(&first.om_input_items);
     // The steering signal is handed to the model alongside the hint...
     assert!(first_om.contains(om::OBSERVATION_CONTINUATION_HINT));
     assert!(first_om.contains("pause and answer the user"), "{first_om}");
-    // ...and consumed: a later log change re-fires the hint but must not
-    // re-inject the now-stale signal.
-    state.changed = true;
+    // ...and consumed: the next assembly carries the hint again (it is
+    // per-assembly) but must not re-inject the now-stale signal.
     let second = state.assemble_context("base prompt");
     let second_om = om_user_content(&second.om_input_items);
     assert!(second_om.contains(om::OBSERVATION_CONTINUATION_HINT));
