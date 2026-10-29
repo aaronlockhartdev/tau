@@ -1,15 +1,15 @@
 <script lang="ts">
   // One transcript entry, V2 presentation: the presentation module maps
-  // the entry to a presentable shape (lib/presentation.ts); this component
+  // the entry to a presentable shape (lib/display/presentation.ts); this component
   // is the generic renderer over that shape — no per-kind branching. The
   // expanded card shells (tool chip, card) render in CardShell (#40).
 
-  import { store } from '../lib/store.svelte';
-  import { present, type ExpandSlot, type Shell } from '../lib/presentation';
-  import type { Entry } from '../lib/protocol';
+  import { store } from '../lib/store/store.svelte';
+  import { present, type ExpandSlot, type Shell } from '../lib/display/presentation';
+  import type { Entry } from '../lib/wire/protocol';
   import CardShell from './CardShell.svelte';
   import Markdown from './Markdown.svelte';
-  import { onActivate } from '../lib/ui';
+  import { onActivate } from '../lib/display/ui';
   import { Layers, Sparkles } from '@lucide/svelte';
 
   let {

@@ -3,8 +3,8 @@
   // steps with their done/open state, the N/M progress, the current step
   // (the first open item), and the gate status. A session with no plan
   // file (an empty plan) renders the empty state.
-  import type { Plan } from '../lib/protocol';
-  import { planProgress } from '../lib/plan';
+  import type { Plan } from '../lib/wire/protocol';
+  import { planProgress } from '../lib/display/plan';
 
   interface Props {
     plan: Plan;

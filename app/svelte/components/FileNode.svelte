@@ -6,9 +6,9 @@
   // and svelte-check chokes on its renamed props).
   import FileNode from './FileNode.svelte';
   import TreeNode from './TreeNode.svelte';
-  import { store, toggleFileDir, retryDirFetch, fileCache, openFile } from '../lib/store.svelte';
-  import { fileIcon, fileKind } from '../lib/files';
-  import type { FileEntry } from '../lib/protocol';
+  import { store, toggleFileDir, retryDirFetch, fileCache, openFile } from '../lib/store/store.svelte';
+  import { fileIcon, fileKind } from '../lib/rules/files';
+  import type { FileEntry } from '../lib/wire/protocol';
 
 
   let { entry, ws, depth = 0 }: { entry: FileEntry; ws: string; depth?: number } = $props();

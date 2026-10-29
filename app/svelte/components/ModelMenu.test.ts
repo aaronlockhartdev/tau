@@ -4,13 +4,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/protocol';
+import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/wire/protocol';
 import ModelMenu from './ModelMenu.svelte';
 import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/mock-store.svelte.ts';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) as Promise<unknown> }));
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

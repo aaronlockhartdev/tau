@@ -6,8 +6,8 @@ import '@fontsource-variable/inter';
 import '@fontsource-variable/jetbrains-mono';
 import { mount } from 'svelte';
 import App from './App.svelte';
-import { init, applyEvents } from './lib/store.svelte';
-import { onEvents, isTauri } from './lib/protocol';
+import { init, applyEvents } from './lib/store/store.svelte';
+import { onEvents, isTauri } from './lib/wire/protocol';
 // Connect at module scope (once, before mount) — not in a component
 // effect: init mutates the store, and a write during an effect's run
 // re-triggers that effect in this Svelte (update-depth loop).

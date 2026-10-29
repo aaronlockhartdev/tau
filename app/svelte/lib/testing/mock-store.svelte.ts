@@ -1,4 +1,4 @@
-// Shared vi.mock factory for store.svelte in component tests.
+// Shared vi.mock factory for the store facade (store/store.svelte) in component tests.
 //
 // The store must be a genuine $state proxy: the components' $derived/$effect
 // graphs track it reactively, so a plain object would render once and never
@@ -8,12 +8,12 @@
 // A `.svelte.ts` module (not `.svelte`) so svelte-check sees the named
 // exports; it needs `allowImportingTsExtensions` in tsconfig.json.
 import { vi } from 'vitest';
-import type { FilesCache } from '../files';
-import type { OpenFiles } from '../openfiles';
-import type { PaneState } from '../panes';
-import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../protocol';
-import { attentionOf, type AttentionItem } from '../attention';
-import { makeStub, type SessionState } from '../sessions';
+import type { FilesCache } from '../rules/files';
+import type { OpenFiles } from '../rules/openfiles';
+import type { PaneState } from '../rules/panes';
+import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../wire/protocol';
+import { attentionOf, type AttentionItem } from '../display/attention';
+import { makeStub, type SessionState } from '../rules/sessions';
 
 export function paneDefault(): PaneState {
   return {

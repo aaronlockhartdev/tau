@@ -5,7 +5,7 @@
   // the pane's own labelled header inside the sheet, and the pane's tab
   // state persists across toggles. The corner chips were too small to
   // aim at and too far from the working area.
-  import { store } from '../lib/store.svelte';
+  import { store } from '../lib/store/store.svelte';
   import { ChevronDown } from '@lucide/svelte';
   import LeftPane from './LeftPane.svelte';
   import RightPane from './RightPane.svelte';

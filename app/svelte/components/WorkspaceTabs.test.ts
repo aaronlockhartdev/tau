@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import { tick } from 'svelte';
-import type { SessionMeta, Workspace } from '../lib/protocol';
-import type { SessionState } from '../lib/sessions';
+import type { SessionMeta, Workspace } from '../lib/wire/protocol';
+import type { SessionState } from '../lib/rules/sessions';
 import WorkspaceTabs from './WorkspaceTabs.svelte';
 import {
   closeWorkspace,
@@ -19,7 +19,7 @@ import {
   tabSelect
 } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

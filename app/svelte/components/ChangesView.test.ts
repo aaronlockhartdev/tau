@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
 import ChangesView from './ChangesView.svelte';
-import { highlightLines } from '../lib/highlight';
+import { highlightLines } from '../lib/display/highlight';
 import {
   closeFile,
   resetMockStore,
@@ -17,12 +17,12 @@ import {
   setCenterMode
 } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
 
-vi.mock('../lib/highlight', () => ({
+vi.mock('../lib/display/highlight', () => ({
   highlightLines: vi.fn((code: string) => Promise.resolve(code.split('\n').map((l) => [{ content: l }])))
 }));
 

@@ -56,7 +56,7 @@ Do (delete the banner, keep any why-text):
 - `scripts/acceptance.sh` L60/97/100/103/106/114 (leg dividers already in the header doc)
 - `app/scripts/verify-demo.mjs` L374/670/688/720/875/887/900/942/996/1045/1066 + the `--- …` check dividers at
   L447/465/493/522/531/535/560 (strip the dashes, keep the why-text where it carries a regression name)
-- `app/svelte/lib/store.svelte` L406
+- `app/svelte/lib/store/state.svelte` (the L406 line number predates #320's split and #328's `lib/store/` move)
 
 > The 2026-10-28 store split (#320) cut `store.svelte` into `state.svelte` and six feature
 > modules, so the `store.svelte` line numbers in section A are the pre-split file: re-locate
@@ -81,7 +81,7 @@ Delete the stale duplicate doc line `crates/tau-core/src/subagent.rs` L410 (cont
 | 4 | `crates/tau-core/src/session.rs:453` `append_compaction` (1 test caller; OM commits via `store.append`) | delete fn + its test |
 | 5 | `app/src-tauri/src/core.rs:2700` `core.self_weak.replace(…)` re-stamp in `run_turn` (no-op; set once in `build` L599) | delete the write |
 | 6 | `app/package.json` `tauri-agent-tools` devDependency (imported nowhere) + the vendored `dev_bridge.rs` + `agent-eval.mjs` (its in-repo replacement) | **Done (2026-09-23)** — all three deleted; tauri-pilot replaces them (AGENTS.md) |
-| 7 | `app/svelte/lib/markdown.ts:13,73` `hl`, `export { esc }` (used only inside the module) | un-export |
+| 7 | `app/svelte/lib/display/markdown.ts` `hl`, `export { esc }` (used only inside the module; the line numbers predate #328's move) | un-export |
 | 8 | `app/svelte/lib/fixture.ts:17,25,30` types `DemoSession`, `FixturePendingMsg`, `FixtureSessionState` (no importers) | un-export |
 
 **Intentionally kept** (do not delete — documented reserved surface, spec §8): `SystemEventKind::ProviderChanged`
@@ -90,7 +90,7 @@ Delete the stale duplicate doc line `crates/tau-core/src/subagent.rs` L410 (cont
 
 ### C. Protocol mirror fix (C6) — one line + a guard
 
-`app/svelte/lib/protocol.ts` `Command` union is missing `provider_delete` (dropped by drive-by in `55e6284`,
+`app/svelte/lib/wire/protocol.ts` `Command` union is missing `provider_delete` (dropped by drive-by in `55e6284`,
 never restored — the same drift class as the `agents` `CommandOutput` a reviewer caught in `e79d705`).
 Rust has `ProviderAdd/Set/Delete` (lib.rs L300–312).
 
@@ -301,7 +301,7 @@ There is no `tauri-mocks` npm package (404); the official module is the one alre
 
 Concrete: `app/package.json` (`"test": "vitest run"`, devDeps `vitest@^5.0.1`, `jsdom@^30.1.1`);
 `app/vite.config.ts` `test: { environment: 'jsdom', include: ['svelte/**/*.svelte.test.ts'] }`;
-`app/svelte/lib/store.svelte.test.ts` — import `./store.svelte`, `mockIPC` reusing `fixture.ts` data, assert
+`app/svelte/lib/store/` suites — import `./store.svelte`, `mockIPC` reusing `fixture.ts` data, assert
 boot-from-snapshot, `applyEvents` (stream_start/delta/end + usage), lane queueing (force/steering/follow-up),
 session switch + archive convergence, the `skill_list_changed` guard, the `file_tree_changed` refetch wave.
 - **Target decomposition** (`04-deepening.md`): C3 + C10 + C11 partition `store.svelte` into a streaming/merge
@@ -335,7 +335,7 @@ L737–860) + panes + the `window.__tau` rig seam. The twin logic is the heart o
 `652b3a6` class of regressions) and is inlined in `applyEvents`, keyed on id-namespace rules no type exposes —
 its only test surface is the browser rig, so a one-line twin change costs a full rig build+run.
 
-Extract a pure `lib/entries.ts`: `applyStreamEvent`, `applyToolEvent`, `mergeHydrated(entries, live, views)`
+Extract a pure `lib/wire/entries.ts`: `applyStreamEvent`, `applyToolEvent`, `mergeHydrated(entries, live, views)`
 with `isTwin` inside (functions over `Entry`/`ViewEntry` arrays, no `$state`). The store keeps state and calls
 in; the `__tau` seam can feed the pure functions directly, shrinking the rig. *Locality*: the streamed-id vs
 file-counter identity rules concentrate in one place. *Test impact*: twin regressions become unit-testable
@@ -406,7 +406,7 @@ lands when the last hard-limit split lands (no grandfathering).
 | `crates/tau-core/src/om_integration.rs` | 1,238 | split here |
 | `crates/tau-core/src/session.rs` | 1,195 | split here |
 | `crates/tau-core/src/task.rs` | 1,158 | split here |
-| `app/svelte/lib/store.svelte` | 1,106 → 108 | C3 done (#320: `state.svelte` + six feature modules) |
+| `app/svelte/lib/store/store.svelte` | 1,106 → 108 | C3 done (#320 split, #328 moved it into `lib/store/`) |
 | `app/scripts/verify-demo.mjs` | 1,124 | G (retires it) |
 
 **Over the soft 500 limit (investigate; split only if the cut improves readability):** `tau-protocol/src/lib.rs`

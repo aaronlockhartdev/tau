@@ -3,8 +3,8 @@
   // sub-agent at its spawn point. The state is the block's edge; the header
   // opens the child session; `follow` pins the follow filter to this worker.
 
-  import { fmtK } from '../lib/format';
-  import type { CrewView } from '../lib/subagent-view';
+  import { fmtK } from '../lib/display/format';
+  import type { CrewView } from '../lib/display/subagent-view';
 
   let {
     view,

@@ -3,7 +3,7 @@
   // expansion/details sub-render with its own scoped styles. Expansion state
   // and its toggles stay in EntryCard (the store map is the persistence
   // layer); this child is a stateless renderer over them.
-  import type { ExpandSlot, KvRow, Section, Shell } from '../lib/presentation';
+  import type { ExpandSlot, KvRow, Section, Shell } from '../lib/display/presentation';
   import { Scissors, Zap } from '@lucide/svelte';
   import ToolOutput from './ToolOutput.svelte';
   import Markdown from './Markdown.svelte';

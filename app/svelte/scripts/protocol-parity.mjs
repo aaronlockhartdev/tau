@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// ADR-0006's TS mirror (app/svelte/lib/protocol.ts) must not silently drift
+// ADR-0006's TS mirror (app/svelte/lib/wire/protocol.ts) must not silently drift
 // from the Rust protocol surface (crates/tau-protocol): the guard diffs
 // every enum/union (tags + fields) and struct (fields) field-for-field,
 // extended to the C9 payload shapes when the crate carries them.
@@ -35,7 +35,7 @@ const rustSrc = globSync('crates/tau-protocol/src/**/*.rs', { cwd: root })
   .sort()
   .map((p) => readFileSync(join(root, p), 'utf8'))
   .join('\n');
-const tsSrc = readFileSync(join(root, 'app/svelte/lib/protocol.ts'), 'utf8');
+const tsSrc = readFileSync(join(root, 'app/svelte/lib/wire/protocol.ts'), 'utf8');
 
 const errors = [];
 const infos = [];

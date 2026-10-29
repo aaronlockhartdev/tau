@@ -5,8 +5,8 @@ import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SessionMeta, SubagentInfo } from '../lib/protocol';
-import type { SessionState } from '../lib/sessions';
+import type { SessionMeta, SubagentInfo } from '../lib/wire/protocol';
+import type { SessionState } from '../lib/rules/sessions';
 import RightPane from './RightPane.svelte';
 import {
   mockStore,
@@ -15,7 +15,7 @@ import {
   seedState
 } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

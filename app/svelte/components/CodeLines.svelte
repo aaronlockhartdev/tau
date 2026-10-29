@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { RenderLine } from '../lib/diffview';
+  import type { RenderLine } from '../lib/display/diffview';
 
   let { lines, numbered = false }: { lines: RenderLine[]; numbered?: boolean } = $props();
 </script>

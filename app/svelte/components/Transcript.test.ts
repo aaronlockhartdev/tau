@@ -6,13 +6,13 @@
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
-import type { Entry, SessionMeta } from '../lib/protocol';
-import type { SessionState } from '../lib/sessions';
+import type { Entry, SessionMeta } from '../lib/wire/protocol';
+import type { SessionState } from '../lib/rules/sessions';
 import Transcript from './Transcript.svelte';
 import { drives } from '../lib/testing/VirtualizerMock.svelte';
 import { fetchWindow, mockStore, resetMockStore, seedState } from '../lib/testing/mock-store.svelte.ts';
 
-vi.mock('../lib/store.svelte', async () => {
+vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });

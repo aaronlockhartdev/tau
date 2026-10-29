@@ -2,8 +2,8 @@
   // The command palette (workbench P6, ⌘K): one filter box over grouped
   // actions — open a session, follow a crew member, fire an app action.
   // j/k + arrows move the active row, Enter runs it, Esc closes.
-  import { store, switchSession, setFollow, newSession, archiveSession, stop } from '../lib/store.svelte';
-  import { paletteItems, filterItems, type PaletteItem } from '../lib/palette';
+  import { store, switchSession, setFollow, newSession, archiveSession, stop } from '../lib/store/store.svelte';
+  import { paletteItems, filterItems, type PaletteItem } from '../lib/display/palette';
   import Overlay from './Overlay.svelte';
 
   const open = $derived(store.paletteOpen);
