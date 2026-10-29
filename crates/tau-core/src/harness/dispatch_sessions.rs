@@ -167,12 +167,12 @@ impl Core {
                 // model, so the records are the trace — the last
                 // model_changed on the branch is the current one.
                 else {
-                    let cwd = self
-                        .owning_session(&session)
-                        .map(|(w, _)| PathBuf::from(w.cwd.clone()))
-                        .ok_or_else(|| ProtocolError::NotFound {
-                            what: format!("session {session} is not open"),
-                        })?;
+                    let (ws, _) =
+                        self.owning_session(&session)
+                            .ok_or_else(|| ProtocolError::NotFound {
+                                what: format!("session {session} is not open"),
+                            })?;
+                    let cwd = PathBuf::from(&ws.cwd);
                     let mut store = SessionStore::for_workspace(&cwd, &session);
                     store.open().map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
@@ -181,6 +181,15 @@ impl Core {
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
+                    // The record is the route the next open reads, so the live
+                    // arm's §6.7 refusal fires here too: appending an id whose
+                    // prefix names no provider leaves the record naming an
+                    // address no endpoint answers, and `open_route` fails the
+                    // reopen into a read-only fallback that says nothing.
+                    // `old` is the model the record names, so the provider it
+                    // routes to is the one the next open starts from.
+                    let config = self.workspace_config(&ws);
+                    switch_route(&config, &model, old.as_deref().unwrap_or_default())?;
                     crate::diagnostics::append_facts(
                         &mut store,
                         &[Diagnostic::ModelChanged {
@@ -431,7 +440,7 @@ impl Core {
                     parent: store.parent().map(str::to_string),
                     created: store.created(),
                     leaf: store.leaf().ok().flatten().map(|e| e.id),
-                    model: None,
+                    model: recorded_model(&mut store),
                     usage: None,
                     archived: false,
                 };

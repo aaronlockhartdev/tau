@@ -258,12 +258,12 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
     }
     core.dispatch(Command::SessionSetModel {
         session: id.clone(),
-        model: "m/new".into(),
+        model: "dev/model".into(),
     })
     .unwrap();
     core.dispatch(Command::SessionSetModel {
         session: id.clone(),
-        model: "m/new".into(),
+        model: "dev/model".into(),
     })
     .unwrap();
     // The quiet entry is the record: the same model again is a no-op.
@@ -272,7 +272,7 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
         facts,
         vec![Diagnostic::ModelChanged {
             from: None,
-            to: "m/new".into(),
+            to: "dev/model".into(),
         }],
         "one record, naming no predecessor"
     );
