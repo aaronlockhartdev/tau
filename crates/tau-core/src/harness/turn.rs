@@ -1,16 +1,19 @@
-//! The post-turn reconciliation and the derived events it emits: the session file is the record; the events it implies are derived here, after `process()` drained the queue.
+//! The turn boundary and the post-turn reconciliation: the session file is
+//! the record, and the events it implies are derived here after `process()`
+//! drains the queue.
 
 use super::{
     Arc, Core, Entry, Event, LiveSession, Ordering, SessionStore, SystemEventKind, Value,
-    entry_to_view, usage_of,
+    derive_turn, entry_to_view, owner_of, usage_of,
 };
-use tau_protocol::EntryKind;
+use crate::agent::ContextGate;
+use tau_protocol::{Diagnostic, EntryKind};
 
 /// The settlement guarantee (#267): the one mechanism that clears
 /// `live.turn` on *any* exit of a turn — normal completion, early
 /// return, or a task that panics and is dropped. Without it a panicked
-/// `run_turn` left the flag `true` forever: the session showed
-/// "running" and every send steered into a turn that would never end.
+/// `run_turn` left the flag `true` forever: the session showed "running"
+/// and every send steered into a turn that would never end.
 ///
 /// It is `RefUnwindSafe` on purpose: the guard must be allowed to unwind
 /// out of the panicked task, because its `Drop` is what clears the flag
@@ -43,6 +46,7 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
         live: Arc::clone(&live),
     };
     live.turn.store(true, Ordering::SeqCst);
+    core.rederive_turn(&live);
     let mut store = SessionStore::for_workspace(&live.cwd, &live.meta.lock().id);
     if let Err(e) = store.open() {
         // The send is already accepted (the GUI shows it as the turn):
@@ -234,6 +238,45 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
 }
 
 impl Core {
+    /// The turn boundary's config re-derivation (spec §12, #337): a session takes
+    /// the live config at the start of its next turn, never mid-stream. A model an
+    /// edit removes is the ADR-0034 case — the gate goes missing and the record
+    /// says so once (the ready→missing edge), while the session keeps running on
+    /// the model it names.
+    pub(crate) fn rederive_turn(&self, live: &LiveSession) {
+        let (workspace, session, model) = {
+            let meta = live.meta.lock();
+            (meta.workspace.clone(), meta.id.clone(), live.agent.model())
+        };
+        let Ok(ws) = self.workspace(&workspace) else {
+            return;
+        };
+        let config = self.workspace_config(&ws);
+        // #336's route, read from the reloaded config: taking the config's first
+        // provider (the pre-#336 shape) read a second provider's model out of the
+        // first provider's model table, where its facts are absent — every reload
+        // dropped a gate the model's own provider declares.
+        let Ok(owner) = owner_of(&config, &model) else {
+            // Refused here as at `SessionSetModel`: the turn keeps the facts it has.
+            return;
+        };
+        let turn = derive_turn(&config, owner.provider, &model, &session);
+        let gate = turn.context_gate();
+        let was_ready = live.agent.current_turn().context_gate().is_ready();
+        live.agent.set_turn_config(turn);
+        if let ContextGate::Missing { reasons } = gate {
+            // One record per transition, not one per turn: a config that keeps
+            // the model bare must not append to the session file every turn.
+            if was_ready
+                && let Err(e) = live.agent.diagnostic(&Diagnostic::GateUnavailable {
+                    model,
+                    missing: reasons,
+                })
+            {
+                tracing::warn!("record the gate loss: {e}");
+            }
+        }
+    }
     pub(crate) fn emit_queue(&self, live: &LiveSession) {
         // One locked scope: the event's fields are cloned out before the
         // guard drops, so a long emit cannot hold the locks. The items are

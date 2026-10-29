@@ -2,6 +2,7 @@
 // bag (state.svelte). The live-stream clock lives in stream.svelte.ts; the
 // subagent fold in rules/sessions.ts.
 import { type Event } from '../wire/protocol';
+import { errText } from '../wire/errors';
 import { streamClock } from '../wire/stream.svelte';
 import { upsertEntry } from '../wire/entries';
 import { applySubagentEvent, laneOf } from '../rules/sessions';
@@ -9,6 +10,7 @@ import { store } from './state.svelte';
 import { refreshGitStatus, scheduleRefetch } from './files-pane.svelte';
 import { fetchActiveFile } from './viewer.svelte';
 import { syncWorkspaces } from './workspace.svelte';
+import { fetchProviders } from './providers.svelte';
 
 export function applyEvents(evts: Event[]): void {
   for (const ev of evts) {
@@ -21,6 +23,26 @@ export function applyEvents(evts: Event[]): void {
         // client) must not wipe a live IPC error (S3).
         if (ev.kind.kind === 'error') store.error = ev.kind.message;
         if (ev.kind.kind === 'workspace_opened') void syncWorkspaces();
+        // The core's config reload swapped the provider rows (#337): the
+        // menu's rows are refetched, so an added provider reaches an open
+        // menu. The row set is per workspace, so one fetch serves it.
+        if (ev.kind.kind === 'provider_changed') {
+          void fetchProviders(ev.workspace).catch((e: unknown) => {
+            // The rows a menu shows stay; the reason the refetch failed is the
+            // fact the banner carries (S3's path).
+            store.error = errText(e);
+          });
+        }
+        // A config edit the core refused: the running config is unchanged and
+        // the reason is the fact the user needs (ADR-0034's rule, applied to
+        // a session-less failure — the system group, not a session record).
+        if (ev.kind.kind === 'config_rejected') {
+          // A validation failure is the merged config's property, not one
+          // file's, so the core sends `path: null` and the sentence leaves the
+          // file out and keeps the reason.
+          const where = ev.kind.path ? `: ${ev.kind.path}` : '';
+          store.error = `config rejected${where} — ${ev.kind.reason}`;
+        }
       }
       if (ev.type === 'skill_list_changed') {
         // Full-state replacement (ticket #31): the change guard keeps an

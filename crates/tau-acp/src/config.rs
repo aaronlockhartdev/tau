@@ -40,8 +40,9 @@ impl AcpConfig {
         let system_dir = home.join(".config").join("tau");
         // No project at startup: the core layers the workspace's
         // `.tau/config.toml` itself at workspace open (spec §12).
-        let base = tau_core::config::load(&system_dir, Path::new("/nonexistent-tau-project"))
-            .unwrap_or_default();
+        let base =
+            tau_core::config::load(&system_dir, Path::new(tau_core::config::NO_PROJECT_LAYER))
+                .unwrap_or_default();
         Ok(Self {
             base,
             system_dir,

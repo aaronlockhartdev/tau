@@ -60,6 +60,16 @@ pub struct Core {
     /// one watcher re-discovers all open workspaces. A `None` seam (the test
     /// shape) is a no-op — there are no roots to watch.
     pub(crate) home_watcher: Mutex<Option<Watcher>>,
+    /// The system config layer (`{system}/config.toml`), watched once globally
+    /// (#337): the layer is shared by every workspace, so one watcher reloads
+    /// it for all. Watched non-recursively — the dir's other files
+    /// (`workspaces.json`, `agents`, `skills`) are not config.
+    pub(crate) system_config_watcher: Mutex<Option<Watcher>>,
+    /// The per-workspace config watchers (the `.tau` layer, #337): a batch
+    /// naming `config.toml` reloads that workspace's cache entry.
+    /// `workspace_close` drops the entry (the debouncer stops on drop), so the
+    /// map tracks the open workspaces.
+    pub(crate) config_watchers: Mutex<HashMap<String, Watcher>>,
     /// The per-workspace project roots (the `.tau/skills` + `.agents/skills`
     /// pair), created at the first `open_workspace`; a batch re-discovers
     /// that workspace. `workspace_close` drops the entry (the debouncer
@@ -226,6 +236,8 @@ impl CoreBuilder {
             configs: Mutex::new(HashMap::new()),
             skills: Mutex::new(HashMap::new()),
             home_watcher: Mutex::new(None),
+            system_config_watcher: Mutex::new(None),
+            config_watchers: Mutex::new(HashMap::new()),
             project_watchers: Mutex::new(HashMap::new()),
             tree_watchers: Mutex::new(HashMap::new()),
             plans: Mutex::new(HashMap::new()),
@@ -261,7 +273,7 @@ impl CoreBuilder {
     fn apply_startup(self, core: &Arc<Core>) -> Result<(), CoreError> {
         let mut config = Config::default();
         if let Some(dir) = self.system_dir
-            && let Ok(loaded) = config::load(&dir, Path::new("/nonexistent-tau-project"))
+            && let Ok(loaded) = config::load(&dir, Path::new(config::NO_PROJECT_LAYER))
         {
             config = loaded;
         }
@@ -283,8 +295,10 @@ impl CoreBuilder {
             }
         }
         // The home-level roots are watched once globally (ticket #31); a
-        // `None` seam (the test shape) is a no-op.
+        // `None` seam (the test shape) is a no-op. The system config layer is
+        // watched once for the same reason: every workspace merges it (#337).
         core.start_home_watcher()?;
+        core.start_system_config_watcher()?;
         Ok(())
     }
 }
@@ -472,6 +486,7 @@ impl Core {
             message: e.to_string(),
         };
         self.start_project_watcher(&workspace).map_err(&refuse)?;
+        self.start_config_watcher(&workspace).map_err(&refuse)?;
         self.start_tree_watcher(&workspace).map_err(&refuse)?;
         self.start_plan_watcher(&workspace).map_err(&refuse)?;
         Ok(workspace)
@@ -548,6 +563,7 @@ impl Core {
         self.set_workspace_open(&w, false);
         self.workspaces.lock().remove(id);
         self.project_watchers.lock().remove(id);
+        self.config_watchers.lock().remove(id);
         self.tree_watchers.lock().remove(id);
         self.plan_watchers.lock().remove(id);
         self.git_snapshots.lock().remove(id);
@@ -611,36 +627,65 @@ impl Core {
             .map(|w| w.id.clone())
     }
 
-    pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {
-        // The project layer wins where present; v0 has no dynamic providers.
-        if let Some(c) = self.configs.lock().get(&workspace.id) {
-            return c.clone();
-        }
-        let mut c = self.system_config();
-        // `config::load` takes the project *directory* and joins
-        // config.toml onto it; a path to the file itself would miss
-        // (spec §12 project layer).
+    /// The workspace's config from its files, the merge rule the cache fill
+    /// and the live reload share (#337): the system layer, then the project
+    /// layer over it — `config::load` takes the project *directory* and joins
+    /// `CONFIG_FILE` onto it, so a path to the file itself would miss (spec
+    /// §12). A layer that fails to parse names no merged config, so the
+    /// caller keeps what it has — the reload's failure path.
+    pub(crate) fn read_workspace_config(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<Config, config::LoadError> {
         let project = Path::new(&workspace.cwd).join(".tau");
-        if project.exists()
-            && let Ok(loaded) = config::load(&self.system_dir_of(), &project)
-        {
-            if self.custom {
-                // Custom roots carry explicit providers: a project entry
-                // replaces the same-named root entry, others coexist.
+        if self.custom {
+            let mut c = self.system_config();
+            // Custom roots carry explicit providers: a project entry replaces
+            // the same-named root entry, others coexist.
+            if project.exists() {
+                let loaded = config::load(&self.system_dir_of(), &project)?;
                 for (name, p) in loaded.providers {
                     c.providers.insert(name, p);
                 }
-            } else {
-                // Full file-level layering (spec §12): `loaded` is the
-                // system + project merge itself. The explicit layers (the
-                // ACP env channel) are re-applied over it: the merge was
-                // built from files alone and would shadow them.
-                c = loaded;
-                for (name, p) in &self.explicit_providers {
-                    c.providers.insert(name.clone(), p.clone());
-                }
             }
+            return Ok(c);
         }
+        // Full file-level layering (spec §12): `loaded` is the system + project
+        // merge itself. The explicit layers (the ACP env channel) are
+        // re-applied over it: the merge was built from files alone and would
+        // shadow them.
+        let mut c = if project.exists() {
+            config::load(&self.system_dir_of(), &project)?
+        } else {
+            self.system_config()
+        };
+        for (name, p) in &self.explicit_providers {
+            c.providers.insert(name.clone(), p.clone());
+        }
+        Ok(c)
+    }
+
+    /// The system layer read from disk, in the boot's shape (`apply_startup`
+    /// loads with no project dir): the live reload's answer for that layer
+    /// (#337).
+    pub(crate) fn read_system_config(&self) -> Result<Config, config::LoadError> {
+        let system = self.system_dir_of();
+        let mut c = config::load(&system, Path::new(config::NO_PROJECT_LAYER))?;
+        for (name, p) in &self.explicit_providers {
+            c.providers.insert(name.clone(), p.clone());
+        }
+        Ok(c)
+    }
+
+    pub(crate) fn workspace_config(&self, workspace: &Workspace) -> Config {
+        if let Some(c) = self.configs.lock().get(&workspace.id) {
+            return c.clone();
+        }
+        // The cold read has no good config to keep, so a layer that fails to
+        // parse leaves the system layer (what boot loaded) in the cache.
+        let c = self
+            .read_workspace_config(workspace)
+            .unwrap_or_else(|_| self.system_config());
         self.configs.lock().insert(workspace.id.clone(), c.clone());
         c
     }

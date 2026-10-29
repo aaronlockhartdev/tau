@@ -115,13 +115,21 @@ _Avoid_: checkpoint (that implies persistence granularity), summary (too generic
 **Snapshot**:
 The ephemeral point-in-time render state the core builds for the GUI — metadata skeleton + bounded OM + live state + cursor; never a file (ADR-0006).
 _Avoid_: export, archive (that is the manual-archive zstd thing)
-
 **Files pane**:
 The file browser over a workspace: lazily listed directories, expand/collapse, and change-coalesced refetches behind its own small invalidation cache — file-tree state, not session state (v0 clean-up item C11).
 _Avoid_: file tree (that is the data), project tree
+
 **Context files**:
 Project/global instruction files loaded into the system prompt, following pi's pattern (2026-09-17): `AGENTS.md`/`CLAUDE.md` from `~/.config/tau/`, from parent directories walking up from the workspace cwd, and the cwd itself — all layers appended; a per-directory `AGENTS.override.md` replaces that directory's `AGENTS.md`/`CLAUDE.md`.
 _Avoid_: prompt files
+
+**Config layer**:
+One `config.toml` in one layer directory: system (`~/.config/tau/`) and project (`{root}/.tau/`), merged section-level (§12). A layer is **live** (#337): its directory is watched, filtered on that file name, and a clean read swaps the running config — a rejected edit applies nothing and surfaces as `config_rejected`. The file is the only writer: `providers add/set/delete` are `Unsupported`, and there is no reload command.
+_Avoid_: config cache (the merged read is a cache that is invalidated, not the source), config source
+
+**Turn boundary**:
+The point at which a turn's derived facts are fixed and the next turn's are read: the start of a turn, never mid-stream. The config-reload and the model switch land here — a running stream keeps the endpoint and facts it started with (§12, #336, #337).
+_Avoid_: mid-turn update, hot reload (the reload is live; it is the *application* that waits for the boundary)
 
 **Security model**:
 In v0: **transparency, not enforcement** (ADR-0007, user decision 2026-09-17) — no sandbox, no permission popups, no per-tool policy; tools run with the user's privileges; sub-agent output marked untrusted is the one enforced boundary; the GUI's legibility affordances (per-tool cards, kill, force, sub-agent visibility) are the security feature; a post-v0 security ticket decides what enforcement comes back.

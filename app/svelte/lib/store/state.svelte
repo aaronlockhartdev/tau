@@ -15,6 +15,7 @@
     isTauri,
     type FileEntry,
     type GitStatus,
+    type ProviderInfo,
     type SkillInfo,
     type Workspace
   } from '../wire/protocol';
@@ -66,6 +67,11 @@
     // The skill registry, cached per workspace (ticket #28): the
     // composer's /skill: autocomplete data source.
     skills: {} as Record<string, SkillInfo[]>,
+    // The provider rows per workspace (the model menu's data, #337): the
+    // core reads its config layers fresh, and `provider_changed` marks the
+    // row set stale, so a provider added to a config file reaches a menu
+    // that is already open.
+    providers: {} as Record<string, ProviderInfo[]>,
     // The files pane (ticket #32), per workspace: the listed dirs and
     // their entries. A dir appears here once fetched (workspace open
     // lists the root, expansion lists its children); FileTreeChanged

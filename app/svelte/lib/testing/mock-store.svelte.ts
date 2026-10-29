@@ -11,7 +11,7 @@ import { vi } from 'vitest';
 import type { FilesCache } from '../rules/files';
 import type { OpenFiles } from '../rules/openfiles';
 import type { PaneState } from '../rules/panes';
-import type { FileEntry, GitStatus, SkillInfo, SessionMeta, Workspace } from '../wire/protocol';
+import type { FileEntry, GitStatus, ProviderInfo, SkillInfo, SessionMeta, Workspace } from '../wire/protocol';
 import { attentionOf, type AttentionItem } from '../display/attention';
 import { makeStub, type SessionState } from '../rules/sessions';
 
@@ -46,6 +46,7 @@ export function freshDefaults() {
     error: null as string | null,
     renderRange: '',
     skills: {} as Record<string, SkillInfo[]>,
+    providers: {} as Record<string, ProviderInfo[]>,
     files: {} as FilesCache,
     fileErrors: {} as Record<string, Record<string, string>>,
     gitStatus: {} as Record<string, GitStatus | null>,
@@ -98,6 +99,7 @@ export const deleteQueueItem = vi.fn(async () => {});
 export const toggleFileDir = vi.fn(async () => {});
 export const retryDirFetch = vi.fn(async () => {});
 export const fetchWindow = vi.fn(async () => {});
+export const fetchProviders = vi.fn().mockResolvedValue([] as ProviderInfo[]);
 export const toggleAllReasoning = vi.fn();
 export const windowTitle = vi.fn(() => 'tau');
 
@@ -117,10 +119,10 @@ export function currentSession(): SessionState | null {
   const c = store.current;
   return c ? store.sessions[c] ?? null : null;
 }
-
 export function fileCache(ws: string): Record<string, FileEntry[]> | undefined {
   return store.files[ws];
 }
+
 // Re-seed the same $state object in place (the mock factory runs once per
 // test file; a re-assignment would break the components' tracked references)
 // and clear the command fns.
@@ -149,6 +151,7 @@ const commandFns = [
   retryDirFetch,
   fetchWindow,
   toggleAllReasoning,
+  fetchProviders,
   windowTitle
 ];
 
@@ -157,6 +160,7 @@ export function resetMockStore(partial: Partial<typeof store> = {}) {
   Object.assign(store, d, partial);
   for (const fn of commandFns) fn.mockReset();
   windowTitle.mockImplementation(() => 'tau');
+  fetchProviders.mockResolvedValue([]);
 }
 
 // A full SessionState from a meta plus optional overrides — built with the

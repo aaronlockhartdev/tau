@@ -389,6 +389,16 @@ pub(crate) fn switch_route<'c>(
     config.route_model(model, current).map_err(Into::into)
 }
 
+/// The provider a model id names (#336), read independently of where the session
+/// currently points: a turn re-derives its facts from the model the record names,
+/// not the model the UI last selected.
+pub(crate) fn owner_of<'c>(
+    config: &'c Config,
+    model: &str,
+) -> Result<ProviderRef<'c>, ProtocolError> {
+    switch_route(config, model, model)
+}
+
 /// #267: mint `status: "error"` tool entries for a dangling assistant — one
 /// whose `calls` have no following `EntryKind::Tool` entry per `call_id` (the turn
 /// died mid-execution). Runs at session re-open, before the store is

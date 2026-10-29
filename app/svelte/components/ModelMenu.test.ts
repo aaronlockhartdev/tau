@@ -1,12 +1,10 @@
 // @vitest-environment jsdom
-// The model menu: fetched from provider_list on open, grouped by provider,
-// the current model dot-highlighted; a pick issues setModel and closes.
+// The model menu: the store's provider rows (#337) grouped by provider, the
+// current model dot-highlighted; a pick issues setModel and closes. Opening
+// the menu is a fresh read (fetchProviders), never a local first-open cache.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { Command, CommandOutput, ProviderInfo, SessionMeta } from '../lib/wire/protocol';
-import ModelMenu from './ModelMenu.svelte';
-import { mockStore, resetMockStore, setModel, seedState } from '../lib/testing/mock-store.svelte.ts';
 
 const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInvoke(...args) as Promise<unknown> }));
@@ -14,6 +12,16 @@ vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
   return { ...m, store: m.mockStore };
 });
+
+import type { ProviderInfo, SessionMeta } from '../lib/wire/protocol';
+import ModelMenu from './ModelMenu.svelte';
+import {
+  fetchProviders,
+  mockStore,
+  resetMockStore,
+  seedState,
+  setModel
+} from '../lib/testing/mock-store.svelte.ts';
 
 const WS = { id: 'w1', name: 'proj', cwd: '/p' };
 function meta(id: string, model: string | null = null): SessionMeta {
@@ -39,46 +47,30 @@ const PROVIDERS: ProviderInfo[] = [
   { name: 'local', base_url: 'http://localhost:11434/v1', models: ['llama3'] }
 ];
 
-function mockIPC(handler: (cmd: Command) => CommandOutput | Promise<CommandOutput>) {
-  mockInvoke.mockImplementation(async (_n: unknown, args: { command: Command }) => handler(args.command));
-}
-
 beforeEach(() => {
   resetMockStore();
-  mockInvoke.mockReset();
-  mockInvoke.mockImplementation(() => Promise.resolve({ kind: 'none' as const }));
   mockStore.sessions = { s1: seedState(meta('s1', 'dev/qwen3.8')) };
   mockStore.current = 's1';
+  mockStore.providers = { [WS.id]: PROVIDERS };
 });
 
 describe('ModelMenu', () => {
-  it('fetches the providers on open and groups them', async () => {
-    mockIPC((cmd) => {
-      if (cmd.type === 'provider_list') return { kind: 'providers', providers: PROVIDERS };
-      return { kind: 'none' };
-    });
+  it('renders the store rows grouped by provider and opens with a fresh read', async () => {
     render(ModelMenu);
     expect(await screen.findByText('openrouter')).toBeInTheDocument();
     expect(screen.getByText('local')).toBeInTheDocument();
     expect(screen.getByText('dev/qwen3.8')).toBeInTheDocument();
     expect(screen.getByText('llama3')).toBeInTheDocument();
+    expect(fetchProviders).toHaveBeenCalledWith(WS.id);
   });
 
   it('marks the current model', async () => {
-    mockIPC((cmd) => {
-      if (cmd.type === 'provider_list') return { kind: 'providers', providers: PROVIDERS };
-      return { kind: 'none' };
-    });
     render(ModelMenu);
     await screen.findByText('openrouter');
     expect(screen.getByText('current')).toBeInTheDocument();
   });
 
   it('a pick issues setModel with the qualified name and closes the menu', async () => {
-    mockIPC((cmd) => {
-      if (cmd.type === 'provider_list') return { kind: 'providers', providers: PROVIDERS };
-      return { kind: 'none' };
-    });
     render(ModelMenu);
     const user = userEvent.setup();
     await user.click(await screen.findByText('llama3'));
@@ -87,10 +79,6 @@ describe('ModelMenu', () => {
   });
 
   it('Escape closes the menu', async () => {
-    mockIPC((cmd) => {
-      if (cmd.type === 'provider_list') return { kind: 'providers', providers: PROVIDERS };
-      return { kind: 'none' };
-    });
     render(ModelMenu);
     await screen.findByText('openrouter');
     await fireEvent.keyDown(window, { key: 'Escape' });
@@ -98,19 +86,23 @@ describe('ModelMenu', () => {
   });
 
   it('a scrim click closes the menu', async () => {
-    mockIPC((cmd) => {
-      if (cmd.type === 'provider_list') return { kind: 'providers', providers: PROVIDERS };
-      return { kind: 'none' };
-    });
     render(ModelMenu);
     await screen.findByText('openrouter');
     await fireEvent.click(document.querySelector('.scrim')!);
     expect(mockStore.modelMenuOpen).toBe(false);
   });
 
-  it('a provider_list failure shows the error', async () => {
-    mockInvoke.mockRejectedValue(new Error('no providers'));
+  it('a fetchProviders failure shows the error', async () => {
+    fetchProviders.mockRejectedValueOnce(new Error('no providers'));
     render(ModelMenu);
     expect(await screen.findByText('no providers')).toBeInTheDocument();
+  });
+
+  it('with no current session the rows are not read', async () => {
+    mockStore.current = null;
+    render(ModelMenu);
+    const loading = await screen.findByText('loading…');
+    expect(loading).toBeInTheDocument();
+    expect(fetchProviders).not.toHaveBeenCalled();
   });
 });

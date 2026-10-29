@@ -205,11 +205,25 @@ pub enum SystemEventKind {
         name: String,
         cwd: String,
     },
-    /// Provider list changed; v0 providers are config-file-driven, so the
-    /// only live producer is a config reload (absent in v0 — the variant
-    /// stays for the §8 surface, emitted by nothing until then).
-    #[allow(dead_code)]
+    /// Provider list changed: a config reload swapped in a config whose
+    /// providers differ from the ones live at boot (spec §12, #337). The model
+    /// menu's provider rows are the consumer; the event is edge-triggered, so
+    /// a swap back to the boot set is silent and a menu refresh on open covers
+    /// that case.
     ProviderChanged,
+    /// A config layer's edit was rejected (`config::load`'s `LoadError`: TOML
+    /// syntax, an unknown key under `deny_unknown_fields`, a bound a section
+    /// violates). The last good config stays live — a rejected edit is never
+    /// applied, so this event is the failure's only route to the user (#337).
+    /// `path` names the layer that failed when the failure has one; a validation
+    /// failure is the merged config's property, not one file's, so it names
+    /// none (`None` — the wire says `null`, the GUI leaves the file out of the
+    /// sentence). Session-less by ADR-0034: a failure that belongs to no session
+    /// is not a diagnostic, so it rides the system group, never a session record.
+    ConfigRejected {
+        path: Option<String>,
+        reason: String,
+    },
     Error {
         message: String,
     },
@@ -307,6 +321,14 @@ mod tests {
                 workspace: "w1".into(),
                 session: None,
                 kind: SystemEventKind::ProviderChanged,
+            },
+            Event::System {
+                workspace: String::new(),
+                session: None,
+                kind: SystemEventKind::ConfigRejected {
+                    path: Some("/tmp/tau-config/config.toml".to_owned()),
+                    reason: "parsing /tmp/tau-config/config.toml: missing field `base_url`".into(),
+                },
             },
             Event::SubagentEvent {
                 workspace: "w1".into(),

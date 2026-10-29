@@ -132,7 +132,7 @@ impl Core {
             Command::SubagentTypes => Ok(CommandOutput::Agents {
                 agents: crate::agent_type::discover(
                     self.system_dir.as_deref(),
-                    Path::new("/nonexistent-tau-project"),
+                    Path::new(crate::config::NO_PROJECT_LAYER),
                 )
                 .iter()
                 .map(|t| AgentType {

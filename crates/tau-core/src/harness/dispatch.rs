@@ -3,7 +3,7 @@
 //! The arms are grouped per domain in their own files; the entry routes.
 
 use super::{
-    Arc, BufRead, Command, CommandOutput, Core, FileText, Path, PathBuf, ProtocolError,
+    Arc, BufRead, Command, CommandOutput, Config, Core, FileText, Path, PathBuf, ProtocolError,
     ProviderInfo, Workspace, list_dir,
 };
 
@@ -60,6 +60,24 @@ fn file_read(
         },
     })
 }
+
+/// The config's providers as the GUI's rows, name-sorted (§8: no key material).
+/// The one shape the `ProviderList` answer and the `ProviderChanged` comparison
+/// share, so the event means what a menu would newly show (#337).
+pub(crate) fn provider_rows(config: &Config) -> Vec<ProviderInfo> {
+    let mut providers = config
+        .providers
+        .iter()
+        .map(|(name, p)| ProviderInfo {
+            name: name.clone(),
+            base_url: p.base_url.clone(),
+            models: p.models.keys().cloned().collect(),
+        })
+        .collect::<Vec<_>>();
+    providers.sort_by(|a, b| a.name.cmp(&b.name));
+    providers
+}
+
 impl Core {
     /// The workspace's cached git snapshot (file-tree plan, phase 2): a
     /// cache hit is a map read; a miss runs the three-spawn snapshot once
@@ -104,7 +122,7 @@ impl Core {
             | Command::SubagentStop { .. }
             | Command::SubagentActivity { .. } => self.dispatch_command(cmd),
             Command::SkillList { .. }
-            | Command::ProviderList
+            | Command::ProviderList { .. }
             | Command::ProviderAdd { .. }
             | Command::ProviderSet { .. }
             | Command::ProviderDelete { .. }
@@ -141,19 +159,13 @@ impl Core {
                 })
             }
 
-            Command::ProviderList => {
-                let mut providers = self
-                    .system_config()
-                    .providers
-                    .iter()
-                    .map(|(name, p)| ProviderInfo {
-                        name: name.clone(),
-                        base_url: p.base_url.clone(),
-                        models: p.models.keys().cloned().collect(),
-                    })
-                    .collect::<Vec<_>>();
-                providers.sort_by(|a, b| a.name.cmp(&b.name));
-                Ok(CommandOutput::Providers { providers })
+            Command::ProviderList { workspace } => {
+                let workspace = self.workspace(&workspace)?;
+                // The workspace's config, read fresh: the project layer is one
+                // of the layers and a config edit shows up (#337).
+                Ok(CommandOutput::Providers {
+                    providers: provider_rows(&self.workspace_config(&workspace)),
+                })
             }
             Command::ProviderAdd { .. }
             | Command::ProviderSet { .. }

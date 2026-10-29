@@ -499,3 +499,36 @@ fn route_child_follows_the_child_model_and_keeps_the_parent_on_a_refusal() {
         "the fallback is the parent, so a session lower in the map keeps its own"
     );
 }
+
+/// The rejected layer's file (#337): a parse failure names the layer the user
+/// must edit, so `ConfigRejected` can carry the path.
+#[test]
+fn a_parse_failure_names_the_layer_file() {
+    let sys = tempfile::tempdir().unwrap();
+    let proj = tempfile::tempdir().unwrap();
+    let project_file = proj.path().join(CONFIG_FILE);
+    std::fs::write(
+        sys.path().join(CONFIG_FILE),
+        "[providers.dev]\nbase_url = \"http://x/v1\"\n",
+    )
+    .unwrap();
+    std::fs::write(&project_file, "[providers.dev]\nbase_url = ").unwrap();
+    let err = load(sys.path(), proj.path()).unwrap_err();
+    assert_eq!(err.path(), Some(project_file.as_path()));
+}
+
+/// A validation failure is the merged config's property, not one file's: it
+/// names no layer, and the event's `path` stays empty (#337).
+#[test]
+fn a_validation_failure_names_no_layer() {
+    let sys = tempfile::tempdir().unwrap();
+    let proj = tempfile::tempdir().unwrap();
+    std::fs::write(
+        sys.path().join(CONFIG_FILE),
+        "[om]\nobserve_threshold = 5000000000\n",
+    )
+    .unwrap();
+    let err = load(sys.path(), proj.path()).unwrap_err();
+    assert!(matches!(err, LoadError::OmThreshold { .. }));
+    assert_eq!(err.path(), None);
+}

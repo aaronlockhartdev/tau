@@ -367,7 +367,13 @@ pub enum Command {
         workspace: String,
     },
 
-    ProviderList,
+    /// The workspace's providers, read from its config layers (spec §12,
+    /// #337): the model menu's rows. Workspace-scoped because the project
+    /// layer is one of them, and the answer is read fresh, so a config edit
+    /// shows up.
+    ProviderList {
+        workspace: String,
+    },
     ProviderAdd {
         name: String,
         base_url: String,
