@@ -1,6 +1,6 @@
 ---
 source: crates/tau-protocol/tests/wire_goldens.rs
-expression: "vec![Diagnostic::ModelChanged\n{ from: Some(\"qwen3.8-27b\".into()), to: \"qwen3.8-flash-next-iq3_s\".into(), },\nDiagnostic::ModelChanged\n{ from: None, to: \"qwen3.8-flash-next-iq3_s\".into(), },\nDiagnostic::GateUnavailable\n{\n    model: \"qwen3.8-flash-next-iq3_s\".into(), missing:\n    vec![\"context_window\".into(), \"max_tokens\".into()],\n}, Diagnostic::ContextOverflow { prompt: 120_000, budget: 110_592, },\nDiagnostic::GateAttempt\n{\n    command: \"cargo nextest run\".into(), retries: 1, max: 2, output:\n    \"test failed\".into(),\n}, Diagnostic::GateFailed\n{ command: \"cargo nextest run\".into(), retries: 2, }, Diagnostic::OmStalled\n{ pending: 24_000, activation: 24_000, }, Diagnostic::ProviderRejected\n{ status: 400, body: \"context length exceeded\".into(), },\nDiagnostic::TurnCutoff\n{\n    model: \"qwen3.8-flash-next-iq3_s\".into(), ended_by:\n    StreamEnd::EofWithoutDone, blocks: 2,\n},]"
+expression: "vec![Diagnostic::ModelChanged\n{ from: Some(\"qwen3.8-27b\".into()), to: \"qwen3.8-flash-next-iq3_s\".into(), },\nDiagnostic::ModelChanged\n{ from: None, to: \"qwen3.8-flash-next-iq3_s\".into(), },\nDiagnostic::GateUnavailable\n{\n    model: \"qwen3.8-flash-next-iq3_s\".into(), missing:\n    vec![\"context_window\".into(), \"max_tokens\".into()],\n}, Diagnostic::ContextOverflow { prompt: 120_000, budget: 110_592, },\nDiagnostic::GateAttempt\n{\n    command: \"cargo nextest run\".into(), retries: 1, max: 2, output:\n    \"test failed\".into(),\n}, Diagnostic::GateFailed\n{ command: \"cargo nextest run\".into(), retries: 2, }, Diagnostic::OmStalled\n{ pending: 24_000, activation: 24_000, }, Diagnostic::ProviderRejected\n{ status: 400, body: \"context length exceeded\".into(), },\nDiagnostic::MissingUserQuery { items: 2 }, Diagnostic::TurnCutoff\n{\n    model: \"qwen3.8-flash-next-iq3_s\".into(), ended_by:\n    StreamOutcome::EofWithoutDone, blocks: 2,\n},]"
 ---
 [
   {
@@ -46,6 +46,10 @@ expression: "vec![Diagnostic::ModelChanged\n{ from: Some(\"qwen3.8-27b\".into())
     "code": "provider_rejected",
     "status": 400,
     "body": "context length exceeded"
+  },
+  {
+    "code": "missing_user_query",
+    "items": 2
   },
   {
     "code": "turn_cutoff",

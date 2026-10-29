@@ -364,6 +364,7 @@ mod payloads {
                 status: 400,
                 body: "context length exceeded".into(),
             },
+            Diagnostic::MissingUserQuery { items: 2 },
             Diagnostic::TurnCutoff {
                 model: "qwen3.8-flash-next-iq3_s".into(),
                 ended_by: StreamOutcome::EofWithoutDone,

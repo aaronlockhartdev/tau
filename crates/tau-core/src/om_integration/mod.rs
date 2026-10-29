@@ -43,10 +43,6 @@ pub struct OmState {
     /// covers only entries after this one. In memory like the chunks
     /// themselves (a restart re-observes via the threshold path).
     buffer_cursor: Option<String>,
-    /// The log changed since the last assembled context: the next assembly
-    /// carries the continuation hint so the model doesn't react to the raw
-    /// history vanishing (spec §4).
-    pub changed: bool,
 }
 /// A config threshold as a u32: the config validates these fit a u32 at load,
 /// so a mismatch is a bug, not a recoverable error.
@@ -78,7 +74,6 @@ impl OmState {
             record,
             buffered,
             buffer_cursor: None,
-            changed: false,
         }
     }
 

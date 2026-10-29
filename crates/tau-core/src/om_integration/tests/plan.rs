@@ -225,7 +225,6 @@ fn the_overflow_ladder_demotes_the_prefix_and_readmits_it() {
         },
         buffered: Vec::new(),
         buffer_cursor: None,
-        changed: false,
     };
     // 200 combined tokens over the 100 budget: the prefix demotes out of
     // the live context (it stays in the record, recall reaches it).

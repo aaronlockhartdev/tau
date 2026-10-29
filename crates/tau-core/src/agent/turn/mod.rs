@@ -136,6 +136,18 @@ impl AgentSession {
                     return Err(AgentError::ContextOverflow { prompt, budget });
                 }
             }
+            // The user-query invariant (#334): the request must answer a query.
+            // A chat template that finds no `role: user` item once the
+            // observations (system) and tool calls are pruned raises "No user
+            // query found in messages" — the 400 whose cause is a request
+            // builder, not the provider. Refuse it here and record the fact
+            // (ADR-0034) so the defect names its owner.
+            if !assembled.has_user_query() {
+                self.diagnostic(&Diagnostic::MissingUserQuery {
+                    items: u64::try_from(assembled.items.len()).unwrap_or(u64::MAX),
+                })?;
+                return Err(AgentError::MissingUserQuery);
+            }
             let request = self.build_request(
                 &assembled.instructions,
                 &assembled.items,
@@ -414,19 +426,30 @@ impl AgentSession {
             .leaf()
             .map_err(AgentError::Session)?
             .map(|e| e.id);
-        // Assembly runs on the persistent state, not a clone: it is
-        // pure over the record, and the one-shot continuation-hint
-        // flip must stick (a clone's flip would be dropped, and the
-        // om_turn_end write-back would re-set `changed`, so the hint
-        // would re-inject on every assembly).
+        // Assembly runs on the persistent state, not a clone: it is pure over
+        // the record, and the suggested-response it consumes must be consumed
+        // from the state the om_turn_end write-back replaces (a clone's
+        // consume would be dropped and a stale steering signal re-injected).
         if let Some(om) = inner.om.as_mut() {
             let assembled = om.assemble_context(&base);
-            let raw = om.raw_window_from(&entries, leaf_id.as_deref());
-            let om_items = assembled.om_input_items.len();
-            let items = assembled
-                .om_input_items
+            let window = om.raw_window_from(&entries, leaf_id.as_deref());
+            // Anchor first, then the observation items, then the tail: the
+            // hint's "messages following this reminder are newer" framing stays
+            // true, and the anchor's position depends on no mutable flag, so
+            // the provider prefix cache survives (#334).
+            let anchor: Vec<InputEntry> = window
+                .anchor
+                .iter()
+                .flat_map(|e| input_items(std::slice::from_ref(e), parent_session.as_deref()))
+                .collect();
+            // The leading items the OM state contributed: the prompt estimate
+            // fingerprints `items[..om_items]`, so the anchor rides the
+            // anchored prefix, not the priced tail.
+            let om_items = anchor.len() + assembled.om_input_items.len();
+            let items = anchor
                 .into_iter()
-                .chain(input_items(&raw, parent_session.as_deref()))
+                .chain(assembled.om_input_items)
+                .chain(input_items(&window.tail, parent_session.as_deref()))
                 .collect();
             Ok(Assembled {
                 model,
@@ -584,3 +607,6 @@ mod tests;
 
 #[cfg(test)]
 mod tests_anchor;
+
+#[cfg(test)]
+mod tests_user_query;

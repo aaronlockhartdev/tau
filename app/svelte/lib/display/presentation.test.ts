@@ -464,6 +464,8 @@ describe('a diagnostic entry (ADR-0034)', () => {
       .toBe('provider cut the turn (stream ended early) after 2 block(s)');
     expect(line({ code: 'om_stalled', pending: 24000, activation: 24000 }))
       .toBe('compaction stalled: 24.0k pending at activation 24.0k');
+    expect(line({ code: 'missing_user_query', items: 2 }))
+      .toBe('refused: assembled input has no user query (2 item(s))');
   });
 
   // A windowed transcript holds snapshot metadata until a paged read hydrates

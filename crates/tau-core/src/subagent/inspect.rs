@@ -75,9 +75,9 @@ impl Supervisor {
 /// One child's activity window: the tail of its observation log plus its
 /// un-observed raw tail, assembled on a **throwaway** `OmState` built from
 /// the child's record (research `subagent-transcript-sourcing.md`): the
-/// seam is pure, and the one-shot flips in `assemble_context` land on the
-/// throwaway, never the child's live state. Never mutates the child's
-/// persistent OM state.
+/// seam is pure, and the suggested-response `assemble_context` consumes
+/// stays unconsumed on the throwaway. Never mutates the child's persistent
+/// OM state.
 pub(crate) fn read_activity(
     cwd: &std::path::Path,
     session_id: &str,
@@ -105,9 +105,9 @@ pub(crate) fn read_activity(
     // The observation groups are the child's actual log text (boundary
     // markers stripped) — the same source `assemble_context` projects them
     // from, so the GUI's window stays byte-faithful to what the child's
-    // model sees. `assemble_context` itself is NOT run here: its one-shot
-    // flips must stay on the child's live state, and nothing downstream
-    // needs them.
+    // model sees. `assemble_context` itself is NOT run here: it consumes the
+    // suggested-response on the state it runs on, and that consumption
+    // belongs to the child's live turn, not a preview.
     let groups = om::parse_observation_groups(&record.agent_observations());
     let state = OmState::from_config(om, record);
     let observations: Vec<ActivityGroup> = groups
@@ -121,12 +121,16 @@ pub(crate) fn read_activity(
         })
         .collect();
     let window = state.raw_window_from(&entries, Some(&leaf.id));
-    // The window is in branch order (newest last): keep the last N.
+    // The window is in branch order (newest last): keep the last N. The
+    // anchor leads it exactly as the request does (#334), so a child whose
+    // tail is all tool calls still shows the instruction it is working on.
     let live: Vec<ActivityEntry> = window
-        .iter()
+        .anchor
+        .into_iter()
+        .chain(window.tail)
         .rev()
         .take(ACTIVITY_TAIL)
-        .map(project_entry)
+        .map(|entry| project_entry(&entry))
         .collect::<Vec<_>>()
         .into_iter()
         .rev()
@@ -419,5 +423,66 @@ mod tests {
             format!("line {n:03}"),
             "last visible line must be complete"
         );
+    }
+    #[test]
+    fn an_observed_child_previews_the_entry_its_request_anchors_on() {
+        // #334: the cursor advanced past the brief into a tool run, so the §4
+        // cut leaves an empty tail and the child's request rides on the
+        // anchored brief. The preview mirrors the request, not the tail.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::for_workspace(tmp.path(), "child-6");
+        store.create().unwrap();
+        let brief = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "the brief" }),
+                None,
+            )
+            .unwrap();
+        let assistant = store
+            .append(
+                EntryKind::Assistant,
+                serde_json::json!({ "text": "on it" }),
+                Some(&brief.id),
+            )
+            .unwrap();
+        let tool = store
+            .append(
+                EntryKind::Tool,
+                serde_json::json!({
+                    "call_id": "c1",
+                    "name": "bash",
+                    "args": {},
+                    "output": "ok",
+                    "status": "success"
+                }),
+                Some(&assistant.id),
+            )
+            .unwrap();
+        let record = crate::om::OmRecord {
+            cursor: Some(crate::om::Cursor {
+                entry_id: assistant.id.clone(),
+                timestamp: 0,
+            }),
+            ..Default::default()
+        };
+        store
+            .append(
+                EntryKind::Om,
+                serde_json::to_value(&record).unwrap(),
+                Some(&tool.id),
+            )
+            .unwrap();
+        let activity = read_activity(tmp.path(), "child-6", &crate::config::Om::default())
+            .expect("a created session yields a window");
+        assert!(!activity.degraded, "the cursor sits on the branch");
+        assert_eq!(
+            activity.live.len(),
+            1,
+            "the cut tail leaves the anchor: {:?}",
+            activity.live
+        );
+        assert_eq!(activity.live[0].role, "user");
+        assert_eq!(activity.live[0].text, "the brief");
     }
 }

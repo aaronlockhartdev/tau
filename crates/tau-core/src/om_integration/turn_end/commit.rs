@@ -78,7 +78,6 @@ impl OmState {
                     self.record.observation_tokens =
                         om::token_count(&self.record.active_observations);
                     self.maintain_prefix_budget();
-                    self.changed = true;
                     self.save(store)?;
                     *action = TurnEndAction::Done;
                 } else if result.outcome == StreamOutcome::Completed
@@ -122,7 +121,6 @@ impl OmState {
         });
         self.record.observation_tokens = om::token_count(&self.record.active_observations);
         self.record.pending_tokens = 0;
-        self.changed = true;
         self.save(store)?;
         Ok(())
     }

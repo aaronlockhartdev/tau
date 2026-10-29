@@ -62,6 +62,11 @@ pub enum AgentError {
         prompt: u32,
         budget: u32,
     },
+    /// The assembled request carries no `role: user` item: OM compaction
+    /// observed the branch's last user entry and the raw window has none to
+    /// anchor on, so the harness refuses the call rather than send a request a
+    /// chat template rejects (#334).
+    MissingUserQuery,
 }
 
 impl fmt::Display for AgentError {
@@ -73,6 +78,10 @@ impl fmt::Display for AgentError {
             Self::ContextOverflow { prompt, budget } => write!(
                 f,
                 "context overflow: prompt ~{prompt} tokens exceeds the safe budget of {budget}; nothing left to compact"
+            ),
+            Self::MissingUserQuery => write!(
+                f,
+                "assembled input has no user query: the session's raw window holds no user entry to anchor the request on"
             ),
         }
     }

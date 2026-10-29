@@ -64,6 +64,10 @@ pub enum Diagnostic {
     OmStalled { pending: u64, activation: u64 },
     /// The provider answered a request with an error status.
     ProviderRejected { status: u16, body: String },
+    /// The assembled request carried no `role: user` item, so the harness
+    /// refused the call before the wire (#334): compaction left no user entry
+    /// on the branch to anchor the request on. `items` is what was assembled.
+    MissingUserQuery { items: u64 },
     /// A provider stream ended without a completion signal.
     TurnCutoff {
         model: String,
@@ -88,6 +92,7 @@ impl Diagnostic {
             Self::GateAttempt { .. } => "gate_attempt",
             Self::GateFailed { .. } => "gate_failed",
             Self::OmStalled { .. } => "om_stalled",
+            Self::MissingUserQuery { .. } => "missing_user_query",
             Self::ProviderRejected { .. } => "provider_rejected",
             Self::TurnCutoff { .. } => "turn_cutoff",
             Self::Unknown { unknown_code } => unknown_code,
