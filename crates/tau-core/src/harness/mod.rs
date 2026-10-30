@@ -78,7 +78,6 @@ mod testkit;
 #[cfg(test)]
 mod tests_archive;
 #[cfg(test)]
-#[cfg(test)]
 mod tests_archive_disk;
 #[cfg(test)]
 mod tests_archive_edges;
