@@ -29,7 +29,7 @@ mkdir -p ~/.config/tau
 open target/release/bundle/macos/Tau.app
 ```
 
-Write `~/.config/tau/config.toml` (or drop a `.tau/config.toml` into a project — the project layer wins per provider name): each `[providers.<name>]` entry is a `base_url` + `key_env` (the name of an environment variable holding the key) + `models`; `[om].om_model` names the compaction model. Tau speaks the OpenAI-compatible `responses` endpoint only.
+Write `~/.config/tau/config.toml` (or drop a `.tau/config.toml` into a project — a project section replaces the system one wholesale): each `[providers.<name>]` entry is a `base_url` + `key_env` (the name of an environment variable holding the key) + `models`; `[om].om_model` names the compaction model. Tau speaks the OpenAI-compatible `responses` endpoint only. Every key, default, and validation rule: [`docs/config.md`](docs/config.md).
 
 On Linux, `just build` builds the full app and bundles an AppImage (needs the webkit system libraries: `libwebkit2gtk-4.1-dev` + `libgtk-3-dev`); the launch smoke (the `launch` suite) runs under `xvfb`.
 
@@ -55,7 +55,7 @@ and a human click-through: `npm run dev` in `app/`, open a workspace with a larg
 ## Repository layout
 
 - `crates/tau-core` — the standalone core library (no GUI dependencies, ADR-0002): the agent loop, the four hash-anchored tools, session storage (JSONL + per-line CRC + zstd sidecars), OM compaction, sub-agents, tasks, the provider client.
-- `crates/tau-protocol` — the transport-agnostic core↔GUI message set (spec §8).
+- `crates/tau-protocol` — the transport-agnostic core↔GUI message set (spec §8). Full reference: [`docs/protocol.md`](docs/protocol.md).
 - `crates/tau-test` — the acceptance driver (this README's live suites).
 - `app/` — the Tauri + Svelte 5 GUI; `svelte/` is the frontend, `src-tauri/` the thin dispatch binding.
 - `justfile` — the build/acceptance entry point (`just build`, `just test`, `just acceptance`); `.github/workflows/ci.yml` — CI (rust matrix, frontend, macOS app + launch smoke, Linux acceptance).
