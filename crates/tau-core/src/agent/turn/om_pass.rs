@@ -1,5 +1,17 @@
 use crate::agent::{AgentError, AgentSession, Inner, SessionStore, TurnProviderRef};
+use crate::om_integration::{OmError, OmStage};
 use tau_protocol::Diagnostic;
+
+/// The stage a compaction failure belongs to (#338): the provider arm carries
+/// the stage the retry loop ran under; a storage failure names the store, the
+/// one place no LLM pass ran.
+fn om_failure_stage(e: &OmError) -> OmStage {
+    match e {
+        OmError::Provider(stage, _) => *stage,
+        OmError::Session(_) => OmStage::Session,
+    }
+}
+
 /// The OM model to use: the configured OM model, or the model the session's
 /// requests address when it is empty (spec §4). The fallback is the address and
 /// not the session's id, so a menu-qualified id does not reach the endpoint with
@@ -21,19 +33,61 @@ impl AgentSession {
             .unwrap_or_else(|| self.provider.clone())
     }
 
-    /// The unobserved raw's token count, read under the session lock (the
-    /// context gate's qualification: fire only when there is material to
-    /// compact, spec §4, ticket #210).
-    pub(super) fn om_pending_tokens(&self) -> u32 {
-        let mut guard = self.inner.lock();
-        let Inner { om, store, .. } = &mut *guard;
-        let Some(om) = om.as_mut() else {
-            return 0;
+    /// The ladder's first rung (#338): promote the buffered chunks — the
+    /// compaction that costs no LLM call. The mid-loop trigger may already have
+    /// done it; promotion is idempotent (an empty buffer is `false`).
+    pub(super) fn om_promote(&self) {
+        let outcome = {
+            let mut guard = self.inner.lock();
+            let Inner { om, store, .. } = &mut *guard;
+            match om.as_mut() {
+                None => Ok(()),
+                Some(om) => om.promote(store).map(|_| ()),
+            }
         };
-        let Ok(unobserved) = om.unobserved(store) else {
-            return 0;
+        if let Err(e) = outcome {
+            // Promotion runs no LLM pass, so the only failure it can have is
+            // the record save: the stage is `session`, never `buffer` (#338).
+            self.record_om_failure(om_failure_stage(&e), &e);
+        }
+    }
+
+    /// The ladder's last rung (#338): reflect at the escalating levels, then
+    /// demote the frozen prefix. The turn-end pass reaches demotion only at
+    /// `reflect_threshold`; the gate runs it because the prompt — not the
+    /// threshold — is over budget, and the prefix is the material that remains
+    /// when the raw window is empty. A failure is recorded, never swallowed:
+    /// the gate reads the next re-pricing and refuses when it still does not
+    /// fit (the #86 "a failed pass must not kill the turn" contract stands for
+    /// a turn under budget, which never reaches this rung).
+    pub(super) async fn om_overflow_compact(&self) {
+        let (state, model, hook) = {
+            let inner = self.inner.lock();
+            (
+                inner.om.clone(),
+                resolve_om_model(&inner.om_model, &inner.turn.request_address(&inner.model)),
+                inner.om_status_hook.clone(),
+            )
         };
-        om.pending_tokens(&unobserved)
+        let Some(mut state) = state else { return };
+        // The re-lock, as in `om_turn_end`: the session lock is never held
+        // across a provider call.
+        let mut with_store =
+            |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), crate::om_integration::OmError>| {
+                let mut guard = self.inner.lock();
+                f(&mut guard.store)
+            };
+        let om_provider = self.om_provider();
+        let outcome = state
+            .overflow_compact(&mut with_store, &om_provider, &model, hook.as_ref())
+            .await;
+        if let Err(e) = &outcome {
+            self.record_om_failure(om_failure_stage(e), e);
+            if let Some(hook) = &hook {
+                hook("idle");
+            }
+        }
+        self.write_back_om(state);
     }
 
     /// The turn-end OM pass (ticket #22, R4): one call — `settle_turn`
@@ -97,17 +151,29 @@ impl AgentSession {
             .settle_turn(&mut with_store, &om_provider, &model, hook.as_ref())
             .await
         {
-            tracing::warn!("om: turn-end pass failed: {e}");
+            // #338: an exhausted retry is a durable `om_failed` record, not a
+            // log line — a dead `om_model` route hid in this `warn!` for a
+            // whole incident. The turn still lives (ticket #86): the record is
+            // the fact, the gate's ladder is the consequence.
+            self.record_om_failure(om_failure_stage(&e), &e);
             // Close the status gauge: a failed pass never reaches the
             // loop's `Done` arm, the only place it goes idle.
             if let Some(hook) = &hook {
                 hook("idle");
             }
         }
-        // D13.2: the write-back is a field-split merge, not a clobber — a
-        // cycle that committed during the pass's LLM round-trip (the
-        // join timed out) keeps its chunks; the pass's observation
-        // fields win.
+        self.write_back_om(state);
+        // A pass that leaves the window at or past activation is a fact the
+        // harness has to be able to see afterwards (ADR-0034): it is the
+        // condition that ends in a provider cutoff.
+        self.record_om_stall();
+        Ok(())
+    }
+
+    /// D13.2: write a pass's state back — a field-split merge over the file's
+    /// record, so a cycle that committed during the pass's LLM round-trip (the
+    /// join timed out) keeps its chunks and the pass's observation fields win.
+    fn write_back_om(&self, mut state: crate::om_integration::OmState) {
         {
             let mut inner = self.inner.lock();
             match crate::om_integration::OmState::load_record(&mut inner.store) {
@@ -136,12 +202,43 @@ impl AgentSession {
                 }
             }
         }
-        // A pass that leaves the window at or past activation is a fact the
-        // harness has to be able to see afterwards (ADR-0034): it is the
-        // condition that ends in a provider cutoff.
-        self.record_om_stall();
-        Ok(())
     }
+
+    /// The `om_failed` record, through the state's latch-and-append (the one
+    /// implementation `Inner::record_om_failure` owns).
+    fn record_om_failure(&self, stage: OmStage, e: &OmError) {
+        self.inner.lock().record_om_failure(stage, e);
+    }
+}
+
+impl Inner {
+    /// The durable `om_failed` record of an exhausted OM round-trip (#338): the
+    /// stage that died and the failure that killed it, on the diagnostic
+    /// channel. Latched once per stage per run (the #306 rule): a dead
+    /// `om_model` route fails every pass, and a record per pass is spam that
+    /// buries the one fact. The background buffer cycle holds this state, not an
+    /// `AgentSession`, so the latch lives here and both sites share it.
+    pub(crate) fn record_om_failure(&mut self, stage: OmStage, e: &OmError) {
+        let stage = stage.as_str();
+        if self.om_failed_recorded.iter().any(|s| s == stage) {
+            return;
+        }
+        self.om_failed_recorded.push(stage.to_owned());
+        let outcome = self.record_diagnostic(&Diagnostic::OmFailed {
+            stage: stage.to_owned(),
+            reason: e.to_string(),
+        });
+        if let Err(e) = outcome {
+            // The record is the point of this call, so the failure to append is
+            // itself worth a line, and the latch clears so the next pass
+            // retries it (the `record_om_stall` trade).
+            self.om_failed_recorded.retain(|s| s != stage);
+            tracing::warn!("om: the om_failed record failed to append: {e}");
+        }
+    }
+}
+
+impl AgentSession {
     /// Record the stalled-window fact when a completed pass left the unobserved
     /// window at or past the activation threshold: OM runs but can no longer
     /// keep the prompt inside what it has observed (ADR-0034). Once per run —

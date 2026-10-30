@@ -442,8 +442,8 @@ async fn a_healthy_reopen_mints_nothing() {
     );
     assert_eq!(
         diagnostic_count(Path::new(&workspace.cwd), &session_id),
-        2,
-        "the reopen records the model it opens on, and that its facts leave no gate"
+        1,
+        "the reopen records the model it opens on; its facts are declared, so the gate is armed (#338)"
     );
     drop(core);
 }

@@ -113,6 +113,19 @@ fn om_config(
     }
 }
 
+/// The `om_failed` records the session file holds, in append order, by stage.
+fn om_failed_stages(entries: &[crate::session::Entry]) -> Vec<String> {
+    entries
+        .iter()
+        .filter(|e| e.kind == EntryKind::Diagnostic)
+        .filter_map(|e| Diagnostic::from_value(&e.payload))
+        .filter_map(|d| match d {
+            Diagnostic::OmFailed { stage, .. } => Some(stage),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Two tool rounds of known size: the turn `write`s a file, then `read`s
 /// it back (a 3200-char body is ~800 tool-result tokens).
 fn read_round(call_id: &str, body: &str) -> Vec<String> {
@@ -330,6 +343,69 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
             .iter()
             .all(|r| r.buffered_chunks.is_empty() && r.cursor.is_none()),
         "a failed cycle left a chunk: {om_records:?}"
+    );
+}
+
+/// Scope 4 (#338): the background cycle's exhausted retries are a durable
+/// `om_failed` naming the `buffer` stage, not a `warn!` line. This is
+/// `retries.buffer`'s most frequent consumer — the incident's dead `om_model`
+/// route failed here every interval with nothing in the record to show.
+#[tokio::test]
+async fn an_exhausted_buffer_cycle_records_om_failed_naming_the_buffer_stage() {
+    let title = "A".repeat(3200);
+    let om = crate::om_integration::OmState::from_config(
+        &om_config(1000, 10_000, 400, 200, 0, 1),
+        crate::om::OmRecord::default(),
+    );
+    let mut scripts = read_round("c1", &title);
+    scripts.push(crate::agent::testkit::sse("done", &[]));
+    let (p, _served, _seen) = scripted_om(
+        scripts,
+        "<observations>unreachable</observations>",
+        true,
+        50,
+    );
+    let rig = rig(om, p);
+    rig.run_turn("go").await;
+    Rig::settled_cleanly(&rig.events());
+
+    assert_eq!(
+        om_failed_stages(&rig.entries()),
+        vec!["buffer".to_owned()],
+        "exhaustion records the stage it died at, once (the #306 latch)"
+    );
+}
+
+/// The `om_failed` negative (#338): the same cycle, answering. Its chunk
+/// commits, so the stage that could have failed files no failure record.
+#[tokio::test]
+async fn a_buffer_cycle_that_commits_a_chunk_records_no_om_failed() {
+    let title = "A".repeat(3200);
+    let om = crate::om_integration::OmState::from_config(
+        &om_config(1000, 10_000, 400, 200, 0, 1),
+        crate::om::OmRecord::default(),
+    );
+    let mut scripts = read_round("c1", &title);
+    scripts.push(crate::agent::testkit::sse("done", &[]));
+    let (p, _served, _seen) =
+        scripted_om(scripts, "<observations>the work</observations>", false, 50);
+    let rig = rig(om, p);
+    rig.run_turn("go").await;
+    Rig::settled_cleanly(&rig.events());
+
+    // The cycle ran and committed, so the arm under test was reached and passed.
+    assert!(
+        rig.entries()
+            .iter()
+            .filter(|e| e.kind == EntryKind::Om)
+            .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
+            .any(|r| !r.buffered_chunks.is_empty()),
+        "the cycle committed no chunk"
+    );
+    assert_eq!(
+        om_failed_stages(&rig.entries()),
+        Vec::<String>::new(),
+        "a cycle that committed files no failure"
     );
 }
 

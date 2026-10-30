@@ -52,21 +52,15 @@ impl fmt::Display for ProviderError {
 impl std::error::Error for ProviderError {}
 
 impl ProviderError {
-    /// A 400 whose body carries a context-length signature (the #256
-    /// classifier): the over-window rejections the bounded retry recovers
-    /// from. Kept narrow — other 400s (auth, schema) are not over-window.
+    /// A 400 whose body names a context overflow (#256's classifier, broadened
+    /// to the gateway's shape in #338): the rejections the repriced retry
+    /// recovers from. Other 400s (auth, schema) are not over-window.
     #[must_use]
-    pub fn is_context_length_error(&self) -> bool {
+    pub fn is_context_overflow(&self) -> bool {
         let Self::Status { status, body } = self else {
             return false;
         };
-        if *status != 400 {
-            return false;
-        }
-        let lower = body.to_ascii_lowercase();
-        lower.contains("context length")
-            || lower.contains("too long")
-            || lower.contains("input_tokens")
+        overflow::is_overflow_body(*status, body)
     }
 }
 
@@ -514,14 +508,15 @@ pub fn fold_event(event: &TurnEvent, result: &mut TurnResult) {
 }
 
 mod canned;
+mod overflow;
 mod request;
 mod stream;
 mod usage;
 mod wire;
 pub use canned::*;
+pub use overflow::*;
 pub use request::*;
 pub use stream::*;
-
 #[cfg(test)]
 mod sse_properties;
 #[cfg(test)]

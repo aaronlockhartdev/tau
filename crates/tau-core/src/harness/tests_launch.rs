@@ -228,7 +228,7 @@ base_url = "http://127.0.0.1:9/v1"
 key_env = ""
 
 [providers.dev.models.model]
-
+context_window = 131072
 [gates]
 command = "false"
 max_retries = 1

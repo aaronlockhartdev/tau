@@ -17,7 +17,7 @@ struct Scripted400State {
 }
 
 impl Scripted400 {
-    fn new(calls: Vec<(u16, String)>) -> Self {
+    pub(crate) fn new(calls: Vec<(u16, String)>) -> Self {
         Self {
             state: std::sync::Arc::new(Scripted400State {
                 calls,
@@ -75,15 +75,30 @@ impl crate::provider::TurnProvider for Scripted400 {
     }
 }
 
-fn context_400_body() -> String {
+/// The #256 shape: an overflow that names no numbers, so the retry halves its
+/// own cap.
+fn context_400_body_blind() -> String {
+    "This model's maximum context length was exceeded.".to_owned()
+}
+
+/// The provider's numbers leave nothing: the prompt alone fills the window, so
+/// no cap saves the request.
+fn context_400_body_no_room() -> String {
     "This model's maximum context length is 262144 tokens. However, your prompt contains at least 262145 input tokens."
+        .to_owned()
+}
+
+fn context_400_body() -> String {
+    // The provider states both sides: 262144 − 250000 − 4096 leaves 8048 for an
+    // answer, so a repriced retry has room to carry.
+    "This model's maximum context length is 262144 tokens. However, your prompt contains at least 250000 input tokens."
         .to_owned()
 }
 
 fn over_budget_turn() -> TurnConfig {
     // budget = 20000 − 200 − 4096 = 15704.
     TurnConfig {
-        context_window: Some(20000),
+        context_window: 20_000,
         max_output_tokens: Some(200),
         ..Default::default()
     }
@@ -190,43 +205,80 @@ async fn under_budget_is_not_refused() {
     assert_eq!(provider.seen.lock().len(), 1);
 }
 
-/// #256: a provider context-length 400 is recoverable — one bounded retry
-/// at a halved `max_output_tokens` (the server computes the window
-/// remainder from it) succeeds, and no error is raised: the turn completed.
+/// #338: a provider context-length 400 that states its arithmetic is repriced
+/// from the provider's own numbers — the retry carries the room the window
+/// leaves, not a guessed half. The turn completes.
 #[tokio::test]
-async fn context_400_retries_once_with_halved_max_output() {
+async fn context_400_reprices_from_the_provider_numbers() {
     let dir = tempfile::tempdir().unwrap();
     let provider = std::sync::Arc::new(Scripted400::new(vec![(400, context_400_body())]));
-    let turn = TurnConfig {
-        max_output_tokens: Some(8000),
-        ..Default::default()
-    };
-    let agent = AgentSession::new(SessionParams {
-        store: session_in(dir.path()),
-        system_prompt: "be terse".into(),
-        model: "test-model".into(),
-        tools: tools::surface::bare_specs(),
-        cwd: dir.path().to_path_buf(),
-        provider: provider.clone(),
-        tool_batch_on_force: ToolBatchPolicy::Complete,
-        turn,
-        gates: None,
-        gate_failed: false,
-        hashline: crate::hashline::pin_store::GcPolicy::default(),
-        om: None,
-        om_model: String::new(),
-        subagents: None,
-        child: None,
-    });
+    let agent = omless_agent(
+        session_in(dir.path()),
+        provider.clone(),
+        TurnConfig {
+            max_output_tokens: Some(8000),
+            ..Default::default()
+        },
+        dir.path().to_path_buf(),
+    );
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
 
-    // The first call carried the full (window-clamped) cap; the retry the
-    // halved one.
+    // 262144 − 250000 − 4096 = 8048: the retry carries the provider's remainder.
+    let seen = provider.seen().lock();
+    assert_eq!(seen.len(), 2, "one bounded retry: {seen:?}");
+    assert_eq!(seen[0], Some(8000), "first call: the wished cap");
+    assert_eq!(seen[1], Some(8_048), "retry: the provider's room");
+}
+
+/// #256: an overflow that names no numbers falls back to the halved wish — the
+/// bounded retry the original ticket asked for, kept for that shape.
+#[tokio::test]
+async fn context_400_without_numbers_halves_the_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = std::sync::Arc::new(Scripted400::new(vec![(400, context_400_body_blind())]));
+    let agent = omless_agent(
+        session_in(dir.path()),
+        provider.clone(),
+        TurnConfig {
+            max_output_tokens: Some(8000),
+            ..Default::default()
+        },
+        dir.path().to_path_buf(),
+    );
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+
     let seen = provider.seen().lock();
     assert_eq!(seen.len(), 2, "one bounded retry: {seen:?}");
     assert_eq!(seen[0], Some(8000), "first call: full cap");
     assert_eq!(seen[1], Some(4000), "retry: halved");
+}
+
+/// #338: a 400 whose numbers say the prompt alone fills the window is not
+/// retried — no cap saves it. The refusal is the gate's, durable, and the
+/// second call never happens.
+#[tokio::test]
+async fn context_400_with_no_room_is_not_retried() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = std::sync::Arc::new(Scripted400::new(vec![(400, context_400_body_no_room())]));
+    let agent = omless_agent(
+        session_in(dir.path()),
+        provider.clone(),
+        TurnConfig {
+            max_output_tokens: Some(8000),
+            ..Default::default()
+        },
+        dir.path().to_path_buf(),
+    );
+    agent.send("go", Lane::FollowUp);
+
+    let err = agent.process().await.unwrap_err();
+    assert!(
+        matches!(&err, AgentError::ContextOverflow { .. }),
+        "no room means a refusal, not a retry: {err:?}"
+    );
+    assert_eq!(provider.seen().lock().len(), 1, "the retry is not sent");
 }
 
 /// #256: the retry is bounded — a second context 400 fails loudly (the
@@ -235,8 +287,8 @@ async fn context_400_retries_once_with_halved_max_output() {
 async fn context_400_fails_loudly_after_one_retry() {
     let dir = tempfile::tempdir().unwrap();
     let provider = std::sync::Arc::new(Scripted400::new(vec![
-        (400, context_400_body()),
-        (400, context_400_body()),
+        (400, context_400_body_blind()),
+        (400, context_400_body_blind()),
     ]));
     let agent = omless_agent(
         session_in(dir.path()),
@@ -259,7 +311,7 @@ async fn context_400_fails_loudly_after_one_retry() {
     let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
     reopened.open().unwrap();
     assert!(
-        recorded_400(&reopened, &context_400_body()),
+        recorded_400(&reopened, &context_400_body_blind()),
         "the 400 is recorded"
     );
 }
@@ -350,20 +402,39 @@ async fn a_huge_rejection_body_is_recorded_bounded() {
 #[test]
 fn the_gate_gap_names_what_the_gate_lacks() {
     let declared = |window, max_output| TurnConfig {
-        context_window: Some(window),
+        context_window: window,
         max_output_tokens: Some(max_output),
         ..Default::default()
     };
+    // A hand-built turn with no config behind it carries the zero window, the
+    // only way a gap is reachable now (#338: config requires a window, and a
+    // default turn gates).
+    let unconfigured = TurnConfig {
+        context_window: 0,
+        max_output_tokens: None,
+        ..Default::default()
+    };
     assert_eq!(
-        TurnConfig::default().context_gate(),
+        unconfigured.context_gate(),
         ContextGate::Missing {
             reasons: ["context_window".to_owned(), "max_tokens".to_owned()].into()
         },
-        "an undeclared model names both facts"
+        "a turn with no config behind it names both facts"
+    );
+    assert_eq!(
+        TurnConfig::default().context_gate(),
+        ContextGate::Ready {
+            window: crate::config::Provider::DEFAULT_WINDOW,
+            cap: u64::from(crate::config::Provider::DEFAULT_MAX_OUTPUT),
+        },
+        "the default turn gates: #338 removed the unbounded prompt"
     );
     assert_eq!(
         declared(20_000, 200).context_gate(),
-        ContextGate::Ready { budget: 15_704 },
+        ContextGate::Ready {
+            window: 20_000,
+            cap: 200,
+        },
         "a computable budget is no gap"
     );
     assert_eq!(
@@ -375,6 +446,7 @@ fn the_gate_gap_names_what_the_gate_lacks() {
     );
     assert_eq!(
         TurnConfig {
+            context_window: 0,
             max_output_tokens: Some(200),
             ..Default::default()
         }
@@ -390,6 +462,20 @@ fn the_gate_gap_names_what_the_gate_lacks() {
         None,
         "no gate means no budget to enforce"
     );
+    // The cap is derived from the prompt by the same arithmetic the gate's
+    // clamp applies, and a prompt that eats the window leaves no cap: the gate
+    // refuses rather than send a doomed request.
+    let gate = declared(20_000, 8_000).context_gate();
+    let ContextGate::Ready { window, cap } = gate else {
+        panic!("a declared window and cap arm the gate");
+    };
+    assert_eq!(clamp_max_output(cap, window, 10_000), 5_904);
+    assert_eq!(
+        clamp_max_output(cap, window, 20_000),
+        0,
+        "a prompt that fills the window leaves no room to answer"
+    );
+    assert_eq!(unconfigured.context_gate().budget(), None);
 }
 
 /// A transport failure is the turn's error to surface, not a fact the provider
@@ -420,5 +506,61 @@ async fn a_dead_stream_files_no_record() {
             .all(|e| e.kind != EntryKind::Diagnostic),
         "a dead stream is not a record: {:?}",
         entries_of(&reopened)
+    );
+}
+
+/// Scope 1 (#338) at turn level: the `Missing` gate is a refusal, never an
+/// unbounded prompt. `max_tokens == context_window` leaves `8192 − 8192 − 4096`
+/// with no room, so the turn refuses before the wire and files the durable
+/// `gate_unavailable` naming the gap. The predicate's own test proves the gate;
+/// this proves the wire stays untouched.
+#[tokio::test]
+async fn a_gate_with_no_room_refuses_the_turn_and_calls_no_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = std::sync::Arc::new(ScriptedProvider::new(vec![sse("ok", &[])]));
+    let agent = omless_agent(
+        session_in(dir.path()),
+        provider.clone(),
+        TurnConfig {
+            context_window: 8_192,
+            max_output_tokens: Some(8_192),
+            ..Default::default()
+        },
+        dir.path().to_path_buf(),
+    );
+    // Small on purpose: the refusal is the gate's facts, not the prompt's size.
+    agent.send("go", Lane::FollowUp);
+
+    let err = agent.process().await.unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            AgentError::GateUnavailable { reasons, .. } if reasons == &["context_room".to_owned()]
+        ),
+        "expected the gate's refusal, got {err:?}"
+    );
+    assert!(
+        provider.seen.lock().is_empty(),
+        "a refusal sends nothing: {} calls",
+        provider.seen.lock().len()
+    );
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    let recorded = entries_of(&reopened);
+    let records: Vec<&serde_json::Value> = recorded
+        .iter()
+        .filter(|e| e.kind == EntryKind::Diagnostic && e.payload["code"] == "gate_unavailable")
+        .map(|e| &e.payload)
+        .collect();
+    assert_eq!(
+        records.len(),
+        1,
+        "the refusal is durable, once: {records:?}"
+    );
+    assert_eq!(
+        records[0]["missing"],
+        serde_json::json!(["context_room"]),
+        "the record names the gap: {}",
+        records[0]
     );
 }

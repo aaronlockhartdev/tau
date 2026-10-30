@@ -102,40 +102,19 @@ impl AgentSession {
             let mut assembled = self.assemble(plan_state.as_deref())?;
             let tools_json = tool_fingerprint(&tools);
             let mut prompt = prompt_size(anchor.as_ref(), &assembled, &tools_json);
-            // The context gate (ticket #210, spec §4): when the assembled
-            // prompt would exceed the safe budget and there is unobserved
-            // material to compact, run the OM pass now so the call fits.
-            let budget = turn.context_gate().budget();
-            if let Some(budget) = budget
-                && prompt > budget
-            {
-                if self.om_pending_tokens() > 0 {
-                    self.om_turn_end().await?;
-                    // The compaction replaced the prefix an anchored count
-                    // would describe, so this call is priced whole.
-                    // A mid-turn compaction is a re-injection point (design).
-                    plan_state = self.plan_state();
-                    assembled = self.assemble(plan_state.as_deref())?;
-                    prompt = prompt_size(None, &assembled, &tools_json);
-                    if prompt > budget {
-                        tracing::warn!(
-                            prompt,
-                            budget,
-                            "context gate: prompt still over budget after OM pass"
-                        );
-                    }
-                } else {
-                    // The gate's blind spot (#255): over budget with no
-                    // unobserved material to compact. Refuse loudly before
-                    // the wire instead of sending a doomed 400, and leave a
-                    // durable trace of the refusal.
-                    self.diagnostic(&Diagnostic::ContextOverflow {
-                        prompt: u64::from(prompt),
-                        budget: u64::from(budget),
-                    })?;
-                    return Err(AgentError::ContextOverflow { prompt, budget });
-                }
-            }
+            // The context gate (spec §4, #338): never skipped, never unbounded.
+            // A gate with no computable budget refuses before the wire, an
+            // over-budget prompt climbs the compaction ladder, and the cap the
+            // request carries is the one the window derives from that prompt.
+            let cap = self
+                .gate_cap(
+                    &turn.context_gate(),
+                    &mut assembled,
+                    &mut prompt,
+                    &mut plan_state,
+                    &tools_json,
+                )
+                .await?;
             // The user-query invariant (#334): the request must answer a query.
             // A chat template that finds no `role: user` item once the
             // observations (system) and tool calls are pruned raises "No user
@@ -154,9 +133,8 @@ impl AgentSession {
                 &tools,
                 &turn,
                 prompt,
-                None,
+                Some(cap),
             );
-
             // A force has already killed the stream it targeted; every
             // fresh call starts un-killed (spec §7).
             self.kill.store(false, Ordering::SeqCst);
@@ -350,11 +328,15 @@ impl AgentSession {
         request
     }
 
-    /// A provider rejection at call time: a context-length 400 gets one
-    /// bounded retry at a halved `max_output_tokens` (#256) — the server
-    /// computes the window remainder from that cap. Anything else (and a
-    /// second context 400) is recorded as a `provider_rejected` record with the
-    /// provider's status and body, then propagates.
+    /// A provider rejection at call time: an over-window 400 gets one bounded
+    /// retry (#256, repriced by the provider's own arithmetic in #338). The
+    /// gateway shape names both numbers — `prompt (205014) … in the context
+    /// (204800)` — so the retry carries the cap the provider's arithmetic
+    /// leaves (`window − prompt − margin`) instead of a blind halving. Where
+    /// that room is zero the provider has measured the prompt past the window:
+    /// no cap saves the request, and the gate refuses rather than send a
+    /// second doomed 400. Anything else (and a second over-window 400) is
+    /// recorded as `provider_rejected` and propagates.
     #[allow(clippy::too_many_arguments)] // the turn's parts, threaded once
     async fn recover_from_provider_error(
         &self,
@@ -367,18 +349,38 @@ impl AgentSession {
         prompt: u32,
     ) -> Result<TurnResult, AgentError> {
         let mut fatal = e;
-        if let Some(cap) = turn.max_output_tokens
-            && fatal.is_context_length_error()
-        {
-            // One bounded retry (no loop) at a halved cap, floored so the
-            // recovery never degrades to a degenerate window.
-            let retry = (cap / 2).max(256);
-            let request =
-                self.build_request(system_prompt, input, tools, turn, prompt, Some(retry));
-            match self.provider.call(&request, sink).await {
-                Ok(result) => return Ok(result),
-                Err(retry_err) => fatal = retry_err,
+        if !fatal.is_context_overflow() {
+            self.record_rejection(&fatal)?;
+            return Err(AgentError::Provider(fatal));
+        }
+        // The cap the retry carries: the provider's arithmetic when it stated
+        // one, the halved wish when it did not (the #256 shape).
+        let retry = match (fatal.context_report(), turn.max_output_tokens) {
+            (Some(report), _) => report.room(),
+            (None, Some(cap)) => (cap / 2).max(256),
+            (None, None) => {
+                self.record_rejection(&fatal)?;
+                return Err(AgentError::Provider(fatal));
             }
+        };
+        if retry == 0 {
+            // The provider's numbers say the prompt alone fills the window:
+            // the request is unsendable, and the refusal is the gate's fact.
+            // The armed gate's budget is the one the record names; a turn
+            // that reached the wire has one (a `Missing` gate refuses
+            // pre-wire), so the `Missing` arm's 0 is the gate's own answer of
+            // "no budget", never a stand-in for a real one.
+            let budget = turn.context_gate().budget().unwrap_or(0);
+            self.diagnostic(&Diagnostic::ContextOverflow {
+                prompt: u64::from(prompt),
+                budget: u64::from(budget),
+            })?;
+            return Err(AgentError::ContextOverflow { prompt, budget });
+        }
+        let request = self.build_request(system_prompt, input, tools, turn, prompt, Some(retry));
+        match self.provider.call(&request, sink).await {
+            Ok(result) => return Ok(result),
+            Err(retry_err) => fatal = retry_err,
         }
         self.record_rejection(&fatal)?;
         Err(AgentError::Provider(fatal))
@@ -598,6 +600,7 @@ fn settled_blocks(result: &TurnResult) -> u64 {
 
 mod assemble;
 mod estimate;
+mod gate;
 mod om_pass;
 mod sink;
 mod tools;

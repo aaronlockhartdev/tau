@@ -148,14 +148,27 @@ fn request_wire_shape_omits_unset_options() {
 
 #[test]
 fn clamp_respects_the_declared_window_and_prompt() {
-    // Cap below the window's remainder: untouched.
-    assert_eq!(clamp_max_output(8192, Some(32768), 1000), 8192);
-    // Cap above the window: clamped to it.
-    assert_eq!(clamp_max_output(8192, Some(9000), 1000), 8000);
-    // No declared window: untouched.
-    assert_eq!(clamp_max_output(8192, None, 1000), 8192);
-    // Prompt fills the window: untouched (the server rejects).
-    assert_eq!(clamp_max_output(8192, Some(500), 1000), 8192);
+    // Cap below the room the window leaves: untouched.
+    assert_eq!(clamp_max_output(8192, 32768, 1000), 8192);
+    // Cap above the room: clamped to `window − prompt − margin` (#338).
+    assert_eq!(clamp_max_output(8192, 13_000, 1000), 7904);
+    // Prompt fills the window: zero, not the wish — the gate refuses a cap of 0
+    // rather than send a request with no room to answer (#338).
+    assert_eq!(clamp_max_output(8192, 500, 1000), 0);
+    // The undeclared-window sentinel reaches the clamp only from a turn built
+    // with no config behind it; it leaves no room either.
+    assert_eq!(clamp_max_output(8192, 0, 1000), 0);
+}
+
+#[test]
+fn the_gate_budget_is_the_clamp_of_the_prompt_side() {
+    // `prompt <= budget` is the same predicate as the clamp's
+    // `prompt + cap + margin <= window` (#338): the pair is one formula.
+    assert_eq!(prompt_budget(20_000, 200), 15_704);
+    assert_eq!(clamp_max_output(200, 20_000, 15_704), 200);
+    // A window that leaves no room once the cap and the margin are taken
+    // budgets nothing.
+    assert_eq!(prompt_budget(8_192, 8_192), 0);
 }
 
 #[test]

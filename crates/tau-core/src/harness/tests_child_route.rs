@@ -17,11 +17,18 @@ const CONFIG: &str = r#"
 base_url = "canned://text"
 
 [providers.aaa.models.text-model]
+context_window = 32768
 
 [providers.zzz]
 base_url = "canned://reasoning"
 
 [providers.zzz.models.reasoning-model]
+context_window = 32768
+
+# The key the unroutable id `nosuch/model` resolves to inside the parent's
+# provider: #338 requires a declared window for a gated turn.
+[providers.zzz.models.model]
+context_window = 32768
 
 [generation]
 default_model = "zzz/reasoning-model"

@@ -187,6 +187,26 @@ impl OmState {
             with_store(&mut |store| self.promote(store).map(|_| ()))?;
         }
         let mut action = self.plan(&unobserved);
+        self.run_actions(with_store, provider, model, hook, &mut action)
+            .await
+    }
+
+    /// The observe/reflect round-trips for one action, run to `Done`: the
+    /// turn-end sequence calls this after `plan`; the context gate calls it
+    /// with its own action, driving the ladder's rungs without a plan (#338).
+    /// Each pass reports its activity on the status gauge, the way the
+    /// turn-end sequence does.
+    pub(crate) async fn run_actions<W>(
+        &mut self,
+        with_store: &mut W,
+        provider: &TurnProviderRef,
+        model: &str,
+        hook: Option<&crate::agent::OmStatusHook>,
+        action: &mut TurnEndAction,
+    ) -> Result<(), OmError>
+    where
+        W: FnMut(&mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>) -> Result<(), OmError>,
+    {
         loop {
             // The activity the status bar's gauge shows while this run is in
             // flight; `Done` closes the run (the hook is the app's om_status
@@ -201,24 +221,28 @@ impl OmState {
             }
             let result = match &action {
                 TurnEndAction::Done => break,
-                TurnEndAction::Observe { transcript } | TurnEndAction::Buffer { transcript } => {
-                    let system = om::observer_system_prompt();
-                    let request = ResponseRequest::new(
-                        model.to_owned(),
-                        Some(system.as_str()),
-                        vec![InputEntry::Message(InputMessage {
-                            role: "user".into(),
-                            content: transcript.clone(),
-                        })],
-                    );
-                    // Per-trigger-point retry counts (ticket #86): observe
-                    // and buffer have separate knobs.
-                    let (label, retries) = if matches!(action, TurnEndAction::Observe { .. }) {
-                        ("observe", self.config.retries.observe)
-                    } else {
-                        ("buffer", self.config.retries.buffer)
-                    };
-                    super::retry::call_with_retry(provider, &request, label, retries).await?
+                // The Observer's call at two trigger points, each with its own
+                // retry knob (ticket #86); the stage is what names a failure's
+                // place in the `om_failed` record (#338).
+                TurnEndAction::Observe { transcript } => {
+                    let request = Self::observer_request(model, transcript);
+                    super::retry::call_with_retry(
+                        provider,
+                        &request,
+                        super::OmStage::Observe,
+                        self.config.retries.observe,
+                    )
+                    .await?
+                }
+                TurnEndAction::Buffer { transcript } => {
+                    let request = Self::observer_request(model, transcript);
+                    super::retry::call_with_retry(
+                        provider,
+                        &request,
+                        super::OmStage::Buffer,
+                        self.config.retries.buffer,
+                    )
+                    .await?
                 }
                 TurnEndAction::Reflect { level } => {
                     let prompt = self.reflector_prompt(*level);
@@ -234,16 +258,56 @@ impl OmState {
                     super::retry::call_with_retry(
                         provider,
                         &request,
-                        "reflect",
+                        super::OmStage::Reflect,
                         self.config.retries.reflect,
                     )
                     .await?
                 }
             };
             model.clone_into(&mut self.record.om_model);
-            with_store(&mut |store| self.commit(store, &mut action, &result))?;
+            with_store(&mut |store| self.commit(store, action, &result))?;
         }
         Ok(())
+    }
+
+    /// The Observer's request for a transcript: the observer system prompt and
+    /// the transcript as its one user item.
+    fn observer_request(model: &str, transcript: &str) -> ResponseRequest {
+        ResponseRequest::new(
+            model.to_owned(),
+            Some(om::observer_system_prompt().as_str()),
+            vec![InputEntry::Message(InputMessage {
+                role: "user".into(),
+                content: transcript.to_owned(),
+            })],
+        )
+    }
+
+    /// The gate's overflow rung (#338): re-compact the managed suffix at each
+    /// escalating reflect level, then demote the frozen prefix. The turn-end
+    /// pass reaches the demotion only at `reflect_threshold`; the gate applies
+    /// it because the prompt — not the threshold — is over budget. `with_store`
+    /// is the caller's re-lock, as in `settle_turn`.
+    pub(crate) async fn overflow_compact<W>(
+        &mut self,
+        with_store: &mut W,
+        provider: &TurnProviderRef,
+        model: &str,
+        hook: Option<&crate::agent::OmStatusHook>,
+    ) -> Result<(), OmError>
+    where
+        W: FnMut(&mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>) -> Result<(), OmError>,
+    {
+        // The reflect levels escalate the compression asked for (spec §4);
+        // `commit` advances the level while a rewrite is refused and lands at
+        // `Done` when one is applied or the levels run out.
+        let mut action = TurnEndAction::Reflect { level: 0 };
+        self.run_actions(with_store, provider, model, hook, &mut action)
+            .await?;
+        // The prefix is the log's oldest material, so it leaves last; recall
+        // still reaches it (spec §4's overflow ladder).
+        self.record.prefix_demoted = true;
+        with_store(&mut |store| self.save(store).map_err(OmError::from))
     }
 
     /// The turn-end decision (pure over the record — `settle_turn` feeds it

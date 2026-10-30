@@ -464,8 +464,31 @@ describe('a diagnostic entry (ADR-0034)', () => {
       .toBe('provider cut the turn (stream ended early) after 2 block(s)');
     expect(line({ code: 'om_stalled', pending: 24000, activation: 24000 }))
       .toBe('compaction stalled: 24.0k pending at activation 24.0k');
+    // #338: an OM pass that exhausts its retries records the stage it died at,
+    // so the card names the trigger point of a dead om_model route.
+    expect(line({ code: 'om_failed', stage: 'observe', reason: 'provider: provider returned 404: no model named dev/x (observe)' }))
+      .toBe('compaction observe pass failed: provider: provider returned 404: no model named dev/x (observe)');
+    // A provider body is multi-line; the card is one line.
+    expect(line({ code: 'om_failed', stage: 'reflect', reason: 'provider: provider returned 500: boom\nstack trace' }))
+      .toBe('compaction reflect pass failed: provider: provider returned 500: boom');
     expect(line({ code: 'missing_user_query', items: 2 }))
       .toBe('refused: assembled input has no user query (2 item(s))');
+  });
+
+  // `session` is not a pass: it is the record-store write a compaction needs,
+  // so a card for it names the store, never a pass that did not run (#338).
+  it('names a store failure as a store failure', () => {
+    expect(line({ code: 'om_failed', stage: 'session', reason: 'io: disk write failed (session)' }))
+      .toBe('compaction: the record store write failed: io: disk write failed (session)');
+  });
+
+  // The pass wording is the stage's name in the pass shape, and a stage this
+  // build does not know renders that way too.
+  it('names a pass by its stage, known or not', () => {
+    expect(line({ code: 'om_failed', stage: 'buffer', reason: 'provider: provider returned 502: bad gateway (buffer)' }))
+      .toBe('compaction buffer pass failed: provider: provider returned 502: bad gateway (buffer)');
+    expect(line({ code: 'om_failed', stage: 'reflect-more', reason: 'provider: connection reset (reflect-more)' }))
+      .toBe('compaction reflect-more pass failed: provider: connection reset (reflect-more)');
   });
 
   // A windowed transcript holds snapshot metadata until a paged read hydrates

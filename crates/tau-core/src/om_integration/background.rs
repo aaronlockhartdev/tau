@@ -87,17 +87,26 @@ pub(crate) async fn buffer_cycle(
             content: super::transcript(&candidates),
         })],
     );
-    let result =
-        match super::retry::call_with_retry(&provider, &request, "buffer", config.retries.buffer)
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                tracing::warn!("om: buffer cycle abandoned after retries: {e}");
-                clear_inflight(&inner);
-                return;
-            }
-        };
+    let result = match super::retry::call_with_retry(
+        &provider,
+        &request,
+        super::OmStage::Buffer,
+        config.retries.buffer,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            // Exhaustion is a fact the record keeps, not a line the log forgets
+            // (scope 4): this is `retries.buffer`'s most frequent consumer, so
+            // the incident's dead `om_model` route failed here every interval
+            // with nothing to show. The stage is the one the retry loop ran
+            // under; the #306 latch keeps it to one record.
+            inner.lock().record_om_failure(super::OmStage::Buffer, &e);
+            clear_inflight(&inner);
+            return;
+        }
+    };
     let parsed = parse_observer_output(&result.text);
     if parsed.degenerate {
         clear_inflight(&inner);

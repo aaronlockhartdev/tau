@@ -32,7 +32,7 @@ fn gated_agent(dir: &std::path::Path, provider: Arc<ScriptedProvider>) -> Arc<Ag
             tools: crate::tools::surface::bare_specs(),
             cwd: dir.to_path_buf(),
             turn: TurnConfig {
-                context_window: Some(12_000),
+                context_window: 12_000,
                 max_output_tokens: Some(500),
                 ..Default::default()
             },

@@ -1,5 +1,5 @@
 use super::{
-    AgentError, AgentSession, OmStatusHook, PlanStateHook, QueueEventHook, StreamDeltaHook,
+    AgentError, AgentSession, Inner, OmStatusHook, PlanStateHook, QueueEventHook, StreamDeltaHook,
     TurnConfig,
 };
 use crate::provider::ToolSpec;
@@ -95,19 +95,41 @@ impl AgentSession {
         self.append(kind, payload)
     }
     /// Record a diagnostic fact about this session (ADR-0034). This is the
-    /// only writer of the channel: the entry is the durable record the GUI,
-    /// a closed session, and a restarted harness all read, and the log line
-    /// beside it is a mirror, never the source.
+    /// only writer of the channel — the `Inner` implementation every record
+    /// site shares: the entry is the durable record the GUI, a closed session,
+    /// and a restarted harness all read, and the log line beside it is a
+    /// mirror, never the source.
     pub(crate) fn diagnostic(&self, fact: &Diagnostic) -> Result<(), AgentError> {
+        self.inner.lock().record_diagnostic(fact)
+    }
+}
+
+impl Inner {
+    /// The one writer of the diagnostic channel (ADR-0034): the log line beside
+    /// the record is the mirror, the entry is the source. Every site — the gate
+    /// refusals, the OM failures, the sub-agent lifecycle — lands here, so the
+    /// channel has one shape and a record cannot be written without its line.
+    pub(crate) fn record_diagnostic(&mut self, fact: &Diagnostic) -> Result<(), AgentError> {
         match fact {
             Diagnostic::ModelChanged { .. } => {
                 tracing::info!(code = fact.code(), "session diagnostic");
             }
             other => tracing::warn!(code = other.code(), "session diagnostic"),
         }
-        self.append_entry(EntryKind::Diagnostic, fact.to_value())
+        // The active leaf is the parent, as `AgentSession::append` resolves it:
+        // the record joins the branch the session is on.
+        let parent = match self.store.leaf() {
+            Ok(leaf) => leaf.map(|e| e.id),
+            Err(e) => return Err(AgentError::Session(e)),
+        };
+        self.store
+            .append(EntryKind::Diagnostic, fact.to_value(), parent.as_deref())
+            .map(|_| ())
+            .map_err(AgentError::Session)
     }
+}
 
+impl AgentSession {
     pub(crate) fn model(&self) -> String {
         self.inner.lock().model.clone()
     }

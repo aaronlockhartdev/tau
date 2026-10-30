@@ -20,12 +20,13 @@ const CONFIG: &str = r#"
 base_url = "canned://text"
 
 [providers.aaa.models.text-model]
+context_window = 32768
 
 [providers.zzz]
 base_url = "canned://reasoning"
 
 [providers.zzz.models.reasoning-model]
-
+context_window = 32768
 [generation]
 default_model = "aaa/text-model"
 "#;

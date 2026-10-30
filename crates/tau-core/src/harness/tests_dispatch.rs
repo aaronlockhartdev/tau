@@ -157,7 +157,7 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
     std::fs::create_dir_all(tmp.path().join(".tau")).unwrap();
     std::fs::write(
             tmp.path().join(".tau").join("config.toml"),
-            "[providers.dev]\nbase_url = \"http://project:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"proj-model\"]\n",
+            "[providers.dev]\nbase_url = \"http://project:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"proj-model\"]\ncontext_window = 32768\n",
         )
         .unwrap();
     let core = CoreBuilder::custom(providers()).build().unwrap();
@@ -192,7 +192,7 @@ async fn an_explicit_provider_survives_the_workspace_file_layer() {
     std::fs::create_dir_all(ws.path().join(".tau")).unwrap();
     std::fs::write(
         ws.path().join(".tau").join("config.toml"),
-        "[providers.dev]\nbase_url = \"http://file:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"file-model\"]\n",
+        "[providers.dev]\nbase_url = \"http://file:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"file-model\"]\ncontext_window = 32768\n",
     )
     .unwrap();
     let core = CoreBuilder::default_system()
@@ -227,7 +227,7 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
     // The system layer carries a provider the project layer does not know.
     std::fs::write(
         sys.path().join("config.toml"),
-        "[providers.sys]\nbase_url = \"http://system:1/v1\"\nkey_env = \"\"\n\n[providers.sys.models.\"sys-model\"]\n",
+        "[providers.sys]\nbase_url = \"http://system:1/v1\"\nkey_env = \"\"\n\n[providers.sys.models.\"sys-model\"]\ncontext_window = 32768\n",
     )
     .unwrap();
     // The project layer adds its own; the merged config is the system layer
@@ -235,7 +235,7 @@ async fn a_project_layer_provider_reaches_a_session_on_the_production_path() {
     std::fs::create_dir_all(ws.path().join(".tau")).unwrap();
     std::fs::write(
         ws.path().join(".tau").join("config.toml"),
-        "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-model\"]\n",
+        "[providers.proj]\nbase_url = \"http://project:2/v1\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-model\"]\ncontext_window = 32768\n",
     )
     .unwrap();
     let core = CoreBuilder::default_system()
@@ -269,7 +269,7 @@ async fn a_production_send_makes_exactly_one_provider_call() {
     let ws = tempfile::tempdir().unwrap();
     std::fs::write(
         sys.path().join("config.toml"),
-        "[providers.canned]\nbase_url = \"canned://text\"\n\n[providers.canned.models.\"canned-model\"]\n",
+        "[providers.canned]\nbase_url = \"canned://text\"\n\n[providers.canned.models.\"canned-model\"]\ncontext_window = 32768\n",
     )
     .unwrap();
     let core = CoreBuilder::default_system()

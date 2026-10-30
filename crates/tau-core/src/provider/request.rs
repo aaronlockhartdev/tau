@@ -431,15 +431,33 @@ fn item_token_estimate(item: &InputEntry) -> u32 {
     }
 }
 
-/// The output cap clamped to a model's declared context window
-/// (`context_window` − prompt; spec §12, #35). A prompt that already fills
-/// the window — or an undeclared window — leaves the cap to the server's
-/// own rejection.
-pub(crate) fn clamp_max_output(max: u64, context_window: Option<u32>, prompt_tokens: u32) -> u64 {
-    match context_window {
-        Some(window) if u64::from(window) > u64::from(prompt_tokens) => {
-            max.min(u64::from(window) - u64::from(prompt_tokens))
-        }
-        _ => max,
-    }
+/// The framing margin the context gate keeps against the model's declared
+/// window (spec §4, #338): the system prompt, the tool schemas, the request
+/// envelope — the part of a request the prompt estimate prices loosely. One
+/// constant for the gate's budget and the clamp's cap, so the pair is one
+/// formula and cannot drift apart.
+pub(crate) const CONTEXT_GATE_MARGIN: u32 = 4096;
+
+/// The output cap a request may carry (#338): the user's wish clamped to the
+/// room the declared window leaves after the prompt and the framing margin.
+/// `prompt + cap + CONTEXT_GATE_MARGIN <= window` holds of the result, which
+/// is the invariant the gate asserts on the built request. Zero means the
+/// window leaves no room for an answer — a model with a window is never
+/// allowed to answer 0 tokens, so the gate refuses rather than sends.
+pub(crate) fn clamp_max_output(max: u64, context_window: u32, prompt_tokens: u32) -> u64 {
+    let room = u64::from(context_window)
+        .saturating_sub(u64::from(prompt_tokens).saturating_add(u64::from(CONTEXT_GATE_MARGIN)));
+    max.min(room)
+}
+
+/// The gate's prompt budget for a cap: the window less the cap and the margin.
+/// `prompt <= budget` is the same predicate as `prompt + cap + margin <=
+/// window`, which is why the gate and the clamp price one quantity (#338).
+#[must_use]
+pub(crate) fn prompt_budget(window: u32, cap: u64) -> u32 {
+    u64::from(window)
+        .saturating_sub(cap)
+        .saturating_sub(u64::from(CONTEXT_GATE_MARGIN))
+        .try_into()
+        .unwrap_or(u32::MAX)
 }

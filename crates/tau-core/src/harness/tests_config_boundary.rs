@@ -22,6 +22,7 @@ max_tokens = 8192
 base_url = "http://127.0.0.1:9/v1"
 
 [providers.local.models.llama3]
+context_window = 32768
 "#;
 
 /// The two-provider fixture (#337 × #336): `zzz` declares its model's facts,
@@ -183,9 +184,10 @@ async fn a_live_session_re_derives_its_turn_from_the_edited_config() {
         provider::canned("data: [DONE]\n\n"),
         TurnConfig::default(),
     );
-    assert!(
-        !live.agent.current_turn().context_gate().is_ready(),
-        "the boot config declares no facts, so the gate is missing"
+    assert_eq!(
+        live.agent.current_turn().max_output_tokens,
+        Some(u64::from(crate::config::Provider::DEFAULT_MAX_OUTPUT)),
+        "the boot config's model carries the declared defaults (#338), so the edit's facts are distinguishable"
     );
     // The cache holds the pre-edit rows (the menu's open read): the watcher's
     // edge compares against them.
