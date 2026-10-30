@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use rand::RngExt;
 
-use crate::om_integration::{NoopSink, OmError};
+use crate::om_integration::{NoopSink, OmError, OmStage};
 use crate::provider::{ProviderError, ResponseRequest, TurnProviderRef, TurnResult};
 
 /// The transient class (mastra §6.2, adapted to [`ProviderError`]):
@@ -17,12 +17,12 @@ use crate::provider::{ProviderError, ResponseRequest, TurnProviderRef, TurnResul
 #[must_use]
 pub fn is_transient(e: &OmError) -> bool {
     match e {
-        OmError::Provider(ProviderError::Request(e)) => e.is_connect() || e.is_timeout(),
-        OmError::Provider(ProviderError::IdleTimeout) => true,
-        OmError::Provider(ProviderError::Status { status, .. }) => {
+        OmError::Provider(_, ProviderError::Request(e)) => e.is_connect() || e.is_timeout(),
+        OmError::Provider(_, ProviderError::IdleTimeout) => true,
+        OmError::Provider(_, ProviderError::Status { status, .. }) => {
             (500..=599).contains(status) || matches!(status, 408 | 425 | 429)
         }
-        OmError::Provider(ProviderError::MalformedStream(_)) | OmError::Session(_) => false,
+        OmError::Provider(_, ProviderError::MalformedStream(_)) | OmError::Session(_) => false,
     }
 }
 
@@ -34,15 +34,16 @@ pub fn is_transient(e: &OmError) -> bool {
 pub async fn call_with_retry(
     provider: &TurnProviderRef,
     request: &ResponseRequest,
-    label: &'static str,
+    stage: OmStage,
     retries: u32,
 ) -> Result<TurnResult, OmError> {
     let mut n = 0u32;
-    // The label rides the wire log's request line (the #98 debug view): an OM
+    // The stage rides the wire log's request line (the #98 debug view): an OM
     // round-trip logs as `observe`/`buffer`/`reflect`, a main turn as
     // unlabeled. Debug-only — the `clone` is the cost, so it's skipped
     // wherever `debug!` is compiled out (a release build sets
     // `release_max_level_error`).
+    let label = stage.as_str();
     let labeled_clone = if tracing::level_enabled!(tracing::Level::DEBUG) {
         Some(request.clone().with_wire_label(label))
     } else {
@@ -54,7 +55,7 @@ pub async fn call_with_retry(
         match provider
             .call(labeled, &mut sink)
             .await
-            .map_err(OmError::Provider)
+            .map_err(|e| OmError::Provider(stage, e))
         {
             Ok(result) => return Ok(result),
             Err(e) if n < retries && is_transient(&e) => {
@@ -62,7 +63,9 @@ pub async fn call_with_retry(
                 let base = (1u32 << (n - 1).min(7)).min(120);
                 let jitter = rand::rng().random::<f64>();
                 let delay = Duration::from_secs_f64(f64::from(base) * (0.8 + 0.4 * jitter));
-                tracing::debug!(
+                // Every retry is visible: the pass is late by the backoff, and
+                // a `debug!` line hid a dead OM route for a whole incident (#338).
+                tracing::warn!(
                     "om {label}: transient failure ({e}); retry {n}/{retries} in {delay:?}"
                 );
                 tokio::time::sleep(delay).await;
@@ -81,10 +84,13 @@ mod tests {
     use crate::provider::{ProviderTurn, TurnProvider, TurnSink};
 
     fn status(code: u16) -> OmError {
-        OmError::Provider(ProviderError::Status {
-            status: code,
-            body: String::new(),
-        })
+        OmError::Provider(
+            OmStage::Observe,
+            ProviderError::Status {
+                status: code,
+                body: String::new(),
+            },
+        )
     }
 
     /// Serves `Ok` after `total_fails` scripted failures; `calls` counts
@@ -129,7 +135,10 @@ mod tests {
 
     #[test]
     fn transient_classification() {
-        assert!(is_transient(&OmError::Provider(ProviderError::IdleTimeout)));
+        assert!(is_transient(&OmError::Provider(
+            OmStage::Observe,
+            ProviderError::IdleTimeout
+        )));
         for code in [408u16, 425, 429, 500, 503, 599] {
             assert!(is_transient(&status(code)), "{code} is transient");
         }
@@ -137,6 +146,7 @@ mod tests {
             assert!(!is_transient(&status(code)), "{code} is permanent");
         }
         assert!(!is_transient(&OmError::Provider(
+            OmStage::Observe,
             ProviderError::MalformedStream("x".into())
         )));
     }
@@ -152,7 +162,7 @@ mod tests {
         let out = call_with_retry(
             &dyn_p,
             &ResponseRequest::new("m".to_string(), None, vec![]),
-            "test",
+            OmStage::Observe,
             3,
         )
         .await;
@@ -171,13 +181,16 @@ mod tests {
         let out = call_with_retry(
             &dyn_p,
             &ResponseRequest::new("m".to_string(), None, vec![]),
-            "test",
+            OmStage::Reflect,
             2,
         )
         .await;
         assert!(matches!(
             out,
-            Err(OmError::Provider(ProviderError::IdleTimeout))
+            Err(OmError::Provider(
+                OmStage::Reflect,
+                ProviderError::IdleTimeout
+            ))
         ));
         assert_eq!(p.fails.load(Ordering::SeqCst), 3);
     }
@@ -193,13 +206,16 @@ mod tests {
         let out = call_with_retry(
             &dyn_p,
             &ResponseRequest::new("m".to_string(), None, vec![]),
-            "test",
+            OmStage::Buffer,
             8,
         )
         .await;
         assert!(matches!(
             out,
-            Err(OmError::Provider(ProviderError::Status { status: 400, .. }))
+            Err(OmError::Provider(
+                OmStage::Buffer,
+                ProviderError::Status { status: 400, .. }
+            ))
         ));
         assert_eq!(p.fails.load(Ordering::SeqCst), 1);
     }

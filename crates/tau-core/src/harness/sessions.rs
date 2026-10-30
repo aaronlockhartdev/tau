@@ -492,7 +492,10 @@ pub(crate) fn derive_turn(
     TurnConfig {
         max_output_tokens: thinking_adjusted_max_output(
             def.and_then(|d| d.max_tokens)
-                .or(config.generation.max_tokens),
+                .or(config.generation.max_tokens)
+                // The contract's sane default (#338): a declared window with no
+                // declared cap gates on the default cap, it does not refuse.
+                .or(Some(crate::config::Provider::DEFAULT_MAX_OUTPUT)),
             def.and_then(|d| d.max_tokens),
             level,
             &config.thinking.budgets,
@@ -505,7 +508,10 @@ pub(crate) fn derive_turn(
         presence_penalty: config.generation.presence_penalty,
         prompt_cache: (config.cache.retention != crate::config::CacheRetention::None)
             .then(|| (session.to_owned(), config.cache.retention)),
-        context_window: def.and_then(|d| d.context_window),
+        // A model the config declares always carries a window (the load
+        // validates it, #338); 0 reaches the gate only for an id no provider
+        // declares, where it refuses rather than runs unbounded.
+        context_window: def.map_or(0, |d| d.context_window),
         image_max_bytes: Some(config.limits.image.max_bytes),
         image_max_pixels: Some(config.limits.image.max_pixels),
         // Resolved here, applied at the request: the id the session carries and

@@ -68,6 +68,11 @@ pub enum Diagnostic {
     /// refused the call before the wire (#334): compaction left no user entry
     /// on the branch to anchor the request on. `items` is what was assembled.
     MissingUserQuery { items: u64 },
+    /// An OM round-trip exhausted its retries (#338): the compaction the
+    /// context gate depends on did not run. `stage` names the trigger point
+    /// (`observe` / `buffer` / `reflect`); the turn survives under the budget
+    /// and the gate refuses over it.
+    OmFailed { stage: String, reason: String },
     /// A provider stream ended without a completion signal.
     TurnCutoff {
         model: String,
@@ -94,6 +99,7 @@ impl Diagnostic {
             Self::OmStalled { .. } => "om_stalled",
             Self::MissingUserQuery { .. } => "missing_user_query",
             Self::ProviderRejected { .. } => "provider_rejected",
+            Self::OmFailed { .. } => "om_failed",
             Self::TurnCutoff { .. } => "turn_cutoff",
             Self::Unknown { unknown_code } => unknown_code,
         }
@@ -168,6 +174,10 @@ mod tests {
             Diagnostic::ProviderRejected {
                 status: 400,
                 body: "context length".into(),
+            },
+            Diagnostic::OmFailed {
+                stage: "observe".into(),
+                reason: "provider returned 503: service down".into(),
             },
             Diagnostic::TurnCutoff {
                 model: "b".into(),
@@ -267,6 +277,10 @@ mod tests {
             Diagnostic::ProviderRejected {
                 status: 400,
                 body: "no".into(),
+            },
+            Diagnostic::OmFailed {
+                stage: "reflect".into(),
+                reason: "provider request failed: connection refused".into(),
             },
             Diagnostic::TurnCutoff {
                 model: "m".into(),

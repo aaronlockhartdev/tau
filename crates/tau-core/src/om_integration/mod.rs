@@ -182,19 +182,50 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
         ..Default::default()
     }
 }
-/// An OM failure: session storage or the model call (the turn-end pass
-/// owns the round-trip, R4).
+/// The OM stage that failed, carried by the failure so the record names
+/// where the compaction died (#338). The trigger points are the config's
+/// retry knobs: `observe`, `buffer`, `reflect`. `Session` is not a pass: it
+/// is the record store a compaction needs and could not reach, named so a
+/// card never claims a pass that did not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OmStage {
+    Observe,
+    Buffer,
+    Reflect,
+    Session,
+}
+
+impl OmStage {
+    /// The wire spelling, shared by the log line and the `om_failed` record.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Observe => "observe",
+            Self::Buffer => "buffer",
+            Self::Reflect => "reflect",
+            Self::Session => "session",
+        }
+    }
+}
+
+/// An OM failure: session storage, or the model call that exhausted its
+/// retries (the turn-end pass owns the round-trip, R4). The provider arm
+/// carries the stage the retry loop ran under, so the `om_failed` record
+/// names its trigger point (#338); the storage arm carries no stage, because
+/// no pass ran.
 #[derive(Debug)]
 pub enum OmError {
     Session(crate::session::Error),
-    Provider(crate::provider::ProviderError),
+    Provider(OmStage, crate::provider::ProviderError),
 }
 
 impl std::fmt::Display for OmError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Session(e) => write!(f, "session: {e}"),
-            Self::Provider(e) => write!(f, "provider: {e}"),
+            Self::Provider(stage, e) => {
+                write!(f, "provider: {e} ({stage})", stage = stage.as_str())
+            }
         }
     }
 }
@@ -206,7 +237,6 @@ impl From<crate::session::Error> for OmError {
         Self::Session(e)
     }
 }
-
 /// A raw conversation entry (spec §4: raw = what the Observer observes);
 /// record entries (om, spawn-snapshot, system) are not raw.
 fn is_raw(entry: &Entry) -> bool {
@@ -385,19 +415,24 @@ pub fn recall(store: &mut SessionStore, record: &OmRecord, args: &Value) -> Resu
 /// between that turn's first user entry and the entry before it (spec §4:
 /// v0 activates pending buffered chunks on a fixed idle timeout, not on
 /// provider-cache TTLs). Zero when the branch starts with the turn's user
-/// entry (a fresh session).
+/// entry (a fresh session), and when the leaf is no turn material at all.
 #[must_use]
 pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
     let branch = crate::session::branch(all, leaf_id);
     // Back over the current turn's model output (assistant + tool entries)
     // to its user run, then to the run's first entry. `om` entries are
     // skipped too: a background buffer cycle can commit one mid-episode,
-    // after the turn's last model output (ticket #86 P2).
+    // after the turn's last model output (ticket #86 P2). A `diagnostic`
+    // record is the same kind of fact-about-the-session (ADR-0034), and it
+    // reaches the leaf often: the `om_failed` record of a cycle that
+    // exhausted its retries (#338) lands there, and the walk landing on it
+    // would read one entry past the branch — a panic in the spawned cycle
+    // is the silent death this ticket refuses.
     let mut i = branch.len();
     while i > 0
         && matches!(
             branch[i - 1].kind,
-            EntryKind::Assistant | EntryKind::Tool | EntryKind::Om
+            EntryKind::Assistant | EntryKind::Tool | EntryKind::Om | EntryKind::Diagnostic
         )
     {
         i -= 1;
@@ -411,7 +446,13 @@ pub fn idle_gap_secs(all: &[Entry], leaf_id: Option<&str>) -> u64 {
     if i == 0 {
         return 0;
     }
-    branch[i].timestamp.saturating_sub(branch[i - 1].timestamp) / 1000
+    // A leaf of a kind no walk skips — a `system` notice, a `subagent`
+    // record, a kind this build does not know — names no turn boundary, and
+    // the honest answer is the fresh-session one: no measured pause.
+    let Some(current) = branch.get(i) else {
+        return 0;
+    };
+    current.timestamp.saturating_sub(branch[i - 1].timestamp) / 1000
 }
 mod retry;
 mod turn_end;

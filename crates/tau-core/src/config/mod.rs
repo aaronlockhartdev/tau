@@ -26,10 +26,34 @@ pub struct Provider {
 }
 
 impl Provider {
-    /// A single-model entry with no facts (the common test shape).
+    /// The context window a model entry carries when nothing declares one: a
+    /// model with no window has no gate, and #338 made the window a required
+    /// fact, so an entry built in code (the ACP env channel, a test kit)
+    /// declares this pair rather than leaving the prompt unbounded.
+    pub const DEFAULT_WINDOW: u32 = 131_072;
+    /// The output cap that pairs with [`Provider::DEFAULT_WINDOW`], comfortably
+    /// under it so the gate's margin always fits.
+    pub const DEFAULT_MAX_OUTPUT: u32 = 16_384;
+
+    /// The model entry a code-built provider carries when the channel that
+    /// built it names no facts (the ACP env override, a `_meta` install): the
+    /// pair above, because #338 requires a window and a gate-less model would
+    /// send unbounded prompts.
+    #[must_use]
+    pub const fn default_def() -> ModelDef {
+        ModelDef {
+            context_window: Self::DEFAULT_WINDOW,
+            max_tokens: Some(Self::DEFAULT_MAX_OUTPUT),
+            reasoning: None,
+            cost: None,
+        }
+    }
+
+    /// A single-model entry with the two gate facts (the common test shape);
+    /// a test that needs other facts sets the model def itself.
     pub fn with_model(base_url: impl Into<String>, model: impl Into<String>) -> Self {
         let mut models = BTreeMap::new();
-        models.insert(model.into(), ModelDef::default());
+        models.insert(model.into(), Self::default_def());
         Self {
             base_url: base_url.into(),
             key_env: String::new(),
@@ -40,14 +64,19 @@ impl Provider {
 
 /// The user-authored facts of one model, inline under its provider (spec
 /// §12, #35): no separate catalog file — fidelity is the user's
-/// responsibility (§6). Every fact is optional; absent = sane default.
+/// responsibility (§6). `context_window` is required (#338); the rest are
+/// optional, absent = sane default.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ModelDef {
-    /// Total context window in tokens; when declared, the output cap is
-    /// clamped to `context_window` − prompt.
-    pub context_window: Option<u32>,
-    /// This model's output cap.
+    /// Total context window in tokens, the gate's bound: the output cap
+    /// derives from it as `min(max_tokens, window − prompt − margin)`. A model
+    /// that declares none has no gate, so a config that omits it (or writes 0)
+    /// fails to load — an unbounded prompt is the failure #338 refuses.
+    /// `0` is the undeclared sentinel; no real model ships a 0-token window.
+    #[serde(default)]
+    pub context_window: u32,
+    /// This model's output cap — a wish: the window decides (#338).
     pub max_tokens: Option<u32>,
     /// The model reasons (thinking levels are offered for it).
     pub reasoning: Option<bool>,
@@ -378,7 +407,41 @@ pub struct Config {
     /// The hashline pin-store GC settings (#225).
     pub hashline: Hashline,
 }
-
+impl Config {
+    /// Every model declares a window (#338): the first model without one is a
+    /// config error, named by provider and model id, so the user's edit lands
+    /// on the entry that needs it. The check runs on the merged config, so a
+    /// project layer that replaces a provider entry wholesale must carry the
+    /// fact the system entry had.
+    ///
+    /// A declared output cap of `0` is refused in the same pass (N6, #338): the
+    /// cap reaches the gate as `Ready { cap: 0 }`, so every call of that session
+    /// refuses at the wire with `context_room` — a config that arms a gate
+    /// guaranteed to refuse loads as a config error instead.
+    fn validate_providers(&self) -> Result<(), LoadError> {
+        for (name, provider) in &self.providers {
+            for (model, def) in &provider.models {
+                if def.context_window == 0 {
+                    return Err(LoadError::MissingContextWindow {
+                        provider: name.clone(),
+                        model: model.clone(),
+                    });
+                }
+                if def.max_tokens == Some(0) {
+                    return Err(LoadError::ZeroMaxTokens {
+                        key: format!("providers.{name}.models.{model}"),
+                    });
+                }
+            }
+        }
+        if self.generation.max_tokens == Some(0) {
+            return Err(LoadError::ZeroMaxTokens {
+                key: "generation".to_owned(),
+            });
+        }
+        Ok(())
+    }
+}
 /// A model id's route, owned: the id a session carries and the provider its id
 /// names (§6.7, #336). `build_live` resolves it once at the open; the endpoint,
 /// the turn's model facts, and the child factory all follow it — never the
@@ -584,18 +647,23 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
     project.merge_into(&mut config);
     config.om.validate()?;
     config.subagents.validate()?;
+    config.validate_providers()?;
     Ok(config)
 }
 
 impl LoadError {
     /// The layer file a parse failure names. A validation failure (an `om`
-    /// threshold, a fleet-cap inversion) is the merged config's property, not
-    /// one file's, so it names no layer (#337).
+    /// threshold, a fleet-cap inversion, a model with no window) is the merged
+    /// config's property, not one file's, so it names no layer (#337).
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::Parse(path, _) => Some(path),
-            Self::Io(_) | Self::OmThreshold { .. } | Self::FleetCapInversion { .. } => None,
+            Self::Io(_)
+            | Self::OmThreshold { .. }
+            | Self::MissingContextWindow { .. }
+            | Self::ZeroMaxTokens { .. }
+            | Self::FleetCapInversion { .. } => None,
         }
     }
 }
@@ -610,10 +678,24 @@ pub enum LoadError {
         value: u64,
         limit: u32,
     },
+    /// A model with no declared `context_window` (#338): the context gate is
+    /// computed from that fact, so a config that omits it leaves the session's
+    /// prompts unbounded. A load-time refusal, never a silent no-gate.
+    MissingContextWindow {
+        provider: String,
+        model: String,
+    },
     /// `subagents.fleet_soft_bound` above `fleet_hard_cap` (#250).
     FleetCapInversion {
         soft: u32,
         hard: u32,
+    },
+    /// An output cap declared as `0` (#338, N6): `key` is the config's own
+    /// spelling of the entry (`providers.<name>.models.<model>`, `generation`).
+    /// A cap of 0 arms a gate every call refuses with `context_room`, so the
+    /// config is the error, not the session.
+    ZeroMaxTokens {
+        key: String,
     },
 }
 impl fmt::Display for LoadError {
@@ -627,6 +709,16 @@ impl fmt::Display for LoadError {
                 limit,
             } => {
                 write!(f, "{field} = {value} exceeds the u32 token limit ({limit})")
+            }
+            Self::MissingContextWindow { provider, model } => write!(
+                f,
+                "providers.{provider}.models.{model} declares no context_window; the context gate needs it"
+            ),
+            Self::ZeroMaxTokens { key } => {
+                write!(
+                    f,
+                    "{key} declares max_tokens = 0; the output cap must be positive"
+                )
             }
             Self::FleetCapInversion { soft, hard } => {
                 write!(

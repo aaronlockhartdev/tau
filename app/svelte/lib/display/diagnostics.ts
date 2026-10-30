@@ -15,7 +15,7 @@ export type DiagnosticEntry = Extract<Entry, { kind: 'diagnostic' }> | AnyEntry;
 // `context_overflow`/`gate_unavailable` are the Context gate (#227/#233).
 const KNOWN_DIAGNOSTIC_CODES: DiagnosticCode[] = [
   'model_changed', 'gate_unavailable', 'context_overflow', 'gate_attempt',
-  'gate_failed', 'om_stalled', 'provider_rejected', 'missing_user_query', 'turn_cutoff'
+  'gate_failed', 'om_stalled', 'om_failed', 'provider_rejected', 'missing_user_query', 'turn_cutoff'
 ];
 
 // A gate_unavailable record names what the gate lacks; the card says what that
@@ -25,6 +25,17 @@ const GATE_GAP: Record<string, string> = {
   context_window: 'context_window undeclared',
   max_tokens: 'max_tokens undeclared',
   context_room: 'the declared window leaves no room once the output cap and the margin are taken'
+};
+
+// An om_failed stage names where compaction died: the passes (`observe`,
+// `buffer`, `reflect`) and `session`, which is no pass at all — the record-store
+// write a compaction needs and could not reach, so a card never reports a pass
+// that never ran. A stage this build does not know renders in the pass shape.
+const OM_STAGE: Record<string, string> = {
+  observe: 'compaction observe pass failed',
+  buffer: 'compaction buffer pass failed',
+  reflect: 'compaction reflect pass failed',
+  session: 'compaction: the record store write failed'
 };
 
 export function diagnosticLabel(entry: DiagnosticEntry): string {
@@ -56,6 +67,8 @@ export function diagnosticLabel(entry: DiagnosticEntry): string {
       return `completion gate: ${d.command} failed after ${d.retries} repairs — marked gate_failed`;
     case 'om_stalled':
       return `compaction stalled: ${fmtK(d.pending)} pending at activation ${fmtK(d.activation)}`;
+    case 'om_failed':
+      return `${OM_STAGE[d.stage] ?? `compaction ${d.stage} pass failed`}: ${firstLine(d.reason)}`;
     case 'provider_rejected':
       return `provider rejected (${d.status}): ${firstLine(d.body)}`;
     case 'missing_user_query':

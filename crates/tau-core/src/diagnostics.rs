@@ -99,6 +99,7 @@ impl Diagnostics {
             | Diagnostic::ContextOverflow { .. }
             | Diagnostic::MissingUserQuery { .. }
             | Diagnostic::OmStalled { .. }
+            | Diagnostic::OmFailed { .. }
             | Diagnostic::ProviderRejected { .. }
             | Diagnostic::TurnCutoff { .. }
             | Diagnostic::Unknown { .. } => {}

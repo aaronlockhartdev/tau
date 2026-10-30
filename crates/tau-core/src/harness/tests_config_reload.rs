@@ -11,7 +11,7 @@ use crate::harness::testkit::*;
 
 fn config_with(provider: &str, model: &str) -> String {
     format!(
-        "[providers.{provider}]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[providers.{provider}.models.\"{model}\"]\n"
+        "[providers.{provider}]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[providers.{provider}.models.\"{model}\"]\ncontext_window = 32768\n"
     )
 }
 

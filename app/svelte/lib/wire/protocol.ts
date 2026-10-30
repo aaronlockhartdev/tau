@@ -174,6 +174,7 @@ export type DiagnosticCode =
   | 'gate_attempt'
   | 'gate_failed'
   | 'om_stalled'
+  | 'om_failed'
   | 'provider_rejected'
   | 'missing_user_query'
   | 'turn_cutoff';
@@ -187,6 +188,7 @@ export type Diagnostic =
   | { code: 'gate_attempt'; command: string; retries: number; max: number; output: string }
   | { code: 'gate_failed'; command: string; retries: number }
   | { code: 'om_stalled'; pending: number; activation: number }
+  | { code: 'om_failed'; stage: string; reason: string }
   | { code: 'provider_rejected'; status: number; body: string }
   | { code: 'missing_user_query'; items: number }
   | { code: 'turn_cutoff'; model: string; ended_by: StreamOutcome; blocks: number }

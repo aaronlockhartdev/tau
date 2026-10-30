@@ -609,6 +609,42 @@ fn the_idle_gap_measures_the_pause_before_the_current_turn() {
     assert_eq!(idle_gap_secs(&fresh, Some("00000002")), 0);
 }
 
+/// A leaf that is no turn material (#338): the `om_failed` record a buffer
+/// cycle's exhausted retries files lands at the leaf, so the walk skips it to
+/// the real boundary; a kind the walk skips nothing for names no boundary and
+/// answers zero, never a read past the branch.
+#[test]
+fn a_leaf_that_is_no_turn_material_never_reads_past_the_branch() {
+    let mk = |id: &str, parent: Option<&str>, ts: u64, kind: EntryKind| Entry {
+        id: id.to_owned(),
+        parent: parent.map(str::to_owned),
+        timestamp: ts,
+        kind,
+        payload: json!({ "text": "x" }),
+        blob: None,
+        first_kept_entry_id: None,
+        crc: None,
+    };
+    let entries = vec![
+        mk("00000001", None, 1_000, EntryKind::User),
+        mk("00000002", Some("00000001"), 2_000, EntryKind::Assistant),
+        mk("00000003", Some("00000002"), 92_000, EntryKind::User),
+        mk("00000004", Some("00000003"), 93_000, EntryKind::Assistant),
+        mk("00000005", Some("00000004"), 94_000, EntryKind::Diagnostic),
+    ];
+    assert_eq!(
+        idle_gap_secs(&entries, Some("00000005")),
+        90,
+        "the record rides the gap it was written in"
+    );
+    // A `system` notice — a kind no walk skips — is no turn's head.
+    let notices = vec![
+        mk("00000001", None, 1_000, EntryKind::User),
+        mk("00000002", Some("00000001"), 2_000, EntryKind::System),
+    ];
+    assert_eq!(idle_gap_secs(&notices, Some("00000002")), 0);
+}
+
 #[test]
 fn seed_compacted_child_stores_the_snapshot_and_returns_the_frozen_prefix() {
     let dir = tempfile::tempdir().unwrap();

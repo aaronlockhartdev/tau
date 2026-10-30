@@ -351,7 +351,7 @@ async fn context_gate_fires_when_over_budget() {
         sse("a2", &[]),     // main call, turn 2 (no gate)
     ]));
     let turn = TurnConfig {
-        context_window: Some(20000),
+        context_window: 20_000,
         max_output_tokens: Some(8000),
         ..Default::default()
     };
@@ -447,7 +447,7 @@ async fn context_gate_noop_when_under_budget() {
     };
     let provider = Arc::new(ScriptedProvider::new(vec![sse("a1", &[])]));
     let turn = TurnConfig {
-        context_window: Some(20000),
+        context_window: 20_000,
         max_output_tokens: Some(8000),
         ..Default::default()
     };
@@ -480,11 +480,12 @@ async fn context_gate_noop_when_under_budget() {
     assert_eq!(seen[0].0.as_deref(), Some("be terse"));
 }
 
-/// Context gate (ticket #210) degraded mode: the observer's output is so
-/// large that the re-assembled prompt is still over budget. The gate warns
-/// and proceeds — the turn completes, it just runs hot.
+/// The ladder ran out of rungs: the observer's output is so large that the
+/// re-priced prompt stays over budget. #338 closes the warn-and-send arm — the
+/// gate refuses pre-wire and the refusal is durable, so the doomed request
+/// never reaches the endpoint (the #338 incident's failure mode).
 #[tokio::test]
-async fn context_gate_degraded_when_still_over_budget() {
+async fn context_gate_refuses_when_the_ladder_cannot_fit() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path());
     // 10 entries of 3200 chars ≈ 8000 tokens, over the 7904 budget.
@@ -513,12 +514,11 @@ async fn context_gate_degraded_when_still_over_budget() {
     let huge_obs = format!("<observations>{}</observations>", "x".repeat(40000));
     let small_obs = "<observations>ok</observations>";
     let provider = Arc::new(ScriptedProvider::new(vec![
-        sse_json(&huge_obs), // observer call (from the gate)
-        sse("a1", &[]),      // main call (degraded: still over budget)
-        sse_json(small_obs), // turn-end observer call (the "go" entry)
+        sse_json(&huge_obs), // observer call (the ladder's observe rung)
+        sse_json(small_obs), // reflector calls follow, then the scripted list runs dry
     ]));
     let turn = TurnConfig {
-        context_window: Some(20000),
+        context_window: 20_000,
         max_output_tokens: Some(8000),
         ..Default::default()
     };
@@ -543,25 +543,37 @@ async fn context_gate_degraded_when_still_over_budget() {
         child: None,
     });
     agent.send("go", Lane::FollowUp);
-    agent.process().await.unwrap();
+    let err = agent
+        .process()
+        .await
+        .expect_err("a prompt the ladder cannot fit is refused");
+    assert!(
+        matches!(&err, AgentError::ContextOverflow { prompt, budget } if *prompt > *budget),
+        "expected ContextOverflow, got {err:?}"
+    );
 
     let seen = provider.seen.lock();
-    // Gate observer + main + turn-end observer.
-    assert_eq!(seen.len(), 3, "gate obs + main + turn-end obs: {seen:?}");
-    // The main call (index 1) proceeded with the session prompt.
+    // Compaction ran and is visible in the call list; the main prompt never
+    // went on the wire — the warn-and-send arm this ticket closes.
     assert!(
-        seen[1]
-            .0
-            .as_deref()
-            .is_some_and(|s| s.starts_with("be terse")),
-        "main call: {:?}",
-        seen[1].0
+        !seen.is_empty(),
+        "the ladder's compaction calls happen: {seen:?}"
     );
-    // Degraded is not silent (ADR-0034): the pass ran and the window stayed
-    // past activation, and that stays readable afterwards.
-    assert_eq!(
-        stalled_in(dir.path()).len(),
-        1,
-        "the stalled window is recorded once"
+    assert!(
+        seen.iter()
+            .all(|c| c.0.as_deref().is_none_or(|s| !s.starts_with("be terse"))),
+        "no main call: the refusal is pre-wire: {seen:?}"
+    );
+    // The refusal is durable: a context_overflow record names prompt > budget.
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    let entries = entries_of(&reopened);
+    assert!(
+        entries.iter().any(|e| {
+            e.kind == EntryKind::Diagnostic
+                && e.payload["prompt"].as_u64().unwrap_or_default()
+                    > e.payload["budget"].as_u64().unwrap_or_default()
+        }),
+        "a diagnostic record names the overflow: {entries:?}"
     );
 }

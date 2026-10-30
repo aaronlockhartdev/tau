@@ -30,7 +30,7 @@ fn setup(
 #[test]
 fn model_facts_override_the_global_generation() {
     let def = crate::config::ModelDef {
-        context_window: Some(32768),
+        context_window: 32768,
         max_tokens: Some(8192),
         reasoning: Some(true),
         cost: None,
@@ -55,7 +55,7 @@ fn model_facts_override_the_global_generation() {
     );
     let turn = derive_turn(&config, &provider, "m", "sess-1");
     assert_eq!(turn.max_output_tokens, Some(8192));
-    assert_eq!(turn.context_window, Some(32768));
+    assert_eq!(turn.context_window, 32768);
     assert_eq!(
         turn.reasoning,
         Some(crate::provider::ReasoningEffort::Medium)
@@ -88,7 +88,18 @@ fn a_model_without_facts_falls_back_to_the_globals() {
     // No model fact → no ceiling, so the High thinking budget (16384 default)
     // raises the 4096 global to leave room for thinking (#36).
     assert_eq!(turn.max_output_tokens, Some(20480));
-    assert_eq!(turn.context_window, None);
+    // #338 makes the window a required fact: the entry with none (the `0`
+    // sentinel) gates nothing, which is why the load rejects it. `max_tokens`
+    // is declared here, so the gap names only the window.
+    assert_eq!(turn.context_window, 0);
+    assert!(
+        matches!(
+            turn.context_gate(),
+            ContextGate::Missing { reasons }
+                if reasons == vec!["context_window".to_owned()]
+        ),
+        "a model with no declared window has no gate, named by the fact"
+    );
     assert_eq!(turn.reasoning, Some(crate::provider::ReasoningEffort::High));
     assert!(!turn.reasoning_summary);
     assert_eq!(turn.temperature, None);
@@ -155,7 +166,7 @@ fn an_off_level_omits_the_effort() {
 #[test]
 fn a_menu_qualified_id_resolves_to_the_declared_key() {
     let def = crate::config::ModelDef {
-        context_window: Some(131_072),
+        context_window: 131_072,
         max_tokens: Some(16_384),
         ..Default::default()
     };
@@ -167,8 +178,7 @@ fn a_menu_qualified_id_resolves_to_the_declared_key() {
     );
     let turn = derive_turn(&config, &provider, "dev/m", "sess-1");
     assert_eq!(
-        turn.context_window,
-        Some(131_072),
+        turn.context_window, 131_072,
         "the declared window is found under the menu's id"
     );
     assert_eq!(turn.max_output_tokens, Some(16_384));
@@ -192,7 +202,7 @@ fn a_menu_qualified_id_resolves_to_the_declared_key() {
 fn a_menu_qualified_id_for_an_undeclared_key_still_names_the_gap() {
     let (config, provider) = setup(
         crate::config::ModelDef {
-            context_window: Some(131_072),
+            context_window: 131_072,
             max_tokens: Some(16_384),
             ..Default::default()
         },
@@ -201,7 +211,7 @@ fn a_menu_qualified_id_for_an_undeclared_key_still_names_the_gap() {
         crate::config::CacheRetention::None,
     );
     let turn = derive_turn(&config, &provider, "dev/ghost", "sess-1");
-    assert_eq!(turn.context_window, None);
+    assert_eq!(turn.context_window, 0);
     assert_eq!(
         turn.address
             .as_ref()
@@ -213,9 +223,9 @@ fn a_menu_qualified_id_for_an_undeclared_key_still_names_the_gap() {
         matches!(
             turn.context_gate(),
             ContextGate::Missing { reasons }
-                if reasons == vec!["context_window".to_owned(), "max_tokens".to_owned()]
+                if reasons == vec!["context_window".to_owned()]
         ),
-        "undeclared is undeclared, whatever spelling reached it"
+        "an undeclared key has no window, and the cap has a default"
     );
 }
 
@@ -226,7 +236,7 @@ fn a_menu_qualified_id_for_an_undeclared_key_still_names_the_gap() {
 fn an_address_resolved_for_one_model_never_names_another() {
     let (config, provider) = setup(
         crate::config::ModelDef {
-            context_window: Some(131_072),
+            context_window: 131_072,
             max_tokens: Some(16_384),
             ..Default::default()
         },

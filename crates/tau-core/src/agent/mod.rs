@@ -67,6 +67,14 @@ pub enum AgentError {
     /// anchor on, so the harness refuses the call rather than send a request a
     /// chat template rejects (#334).
     MissingUserQuery,
+    /// The gate has no computable budget — a model fact is undeclared, or the
+    /// declared facts leave no room for an answer (#338). The refusal is
+    /// pre-wire and carries a `gate_unavailable` record; a prompt nobody
+    /// bounded is the failure this ticket refuses.
+    GateUnavailable {
+        model: String,
+        reasons: Vec<String>,
+    },
 }
 
 impl fmt::Display for AgentError {
@@ -83,6 +91,9 @@ impl fmt::Display for AgentError {
                 f,
                 "assembled input has no user query: the session's raw window holds no user entry to anchor the request on"
             ),
+            Self::GateUnavailable { model, reasons } => {
+                write!(f, "context gate refuses {model}: no {}", reasons.join(", "))
+            }
         }
     }
 }
@@ -116,8 +127,13 @@ pub struct ModelAddress {
 /// Per-turn provider options, resolved from the merged config and the
 /// session's model facts at session build (spec §12, #35); re-resolved when
 /// the session's model changes.
-#[derive(Debug, Clone, Default)]
+///
+/// The defaults are a working gate, not a gap: a turn built with no config
+/// behind it (a test kit, a bare seam) still bounds its prompt, because #338
+/// removed the unbounded prompt.
+#[derive(Debug, Clone)]
 pub struct TurnConfig {
+    /// The output cap the config wishes — the window takes it down at the gate.
     pub max_output_tokens: Option<u64>,
     pub reasoning: Option<ReasoningEffort>,
     pub reasoning_summary: bool,
@@ -133,8 +149,9 @@ pub struct TurnConfig {
     /// model while the child inherits its parent's turn config. `None` = no
     /// config resolved this turn, so the id addresses itself.
     pub address: Option<ModelAddress>,
-    /// The model's declared context window (its facts); the clamp's ceiling.
-    pub context_window: Option<u32>,
+    /// The model's declared context window (its facts): the gate's bound, and
+    /// the ceiling the output cap derives from (#338).
+    pub context_window: u32,
     /// The `limits.image.max_bytes` cap on a `read` of an image file (#36);
     /// `None` (the default) is uncapped.
     pub image_max_bytes: Option<u64>,
@@ -144,21 +161,56 @@ pub struct TurnConfig {
     pub image_max_pixels: Option<u64>,
 }
 
-/// The framing margin the context gate keeps against the model's declared
-/// window (spec §4): the system prompt, the tool schemas, the request envelope.
-const CONTEXT_GATE_MARGIN: u32 = 4096;
+pub(crate) use crate::provider::{clamp_max_output, prompt_budget};
 
-/// What the context gate knows about a turn (spec §4, ADR-0034). One predicate
-/// computes it, so the gate's own budget check and every `gate_unavailable`
+/// The window and cap a turn runs with when no config resolved model facts
+/// (a test kit, a bare seam): the same shape `Provider::with_model` declares,
+/// so a default turn carries a gate — #338 removed the unbounded prompt.
+impl Default for TurnConfig {
+    fn default() -> Self {
+        Self {
+            max_output_tokens: Some(DEFAULT_MAX_OUTPUT),
+            reasoning: None,
+            reasoning_summary: false,
+            temperature: None,
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            prompt_cache: None,
+            address: None,
+            context_window: crate::config::Provider::DEFAULT_WINDOW,
+            image_max_bytes: None,
+            image_max_pixels: None,
+        }
+    }
+}
+
+/// The output cap a turn carries when no config named one: the gate needs a
+/// cap to derive the budget from, and #338 removed the unbounded prompt. The
+/// same value `Provider::default_def` declares, so a default turn and a
+/// config-resolved test session gate identically.
+#[allow(
+    clippy::as_conversions,
+    reason = "u64::from is not const-stable; the value is the u32 constant named here"
+)]
+const DEFAULT_MAX_OUTPUT: u64 = crate::config::Provider::DEFAULT_MAX_OUTPUT as u64;
+
+/// What the context gate knows about a turn (spec §4, ADR-0034, #338). One
+/// predicate computes it, so the gate's own checks and every `gate_unavailable`
 /// record read the same arm: a record cannot claim a gap the gate does not have.
+///
+/// A gate is never "off": `Missing` is a refusal, not an unbounded prompt —
+/// the defect that let a declared window run unbounded in the #338 incident.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ContextGate {
-    /// The safe prompt budget: the declared window less the output cap and the
-    /// framing margin.
-    Ready { budget: u32 },
-    /// No gate at all. `reasons` is never empty: the missing facts by their
-    /// config names, or `context_room` when both are declared and the
-    /// subtraction leaves nothing.
+    /// The facts are declared: `window` is the model's context window and
+    /// `cap` the output cap the config wishes. The prompt decides the rest —
+    /// [`clamp_max_output`] is the cap the request carries, and
+    /// [`prompt_budget`] the prompt's ceiling for that cap.
+    Ready { window: u32, cap: u64 },
+    /// No computable gate: `reasons` is never empty — the missing facts by
+    /// their config names, or `context_room` when the declared facts leave no
+    /// room for an answer. The turn refuses with `gate_unavailable`, pre-wire.
     Missing { reasons: Vec<String> },
 }
 
@@ -170,10 +222,14 @@ impl ContextGate {
         matches!(self, Self::Ready { .. })
     }
 
+    /// The prompt's ceiling for the cap the config wishes: `window − cap −
+    /// margin`, the same quantity as the built request's
+    /// `prompt + cap + margin <= window` (#338). `None` is the `Missing` arm —
+    /// a gate with nothing to enforce.
     #[must_use]
     pub(crate) fn budget(&self) -> Option<u32> {
         match self {
-            Self::Ready { budget } => Some(*budget),
+            Self::Ready { window, cap } => Some(prompt_budget(*window, *cap)),
             Self::Missing { .. } => None,
         }
     }
@@ -193,30 +249,32 @@ impl TurnConfig {
             .map_or_else(|| model.to_owned(), |address| address.key.clone())
     }
 
-    /// The context gate, from the model's declared facts (spec §4).
+    /// The context gate, from the model's declared facts (spec §4). Config
+    /// guarantees a window (#338), so a `context_window` gap names a turn built
+    /// with no config behind it (a bare test kit).
     #[must_use]
     pub(crate) fn context_gate(&self) -> ContextGate {
-        match (self.context_window, self.max_output_tokens) {
-            (Some(window), Some(max_output)) => u32::try_from(max_output)
-                .ok()
-                .and_then(|output| window.checked_sub(output))
-                .and_then(|rest| rest.checked_sub(CONTEXT_GATE_MARGIN))
-                .map_or_else(
-                    || ContextGate::Missing {
-                        reasons: vec!["context_room".to_owned()],
-                    },
-                    |budget| ContextGate::Ready { budget },
-                ),
-            (None, None) => ContextGate::Missing {
-                reasons: vec!["context_window".to_owned(), "max_tokens".to_owned()],
-            },
-            (None, Some(_)) => ContextGate::Missing {
-                reasons: vec!["context_window".to_owned()],
-            },
-            (Some(_), None) => ContextGate::Missing {
-                reasons: vec!["max_tokens".to_owned()],
-            },
+        if self.context_window == 0 || self.max_output_tokens.is_none() {
+            let mut reasons = Vec::new();
+            if self.context_window == 0 {
+                reasons.push("context_window".to_owned());
+            }
+            if self.max_output_tokens.is_none() {
+                reasons.push("max_tokens".to_owned());
+            }
+            return ContextGate::Missing { reasons };
         }
+        // The wish is taken down to the window: `generation.max_tokens` is a
+        // wish, the window decides (#338). A window that leaves no room once
+        // the wish and the margin are taken is the gap named `context_room`.
+        let window = self.context_window;
+        let cap = self.max_output_tokens.unwrap_or(0).min(u64::from(window));
+        if prompt_budget(window, cap) == 0 {
+            return ContextGate::Missing {
+                reasons: vec!["context_room".to_owned()],
+            };
+        }
+        ContextGate::Ready { window, cap }
     }
 }
 
@@ -330,6 +388,12 @@ pub(crate) struct Inner {
     /// The job-completion hook (#53): the harness wakes the session on it —
     /// the same steering lane a sub-agent's report rides.
     job_notify_hook: Option<crate::tools::bgjobs::JobCompletionHook>,
+    /// The model whose `gate_unavailable` gap this run has already recorded
+    /// (the #306 latch): one record per model, never one per request.
+    pub(crate) gate_gap_recorded: Option<String>,
+    /// The OM stages whose exhausted retries this run has already recorded as
+    /// `om_failed` (#338): one record per stage, not one per round-trip.
+    pub(crate) om_failed_recorded: Vec<String>,
 }
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
 /// (or a parent agent) drives it with `send` + `process`; the kill flag is
@@ -421,6 +485,8 @@ impl AgentSession {
                 anchors: Arc::new(parking_lot::Mutex::new(anchor_registry)),
                 background_jobs: Arc::new(crate::tools::bgjobs::BackgroundJobs::default()),
                 job_notify_hook: None,
+                gate_gap_recorded: None,
+                om_failed_recorded: Vec::new(),
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),
@@ -513,6 +579,8 @@ mod tests_bgjobs;
 mod tests_cutoff;
 #[cfg(test)]
 mod tests_gate;
+#[cfg(test)]
+mod tests_ladder;
 #[cfg(test)]
 mod tests_om;
 #[cfg(test)]

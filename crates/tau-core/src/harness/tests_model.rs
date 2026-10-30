@@ -235,7 +235,9 @@ async fn session_set_model_updates_the_live_meta_and_records_the_change() {
             },
             Diagnostic::GateUnavailable {
                 model: "undeclared".into(),
-                missing: vec!["context_window".into(), "max_tokens".into()],
+                // The cap has a default (#338), so the window is the fact that
+                // is missing.
+                missing: vec!["context_window".into()],
             },
         ],
         "the change, then the gate its facts cannot compute"
@@ -283,7 +285,16 @@ async fn a_session_written_before_the_records_gains_one_baseline_at_open() {
     // The migration path (ADR-0034): an old file is not re-interpreted. The
     // first open states the model it runs and the gate its facts leave out;
     // every later open reads those records and states nothing new.
-    let core = CoreBuilder::custom(providers()).build().unwrap();
+    // The ungated model entry is the pre-#338 config shape — a model def with
+    // no window — which a file load now refuses (#338); a hand-built provider
+    // map still carries it, the shape an old session file was written under.
+    let mut provider = crate::config::Provider::with_model("http://127.0.0.1:9/v1", "model");
+    provider
+        .models
+        .insert("model".into(), crate::config::ModelDef::default());
+    let core = CoreBuilder::custom(BTreeMap::from([("dev".to_owned(), provider)]))
+        .build()
+        .unwrap();
     let cwd = tempfile::tempdir().unwrap();
     let w = open_ws(&core, cwd.path()).await;
     let id = SessionStore::new_session_id();
@@ -313,7 +324,7 @@ async fn a_session_written_before_the_records_gains_one_baseline_at_open() {
             },
             Diagnostic::GateUnavailable {
                 model: "model".into(),
-                missing: vec!["context_window".into(), "max_tokens".into()],
+                missing: vec!["context_window".into()],
             },
         ],
         "two opens, one pair of records"
@@ -328,7 +339,7 @@ async fn a_model_that_declares_its_facts_records_no_gate_gap() {
     facts.insert(
         "model".into(),
         crate::config::ModelDef {
-            context_window: Some(131_072),
+            context_window: 131_072,
             max_tokens: Some(16_384),
             ..Default::default()
         },
@@ -371,7 +382,7 @@ async fn a_model_whose_window_leaves_no_room_records_the_gap() {
     provider.models.insert(
         "model".into(),
         crate::config::ModelDef {
-            context_window: Some(8_192),
+            context_window: 8_192,
             max_tokens: Some(8_192),
             ..Default::default()
         },
@@ -457,7 +468,7 @@ async fn a_menu_qualified_switch_keeps_the_declared_facts() {
     provider.models.insert(
         "second".to_owned(),
         crate::config::ModelDef {
-            context_window: Some(131_072),
+            context_window: 131_072,
             max_tokens: Some(16_384),
             ..Default::default()
         },
@@ -523,11 +534,11 @@ base_url = "http://127.0.0.1:9/v1"
 key_env = ""
 
 [providers.dev.models.first]
+context_window = 8192
 
 [providers.dev.models.second]
 context_window = 131_072
 max_tokens = 16_384
-
 [generation]
 default_model = "dev/second"
 "#,
@@ -592,7 +603,7 @@ async fn an_undeclared_default_model_falls_back_to_the_first_model() {
     let sys = tempfile::tempdir().unwrap();
     std::fs::write(
         sys.path().join("config.toml"),
-        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"model\"]\n\n[generation]\ndefault_model = \"other/nope\"\n",
+        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\nkey_env = \"\"\n\n[providers.dev.models.\"model\"]\ncontext_window = 32768\n\n[generation]\ndefault_model = \"other/nope\"\n",
     )
     .unwrap();
     let core = CoreBuilder::default_system()
@@ -779,7 +790,7 @@ async fn a_shared_model_key_resolves_its_facts_from_the_prefix() {
     first.models.insert(
         "shared".to_owned(),
         crate::config::ModelDef {
-            context_window: Some(8_192),
+            context_window: 8_192,
             max_tokens: Some(8_192),
             ..Default::default()
         },
@@ -788,7 +799,7 @@ async fn a_shared_model_key_resolves_its_facts_from_the_prefix() {
     second.models.insert(
         "shared".to_owned(),
         crate::config::ModelDef {
-            context_window: Some(131_072),
+            context_window: 131_072,
             max_tokens: Some(16_384),
             ..Default::default()
         },

@@ -227,14 +227,20 @@ async fn prompt_streams_chunks_and_ends_the_turn() {
         })
         .collect();
     assert!(!text.is_empty(), "the chunks carry the assistant text");
-    // No config layer declares a context window for the env provider's
-    // model, so no `usage_update` is owed (N5: `size` must not be guessed).
-    assert!(
-        updates
-            .iter()
-            .all(|u| u["params"]["update"]["sessionUpdate"] != "usage_update"),
-        "no usage_update without a declared window: {updates:?}"
+    // A `usage_update` is owed: #338 made the window a required fact and the
+    // env channel builds its model with the default pair, so the session runs
+    // on a declared window (N5: `size` is never guessed).
+    let usage: Vec<&Value> = updates
+        .iter()
+        .filter(|u| u["params"]["update"]["sessionUpdate"] == "usage_update")
+        .collect();
+    assert_eq!(
+        usage.len(),
+        1,
+        "one usage_update for the single provider call: {updates:?}"
     );
+    // The env channel's default facts (`Provider::DEFAULT_WINDOW`).
+    assert_eq!(usage[0]["params"]["update"]["size"], 131_072);
     assert_eq!(resp["result"]["stopReason"], "end_turn");
 }
 
@@ -264,13 +270,15 @@ async fn prompt_usage_update_when_the_window_is_known() {
     let base_url = format!("http://{addr}/v1");
 
     // The system config declares the session's model with a window; the
-    // provider name sorts first, so its model is the effective default.
+    // provider name sorts first, so its model is the effective default. The
+    // window clears the gate's margin plus the default cap (#338): a 4096
+    // window leaves no room for the default 16384-token wish and is refused.
     let config_dir = home.path().join(".config").join("tau");
     std::fs::create_dir_all(&config_dir).expect("makes the config dir");
     std::fs::write(
         config_dir.join("config.toml"),
         format!(
-            "[providers.aa-mock]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.aa-mock.models.windowed-model]\ncontext_window = 4096\n"
+            "[providers.aa-mock]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.aa-mock.models.windowed-model]\ncontext_window = 32768\n"
         ),
     )
     .expect("writes the system config");
@@ -308,7 +316,7 @@ async fn prompt_usage_update_when_the_window_is_known() {
     );
     // The mock fallback's usage: 120 input + 48 output.
     assert_eq!(usage[0]["params"]["update"]["used"], 168);
-    assert_eq!(usage[0]["params"]["update"]["size"], 4096);
+    assert_eq!(usage[0]["params"]["update"]["size"], 32_768);
     assert_eq!(resp["result"]["stopReason"], "end_turn");
 }
 
@@ -429,7 +437,7 @@ async fn project_layer_models_appear_in_the_selector() {
     std::fs::write(
         cwd.path().join(".tau").join("config.toml"),
         format!(
-            "[providers.proj]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-a\"]\n[providers.proj.models.\"proj-b\"]\n"
+            "[providers.proj]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-a\"]\ncontext_window = 32768\n[providers.proj.models.\"proj-b\"]\ncontext_window = 32768\n"
         ),
     )
     .expect("writes the project config");
@@ -478,7 +486,7 @@ async fn set_config_option_responds_with_the_updated_select() {
     std::fs::write(
         cwd.path().join(".tau").join("config.toml"),
         format!(
-            "[providers.proj]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-a\"]\n[providers.proj.models.\"proj-b\"]\n"
+            "[providers.proj]\nbase_url = \"{base_url}\"\nkey_env = \"\"\n\n[providers.proj.models.\"proj-a\"]\ncontext_window = 32768\n[providers.proj.models.\"proj-b\"]\ncontext_window = 32768\n"
         ),
     )
     .expect("writes the project config");

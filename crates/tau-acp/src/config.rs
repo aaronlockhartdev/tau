@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use tau_core::config::{Config, ModelDef, Provider};
+use tau_core::config::{Config, Provider};
 use tau_core::harness::{Core, CoreBuilder, CoreError};
 use tokio::sync::Mutex as TokioMutex;
 
@@ -62,7 +62,9 @@ impl AcpConfig {
             String::new()
         };
         let mut models = BTreeMap::new();
-        models.insert(model, ModelDef::default());
+        // The channel names no facts, and #338 requires a window: the entry
+        // declares the default pair rather than riding in ungated.
+        models.insert(model, Provider::default_def());
         Some(Provider {
             base_url,
             key_env,
@@ -158,14 +160,17 @@ impl AcpConfig {
     /// The model's declared context window, when any layer declares one: a
     /// layer that offers the model without a window is skipped, not treated
     /// as "no window" (N5 — the `usage_update` `size` must not be guessed).
+    /// Config requires the fact (#338), so a 0 is an entry that reached the
+    /// map without the load's validation, not a 0-token model.
     #[must_use]
     pub async fn context_window_for(&self, cwd: &str, model: &str) -> Option<u64> {
         self.merged(cwd)
             .await
             .providers
             .values()
-            .find_map(|p| p.models.get(model).and_then(|m| m.context_window))
-            .map(u64::from)
+            .filter_map(|p| p.models.get(model))
+            .map(|m| u64::from(m.context_window))
+            .find(|window| *window > 0)
     }
     /// `authenticate` `_meta` install: connection-scoped, never written to
     /// the user's config file.
@@ -183,7 +188,7 @@ impl AcpConfig {
         let base_url = meta.get("baseUrl")?.as_str()?.to_owned();
         let model = meta.get("model")?.as_str()?.to_owned();
         let mut models = BTreeMap::new();
-        models.insert(model, ModelDef::default());
+        models.insert(model, Provider::default_def());
         Some(Provider {
             base_url,
             key_env: String::new(),
@@ -207,7 +212,7 @@ impl AcpConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    use tau_core::config::ModelDef;
     #[test]
     fn meta_provider_parses_the_extension() {
         let params = serde_json::json!({
@@ -260,7 +265,7 @@ mod tests {
             models: BTreeMap::new(),
         };
         let def = ModelDef {
-            context_window: Some(4096),
+            context_window: 4096,
             ..Default::default()
         };
         full.models.insert("m1".into(), def);
