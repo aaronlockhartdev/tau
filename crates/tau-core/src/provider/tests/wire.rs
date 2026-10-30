@@ -162,13 +162,27 @@ fn clamp_respects_the_declared_window_and_prompt() {
 
 #[test]
 fn the_gate_budget_is_the_clamp_of_the_prompt_side() {
-    // `prompt <= budget` is the same predicate as the clamp's
-    // `prompt + cap + margin <= window` (#338): the pair is one formula.
-    assert_eq!(prompt_budget(20_000, 200), 15_704);
+    // The fence has two sides and one arithmetic (#338): the budget reserves the
+    // framing margin and the smallest answer, so a prompt at the budget leaves
+    // exactly `MIN_ANSWER_ROOM` of room, which is what the clamp prices.
+    assert_eq!(
+        prompt_budget(20_000),
+        20_000 - CONTEXT_GATE_MARGIN - MIN_ANSWER_ROOM
+    );
+    // The two sides price one quantity: a prompt that leaves 200 of room gets
+    // the 200 cap, and the fence `prompt + cap + margin <= window` holds.
     assert_eq!(clamp_max_output(200, 20_000, 15_704), 200);
-    // A window that leaves no room once the cap and the margin are taken
-    // budgets nothing.
-    assert_eq!(prompt_budget(8_192, 8_192), 0);
+    // The cap is a hard ceiling, never a reservation: the largest cap a config
+    // can write still gets `MIN_ANSWER_ROOM` at a prompt on the budget. That is
+    // the guarantee that a request leaving the gate carries a positive cap.
+    assert_eq!(
+        clamp_max_output(u64::from(u32::MAX), 20_000, prompt_budget(20_000)),
+        u64::from(MIN_ANSWER_ROOM)
+    );
+    // A window that cannot carry the framing margin and an answer budgets
+    // nothing; the wish is not what makes it so.
+    assert_eq!(prompt_budget(8_192), 0);
+    assert_eq!(prompt_budget(8_193), 1);
 }
 
 #[test]

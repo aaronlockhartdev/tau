@@ -322,8 +322,8 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
 async fn context_gate_fires_when_over_budget() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path());
-    // 10 entries of 3200 chars ≈ 8000 tokens, over the 7904 budget
-    // (20000 − 8000 − 4096).
+    // 10 entries of 3200 chars ≈ 8000 tokens, over the 7904 budget the 16096
+    // window arms (16096 − 4096 margin − 4096 smallest answer).
     let mut parent: Option<String> = None;
     for _ in 0..10 {
         let e = store
@@ -351,7 +351,7 @@ async fn context_gate_fires_when_over_budget() {
         sse("a2", &[]),     // main call, turn 2 (no gate)
     ]));
     let turn = TurnConfig {
-        context_window: 20_000,
+        context_window: 16_096,
         max_output_tokens: Some(8000),
         ..Default::default()
     };
@@ -447,7 +447,7 @@ async fn context_gate_noop_when_under_budget() {
     };
     let provider = Arc::new(ScriptedProvider::new(vec![sse("a1", &[])]));
     let turn = TurnConfig {
-        context_window: 20_000,
+        context_window: 16_096,
         max_output_tokens: Some(8000),
         ..Default::default()
     };
@@ -518,7 +518,7 @@ async fn context_gate_refuses_when_the_ladder_cannot_fit() {
         sse_json(small_obs), // reflector calls follow, then the scripted list runs dry
     ]));
     let turn = TurnConfig {
-        context_window: 20_000,
+        context_window: 16_096,
         max_output_tokens: Some(8000),
         ..Default::default()
     };

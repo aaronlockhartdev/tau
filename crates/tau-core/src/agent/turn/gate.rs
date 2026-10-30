@@ -54,9 +54,9 @@ impl AgentSession {
                     reasons: reasons.clone(),
                 });
             }
-            // The budget the armed gate enforces, from the facts it carries:
-            // the ladder, the cap and the refusal all price against it.
-            ContextGate::Ready { window, cap } => (prompt_budget(*window, *cap), *cap, *window),
+            // The budget the armed gate enforces, from the window: the ladder,
+            // the refusal and the derived cap all price against it.
+            ContextGate::Ready { window, cap } => (prompt_budget(*window), *cap, *window),
         };
         let priced = &mut Priced {
             assembled,

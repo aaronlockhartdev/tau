@@ -437,6 +437,12 @@ fn item_token_estimate(item: &InputEntry) -> u32 {
 /// constant for the gate's budget and the clamp's cap, so the pair is one
 /// formula and cannot drift apart.
 pub(crate) const CONTEXT_GATE_MARGIN: u32 = 4096;
+/// The smallest answer the gate arms for: the room a prompt must leave for a
+/// reply before the gate calls it an overflow. The window carries framing and
+/// an answer, and `max_tokens` is a hard cap on the answer, never a reservation
+/// against the prompt — so a constant, not the cap, sets how much of the window
+/// a prompt may take.
+pub(crate) const MIN_ANSWER_ROOM: u32 = 4_096;
 
 /// The output cap a request may carry (#338): the user's wish clamped to the
 /// room the declared window leaves after the prompt and the framing margin.
@@ -450,14 +456,23 @@ pub(crate) fn clamp_max_output(max: u64, context_window: u32, prompt_tokens: u32
     max.min(room)
 }
 
-/// The gate's prompt budget for a cap: the window less the cap and the margin.
-/// `prompt <= budget` is the same predicate as `prompt + cap + margin <=
-/// window`, which is why the gate and the clamp price one quantity (#338).
+/// The gate's prompt budget: the most a prompt may take and still leave
+/// [`MIN_ANSWER_ROOM`] for a reply inside the framing margin. It reads the
+/// window alone. The config's `max_tokens` is a ceiling on the answer, so
+/// letting it set this number is what made a wish at the window refuse every
+/// session on that model — the ladder would have had a whole window of
+/// compaction to reach and a prompt that fitted it already.
+///
+/// `prompt <= budget` is the prompt's side of the fence [`clamp_max_output`]
+/// is the answer's side of: a prompt inside the budget leaves room of at least
+/// `MIN_ANSWER_ROOM`, so the cap the clamp derives is at least
+/// `min(max_tokens, MIN_ANSWER_ROOM)`, and a positive cap is a request the wire
+/// can price (#338).
 #[must_use]
-pub(crate) fn prompt_budget(window: u32, cap: u64) -> u32 {
+pub(crate) fn prompt_budget(window: u32) -> u32 {
+    let reserve = u64::from(CONTEXT_GATE_MARGIN).saturating_add(u64::from(MIN_ANSWER_ROOM));
     u64::from(window)
-        .saturating_sub(cap)
-        .saturating_sub(u64::from(CONTEXT_GATE_MARGIN))
+        .saturating_sub(reserve)
         .try_into()
         .unwrap_or(u32::MAX)
 }

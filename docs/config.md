@@ -90,19 +90,24 @@ user's responsibility).
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `context_window` | int (tokens) | **required** | the model's context window. Omitting it, or writing `0` (the undeclared sentinel), is a load failure |
-| `max_tokens` | int (tokens) | 16384 | this model's output cap — a wish, not a promise: a request carries `min(max_tokens, context_window − prompt − 4096)` |
+| `max_tokens` | int (tokens) | 16384 | this model's output cap — a **hard ceiling** on the answer, never a reservation against the prompt: a request carries `min(max_tokens, context_window − prompt − 4096)`, so a wish at the window is shrunk, not refused |
 | `reasoning` | bool | none | `false` means the effort is never sent for this model, even with a level configured — the server would reject it. `true` is carried, no consumer: the effort itself comes from `[thinking].level` / `levels` |
 | `cost` | table | none | `{ input, output }` per 1M tokens, USD. **Carried, no consumer** — the GUI cost display is post-v0 |
 
-Gate and clamp price one quantity: `CONTEXT_GATE_MARGIN` = 4096 (the system
-prompt, the tool schemas, the request envelope), the cap a request carries is
-`clamp_max_output` = `min(max_tokens, context_window − prompt − 4096)`, and the
-prompt's ceiling for a cap is `prompt_budget` = `context_window − cap − 4096`
-(`provider/request.rs`). The cap priced with is the thinking-adjusted one, so a
-high thinking level on a small window is what makes the room run out. A window
-that leaves no room once the cap and the margin are taken records
-`gate_unavailable { context_room }` — a declared window is never asked to answer
-0 tokens — and a gate with a gap is a refusal, never an unbounded prompt
+Gate and clamp price one quantity in two constants (`provider/request.rs`):
+`CONTEXT_GATE_MARGIN` = 4096 (the framing — system prompt, tool schemas, request
+envelope) and `MIN_ANSWER_ROOM` = 4096 (the smallest reply worth sending). The cap
+a request carries is `clamp_max_output` = `min(max_tokens, context_window − prompt
+− 4096)`; the prompt's ceiling is `prompt_budget` = `context_window − 4096 −
+4096`, a number **no cap can move** — `max_tokens` bounds the answer, not the
+prompt, which is why `max_tokens = context_window` arms the gate and the clamp
+shrinks the wish. The cap that reaches the wire is the thinking-adjusted one, so
+a high thinking level spends the room the prompt leaves; it never moves the
+prompt's ceiling. A prompt over the ceiling climbs the compaction ladder; one the
+ladder cannot fit, and a window that leaves nothing once the margin and an
+answer are taken (`context_window <= 8192`), both record
+`gate_unavailable { context_room }` — a declared window is never asked to
+answer 0 tokens — and a gate with a gap is a refusal, never an unbounded prompt
 (ADR-0034). An absent `max_tokens` takes 16384 (`Provider::DEFAULT_MAX_OUTPUT`);
 a model entry built in code that names no facts — the ACP env channel, a test
 kit — carries 131072 / 16384 (`Provider::default_def`).
@@ -159,7 +164,7 @@ max_tokens = 32000
 |---|---|---|---|
 | `default_model` | string | `""` | any model any provider declares: a `provider/` prefix names that provider, a bare key is taken where it is declared (§6.7). An empty value, a prefix naming no provider, and a key no provider declares are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`) — see [Provider resolution](#provider-resolution) |
 | `temperature` | float | none | |
-| `max_tokens` | int | none | the output cap a session wishes, before the thinking adjustment below; a model entry's own `max_tokens` wins, and the window clamps both per call |
+| `max_tokens` | int | none | the output cap for the session, before the thinking adjustment below; a model entry's own `max_tokens` wins, and the window clamps both per call — a ceiling on the answer, never a reservation against the prompt |
 | `top_p` | float | none | |
 | `frequency_penalty` | float | none | |
 | `presence_penalty` | float | none | |
