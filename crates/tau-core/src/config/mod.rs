@@ -563,18 +563,41 @@ impl ConfigFile {
     }
 }
 
+/// The config layer's file name inside its layer directory (spec §12). The
+/// watcher filters its batch on this name: the layer dirs carry the sessions,
+/// agents, and plans too, and only this file is config.
+pub const CONFIG_FILE: &str = "config.toml";
+
+/// The project layer's stand-in for "none": a path that cannot exist, so `load`
+/// answers with the system layer alone. Boot, the ACP entry, subagent-type
+/// discovery, and the system-layer reload all read config with no project open.
+pub const NO_PROJECT_LAYER: &str = "/nonexistent-tau-project";
+
 /// Load the merged config from the system directory and the project directory.
 /// Sections layer over the system values; a project provider entry of the same
 /// name replaces the system entry wholesale.
 pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> {
-    let system = ConfigFile::read(&system_dir.join("config.toml"))?;
-    let project = ConfigFile::read(&project_dir.join("config.toml"))?;
+    let system = ConfigFile::read(&system_dir.join(CONFIG_FILE))?;
+    let project = ConfigFile::read(&project_dir.join(CONFIG_FILE))?;
     let mut config = Config::default();
     system.merge_into(&mut config);
     project.merge_into(&mut config);
     config.om.validate()?;
     config.subagents.validate()?;
     Ok(config)
+}
+
+impl LoadError {
+    /// The layer file a parse failure names. A validation failure (an `om`
+    /// threshold, a fleet-cap inversion) is the merged config's property, not
+    /// one file's, so it names no layer (#337).
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Parse(path, _) => Some(path),
+            Self::Io(_) | Self::OmThreshold { .. } | Self::FleetCapInversion { .. } => None,
+        }
+    }
 }
 
 #[derive(Debug)]

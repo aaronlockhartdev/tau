@@ -93,6 +93,12 @@ impl Watcher {
         self.watched.insert(path.to_path_buf());
     }
 
+    /// Whether this watcher holds `path` (the config watchers use it to skip
+    /// their consumer thread for a layer dir the machine has none of).
+    #[must_use]
+    pub fn watching(&self, path: &Path) -> bool {
+        self.watched.contains(path)
+    }
     /// Stop watching a directory the pane collapsed (#115). Idempotent —
     /// dropping a dir that isn't watched is a no-op.
     pub fn unwatch_path(&mut self, path: &Path) {

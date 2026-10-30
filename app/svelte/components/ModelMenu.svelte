@@ -1,18 +1,24 @@
 <script lang="ts">
   // The model menu (the model's new home): floating and CENTERED in the
   // center column (the v4/v5 answer — one convention for all floating
-  // menus), models grouped by provider (the provider_list query), the
+  // menus), models grouped by provider (the workspace's provider rows), the
   // current model dot-highlighted. The composer's model chip and the
   // /model command both open it.
+  //
+  // The rows are the store's (#337), not a local first-open cache: the core
+  // reads its config layers on every `provider_list` and emits
+  // `provider_changed` when the rows it serves differ, so a provider added
+  // to config.toml reaches a menu that is already open.
   import { onMount } from 'svelte';
-  import { store, setModel, currentSession } from '../lib/store/store.svelte';
-  import { command, type ProviderInfo } from '../lib/wire/protocol';
+  import type { ProviderInfo } from '../lib/wire/protocol';
+  import { store, setModel, currentSession, fetchProviders } from '../lib/store/store.svelte';
 
-  let providers = $state<ProviderInfo[] | null>(null);
   let error = $state<string | null>(null);
 
   const cur = $derived(currentSession());
   const model = $derived(cur?.meta.model ?? '');
+  const ws = $derived(cur?.meta.workspace ?? null);
+  const providers = $derived<ProviderInfo[] | null>(ws ? (store.providers[ws] ?? null) : null);
 
   function close(): void {
     store.modelMenuOpen = false;
@@ -29,15 +35,12 @@
 
   onMount(() => {
     window.addEventListener('keydown', onKey);
-    // Fetched on first open (the store has no provider cache).
-    if (providers === null) {
-      command({ type: 'provider_list' })
-        .then((out) => {
-          if (out.kind === 'providers') providers = out.providers;
-        })
-        .catch((e: unknown) => {
-          error = e instanceof Error ? e.message : String(e);
-        });
+    // Opening is a fresh read: the core serves the rows from the current
+    // files, so a menu never shows a provider the config no longer has.
+    if (ws) {
+      void fetchProviders(ws).catch((e: unknown) => {
+        error = e instanceof Error ? e.message : String(e);
+      });
     }
     return () => window.removeEventListener('keydown', onKey);
   });

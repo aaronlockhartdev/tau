@@ -43,19 +43,21 @@ export default [
       '**/*.svelte',
       '**/*.mjs',
       'svelte/lib/store/commands.ts',
-      // The six feature modules that import the state bag.
+      // The seven feature modules that import the state bag.
       'svelte/lib/store/workspace.svelte.ts',
       'svelte/lib/store/files-pane.svelte.ts',
       'svelte/lib/store/viewer.svelte.ts',
       'svelte/lib/store/transcript.svelte.ts',
       'svelte/lib/store/composer.svelte.ts',
       'svelte/lib/store/events.svelte.ts',
+      'svelte/lib/store/providers.svelte.ts',
       // The suites that import a .svelte module.
       'svelte/lib/store/commands.test.ts',
       'svelte/lib/store/boot.test.ts',
       'svelte/lib/store/surface.test.ts',
       'svelte/lib/store/events.test.ts',
       'svelte/lib/store/files-pane.test.ts',
+      'svelte/lib/store/providers.test.ts',
       'svelte/lib/store/session-archive.test.ts',
       'svelte/lib/store/live-stream.test.ts',
       'svelte/lib/store/window.test.ts',

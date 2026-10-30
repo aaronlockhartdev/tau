@@ -163,6 +163,13 @@ pub(crate) enum ContextGate {
 }
 
 impl ContextGate {
+    /// Whether the gate has a budget (the turn-boundary record fires on the
+    /// ready-to-missing transition, #337).
+    #[must_use]
+    pub(crate) fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready { .. })
+    }
+
     #[must_use]
     pub(crate) fn budget(&self) -> Option<u32> {
         match self {

@@ -428,7 +428,7 @@ export type Command =
   | { type: 'subagent_stop'; handle: string }
   | { type: 'subagent_activity'; handle: string }
   | { type: 'skill_list'; workspace: string }
-  | { type: 'provider_list' }
+  | { type: 'provider_list'; workspace: string }
   | { type: 'provider_add'; name: string; base_url: string; key_env: string; models: string[] }
   | { type: 'provider_set'; name: string; base_url: string; key_env: string; models: string[] }
   | { type: 'provider_delete'; name: string }
@@ -465,6 +465,10 @@ export type SessionEventKind =
 export type SystemEventKind =
   | { kind: 'workspace_opened'; name: string; cwd: string }
   | { kind: 'provider_changed' }
+  // A config layer's edit was rejected (#337): the last good config stays
+  // live, and this event is the failure's route to the user — the store
+  // shows it as the banner naming the file and the reason.
+  | { kind: 'config_rejected'; path: string | null; reason: string }
   | { kind: 'error'; message: string };
 
 export type Event =

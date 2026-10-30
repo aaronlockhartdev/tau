@@ -298,6 +298,9 @@ describe('store.error lifecycle', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     store.current = 's1';
     store.error = 'stale failure';
+    // The refetch answers cleanly: the provider_changed event itself is the
+    // unrelated system event under test, not a failing round-trip.
+    defaultIPC();
     applyEvents([
       { type: 'system', workspace: WS.id, session: null, kind: { kind: 'provider_changed' } }
     ]);

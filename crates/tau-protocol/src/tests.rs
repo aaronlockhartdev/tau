@@ -100,7 +100,9 @@ fn command_variants_roundtrip() {
         Command::SkillList {
             workspace: "w1".into(),
         },
-        Command::ProviderList,
+        Command::ProviderList {
+            workspace: "w1".into(),
+        },
         Command::ProviderAdd {
             name: "p".into(),
             base_url: "u".into(),

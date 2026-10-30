@@ -179,6 +179,7 @@ export async function closeWorkspace(ws: Workspace, redirect = true): Promise<vo
     store.error = errText(e);
   });
   delete store.skills[ws.id];
+  delete store.providers[ws.id];
   if (ws.id in store.fileErrors) {
     const next = { ...store.fileErrors };
     delete next[ws.id];

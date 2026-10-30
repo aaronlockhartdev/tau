@@ -36,6 +36,7 @@
   import { retryDirFetch, toggleFileDir } from './files-pane.svelte';
   import { closeFile, openFile, reconcileActiveFile, selectFile, setCenterMode } from './viewer.svelte';
   import { fetchWindow } from './transcript.svelte';
+  import { fetchProviders } from './providers.svelte';
   import { deleteQueueItem, send, stop } from './composer.svelte';
   import { applyEvents } from './events.svelte';
 
@@ -50,6 +51,7 @@
     deleteQueueItem,
     deleteSession,
     ensurePane,
+    fetchProviders,
     fetchWindow,
     fileCache,
     init,

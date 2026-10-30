@@ -477,3 +477,86 @@ pub(crate) fn write_skill_fixture(project: &Path, rel: &str, raw: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, raw).unwrap();
 }
+
+/// One config layer's file (`{layer}/config.toml`), the shape `config::load`
+/// reads (#337).
+pub(crate) fn write_config_fixture(layer: &Path, raw: &str) {
+    std::fs::create_dir_all(layer).unwrap();
+    std::fs::write(layer.join(crate::config::CONFIG_FILE), raw).unwrap();
+}
+
+/// The rows `provider_list` serves for `ws` — the model menu's read.
+pub(crate) fn provider_list(core: &Arc<Core>, ws: &str) -> Vec<ProviderInfo> {
+    match core
+        .dispatch(Command::ProviderList {
+            workspace: ws.to_owned(),
+        })
+        .unwrap()
+    {
+        CommandOutput::Providers { providers } => providers,
+        other => panic!("expected providers: {other:?}"),
+    }
+}
+
+/// Bounded wait (generous, 5 s) for a `provider_changed` for `ws` — the
+/// reload's edge. The tests assert that it landed, never the event sequence.
+pub(crate) async fn wait_for_provider_changed(collected: &Arc<Mutex<Vec<Event>>>, ws: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if collected.lock().iter().any(|e| match e {
+            Event::System {
+                workspace, kind, ..
+            } => workspace == ws && matches!(kind, SystemEventKind::ProviderChanged),
+            _ => false,
+        }) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no provider_changed for {ws} within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Bounded wait (generous, 5 s) for a `config_rejected` for `ws`; returns its
+/// `(path, reason)` — the pair the GUI's banner shows. `path` is `None` for a
+/// validation failure, which names no file.
+pub(crate) async fn wait_for_config_rejected(
+    collected: &Arc<Mutex<Vec<Event>>>,
+    ws: &str,
+) -> (Option<String>, String) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(rejection) = collected.lock().iter().rev().find_map(|e| match e {
+            Event::System {
+                workspace,
+                kind: SystemEventKind::ConfigRejected { path, reason },
+                ..
+            } if workspace == ws => Some((path.clone(), reason.clone())),
+            _ => None,
+        }) {
+            return rejection;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no config_rejected for {ws} within 5 s"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The `provider_changed` count for `ws` — the edge-trigger's test: a reload
+/// that changes nothing must not add one.
+pub(crate) fn provider_changed_count(collected: &Arc<Mutex<Vec<Event>>>, ws: &str) -> usize {
+    collected
+        .lock()
+        .iter()
+        .filter(|e| match e {
+            Event::System {
+                workspace, kind, ..
+            } => workspace == ws && matches!(kind, SystemEventKind::ProviderChanged),
+            _ => false,
+        })
+        .count()
+}

@@ -96,6 +96,6 @@ bugs below.
 
 - `~/.config/tau/config.toml` did not exist, so `session_new` failed
   with "no providers configured". Resolved by copying `dev/config.toml`
-  (the documented dev setup). The core reads config at construction, so
-  a config change needs an app restart (no live reload in v0 —
-  expected).
+  (the documented dev setup). A config edit reaches the running app at the next
+  turn boundary (#337, spec §12) — no restart; a rejected edit keeps the last
+  good config live and says why in the banner.

@@ -447,7 +447,13 @@ async fn a_stop_of_a_child_session_goes_through_the_supervisor() {
 #[tokio::test]
 async fn provider_list_is_served_sorted_by_name() {
     let rig = rig(done_body(), 0);
-    match rig.core.dispatch(Command::ProviderList).unwrap() {
+    match rig
+        .core
+        .dispatch(Command::ProviderList {
+            workspace: rig.workspace.clone(),
+        })
+        .unwrap()
+    {
         CommandOutput::Providers { providers } => {
             let names: Vec<&str> = providers.iter().map(|p| p.name.as_str()).collect();
             let mut sorted = names.clone();

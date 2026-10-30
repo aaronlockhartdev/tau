@@ -1,8 +1,9 @@
-//! The watcher consumers: the home/project/tree watchers, the batch-to-stale-dirs mapping, the dir listing, and the teardown.
+//! The watcher consumers: the home/project/config/tree/plan watchers, the
+//! batch-to-stale-dirs mapping, the dir listing, and the teardown.
 
 use super::{
-    Arc, Batch, Core, Event, FileEntry, Path, WATCH_DEBOUNCE, Watcher, Workspace, mpsc,
-    state::CoreError,
+    Arc, Batch, Config, Core, Event, FileEntry, Path, ProviderInfo, SystemEventKind,
+    WATCH_DEBOUNCE, Watcher, Workspace, config, dispatch, mpsc, state::CoreError,
 };
 
 impl Core {
@@ -64,6 +65,155 @@ impl Core {
             }
         })?;
         Ok(())
+    }
+
+    /// The config layer's watcher (spec §12, #337): the system dir, watched
+    /// non-recursively. Started once globally (the system layer is shared by every
+    /// workspace); a `None` seam (the test shape) watches nothing.
+    pub(crate) fn start_system_config_watcher(&self) -> Result<(), CoreError> {
+        let Some(dir) = self.system_dir.as_deref() else {
+            return Ok(());
+        };
+        self.start_layer_watcher(
+            dir,
+            move |core, watcher| {
+                core.system_config_watcher.lock().replace(watcher);
+            },
+            |core| core.reload_system_config(),
+        )
+    }
+
+    /// The workspace's project config layer (`.tau/config.toml`, #337), started
+    /// from the first `open_workspace`. `workspace_close` drops the entry (the
+    /// debouncer stops on drop), so the map tracks the open workspaces.
+    pub(crate) fn start_config_watcher(&self, workspace: &Workspace) -> Result<(), CoreError> {
+        let project = Path::new(&workspace.cwd).join(".tau");
+        if self.config_watchers.lock().contains_key(&workspace.id) {
+            return Ok(());
+        }
+        let parked = workspace.id.clone();
+        let id = workspace.id.clone();
+        self.start_layer_watcher(
+            &project,
+            move |core, watcher| {
+                core.config_watchers.lock().insert(parked, watcher);
+            },
+            move |core| {
+                if let Ok(ws) = core.workspace(&id) {
+                    core.reload_workspace_config(&ws);
+                }
+            },
+        )
+    }
+
+    /// One config layer's watcher (#337): watch `dir` non-recursively, park its
+    /// `Watcher` where teardown can find it, and reload on a batch naming
+    /// `CONFIG_FILE`. A dir that is not a directory has no layer to watch: the
+    /// watcher is dropped (its `stop` runs) and reads stay file-only.
+    fn start_layer_watcher(
+        &self,
+        dir: &Path,
+        park: impl FnOnce(&Core, Watcher),
+        reload: impl Fn(&Arc<Core>) + Send + 'static,
+    ) -> Result<(), CoreError> {
+        let (mut watcher, rx) = Watcher::new(WATCH_DEBOUNCE)?;
+        watcher.watch_path(dir);
+        if !watcher.watching(dir) {
+            return Ok(());
+        }
+        park(self, watcher);
+        let Some(core) = self.self_arc() else {
+            return Ok(());
+        };
+        spawn_watcher_consumer(&core, rx, move |core, batch| {
+            if batch_carries_config_file(&batch) {
+                reload(&core);
+            }
+        })?;
+        Ok(())
+    }
+
+    /// The system layer's reload (spec §12, #337): the swap lands only on a
+    /// successful read, so a rejected edit leaves the last good config live and
+    /// `ConfigRejected` is that failure's only route to the user (ADR-0034: it
+    /// belongs to no session). A success drops the merged entries derived from
+    /// this layer (the next read re-merges the current files); a failure deletes
+    /// no key, since serving `Config::default()` in place of the last good merge
+    /// is the worse failure. `ProviderChanged` is edge-triggered per workspace.
+    pub(crate) fn reload_system_config(&self) {
+        let workspaces: Vec<Workspace> = self.workspaces.lock().values().cloned().collect();
+        let before: Vec<Vec<ProviderInfo>> =
+            workspaces.iter().map(|ws| self.provider_rows(ws)).collect();
+        let config = match self.read_system_config() {
+            Ok(config) => config,
+            Err(e) => {
+                self.emit_config_rejected("", &e);
+                return;
+            }
+        };
+        self.put_merged(config, &workspaces);
+        for (ws, before) in workspaces.iter().zip(before) {
+            if self.provider_rows(ws) != before {
+                self.emit_provider_changed(&ws.id);
+            }
+        }
+    }
+
+    /// The rows this workspace's model menu shows — the `provider_list` answer,
+    /// so `ProviderChanged` means exactly what a menu would newly show (#337).
+    fn provider_rows(&self, workspace: &Workspace) -> Vec<ProviderInfo> {
+        dispatch::provider_rows(&self.workspace_config(workspace))
+    }
+
+    /// The workspace layer's reload (spec §12, #337): a success swaps that
+    /// workspace's merged entry (the project layer feeds exactly one). A failure
+    /// emits `ConfigRejected` and writes nothing, leaving the last good merge live.
+    pub(crate) fn reload_workspace_config(&self, workspace: &Workspace) {
+        let before = self.provider_rows(workspace);
+        match self.read_workspace_config(workspace) {
+            Ok(config) => {
+                let rows = dispatch::provider_rows(&config);
+                self.configs.lock().insert(workspace.id.clone(), config);
+                if rows != before {
+                    self.emit_provider_changed(&workspace.id);
+                }
+            }
+            Err(e) => self.emit_config_rejected(&workspace.id, &e),
+        }
+    }
+
+    /// Swap the system entry in and drop the merged entries derived from it
+    /// (the reload's success path; the merged keys refill from the new system
+    /// entry at the next read). One lock scope: a reader between the two
+    /// writes would serve the old system layer under a new project layer.
+    fn put_merged(&self, system: Config, workspaces: &[Workspace]) {
+        let mut configs = self.configs.lock();
+        configs.insert(String::new(), system);
+        for ws in workspaces {
+            configs.remove(&ws.id);
+        }
+    }
+    fn emit_provider_changed(&self, workspace: &str) {
+        self.emit(Event::System {
+            workspace: workspace.to_owned(),
+            session: None,
+            kind: SystemEventKind::ProviderChanged,
+        });
+    }
+
+    /// A rejected edit's record (#337). `path` names the layer file when the
+    /// failure has one — a validation failure is the merged config's property,
+    /// not one file's, so it names none. Session-less by ADR-0034, so it rides
+    /// the system group; the workspace key is the routing.
+    fn emit_config_rejected(&self, workspace: &str, err: &config::LoadError) {
+        self.emit(Event::System {
+            workspace: workspace.to_owned(),
+            session: None,
+            kind: SystemEventKind::ConfigRejected {
+                path: err.path().map(|p| p.display().to_string()),
+                reason: err.to_string(),
+            },
+        });
     }
 
     /// The workspace's tree watcher (the files pane, #32/#115): the second
@@ -219,13 +369,28 @@ pub(crate) fn refresh_plan_batch(core: &Core, ws: &Workspace, batch: &Batch) {
     }
 }
 
+/// A batch's config-file paths (#337): the watched layer dir carries the
+/// sessions, skills, and plans too, so only a batch naming `config.toml`
+/// means config. An empty batch is a rescan trigger: the layer is treated as
+/// changed, so a lost event self-heals on the next rescan (the read costs two
+/// file reads).
+pub(crate) fn batch_carries_config_file(batch: &Batch) -> bool {
+    batch.is_empty()
+        || batch.iter().any(|p| {
+            p.file_name()
+                .is_some_and(|n| n == std::ffi::OsStr::new(crate::config::CONFIG_FILE))
+        })
+}
+
 /// The drop is the test teardown for the watchers a close did not stop;
 /// it joins each debouncer thread (the `Watcher`'s own drop does the
 /// joining).
 impl Drop for Core {
     fn drop(&mut self) {
         self.home_watcher.lock().take();
+        self.system_config_watcher.lock().take();
         self.project_watchers.lock().clear();
+        self.config_watchers.lock().clear();
         self.tree_watchers.lock().clear();
         self.plan_watchers.lock().clear();
         self.plans.lock().clear();

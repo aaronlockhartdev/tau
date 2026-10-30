@@ -150,6 +150,7 @@ export function freshStore() {
   store.files = {};
   store.fileErrors = {};
   store.skills = {};
+  store.providers = {};
   store.pane = {};
   store.tabSelected = [];
   store.tabSelAnchor = null;

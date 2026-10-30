@@ -82,6 +82,13 @@ impl AgentSession {
         self.inner.lock().turn = turn;
     }
 
+    /// The session's current turn options (spec §12, #35): what the next
+    /// turn's calls run with. The config-reload boundary reads it to decide
+    /// whether a re-derivation would change the gate (#337).
+    #[must_use]
+    pub(crate) fn current_turn(&self) -> TurnConfig {
+        self.inner.lock().turn.clone()
+    }
     /// Append a record entry against the active leaf (the sub-agent
     /// lifecycle records, ticket #23).
     pub(crate) fn append_entry(&self, kind: EntryKind, payload: Value) -> Result<(), AgentError> {
