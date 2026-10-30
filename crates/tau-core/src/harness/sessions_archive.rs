@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 
 use super::{
     Arc, CommandOutput, Core, LiveSession, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionStore, StoppedBy, delete_session_files,
+    SessionStore, StoppedBy, delete_session_files, recorded_model,
 };
 
 impl Core {
@@ -214,7 +214,7 @@ impl Core {
                 parent: None,
                 created: store.created(),
                 leaf: store.leaf().ok().flatten().map(|e| e.id),
-                model: None,
+                model: recorded_model(&mut store),
                 usage: None,
                 archived: true,
             },

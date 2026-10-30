@@ -82,6 +82,8 @@ mod tests_archive_disk;
 #[cfg(test)]
 mod tests_archive_edges;
 #[cfg(test)]
+mod tests_child_route;
+#[cfg(test)]
 mod tests_dispatch;
 #[cfg(test)]
 mod tests_git;
@@ -89,6 +91,8 @@ mod tests_git;
 mod tests_launch;
 #[cfg(test)]
 mod tests_model;
+#[cfg(test)]
+mod tests_model_route;
 #[cfg(test)]
 mod tests_om_async;
 #[cfg(test)]

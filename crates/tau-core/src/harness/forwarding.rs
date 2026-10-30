@@ -2,18 +2,23 @@
 
 use super::{
     AgentSession, Arc, AtomicBool, AtomicU64, BoxedDrive, ChildDriver, ChildProviderFactory,
-    ContextMode, Core, Duration, Event, HashMap, LiveSession, Mutex, Ordering, PipeCounters,
-    ProviderTurn, ReadoptNotice, ReclaimNotice, ResponseRequest, SessionMeta, SessionStore,
-    Skeleton, SkillInfo, SpawnNotice, StateNotice, SubagentBridge, SubagentEventKind, SubagentInfo,
-    Supervisor, TurnEvent, TurnProvider, TurnProviderRef, TurnSink, Usage, WakeKind, WakeNotice,
-    Weak, json, mpsc, pipe_send, provider, run_turn,
+    Config, ContextMode, Core, Duration, Event, HashMap, LiveSession, Mutex, Ordering,
+    PipeCounters, ProviderTurn, ReadoptNotice, ReclaimNotice, ResponseRequest, SessionMeta,
+    SessionStore, Skeleton, SkillInfo, SpawnNotice, StateNotice, SubagentBridge, SubagentEventKind,
+    SubagentInfo, Supervisor, TurnEvent, TurnProvider, TurnProviderRef, TurnSink, Usage, WakeKind,
+    WakeNotice, Weak, json, mpsc, pipe_send, provider, run_turn,
 };
+use crate::config::ProviderRef;
 use std::future::Future;
 use std::pin::Pin;
 /// A `TurnProvider` wrapper that mirrors stream events onto the protocol
 /// channel (spec §8 streaming) before the loop's own sink sees them.
 pub(crate) struct ForwardingProvider {
-    pub(crate) inner: TurnProviderRef,
+    /// The endpoint this session's calls go to (#336). The constructor's
+    /// provider is the first of them; a model switch to another provider's
+    /// model rebinds it, so the next turn's call answers to the model the
+    /// session carries, not the provider the config's map sorts first.
+    route: Mutex<TurnProviderRef>,
     pub(crate) tx: mpsc::Sender<Event>,
     /// The core's pipe drop bookkeeping (shared): an overflow in a child
     /// stream is counted and surfaced exactly like the core's own pipe.
@@ -43,7 +48,7 @@ impl ForwardingProvider {
         stop: Arc<AtomicBool>,
     ) -> Self {
         Self {
-            inner,
+            route: Mutex::new(inner),
             tx,
             pipe,
             workspace,
@@ -54,11 +59,19 @@ impl ForwardingProvider {
             completed: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+
+    /// Point this session's calls at `inner` — the endpoint the model its id
+    /// names is addressed at (the `session_set_model` command's live half).
+    /// It takes effect at the next call: an in-flight stream keeps the endpoint
+    /// it started on, so the switch lands at the turn boundary.
+    pub(crate) fn set_route(&self, inner: TurnProviderRef) {
+        *self.route.lock() = inner;
+    }
 }
 
 impl TurnProvider for ForwardingProvider {
     fn forwarding_inner(&self) -> Option<TurnProviderRef> {
-        Some(self.inner.clone())
+        Some(self.route.lock().clone())
     }
     fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let call_id = format!(
@@ -88,7 +101,7 @@ impl TurnProvider for ForwardingProvider {
             session: forward.session.clone(),
             call_id: forward.call_id.clone(),
         });
-        let inner = self.inner.clone();
+        let inner = self.route.lock().clone();
         let request = request.clone();
         Box::pin(async move { inner.call(&request, &mut forward).await })
     }
@@ -208,10 +221,14 @@ pub(crate) fn session_inner(
     provider::canned_dev(p).unwrap_or_else(|| provider::production(client, p, requests))
 }
 
-/// The child provider factory (ticket #23 N3): wraps the session's
-/// production provider in the forwarding seam, per child session id.
+/// The child provider factory (ticket #23 N3): wraps the provider the parent's
+/// model is addressed at in the forwarding seam, per child session id.
 pub(crate) struct ForwardingChildFactory {
     pub(crate) client: reqwest::Client,
+    /// The workspace config: a `.md` agent type names a model of its own, and
+    /// that id routes to its own provider (#336) — the parent's entry is only
+    /// the fallback a bare key resolves against.
+    pub(crate) config: Config,
     pub(crate) provider: crate::config::Provider,
     pub(crate) requests: crate::config::Requests,
     pub(crate) tx: mpsc::Sender<Event>,
@@ -220,9 +237,21 @@ pub(crate) struct ForwardingChildFactory {
     pub(crate) providers: Mutex<HashMap<String, Arc<ForwardingProvider>>>,
 }
 impl ChildProviderFactory for ForwardingChildFactory {
-    fn create(&self, child: &str) -> TurnProviderRef {
+    fn create(&self, child: &str, model: &str) -> TurnProviderRef {
+        // #336: a child is addressed at the provider its model's id names (a
+        // `.md` agent type's model, or the parent's), not at the provider the
+        // parent happened to open on. A prefix naming no provider is no route
+        // — the child keeps the parent's provider, whose id the spawn already
+        // resolved.
+        let owner = self.config.route_child(
+            model,
+            ProviderRef {
+                name: "",
+                provider: &self.provider,
+            },
+        );
         let provider = Arc::new(ForwardingProvider::new(
-            session_inner(&self.client, &self.provider, &self.requests),
+            session_inner(&self.client, owner, &self.requests),
             self.tx.clone(),
             self.pipe.clone(),
             self.workspace.clone(),

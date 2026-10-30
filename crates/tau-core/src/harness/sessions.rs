@@ -5,10 +5,11 @@ use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
     MAX_TITLE_LEN, ModelAddress, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
     SessionRole, SessionStore, Skeleton, SkillInfo, TurnConfig, Value, ViewEntry, Workspace,
-    session_inner, session_name, skill_info, unique_name,
+    session_inner, session_name, session_open, skill_info, unique_name,
 };
+use crate::config::{ProviderRef, Route};
+use crate::diagnostics::Diagnostics;
 use tau_protocol::EntryKind;
-
 impl Core {
     /// The workspace's skill registry (ticket #28): the per-workspace
     /// cache; a workspace with no session opened yet is discovered on
@@ -247,29 +248,26 @@ impl Core {
     pub(crate) fn build_live(
         &self,
         workspace: &Workspace,
-        store: SessionStore,
+        mut store: SessionStore,
         title: Option<String>,
         created: u64,
         base_prompt: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
         let parent = store.parent().map(str::to_string);
         let config = self.workspace_config(workspace);
-        let (name, first) = config
-            .providers
-            .iter()
-            .next()
-            .map(|(name, p)| (name.clone(), p.clone()))
-            .ok_or_else(|| ProtocolError::Other {
-                message: "no providers configured; add a [providers.x] section".into(),
-            })?;
+        // #336: the endpoint follows the model this session opens on — its
+        // record's last switch, else the config default — and the provider its
+        // id names, never the provider the config's map sorts first.
+        let opened = session_open::facts(&mut store)?;
+        let route = open_route(&config, opened.as_ref())?;
         let self_arc = self.self_arc().expect("session_new on a built core");
         // The live shell's provider (the stream-forwarding seam); the
-        // constructor takes the same resolved first provider for the
-        // supervisor's child factory (one resolution, ticket #43).
+        // constructor takes the same resolved provider for the supervisor's
+        // child factory (one resolution, ticket #43).
         let inner = self
             .root_provider
             .clone()
-            .unwrap_or_else(|| session_inner(&self.client, &first, &config.requests));
+            .unwrap_or_else(|| session_inner(&self.client, &route.provider, &config.requests));
         let provider = Arc::new(ForwardingProvider::new(
             inner,
             self.events_tx.clone(),
@@ -286,7 +284,7 @@ impl Core {
                 config,
                 provider: provider.clone(),
                 base_prompt,
-                first_provider: (name, first),
+                route,
             },
         )?;
         let meta = SessionMeta {
@@ -313,6 +311,82 @@ impl Core {
         self.sessions.lock().insert(id.clone(), live.clone());
         Ok(meta)
     }
+}
+
+/// The provider set's first entry (`BTreeMap` order): the address a session
+/// starts from, before any model id is routed. `None` is the config error the
+/// GUI shows — a workspace with no provider can open no session.
+fn first_provider(config: &Config) -> Result<ProviderRef<'_>, ProtocolError> {
+    config
+        .providers
+        .iter()
+        .next()
+        .map(|(name, provider)| ProviderRef { name, provider })
+        .ok_or_else(|| ProtocolError::Other {
+            message: "no providers configured; add a [providers.x] section".into(),
+        })
+}
+
+/// `generation.default_model`, taken by its §6.7 route: a default written with
+/// its provider's prefix names that provider; one written bare is taken where
+/// it is declared. An empty default, a prefix naming no provider, and a key no
+/// provider declares are all the config's empty-value contract — the first
+/// provider's first model.
+fn default_model(config: &Config, first: ProviderRef<'_>) -> Result<String, ProtocolError> {
+    let default = config.generation.default_model.as_str();
+    if !default.is_empty()
+        && let Ok(owner) = config.route_model(default, first)
+        && owner
+            .provider
+            .models
+            .contains_key(Config::model_key_for(owner.name, default))
+    {
+        return Ok(default.to_owned());
+    }
+    first
+        .provider
+        .models
+        .keys()
+        .next()
+        .cloned()
+        .ok_or_else(|| ProtocolError::Other {
+            message: format!("provider {} has no models", first.name),
+        })
+}
+
+/// The model a session opens on and the provider that owns it (#336): the model
+/// its record last named, else the config's default, routed by its id — so the
+/// endpoint, the model's facts, and the request all answer to the one provider
+/// the id names, not the provider the config's map sorts first.
+pub(crate) fn open_route(
+    config: &Config,
+    record: Option<&Diagnostics>,
+) -> Result<Route, ProtocolError> {
+    let first = first_provider(config)?;
+    let model = record
+        .and_then(|r| r.model.clone())
+        .map_or_else(|| default_model(config, first), Ok)?;
+    let owner = config.route_model(&model, first)?;
+    Ok(Route {
+        model,
+        provider: owner.provider.clone(),
+    })
+}
+
+/// The provider a model switch is addressed at (#336). `previous` is the model
+/// the session carries: a bare key is looked up against the provider it is
+/// already on (the prefix is what disambiguates between providers, so a key
+/// several providers declare stays where it is), and an id whose prefix names no
+/// configured provider is refused — it never travels silently to whichever
+/// provider the config's map sorts first.
+pub(crate) fn switch_route<'c>(
+    config: &'c Config,
+    model: &str,
+    previous: &str,
+) -> Result<ProviderRef<'c>, ProtocolError> {
+    let first = first_provider(config)?;
+    let current = config.provider_for(previous).unwrap_or(first);
+    config.route_model(model, current).map_err(Into::into)
 }
 
 /// #267: mint `status: "error"` tool entries for a dangling assistant — one
@@ -383,7 +457,8 @@ fn repair_dangling_tool_calls(store: &mut SessionStore) -> Result<(), ProtocolEr
 /// The session's per-turn provider options (spec §12, #35): sampling from
 /// `generation`, model-specific facts (output cap, context window, reasoning
 /// level) from the model's entry — a model with no facts falls back to the
-/// global values.
+/// global values. `provider` is the one the model's id routes to (#336), so a
+/// model declared on the second provider resolves its facts, not a gate gap.
 pub(crate) fn derive_turn(
     config: &Config,
     provider: &crate::config::Provider,

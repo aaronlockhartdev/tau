@@ -4,7 +4,7 @@
 use super::{
     Arc, Command, CommandOutput, Core, Event, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
     SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, recorded_model,
-    running_turn_refusal,
+    running_turn_refusal, session_inner, switch_route,
 };
 use tau_protocol::Diagnostic;
 
@@ -106,6 +106,18 @@ impl Core {
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
+                    // #336: the route is resolved before anything moves. An id
+                    // whose prefix names no configured provider is refused here,
+                    // so the meta, the agent, the endpoint, and the record all
+                    // keep the model they have.
+                    let ws_id = live.meta.lock().workspace.clone();
+                    let ws = self.workspace(&ws_id)?;
+                    let config = self.workspace_config(&ws);
+                    let route = switch_route(
+                        &config,
+                        &model,
+                        live.meta.lock().model.as_deref().unwrap_or_default(),
+                    )?;
                     // The same meta-mutation path as a rename: the
                     // in-memory meta is what snapshot() and
                     // session_list() serve, so a re-open must not
@@ -121,30 +133,33 @@ impl Core {
                         .map_err(|e| ProtocolError::Other {
                             message: e.to_string(),
                         })?;
+                    // The endpoint follows the model: the live provider calls
+                    // the address this model's id names, from the next call on
+                    // (the turn boundary — an in-flight stream keeps the
+                    // endpoint it started on, #336).
+                    live.provider.set_route(session_inner(
+                        &self.client,
+                        route.provider,
+                        &config.requests,
+                    ));
                     // #35: the model-specific options (output-cap clamp,
-                    // reasoning level) track the active model —
-                    // re-derived from the workspace config.
-                    let ws_id = live.meta.lock().workspace.clone();
-                    if let Ok(ws) = self.workspace(&ws_id) {
-                        let config = self.workspace_config(&ws);
-                        if let Some((_, p)) = config.providers.iter().next() {
-                            let turn = derive_turn(&config, p, &model, &session);
-                            let gate = turn.context_gate();
-                            live.agent.set_turn_config(turn);
-                            if let crate::agent::ContextGate::Missing { reasons } = gate {
-                                // The switch landed on a model with no gate
-                                // (ADR-0034): the record says so here, once,
-                                // instead of every request running unbounded.
-                                live.agent
-                                    .diagnostic(&Diagnostic::GateUnavailable {
-                                        model: model.clone(),
-                                        missing: reasons,
-                                    })
-                                    .map_err(|e| ProtocolError::Other {
-                                        message: e.to_string(),
-                                    })?;
-                            }
-                        }
+                    // reasoning level) and the gate track the active model —
+                    // re-derived from the provider that declares its facts.
+                    let turn = derive_turn(&config, route.provider, &model, &session);
+                    let gate = turn.context_gate();
+                    live.agent.set_turn_config(turn);
+                    if let crate::agent::ContextGate::Missing { reasons } = gate {
+                        // The switch landed on a model with no gate
+                        // (ADR-0034): the record says so here, once,
+                        // instead of every request running unbounded.
+                        live.agent
+                            .diagnostic(&Diagnostic::GateUnavailable {
+                                model: model.clone(),
+                                missing: reasons,
+                            })
+                            .map_err(|e| ProtocolError::Other {
+                                message: e.to_string(),
+                            })?;
                     }
                     Ok(CommandOutput::None)
                 }
@@ -152,12 +167,12 @@ impl Core {
                 // model, so the records are the trace — the last
                 // model_changed on the branch is the current one.
                 else {
-                    let cwd = self
-                        .owning_session(&session)
-                        .map(|(w, _)| PathBuf::from(w.cwd.clone()))
-                        .ok_or_else(|| ProtocolError::NotFound {
-                            what: format!("session {session} is not open"),
-                        })?;
+                    let (ws, _) =
+                        self.owning_session(&session)
+                            .ok_or_else(|| ProtocolError::NotFound {
+                                what: format!("session {session} is not open"),
+                            })?;
+                    let cwd = PathBuf::from(&ws.cwd);
                     let mut store = SessionStore::for_workspace(&cwd, &session);
                     store.open().map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
@@ -166,6 +181,15 @@ impl Core {
                     if old.as_deref() == Some(model.as_str()) {
                         return Ok(CommandOutput::None);
                     }
+                    // The record is the route the next open reads, so the live
+                    // arm's §6.7 refusal fires here too: appending an id whose
+                    // prefix names no provider leaves the record naming an
+                    // address no endpoint answers, and `open_route` fails the
+                    // reopen into a read-only fallback that says nothing.
+                    // `old` is the model the record names, so the provider it
+                    // routes to is the one the next open starts from.
+                    let config = self.workspace_config(&ws);
+                    switch_route(&config, &model, old.as_deref().unwrap_or_default())?;
                     crate::diagnostics::append_facts(
                         &mut store,
                         &[Diagnostic::ModelChanged {
@@ -416,7 +440,7 @@ impl Core {
                     parent: store.parent().map(str::to_string),
                     created: store.created(),
                     leaf: store.leaf().ok().flatten().map(|e| e.id),
-                    model: None,
+                    model: recorded_model(&mut store),
                     usage: None,
                     archived: false,
                 };

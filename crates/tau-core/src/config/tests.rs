@@ -342,3 +342,160 @@ fn model_key_resolves_the_menu_spelling_to_the_config_key() {
     // Resolving a second time is a no-op: the address is stable.
     assert_eq!(config.model_key(config.model_key("dev/qwen")), "qwen");
 }
+
+/// The §6.7 routing set: two distinct providers, so a prefix has something to
+/// select and a shared key has something to refuse to guess between. `aaa` sorts
+/// first, so every assertion below that lands on `zzz` proves the route is not
+/// the map's order (#336).
+fn routing_config() -> Config {
+    let mut aaa = crate::config::Provider::with_model("http://127.0.0.1:9/aaa/v1", "solo");
+    aaa.models.insert("shared".to_owned(), ModelDef::default());
+    let mut zzz = crate::config::Provider::with_model("http://127.0.0.1:9/zzz/v1", "zzz-model");
+    zzz.models.insert("shared".to_owned(), ModelDef::default());
+    Config {
+        providers: BTreeMap::from([("aaa".to_owned(), aaa), ("zzz".to_owned(), zzz)]),
+        ..Default::default()
+    }
+}
+
+/// The provider each spelling is addressed at: the prefix owning it, the sole
+/// declaration of a bare key, and the current provider when a bare key says
+/// nothing (#336).
+#[test]
+fn route_model_binds_the_provider_the_id_names() {
+    let config = routing_config();
+    let first = config
+        .provider_for("aaa/solo")
+        .expect("aaa is a configured provider");
+    // Prefix owning: the prefix selects its provider, whatever the map's order.
+    let zzz = config
+        .route_model("zzz/zzz-model", first)
+        .expect("zzz is a configured provider");
+    assert_eq!(zzz.name, "zzz");
+    assert_eq!(zzz.provider.base_url, "http://127.0.0.1:9/zzz/v1");
+    // Bare key declared once: it routes to its one declarer, not to `current`.
+    assert_eq!(
+        config
+            .route_model("solo", first)
+            .expect("only aaa declares solo")
+            .name,
+        "aaa"
+    );
+    // Bare key declared by both: the prefix is what disambiguates, so the core
+    // never guesses and the key stays where the session already is.
+    assert_eq!(
+        config
+            .route_model("shared", zzz)
+            .expect("a shared key is never a refusal")
+            .name,
+        "zzz",
+        "a key two providers declare stays with the provider in use"
+    );
+    // Bare key no provider declares: the same stay-put rule, not a refusal.
+    assert_eq!(
+        config
+            .route_model("undeclared", zzz)
+            .expect("an undeclared key is never a refusal")
+            .name,
+        "zzz"
+    );
+}
+
+/// The negative half of §6.7: a prefix naming no configured provider addresses
+/// no endpoint, so it is refused. At HEAD it travelled to the provider the map
+/// sorts first — the #336 burst of 400s.
+#[test]
+fn route_model_refuses_a_prefix_that_names_no_provider() {
+    let config = routing_config();
+    let first = config
+        .provider_for("aaa/solo")
+        .expect("aaa is a configured provider");
+    let err = config
+        .route_model("nosuch/model", first)
+        .expect_err("no provider is named `nosuch`");
+    assert_eq!(err, crate::config::UnownedPrefix("nosuch".to_owned()));
+    // The refusal reads as the config's own words, naming the prefix.
+    assert_eq!(
+        err.to_string(),
+        "model names no configured provider 'nosuch'"
+    );
+}
+
+/// `provider_for` is the prefix read `route_model` and `switch_route` share: the
+/// entry a configured prefix names, `None` for every other spelling.
+#[test]
+fn provider_for_reads_only_a_configured_prefix() {
+    let config = routing_config();
+    assert_eq!(
+        config.provider_for("zzz/shared").map(|p| p.name),
+        Some("zzz")
+    );
+    assert_eq!(
+        config.provider_for("shared").map(|p| p.name),
+        None,
+        "a bare key names no provider"
+    );
+    assert_eq!(
+        config.provider_for("nosuch/x").map(|p| p.name),
+        None,
+        "an unconfigured prefix is not a provider"
+    );
+}
+
+/// The key the routed provider declares: its own prefix stripped, and the id
+/// kept whole for every spelling the prefix rule leaves alone.
+#[test]
+fn model_key_for_strips_only_the_owning_prefix() {
+    assert_eq!(Config::model_key_for("zzz", "zzz/zzz-model"), "zzz-model");
+    assert_eq!(
+        Config::model_key_for("zzz", "aaa/zzz-model"),
+        "aaa/zzz-model",
+        "a foreign prefix is part of the key"
+    );
+    assert_eq!(Config::model_key_for("zzz", "zzz-model"), "zzz-model");
+    // A gateway key that carries `/` under a provider nobody declared is its
+    // provider's key verbatim.
+    assert_eq!(Config::model_key_for("zzz", "openai/gpt-5"), "openai/gpt-5");
+    // The route and the key agree: the provider `route_model` picks declares the
+    // key `model_key_for` returns for it.
+    let config = routing_config();
+    let zzz = config
+        .route_model("zzz/shared", config.provider_for("aaa/solo").expect("aaa"))
+        .expect("zzz is a configured provider");
+    assert!(
+        zzz.provider
+            .models
+            .contains_key(Config::model_key_for(zzz.name, "zzz/shared")),
+        "the routed provider declares the routed id's key"
+    );
+}
+
+/// §6.7's child rule: a child is addressed at the provider its own model names;
+/// an id that names no provider keeps the parent's entry, never the map's first
+/// entry (#336).
+#[test]
+fn route_child_follows_the_child_model_and_keeps_the_parent_on_a_refusal() {
+    let config = routing_config();
+    let parent = config
+        .provider_for("aaa/solo")
+        .expect("aaa is a configured provider");
+    // A child whose agent type names another provider reaches that provider.
+    assert_eq!(
+        config.route_child("zzz/zzz-model", parent).base_url,
+        "http://127.0.0.1:9/zzz/v1"
+    );
+    // A child id whose prefix names no provider is the spawn's already-resolved
+    // id: it keeps the parent, not the provider the map sorts first.
+    assert_eq!(
+        config.route_child("nosuch/model", parent).base_url,
+        "http://127.0.0.1:9/aaa/v1"
+    );
+    let parent = config
+        .provider_for("zzz/zzz-model")
+        .expect("zzz is a configured provider");
+    assert_eq!(
+        config.route_child("nosuch/model", parent).base_url,
+        "http://127.0.0.1:9/zzz/v1",
+        "the fallback is the parent, so a session lower in the map keeps its own"
+    );
+}

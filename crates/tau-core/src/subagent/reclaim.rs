@@ -149,7 +149,9 @@ impl Supervisor {
             store,
             SessionRole::Child {
                 supervisor: sup,
-                provider: self.provider.create(&d.child),
+                // The re-adopted child is addressed at the provider its model
+                // id names, the same route a spawn takes (#336).
+                provider: self.provider.create(&d.child, &self.model),
                 system_prompt: self.system_prompt.clone(),
                 model: self.model.clone(),
                 tools: tools::surface::child_specs(None),

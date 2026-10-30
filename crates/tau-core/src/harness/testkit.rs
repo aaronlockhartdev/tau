@@ -14,6 +14,19 @@ pub(crate) fn providers() -> BTreeMap<String, crate::config::Provider> {
     m
 }
 
+/// The `Root` role's route over the canned set: `model` addressed at `dev`.
+/// `config` is borrowed, so the caller keeps it to move into the role.
+pub(crate) fn route(config: &crate::config::Config, model: &str) -> crate::config::Route {
+    crate::config::Route {
+        model: model.to_owned(),
+        provider: config
+            .providers
+            .get("dev")
+            .cloned()
+            .expect("the test config carries the dev provider"),
+    }
+}
+
 /// A session wired to `inner` (canned in tests, production in the
 /// live test), registered with the core the way `SessionNew` does.
 pub(crate) fn manual_session(
@@ -200,7 +213,7 @@ pub(crate) struct CannedChildFactory {
     pub(crate) body: String,
 }
 impl ChildProviderFactory for CannedChildFactory {
-    fn create(&self, _child: &str) -> TurnProviderRef {
+    fn create(&self, _child: &str, _model: &str) -> TurnProviderRef {
         Arc::new(CannedChild {
             body: self.body.clone(),
             index: AtomicUsize::new(0),
@@ -243,7 +256,7 @@ pub(crate) struct SlowChildFactory {
     pub(crate) delay_ms: u64,
 }
 impl ChildProviderFactory for SlowChildFactory {
-    fn create(&self, _child: &str) -> TurnProviderRef {
+    fn create(&self, _child: &str, _model: &str) -> TurnProviderRef {
         Arc::new(SlowChild {
             body: self.body.clone(),
             delay_ms: self.delay_ms,

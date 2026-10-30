@@ -57,7 +57,7 @@ pub(crate) struct CannedFactory {
 }
 
 impl ChildProviderFactory for CannedFactory {
-    fn create(&self, _id: &str) -> TurnProviderRef {
+    fn create(&self, _id: &str, _model: &str) -> TurnProviderRef {
         let slot = self.created.fetch_add(1, Ordering::SeqCst);
         let scripts = self
             .scripts
