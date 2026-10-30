@@ -123,13 +123,26 @@ impl crate::provider::TurnProvider for OmScript {
     }
 }
 
-/// A session whose gate is armed at window 20000, cap 8000: the prompt's
-/// budget is 7904, the quantity the ladder prices against.
+/// The ladder fixture: a 16096 window, a wish the window leaves room for.
 fn agent_on(
     dir: &std::path::Path,
     store: SessionStore,
     provider: Arc<OmScript>,
     om: crate::om_integration::OmState,
+) -> AgentSession {
+    agent_wish_at(dir, store, provider, om, 16_096, 8_000)
+}
+
+/// A session whose gate is armed at `window`: the prompt's budget is
+/// `window − margin − answer` (7904 at 16096) — the quantity the ladder prices
+/// against. `wish` is a ceiling on the answer and sets no part of that budget.
+fn agent_wish_at(
+    dir: &std::path::Path,
+    store: SessionStore,
+    provider: Arc<OmScript>,
+    om: crate::om_integration::OmState,
+    window: u32,
+    wish: u64,
 ) -> AgentSession {
     AgentSession::new(SessionParams {
         store,
@@ -140,8 +153,8 @@ fn agent_on(
         provider,
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig {
-            context_window: 20_000,
-            max_output_tokens: Some(8_000),
+            context_window: window,
+            max_output_tokens: Some(wish),
             ..Default::default()
         },
         gates: None,
@@ -266,7 +279,6 @@ async fn the_built_request_respects_the_window_fence() {
     om.buffered = vec![chunk("00000001", "00000010"), chunk("00000011", "00000011")];
     om.record.buffered_chunks = om.buffered.clone();
     let provider = OmScript::scripted(Vec::new());
-    // window 20000, wish 8000: the fence's budget is 7904.
     let agent = agent_on(dir.path(), store, provider.clone(), om);
     agent.send("go", Lane::FollowUp);
     agent.process().await.unwrap();
@@ -279,9 +291,9 @@ async fn the_built_request_respects_the_window_fence() {
         crate::provider::prompt_token_estimate(&request.instructions, &request.input, &tools_json);
     let cap = request.cap.expect("the armed gate's request carries a cap");
     assert!(
-        u64::from(prompt) + cap + u64::from(crate::provider::CONTEXT_GATE_MARGIN) <= 20_000,
+        u64::from(prompt) + cap + u64::from(crate::provider::CONTEXT_GATE_MARGIN) <= 16_096,
         "the request breaches its window: prompt {prompt} + cap {cap} + margin \
-         {} > 20000",
+         {} > 16096",
         crate::provider::CONTEXT_GATE_MARGIN
     );
     // The wish survives while the window leaves room: the cap is the smaller of
@@ -292,6 +304,43 @@ async fn the_built_request_respects_the_window_fence() {
     );
 }
 
+/// #343's positive at the wire: the incident's config is a wish at the window,
+/// and it must send. The gate arms on the window, so a bare prompt sits under
+/// the ceiling, no rung runs, and the request carries the room the window
+/// leaves — the wish shrinks, nothing is refused.
+#[tokio::test]
+async fn a_wish_at_the_window_sends_and_carries_the_room() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = store_with_raw(dir.path(), 2, 200);
+    let om = state(1_000, crate::om::OmRecord::default());
+    let provider = OmScript::scripted(Vec::new());
+    let agent = agent_wish_at(dir.path(), store, provider.clone(), om, 16_096, 16_096);
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+
+    let built = provider.main_requests.lock();
+    assert_eq!(built.len(), 1, "a session on the incident's config sends");
+    let request = built.first().expect("one main request");
+    let tools_json = serde_json::to_string(&tools::surface::bare_specs()).unwrap();
+    let prompt =
+        crate::provider::prompt_token_estimate(&request.instructions, &request.input, &tools_json);
+    let cap = request.cap.expect("the armed gate's request carries a cap");
+    assert!(
+        prompt <= 7_904,
+        "a bare prompt is under the 7904 ceiling: {prompt}"
+    );
+    assert_eq!(
+        cap,
+        clamp_max_output(16_096, 16_096, prompt),
+        "the wire carries the room the window leaves, not the wish"
+    );
+    assert!(cap < 16_096, "the wish at the window is shrunk: {cap}");
+    assert!(
+        cap >= u64::from(crate::provider::MIN_ANSWER_ROOM),
+        "the gate arms only where an answer fits: {cap}"
+    );
+}
+
 /// The fence's negative (#338): a prompt the declared window cannot carry is
 /// refused before the wire, so the fence is never satisfied by an absent
 /// request — the breach is sent by nobody, and the cap the clamp derives from
@@ -299,10 +348,9 @@ async fn the_built_request_respects_the_window_fence() {
 #[tokio::test]
 async fn a_prompt_that_fills_the_window_leaves_no_cap_and_sends_nothing() {
     let dir = tempfile::tempdir().unwrap();
-    // A prompt past `window − margin` (15904 of the 20000 declared) is the
-    // fence's negative: 53000 bytes price ~16600 tokens (the estimator's
-    // quarter-of-bytes rule plus its 20% serialization allowance), over the
-    // 7904 budget the armed gate enforces (window 20000, wish 8000).
+    // A prompt past `window − margin − answer` is the fence's negative: 53000
+    // bytes price ~16600 tokens (the estimator's quarter-of-bytes rule plus its
+    // 20% serialization allowance), over the 7904 budget the 16096 window arms.
     // `clamp_max_output` finds no room for an answer, and 0 is refusal.
     let mut store = session_in(dir.path());
     store
@@ -339,14 +387,14 @@ async fn a_prompt_that_fills_the_window_leaves_no_cap_and_sends_nothing() {
         panic!("the refusal carries the numbers: {err:?}")
     };
     assert_eq!(
-        crate::provider::clamp_max_output(8_000, 20_000, prompt),
+        crate::provider::clamp_max_output(8_000, 16_096, prompt),
         0,
         "the prompt leaves no room for an answer: prompt {prompt}, budget {budget}"
     );
     assert!(
-        u64::from(prompt) + u64::from(crate::provider::CONTEXT_GATE_MARGIN) > 20_000,
+        u64::from(prompt) + u64::from(crate::provider::CONTEXT_GATE_MARGIN) > 16_096,
         "any positive cap on this prompt breaches the window: prompt {prompt} \
-         + margin {} > 20000",
+         + margin {} > 16096",
         crate::provider::CONTEXT_GATE_MARGIN
     );
 }

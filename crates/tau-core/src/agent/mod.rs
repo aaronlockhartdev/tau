@@ -185,8 +185,8 @@ impl Default for TurnConfig {
     }
 }
 
-/// The output cap a turn carries when no config named one: the gate needs a
-/// cap to derive the budget from, and #338 removed the unbounded prompt. The
+/// The output cap a turn carries when no config named one: the clamp needs a
+/// wish to bound the answer, and #338 removed the unbounded prompt. The
 /// same value `Provider::default_def` declares, so a default turn and a
 /// config-resolved test session gate identically.
 #[allow(
@@ -204,9 +204,10 @@ const DEFAULT_MAX_OUTPUT: u64 = crate::config::Provider::DEFAULT_MAX_OUTPUT as u
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ContextGate {
     /// The facts are declared: `window` is the model's context window and
-    /// `cap` the output cap the config wishes. The prompt decides the rest —
+    /// `cap` the hard output cap the config declares — a ceiling on the answer,
+    /// never a reservation against the prompt. The prompt decides the rest:
     /// [`clamp_max_output`] is the cap the request carries, and
-    /// [`prompt_budget`] the prompt's ceiling for that cap.
+    /// [`prompt_budget`] the prompt's ceiling for any cap the clamp can derive.
     Ready { window: u32, cap: u64 },
     /// No computable gate: `reasons` is never empty — the missing facts by
     /// their config names, or `context_room` when the declared facts leave no
@@ -222,14 +223,13 @@ impl ContextGate {
         matches!(self, Self::Ready { .. })
     }
 
-    /// The prompt's ceiling for the cap the config wishes: `window − cap −
-    /// margin`, the same quantity as the built request's
-    /// `prompt + cap + margin <= window` (#338). `None` is the `Missing` arm —
+    /// The prompt's ceiling: the window less the framing margin and the
+    /// smallest answer, read off the window alone. `None` is the `Missing` arm —
     /// a gate with nothing to enforce.
     #[must_use]
     pub(crate) fn budget(&self) -> Option<u32> {
         match self {
-            Self::Ready { window, cap } => Some(prompt_budget(*window, *cap)),
+            Self::Ready { window, .. } => Some(prompt_budget(*window)),
             Self::Missing { .. } => None,
         }
     }
@@ -264,17 +264,22 @@ impl TurnConfig {
             }
             return ContextGate::Missing { reasons };
         }
-        // The wish is taken down to the window: `generation.max_tokens` is a
-        // wish, the window decides (#338). A window that leaves no room once
-        // the wish and the margin are taken is the gap named `context_room`.
+        // The gate arms on the window alone. The prompt's ceiling is the window
+        // less the framing margin and the smallest answer; `max_tokens` is a
+        // hard cap on the answer, so it never moves that ceiling — a wish at the
+        // window is a shrink at the clamp, not a session that can never run
+        // (#342). A window too small to carry the margin and an answer at all
+        // is the gap named `context_room`.
         let window = self.context_window;
-        let cap = self.max_output_tokens.unwrap_or(0).min(u64::from(window));
-        if prompt_budget(window, cap) == 0 {
+        if prompt_budget(window) == 0 {
             return ContextGate::Missing {
                 reasons: vec!["context_room".to_owned()],
             };
         }
-        ContextGate::Ready { window, cap }
+        ContextGate::Ready {
+            window,
+            cap: self.max_output_tokens.unwrap_or(0),
+        }
     }
 }
 

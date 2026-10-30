@@ -76,7 +76,8 @@ pub struct ModelDef {
     /// `0` is the undeclared sentinel; no real model ships a 0-token window.
     #[serde(default)]
     pub context_window: u32,
-    /// This model's output cap — a wish: the window decides (#338).
+    /// This model's output cap — a hard ceiling on the answer, which the window
+    /// shrinks per call; it never reserves prompt room (#338, #343).
     pub max_tokens: Option<u32>,
     /// The model reasons (thinking levels are offered for it).
     pub reasoning: Option<bool>,

@@ -21,7 +21,8 @@ fn read_then_answer(input_tokens: Option<u64>) -> Vec<String> {
 }
 
 /// A session whose model declares a 12,000-token window and a 500-token output
-/// cap: budget = 12,000 − 500 − 4,096 = 7,404.
+/// cap. The window is what sets the prompt's ceiling; the cap rides along as the
+/// request's hard limit.
 fn gated_agent(dir: &std::path::Path, provider: Arc<ScriptedProvider>) -> Arc<AgentSession> {
     AgentSession::launch(
         session_in(dir),
@@ -32,6 +33,7 @@ fn gated_agent(dir: &std::path::Path, provider: Arc<ScriptedProvider>) -> Arc<Ag
             tools: crate::tools::surface::bare_specs(),
             cwd: dir.to_path_buf(),
             turn: TurnConfig {
+                // budget = 12000 − 4096 margin − 4096 smallest answer = 3808.
                 context_window: 12_000,
                 max_output_tokens: Some(500),
                 ..Default::default()
@@ -69,7 +71,7 @@ async fn the_gate_refuses_on_the_count_the_provider_charged() {
                 (9_000..9_200).contains(&prompt),
                 "prompt {prompt} is not the charged 9,000 plus a small tail"
             );
-            assert_eq!(budget, 7_404);
+            assert_eq!(budget, 3_808);
         }
         other => panic!("expected the context gate, saw {other:?}"),
     }
@@ -92,7 +94,7 @@ async fn a_charge_past_the_ceiling_refuses_at_the_ceiling() {
     match err {
         AgentError::ContextOverflow { prompt, budget } => {
             assert_eq!(prompt, u32::MAX);
-            assert_eq!(budget, 7_404);
+            assert_eq!(budget, 3_808);
         }
         other => panic!("expected the context gate, saw {other:?}"),
     }

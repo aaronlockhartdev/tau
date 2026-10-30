@@ -96,9 +96,9 @@ fn context_400_body() -> String {
 }
 
 fn over_budget_turn() -> TurnConfig {
-    // budget = 20000 − 200 − 4096 = 15704.
+    // budget = 23896 − 4096 margin − 4096 smallest answer = 15704.
     TurnConfig {
-        context_window: 20_000,
+        context_window: 23_896,
         max_output_tokens: Some(200),
         ..Default::default()
     }
@@ -437,12 +437,31 @@ fn the_gate_gap_names_what_the_gate_lacks() {
         },
         "a computable budget is no gap"
     );
+    // The config that asks for the whole window arms, it does not die: a
+    // `max_tokens` of `context_window` is a ceiling on the answer, so the gate
+    // gates on the window and the clamp shrinks the wish. This is the shape that
+    // refused every session on a `context_window = max_tokens = 200000` model.
+    assert_eq!(
+        declared(200_000, 200_000).context_gate(),
+        ContextGate::Ready {
+            window: 200_000,
+            cap: 200_000,
+        },
+        "a wish at the window is a shrink, not a gap"
+    );
+    assert_eq!(
+        declared(8_192, 200).context_gate(),
+        ContextGate::Missing {
+            reasons: vec!["context_room".to_owned()]
+        },
+        "the window alone can leave no room: 8192 cannot carry the margin and an answer"
+    );
     assert_eq!(
         declared(8_192, 8_192).context_gate(),
         ContextGate::Missing {
             reasons: vec!["context_room".to_owned()]
         },
-        "facts can be declared and still leave no gate"
+        "a wish at the window meets the same window gap"
     );
     assert_eq!(
         TurnConfig {
@@ -456,7 +475,22 @@ fn the_gate_gap_names_what_the_gate_lacks() {
         },
         "one declared fact names only the other"
     );
-    assert_eq!(declared(20_000, 200).context_gate().budget(), Some(15_704));
+    let margin = crate::provider::CONTEXT_GATE_MARGIN;
+    let answer = crate::provider::MIN_ANSWER_ROOM;
+    assert_eq!(
+        declared(20_000, 200).context_gate().budget(),
+        Some(20_000 - margin - answer)
+    );
+    assert_eq!(
+        declared(200_000, 200_000).context_gate().budget(),
+        Some(200_000 - margin - answer),
+        "the prompt's ceiling is the window's, not the wish's"
+    );
+    assert_eq!(
+        clamp_max_output(200_000, 200_000, 3_000),
+        192_904,
+        "a fresh session on that model gets the room the window leaves"
+    );
     assert_eq!(
         declared(8_192, 8_192).context_gate().budget(),
         None,
@@ -510,9 +544,10 @@ async fn a_dead_stream_files_no_record() {
 }
 
 /// Scope 1 (#338) at turn level: the `Missing` gate is a refusal, never an
-/// unbounded prompt. `max_tokens == context_window` leaves `8192 − 8192 − 4096`
-/// with no room, so the turn refuses before the wire and files the durable
-/// `gate_unavailable` naming the gap. The predicate's own test proves the gate;
+/// unbounded prompt. An 8192 window cannot carry the framing margin and the
+/// smallest answer — `8192 − 4096 − 4096` is nothing — so the turn refuses
+/// before the wire and files the durable `gate_unavailable` naming the gap.
+/// The predicate's own test proves the gate;
 /// this proves the wire stays untouched.
 #[tokio::test]
 async fn a_gate_with_no_room_refuses_the_turn_and_calls_no_provider() {
