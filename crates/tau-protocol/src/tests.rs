@@ -332,6 +332,10 @@ fn protocol_error_wire_shape() {
             },
             r#"{"kind":"other","message":"m"}"#,
         ),
+        (
+            ProtocolError::Busy { what: "w".into() },
+            r#"{"kind":"busy","what":"w"}"#,
+        ),
     ];
     for (err, wire) in cases {
         assert_eq!(&serde_json::to_string(&err).unwrap(), wire);

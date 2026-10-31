@@ -133,13 +133,19 @@ pub enum ProtocolError {
     Other {
         message: String,
     },
+    /// The target is mid-turn, so the command is refused for now: a retryable
+    /// condition the GUI acts on (re-enable the composer) without parsing
+    /// prose (#346). I/O and decode failures stay prose in `Other`.
+    Busy {
+        what: String,
+    },
 }
 
 impl std::fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let msg = match self {
             Self::Unsupported { message } | Self::Other { message } => message.as_str(),
-            Self::NotFound { what } => what.as_str(),
+            Self::NotFound { what } | Self::Busy { what } => what.as_str(),
         };
         f.write_str(msg)
     }
@@ -327,12 +333,12 @@ pub enum Command {
     MessageStop {
         session: String,
     },
-    /// Delete a queued message by its position in the session's queue (the
-    /// global index the queue pane shows, ticket #223): the item leaves the
-    /// queue and never runs.
+    /// Delete a queued message by its id (the id the core minted when the
+    /// item entered the queue, carried in every `Event::Queue` and snapshot):
+    /// the item leaves the queue and never runs.
     QueueItemRemove {
         session: String,
-        index: usize,
+        item: String,
     },
 
     SubagentTypes,

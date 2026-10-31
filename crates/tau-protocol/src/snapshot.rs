@@ -112,6 +112,10 @@ pub struct ViewEntry {
 /// A message sitting on a lane, as the GUI's vertical queue shows it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QueuedItem {
+    /// The item's identity for the whole of its life in the queue: the GUI
+    /// deletes by it, so a re-projection never renumbers a row it points at
+    /// (#346).
+    pub id: String,
     pub text: String,
     pub lane: MessageLane,
     /// Child provenance (a sub-agent's report, ticket #23): `None` for the
@@ -316,9 +320,9 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&bare).unwrap()).unwrap();
         assert_eq!(bare_back, bare);
 
-        // source is default-None: a user's own queued message carries no tag.
+        // `source` is default-None: a user's own queued message carries no tag.
         let item: QueuedItem =
-            serde_json::from_str(r#"{"text":"next","lane":"steering"}"#).unwrap();
+            serde_json::from_str(r#"{"id":"q1","text":"next","lane":"steering"}"#).unwrap();
         assert!(item.source.is_none());
         let item_back: QueuedItem =
             serde_json::from_str(&serde_json::to_string(&item).unwrap()).unwrap();
@@ -336,6 +340,7 @@ mod tests {
     fn live_state_and_full_snapshot_roundtrip() {
         let live = LiveState {
             queue: vec![QueuedItem {
+                id: "q1".into(),
                 text: "next".into(),
                 lane: MessageLane::FollowUp,
                 source: Some("s2".into()),
@@ -433,6 +438,11 @@ mod tests {
         let err = serde_json::from_str::<TurnState>("\"paused\"").unwrap_err();
         assert_eq!(err.classify(), serde_json::error::Category::Data);
         let err = serde_json::from_str::<ViewEntry>(r#"{"id":"e1"}"#).unwrap_err();
+        assert_eq!(err.classify(), serde_json::error::Category::Data);
+        // A queue item with no core-issued id is a data error: the GUI deletes by
+        // id, so a row it cannot address is worse than no queue (#346).
+        let err =
+            serde_json::from_str::<QueuedItem>(r#"{"text":"next","lane":"steering"}"#).unwrap_err();
         assert_eq!(err.classify(), serde_json::error::Category::Data);
         let mut v = serde_json::to_value(Snapshot {
             workspace: Workspace {

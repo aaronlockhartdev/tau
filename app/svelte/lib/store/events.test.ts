@@ -30,9 +30,9 @@ describe('applyEvents: queueing', () => {
         workspace: WS.id,
         session: 's1',
         items: [
-          { text: 'a', lane: 'force' },
-          { text: 'b', lane: 'steering' },
-          { text: 'c', lane: 'follow_up' }
+          { id: 'q1', text: 'a', lane: 'force' },
+          { id: 'q2', text: 'b', lane: 'steering' },
+          { id: 'q3', text: 'c', lane: 'follow_up' }
         ]
       }
     ]);
@@ -47,8 +47,8 @@ describe('applyEvents: queueing', () => {
         workspace: WS.id,
         session: 's1',
         items: [
-          { text: 'a', lane: 'steering' },
-          { text: 'child done', lane: 'steering', source: 's1-1' }
+          { id: 'q1', text: 'a', lane: 'steering' },
+          { id: 'q2', text: 'child done', lane: 'steering', source: 's1-1' }
         ]
       }
     ]);
@@ -62,7 +62,7 @@ describe('applyEvents: queueing', () => {
     store.sessions = openSession({}, 's1', snap('s1').snapshot);
     store.current = 's1';
     applyEvents([
-      { type: 'queue', workspace: WS.id, session: 's1', items: [{ text: 'hi', lane: 'steering' }] }
+      { type: 'queue', workspace: WS.id, session: 's1', items: [{ id: 'q1', text: 'hi', lane: 'steering' }] }
     ]);
     const before = store.tailJump;
     await send('hi', 'steering');
@@ -145,7 +145,7 @@ describe('applyEvents: last_modified (#282/#283)', () => {
   it('queue and plan_changed advance the timestamp', () => {
     freshSession();
     vi.spyOn(Date, 'now').mockReturnValue(5000);
-    applyEvents([{ type: 'queue', workspace: WS.id, session: 's1', items: [{ text: 'hi', lane: 'steering' }] }]);
+    applyEvents([{ type: 'queue', workspace: WS.id, session: 's1', items: [{ id: 'q1', text: 'hi', lane: 'steering' }] }]);
     expect(store.sessions['s1']!.last_modified).toBe(5000);
     applyEvents([
       {

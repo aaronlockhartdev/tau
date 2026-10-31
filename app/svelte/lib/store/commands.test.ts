@@ -59,7 +59,10 @@ function defaultIPC(over: Partial<Record<Command['type'], (cmd: Command) => Comm
   const base: Partial<Record<Command['type'], (cmd: Command) => CommandOutput>> = {
     session_list: () => ({ kind: 'sessions', sessions: [meta('s1')] }),
     session_new: () => ({ kind: 'session', session: meta('s2') }),
-    session_rename: () => ({ kind: 'none' }),
+    session_rename: (cmd: Command) =>
+      cmd.type === 'session_rename'
+        ? { kind: 'session', session: meta('s1', WS.id, { title: cmd.title }) }
+        : { kind: 'none' as const },
     session_open: () => snap('s1')
   };
   mockIPC((cmd) => (over[cmd.type] ?? base[cmd.type]!) (cmd));
@@ -170,7 +173,23 @@ describe('session command wrapper (F5)', () => {
     );
     expect(ok).toBe(true);
     expect(store.error).toBeNull();
-    expect(seen).toEqual(['none']);
+    expect(seen).toEqual(['session']);
+  });
+
+  it('a busy refusal returns false with no banner (the composer re-enables, #346)', async () => {
+    oneSession();
+    // The core rejects with the serialized tagged error, not an Error.
+    mockInvoke.mockRejectedValue({ kind: 'busy', what: 'session s1 is running — stop it first' });
+    let ran = false;
+    const ok = await runSessionCommand(
+      { type: 'session_rename', session: 's1', title: 'x' },
+      () => {
+        ran = true;
+      }
+    );
+    expect(ok).toBe(false);
+    expect(store.error).toBeNull();
+    expect(ran).toBe(false);
   });
 
   it('on invoke failure: sets the banner and skips the follow-up', async () => {

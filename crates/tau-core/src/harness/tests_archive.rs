@@ -42,10 +42,11 @@ async fn a_session_archives_and_lists_with_the_flag() {
             session: session_id.clone(),
         })
         .unwrap_err();
-    assert!(
-        matches!(err, ProtocolError::Other { .. }),
-        "a running session must refuse: {err:?}"
+    let ok = matches!(
+        err,
+        ProtocolError::Other { .. } | ProtocolError::Busy { .. }
     );
+    assert!(ok, "a running session must refuse: {err:?}");
     // Let the turn end, then archive.
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     while core

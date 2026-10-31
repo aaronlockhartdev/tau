@@ -285,6 +285,10 @@ impl TurnConfig {
 
 #[derive(Clone)]
 struct Queued {
+    /// The item's stable queue id (`q{n}`, minted from the session's queue
+    /// counter as it enters the queue): the GUI's delete target, so a
+    /// re-projected queue never renumbers a row it points at (#346).
+    id: String,
     text: String,
     lane: Lane,
     /// Provenance: the child session that produced this wake message
@@ -331,6 +335,10 @@ pub(crate) struct Inner {
     tool_batch_on_force: ToolBatchPolicy,
     turn: TurnConfig,
     queue: VecDeque<Queued>,
+    /// The queue-id counter: mints each item's `q{n}` as it enters the queue.
+    /// Monotonic for the session's life, so an id never names a second live
+    /// item (#346).
+    queue_seq: u64,
     /// The input-item count the previous wire request carried (the #98
     /// wire log's delta view): this request's log line reports only the
     /// items appended since then, not the whole conversation. OM
@@ -472,6 +480,7 @@ impl AgentSession {
                 tool_batch_on_force: p.tool_batch_on_force,
                 turn: p.turn,
                 queue: VecDeque::new(),
+                queue_seq: 0,
                 prev_input_len: 0,
                 gates: p.gates,
                 gate_failed: p.gate_failed,

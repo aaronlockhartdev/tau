@@ -11,7 +11,7 @@ import { errText } from '../wire/errors';
 import { open as pickDirectory } from '@tauri-apps/plugin-dialog';
 import { listen } from '@tauri-apps/api/event';
 import { applySessionList } from '../rules/sessions';
-import { switchSession } from './commands';
+import { runSessionCommand, switchSession } from './commands';
 import { ensureWorkspace, removeWorkspace } from '../rules/files';
 import { applyTabSelect } from '../rules/panes';
 import { clearError, store } from './state.svelte';
@@ -250,15 +250,14 @@ export async function closeWorkspaces(wss: Workspace[]): Promise<void> {
 
 export async function setModel(model: string): Promise<void> {
   const sid = store.current;
-  if (!sid) return;
+  if (sid === null) return;
   const s = store.sessions[sid];
   if (!s || !model || s.meta.model === model) return;
-  try {
-    clearError();
-    await command({ type: 'session_set_model', session: sid, model });
-  } catch (e) {
-    store.error = errText(e);
-    return;
-  }
-  s.meta.model = model;
+  await runSessionCommand(
+    { type: 'session_set_model', session: sid, model },
+    (out) => {
+      if (out.kind !== 'session') throw new Error('unexpected session_set_model output');
+      s.meta.model = out.session.model;
+    }
+  );
 }
