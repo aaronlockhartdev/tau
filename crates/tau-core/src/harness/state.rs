@@ -62,8 +62,10 @@ pub struct Core {
     pub(crate) configs: Mutex<HashMap<String, Config>>,
     /// A workspace whose project layer stopped reading, keyed to what the loader
     /// said. The merged entry beside it is the config the workspace keeps running
-    /// on; the flag is what tells the next turn boundary that the file on disk no
-    /// longer says that (#359). The watcher sets it, a read that succeeds clears it.
+    /// on; the mark is what tells the next turn boundary that the file on disk no
+    /// longer says that (#359). The watcher sets it; a merge that replaces the entry
+    /// it describes — the watcher's reload, a system reload's drop, a read that
+    /// reads — clears it.
     pub(crate) config_stale: Mutex<HashMap<String, ConfigRejection>>,
     /// Per-workspace skill registry (tickets #28/#31): built at session
     /// open and refreshed by the file watcher; consulted by the
@@ -582,6 +584,12 @@ impl Core {
         self.tree_watchers.lock().remove(id);
         self.plan_watchers.lock().remove(id);
         self.git_snapshots.lock().remove(id);
+        // The merged entry and its staleness mark go with the workspace: a reopen
+        // of the same cwd must meet the files as they are, not as the last session
+        // left them — a layer repaired while the workspace was closed is live, not
+        // filed under a failure it no longer has (#359).
+        self.configs.lock().remove(id);
+        self.config_stale.lock().remove(id);
         Ok(())
     }
 
@@ -644,7 +652,7 @@ impl Core {
 
     /// The project layer's directory: where a workspace's own config file lives.
     /// A load rule names no file, so a merged-set failure is attributed here — a
-    /// rule the system layer introduced is filed under this path (#363).
+    /// rule the system layer introduced is filed under this path (#366).
     pub(crate) fn project_layer_dir(workspace: &Workspace) -> PathBuf {
         Path::new(&workspace.cwd).join(".tau")
     }
@@ -714,16 +722,22 @@ impl Core {
         &self,
         workspace: &Workspace,
     ) -> (Config, Option<ConfigRejection>) {
-        if let Some(c) = self.configs.lock().get(&workspace.id) {
+        // One lock at a time: `parking_lot::Mutex` is not reentrant, and the
+        // ordering invariant is cheaper to honor than to document.
+        let warm = self.configs.lock().get(&workspace.id).cloned();
+        if let Some(c) = warm {
             // The warm entry is the last config this workspace read. If the file
-            // on disk stopped reading, the flag says so and the boundary is told;
+            // on disk stopped reading, the mark says so and the boundary is told;
             // the run continues on the warm entry (spec §12's reload failure path).
-            let stale = self.config_stale.lock().get(&workspace.id).cloned();
-            return (c.clone(), stale);
+            return (c, self.config_stale.lock().get(&workspace.id).cloned());
         }
         match self.read_workspace_config(workspace) {
             Ok(c) => {
+                // The merge this read produced supersedes the one the mark rode,
+                // so the mark goes with it: a mark describes one merged entry, and
+                // a config read off disk now is current by construction (#359).
                 self.configs.lock().insert(workspace.id.clone(), c.clone());
+                self.config_stale.lock().remove(&workspace.id);
                 (c, None)
             }
             Err(e) => {

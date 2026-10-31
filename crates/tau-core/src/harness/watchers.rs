@@ -169,7 +169,7 @@ impl Core {
     /// workspace's merged entry (the project layer feeds exactly one). A failure
     /// emits `ConfigRejected`, drops the merged entry's claim to be current, and
     /// writes no config: the workspace keeps running on the last merge that read,
-    /// and the flag is what tells the next turn boundary to say so (#359).
+    /// and the mark is what tells the next turn boundary to say so (#359).
     pub(crate) fn reload_workspace_config(&self, workspace: &Workspace) {
         let before = self.provider_rows(workspace);
         match self.read_workspace_config(workspace) {
@@ -194,7 +194,7 @@ impl Core {
     /// (the reload's success path; the merged keys refill from the new system
     /// entry at the next read). One lock scope: a reader between the two
     /// writes would serve the old system layer under a new project layer. A merged
-    /// entry's staleness flag goes with it: the entry is gone, so the next read
+    /// entry's staleness mark goes with it: the entry is gone, so the next read
     /// meets the file as it is.
     fn put_merged(&self, system: Config, workspaces: &[Workspace]) {
         let mut configs = self.configs.lock();

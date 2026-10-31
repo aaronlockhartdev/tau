@@ -215,6 +215,12 @@ Identity is always the **workspace object** (`id`, `name`, `cwd`-on-host) — ne
   set *is* the watch set, so `file_tree_changed` carries only what the GUI can refetch (#115).
 - **`workspace_close` is a flag, not a teardown**: the `open` flag in the workspace index persists,
   the sessions stay on disk, and the workspace re-opens.
+- **The transcript group's records are the transcript's own facts** — a tool's result, a
+  missing provider, a model switch are facts about the session. A model id that resolves nowhere is
+  not: a refused command is the answer.
+- **The config the session meets at open or at a turn boundary, and the last good one it
+  runs on, are the session's own facts. A rejected config edit is a system event because
+  no session owns it (#359).
 
 ---
 
@@ -232,7 +238,7 @@ multiplexed channel needs (#13). One channel, `tau://event`, carries all groups.
 | `queue` | `workspace, session, items[]` | full state | the pending lanes (steering above, follow-up below) |
 | `session_event` | `workspace, session, kind` | edge | `branch_move {leaf}` · `compaction {entry, first_kept}` |
 | `om_status` | `workspace, session, kind` | state | `observing` · `reflecting` · `idle` — the status-bar gauge |
-| `system` | `workspace, session?, kind` | edge | `workspace_opened {name, cwd}` · `provider_changed` · `config_rejected {path?, reason}` · `error {message}` |
+| `system` | `workspace, session?, kind` | edge | `workspace_opened {name, cwd}` · `provider_changed` · `config_rejected {path, reason}` · `error {message}` |
 | `subagent_event` | `workspace, session (parent), kind` | state/edge | `spawned {handle, child, agent_type, context_mode, title}` · `state {handle, child, state, detail?, note?}` · `notified {child, wake, text, output?}` |
 | `plan_changed` | `workspace, session, plan` | full state | the plan file's parsed state (the watcher, §5.3) |
 | `skill_list_changed` | `workspace, skills[]` | full state | the skill registry (watcher, #31); session-less |
@@ -254,6 +260,12 @@ refused by the view — including the first frame of a run it has never seen —
 mid-turn reads the record instead (`streamClock.apply` / `.settle`,
 [`wire/stream.svelte.ts`](../app/svelte/lib/wire/stream.svelte.ts)). Delta clocks are keyed
 **session → entry id**, because entry ids are minted per session and repeat across sessions.
+
+A config failure is told in two shapes. The watcher's `config_rejected` event is live and
+session-less: it reaches a GUI in front of the edit. The `config_rejected` diagnostic record is
+durable and session-scoped: minted by the session itself when its own config read fails — at open,
+where the watcher fires for nobody, and at a turn boundary — once per failure, naming the file and
+what the loader said, beside the turn that ran on the last config that read (#359).
 
 **HITL.** Spec §8 keeps the request/response pair (timeout, default, queueing on disconnect) in
 the protocol's shape with **zero live request types** — v0 has no permission popups; the model asks

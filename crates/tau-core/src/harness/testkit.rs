@@ -597,8 +597,8 @@ pub(crate) fn om_core(om: &crate::config::Om) -> (Arc<Core>, tempfile::TempDir) 
 /// layer's reload. A workspace's merged config is cached, and the reload drops
 /// those entries — in production the file watcher's task reloads on the edit, and
 /// a test drives the edit by hand, so a leg that edits the file and sends
-/// without this reads the pre-edit merge (#359). The core's test-only peer of
-/// `reload_workspace_config` (#337).
+/// without this reads the pre-edit merge (#359). The step is the system layer's
+/// reload — `Core::reload_system_config`, what the system watcher's task runs (#337).
 pub(crate) fn reload_system_layer(core: &Arc<Core>) {
     core.reload_system_config();
 }

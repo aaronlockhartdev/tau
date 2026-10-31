@@ -326,25 +326,30 @@ impl Core {
         self.sessions.lock().insert(id.clone(), live.clone());
         // A config broken before the session opened is stated to it as a record:
         // the GUI's banner rides the watcher's event, and a cold open never fires
-        // the watcher. The record decides, not the fresh agent — the latch is born
-        // with the session, so a close and a reopen would state one unfixed
-        // failure once per open. The projection carries the last rejection the
-        // file names, and the latch keeps the first boundary under it quiet
-        // (#359, ADR-0034).
-        if let Some(rejection) = rejection
-            && opened
+        // the watcher. The record decides what is minted — a fresh agent's latch is
+        // born empty, so a close and a reopen would state one unfixed failure once
+        // per open — and the latch is set to what the read found either way, so the
+        // first boundary under that reopen stays quiet too (#359, ADR-0034).
+        if let Some(rejection) = rejection {
+            let stated = opened
                 .as_ref()
                 .and_then(|f| f.last_config_rejection.as_ref())
-                .is_none_or(|(path, reason)| *path != rejection.path || *reason != rejection.reason)
-            && live
-                .agent
-                .config_rejection_changed(&rejection.path, &rejection.reason)
-            && let Err(e) = live.agent.diagnostic(&Diagnostic::ConfigRejected {
-                path: rejection.path,
-                reason: rejection.reason,
-            })
-        {
-            tracing::warn!("record the config rejection: {e}");
+                .is_some_and(|(path, reason)| {
+                    *path == rejection.path && *reason == rejection.reason
+                });
+            // The latch takes the pair even when the record already states it:
+            // a fresh agent's latch is born empty, and the boundary under this
+            // open must be under the record the file already carries.
+            live.agent
+                .config_rejection_changed(&rejection.path, &rejection.reason);
+            if !stated
+                && let Err(e) = live.agent.diagnostic(&Diagnostic::ConfigRejected {
+                    path: rejection.path,
+                    reason: rejection.reason,
+                })
+            {
+                tracing::warn!("record the config rejection: {e}");
+            }
         }
         Ok(meta)
     }
