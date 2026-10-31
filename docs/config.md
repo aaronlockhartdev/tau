@@ -55,7 +55,8 @@ the interface.
   banner rides a live event, and a cold open fires no watcher. A warm cache is no
   exemption: the watcher's failed reload marks the workspace's merged entry stale
   and a reload that reads clears the mark, so the boundary meets the failure the
-  turn after the edit.
+  turn after the edit. A break of the system layer marks every open workspace,
+  since every merge rides that layer (#364).
 - What the app reads at **launch** is not a live value: a session keeps the
   model it opened on (`[generation]`'s `default_model` picks new sessions), the
   gate set it opened with and the `[gates]` instructions its system prompt

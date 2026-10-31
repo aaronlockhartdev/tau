@@ -265,7 +265,9 @@ A config failure is told in two shapes. The watcher's `config_rejected` event is
 session-less: it reaches a GUI in front of the edit. The `config_rejected` diagnostic record is
 durable and session-scoped: minted by the session itself when its own config read fails — at open,
 where the watcher fires for nobody, and at a turn boundary — once per failure, naming the file and
-what the loader said, beside the turn that ran on the last config that read (#359).
+what the loader said, beside the turn that ran on the last config that read (#359). A
+break of the system layer is a story every open workspace has, so it marks each of
+their merges and every session under that layer records it (#364).
 
 **HITL.** Spec §8 keeps the request/response pair (timeout, default, queueing on disconnect) in
 the protocol's shape with **zero live request types** — v0 has no permission popups; the model asks

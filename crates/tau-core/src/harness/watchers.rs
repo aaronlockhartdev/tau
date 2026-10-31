@@ -140,6 +140,8 @@ impl Core {
     /// this layer (the next read re-merges the current files); a failure deletes
     /// no key, since serving `Config::default()` in place of the last good merge
     /// is the worse failure. `ProviderChanged` is edge-triggered per workspace.
+    /// A failure marks every open workspace: each of their merges rides this
+    /// layer, so the next boundary of each session meets the failure (#364).
     pub(crate) fn reload_system_config(&self) {
         let workspaces: Vec<Workspace> = self.workspaces.lock().values().cloned().collect();
         let before: Vec<Vec<ProviderInfo>> =
@@ -148,6 +150,15 @@ impl Core {
             Ok(config) => config,
             Err(e) => {
                 self.emit_config_rejected("", &e);
+                // Every open workspace's merge rides this layer, so a break here
+                // is a story each of them has to be told (#364). The mark is what
+                // a warm cache cannot give the boundary.
+                let rejection =
+                    Self::rejection_at(self.system_dir_of().join(config::CONFIG_FILE), &e);
+                let mut stale = self.config_stale.lock();
+                for ws in &workspaces {
+                    stale.insert(ws.id.clone(), rejection.clone());
+                }
                 return;
             }
         };

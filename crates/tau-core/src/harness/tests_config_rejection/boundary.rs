@@ -211,3 +211,81 @@ async fn a_failure_that_returns_after_a_watchers_repair_is_recorded_again() {
         );
     }
 }
+
+/// The layer under every workspace: a mid-session break of the system layer marks
+/// each open workspace's merge, so a session's next boundary states what the
+/// watcher's banner already showed, and the reload that reads the repair clears
+/// the mark. The session keeps running on the merge it last read (#364).
+#[tokio::test]
+async fn a_broken_system_layer_is_recorded_by_the_sessions_running_under_it() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &project_layer("short")).await;
+    core.workspace_config_checked(&ws);
+    let live = manual_session(
+        &core,
+        &ws,
+        provider::canned("data: [DONE]\n\n"),
+        TurnConfig::default(),
+    );
+    carry_model(&live, "model");
+    let session = live.meta.lock().id.clone();
+    let cwd = Path::new(&ws.cwd);
+    let system_file = system.path().join("config.toml");
+
+    core.rederive_turn(&live);
+    assert_eq!(
+        retention(&live),
+        Some(CacheRetention::Short),
+        "the layer the session opened with is live at the boundary"
+    );
+
+    write_config_fixture(system.path(), "[providers.dev\n");
+    reload_system_layer(&core);
+    core.rederive_turn(&live);
+    let records = config_records(cwd, &session);
+    assert_eq!(
+        records.len(),
+        1,
+        "the banner fired, and the boundary tells the session too: {records:?}"
+    );
+    assert_eq!(
+        records[0].0,
+        system_file.display().to_string(),
+        "the record names the system file, not the layer the user did not touch"
+    );
+    assert_eq!(
+        retention(&live),
+        Some(CacheRetention::Short),
+        "the unreadable layer is inert: the session runs on the merge it last read"
+    );
+
+    core.rederive_turn(&live);
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        1,
+        "one record per broken layer, not one per turn"
+    );
+
+    write_config_fixture(system.path(), SYSTEM);
+    reload_system_layer(&core);
+    assert!(
+        core.config_stale.lock().get(&ws.id).is_none(),
+        "the reload that reads clears the mark it marked"
+    );
+    core.rederive_turn(&live);
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        1,
+        "the repair mints nothing"
+    );
+
+    write_config_fixture(system.path(), "[providers.dev\n");
+    reload_system_layer(&core);
+    core.rederive_turn(&live);
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        2,
+        "the same break after a real repair is a new story"
+    );
+}

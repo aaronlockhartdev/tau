@@ -759,15 +759,21 @@ impl Core {
     /// file to name. A load rule names no file — it speaks of the merged set — so
     /// the path given is the layer a mid-session edit lands in.
     pub(crate) fn rejection_of(workspace: &Workspace, e: &config::LoadError) -> ConfigRejection {
-        let path = e.path().map_or_else(
-            || {
-                Self::project_layer_dir(workspace)
-                    .join(config::CONFIG_FILE)
-                    .display()
-                    .to_string()
-            },
-            |p| p.display().to_string(),
-        );
+        Self::rejection_at(
+            Self::project_layer_dir(workspace).join(config::CONFIG_FILE),
+            e,
+        )
+    }
+
+    /// The same story with the fallback path chosen by the caller: the system
+    /// layer's reload names the system file, because that is the layer whose edit
+    /// failed (#364).
+    pub(crate) fn rejection_at(fallback: PathBuf, e: &config::LoadError) -> ConfigRejection {
+        let path = e
+            .path()
+            .map_or_else(|| fallback, Path::to_path_buf)
+            .display()
+            .to_string();
         ConfigRejection {
             path,
             reason: e.to_string(),
