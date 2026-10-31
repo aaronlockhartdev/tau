@@ -102,6 +102,7 @@ impl Diagnostics {
             | Diagnostic::OmFailed { .. }
             | Diagnostic::ProviderRejected { .. }
             | Diagnostic::TurnCutoff { .. }
+            | Diagnostic::ConfigRejected { .. }
             | Diagnostic::Unknown { .. } => {}
         }
     }

@@ -86,6 +86,8 @@ mod tests_child_route;
 #[cfg(test)]
 mod tests_config_boundary;
 #[cfg(test)]
+mod tests_config_rejection;
+#[cfg(test)]
 mod tests_config_reload;
 #[cfg(test)]
 mod tests_dispatch;

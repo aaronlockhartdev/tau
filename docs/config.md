@@ -38,7 +38,8 @@ the interface.
   `config_rejected { path, reason }` (ADR-0034: a failure belonging to no
   session is not a session diagnostic). A parse failure names the layer file;
   an I/O failure names none, and so does a validation failure — it is a property
-  of the merged config, not of one file.
+  of the merged config, not of one file. Every read of a layer checks it, so a
+  file the code cannot read is a failure the moment it is met, not only at boot.
 - A live session takes the new config at the **next turn boundary**, never
   mid-stream. The boundary re-derives the session's **turn**: the context facts a
   model's `[providers]` entry declares, its sampling and reasoning (`[thinking]`,
@@ -46,10 +47,14 @@ the interface.
   image limits (`[limits]`). It re-derives the **memory passes** too: `[om]`'s
   thresholds, buffer interval, retry counts and route (#348, #347). A model an
   edit removes sends its context gate to missing and records `gate_unavailable`
-  **once** per transition.
+  **once** per transition. A layer that will not load is inert in the same
+  breath: the session keeps running on the config that last read, and the
+  failure is recorded **in the session** as `config_rejected { path, reason }`,
+  once per failure, so the transcript says why a file's edits are not showing up
+  (#359). A session that opens on a broken config is told the same way — the
+  banner rides a live event, and a cold open fires no watcher.
 - What the app reads at **launch** is not a live value: a session keeps the
   model it opened on (`[generation]`'s `default_model` picks new sessions), the
-  gate set it opened with and the `[gates]` instructions its system prompt
   gate set it opened with and the `[gates]` instructions its system prompt
   embeds, `[requests]`' timeouts — read per call from the copy the session was
   built with, and rebound only when a model switch resets the route — and
@@ -454,6 +459,13 @@ for a model entry, `generation` for `[generation].max_tokens`.
 
 A validation failure is a property of the merged config, not of one file, so it
 names no layer path (`config_rejected` carries `path: null`, #337).
+
+A session records the same failure as its own fact — `config_rejected`, minted
+when the session opens and at each of its turn boundaries, once per failure
+(#359). That record always names a file: at a rule failure, the layer a
+mid-session edit lands in, because a rule speaks of the merged set and names no
+file of its own. The session keeps running on the config that last read, so the
+record is also the answer to "why isn't my edit taking effect?".
 
 A provider with no `models` entry, reached as a session's provider, is a runtime
 `provider {name} has no models`, not a load error.

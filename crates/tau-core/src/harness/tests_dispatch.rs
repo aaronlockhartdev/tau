@@ -170,7 +170,7 @@ async fn the_project_config_layer_is_read_from_the_workspace() {
         CommandOutput::Workspace { workspace: w } => w,
         other => panic!("expected a workspace: {other:?}"),
     };
-    let config = core.workspace_config(&workspace);
+    let config = core.workspace_config_silent(&workspace);
     let dev = &config.providers["dev"];
     assert_eq!(
         dev.base_url, "http://project:9/v1",
@@ -206,7 +206,7 @@ async fn an_explicit_provider_survives_the_workspace_file_layer() {
         .build()
         .unwrap();
     let workspace = open_ws(&core, ws.path()).await;
-    let config = core.workspace_config(&workspace);
+    let config = core.workspace_config_silent(&workspace);
     let dev = &config.providers["dev"];
     assert_eq!(
         dev.base_url, "http://explicit:9/v1",

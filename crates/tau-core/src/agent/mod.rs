@@ -400,6 +400,10 @@ pub(crate) struct Inner {
     /// The OM stages whose exhausted retries this run has already recorded as
     /// `om_failed` (#338): one record per stage, not one per round-trip.
     pub(crate) om_failed_recorded: Vec<String>,
+    /// The `(file, reason)` config failure this run has already stated to the
+    /// session (#359): the boundary runs every turn, so one failure is recorded
+    /// once, not per turn.
+    pub(crate) config_rejection: Option<(String, String)>,
 }
 /// One session's agent loop. Single-writer per session (spec §2): the GUI
 /// (or a parent agent) drives it with `send` + `process`; the kill flag is
@@ -530,6 +534,7 @@ impl AgentSession {
                 job_notify_hook: None,
                 gate_gap_recorded: None,
                 om_failed_recorded: Vec::new(),
+                config_rejection: None,
             })),
             provider: p.provider,
             kill: Arc::new(AtomicBool::new(false)),

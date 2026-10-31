@@ -112,7 +112,7 @@ impl Core {
                     // keep the model they have.
                     let ws_id = live.meta.lock().workspace.clone();
                     let ws = self.workspace(&ws_id)?;
-                    let config = self.workspace_config(&ws);
+                    let config = self.workspace_config_silent(&ws);
                     let route = switch_route(
                         &config,
                         &model,
@@ -192,7 +192,7 @@ impl Core {
                     // reopen into a read-only fallback that says nothing.
                     // `old` is the model the record names, so the provider it
                     // routes to is the one the next open starts from.
-                    let config = self.workspace_config(&ws);
+                    let config = self.workspace_config_silent(&ws);
                     switch_route(&config, &model, old.as_deref().unwrap_or_default())?;
                     crate::diagnostics::append_facts(
                         &mut store,

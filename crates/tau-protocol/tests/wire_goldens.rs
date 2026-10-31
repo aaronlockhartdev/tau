@@ -370,6 +370,10 @@ mod payloads {
                 ended_by: StreamOutcome::EofWithoutDone,
                 blocks: 2,
             },
+            Diagnostic::ConfigRejected {
+                path: "/home/user/proj/.tau/config.toml".into(),
+                reason: "providers.dev/x: a provider name must not contain '/'; an id's prefix is its provider's name".into(),
+            },
         ]);
     }
 }

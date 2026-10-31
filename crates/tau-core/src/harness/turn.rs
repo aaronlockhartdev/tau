@@ -252,7 +252,25 @@ impl Core {
         let Ok(ws) = self.workspace(&workspace) else {
             return;
         };
-        let config = self.workspace_config(&ws);
+        let (config, rejection) = self.workspace_config_checked(&ws);
+        match rejection {
+            // A layer the code cannot read is the user's to fix: the record names
+            // the file and what the loader said, and the boundary proceeds on the
+            // config the session keeps — the edit is inert, never silent (#359).
+            Some(rejection) => {
+                if live
+                    .agent
+                    .config_rejection_changed(&rejection.path, &rejection.reason)
+                    && let Err(e) = live.agent.diagnostic(&Diagnostic::ConfigRejected {
+                        path: rejection.path,
+                        reason: rejection.reason,
+                    })
+                {
+                    tracing::warn!("record the config rejection: {e}");
+                }
+            }
+            None => live.agent.config_accepted(),
+        }
         // #336's route, read from the reloaded config: taking the config's first
         // provider (the pre-#336 shape) read a second provider's model out of the
         // first provider's model table, where its facts are absent — every reload

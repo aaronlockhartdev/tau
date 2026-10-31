@@ -81,7 +81,7 @@ async fn an_invalid_project_config_keeps_the_last_good_config_live() {
     write_config_fixture(&project, &config_with("local", "llama3"));
     let core = CoreBuilder::custom(providers()).build().unwrap();
     let workspace = open_ws(&core, tmp.path()).await;
-    let good = core.workspace_config(&workspace);
+    let good = core.workspace_config_silent(&workspace);
     assert!(good.providers.contains_key("local"));
     let collected = collect_events(&core);
     std::fs::write(&file, "[providers.local]\nbase_url = ").unwrap();

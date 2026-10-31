@@ -162,7 +162,7 @@ impl Core {
     /// The rows this workspace's model menu shows — the `provider_list` answer,
     /// so `ProviderChanged` means exactly what a menu would newly show (#337).
     fn provider_rows(&self, workspace: &Workspace) -> Vec<ProviderInfo> {
-        dispatch::provider_rows(&self.workspace_config(workspace))
+        dispatch::provider_rows(&self.workspace_config_silent(workspace))
     }
 
     /// The workspace layer's reload (spec §12, #337): a success swaps that

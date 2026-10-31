@@ -177,7 +177,9 @@ export type DiagnosticCode =
   | 'om_failed'
   | 'provider_rejected'
   | 'missing_user_query'
-  | 'turn_cutoff';
+  | 'turn_cutoff'
+  // A config layer the core could not read, so the edit is inert (#359).
+  | 'config_rejected';
 
 // A fact the harness recorded about a session: the code is the discriminant
 // and the GUI composes the sentence, so no display string crosses the seam.
@@ -192,6 +194,7 @@ export type Diagnostic =
   | { code: 'provider_rejected'; status: number; body: string }
   | { code: 'missing_user_query'; items: number }
   | { code: 'turn_cutoff'; model: string; ended_by: StreamOutcome; blocks: number }
+  | { code: 'config_rejected'; path: string; reason: string }
   // What a core reads back when a stored code is not one it knows: the record
   // on disk keeps its own code, this is the re-emitted form (Diagnostic::Unknown).
   | { code: 'unknown'; unknown_code: string }

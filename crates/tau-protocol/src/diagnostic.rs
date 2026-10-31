@@ -80,6 +80,11 @@ pub enum Diagnostic {
         ended_by: StreamOutcome,
         blocks: u64,
     },
+    /// A config layer the code cannot read: it failed to parse or validate, so
+    /// the session keeps running on the config it already had and the edit is
+    /// inert. `path` is the file that failed, `reason` the load failure's message
+    /// (#359: a config is checked at every read, and a broken one is named).
+    ConfigRejected { path: String, reason: String },
     /// A code this build does not know, or a known code whose fields do not
     /// decode — kept by name so the line still loads and renders. The entry's raw
     /// payload — not this variant — is what the GUI reads, so it is never written
@@ -102,6 +107,7 @@ impl Diagnostic {
             Self::ProviderRejected { .. } => "provider_rejected",
             Self::OmFailed { .. } => "om_failed",
             Self::TurnCutoff { .. } => "turn_cutoff",
+            Self::ConfigRejected { .. } => "config_rejected",
             Self::Unknown { unknown_code } => unknown_code,
         }
     }
@@ -184,6 +190,10 @@ mod tests {
                 model: "b".into(),
                 ended_by: StreamOutcome::EofWithoutDone,
                 blocks: 1,
+            },
+            Diagnostic::ConfigRejected {
+                path: "/home/user/proj/.tau/config.toml".into(),
+                reason: "providers.dev/x: a provider name must not contain '/'; an id's prefix is its provider's name".into(),
             },
         ];
         for case in cases {
@@ -287,6 +297,10 @@ mod tests {
                 model: "m".into(),
                 ended_by: StreamOutcome::Length,
                 blocks: 3,
+            },
+            Diagnostic::ConfigRejected {
+                path: "p".into(),
+                reason: "r".into(),
             },
         ];
         for fact in facts {

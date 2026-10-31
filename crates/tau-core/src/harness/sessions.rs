@@ -10,7 +10,7 @@ use super::{
 use crate::agent::OmRoute;
 use crate::config::{ProviderRef, Route};
 use crate::diagnostics::Diagnostics;
-use tau_protocol::EntryKind;
+use tau_protocol::{Diagnostic, EntryKind};
 impl Core {
     /// Where a session's memory passes run (#348): `[om].om_model` resolved by
     /// §6.7 against the live config, at the endpoint its id names — prefix
@@ -269,7 +269,7 @@ impl Core {
         base_prompt: Option<String>,
     ) -> Result<SessionMeta, ProtocolError> {
         let parent = store.parent().map(str::to_string);
-        let config = self.workspace_config(workspace);
+        let (config, rejection) = self.workspace_config_checked(workspace);
         // #336: the endpoint follows the model this session opens on — its
         // record's last switch, else the config default — and the provider its
         // id names, never the provider the config's map sorts first.
@@ -324,6 +324,21 @@ impl Core {
         });
         let id = live.meta.lock().id.clone();
         self.sessions.lock().insert(id.clone(), live.clone());
+        // A config broken before the session opened is stated to it as a record:
+        // the GUI's banner rides the watcher's event, and a cold open never fires
+        // the watcher. The latch is the open's, and it is set here so the first
+        // boundary under the same failure does not state it a second time (#359).
+        if let Some(rejection) = rejection
+            && live
+                .agent
+                .config_rejection_changed(&rejection.path, &rejection.reason)
+            && let Err(e) = live.agent.diagnostic(&Diagnostic::ConfigRejected {
+                path: rejection.path,
+                reason: rejection.reason,
+            })
+        {
+            tracing::warn!("record the config rejection: {e}");
+        }
         Ok(meta)
     }
 }

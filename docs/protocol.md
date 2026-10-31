@@ -336,7 +336,7 @@ the sentence from the code and its fields.
 budget}` · `gate_attempt {command, retries, max, output}` · `gate_failed {command, retries}` ·
 `om_stalled {pending, activation}` · `om_failed {stage, reason}` · `provider_rejected {status,
 body}` · `missing_user_query {items}` · `turn_cutoff {model, ended_by, blocks}` ·
-`unknown {unknown_code}`.
+`config_rejected {path, reason}` · `unknown {unknown_code}`.
 
 `from` is absent when no predecessor was recorded (a config-level change). A known code whose
 fields don't decode reads as `Unknown` — defaults filled into a truncated record would state a
@@ -348,7 +348,9 @@ fact no provider reported.
 `providerCutoff()`). Cutoff is not force-send; the glossary keeps them apart.
 
 A failure that belongs to **no session** is not a diagnostic (ADR-0034): a rejected config edit
-rides the system group as `config_rejected`.
+rides the system group as the `config_rejected` event. A config failure a session met in its own
+read **is** one — minted at its open and at its turn boundaries, once per failure (#359) — because
+"why are this file's edits not showing up?" is a fact about that session.
 
 ### Errors ([`lib.rs`](../crates/tau-protocol/src/lib.rs))
 
