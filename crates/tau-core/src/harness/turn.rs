@@ -267,8 +267,7 @@ impl Core {
         // The memory passes follow the config too (#348, #337): a `[om].om_model`
         // edit reaches the next pass, and a route the edit killed is recorded once
         // as `om_failed { stage: "route" }`.
-        live.agent
-            .set_om_route(self.om_route(&config, owner.provider));
+        live.agent.set_om_route(self.om_route(&config, owner));
         // A child inherits the model its parent has, so the config's move reaches
         // the pair the supervisor hands a model-less child (#336).
         if let Some(sup) = live.agent.subagents() {

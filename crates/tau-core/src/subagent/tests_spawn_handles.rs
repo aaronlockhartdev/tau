@@ -67,7 +67,6 @@ async fn a_reopened_parent_does_not_remint_a_child_handle() {
         model: "test-model".into(),
         system_prompt: "be terse".into(),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,

@@ -255,6 +255,9 @@ pub(crate) struct ForwardingChildFactory {
     /// the fallback a bare key resolves against.
     pub(crate) config: Config,
     pub(crate) provider: crate::config::Provider,
+    /// The config key of `provider`: §6.7 answers a contested bare key against a
+    /// provider's name, and the factory carries the parent's entry (#348).
+    pub(crate) provider_name: String,
     pub(crate) requests: crate::config::Requests,
     pub(crate) tx: mpsc::Sender<Event>,
     pub(crate) pipe: PipeCounters,
@@ -271,7 +274,7 @@ impl ChildProviderFactory for ForwardingChildFactory {
         let owner = self.config.route_child(
             model,
             ProviderRef {
-                name: "",
+                name: &self.provider_name,
                 provider: &self.provider,
             },
         );
@@ -289,31 +292,6 @@ impl ChildProviderFactory for ForwardingChildFactory {
             .lock()
             .insert(child.to_owned(), provider.clone());
         provider
-    }
-
-    fn om_route(&self, om_model: &str, model: &str) -> crate::agent::OmRoute {
-        let om_model = om_model.trim();
-        if om_model.is_empty() {
-            return crate::agent::OmRoute::Session;
-        }
-        // The child's own route is `current`: the same provider its model is
-        // addressed at (#336), not the parent's.
-        let current = self.config.route_child(
-            model,
-            ProviderRef {
-                name: "",
-                provider: &self.provider,
-            },
-        );
-        om_route_for(
-            &self.client,
-            &self.config,
-            om_model,
-            ProviderRef {
-                name: "",
-                provider: current,
-            },
-        )
     }
 }
 

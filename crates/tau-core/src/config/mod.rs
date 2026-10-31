@@ -449,6 +449,10 @@ impl Config {
 /// provider the config's map sorts first.
 #[derive(Debug, Clone)]
 pub struct Route {
+    /// The config key that owns the provider (§6.7): `Provider` is unnamed — the
+    /// map keys it — and §6.7's answer to a contested bare key is a fact about
+    /// the provider's identity (#348).
+    pub name: String,
     /// The model id, spelled as the session's record names it.
     pub model: String,
     /// The provider that owns the id.

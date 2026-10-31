@@ -64,9 +64,6 @@ pub struct Supervisor {
     inherited: Mutex<(String, TurnConfig)>,
     system_prompt: String,
     om: Om,
-    /// The parent's `[om].om_model`, handed to the provider factory to route
-    /// (#348); the child's memory passes run where it resolves.
-    om_model: String,
     tool_batch_on_force: ToolBatchPolicy,
     gates: Option<Gates>,
     /// The pin store's GC policy (#225): children inherit it so their
@@ -110,9 +107,6 @@ pub struct SupervisorParams {
     pub model: String,
     pub system_prompt: String,
     pub om: Om,
-    /// The parent's `[om].om_model` (§4), routed by the factory into each child's
-    /// OM route (#348).
-    pub om_model: String,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
     pub gates: Option<Gates>,
@@ -194,7 +188,6 @@ impl Supervisor {
             inherited: Mutex::new((p.model, p.turn)),
             system_prompt: p.system_prompt,
             om: p.om,
-            om_model: p.om_model,
             tool_batch_on_force: p.tool_batch_on_force,
             gates: p.gates,
             hashline: p.hashline,
@@ -263,14 +256,6 @@ impl Supervisor {
     /// as the parent's current model, not the one it launched on (#336).
     pub(crate) fn set_inherited(&self, model: String, turn: TurnConfig) {
         *self.inherited.lock() = (model, turn);
-    }
-
-    /// Where a child's memory passes run (#348): the factory owns the HTTP
-    /// client and the config, so it resolves the inherited `[om].om_model` by
-    /// §6.7 against the provider the child's model names.
-    /// A key several providers declare is answered by that provider, not the parent's.
-    pub(crate) fn child_om_route(&self, model: &str) -> crate::agent::OmRoute {
-        self.provider.om_route(&self.om_model, model)
     }
 
     /// The core link (production); `None` on the test seams (no plan

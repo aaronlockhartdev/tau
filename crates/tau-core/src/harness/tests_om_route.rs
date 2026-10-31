@@ -134,11 +134,15 @@ base_url = "{aaa}"
 
 [providers.aaa.models.om-model]
 context_window = 32768
+[providers.aaa.models.shared]
+context_window = 32768
 
 [providers.zzz]
 base_url = "{zzz}"
 
 [providers.zzz.models.main-model]
+context_window = 32768
+[providers.zzz.models.shared]
 context_window = 32768
 
 [generation]
@@ -204,15 +208,29 @@ async fn settle(core: &Arc<Core>, session: &str) {
     }
 }
 
-/// Send one message whose size crosses the observe threshold.
-async fn send(core: &Arc<Core>, session: &str) {
+/// The brief a child is spawned with: text no other transcript in the fixture
+/// contains, so a request body is attributable to the child.
+const BRIEF: &str = "inspect the parser";
+/// The message `send` delivers, for the same reason on the parent's side.
+const SEND_TEXT: &str = "work through this task carefully";
+/// The observer prompt's opening: marks a request as a memory pass, not a model
+/// call.
+const MEMORY_INSTRUCTIONS: &str = "You are the memory system of a coding agent";
+
+/// Deliver `text` to `session` and settle its turn.
+async fn send_text(core: &Arc<Core>, session: &str, text: &str) {
     core.dispatch(Command::MessageSend {
         session: session.into(),
-        text: "work through this task carefully".into(),
+        text: text.into(),
         lane: MessageLane::Steering,
     })
     .unwrap();
     settle(core, session).await;
+}
+
+/// Send one message whose size crosses the observe threshold.
+async fn send(core: &Arc<Core>, session: &str) {
+    send_text(core, session, SEND_TEXT).await;
 }
 
 /// The diagnostic payloads of a session's file, as JSON.
@@ -430,75 +448,186 @@ async fn an_empty_om_model_stamps_the_record_with_the_model_it_rides() {
     );
 }
 
-/// The child leg (#348 with #336): a subagent's `om_model` resolves against the
-/// provider **its own model** names, not the parent's. The factory's resolver is
-/// a pure function of the config, the `om_model` and the child's model, so the
-/// route it builds is read directly — no turn, no timing.
-fn child_factory() -> ForwardingChildFactory {
-    let mut aaa = crate::config::Provider::with_model("http://127.0.0.1:9/aaa/v1", "om-model");
-    aaa.models
-        .insert("shared".to_owned(), crate::config::ModelDef::default());
-    let providers = BTreeMap::from([
-        ("aaa".to_owned(), aaa),
-        (
-            "zzz".to_owned(),
-            crate::config::Provider::with_model("http://127.0.0.1:9/zzz/v1", "main-model"),
-        ),
-    ]);
-    let config = Config {
-        providers,
-        ..Default::default()
-    };
-    ForwardingChildFactory {
-        client: reqwest::Client::new(),
-        provider: config.providers["zzz"].clone(),
-        requests: config.requests.clone(),
-        config,
-        tx: mpsc::channel(1).0,
-        pipe: PipeCounters {
-            dropped: Arc::new(AtomicU64::new(0)),
-            overflow_pending: Arc::new(AtomicBool::new(false)),
-        },
-        workspace: "ws".to_owned(),
-        providers: Mutex::new(HashMap::new()),
+/// A `.md` agent type naming `model` as its own (spec §5.5), written before the
+/// parent opens: the root assembly discovers types at launch.
+fn write_agent_type(project: &Path, name: &str, model: &str) {
+    let dir = project.join(".tau").join("agents");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join(format!("{name}.md")),
+        format!("---\nname: {name}\ndescription: reviews\nmodel: {model}\n---\nYou review.\n"),
+    )
+    .unwrap();
+}
+
+fn spawn(core: &Arc<Core>, parent: &str, agent_type: &str) -> String {
+    match core
+        .dispatch(Command::SubagentSpawn {
+            session: parent.into(),
+            agent_type: agent_type.into(),
+            brief: BRIEF.into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent.child,
+        other => panic!("expected a subagent: {other:?}"),
     }
 }
 
-#[test]
-fn a_childs_om_model_is_addressed_at_the_provider_its_own_model_names() {
-    let factory = child_factory();
-    // Positive: the prefix names `aaa`, so the pass is addressed there and asks
-    // for the stripped key — the child rides `zzz`, so this is not its route.
-    let route = factory.om_route("aaa/om-model", "zzz/main-model");
-    let crate::agent::OmRoute::Configured { model, .. } = &route else {
-        panic!("a prefix naming a configured provider is an address: {route:?}");
-    };
-    assert_eq!(model, "om-model");
-    // A bare key with one declarer is addressed at its declarer, not at the
-    // provider the child's model names.
-    let bare = factory.om_route("om-model", "zzz/main-model");
-    let crate::agent::OmRoute::Configured { model, .. } = &bare else {
-        panic!("one provider declares `om-model`: {bare:?}");
-    };
-    assert_eq!(model, "om-model");
-    // Negative: a prefix naming no provider is a refusal naming the config key
-    // and the id — the child has no parent endpoint to borrow.
-    let refused = factory.om_route("nosuch/om-model", "zzz/main-model");
-    assert!(
-        matches!(
-            &refused,
-            crate::agent::OmRoute::Refused { reason }
-                if reason.contains("om.om_model") && reason.contains("nosuch/om-model")
-        ),
-        "{refused:?}"
+/// An endpoint received a request for `model`.
+fn saw_model(seen: &Arc<Mutex<Vec<String>>>, model: &str) -> bool {
+    seen.lock()
+        .iter()
+        .any(|payload| captured_model(payload).as_deref() == Some(model))
+}
+
+/// What an endpoint was asked for, model by model — the readable form for an
+/// assertion message, where a payload dump would bury the answer.
+fn models_seen(seen: &Arc<Mutex<Vec<String>>>) -> Vec<Option<String>> {
+    seen.lock()
+        .iter()
+        .map(|payload| captured_model(payload))
+        .collect()
+}
+
+/// The child leg end to end (#348 with #336): the parent rides `zzz`, the
+/// child's agent type names a model of `aaa`, and `om_model` is a bare key both
+/// providers declare. §6.7 answers that key per session, so the parent's memory
+/// pass is addressed at zzz and the child's at aaa. The capture servers are the
+/// discriminator: the factory's own route is a `Configured { model }`, which
+/// names the key, not the endpoint — a pass that travelled to the parent's
+/// provider would be invisible in the unit leg.
+#[tokio::test]
+async fn a_child_and_its_parent_answer_a_contested_om_key_at_their_own_providers() {
+    let f = Fixture::new();
+    write_agent_type(f.project.path(), "reviewer", "aaa/om-model");
+    let (core, parent) = f.start("shared").await;
+    let child = spawn(&core, &parent, "reviewer");
+    send(&core, &parent).await;
+
+    assert_eq!(
+        stamped_om_model(f.project.path(), &child).await.as_deref(),
+        Some("shared"),
+        "the child's record names the key its pass was addressed with"
     );
-    // Empty `om_model` rides, which the agent resolves against the child's own
-    // route; the factory states the ride, it does not resolve it.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    while !(saw_memory_pass(&f.aaa_seen, "shared", BRIEF)
+        && saw_memory_pass(&f.zzz_seen, "shared", SEND_TEXT))
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the parent's pass at zzz and the child's at aaa: zzz saw {:?}, aaa saw {:?}",
+            models_seen(&f.zzz_seen),
+            models_seen(&f.aaa_seen)
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert!(
-        matches!(
-            factory.om_route("  ", "zzz/main-model"),
-            crate::agent::OmRoute::Session
-        ),
-        "an empty `om_model` is a ride, not a refusal"
+        saw_model(&f.aaa_seen, "om-model"),
+        "the child's model calls ran at aaa, so the `shared` request there is \
+         the child's memory pass: {:?}",
+        models_seen(&f.aaa_seen)
+    );
+}
+
+/// An endpoint ran a memory pass for `model` over a transcript containing `text`:
+/// the model names the address, the transcript says which session ran there.
+fn saw_memory_pass(seen: &Arc<Mutex<Vec<String>>>, model: &str, text: &str) -> bool {
+    seen.lock().iter().any(|payload| {
+        captured_model(payload).as_deref() == Some(model)
+            && payload.contains(MEMORY_INSTRUCTIONS)
+            && payload.contains(text)
+    })
+}
+
+/// The newest `om` record's model, waited for past the unstamped ones: the
+/// activation record names no model, and it lands before the pass's record.
+async fn stamped_om_model(cwd: &Path, session: &str) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(model) = om_record_models(cwd, session).last().cloned().flatten()
+            && !model.is_empty()
+        {
+            return Some(model);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// Every `om` record's model field, in append order.
+fn om_record_models(cwd: &Path, session: &str) -> Vec<Option<String>> {
+    let mut store = SessionStore::for_workspace(cwd, session);
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Om)
+        .map(|e| {
+            e.payload
+                .get("om_model")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+/// The newest `om` record's model, waited for past `before` records.
+async fn om_record_model_after(cwd: &Path, session: &str, before: usize) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let models = om_record_models(cwd, session);
+        if models.len() > before {
+            return models.last().cloned().flatten();
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+/// A child already alive follows a config move: its route is re-derived at its
+/// own turn boundary, so the pass after the edit is addressed where the new id
+/// names it. The launch-time value is not the claim — a child whose route was
+/// frozen at spawn keeps asking for the key it opened on, which is what this
+/// leg refuses to accept (#348, #337, #347).
+#[tokio::test]
+async fn a_config_move_reaches_a_child_that_is_already_alive() {
+    let f = Fixture::new();
+    write_agent_type(f.project.path(), "reviewer", "aaa/om-model");
+    let (core, parent) = f.start("shared").await;
+    let child = spawn(&core, &parent, "reviewer");
+    send(&core, &parent).await;
+
+    let opened = om_record_models(f.project.path(), &child).len();
+    assert_eq!(
+        stamped_om_model(f.project.path(), &child).await.as_deref(),
+        Some("shared"),
+        "the child opens on a pass stamped with the contested key"
+    );
+
+    f.write_config("aaa/om-model");
+    core.reload_system_config();
+    // A pass runs at a turn's end only once the buffer crosses `observe`, so the
+    // turn after the edit says enough to be worth reflecting on.
+    send_text(&core, &child, &BRIEF.repeat(200)).await;
+
+    assert_eq!(
+        om_record_model_after(f.project.path(), &child, opened)
+            .await
+            .as_deref(),
+        Some("om-model"),
+        "the pass after the edit is stamped with the model the new id selects"
+    );
+    assert!(
+        saw_memory_pass(&f.aaa_seen, "om-model", BRIEF),
+        "the child's pass after the edit asks the provider the new id names for \
+         its key: {:?}",
+        models_seen(&f.aaa_seen)
     );
 }

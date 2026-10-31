@@ -11,7 +11,7 @@ use super::{
     TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open, tools,
 };
 use crate::agent::{OmRoute, StreamDelta};
-use crate::config::{Route, ToolBatchPolicy};
+use crate::config::{ProviderRef, Route, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
@@ -172,10 +172,9 @@ impl AgentSession {
                      is a human, and an unlabeled message is your own task \
                      (the spawn brief).",
                 );
-                // The child's memory passes run where the inherited
-                // `[om].om_model` resolves, at the provider the child's own model
-                // names (#348).
-                let om_route = supervisor.child_om_route(&model);
+                // The child rides its own model until its first turn boundary,
+                // where the live config re-derives the route against the
+                // provider its own model names (#348).
 
                 let agent = Self::new(SessionParams {
                     store,
@@ -189,7 +188,7 @@ impl AgentSession {
                     gates,
                     gate_failed: false,
                     om: Some(OmState::from_config(&om, record)),
-                    om_route,
+                    om_route: OmRoute::Session,
                     hashline,
                     subagents: None,
                     child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
@@ -335,7 +334,13 @@ fn root_session(
     // session with no `[om].om_model` rides the model above; each pass stamps
     // the model it addressed into the memory record, so the record names the
     // endpoint the memory runs on, configured or ridden.
-    let om_route = core.om_route(config, &route.provider);
+    let om_route = core.om_route(
+        config,
+        ProviderRef {
+            name: &route.name,
+            provider: &route.provider,
+        },
+    );
 
     let cwd = PathBuf::from(&workspace.cwd);
 
@@ -398,6 +403,7 @@ fn root_session(
             client: core.client.clone(),
             config: config.clone(),
             provider: route.provider.clone(),
+            provider_name: route.name.clone(),
             requests: config.requests.clone(),
             tx: core.events_tx.clone(),
             pipe: core.pipe.clone(),
@@ -423,7 +429,6 @@ fn root_session(
         model: model.to_owned(),
         system_prompt: system_prompt.clone(),
         om: config.om.clone(),
-        om_model: config.om.om_model.clone(),
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
         gates: config.gates.clone(),

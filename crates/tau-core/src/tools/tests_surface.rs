@@ -93,7 +93,6 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         model: "test-model".into(),
         system_prompt: "be terse".into(),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
