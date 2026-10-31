@@ -78,6 +78,7 @@ pub(crate) async fn buffer_cycle(
         return;
     }
 
+    let addressed = model.clone();
     let system = observer_system_prompt();
     let request = ResponseRequest::new(
         model,
@@ -115,7 +116,15 @@ pub(crate) async fn buffer_cycle(
     let group_id = generate_group_id(&parsed.observations);
     let range_str = format!("{}:{}", range.0, range.1);
     let text = wrap_in_observation_group(&parsed.observations, &range_str, &group_id, None);
-    commit_chunk(&inner, &candidates, range, candidate_tokens, text, boundary);
+    commit_chunk(
+        &inner,
+        &candidates,
+        range,
+        candidate_tokens,
+        text,
+        boundary,
+        &addressed,
+    );
 }
 
 /// The cycle's phase 1 (D4): under the lock, load the freshest record,
@@ -182,6 +191,8 @@ fn candidate_range(candidates: &[crate::session::Entry]) -> Option<(String, Stri
 /// the freshest record (the turn-end pass may have saved during the
 /// round-trip), push the chunk, advance the persisted boundary, save,
 /// then mirror into the live state and clear the in-flight flag.
+/// The record names the endpoint the pass ran at, so a chunk committed by a
+/// background cycle is attributed like a synchronous pass's (#348).
 fn commit_chunk(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     candidates: &[crate::session::Entry],
@@ -189,6 +200,7 @@ fn commit_chunk(
     tokens: u32,
     text: String,
     boundary: u64,
+    model: &str,
 ) {
     let mut g = inner.lock();
     let mut latest = match OmState::load_record(&mut g.store) {
@@ -199,6 +211,7 @@ fn commit_chunk(
             return;
         }
     };
+    model.clone_into(&mut latest.om_model);
     if !latest.buffered_chunks.iter().any(|c| c.range == range) {
         latest.buffered_chunks.push(BufferedChunk {
             range,

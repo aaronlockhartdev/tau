@@ -408,3 +408,76 @@ async fn an_empty_om_model_stamps_the_record_with_the_model_it_rides() {
         "no call reached a provider the config did not name for the memory passes"
     );
 }
+
+/// The child leg (#348 with #336): a subagent's `om_model` resolves against the
+/// provider **its own model** names, not the parent's. The factory's resolver is
+/// a pure function of the config, the `om_model` and the child's model, so the
+/// route it builds is read directly — no turn, no timing.
+fn child_factory() -> ForwardingChildFactory {
+    let mut aaa = crate::config::Provider::with_model("http://127.0.0.1:9/aaa/v1", "om-model");
+    aaa.models
+        .insert("shared".to_owned(), crate::config::ModelDef::default());
+    let providers = BTreeMap::from([
+        ("aaa".to_owned(), aaa),
+        (
+            "zzz".to_owned(),
+            crate::config::Provider::with_model("http://127.0.0.1:9/zzz/v1", "main-model"),
+        ),
+    ]);
+    let config = Config {
+        providers,
+        ..Default::default()
+    };
+    ForwardingChildFactory {
+        client: reqwest::Client::new(),
+        provider: config.providers["zzz"].clone(),
+        requests: config.requests.clone(),
+        config,
+        tx: mpsc::channel(1).0,
+        pipe: PipeCounters {
+            dropped: Arc::new(AtomicU64::new(0)),
+            overflow_pending: Arc::new(AtomicBool::new(false)),
+        },
+        workspace: "ws".to_owned(),
+        providers: Mutex::new(HashMap::new()),
+    }
+}
+
+#[test]
+fn a_childs_om_model_is_addressed_at_the_provider_its_own_model_names() {
+    let factory = child_factory();
+    // Positive: the prefix names `aaa`, so the pass is addressed there and asks
+    // for the stripped key — the child rides `zzz`, so this is not its route.
+    let route = factory.om_route("aaa/om-model", "zzz/main-model");
+    let crate::agent::OmRoute::Configured { model, .. } = &route else {
+        panic!("a prefix naming a configured provider is an address: {route:?}");
+    };
+    assert_eq!(model, "om-model");
+    // A bare key with one declarer is addressed at its declarer, not at the
+    // provider the child's model names.
+    let bare = factory.om_route("om-model", "zzz/main-model");
+    let crate::agent::OmRoute::Configured { model, .. } = &bare else {
+        panic!("one provider declares `om-model`: {bare:?}");
+    };
+    assert_eq!(model, "om-model");
+    // Negative: a prefix naming no provider is a refusal naming the config key
+    // and the id — the child has no parent endpoint to borrow.
+    let refused = factory.om_route("nosuch/om-model", "zzz/main-model");
+    assert!(
+        matches!(
+            &refused,
+            crate::agent::OmRoute::Refused { reason }
+                if reason.contains("om.om_model") && reason.contains("nosuch/om-model")
+        ),
+        "{refused:?}"
+    );
+    // Empty `om_model` rides, which the agent resolves against the child's own
+    // route; the factory states the ride, it does not resolve it.
+    assert!(
+        matches!(
+            factory.om_route("  ", "zzz/main-model"),
+            crate::agent::OmRoute::Session
+        ),
+        "an empty `om_model` is a ride, not a refusal"
+    );
+}

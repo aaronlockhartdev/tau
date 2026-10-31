@@ -268,6 +268,7 @@ impl Supervisor {
     /// Where a child's memory passes run (#348): the factory owns the HTTP
     /// client and the config, so it resolves the inherited `[om].om_model` by
     /// §6.7 against the provider the child's model names.
+    /// A key several providers declare is answered by that provider, not the parent's.
     pub(crate) fn child_om_route(&self, model: &str) -> crate::agent::OmRoute {
         self.provider.om_route(&self.om_model, model)
     }

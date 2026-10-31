@@ -611,6 +611,9 @@ impl Config {
     /// no address of their own to fall back to, so `current` — the provider the
     /// session is on — is only an answer for a key that provider declares among
     /// several that do.
+    /// It walks §6.7's rules itself rather than reading through `route_model`
+    /// because that answers the no-declarer and contested cases with `current`,
+    /// and `om_model` refuses both.
     pub(crate) fn route_om<'c>(
         &'c self,
         om_model: &str,
@@ -633,27 +636,32 @@ impl Config {
                 prefix: prefix.to_owned(),
             });
         }
-        let mut declaring = self
+        let declaring: Vec<ProviderRef<'_>> = self
             .providers
             .iter()
             .filter(|(_, provider)| provider.models.contains_key(om_model))
-            .map(|(name, provider)| ProviderRef { name, provider });
-        let Some(only) = declaring.next() else {
+            .map(|(name, provider)| ProviderRef { name, provider })
+            .collect();
+        let Some(only) = declaring.first() else {
             return Err(OmRouteMiss::Undeclared {
                 model: om_model.to_owned(),
                 provider: None,
             });
         };
-        if declaring.next().is_none() {
-            return Ok(only);
+        if declaring.len() == 1 {
+            return Ok(*only);
         }
         if current.provider.models.contains_key(om_model) {
             return Ok(current);
         }
-        let providers = std::iter::once(only.name)
-            .chain(declaring.map(|owner| owner.name))
-            .map(str::to_owned)
-            .collect();
+        // The refusal is the config author's fix instruction, so it names every
+        // provider in the collision, in a stable order, not the one the map
+        // happened to reach first.
+        let mut providers = declaring
+            .iter()
+            .map(|owner| owner.name.to_owned())
+            .collect::<Vec<_>>();
+        providers.sort();
         Err(OmRouteMiss::Ambiguous {
             model: om_model.to_owned(),
             providers,

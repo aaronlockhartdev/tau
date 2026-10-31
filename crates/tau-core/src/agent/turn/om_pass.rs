@@ -56,6 +56,13 @@ impl AgentSession {
         }
     }
 
+    /// The memory record names the model each pass is addressed at (#348), so a
+    /// reader of the record sees the endpoint the memory runs on — configured or
+    /// ridden — whatever the pass did with it.
+    fn stamp_om_model(model: &str, record: &mut crate::om::OmRecord) {
+        model.clone_into(&mut record.om_model);
+    }
+
     /// The endpoint the memory passes run at, from the live config (#348, #337):
     /// the harness re-derives it at the turn boundary, so an edit to
     /// `[om].om_model` reaches the next pass without a restart.
@@ -101,10 +108,7 @@ impl AgentSession {
         let Some((om_provider, model)) = self.om_address() else {
             return;
         };
-        // The record names the model the pass is addressed at, whatever the pass
-        // does with it (#348): a reader of the OM record sees the endpoint the
-        // memory runs on, configured or ridden.
-        model.clone_into(&mut state.record.om_model);
+        Self::stamp_om_model(&model, &mut state.record);
         // The re-lock, as in `om_turn_end`: the session lock is never held
         // across a provider call.
         let mut with_store =
@@ -144,10 +148,7 @@ impl AgentSession {
         let Some((om_provider, model)) = self.om_address() else {
             return Ok(());
         };
-        // The record names the model the pass is addressed at, before the
-        // round-trips run: an Observe-only turn stamps it too, not only a
-        // reflection (#348).
-        model.clone_into(&mut state.record.om_model);
+        Self::stamp_om_model(&model, &mut state.record);
         // D13.1: join the in-flight buffer cycle BEFORE the pass — the
         // pass's activation (promote) reads the buffer the cycle writes.
         // 60s bound: a cycle outliving it is fine, the write-back merge
@@ -362,8 +363,6 @@ impl AgentSession {
             // crossing (one more interval of material) triggers again.
             return;
         }
-        // The record names the model the buffer cycle is addressed at (#348).
-        model.clone_into(&mut om.record.om_model);
         // The in-process boundary advances at TRIGGER time (D6); the
         // persisted one only at the cycle's successful commit.
         *om_buffer_boundary = pending;

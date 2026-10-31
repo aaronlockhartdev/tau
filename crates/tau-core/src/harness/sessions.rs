@@ -13,11 +13,12 @@ use crate::diagnostics::Diagnostics;
 use tau_protocol::EntryKind;
 impl Core {
     /// Where a session's memory passes run (#348): `[om].om_model` resolved by
-    /// §6.7 against the live config, at the endpoint its id names. An empty
-    /// `om_model` rides `current` — the model the session is on; an id that
-    /// resolves to no endpoint is a refusal the session records once, never this
-    /// route borrowed. `current` is the provider the session's model is addressed
-    /// at, so a key several providers declare goes to that one.
+    /// §6.7 against the live config, at the endpoint its id names — prefix
+    /// stripped, a bare key resolved among its declarers. An empty `om_model`
+    /// rides the session's own provider and model. An id that resolves to no
+    /// endpoint is a refusal the session records, never this route borrowed; a
+    /// key several providers declare is answered by `current`, the provider the
+    /// session's model is addressed at.
     pub(crate) fn om_route(&self, config: &Config, current: &Provider) -> OmRoute {
         let om_model = config.om.om_model.trim();
         if om_model.is_empty() {

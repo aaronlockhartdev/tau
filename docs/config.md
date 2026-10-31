@@ -54,8 +54,11 @@ looked up among the providers that declare it. The route decides the `base_url`
 a request goes to, the facts it is built from, and the provider a subagent
 child is addressed at — never the provider the config's map sorts first. It
 applies to every id the harness resolves a provider's facts from, including
-`[generation].default_model`. It does **not** apply to `[om].om_model`, which is
-sent to the endpoint verbatim (`resolve_om_model`). See
+`[generation].default_model` and `[om].om_model` (`Config::route_om`, #348): the
+memory passes are addressed at the provider the id names and asked of it for the
+prefix stripped. An `om_model` that addresses no endpoint is refused — the
+passes stop and the record carries `om_failed { stage: "route" }` naming the
+config key and the id — because the memory has no address of its own to borrow. See
 [Provider resolution](#provider-resolution).
 
 Agent types are **not** in this file: they are `agents/*.md` under
@@ -210,7 +213,7 @@ The compaction model is global, not per-provider (spec §4).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `om_model` | string | `""` | empty = the session's own model. Sent to the session provider's endpoint **verbatim** — §6.7's `provider/` prefix is not stripped here (`resolve_om_model`), so a prefixed id reaches the endpoint with its provider still attached |
+| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key, a bare key goes to the provider that declares it. An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
 | `observe_threshold` | int | 30000 | |
 | `reflect_threshold` | int | 40000 | |
 | `buffer_increment` | int | 6000 | |
