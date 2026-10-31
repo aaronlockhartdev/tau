@@ -111,7 +111,7 @@ async fn an_observed_done_is_confirmed_by_the_complete_plan() {
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: None,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }));

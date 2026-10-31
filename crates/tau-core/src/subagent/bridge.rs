@@ -14,6 +14,15 @@ use tau_protocol::payload::ResumeContract;
 /// id names (#336) instead of the one its parent happens to address.
 pub trait ChildProviderFactory: Send + Sync {
     fn create(&self, child_session_id: &str, model: &str) -> TurnProviderRef;
+
+    /// Where a child's memory passes run (#348): `om_model` is the inherited
+    /// `[om].om_model` and `model` the child's own id, so a bare `om_model` that
+    /// several providers declare resolves against the provider the child's id
+    /// names (#336). `Session` — the default, and what the test seams run — has
+    /// the child ride its own model.
+    fn om_route(&self, _om_model: &str, _model: &str) -> crate::agent::OmRoute {
+        crate::agent::OmRoute::Session
+    }
 }
 
 /// The parent-side notice for a child state transition: the GUI badge and

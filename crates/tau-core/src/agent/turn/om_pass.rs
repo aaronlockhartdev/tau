@@ -1,4 +1,4 @@
-use crate::agent::{AgentError, AgentSession, Inner, SessionStore, TurnProviderRef};
+use crate::agent::{AgentError, AgentSession, Inner, OmRoute, SessionStore, TurnProviderRef};
 use crate::om_integration::{OmError, OmStage};
 use tau_protocol::Diagnostic;
 
@@ -12,25 +12,55 @@ fn om_failure_stage(e: &OmError) -> OmStage {
     }
 }
 
-/// The OM model to use: the configured OM model, or the model the session's
-/// requests address when it is empty (spec §4). The fallback is the address and
-/// not the session's id, so a menu-qualified id does not reach the endpoint with
-/// its provider still attached (§6.7).
-fn resolve_om_model(om_model: &str, address: &str) -> String {
-    if om_model.is_empty() {
-        address.to_owned()
-    } else {
-        om_model.to_owned()
-    }
-}
-
 impl AgentSession {
-    /// The OM provider: a forwarding provider's inner (the registry-backed
-    /// one the OM pass calls), or the provider itself when it has none.
+    /// The session's own route provider, unwrapped from the forwarding seam: a
+    /// plain (non-forwarding) provider has no call registry, which is what keeps
+    /// an OM call out of the post-turn reconciliation (ticket #86).
     fn om_provider(&self) -> TurnProviderRef {
         self.provider
             .forwarding_inner()
             .unwrap_or_else(|| self.provider.clone())
+    }
+
+    /// The provider an OM call is addressed at: the endpoint `[om].om_model`
+    /// resolves to, and the key to ask it for (#348). OM calls never go through
+    /// the forwarding seam (ticket #86) — they are not user-facing streams, and
+    /// keeping them out of the forwarding call registry means a failed pass
+    /// cannot surface as an interrupted `StreamEnd` in the post-turn
+    /// reconciliation (the #82 class); a route built for the memory passes is
+    /// built plain for that reason.
+    ///
+    /// An empty `om_model` rides the session's own route and request address
+    /// An empty `om_model` rides the session's own route and request address
+    /// (spec §4). An `om_model` that addresses no endpoint is
+    /// `om_failed { stage: "route" }`, stated once per run, and the pass does not
+    /// run: the address is not the session's to borrow. Whichever model a pass is
+    /// addressed at, the caller stamps it into the memory record (#348), so the
+    /// record names where the memory runs.
+    fn om_address(&self) -> Option<(TurnProviderRef, String)> {
+        let (route, address) = {
+            let inner = self.inner.lock();
+            let rides = matches!(inner.om_route, OmRoute::Session);
+            (
+                inner.om_route.clone(),
+                rides.then(|| inner.turn.request_address(&inner.model)),
+            )
+        };
+        match route {
+            OmRoute::Configured { provider, model } => Some((provider, model)),
+            OmRoute::Session => Some((self.om_provider(), address?)),
+            OmRoute::Refused { reason } => {
+                self.inner.lock().record_om_route_refusal(&reason);
+                None
+            }
+        }
+    }
+
+    /// The endpoint the memory passes run at, from the live config (#348, #337):
+    /// the harness re-derives it at the turn boundary, so an edit to
+    /// `[om].om_model` reaches the next pass without a restart.
+    pub(crate) fn set_om_route(&self, route: OmRoute) {
+        self.inner.lock().om_route = route;
     }
 
     /// The ladder's first rung (#338): promote the buffered chunks — the
@@ -61,15 +91,20 @@ impl AgentSession {
     /// fit (the #86 "a failed pass must not kill the turn" contract stands for
     /// a turn under budget, which never reaches this rung).
     pub(super) async fn om_overflow_compact(&self) {
-        let (state, model, hook) = {
+        let (state, hook) = {
             let inner = self.inner.lock();
-            (
-                inner.om.clone(),
-                resolve_om_model(&inner.om_model, &inner.turn.request_address(&inner.model)),
-                inner.om_status_hook.clone(),
-            )
+            (inner.om.clone(), inner.om_status_hook.clone())
         };
         let Some(mut state) = state else { return };
+        // The address is resolved after the state check: a session with OM
+        // disabled runs no pass, so it records nothing about the route (#348).
+        let Some((om_provider, model)) = self.om_address() else {
+            return;
+        };
+        // The record names the model the pass is addressed at, whatever the pass
+        // does with it (#348): a reader of the OM record sees the endpoint the
+        // memory runs on, configured or ridden.
+        model.clone_into(&mut state.record.om_model);
         // The re-lock, as in `om_turn_end`: the session lock is never held
         // across a provider call.
         let mut with_store =
@@ -77,7 +112,6 @@ impl AgentSession {
                 let mut guard = self.inner.lock();
                 f(&mut guard.store)
             };
-        let om_provider = self.om_provider();
         let outcome = state
             .overflow_compact(&mut with_store, &om_provider, &model, hook.as_ref())
             .await;
@@ -98,19 +132,22 @@ impl AgentSession {
     /// held across a provider call (a std guard cannot cross an await in a
     /// spawned future).
     pub(super) async fn om_turn_end(&self) -> Result<(), AgentError> {
-        // The OM model (global config, spec §4); empty = the session's
-        // model. Resolved with the state clone, before the pass.
-        let (state, model, hook) = {
+        // The state clone comes first: a session with OM disabled runs no pass,
+        // so it records nothing about the route (#348).
+        let (state, hook) = {
             let inner = self.inner.lock();
-            (
-                inner.om.clone(),
-                resolve_om_model(&inner.om_model, &inner.turn.request_address(&inner.model)),
-                inner.om_status_hook.clone(),
-            )
+            (inner.om.clone(), inner.om_status_hook.clone())
         };
         let Some(mut state) = state else {
             return Ok(());
         };
+        let Some((om_provider, model)) = self.om_address() else {
+            return Ok(());
+        };
+        // The record names the model the pass is addressed at, before the
+        // round-trips run: an Observe-only turn stamps it too, not only a
+        // reflection (#348).
+        model.clone_into(&mut state.record.om_model);
         // D13.1: join the in-flight buffer cycle BEFORE the pass — the
         // pass's activation (promote) reads the buffer the cycle writes.
         // 60s bound: a cycle outliving it is fine, the write-back merge
@@ -136,13 +173,10 @@ impl AgentSession {
                 let mut guard = self.inner.lock();
                 f(&mut guard.store)
             };
-        // The pass goes through the session's inner provider, not the
-        // forwarding seam (ticket #86): OM calls are not user-facing
-        // streams, and keeping them out of the forwarding call registry
-        // means a failed pass cannot surface as an interrupted `StreamEnd`
-        // in the post-turn reconciliation (the #82 class). A plain
-        // (non-forwarding) provider has no registry — use it as-is.
-        let om_provider = self.om_provider();
+        // The address (`om_address`) is never the forwarding seam: OM calls are
+        // not user-facing streams, and keeping them out of the forwarding call
+        // registry is what stops a failed pass surfacing as an interrupted
+        // `StreamEnd` in the post-turn reconciliation (the #82 class, #348).
         // A failed pass (a provider error that survived its retries, a
         // storage error) must not kill the turn (ticket #86): the entries
         // stay unobserved and the next turn-end retries; the partial state
@@ -219,14 +253,24 @@ impl Inner {
     /// buries the one fact. The background buffer cycle holds this state, not an
     /// `AgentSession`, so the latch lives here and both sites share it.
     pub(crate) fn record_om_failure(&mut self, stage: OmStage, e: &OmError) {
-        let stage = stage.as_str();
+        self.record_om_failure_at(stage.as_str(), &e.to_string());
+    }
+
+    /// The durable record of a `[om].om_model` that addresses no endpoint
+    /// (#348): the same latch and channel as an exhausted round-trip, since a
+    /// dead route fails every pass the way a provider that answers 404 does.
+    pub(crate) fn record_om_route_refusal(&mut self, reason: &str) {
+        self.record_om_failure_at(OmStage::Route.as_str(), reason);
+    }
+
+    fn record_om_failure_at(&mut self, stage: &str, reason: &str) {
         if self.om_failed_recorded.iter().any(|s| s == stage) {
             return;
         }
         self.om_failed_recorded.push(stage.to_owned());
         let outcome = self.record_diagnostic(&Diagnostic::OmFailed {
             stage: stage.to_owned(),
-            reason: e.to_string(),
+            reason: reason.to_owned(),
         });
         if let Err(e) = outcome {
             // The record is the point of this call, so the failure to append is
@@ -293,51 +337,24 @@ impl AgentSession {
     /// trigger never race on it. With `buffer_tokens = 0` (kill switch)
     /// this is a no-op and the pass keeps today's sync behavior.
     pub(super) fn om_mid_loop(&self) {
+        let Some(pending) = self.om_buffer_due() else {
+            return;
+        };
+        // The OM address (#348), resolved between the two lock sections: the
+        // record it may write takes the lock, and the D14 spawn below cannot
+        // release it. A dead route is recorded once and spawns nothing; the
+        // activation rung above ran regardless, since it calls no model.
+        let Some((provider, model)) = self.om_address() else {
+            return;
+        };
         let mut guard = self.inner.lock();
         let Inner {
-            store,
             om,
             om_inflight,
             om_buffer_boundary,
-            om_model,
-            model,
-            turn,
             ..
         } = &mut *guard;
         let Some(om) = om.as_mut() else {
-            return;
-        };
-        if om.config.buffer_tokens == 0 {
-            return;
-        }
-        let Ok(unobserved) = om.unobserved(store) else {
-            // A store read failure degrades: keep the last known pending,
-            // no trigger this round (the turn-end pass retries the read).
-            return;
-        };
-        om.record.pending_tokens = om.pending_tokens(&unobserved);
-        let spawn_pending = if om.activation_reached(om.record.pending_tokens) {
-            // Activation: promote the buffered chunks into the log (no LLM
-            // call); the sync turn-end pass owns the at/above-threshold
-            // range from here (the mastra partition).
-            match om.promote(store) {
-                Ok(_) => None,
-                Err(e) => {
-                    tracing::warn!("om: mid-loop activation failed: {e}");
-                    None
-                }
-            }
-        } else if crate::om_integration::background::boundary_crossed(
-            u64::from(om.record.pending_tokens),
-            &om.config,
-            om.record.last_buffered_at_tokens,
-            *om_buffer_boundary,
-        ) {
-            Some(om.record.pending_tokens)
-        } else {
-            None
-        };
-        let Some(pending) = spawn_pending else {
             return;
         };
         if om_inflight.is_some() {
@@ -345,21 +362,58 @@ impl AgentSession {
             // crossing (one more interval of material) triggers again.
             return;
         }
+        // The record names the model the buffer cycle is addressed at (#348).
+        model.clone_into(&mut om.record.om_model);
         // The in-process boundary advances at TRIGGER time (D6); the
         // persisted one only at the cycle's successful commit.
-        *om_buffer_boundary = u64::from(pending);
+        *om_buffer_boundary = pending;
         let inner = std::sync::Arc::clone(&self.inner);
         let config = om.config.clone();
-        let provider = self.om_provider();
-        let model_owned = resolve_om_model(om_model, &turn.request_address(model));
         *om_inflight = Some(tokio::spawn(
             crate::om_integration::background::buffer_cycle(
-                inner,
-                config,
-                provider,
-                model_owned,
-                u64::from(pending),
+                inner, config, provider, model, pending,
             ),
         ));
+    }
+
+    /// Whether a buffer cycle is due after a tool round (D3/D5): OM is on, the
+    /// kill switch is off, and the interval boundary was crossed. At the
+    /// activation threshold it promotes the chunks — the rung that costs no LLM
+    /// call — and reports no cycle due.
+    fn om_buffer_due(&self) -> Option<u64> {
+        let mut guard = self.inner.lock();
+        let Inner {
+            store,
+            om,
+            om_buffer_boundary,
+            ..
+        } = &mut *guard;
+        let om = om.as_mut()?;
+        if om.config.buffer_tokens == 0 {
+            return None;
+        }
+        let Ok(unobserved) = om.unobserved(store) else {
+            // A store read failure degrades: keep the last known pending,
+            // no trigger this round (the turn-end pass retries the read).
+            return None;
+        };
+        om.record.pending_tokens = om.pending_tokens(&unobserved);
+        let pending = u64::from(om.record.pending_tokens);
+        if om.activation_reached(om.record.pending_tokens) {
+            // Activation: promote the buffered chunks into the log (no LLM
+            // call); the sync turn-end pass owns the at/above-threshold
+            // range from here (the mastra partition).
+            if let Err(e) = om.promote(store) {
+                tracing::warn!("om: mid-loop activation failed: {e}");
+            }
+            return None;
+        }
+        crate::om_integration::background::boundary_crossed(
+            pending,
+            &om.config,
+            om.record.last_buffered_at_tokens,
+            *om_buffer_boundary,
+        )
+        .then_some(pending)
     }
 }

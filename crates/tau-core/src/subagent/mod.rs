@@ -64,6 +64,8 @@ pub struct Supervisor {
     inherited: Mutex<(String, TurnConfig)>,
     system_prompt: String,
     om: Om,
+    /// The parent's `[om].om_model`, handed to the provider factory to route
+    /// (#348); the child's memory passes run where it resolves.
     om_model: String,
     tool_batch_on_force: ToolBatchPolicy,
     gates: Option<Gates>,
@@ -92,7 +94,6 @@ pub(crate) struct Inherited {
     pub(crate) system_prompt: String,
     pub(crate) turn: TurnConfig,
     pub(crate) om: Om,
-    pub(crate) om_model: String,
     pub(crate) tool_batch_on_force: ToolBatchPolicy,
     pub(crate) gates: Option<Gates>,
     /// The pin store's GC policy (#225); inherited so children sweep like
@@ -109,6 +110,8 @@ pub struct SupervisorParams {
     pub model: String,
     pub system_prompt: String,
     pub om: Om,
+    /// The parent's `[om].om_model` (§4), routed by the factory into each child's
+    /// OM route (#348).
     pub om_model: String,
     pub tool_batch_on_force: ToolBatchPolicy,
     pub turn: TurnConfig,
@@ -249,7 +252,6 @@ impl Supervisor {
             system_prompt: self.system_prompt.clone(),
             turn,
             om: self.om.clone(),
-            om_model: self.om_model.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
             gates: self.gates.clone(),
             hashline: self.hashline,
@@ -261,6 +263,13 @@ impl Supervisor {
     /// as the parent's current model, not the one it launched on (#336).
     pub(crate) fn set_inherited(&self, model: String, turn: TurnConfig) {
         *self.inherited.lock() = (model, turn);
+    }
+
+    /// Where a child's memory passes run (#348): the factory owns the HTTP
+    /// client and the config, so it resolves the inherited `[om].om_model` by
+    /// §6.7 against the provider the child's model names.
+    pub(crate) fn child_om_route(&self, model: &str) -> crate::agent::OmRoute {
+        self.provider.om_route(&self.om_model, model)
     }
 
     /// The core link (production); `None` on the test seams (no plan

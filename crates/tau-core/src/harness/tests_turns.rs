@@ -280,7 +280,7 @@ async fn a_live_om_run_emits_om_status_events() {
             &om,
             crate::om::OmRecord::default(),
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }));

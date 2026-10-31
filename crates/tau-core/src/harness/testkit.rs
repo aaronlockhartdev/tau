@@ -72,7 +72,7 @@ pub(crate) fn manual_session_om(
             turn,
             tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
             om,
-            om_model: String::new(),
+            om_route: crate::agent::OmRoute::Session,
             gates: None,
         },
     )

@@ -162,7 +162,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: None,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }));
@@ -247,7 +247,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: None,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }));
@@ -412,7 +412,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: None,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }));

@@ -100,6 +100,8 @@ mod tests_model_route;
 #[cfg(test)]
 mod tests_om_async;
 #[cfg(test)]
+mod tests_om_route;
+#[cfg(test)]
 mod tests_plan;
 #[cfg(test)]
 mod tests_queue;

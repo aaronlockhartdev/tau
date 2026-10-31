@@ -264,6 +264,11 @@ impl Core {
         let gate = turn.context_gate();
         let was_ready = live.agent.current_turn().context_gate().is_ready();
         live.agent.set_turn_config(turn.clone());
+        // The memory passes follow the config too (#348, #337): a `[om].om_model`
+        // edit reaches the next pass, and a route the edit killed is recorded once
+        // as `om_failed { stage: "route" }`.
+        live.agent
+            .set_om_route(self.om_route(&config, owner.provider));
         // A child inherits the model its parent has, so the config's move reaches
         // the pair the supervisor hands a model-less child (#336).
         if let Some(sup) = live.agent.subagents() {

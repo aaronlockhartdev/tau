@@ -221,6 +221,31 @@ pub(crate) fn session_inner(
     provider::canned_dev(p).unwrap_or_else(|| provider::production(client, p, requests))
 }
 
+/// The endpoint the memory passes are addressed at, from `[om].om_model` and
+/// §6.7 (#348): the provider its id names, asked for the key that provider
+/// declares. `current` is the route the session (or child) itself is on — the
+/// answer for a bare key several providers declare, and only for that case: an
+/// id that resolves nowhere is a refusal carrying the reason the session will
+/// record, never the session's own address borrowed.
+pub(crate) fn om_route_for(
+    client: &reqwest::Client,
+    config: &Config,
+    om_model: &str,
+    current: ProviderRef<'_>,
+) -> crate::agent::OmRoute {
+    match config.route_om(om_model, current) {
+        Ok(owner) => crate::agent::OmRoute::Configured {
+            // Plain, never the forwarding seam: an OM call is not a user-facing
+            // stream (ticket #86).
+            provider: session_inner(client, owner.provider, &config.requests),
+            model: Config::model_key_for(owner.name, om_model).to_owned(),
+        },
+        Err(miss) => crate::agent::OmRoute::Refused {
+            reason: miss.to_string(),
+        },
+    }
+}
+
 /// The child provider factory (ticket #23 N3): wraps the provider the parent's
 /// model is addressed at in the forwarding seam, per child session id.
 pub(crate) struct ForwardingChildFactory {
@@ -264,6 +289,31 @@ impl ChildProviderFactory for ForwardingChildFactory {
             .lock()
             .insert(child.to_owned(), provider.clone());
         provider
+    }
+
+    fn om_route(&self, om_model: &str, model: &str) -> crate::agent::OmRoute {
+        let om_model = om_model.trim();
+        if om_model.is_empty() {
+            return crate::agent::OmRoute::Session;
+        }
+        // The child's own route is `current`: the same provider its model is
+        // addressed at (#336), not the parent's.
+        let current = self.config.route_child(
+            model,
+            ProviderRef {
+                name: "",
+                provider: &self.provider,
+            },
+        );
+        om_route_for(
+            &self.client,
+            &self.config,
+            om_model,
+            ProviderRef {
+                name: "",
+                provider: current,
+            },
+        )
     }
 }
 

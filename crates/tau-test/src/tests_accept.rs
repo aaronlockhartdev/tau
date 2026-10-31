@@ -19,7 +19,7 @@ pub(crate) async fn accept_tools(ctx: &Ctx) -> Result<(), String> {
             gates: None,
             tool_batch_on_force: ToolBatchPolicy::default(),
             om: None,
-            om_model: String::new(),
+            om_route: tau_core::agent::OmRoute::Session,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
@@ -113,7 +113,7 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
                 turn: capped(),
                 tool_batch_on_force: ToolBatchPolicy::default(),
                 om: None,
-                om_model: String::new(),
+                om_route: tau_core::agent::OmRoute::Session,
                 gates: Some(gates),
             },
         )
@@ -798,7 +798,7 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             gates: None,
             tool_batch_on_force: ToolBatchPolicy::default(),
             om: Some(om),
-            om_model: String::new(),
+            om_route: tau_core::agent::OmRoute::Session,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;

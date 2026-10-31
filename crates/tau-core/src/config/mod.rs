@@ -483,6 +483,61 @@ impl From<UnownedPrefix> for tau_protocol::ProtocolError {
         }
     }
 }
+/// Why `[om].om_model` addresses no endpoint (#348). The memory passes run on
+/// the config's own id, not the session's, so a miss is the config author's
+/// mistake and the text names the config key: the `om_failed { stage: "route" }`
+/// record it becomes is read by whoever edited the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OmRouteMiss {
+    /// The prefix names no configured provider (§6.7).
+    UnownedPrefix { model: String, prefix: String },
+    /// The key is declared nowhere: by the provider the prefix names, when the
+    /// id carries one, and by no provider at all when it does not.
+    Undeclared {
+        model: String,
+        provider: Option<String>,
+    },
+    /// Several providers declare the bare key and none of them is the provider
+    /// the session is on: the prefix is what disambiguates (§6.7).
+    Ambiguous {
+        model: String,
+        providers: Vec<String>,
+    },
+}
+
+impl fmt::Display for OmRouteMiss {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnownedPrefix { model, prefix } => {
+                write!(
+                    f,
+                    "om.om_model '{model}': provider '{prefix}' is not configured"
+                )
+            }
+            Self::Undeclared {
+                model,
+                provider: Some(provider),
+            } => write!(
+                f,
+                "om.om_model '{model}': provider '{provider}' declares no model '{}'",
+                Config::model_key_for(provider, model)
+            ),
+            Self::Undeclared { model, .. } => {
+                write!(
+                    f,
+                    "om.om_model '{model}': no configured provider declares it"
+                )
+            }
+            Self::Ambiguous { model, providers } => write!(
+                f,
+                "om.om_model '{model}': declared by {} — name it as provider/key",
+                providers.join(", ")
+            ),
+        }
+    }
+}
+
+impl std::error::Error for OmRouteMiss {}
 
 impl Config {
     /// §6.7: the one read of a model id. A model menu names a model as
@@ -547,6 +602,62 @@ impl Config {
             Ok(owner) => owner.provider,
             Err(_) => current.provider,
         }
+    }
+    /// §6.7 for `[om].om_model` (#348): the endpoint the Observer and the
+    /// Reflector are addressed at. A prefix naming a configured provider owns
+    /// the id, and the key it asks that provider for is the prefix stripped;
+    /// a bare key goes to the one provider that declares it. Unlike a session
+    /// model, an id that resolves nowhere is a refusal: the memory passes have
+    /// no address of their own to fall back to, so `current` — the provider the
+    /// session is on — is only an answer for a key that provider declares among
+    /// several that do.
+    pub(crate) fn route_om<'c>(
+        &'c self,
+        om_model: &str,
+        current: ProviderRef<'c>,
+    ) -> Result<ProviderRef<'c>, OmRouteMiss> {
+        if let Some(owner) = self.provider_for(om_model) {
+            let key = Self::model_key_for(owner.name, om_model);
+            return if owner.provider.models.contains_key(key) {
+                Ok(owner)
+            } else {
+                Err(OmRouteMiss::Undeclared {
+                    model: om_model.to_owned(),
+                    provider: Some(owner.name.to_owned()),
+                })
+            };
+        }
+        if let Some((prefix, _)) = om_model.split_once('/') {
+            return Err(OmRouteMiss::UnownedPrefix {
+                model: om_model.to_owned(),
+                prefix: prefix.to_owned(),
+            });
+        }
+        let mut declaring = self
+            .providers
+            .iter()
+            .filter(|(_, provider)| provider.models.contains_key(om_model))
+            .map(|(name, provider)| ProviderRef { name, provider });
+        let Some(only) = declaring.next() else {
+            return Err(OmRouteMiss::Undeclared {
+                model: om_model.to_owned(),
+                provider: None,
+            });
+        };
+        if declaring.next().is_none() {
+            return Ok(only);
+        }
+        if current.provider.models.contains_key(om_model) {
+            return Ok(current);
+        }
+        let providers = std::iter::once(only.name)
+            .chain(declaring.map(|owner| owner.name))
+            .map(str::to_owned)
+            .collect();
+        Err(OmRouteMiss::Ambiguous {
+            model: om_model.to_owned(),
+            providers,
+        })
     }
 
     /// §6.7: the key the provider named `name` declares for `id` — the id with

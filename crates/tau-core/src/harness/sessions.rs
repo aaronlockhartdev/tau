@@ -5,12 +5,36 @@ use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
     MAX_TITLE_LEN, ModelAddress, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
     SessionRole, SessionStore, Skeleton, SkillInfo, TurnConfig, Value, ViewEntry, Workspace,
-    session_inner, session_name, session_open, skill_info, unique_name,
+    om_route_for, session_inner, session_name, session_open, skill_info, unique_name,
 };
-use crate::config::{ProviderRef, Route};
+use crate::agent::OmRoute;
+use crate::config::{Provider, ProviderRef, Route};
 use crate::diagnostics::Diagnostics;
 use tau_protocol::EntryKind;
 impl Core {
+    /// Where a session's memory passes run (#348): `[om].om_model` resolved by
+    /// §6.7 against the live config, at the endpoint its id names. An empty
+    /// `om_model` rides `current` — the model the session is on; an id that
+    /// resolves to no endpoint is a refusal the session records once, never this
+    /// route borrowed. `current` is the provider the session's model is addressed
+    /// at, so a key several providers declare goes to that one.
+    pub(crate) fn om_route(&self, config: &Config, current: &Provider) -> OmRoute {
+        let om_model = config.om.om_model.trim();
+        if om_model.is_empty() {
+            return OmRoute::Session;
+        }
+        om_route_for(
+            &self.client,
+            config,
+            om_model,
+            ProviderRef {
+                // `Provider` carries no name (the config map keys them): `current`
+                // is asked only whether it declares a contested key (#348).
+                name: "",
+                provider: current,
+            },
+        )
+    }
     /// The workspace's skill registry (ticket #28): the per-workspace
     /// cache; a workspace with no session opened yet is discovered on
     /// demand (`skill_list` at workspace open). The watcher refreshes the

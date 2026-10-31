@@ -186,13 +186,16 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
 /// where the compaction died (#338). The trigger points are the config's
 /// retry knobs: `observe`, `buffer`, `reflect`. `Session` is not a pass: it
 /// is the record store a compaction needs and could not reach, named so a
-/// card never claims a pass that did not run.
+/// card never claims a pass that did not run. `Route` is not a pass either:
+/// it is `[om].om_model` addressing no endpoint, so no round-trip ran and
+/// none will (#348).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OmStage {
     Observe,
     Buffer,
     Reflect,
     Session,
+    Route,
 }
 
 impl OmStage {
@@ -204,6 +207,7 @@ impl OmStage {
             Self::Buffer => "buffer",
             Self::Reflect => "reflect",
             Self::Session => "session",
+            Self::Route => "route",
         }
     }
 }

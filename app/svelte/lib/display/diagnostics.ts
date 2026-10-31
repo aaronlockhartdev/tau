@@ -29,13 +29,16 @@ const GATE_GAP: Record<string, string> = {
 
 // An om_failed stage names where compaction died: the passes (`observe`,
 // `buffer`, `reflect`) and `session`, which is no pass at all — the record-store
-// write a compaction needs and could not reach, so a card never reports a pass
-// that never ran. A stage this build does not know renders in the pass shape.
+// write a compaction needs and could not reach, and `route`, which is no pass
+// either: `[om].om_model` addresses no endpoint, so the passes never started
+// (#348). A card never reports a pass that never ran; a stage this build does
+// not know renders in the pass shape.
 const OM_STAGE: Record<string, string> = {
   observe: 'compaction observe pass failed',
   buffer: 'compaction buffer pass failed',
   reflect: 'compaction reflect pass failed',
-  session: 'compaction: the record store write failed'
+  session: 'compaction: the record store write failed',
+  route: 'compaction: om_model addresses no endpoint'
 };
 
 export function diagnosticLabel(entry: DiagnosticEntry): string {

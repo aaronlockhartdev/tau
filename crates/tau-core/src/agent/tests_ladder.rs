@@ -161,7 +161,7 @@ fn agent_wish_at(
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: Some(om),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     })

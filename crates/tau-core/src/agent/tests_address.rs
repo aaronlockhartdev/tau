@@ -30,7 +30,7 @@ fn agent_on(
             },
             tool_batch_on_force: ToolBatchPolicy::Complete,
             om: None,
-            om_model: String::new(),
+            om_route: crate::agent::OmRoute::Session,
             gates: None,
         },
     )
