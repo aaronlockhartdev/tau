@@ -68,7 +68,10 @@ child is addressed at — never the provider the config's map sorts first. It
 applies to every id the harness resolves a provider's facts from, including
 `[generation].default_model` and `[om].om_model` (`Config::route_om`, #348): the
 memory passes are addressed at the provider the id names and asked of it for the
-prefix stripped. An `om_model` that addresses no endpoint is refused — the
+prefix stripped. An id whose prefix names no provider is taken where a provider
+declares the whole string — a gateway's ids read `vendor/name` (#354, #358) —
+and refused when nothing declares it. An `om_model` that addresses no endpoint
+is refused — the
 passes stop and the record carries `om_failed { stage: "route" }` naming the
 config key and the id — because the memory has no address of its own to borrow. See
 [Provider resolution](#provider-resolution).
@@ -113,8 +116,10 @@ own id: the declared `openai/gpt-5` above is addressed by the full
 `openai/openai/gpt-5`, while the bare `openai/gpt-5` means provider `openai`'s
 model `gpt-5`. Under a provider that is *not* named for that prefix
 (`providers.openrouter.models."openai/gpt-5"`), §6.7 finds no provider in the
-bare spelling, so `openai/gpt-5` is refused (`UnownedPrefix`) and the id that
-addresses that provider is `openrouter/openai/gpt-5`. A thinking level is
+bare spelling, so the whole string is the key: `openai/gpt-5` is asked of that
+provider, and `openrouter/openai/gpt-5` addresses the same endpoint (#358). A
+slashed id no provider declares — `nosuch/gpt-5` in a file with no such key — is
+refused (`UnownedPrefix`). A thinking level is
 keyed by the declared key in both cases — see
 [`thinking`](#thinking-thinking-levels).
 
@@ -161,7 +166,7 @@ sorts first.
 |---|---|
 | Which `base_url` does a request use? | the routed provider's |
 | Where are a model's facts read from? | that provider's `models` map, keyed by §6.7's key (`Config::model_key_for`) |
-| What may `default_model` name? | any model any provider declares: a prefixed id names its provider, a bare key is taken where it is declared |
+| What may `default_model` name? | a prefixed id names its provider, a bare key is taken where it is declared, a gateway's `vendor/name` key at the provider declaring it (#358); anything else — empty, a slashed id no provider declares, an undeclared bare key — is the empty-value contract, the first provider's first model |
 | What does a menu switch do? | routes the new id against the provider the session is on (`switch_route`), then re-derives the turn from the owner it lands on |
 | What does a subagent child use? | the provider its own model id routes to (`Config::route_child`); an id naming no provider keeps the parent's, which the spawn already resolved |
 | Where does a child with no model of its own get one? | from its parent — the model the parent is on **when the child spawns** (#336), so a menu switch reaches children spawned after it, never a child already running |
@@ -201,7 +206,7 @@ max_tokens = 32000
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `default_model` | string | `""` | any model any provider declares: a `provider/` prefix names that provider, a bare key is taken where it is declared (§6.7). An empty value, a prefix naming no provider, and a key no provider declares are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`) — see [Provider resolution](#provider-resolution) |
+| `default_model` | string | `""` | a `provider/` prefix names that provider, a bare key is taken where it is declared, a gateway's `vendor/name` key at the provider declaring it (§6.7, #358). An empty value, a slashed id no provider declares, and an undeclared bare key are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`) — see [Provider resolution](#provider-resolution) |
 | `temperature` | float | none | |
 | `max_tokens` | int | none | the output cap for the session, before the thinking adjustment below; a model entry's own `max_tokens` wins, and the window clamps both per call — a ceiling on the answer, never a reservation against the prompt |
 | `top_p` | float | none | |
@@ -248,7 +253,7 @@ The compaction model is global, not per-provider (spec §4).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, a contested key elsewhere being a refusal. An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
+| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, and a contested key that provider does not declare is a refusal. A `vendor/name` id whose prefix names no provider goes to the provider declaring that whole key, a gateway's ids reading that way (#358). An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
 | `observe_threshold` | int | 30000 | |
 | `reflect_threshold` | int | 40000 | |
 | `buffer_increment` | int | 6000 | |
@@ -350,7 +355,8 @@ max_tokens = 32768
 
 [generation]
 # Routed by §6.7: the menu's spelling (provider/key) names the provider, a bare
-# key is taken where it is declared.
+# key is taken where it is declared, a gateway's `vendor/name` id at the provider
+# declaring that key (#358).
 default_model = "lmstudio/gpt-5-mini"
 temperature = 0.0
 max_tokens = 16384

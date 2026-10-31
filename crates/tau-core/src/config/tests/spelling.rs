@@ -100,12 +100,17 @@ context_window = 1000
         "aaa/solo",
         "the request is addressed by the declared key"
     );
-    // The same string spelled bare names no endpoint: §6.7 reads `aaa` as a
-    // provider, and none is configured.
-    let err = config
+    // #358: the vendor's own spelling of the model is addressed at its declarer,
+    // key whole. A user writes what the vendor prints, and it means one endpoint.
+    let owner = config
         .route_model("aaa/solo", current)
-        .expect_err("no provider is named `aaa`");
-    assert_eq!(err, crate::config::UnownedPrefix("aaa".to_owned()));
+        .expect("bbb declares the whole string");
+    assert_eq!(owner.name, "bbb");
+    assert_eq!(
+        config.model_key("aaa/solo"),
+        "aaa/solo",
+        "a prefix naming no provider stays part of the key"
+    );
 }
 
 #[test]

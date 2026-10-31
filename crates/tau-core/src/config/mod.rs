@@ -573,10 +573,11 @@ impl Config {
     /// that declares it; a key several providers declare — and one no provider
     /// declares — stays with `current`, the provider the session already
     /// addresses, because the prefix is what disambiguates between providers and
-    /// the core never guesses across them. A prefix naming no configured
-    /// provider is a refusal, never a silent route to whichever provider the
-    /// config's map sorts first. The key that provider declares is
-    /// [`Config::model_key_for`].
+    /// the core never guesses across them. An id whose prefix names no provider
+    /// is taken where the whole string is declared — a gateway's ids are spelled
+    /// `vendor/name` (#354, #358) — and refused when nothing declares it, never
+    /// silently routed to whichever provider the config's map sorts first. The
+    /// key that provider declares is [`Config::model_key_for`].
     pub(crate) fn route_model<'c>(
         &'c self,
         id: &str,
@@ -585,17 +586,27 @@ impl Config {
         if let Some(owner) = self.provider_for(id) {
             return Ok(owner);
         }
-        if let Some((prefix, _)) = id.split_once('/') {
-            return Err(UnownedPrefix(prefix.to_owned()));
-        }
         let mut declaring = self
             .providers
             .iter()
             .filter(|(_, p)| p.models.contains_key(id))
             .map(|(name, provider)| ProviderRef { name, provider });
-        match (declaring.next(), declaring.next()) {
-            (Some(owner), None) => Ok(owner),
-            _ => Ok(current),
+        let sole = declaring.next();
+        if declaring.next().is_some() {
+            // Contested: the prefix is what disambiguates between providers and
+            // this id carries none, so the session's own provider answers.
+            return Ok(current);
+        }
+        if let Some(owner) = sole {
+            // The id is its own key, prefix included, so `model_key_for` leaves
+            // it whole: this is how a gateway's `openai/gpt-5` is asked.
+            return Ok(owner);
+        }
+        match id.split_once('/') {
+            Some((prefix, _)) => Err(UnownedPrefix(prefix.to_owned())),
+            // A bare key nobody declares: the session's provider is asked, and
+            // its gate records the facts that are missing.
+            None => Ok(current),
         }
     }
 
@@ -612,7 +623,9 @@ impl Config {
     /// §6.7 for `[om].om_model` (#348): the endpoint the Observer and the
     /// Reflector are addressed at. A prefix naming a configured provider owns
     /// the id, and the key it asks that provider for is the prefix stripped;
-    /// a bare key goes to the one provider that declares it. Unlike a session
+    /// a bare key goes to the one provider that declares it, as does an id whose
+    /// prefix names no provider when some provider declares the whole string
+    /// (#358).
     /// model, an id that resolves nowhere is a refusal: the memory passes have
     /// no address of their own to fall back to, so `current` — the provider the
     /// session is on — is only an answer for a key that provider declares among
@@ -636,18 +649,24 @@ impl Config {
                 })
             };
         }
-        if let Some((prefix, _)) = om_model.split_once('/') {
-            return Err(OmRouteMiss::UnownedPrefix {
-                model: om_model.to_owned(),
-                prefix: prefix.to_owned(),
-            });
-        }
         let declaring: Vec<ProviderRef<'_>> = self
             .providers
             .iter()
             .filter(|(_, provider)| provider.models.contains_key(om_model))
             .map(|(name, provider)| ProviderRef { name, provider })
             .collect();
+        if let Some((prefix, _)) = om_model.split_once('/') {
+            // A gateway's ids read `vendor/name` (#354), so the whole string can
+            // be a declared key with a prefix that names no provider: its sole
+            // declarer answers, and nobody declaring it is the refusal.
+            if let [owner] = declaring.as_slice() {
+                return Ok(*owner);
+            }
+            return Err(OmRouteMiss::UnownedPrefix {
+                model: om_model.to_owned(),
+                prefix: prefix.to_owned(),
+            });
+        }
         let Some(only) = declaring.first() else {
             return Err(OmRouteMiss::Undeclared {
                 model: om_model.to_owned(),

@@ -279,3 +279,124 @@ fn route_om_names_every_provider_when_a_bare_key_is_contested() {
         "and says how to name it: {shown}"
     );
 }
+
+/// A gateway provider whose declared keys are the vendor's own `vendor/name`
+/// spellings (#354), beside a provider that names none of them.
+fn gateway_config() -> Config {
+    let toml = r#"[providers.aaa]
+base_url = "http://127.0.0.1:9/aaa/v1"
+
+[providers.aaa.models.solo]
+context_window = 1000
+
+[providers.zzz]
+base_url = "http://127.0.0.1:9/zzz/v1"
+
+[providers.zzz.models."openai/gpt-5"]
+context_window = 1000
+"#;
+    load_from(toml, "").expect("a slashed key is legal (#354)")
+}
+
+/// #358: a gateway's ids read `vendor/name`, and a user writes what the vendor
+/// prints. The prefix names no provider, so the whole string is the key and its
+/// sole declarer is the endpoint — the same address the menu's
+/// `zzz/openai/gpt-5` reaches.
+#[test]
+fn route_model_takes_a_gateways_slashed_id_to_its_declarer() {
+    let config = gateway_config();
+    let aaa = config
+        .provider_for("aaa/solo")
+        .expect("aaa is a configured provider");
+    let owner = config
+        .route_model("openai/gpt-5", aaa)
+        .expect("zzz declares the whole string");
+    assert_eq!(
+        owner.name, "zzz",
+        "the vendor's spelling is asked at its declarer, not at the session's provider"
+    );
+    assert_eq!(
+        config.model_key("openai/gpt-5"),
+        "openai/gpt-5",
+        "a prefix naming no provider stays part of the key"
+    );
+    // The menu's spelling of the same endpoint agrees.
+    assert_eq!(
+        config
+            .route_model("zzz/openai/gpt-5", aaa)
+            .expect("zzz is configured")
+            .name,
+        "zzz"
+    );
+    assert_eq!(
+        Config::model_key_for("zzz", "zzz/openai/gpt-5"),
+        "openai/gpt-5"
+    );
+}
+
+/// Two gateways declare the same vendor spelling. The prefix is what would
+/// disambiguate and it names no provider, so the session's own provider answers:
+/// one id, the endpoint the session is already on (#358).
+#[test]
+fn route_model_answers_a_contested_gateway_id_at_its_own_session() {
+    let toml = r#"[providers.bbb]
+base_url = "http://127.0.0.1:9/bbb/v1"
+
+[providers.bbb.models.solo]
+context_window = 1000
+
+[providers.bbb.models."openai/gpt-5"]
+context_window = 1000
+
+[providers.zzz]
+base_url = "http://127.0.0.1:9/zzz/v1"
+
+[providers.zzz.models.solo]
+context_window = 1000
+
+[providers.zzz.models."openai/gpt-5"]
+context_window = 1000
+"#;
+    let config = load_from(toml, "").expect("a slashed key is legal (#354)");
+    let bbb = config.provider_for("bbb/solo").expect("bbb is configured");
+    let zzz = config.provider_for("zzz/solo").expect("zzz is configured");
+    assert_eq!(
+        config
+            .route_model("openai/gpt-5", bbb)
+            .expect("contested: the session's provider answers")
+            .name,
+        "bbb"
+    );
+    assert_eq!(
+        config
+            .route_model("openai/gpt-5", zzz)
+            .expect("contested: the session's provider answers")
+            .name,
+        "zzz"
+    );
+}
+
+/// #358's OM leg: `[om].om_model` written as a gateway's own id is addressed at
+/// the provider that declares that key. An id nobody declares stays a refusal,
+/// so a pasted `base_url` is never turned into a call.
+#[test]
+fn route_om_addresses_a_gateways_slashed_key_at_its_declarer() {
+    let config = gateway_config();
+    let aaa = config
+        .provider_for("aaa/solo")
+        .expect("aaa is a configured provider");
+    assert_eq!(
+        config
+            .route_om("openai/gpt-5", aaa)
+            .expect("zzz declares the key")
+            .name,
+        "zzz"
+    );
+    assert!(
+        matches!(
+            config.route_om("nosuch/model", aaa),
+            Err(crate::config::OmRouteMiss::UnownedPrefix { .. })
+        ),
+        "nobody declaring it is still a refusal"
+    );
+}
