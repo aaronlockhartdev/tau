@@ -161,7 +161,7 @@ sorts first.
 |---|---|
 | Which `base_url` does a request use? | the routed provider's |
 | Where are a model's facts read from? | that provider's `models` map, keyed by §6.7's key (`Config::model_key_for`) |
-| What may `default_model` name? | any model any provider declares: a prefixed id names its provider, a bare key is taken where it is declared |
+| What may `default_model` name? | a prefixed id names its provider, a bare key is taken where it is declared; anything else — empty, a prefix naming no provider, an undeclared key — is the empty-value contract, the first provider's first model |
 | What does a menu switch do? | routes the new id against the provider the session is on (`switch_route`), then re-derives the turn from the owner it lands on |
 | What does a subagent child use? | the provider its own model id routes to (`Config::route_child`); an id naming no provider keeps the parent's, which the spawn already resolved |
 | Where does a child with no model of its own get one? | from its parent — the model the parent is on **when the child spawns** (#336), so a menu switch reaches children spawned after it, never a child already running |
@@ -201,7 +201,7 @@ max_tokens = 32000
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `default_model` | string | `""` | any model any provider declares: a `provider/` prefix names that provider, a bare key is taken where it is declared (§6.7). An empty value, a prefix naming no provider, and a key no provider declares are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`) — see [Provider resolution](#provider-resolution) |
+| `default_model` | string | `""` | a `provider/` prefix names that provider, a bare key is taken where it is declared (§6.7). An empty value, a prefix naming no provider, and a key no provider declares are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`), a fall-back #358 questions for a gateway's slashed key — see [Provider resolution](#provider-resolution) |
 | `temperature` | float | none | |
 | `max_tokens` | int | none | the output cap for the session, before the thinking adjustment below; a model entry's own `max_tokens` wins, and the window clamps both per call — a ceiling on the answer, never a reservation against the prompt |
 | `top_p` | float | none | |
