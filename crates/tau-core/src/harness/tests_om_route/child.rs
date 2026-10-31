@@ -177,7 +177,7 @@ async fn a_config_move_reaches_a_child_that_is_already_alive() {
 /// route is the child's own durable record, and the pass does not run — the
 /// provider it rides is not an address to fall back to (#348, #337).
 #[tokio::test]
-async fn a_config_move_that_kills_a_childs_route_is_recorded_by_the_child() {
+async fn a_config_move_that_leaves_a_child_routeless_is_recorded_by_that_child() {
     let f = Fixture::new();
     write_agent_type(f.project.path(), "reviewer", "aaa/om-model");
     let (core, parent) = f.start("aaa/om-model").await;
