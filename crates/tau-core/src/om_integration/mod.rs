@@ -50,7 +50,11 @@ fn threshold_u32(v: u64) -> u32 {
     u32::try_from(v).expect("om thresholds are validated to fit a u32 at config load")
 }
 
-/// The thresholds the passes run with, folded from the `[om]` section.
+/// The thresholds the passes run with, folded from the `[om]` section: the
+/// config states the buffer's fill step as absolute tokens and the module's
+/// `buffer_activation` is a ratio of the observe threshold
+/// (1 − increment/threshold; the two forms agree at the defaults: 6k over 30k =
+/// 0.8), and `observe_threshold.max(1)` keeps that ratio defined.
 fn om_config_of(om: &crate::config::Om) -> OmConfig {
     let observe = f64::from(threshold_u32(om.observe_threshold.max(1)));
     let activation =
@@ -66,9 +70,9 @@ fn om_config_of(om: &crate::config::Om) -> OmConfig {
 }
 
 impl OmState {
-    /// Fold the config's absolute `buffer_increment` into the module's
-    /// `buffer_activation` ratio (1 − increment/threshold; the two forms
-    /// agree at the defaults: 6k over 30k = 0.8).
+    /// The state a session's memory passes run with, over `record`: the record
+    /// is the single source of truth for the buffered chunks, the in-memory vec
+    /// its mirror (ticket #86 P2).
     #[must_use]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
         // The record is the single source of truth for the chunks; the
