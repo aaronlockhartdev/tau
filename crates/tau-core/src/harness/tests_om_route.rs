@@ -306,14 +306,19 @@ async fn stamped_om_model(cwd: &Path, session: &str) -> Option<String> {
     }
 }
 
-/// The newest `om` record's model, waited for past `before` records: the pass a
-/// config move is about appends the record after the ones already read.
+/// The newest stamped `om` record's model, waited for past `before` records: the
+/// pass a config move is about appends it after the ones already read. An
+/// unstamped record — the activation's — proves a pass ran, not where it ran.
 async fn om_record_model_after(cwd: &Path, session: &str, before: usize) -> Option<String> {
     let deadline = tokio::time::Instant::now() + SETTLE;
     loop {
-        let models = om_record_models(cwd, session);
-        if models.len() > before {
-            return models.last().cloned().flatten();
+        if let Some(model) = om_record_models(cwd, session)
+            .into_iter()
+            .skip(before)
+            .flatten()
+            .last()
+        {
+            return Some(model);
         }
         if tokio::time::Instant::now() >= deadline {
             return None;

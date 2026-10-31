@@ -64,9 +64,10 @@ fn saw_memory_pass(seen: &Arc<Mutex<Vec<String>>>, model: &str, text: &str) -> b
     })
 }
 
-/// How many memory passes an endpoint has been asked to run: the Observer's
-/// instructions mark the request, and the mark is on the wire before any answer
-/// is parsed, so a count is a witness no failed parse can hide.
+/// How many memory passes an endpoint has been asked to run. Every memory
+/// round-trip — Observer or Reflector — carries the memory prompt, and the mark
+/// is on the wire before any answer is parsed, so a count is a witness no failed
+/// parse can hide.
 fn memory_passes(seen: &Arc<Mutex<Vec<String>>>) -> usize {
     seen.lock()
         .iter()
@@ -143,12 +144,12 @@ async fn a_config_move_reaches_a_child_that_is_already_alive() {
     let child = spawn(&core, &parent, "reviewer");
     send(&core, &parent).await;
 
-    let opened = om_record_models(f.project.path(), &child).len();
     assert_eq!(
         stamped_om_model(f.project.path(), &child).await.as_deref(),
         Some("shared"),
         "the child opens on a pass stamped with the contested key"
     );
+    let opened = om_record_models(f.project.path(), &child).len();
 
     f.write_config("aaa/om-model");
     core.reload_system_config();
@@ -187,9 +188,12 @@ async fn a_config_move_that_kills_a_childs_route_is_recorded_by_the_child() {
         Some("om-model"),
         "the child opens on a pass at the provider the id names"
     );
-    // A memory pass is a request the Observer's instructions mark. Counting them
-    // is the test's witness that a refusal runs no pass: the pass stamps its
-    // record where a stamp may land on a record the activation already made.
+    // The witness that a refusal runs no pass: every memory round-trip carries the
+    // memory prompt, and the capture server logs a request before it answers, so a
+    // pass shows up whatever model it rides. A pass's stamp is no such witness — it
+    // reaches a record only with a chunk delta, so a refused pass can leave the
+    // records untouched. `buffer_tokens` is 0 in this fixture, so no detached
+    // background cycle can add a request outside the turn's settle.
     let passes = memory_passes(&f.aaa_seen) + memory_passes(&f.zzz_seen);
 
     f.write_config("zzz/ghost");
@@ -206,16 +210,15 @@ async fn a_config_move_that_kills_a_childs_route_is_recorded_by_the_child() {
         "the refusal names the config key and the id it cannot address: {}",
         refusal.1
     );
-    // A refusal that then asks someone is the pre-#348 shape with a note
-    // attached: a second turn gives any such pass its chance to reach the wire
-    // before the endpoints are read.
+    // A second turn: a refusal that also asks someone does it at a turn's end, so
+    // the session has to reach a turn's end before the endpoints are read.
     send_text(&core, &child, &BRIEF.repeat(200)).await;
     settle(&core, &child).await;
     assert_eq!(
         memory_passes(&f.aaa_seen) + memory_passes(&f.zzz_seen),
         passes,
-        "the refusal runs no pass: no endpoint is asked to observe after the edit: \
-         aaa={:?} zzz={:?}",
+        "the refusal runs no pass: no endpoint is asked to run a memory pass after \
+         the edit: aaa={:?} zzz={:?}",
         models_seen(&f.aaa_seen),
         models_seen(&f.zzz_seen)
     );
