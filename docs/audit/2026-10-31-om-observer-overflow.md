@@ -96,22 +96,24 @@ the cause. Measured live against the config's two endpoints (2026-10-31):
   and answers `"model": "swift-1.5-iq3_s"`. So 204 800 is the real ceiling of an OM
   request that names the local model; the config's 262 144 never reaches the wire.
 
-The seam is a split between name and endpoint, in the tree as it stood when this
-was written: `resolve_om_model` supplied the **name** (the config's `om_model`)
-and `om_provider` (`agent/turn/om_pass.rs:19`) supplied the **endpoint**, which
-is `ForwardingProvider::route` (`harness/forwarding.rs:21`) — a `Mutex` rebound
-only by `set_route` (`harness/dispatch_sessions.rs:140`), which fires when the
-**session's** model changes. No `Config::route_model` / `route_child` call
-(`config/mod.rs:580,606`) was applied to `om_model` anywhere in the tree. #336
-made a *main* request follow its model id; the OM pass kept borrowing the
-session's endpoint. #348 closed that half: `om_address`
+The seam is a split between name and endpoint, in the tree this was written
+against (56d1c56): `resolve_om_model` (`agent/turn/om_pass.rs:19`) supplied the
+**name** (the config's `om_model`) and `om_provider` (`:30`) supplied the
+**endpoint**, which is `ForwardingProvider::route` (`harness/forwarding.rs:21`) —
+a `Mutex` rebound only by `set_route` (`harness/dispatch_sessions.rs:140`), which
+fires when the **session's** model changes. No `Config::route_model` /
+`route_child` call (`config/mod.rs:519,545`) was applied to `om_model` anywhere
+in that tree. #336 made a *main* request follow its model id; the OM pass kept
+borrowing the session's endpoint. #348 closed that half: `om_address`
 (`agent/turn/om_pass.rs:39`) is the resolver now, addressing the pass at the
 provider `om_model` names and recording a refusal when it names no endpoint.
 
 Both incidents show the switch doing it. Each appends `model_changed`
 `qwen3.6-35b-a3b → yunyun/qwen3.8-flash-next-iq3_s` at 20:55Z Oct 30, and their `om`
 records keep writing `om_model: "qwen3.6-35b-a3b"` (display-only, written from the
-resolved name at `turn_end/mod.rs:267`) for hours afterwards — the name stayed local, the
+records keep writing `om_model: "qwen3.6-35b-a3b"` (display-only, written from the
+resolved name at `turn_end/mod.rs:267` in that tree; #348 moved the stamp to the
+pass) for hours afterwards — the name stayed local, the
 endpoint moved to yunyun. The Observer then ran, successfully, against a 204 800-token
 gateway that answers any model id, until the unobserved tail crossed it. The first 400 is
 the last, because `unobserved` only grows: `pending` ran 182 094 → 200 188
@@ -168,7 +170,8 @@ Defect A needs a v0 §4 decision, so it is the user's call. Four moves, in the o
 causal chain runs:
 
 1. **Route the OM request by `om_model`, not by the session's model.** #336's rule — a
-   model's endpoint is the provider its id names (`Config::route_model`, `config/mod.rs:519`)
+   model's endpoint is the provider its id names (`Config::route_model`, `config/mod.rs:519`,
+   in the tree above)
    — is applied to the main request (`harness/sessions.rs:369`, `dispatch_sessions.rs:140`)
    and never to `om_model`. `om_provider` (`agent/turn/om_pass.rs:30`) returns the
    forwarding seam's current route, which tracks the *session*. The OM name and the OM

@@ -40,9 +40,21 @@ the interface.
   an I/O failure names none, and so does a validation failure — it is a property
   of the merged config, not of one file.
 - A live session takes the new config at the **next turn boundary**, never
-  mid-stream, re-deriving its turn from the provider its model id names. A model
-  an edit removes sends its context gate to missing and records
-  `gate_unavailable` **once** per transition.
+  mid-stream. The boundary re-derives the session's **turn**: the context facts a
+  model's `[providers]` entry declares, its sampling and reasoning (`[thinking]`,
+  `[generation]`), the cache retention a request declares (`[cache]`), and the
+  image limits (`[limits]`). It re-derives the **memory passes** too: `[om]`'s
+  thresholds, buffer interval, retry counts and route (#348, #347). A model an
+  edit removes sends its context gate to missing and records `gate_unavailable`
+  **once** per transition.
+- What the app reads at **launch** is not a live value: a session keeps the
+  model it opened on (`[generation]`'s `default_model` picks new sessions), the
+  gate set it opened with and the `[gates]` instructions its system prompt
+  gate set it opened with and the `[gates]` instructions its system prompt
+  embeds, `[requests]`' timeouts — read per call from the copy the session was
+  built with, and rebound only when a model switch resets the route — and
+  `[subagents]` and `[hashline]`, copied at open. #347 tracks
+  widening the live set.
 - `provider_changed` is edge-triggered on the rows a model menu would newly see,
   so a save that changes nothing emits nothing.
 
@@ -78,16 +90,20 @@ keychain, no auto-detection, spec §6).
 | `models` | map | empty | model id = key; value is the table below |
 
 Providers are a `BTreeMap`, and **a model id picks the provider it is addressed
-at** (#336) — the entry its prefix names, or, for a bare key, the one provider
-that declares it. The alphabetically-first entry is only the starting address:
-the fallback a session with no recorded model opens on, and the provider a bare
-key is looked up against at the open. See [Provider resolution](#provider-resolution).
+at** (§6.7, #336): an id whose prefix names a provider is addressed at that
+entry; a prefixed id whose prefix names no provider is **refused**, never handed
+to the first entry; a bare key goes to the one provider that declares it, and
+where two declare it **the session's own provider answers** — which is why the
+model menu spells ids prefixed. The alphabetically-first entry is only the
+starting address: the fallback a session with no recorded model opens on. See
+[Provider resolution](#provider-resolution).
 
 Because the id carries the routing, its spelling has to be readable as one
 address (#354), and two shapes that break that fail the load: a **provider name
 containing `/`** — the prefix is where a name ends, so a name with a slash
-leaves the prefix ambiguous — and a **`[thinking].levels` key no provider
-declares as a model**, which is then read by nothing.
+leaves the prefix ambiguous — and a **`[thinking].levels` key carrying a `/`
+that no provider declares as a model**, which is then read by nothing (a bare
+key is exempt: every id routes to a bare key, and that is the key read).
 
 A **model key may itself carry a `/`**, the spelling of the providers that host
 several vendors: `providers.openai.models."openai/gpt-5"`, a gateway whose keys
@@ -97,8 +113,9 @@ own id: the declared `openai/gpt-5` above is addressed by the full
 `openai/openai/gpt-5`, while the bare `openai/gpt-5` means provider `openai`'s
 model `gpt-5`. Under a provider that is *not* named for that prefix
 (`providers.openrouter.models."openai/gpt-5"`), §6.7 finds no provider in the
-bare spelling and addresses the provider that declares the key. A thinking level
-is keyed by the declared key in both cases — see
+bare spelling, so `openai/gpt-5` is refused (`UnownedPrefix`) and the id that
+addresses that provider is `openrouter/openai/gpt-5`. A thinking level is
+keyed by the declared key in both cases — see
 [`thinking`](#thinking-thinking-levels).
 
 ### `[providers.<name>.models.<id>]` — model facts

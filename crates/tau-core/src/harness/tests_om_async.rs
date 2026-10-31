@@ -144,9 +144,17 @@ struct Rig {
     collected: Arc<Mutex<Vec<Event>>>,
 }
 
-fn rig(om: crate::om_integration::OmState, provider: provider::TurnProviderRef) -> Rig {
+/// The rig: a session whose OM state is folded from `om` over `record`, on a
+/// core whose system layer carries that same `[om]` section. The file has to
+/// carry it — the turn boundary re-derives `[om]` from the live config (#347),
+/// so a state the config contradicts is reset at the first boundary.
+fn rig(
+    om: &crate::config::Om,
+    record: crate::om::OmRecord,
+    provider: provider::TurnProviderRef,
+) -> Rig {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build().unwrap();
+    let (core, _system) = om_core(om);
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -156,7 +164,13 @@ fn rig(om: crate::om_integration::OmState, provider: provider::TurnProviderRef) 
         CommandOutput::Workspace { workspace: w } => w,
         other => panic!("expected a workspace: {other:?}"),
     };
-    let live = manual_session_om(&core, &workspace, provider, TurnConfig::default(), Some(om));
+    let live = manual_session_om(
+        &core,
+        &workspace,
+        provider,
+        TurnConfig::default(),
+        Some(crate::om_integration::OmState::from_config(om, record)),
+    );
     let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
     let sink = Arc::clone(&collected);
     let pump_core = Arc::clone(&core);
@@ -241,15 +255,12 @@ impl Rig {
 #[tokio::test]
 async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     let title = "A".repeat(3200);
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 0),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 0);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) =
         scripted_om(scripts, "<observations>the work</observations>", false, 50);
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     let events = rig.events();
     Rig::settled_cleanly(&events);
@@ -313,10 +324,7 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
 #[tokio::test]
 async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
     let title = "A".repeat(3200);
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 1),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 1);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) = scripted_om(
@@ -325,7 +333,7 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
         true,
         50,
     );
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     let events = rig.events();
     Rig::settled_cleanly(&events);
@@ -357,10 +365,7 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
 #[tokio::test]
 async fn an_exhausted_buffer_cycle_records_om_failed_naming_the_buffer_stage() {
     let title = "A".repeat(3200);
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 1),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 1);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, _served, _seen) = scripted_om(
@@ -369,7 +374,7 @@ async fn an_exhausted_buffer_cycle_records_om_failed_naming_the_buffer_stage() {
         true,
         50,
     );
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());
 
@@ -385,15 +390,12 @@ async fn an_exhausted_buffer_cycle_records_om_failed_naming_the_buffer_stage() {
 #[tokio::test]
 async fn a_buffer_cycle_that_commits_a_chunk_records_no_om_failed() {
     let title = "A".repeat(3200);
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 1),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 1);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, _served, _seen) =
         scripted_om(scripts, "<observations>the work</observations>", false, 50);
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());
 
@@ -420,10 +422,7 @@ async fn a_buffer_cycle_that_commits_a_chunk_records_no_om_failed() {
 #[tokio::test]
 async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
     let title = "A".repeat(3200);
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 0),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 0);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) = scripted_om(
@@ -432,7 +431,7 @@ async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
         true,
         50,
     );
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     let events = rig.events();
     Rig::settled_cleanly(&events);
@@ -466,10 +465,7 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     let a = "A".repeat(2300);
     let b = "B".repeat(2300);
     let c = "C".repeat(2300);
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 0),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 0);
     let mut scripts = read_round("c1", &a);
     scripts.extend(read_round("c2", &b));
     scripts.extend(read_round("c3", &c));
@@ -480,7 +476,7 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
         false,
         100,
     );
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     let events = rig.events();
     Rig::settled_cleanly(&events);
@@ -536,13 +532,10 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
 /// unobserved entries (the 10k-entry acceptance stress leg pins this).
 #[tokio::test]
 async fn a_done_turn_appends_no_om_entry() {
-    let om = crate::om_integration::OmState::from_config(
-        &om_config(1000, 10_000, 400, 200, 0, 0),
-        crate::om::OmRecord::default(),
-    );
+    let om = om_config(1000, 10_000, 400, 200, 0, 0);
     let (p, served, _seen) =
         scripted_om(vec![crate::agent::testkit::sse("done", &[])], "", false, 10);
-    let rig = rig(om, p);
+    let rig = rig(&om, crate::om::OmRecord::default(), p);
     rig.run_turn("go").await;
     let events = rig.events();
     Rig::settled_cleanly(&events);
@@ -574,20 +567,17 @@ async fn a_promoting_turn_end_writes_one_record_not_two() {
         buffered_chunks: vec![chunk("e1"), chunk("e2")],
         ..Default::default()
     };
-    let om = crate::om_integration::OmState::from_config(
-        // observe 1000 (the round crosses it at turn end); increment 900 (a low
-        // retention floor so the promotion removes both chunks); buffer 0
-        // (disables the mid-loop trigger, so the promote fires only at turn end).
-        &om_config(1000, 10_000, 900, 0, 0, 0),
-        record,
-    );
+    // observe 1000 (the round crosses it at turn end); increment 900 (a low
+    // retention floor so the promotion removes both chunks); buffer 0
+    // (disables the mid-loop trigger, so the promote fires only at turn end).
+    let om = om_config(1000, 10_000, 900, 0, 0, 0);
     // One ~1150-token round crosses the observe threshold at turn end, so the
     // turn-end activation promotes the two pre-buffered chunks.
     let a = "A".repeat(4600);
     let mut scripts = read_round("c1", &a);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, _served, _seen) = scripted_om(scripts, "", false, 10);
-    let rig = rig(om, p);
+    let rig = rig(&om, record, p);
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());
 

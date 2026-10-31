@@ -264,3 +264,156 @@ async fn a_gate_lost_at_the_turn_boundary_records_once() {
         "a gate that was already missing records nothing new"
     );
 }
+
+/// The system layer's config: one provider at the capture server, and the
+/// Observer's threshold at `observe`. The model's facts are declared so the
+/// context gate stays armed; `buffer_tokens = 0` keeps the background cycle off,
+/// so every memory round-trip in these legs belongs to a turn.
+fn system_layer(base_url: &str, observe: u64) -> String {
+    format!(
+        "[providers.dev]\nbase_url = \"{base_url}/v1\"\n\n[providers.dev.models.model]\ncontext_window = 32768\nmax_tokens = 8192\n\n[generation]\ndefault_model = \"dev/model\"\n\n[om]\nom_model = \"\"\nobserve_threshold = {observe}\nreflect_threshold = 100000\nbuffer_increment = 6000\nbuffer_tokens = 0\n"
+    )
+}
+
+/// The `om` entries a session file holds — the durable witness that a memory
+/// pass ran.
+fn om_records(cwd: &Path, session: &str) -> usize {
+    let mut store = SessionStore::for_workspace(cwd, session);
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Om)
+        .count()
+}
+
+/// A message sent and its turn settled: `ended` counts the `StreamEnd` events
+/// already seen, so the caller waits for *its* turn.
+async fn send_and_settle(
+    core: &Arc<Core>,
+    collected: &Arc<Mutex<Vec<Event>>>,
+    session: &str,
+    text: &str,
+) {
+    let ended = stream_ends(collected);
+    core.dispatch(Command::MessageSend {
+        session: session.to_owned(),
+        text: text.to_owned(),
+        lane: MessageLane::Steering,
+    })
+    .unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        if stream_ends(collected) > ended {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the turn never settled for {session}"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    // The turn-end memory pass runs before the session goes idle, so an idle
+    // session has already written its record.
+    let live = core.live(session).unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while live.turn.load(std::sync::atomic::Ordering::SeqCst) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the session never went idle after {session}'s turn"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+fn stream_ends(collected: &Arc<Mutex<Vec<Event>>>) -> usize {
+    collected
+        .lock()
+        .iter()
+        .filter(|e| matches!(e, Event::StreamEnd { .. }))
+        .count()
+}
+
+/// #347, positively: the `[om]` thresholds are a live value. A session opened
+/// where no pass can run takes a lowered `observe_threshold` at its next turn,
+/// and the pass runs at the edited number; a raised number runs none, so the
+/// edit is the threshold and not the mere fact of a turn.
+#[tokio::test]
+async fn an_observe_threshold_edit_runs_the_next_turn_s_pass() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (base, _seen) = crate::harness::tests_om_route::capture_server(
+        "<observations>noted</observations>".to_owned(),
+    );
+    write_config_fixture(system.path(), &system_layer(&base, 100_000));
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(system.path().to_path_buf())
+        .with_home(system.path().to_path_buf())
+        .build()
+        .unwrap();
+    let workspace = open_ws(&core, project.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session.id,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let collected = collect_events(&core);
+    // ~1800 soft tokens per send: over the edited 1, under the opened 100k.
+    let work = "work through this task carefully ".repeat(200);
+
+    send_and_settle(&core, &collected, &session, &work).await;
+    assert_eq!(
+        om_records(project.path(), &session),
+        0,
+        "the threshold the session opened with runs no pass"
+    );
+
+    write_config_fixture(system.path(), &system_layer(&base, 1));
+    core.reload_system_config();
+    send_and_settle(&core, &collected, &session, &work).await;
+    assert_eq!(
+        om_records(project.path(), &session),
+        1,
+        "the edited threshold runs the session's next pass"
+    );
+
+    write_config_fixture(system.path(), &system_layer(&base, 100_000));
+    core.reload_system_config();
+    send_and_settle(&core, &collected, &session, &work).await;
+    assert_eq!(
+        om_records(project.path(), &session),
+        1,
+        "a raised threshold runs no pass; the record the pass wrote stays"
+    );
+}
+
+/// A session with no memory at all has no thresholds to re-read: the boundary's
+/// `[om]` re-derivation creates nothing.
+#[tokio::test]
+async fn a_session_with_no_memory_re_reads_no_thresholds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join(".tau");
+    write_config_fixture(&project, FACTS);
+    let core = CoreBuilder::custom(providers()).build().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let live = manual_session(
+        &core,
+        &workspace,
+        provider::canned("data: [DONE]\n\n"),
+        TurnConfig::default(),
+    );
+    carry_model(&live, "model");
+    core.rederive_turn(&live);
+    assert!(
+        live.agent.om_state().is_none(),
+        "a session launched with no OM gains one from a config edit"
+    );
+}
