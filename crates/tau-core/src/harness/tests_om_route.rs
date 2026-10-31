@@ -4,8 +4,9 @@
 //! capture server that records the requests it receives, so a test names the
 //! provider that answered the Observer and the model key it was asked for.
 //!
-//! The session's own provider is `zzz` in every leg, so an OM call that lands
-//! there is the pre-#348 route riding `ForwardingProvider::route`.
+//! A root session rides `zzz`, so an OM call that lands there is the pre-#348
+//! route riding `ForwardingProvider::route`; `child` adds sessions that ride
+//! `aaa`, where §6.7 answers a contested key per session.
 
 use super::*;
 use crate::harness::testkit::*;
@@ -14,6 +15,10 @@ use std::io::Read as _;
 use std::io::Write as _;
 
 mod child;
+/// The ceiling on a waiter: these legs run concurrently with the rest of the
+/// suite, so a record can take seconds to appear under load. A red should cost
+/// wall time, not flake.
+const SETTLE: Duration = Duration::from_secs(60);
 
 /// One captured request: the model its `model` field names.
 fn captured_model(body: &str) -> Option<String> {
@@ -194,7 +199,7 @@ buffer_tokens = 0
 /// The turn settles: the session is idle and its file holds an assistant entry.
 async fn settle(core: &Arc<Core>, session: &str) {
     let live = core.live(session).unwrap();
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + SETTLE;
     loop {
         let idle = !live.turn.load(Ordering::SeqCst);
         let mut store = SessionStore::for_workspace(&live.cwd, session);
@@ -263,13 +268,35 @@ fn om_failures(cwd: &Path, session: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// The newest `om` record's model, waited for: a memory pass runs at the turn's
-/// end, so its record lands after the turn is idle — reading the file once
-/// races it.
-async fn om_record_model_settled(cwd: &Path, session: &str) -> Option<String> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+/// Every `om` record's model field, in append order: a pass stamps its record,
+/// the activation record names no model.
+fn om_record_models(cwd: &Path, session: &str) -> Vec<Option<String>> {
+    let mut store = SessionStore::for_workspace(cwd, session);
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Om)
+        .map(|e| {
+            e.payload
+                .get("om_model")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
+/// The newest `om` record's model, waited for. The agent task appends the
+/// record and this reader opens its own handle to the file, so it polls for the
+/// append rather than assuming it landed. An empty stamp is no answer: the
+/// activation record names no model and lands before the pass's record.
+async fn stamped_om_model(cwd: &Path, session: &str) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + SETTLE;
     loop {
-        if let Some(model) = om_record_model(cwd, session) {
+        if let Some(model) = om_record_models(cwd, session).last().cloned().flatten()
+            && !model.is_empty()
+        {
             return Some(model);
         }
         if tokio::time::Instant::now() >= deadline {
@@ -279,19 +306,20 @@ async fn om_record_model_settled(cwd: &Path, session: &str) -> Option<String> {
     }
 }
 
-/// The newest `om` record's model field: the name the pass wrote.
-fn om_record_model(cwd: &Path, session: &str) -> Option<String> {
-    let mut store = SessionStore::for_workspace(cwd, session);
-    store.open().unwrap();
-    store
-        .entries_range(0, usize::MAX)
-        .unwrap()
-        .iter()
-        .rev()
-        .find(|e| e.kind == EntryKind::Om)
-        .and_then(|e| e.payload.get("om_model"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
+/// The newest `om` record's model, waited for past `before` records: the pass a
+/// config move is about appends the record after the ones already read.
+async fn om_record_model_after(cwd: &Path, session: &str, before: usize) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    loop {
+        let models = om_record_models(cwd, session);
+        if models.len() > before {
+            return models.last().cloned().flatten();
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
 }
 
 /// The positive: `om_model = "aaa/om-model"` while the session rides `zzz`.
@@ -319,7 +347,9 @@ async fn an_om_model_prefixed_id_is_addressed_at_the_provider_it_names() {
         "every call at zzz is a main turn, never a memory pass: {zzz:?}"
     );
     assert_eq!(
-        om_record_model(f.project.path(), &session).as_deref(),
+        stamped_om_model(f.project.path(), &session)
+            .await
+            .as_deref(),
         Some("om-model"),
         "the durable record names the model that answered"
     );
@@ -432,7 +462,7 @@ async fn an_empty_om_model_stamps_the_record_with_the_model_it_rides() {
     send(&core, &session).await;
 
     assert_eq!(
-        om_record_model_settled(f.project.path(), &session)
+        stamped_om_model(f.project.path(), &session)
             .await
             .as_deref(),
         Some("main-model"),
@@ -449,23 +479,4 @@ async fn an_empty_om_model_stamps_the_record_with_the_model_it_rides() {
         f.aaa_seen.lock().is_empty(),
         "no call reached a provider the config did not name for the memory passes"
     );
-}
-
-/// What an endpoint was asked for, model by model — the readable form for an
-/// assertion message, where a payload dump would bury the answer.
-fn models_seen(seen: &Arc<Mutex<Vec<String>>>) -> Vec<Option<String>> {
-    seen.lock()
-        .iter()
-        .map(|payload| captured_model(payload))
-        .collect()
-}
-
-/// An endpoint ran a memory pass for `model` over a transcript containing `text`:
-/// the model names the address, the transcript says which session ran there.
-fn saw_memory_pass(seen: &Arc<Mutex<Vec<String>>>, model: &str, text: &str) -> bool {
-    seen.lock().iter().any(|payload| {
-        captured_model(payload).as_deref() == Some(model)
-            && payload.contains(MEMORY_INSTRUCTIONS)
-            && payload.contains(text)
-    })
 }
