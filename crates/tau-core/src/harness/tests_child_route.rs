@@ -246,7 +246,7 @@ async fn a_config_move_reaches_the_pair_a_child_inherits() {
     );
     // The watcher's own leg is tests_config_reload's (#337); this leg is the
     // turn boundary's, so the reload is taken synchronously.
-    core.reload_system_config();
+    reload_system_layer(&core);
     core.rederive_turn(&live);
     assert_eq!(
         sup.inherited().turn.max_output_tokens,

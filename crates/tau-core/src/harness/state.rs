@@ -60,6 +60,11 @@ pub struct Core {
     pub(crate) workspaces: Mutex<BTreeMap<String, Workspace>>,
     pub(crate) sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     pub(crate) configs: Mutex<HashMap<String, Config>>,
+    /// A workspace whose project layer stopped reading, keyed to what the loader
+    /// said. The merged entry beside it is the config the workspace keeps running
+    /// on; the flag is what tells the next turn boundary that the file on disk no
+    /// longer says that (#359). The watcher sets it, a read that succeeds clears it.
+    pub(crate) config_stale: Mutex<HashMap<String, ConfigRejection>>,
     /// Per-workspace skill registry (tickets #28/#31): built at session
     /// open and refreshed by the file watcher; consulted by the
     /// `message_send` boundary and `skill_list`.
@@ -243,6 +248,7 @@ impl CoreBuilder {
             workspaces: Mutex::new(BTreeMap::new()),
             sessions: Mutex::new(HashMap::new()),
             configs: Mutex::new(HashMap::new()),
+            config_stale: Mutex::new(HashMap::new()),
             skills: Mutex::new(HashMap::new()),
             home_watcher: Mutex::new(None),
             system_config_watcher: Mutex::new(None),
@@ -636,9 +642,10 @@ impl Core {
             .map(|w| w.id.clone())
     }
 
-    /// The project layer's directory: where a workspace's own config file
-    /// lives, the file a load rule names when it is the merged set that failed.
-    fn project_layer_dir(workspace: &Workspace) -> PathBuf {
+    /// The project layer's directory: where a workspace's own config file lives.
+    /// A load rule names no file, so a merged-set failure is attributed here — a
+    /// rule the system layer introduced is filed under this path (#363).
+    pub(crate) fn project_layer_dir(workspace: &Workspace) -> PathBuf {
         Path::new(&workspace.cwd).join(".tau")
     }
     /// The workspace's config from its files, the merge rule the cache fill
@@ -708,7 +715,11 @@ impl Core {
         workspace: &Workspace,
     ) -> (Config, Option<ConfigRejection>) {
         if let Some(c) = self.configs.lock().get(&workspace.id) {
-            return (c.clone(), None);
+            // The warm entry is the last config this workspace read. If the file
+            // on disk stopped reading, the flag says so and the boundary is told;
+            // the run continues on the warm entry (spec §12's reload failure path).
+            let stale = self.config_stale.lock().get(&workspace.id).cloned();
+            return (c.clone(), stale);
         }
         match self.read_workspace_config(workspace) {
             Ok(c) => {
@@ -721,30 +732,31 @@ impl Core {
                 // read, else the system layer (what boot loaded). A failed read
                 // writes nothing, so the cache holds only configs that read — a
                 // broken layer is met again at the next boundary, where the
-                // check runs anew (#359). The system layer lives in this same
-                // map, so it is read before the guard is taken: the lock is not
-                // reentrant.
+                // check runs anew (#359). `system_config()` takes this same lock,
+                // so it is called with no guard held.
                 let warm = self.configs.lock().get(&workspace.id).cloned();
                 let kept = warm.unwrap_or_else(|| self.system_config());
-                // A load rule names no file — it speaks of the merged set — so
-                // the path given is the layer a mid-session edit lands in.
-                let path = e.path().map_or_else(
-                    || {
-                        Self::project_layer_dir(workspace)
-                            .join(config::CONFIG_FILE)
-                            .display()
-                            .to_string()
-                    },
-                    |p| p.display().to_string(),
-                );
-                (
-                    kept,
-                    Some(ConfigRejection {
-                        path,
-                        reason: e.to_string(),
-                    }),
-                )
+                (kept, Some(Self::rejection_of(workspace, &e)))
             }
+        }
+    }
+
+    /// What to tell a session about a load failure: what the loader said, and the
+    /// file to name. A load rule names no file — it speaks of the merged set — so
+    /// the path given is the layer a mid-session edit lands in.
+    pub(crate) fn rejection_of(workspace: &Workspace, e: &config::LoadError) -> ConfigRejection {
+        let path = e.path().map_or_else(
+            || {
+                Self::project_layer_dir(workspace)
+                    .join(config::CONFIG_FILE)
+                    .display()
+                    .to_string()
+            },
+            |p| p.display().to_string(),
+        );
+        ConfigRejection {
+            path,
+            reason: e.to_string(),
         }
     }
 

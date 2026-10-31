@@ -377,7 +377,7 @@ async fn an_observe_threshold_edit_runs_the_next_turn_s_pass() {
     );
 
     write_config_fixture(system.path(), &system_layer(&base, 1));
-    core.reload_system_config();
+    reload_system_layer(&core);
     send_and_settle(&core, &collected, &session, &work).await;
     assert_eq!(
         om_records(project.path(), &session),
@@ -386,7 +386,7 @@ async fn an_observe_threshold_edit_runs_the_next_turn_s_pass() {
     );
 
     write_config_fixture(system.path(), &system_layer(&base, 100_000));
-    core.reload_system_config();
+    reload_system_layer(&core);
     send_and_settle(&core, &collected, &session, &work).await;
     assert_eq!(
         om_records(project.path(), &session),

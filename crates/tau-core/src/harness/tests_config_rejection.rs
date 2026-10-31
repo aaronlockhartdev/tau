@@ -106,12 +106,6 @@ fn carry_model(live: &Arc<LiveSession>, model: &str) {
     live.meta.lock().model = Some(model.to_owned());
     live.agent.set_model(model.to_owned());
 }
-/// The merged config is cached from the last read, so a fixture that rewrote a
-/// layer drops the cache and the next boundary reads the file. In the running
-/// app the watcher does this (`reload_workspace_config`).
-fn invalidate_config_cache(core: &Arc<Core>) {
-    core.reload_system_config();
-}
 
 /// A session opened through dispatch — the path a user opens one.
 fn new_session(core: &Arc<Core>, workspace: &Workspace) -> String {
@@ -158,7 +152,7 @@ async fn a_broken_layer_at_the_boundary_is_recorded_once_and_the_edit_is_inert()
     );
 
     write_config_fixture(&project.path().join(".tau"), &broken_layer("long"));
-    invalidate_config_cache(&core);
+    reload_system_layer(&core);
     core.rederive_turn(&live);
     let records = config_records(cwd, &session);
     assert_eq!(records.len(), 1, "the unreadable layer is recorded");
@@ -186,7 +180,7 @@ async fn a_broken_layer_at_the_boundary_is_recorded_once_and_the_edit_is_inert()
     );
 
     write_config_fixture(&project.path().join(".tau"), &project_layer("long"));
-    invalidate_config_cache(&core);
+    reload_system_layer(&core);
     core.rederive_turn(&live);
     assert_eq!(
         config_records(cwd, &session).len(),
@@ -218,7 +212,7 @@ async fn a_second_broken_layer_with_a_new_reason_is_recorded_too() {
     let cwd = Path::new(&ws.cwd);
 
     write_config_fixture(&project.path().join(".tau"), &broken_layer("long"));
-    invalidate_config_cache(&core);
+    reload_system_layer(&core);
     core.rederive_turn(&live);
     assert_eq!(config_records(cwd, &session).len(), 1);
 
@@ -227,7 +221,7 @@ async fn a_second_broken_layer_with_a_new_reason_is_recorded_too() {
         &project.path().join(".tau"),
         "[providers.dev\nbase_url = \"x\"",
     );
-    invalidate_config_cache(&core);
+    reload_system_layer(&core);
     core.rederive_turn(&live);
     let records = config_records(cwd, &session);
     assert_eq!(records.len(), 2, "a new failure is a new record");
@@ -256,6 +250,72 @@ async fn a_broken_layer_at_open_is_recorded_as_the_session_opens() {
     assert!(records[0].1.contains("dev/x"), "{}", records[0].1);
 }
 
+/// The GUI's live edit, seen through the watcher: it reads the file, finds it
+/// broken, and the merged entry it leaves behind stops claiming to be current —
+/// so the next boundary states the failure while the session keeps running on the
+/// config it last read. A warm cache alone used to leave that boundary silent
+/// (#359).
+#[tokio::test]
+async fn a_watchers_reload_of_a_broken_layer_is_recorded_at_the_next_boundary() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &project_layer("short")).await;
+    let live = manual_session(
+        &core,
+        &ws,
+        provider::canned("data: [DONE]\n\n"),
+        TurnConfig::default(),
+    );
+    carry_model(&live, "model");
+    let session = live.meta.lock().id.clone();
+    let cwd = Path::new(&ws.cwd);
+    let layer = project.path().join(".tau");
+
+    core.rederive_turn(&live);
+    assert_eq!(
+        retention(&live),
+        Some(CacheRetention::Short),
+        "the opened layer is live at the boundary"
+    );
+
+    write_config_fixture(&layer, &broken_layer("long"));
+    core.reload_workspace_config(&ws);
+    core.rederive_turn(&live);
+    let records = config_records(cwd, &session);
+    assert_eq!(
+        records.len(),
+        1,
+        "the watcher met the failure, so the session says it: {records:?}"
+    );
+    assert!(records[0].1.contains("dev/x"), "{}", records[0].1);
+    assert_eq!(
+        retention(&live),
+        Some(CacheRetention::Short),
+        "the unreadable edit is inert: the session runs on the config it last read"
+    );
+
+    core.rederive_turn(&live);
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        1,
+        "one record per broken layer, not one per turn"
+    );
+
+    write_config_fixture(&layer, &project_layer("long"));
+    core.reload_workspace_config(&ws);
+    core.rederive_turn(&live);
+    assert_eq!(
+        retention(&live),
+        Some(CacheRetention::Long),
+        "the repaired layer is live at the next boundary"
+    );
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        1,
+        "the reload that reads clears the flag: the repair mints nothing"
+    );
+}
+
 /// The negative beside it: a config that reads mints nothing at open.
 #[tokio::test]
 async fn a_readable_layer_at_open_records_nothing() {
@@ -271,7 +331,7 @@ async fn a_readable_layer_at_open_records_nothing() {
 /// The open's record and the boundary's are one story: a session opened on a
 /// broken layer states it at open, and its first boundary under the same failure
 /// adds nothing — a failed read caches nothing, so the boundary meets the failure
-/// again and the latch is what keeps it to one record (#359).
+/// again, and the latch is what keeps it to one record (#359).
 #[tokio::test]
 async fn a_broken_layer_at_open_is_recorded_once_across_its_first_boundary() {
     let system = tempfile::tempdir().unwrap();
@@ -285,7 +345,7 @@ async fn a_broken_layer_at_open_is_recorded_once_across_its_first_boundary() {
         .cloned()
         .expect("the session the open registered");
     carry_model(&live, "model");
-    invalidate_config_cache(&core);
+    reload_system_layer(&core);
     core.rederive_turn(&live);
     let records = config_records(Path::new(&ws.cwd), &session);
     assert_eq!(
@@ -293,4 +353,58 @@ async fn a_broken_layer_at_open_is_recorded_once_across_its_first_boundary() {
         1,
         "the open states the failure; the first boundary under it adds nothing: {records:?}"
     );
+}
+
+/// The record, not the latch, is what survives a close: the latch is born with
+/// the agent, so a session closed and reopened over one unfixed failure states it
+/// once — the projection says the file already names it (#359).
+#[tokio::test]
+async fn a_broken_layer_is_stated_once_across_a_reopen() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &broken_layer("short")).await;
+    let session = new_session(&core, &ws);
+    reload_system_layer(&core);
+    for _ in 0..2 {
+        core.sessions.lock().remove(&session);
+        core.session_reopen(&ws, &session).unwrap();
+    }
+    let records = config_records(Path::new(&ws.cwd), &session);
+    assert_eq!(
+        records.len(),
+        1,
+        "a file left broken is one story, not one per open: {records:?}"
+    );
+}
+
+/// A read that succeeds clears the latch: a failure that returns after a repair
+/// is a new story, and its boundary mints it (#359).
+#[tokio::test]
+async fn a_failure_that_returns_after_a_repair_is_recorded_again() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &project_layer("short")).await;
+    let live = manual_session(
+        &core,
+        &ws,
+        provider::canned("data: [DONE]\n\n"),
+        TurnConfig::default(),
+    );
+    carry_model(&live, "model");
+    let session = live.meta.lock().id.clone();
+    let cwd = Path::new(&ws.cwd);
+    let layer = project.path().join(".tau");
+    for round in 0..2 {
+        write_config_fixture(&layer, &broken_layer("long"));
+        reload_system_layer(&core);
+        core.rederive_turn(&live);
+        write_config_fixture(&layer, &project_layer("long"));
+        reload_system_layer(&core);
+        core.rederive_turn(&live);
+        assert_eq!(
+            config_records(cwd, &session).len(),
+            round + 1,
+            "round {round}: the broken layer is stated, the repair mints nothing"
+        );
+    }
 }

@@ -326,9 +326,16 @@ impl Core {
         self.sessions.lock().insert(id.clone(), live.clone());
         // A config broken before the session opened is stated to it as a record:
         // the GUI's banner rides the watcher's event, and a cold open never fires
-        // the watcher. The latch is the open's, and it is set here so the first
-        // boundary under the same failure does not state it a second time (#359).
+        // the watcher. The record decides, not the fresh agent — the latch is born
+        // with the session, so a close and a reopen would state one unfixed
+        // failure once per open. The projection carries the last rejection the
+        // file names, and the latch keeps the first boundary under it quiet
+        // (#359, ADR-0034).
         if let Some(rejection) = rejection
+            && opened
+                .as_ref()
+                .and_then(|f| f.last_config_rejection.as_ref())
+                .is_none_or(|(path, reason)| *path != rejection.path || *reason != rejection.reason)
             && live
                 .agent
                 .config_rejection_changed(&rejection.path, &rejection.reason)

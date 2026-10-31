@@ -27,6 +27,11 @@ pub struct Diagnostics {
     /// per-request spam); alternating between two ungated models re-records
     /// each switch, which is right — each switch is a transition.
     pub last_gate_unavailable: Option<String>,
+    /// The file and loader text the last `config_rejected` record named
+    /// (#359). Re-opening a session never re-states a failure its record already
+    /// names — the in-memory latch is born with the agent, so the record is what
+    /// survives a close.
+    pub last_config_rejection: Option<(String, String)>,
 }
 
 /// Fold a branch's entries into session state (ADR-0034's one reader, in
@@ -94,6 +99,9 @@ impl Diagnostics {
             Diagnostic::ModelChanged { to, .. } => self.set_model(to),
             Diagnostic::GateUnavailable { model, .. } => self.last_gate_unavailable = Some(model),
             Diagnostic::GateFailed { .. } => self.gate_failed = true,
+            Diagnostic::ConfigRejected { path, reason } => {
+                self.last_config_rejection = Some((path, reason));
+            }
             // The rest are facts about a moment, not state to carry.
             Diagnostic::GateAttempt { .. }
             | Diagnostic::ContextOverflow { .. }
@@ -102,7 +110,6 @@ impl Diagnostics {
             | Diagnostic::OmFailed { .. }
             | Diagnostic::ProviderRejected { .. }
             | Diagnostic::TurnCutoff { .. }
-            | Diagnostic::ConfigRejected { .. }
             | Diagnostic::Unknown { .. } => {}
         }
     }

@@ -100,8 +100,12 @@ impl AgentSession {
     /// A config read that failed, by the file and what the loader said. True the
     /// first time that pair arrives — the caller's signal to record it. The
     /// boundary runs every turn and a broken file does not fix itself, so one
-    /// failure is stated once, not per turn; the file is part of the key because
-    /// the same loader text from a different layer is a different story (#359).
+    /// failure is stated once, not per turn, and a read that succeeds clears the
+    /// latch so a failure returning after a repair is a new story. The pair is
+    /// the key, not the reason alone: a parse failure names its file, so two
+    /// broken layers are two stories. A load rule speaks of the merged set and
+    /// names no file — the boundary files it under the project layer — so a rule
+    /// failure is stated once per session until a read succeeds (#359).
     pub(crate) fn config_rejection_changed(&self, path: &str, reason: &str) -> bool {
         let pair = (path.to_owned(), reason.to_owned());
         let mut inner = self.inner.lock();

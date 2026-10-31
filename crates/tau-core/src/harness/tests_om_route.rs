@@ -443,7 +443,7 @@ async fn a_config_move_reaches_the_om_route() {
     );
 
     f.write_config("aaa/om-model");
-    core.reload_system_config();
+    reload_system_layer(&core);
     send(&core, &session).await;
 
     let aaa = f.aaa_seen.lock().clone();

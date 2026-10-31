@@ -152,7 +152,7 @@ async fn a_config_move_reaches_a_child_that_is_already_alive() {
     let opened = om_record_models(f.project.path(), &child).len();
 
     f.write_config("aaa/om-model");
-    core.reload_system_config();
+    reload_system_layer(&core);
     // The turn after the edit repeats the brief: a pass reads the transcript
     // after its cursor, so the body it sends is this turn's text and a request
     // naming BRIEF at an endpoint is attributable to the child.
@@ -197,7 +197,7 @@ async fn a_config_move_that_kills_a_childs_route_is_recorded_by_the_child() {
     let passes = memory_passes(&f.aaa_seen) + memory_passes(&f.zzz_seen);
 
     f.write_config("zzz/ghost");
-    core.reload_system_config();
+    reload_system_layer(&core);
     // As above: the repeated brief makes any request that does reach an
     // endpoint attributable to the child, which is what a refusal must prevent.
     send_text(&core, &child, &BRIEF.repeat(200)).await;

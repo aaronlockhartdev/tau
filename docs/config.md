@@ -52,7 +52,10 @@ the interface.
   failure is recorded **in the session** as `config_rejected { path, reason }`,
   once per failure, so the transcript says why a file's edits are not showing up
   (#359). A session that opens on a broken config is told the same way — the
-  banner rides a live event, and a cold open fires no watcher.
+  banner rides a live event, and a cold open fires no watcher. A warm cache is no
+  exemption: the watcher's failed reload marks the workspace's merged entry stale
+  and a reload that reads clears the mark, so the boundary meets the failure the
+  turn after the edit.
 - What the app reads at **launch** is not a live value: a session keeps the
   model it opened on (`[generation]`'s `default_model` picks new sessions), the
   gate set it opened with and the `[gates]` instructions its system prompt

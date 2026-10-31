@@ -87,7 +87,7 @@ impl Core {
     /// from the first `open_workspace`. `workspace_close` drops the entry (the
     /// debouncer stops on drop), so the map tracks the open workspaces.
     pub(crate) fn start_config_watcher(&self, workspace: &Workspace) -> Result<(), CoreError> {
-        let project = Path::new(&workspace.cwd).join(".tau");
+        let project = Self::project_layer_dir(workspace);
         if self.config_watchers.lock().contains_key(&workspace.id) {
             return Ok(());
         }
@@ -135,7 +135,7 @@ impl Core {
 
     /// The system layer's reload (spec §12, #337): the swap lands only on a
     /// successful read, so a rejected edit leaves the last good config live and
-    /// `ConfigRejected` is that failure's only route to the user (ADR-0034: it
+    /// `ConfigRejected` is that failure's route to the GUI (ADR-0034: the event
     /// belongs to no session). A success drops the merged entries derived from
     /// this layer (the next read re-merges the current files); a failure deletes
     /// no key, since serving `Config::default()` in place of the last good merge
@@ -167,30 +167,42 @@ impl Core {
 
     /// The workspace layer's reload (spec §12, #337): a success swaps that
     /// workspace's merged entry (the project layer feeds exactly one). A failure
-    /// emits `ConfigRejected` and writes nothing, leaving the last good merge live.
+    /// emits `ConfigRejected`, drops the merged entry's claim to be current, and
+    /// writes no config: the workspace keeps running on the last merge that read,
+    /// and the flag is what tells the next turn boundary to say so (#359).
     pub(crate) fn reload_workspace_config(&self, workspace: &Workspace) {
         let before = self.provider_rows(workspace);
         match self.read_workspace_config(workspace) {
             Ok(config) => {
                 let rows = dispatch::provider_rows(&config);
                 self.configs.lock().insert(workspace.id.clone(), config);
+                self.config_stale.lock().remove(&workspace.id);
                 if rows != before {
                     self.emit_provider_changed(&workspace.id);
                 }
             }
-            Err(e) => self.emit_config_rejected(&workspace.id, &e),
+            Err(e) => {
+                self.config_stale
+                    .lock()
+                    .insert(workspace.id.clone(), Self::rejection_of(workspace, &e));
+                self.emit_config_rejected(&workspace.id, &e);
+            }
         }
     }
 
     /// Swap the system entry in and drop the merged entries derived from it
     /// (the reload's success path; the merged keys refill from the new system
     /// entry at the next read). One lock scope: a reader between the two
-    /// writes would serve the old system layer under a new project layer.
+    /// writes would serve the old system layer under a new project layer. A merged
+    /// entry's staleness flag goes with it: the entry is gone, so the next read
+    /// meets the file as it is.
     fn put_merged(&self, system: Config, workspaces: &[Workspace]) {
         let mut configs = self.configs.lock();
         configs.insert(String::new(), system);
+        let mut stale = self.config_stale.lock();
         for ws in workspaces {
             configs.remove(&ws.id);
+            stale.remove(&ws.id);
         }
     }
     fn emit_provider_changed(&self, workspace: &str) {
@@ -204,7 +216,8 @@ impl Core {
     /// A rejected edit's record (#337). `path` names the layer file when the
     /// failure has one — a validation failure is the merged config's property,
     /// not one file's, so it names none. Session-less by ADR-0034, so it rides
-    /// the system group; the workspace key is the routing.
+    /// the system group; the workspace key is the routing. A session that meets
+    /// the same failure in its own read adds the record inside itself (#359).
     fn emit_config_rejected(&self, workspace: &str, err: &config::LoadError) {
         self.emit(Event::System {
             workspace: workspace.to_owned(),
