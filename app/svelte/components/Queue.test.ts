@@ -49,7 +49,7 @@ describe('Queue', () => {
   it('lists steering items under "next tool boundary"', () => {
     mockStore.sessions = {
       s1: seedState(meta('s1'), {
-        over: { pending: [{ text: 'steer me', lane: 'steering' }] }
+        over: { pending: [{ id: 'q1', text: 'steer me', lane: 'steering' }] }
       })
     };
     mockStore.current = 's1';
@@ -61,7 +61,7 @@ describe('Queue', () => {
   it('lists follow-up items under "after work completes"', () => {
     mockStore.sessions = {
       s1: seedState(meta('s1'), {
-        over: { pending: [{ text: 'then check', lane: 'follow-up' }] }
+        over: { pending: [{ id: 'q1', text: 'then check', lane: 'follow-up' }] }
       })
     };
     mockStore.current = 's1';
@@ -73,7 +73,7 @@ describe('Queue', () => {
   it('a sub-agent report gets the reports section and its source tail', () => {
     mockStore.sessions = {
       s1: seedState(meta('s1'), {
-        over: { pending: [{ text: 'report', lane: 'steering', source: 's1-2' }] }
+        over: { pending: [{ id: 'q1', text: 'report', lane: 'steering', source: 's1-2' }] }
       })
     };
     mockStore.current = 's1';
@@ -89,8 +89,8 @@ describe('Queue', () => {
       s1: seedState(meta('s1'), {
         over: {
           pending: [
-            { text: 'steer', lane: 'steering', source: 'user' },
-            { text: 'report', lane: 'steering', source: 's1-2' }
+            { id: 'q1', text: 'steer', lane: 'steering', source: 'user' },
+            { id: 'q2', text: 'report', lane: 'steering', source: 's1-2' }
           ]
         }
       })
@@ -103,14 +103,14 @@ describe('Queue', () => {
     expect(screen.getAllByRole('button')).toHaveLength(1);
   });
 
-  it('delete issues deleteQueueItem with the item text, lane and section index', async () => {
+  it('delete issues deleteQueueItem with the row id the core issued', async () => {
     mockStore.sessions = {
       s1: seedState(meta('s1'), {
         over: {
           pending: [
-            { text: 'first', lane: 'steering' },
-            { text: 'second', lane: 'steering' },
-            { text: 'later', lane: 'follow-up' }
+            { id: 'q1', text: 'first', lane: 'steering' },
+            { id: 'q2', text: 'second', lane: 'steering' },
+            { id: 'q3', text: 'later', lane: 'follow-up' }
           ]
         }
       })
@@ -120,10 +120,23 @@ describe('Queue', () => {
     const user = userEvent.setup();
     const dels = screen.getAllByRole('button');
     await user.click(dels[1]!);
-    expect(deleteQueueItem).toHaveBeenCalledWith('second', 'steering', null, 1);
-    // the mock keeps the rows; the last button is the follow-up section's (index 0 there)
+    expect(deleteQueueItem).toHaveBeenCalledWith('q2');
+    // the mock keeps the rows; the last button is the follow-up section's row
     await user.click(screen.getAllByRole('button').at(-1)!);
-    expect(deleteQueueItem).toHaveBeenCalledWith('later', 'follow-up', null, 0);
+    expect(deleteQueueItem).toHaveBeenCalledWith('q3');
+  });
+
+  it('the queue of a child session renders no delete control', () => {
+    mockStore.sessions = {
+      s1: seedState(meta('s1'), {
+        parent: 'p1',
+        over: { pending: [{ id: 'q1', text: 'steer', lane: 'steering' }] }
+      })
+    };
+    mockStore.current = 's1';
+    render(Queue);
+    expect(screen.getByText('steer')).toBeInTheDocument();
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
   });
 
   it('sections render in reports / steering / follow-up order', () => {
@@ -131,9 +144,9 @@ describe('Queue', () => {
       s1: seedState(meta('s1'), {
         over: {
           pending: [
-            { text: 'fu', lane: 'follow-up' },
-            { text: 'rep', lane: 'follow-up', source: 'p-1' },
-            { text: 'st', lane: 'steering' }
+            { id: 'q1', text: 'fu', lane: 'follow-up' },
+            { id: 'q2', text: 'rep', lane: 'follow-up', source: 'p-1' },
+            { id: 'q3', text: 'st', lane: 'steering' }
           ]
         }
       })

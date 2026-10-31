@@ -101,8 +101,14 @@ export function bindIPC(mockInvoke: Mock) {
       workspace_close: () => ({ kind: 'none' }),
       session_list: () => ({ kind: 'sessions', sessions: [meta('s1')] }),
       session_new: () => ({ kind: 'session', session: meta('s2') }),
-      session_rename: () => ({ kind: 'none' }),
-      session_set_model: () => ({ kind: 'none' }),
+      session_rename: (cmd) =>
+        cmd.type === 'session_rename'
+          ? { kind: 'session', session: meta(cmd.session, WS.id, { title: cmd.title }) }
+          : { kind: 'none' },
+      session_set_model: (cmd) =>
+        cmd.type === 'session_set_model'
+          ? { kind: 'session', session: meta(cmd.session, WS.id, { model: cmd.model }) }
+          : { kind: 'none' },
       session_open: () => ({ kind: 'snapshot', snapshot: snap('s1').snapshot }),
       session_close: () => ({ kind: 'none' }),
       session_delete: () => ({ kind: 'none' }),

@@ -1,6 +1,6 @@
 ---
 source: crates/tau-protocol/tests/wire_goldens.rs
-expression: "vec![ProtocolError::Unsupported\n{ message: \"subagents land with ticket #23\".into() }, ProtocolError::NotFound\n{ what: \"session s1\".into() }, ProtocolError::Other\n{ message: \"disk full\".into() },]"
+expression: "vec![ProtocolError::Unsupported\n{ message: \"subagents land with ticket #23\".into() }, ProtocolError::NotFound\n{ what: \"session s1\".into() }, ProtocolError::Other\n{ message: \"disk full\".into() }, ProtocolError::Busy\n{ what: \"session s1 is running a turn\".into() },]"
 ---
 [
   {
@@ -14,5 +14,9 @@ expression: "vec![ProtocolError::Unsupported\n{ message: \"subagents land with t
   {
     "kind": "other",
     "message": "disk full"
+  },
+  {
+    "kind": "busy",
+    "what": "session s1 is running a turn"
   }
 ]

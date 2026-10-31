@@ -277,6 +277,7 @@ mod tests {
                 workspace: "w1".into(),
                 session: "s1".into(),
                 items: vec![snapshot::QueuedItem {
+                    id: "q1".into(),
                     text: "next".into(),
                     lane: MessageLane::Steering,
                     source: None,

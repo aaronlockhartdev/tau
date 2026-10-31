@@ -3,8 +3,9 @@
   // steering ("next tool boundary") on top, follow-up ("after work
   // completes") below. Child reports (a sub-agent's wake) carry a source
   // and get their own section, distinct from the user's own messages.
-  // Items are deletable; the core's queue events are the source of truth,
-  // so deletion is optimistic with resync.
+  // Items are deletable by their core-issued id; the core's queue events
+  // are the source of truth, so deletion is optimistic with resync. A
+  // child's queue is its parent's, so the delete control is not offered (#346).
 
   import { deleteQueueItem, currentSession } from '../lib/store/store.svelte';
   import type { PendingMsg } from '../lib/rules/sessions';
@@ -13,6 +14,9 @@
   const reports = $derived(s ? s.pending.filter((p) => p.source && p.source !== 'user') : []);
   const steering = $derived(s ? s.pending.filter((p) => p.lane === 'steering' && (!p.source || p.source === 'user')) : []);
   const followUp = $derived(s ? s.pending.filter((p) => p.lane === 'follow-up' && (!p.source || p.source === 'user')) : []);
+  // The core's queue guard is "this session has a child link"; in the store
+  // that link is the state-level parent (a child's own snapshot omits it).
+  const childQueue = $derived(!!s?.parent);
 </script>
 
 {#if s && s.pending.length > 0}
@@ -21,14 +25,14 @@
       {#if items.length > 0}
         <div class="qlabel">{heading}</div>
       {/if}
-      {#each items as p, idx (p.text + ':' + idx)}
+      {#each items as p (p.id)}
         <div class="qrow" class:qsub={sub}>
           {#if sub}
             <span class="qsrc" title={p.source ?? ''}>sub-agent {(p.source ?? '').split('-').pop()}</span>
           {/if}
           <span class="qtext">{p.text}</span>
-          {#if !sub}
-            <button class="qdel" onclick={() => void deleteQueueItem(p.text, p.lane, null, idx)}>✕</button>
+          {#if !sub && !childQueue}
+            <button class="qdel" onclick={() => void deleteQueueItem(p.id)}>✕</button>
           {/if}
         </div>
       {/each}

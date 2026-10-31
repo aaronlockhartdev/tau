@@ -17,6 +17,7 @@ import type {
 } from '../wire/protocol';
 
 export interface PendingMsg {
+  id: string;
   text: string;
   lane: 'force' | 'steering' | 'follow-up';
   // Child provenance (a sub-agent's report): set only for those.
@@ -112,7 +113,7 @@ function snapshotToState(snap: Snapshot): SessionState {
     // The snapshot carries the gauge values; the activity kind is
     // event-driven (an open session is idle until a run starts).
     om: { ...snap.om, kind: 'idle' },
-    pending: snap.live.queue.map((q) => ({ text: q.text, lane: laneOf(q.lane), source: q.source ?? undefined })),
+    pending: snap.live.queue.map((q) => ({ id: q.id, text: q.text, lane: laneOf(q.lane), source: q.source ?? undefined })),
     parent: null,
     state,
     waiting_on: waitingOn,

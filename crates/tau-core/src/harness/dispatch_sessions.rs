@@ -3,8 +3,9 @@
 
 use super::{
     Arc, Command, CommandOutput, Core, Event, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
-    SessionStore, StoppedBy, check_title_len, delete_session_files, derive_turn, recorded_model,
-    running_turn_refusal, session_inner, switch_route,
+    SessionStore, StoppedBy, check_title_len, child_running_refusal, delete_session_files,
+    derive_turn, recorded_model, running_turn_refusal, session_inner, switch_route,
+    turn_started_refusal,
 };
 use tau_protocol::Diagnostic;
 
@@ -84,16 +85,24 @@ impl Core {
                 if let Some(l) = &live
                     && l.turn.load(Ordering::SeqCst)
                 {
-                    return Err(ProtocolError::Other {
-                        message: format!(
-                            "session {session} started a turn while renaming — stop it and retry"
-                        ),
-                    });
+                    return Err(turn_started_refusal(&session, "renaming"));
                 }
                 store.set_title(&title).map_err(|e| ProtocolError::Other {
                     message: e.to_string(),
                 })?;
-                Ok(CommandOutput::None)
+                // The rename changes GUI-visible state, so the answer is the
+                // meta the core wrote — the live copy, or the file re-read for a
+                // closed session (#346: a command carries the state it changed).
+                let meta = match &live {
+                    Some(l) => l.meta.lock().clone(),
+                    None => self
+                        .owning_session(&session)
+                        .map(|(_, m)| m)
+                        .ok_or_else(|| ProtocolError::NotFound {
+                            what: format!("session {session} is not open"),
+                        })?,
+                };
+                Ok(CommandOutput::Session { session: meta })
             }
             Command::SessionSetModel { session, model } => {
                 if model.trim().is_empty() {
@@ -104,7 +113,9 @@ impl Core {
                 if let Ok(live) = self.live(&session) {
                     let old = live.meta.lock().model.clone();
                     if old.as_deref() == Some(model.as_str()) {
-                        return Ok(CommandOutput::None);
+                        return Ok(CommandOutput::Session {
+                            session: live.meta.lock().clone(),
+                        });
                     }
                     // #336: the route is resolved before anything moves. An id
                     // whose prefix names no configured provider is refused here,
@@ -161,25 +172,35 @@ impl Core {
                                 message: e.to_string(),
                             })?;
                     }
-                    Ok(CommandOutput::None)
+                    // The switch changes GUI-visible state (the model chip, the
+                    // row's meta), so the answer is the meta the core wrote (#346).
+                    Ok(CommandOutput::Session {
+                        session: live.meta.lock().clone(),
+                    })
                 }
                 // A closed session is a file: the header carries no
                 // model, so the records are the trace — the last
                 // model_changed on the branch is the current one.
                 else {
-                    let (ws, _) =
+                    let (ws, meta) =
                         self.owning_session(&session)
                             .ok_or_else(|| ProtocolError::NotFound {
                                 what: format!("session {session} is not open"),
                             })?;
                     let cwd = PathBuf::from(&ws.cwd);
                     let mut store = SessionStore::for_workspace(&cwd, &session);
+                    // The command's answer is the meta with the model the record
+                    // now names — the file's model is the next open's route (#346).
+                    let meta = SessionMeta {
+                        model: Some(model.clone()),
+                        ..meta
+                    };
                     store.open().map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
                     })?;
                     let old = recorded_model(&mut store);
                     if old.as_deref() == Some(model.as_str()) {
-                        return Ok(CommandOutput::None);
+                        return Ok(CommandOutput::Session { session: meta });
                     }
                     // The record is the route the next open reads, so the live
                     // arm's §6.7 refusal fires here too: appending an id whose
@@ -200,7 +221,7 @@ impl Core {
                     .map_err(|e| ProtocolError::Other {
                         message: e.to_string(),
                     })?;
-                    Ok(CommandOutput::None)
+                    Ok(CommandOutput::Session { session: meta })
                 }
             }
             Command::SessionOpen { session } => {
@@ -294,11 +315,7 @@ impl Core {
                 // not move mid-write.
                 if live.turn.load(Ordering::SeqCst) {
                     self.sessions.lock().insert(session.clone(), live.clone());
-                    return Err(ProtocolError::Other {
-                        message: format!(
-                            "session {session} started a turn while deleting — stop it and retry"
-                        ),
-                    });
+                    return Err(turn_started_refusal(&session, "deleting"));
                 }
                 live.stop.store(true, Ordering::SeqCst);
                 if let Some(sup) = live.agent.subagents() {
@@ -354,12 +371,7 @@ impl Core {
                         // GUI sends): it blocks the archive too, before
                         // anything is quiesced.
                         if matches!(info.state, crate::subagent::ChildState::Running) {
-                            return Err(ProtocolError::Other {
-                                message: format!(
-                                    "child session {} is running — stop it first",
-                                    info.child
-                                ),
-                            });
+                            return Err(child_running_refusal(&info.child));
                         }
                         children.insert(info.child);
                     }
@@ -383,9 +395,7 @@ impl Core {
                     if let Some(cl) = self.sessions.lock().get(child)
                         && cl.turn.load(Ordering::SeqCst)
                     {
-                        return Err(ProtocolError::Other {
-                            message: format!("child session {child} is running — stop it first"),
-                        });
+                        return Err(child_running_refusal(child));
                     }
                 }
                 self.archive_live(&live, &session, &children)

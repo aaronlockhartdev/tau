@@ -127,6 +127,7 @@ export function applyEvents(evts: Event[]): void {
       }
       case 'queue': {
         s.pending = ev.items.map((q) => ({
+          id: q.id,
           text: q.text,
           lane: laneOf(q.lane),
           source: q.source ?? undefined

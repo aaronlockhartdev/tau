@@ -251,6 +251,7 @@ export type AnyEntry = {
   model?: string;
 };
 export interface QueuedItem {
+  id: string;
   text: string;
   lane: MessageLane;
   // Child provenance (a sub-agent's report): null for the user's own messages.
@@ -421,7 +422,7 @@ export type Command =
   | { type: 'blob_read'; workspace: string; id: string; hash: string }
   | { type: 'message_send'; session: string; text: string; lane: MessageLane }
   | { type: 'message_stop'; session: string }
-  | { type: 'queue_item_remove'; session: string; index: number }
+  | { type: 'queue_item_remove'; session: string; item: string }
   | { type: 'subagent_types' }
   | { type: 'subagent_list'; session: string }
   | { type: 'subagent_state'; handle: string }
@@ -512,6 +513,7 @@ export type Event =
 export type ProtocolError =
   | { kind: 'unsupported'; message: string }
   | { kind: 'not_found'; what: string }
+  | { kind: 'busy'; what: string }
   | { kind: 'other'; message: string };
 
 // Transport #1 (ADR-0002: tau-core/tau-protocol are free of Tauri types; the
@@ -519,16 +521,20 @@ export type ProtocolError =
 // never calls these.
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
+import { BusyError } from './errors';
 
 export async function command(cmd: Command): Promise<CommandOutput> {
   try {
     return await invoke<CommandOutput>('tau_command', { command: cmd });
   } catch (e) {
     // The Rust side rejects with the deserialized ProtocolError: a plain
-    // object carrying message (other/unsupported) or what (not_found) —
-    // neither stringifies to anything useful on its own.
-    const o = e as { message?: string; what?: string } | string;
+    // object carrying message (other/unsupported) or what (not_found/busy)
+    // — neither stringifies to anything useful on its own.
+    const o = e as { message?: string; what?: string; kind?: string } | string;
     const msg = typeof o === 'string' ? o : o?.message ?? o?.what ?? JSON.stringify(o);
+    // `busy` is the one kind a caller branches on: a retryable refusal, kept
+    // as its own Error type so the GUI never string-matches prose (#346).
+    if (typeof o === 'object' && o?.kind === 'busy') throw new BusyError(msg);
     throw new Error(msg, { cause: e });
   }
 }

@@ -180,11 +180,7 @@ impl Core {
             self.sessions
                 .lock()
                 .insert(session.to_owned(), live.clone());
-            return Err(ProtocolError::Other {
-                message: format!(
-                    "session {session} started a turn while archiving — stop it and retry"
-                ),
-            });
+            return Err(turn_started_refusal(session, "archiving"));
         }
         Ok(())
     }
@@ -559,9 +555,28 @@ pub(crate) fn check_title_len(title: &str) -> Result<(), ProtocolError> {
     Ok(())
 }
 
-/// branch) and the delete: the same guard as the archive (ADR-0005).
+/// The running-turn guard (ADR-0005), shared by the archive, the rename,
+/// the branch and the delete: a target whose turn is in flight is refused.
+/// `Busy`, not prose: the GUI re-enables its composer off the kind (#346).
 pub(crate) fn running_turn_refusal(session: &str) -> ProtocolError {
-    ProtocolError::Other {
-        message: format!("session {session} is running — stop it first"),
+    ProtocolError::Busy {
+        what: format!("session {session} is running — stop it first"),
+    }
+}
+
+/// The race recheck's twin: the turn flag was clear at the guard, and a wake
+/// set it inside the window. Same retryable condition, so the same `Busy`
+/// kind (#346).
+pub(crate) fn turn_started_refusal(session: &str, action: &str) -> ProtocolError {
+    ProtocolError::Busy {
+        what: format!("session {session} started a turn while {action} — stop it and retry"),
+    }
+}
+
+/// The archive's running-child refusal (ADR-0005): a child's run blocks its
+/// parent's archive until it is stopped.
+pub(crate) fn child_running_refusal(child: &str) -> ProtocolError {
+    ProtocolError::Busy {
+        what: format!("child session {child} is running — stop it first"),
     }
 }

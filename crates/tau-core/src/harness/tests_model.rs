@@ -142,11 +142,21 @@ async fn session_rename_syncs_the_live_meta() {
         CommandOutput::Session { session } => session,
         other => panic!("expected session: {other:?}"),
     };
-    core.dispatch(Command::SessionRename {
-        session: live.id.clone(),
-        title: "Renamed".into(),
-    })
-    .unwrap();
+    let out = core
+        .dispatch(Command::SessionRename {
+            session: live.id.clone(),
+            title: "Renamed".into(),
+        })
+        .unwrap();
+    // Output authority (#346): the command answers the meta it wrote, so the
+    // GUI applies the core's value instead of patching its own copy.
+    match out {
+        CommandOutput::Session { session } => {
+            assert_eq!(session.id, live.id);
+            assert_eq!(session.title.as_deref(), Some("Renamed"));
+        }
+        other => panic!("expected session: {other:?}"),
+    }
     // Re-opening serves the snapshot from the live meta; the rename must
     // not revert (the B1 regression).
     let snap = match core
@@ -171,11 +181,20 @@ async fn session_rename_updates_a_closed_session_header() {
         store.create().unwrap();
         store.set_title("Before").unwrap();
     }
-    core.dispatch(Command::SessionRename {
-        session: id.clone(),
-        title: "After".into(),
-    })
-    .unwrap();
+    let out = core
+        .dispatch(Command::SessionRename {
+            session: id.clone(),
+            title: "After".into(),
+        })
+        .unwrap();
+    // The closed arm answers the meta read back from the file it rewrote.
+    match out {
+        CommandOutput::Session { session } => {
+            assert_eq!(session.id, id);
+            assert_eq!(session.title.as_deref(), Some("After"));
+        }
+        other => panic!("expected session: {other:?}"),
+    }
     let header =
         std::fs::read_to_string(cwd.path().join(".tau/sessions").join(format!("{id}.jsonl")))
             .unwrap()
@@ -204,17 +223,34 @@ async fn session_set_model_updates_the_live_meta_and_records_the_change() {
         other => panic!("expected session: {other:?}"),
     };
     let old = live.model.clone().expect("a fresh session has a model");
-    // Same model: a no-op (no quiet entry appended).
-    core.dispatch(Command::SessionSetModel {
-        session: live.id.clone(),
-        model: old.clone(),
-    })
-    .unwrap();
-    core.dispatch(Command::SessionSetModel {
-        session: live.id.clone(),
-        model: "undeclared".into(),
-    })
-    .unwrap();
+    // Same model: a no-op (no quiet entry appended) that still answers the meta.
+    let noop = core
+        .dispatch(Command::SessionSetModel {
+            session: live.id.clone(),
+            model: old.clone(),
+        })
+        .unwrap();
+    match noop {
+        CommandOutput::Session { session } => {
+            assert_eq!(session.id, live.id);
+            assert_eq!(session.model.as_deref(), Some(old.as_str()));
+        }
+        other => panic!("expected session: {other:?}"),
+    }
+    let changed = core
+        .dispatch(Command::SessionSetModel {
+            session: live.id.clone(),
+            model: "undeclared".into(),
+        })
+        .unwrap();
+    // Output authority (#346): the switch answers the meta it wrote, so the
+    // GUI's model chip reads the core's value, not its own guess.
+    match changed {
+        CommandOutput::Session { session } => {
+            assert_eq!(session.model.as_deref(), Some("undeclared"));
+        }
+        other => panic!("expected session: {other:?}"),
+    }
     let snap = match core
         .dispatch(Command::SessionOpen {
             session: live.id.clone(),
@@ -263,11 +299,21 @@ async fn session_set_model_on_a_closed_session_appends_the_quiet_entry() {
         model: "dev/model".into(),
     })
     .unwrap();
-    core.dispatch(Command::SessionSetModel {
-        session: id.clone(),
-        model: "dev/model".into(),
-    })
-    .unwrap();
+    let second = core
+        .dispatch(Command::SessionSetModel {
+            session: id.clone(),
+            model: "dev/model".into(),
+        })
+        .unwrap();
+    // The closed arm answers the meta with the model the record now names, on
+    // the no-op second call as on the first (#346).
+    match second {
+        CommandOutput::Session { session } => {
+            assert_eq!(session.id, id);
+            assert_eq!(session.model.as_deref(), Some("dev/model"));
+        }
+        other => panic!("expected session: {other:?}"),
+    }
     // The quiet entry is the record: the same model again is a no-op.
     let facts = facts_in(&session_file(cwd.path(), &id));
     assert_eq!(

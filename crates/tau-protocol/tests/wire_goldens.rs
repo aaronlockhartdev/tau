@@ -154,6 +154,7 @@ mod events {
             workspace: "w1".into(),
             session: "s1".into(),
             items: vec![QueuedItem {
+                id: "q1".into(),
                 text: "next".into(),
                 lane: tau_protocol::MessageLane::FollowUp,
                 source: Some("s2".into()),
@@ -389,6 +390,9 @@ mod errors {
             },
             ProtocolError::Other {
                 message: "disk full".into()
+            },
+            ProtocolError::Busy {
+                what: "session s1 is running a turn".into()
             },
         ]);
     }

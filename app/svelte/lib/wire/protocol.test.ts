@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => mockInv
 vi.mock('@tauri-apps/api/event', () => ({ listen: (...args: unknown[]) => mockListen(...args) as Promise<() => void> }));
 
 import { command, isTauri, onEvents, type Command } from './protocol';
+import { BusyError } from './errors';
 
 beforeEach(() => {
   mockInvoke.mockReset();
@@ -38,6 +39,18 @@ describe('command', () => {
   it('wraps a not_found rejection: the what field is the message', async () => {
     mockInvoke.mockRejectedValue({ what: 'session s1' });
     await expect(command({ type: 'workspace_list' })).rejects.toThrow('session s1');
+  });
+
+  it('a busy rejection is a BusyError, so a caller branches without parsing prose', async () => {
+    mockInvoke.mockRejectedValue({ kind: 'busy', what: 'session s1 is running' });
+    await expect(command({ type: 'workspace_list' })).rejects.toThrow(BusyError);
+  });
+
+  it('a not_found rejection is not a BusyError (only busy branches)', async () => {
+    mockInvoke.mockRejectedValue({ kind: 'not_found', what: 'session s1' });
+    const err = await command({ type: 'workspace_list' }).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(BusyError);
+    expect((err as Error).message).toBe('session s1');
   });
 
   it('stringifies a rejection with neither field', async () => {
