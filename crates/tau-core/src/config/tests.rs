@@ -759,3 +759,100 @@ fn a_validation_failure_names_no_layer() {
     assert!(matches!(no_window, LoadError::MissingContextWindow { .. }));
     assert_eq!(no_window.path(), None);
 }
+
+#[test]
+fn a_provider_name_that_carries_a_slash_is_refused() {
+    let toml = r#"[providers."aa/bb"]
+base_url = "http://x/v1"
+
+[providers."aa/bb".models.m1]
+context_window = 1000
+"#;
+    let err = load_from(toml, "").unwrap_err();
+    assert!(
+        matches!(&err, LoadError::ProviderNameHasSlash { provider } if provider == "aa/bb"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_provider_name_of_dots_and_dashes_loads() {
+    let toml = r#"[providers."zzz-local.v2"]
+base_url = "http://x/v1"
+
+[providers."zzz-local.v2".models."deepseek/chat"]
+context_window = 1000
+"#;
+    let config = load_from(toml, "").unwrap();
+    assert!(
+        config
+            .providers
+            .get("zzz-local.v2")
+            .is_some_and(|p| p.models.contains_key("deepseek/chat"))
+    );
+}
+
+#[test]
+fn a_model_key_that_names_a_configured_provider_is_refused() {
+    let toml = r#"[providers.aaa]
+base_url = "http://x/v1"
+
+[providers.aaa.models."aaa/solo"]
+context_window = 1000
+"#;
+    let err = load_from(toml, "").unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            LoadError::UnreachableModelKey { provider, model, named }
+                if provider == "aaa" && model == "aaa/solo" && named == "aaa"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_model_key_whose_prefix_names_no_provider_loads() {
+    let toml = r#"[providers.bbb]
+base_url = "http://x/v1"
+
+[providers.bbb.models."aaa/solo"]
+context_window = 1000
+"#;
+    assert!(load_from(toml, "").is_ok());
+}
+
+#[test]
+fn a_thinking_level_whose_prefix_names_no_provider_is_refused() {
+    let toml = r#"[providers.aaa]
+base_url = "http://x/v1"
+
+[providers.aaa.models.solo]
+context_window = 1000
+
+[thinking.levels]
+"zzz/solo" = "high"
+"#;
+    let err = load_from(toml, "").unwrap_err();
+    assert!(
+        matches!(&err, LoadError::LevelPrefixUnknown { key, prefix }
+            if key == "zzz/solo" && prefix == "zzz"),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_thinking_level_of_a_configured_prefix_or_a_bare_key_loads() {
+    let toml = r#"[providers.aaa]
+base_url = "http://x/v1"
+
+[providers.aaa.models.solo]
+context_window = 1000
+
+[thinking.levels]
+"aaa/solo" = "high"
+bare = "off"
+"#;
+    let config = load_from(toml, "").unwrap();
+    assert_eq!(config.thinking.levels.len(), 2);
+}

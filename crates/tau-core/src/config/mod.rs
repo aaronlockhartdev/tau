@@ -12,6 +12,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
+mod spelling;
+
 /// A named OpenAI-compatible provider entry: base URL, env var holding the key,
 /// and the models it offers (spec §6: no keychain, no auto-detection).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -772,6 +774,7 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
     config.om.validate()?;
     config.subagents.validate()?;
     config.validate_providers()?;
+    spelling::validate(&config)?;
     Ok(config)
 }
 
@@ -787,7 +790,10 @@ impl LoadError {
             | Self::OmThreshold { .. }
             | Self::MissingContextWindow { .. }
             | Self::ZeroMaxTokens { .. }
-            | Self::FleetCapInversion { .. } => None,
+            | Self::FleetCapInversion { .. }
+            | Self::ProviderNameHasSlash { .. }
+            | Self::UnreachableModelKey { .. }
+            | Self::LevelPrefixUnknown { .. } => None,
         }
     }
 }
@@ -821,6 +827,26 @@ pub enum LoadError {
     ZeroMaxTokens {
         key: String,
     },
+    /// A provider name carrying `/` (#354): an id's prefix is where its
+    /// provider's name ends, so a name with a slash leaves the prefix ambiguous.
+    ProviderNameHasSlash {
+        provider: String,
+    },
+    /// A model key whose first segment names a configured provider (#354): §6.7
+    /// routes that id to the named provider's model past the slash, so the key as
+    /// declared is reachable by no id.
+    UnreachableModelKey {
+        provider: String,
+        model: String,
+        named: String,
+    },
+    /// An `[thinking].levels` key whose provider prefix names no configured
+    /// provider (#354): a prefixed level is read when its id resolves, so the
+    /// entry is never read.
+    LevelPrefixUnknown {
+        key: String,
+        prefix: String,
+    },
 }
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -850,6 +876,22 @@ impl fmt::Display for LoadError {
                     "subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})"
                 )
             }
+            Self::ProviderNameHasSlash { provider } => write!(
+                f,
+                "providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name"
+            ),
+            Self::UnreachableModelKey {
+                provider,
+                model,
+                named,
+            } => write!(
+                f,
+                "providers.{provider}.models.{model} is reachable by no id: its prefix names the provider '{named}', so the id routes to that provider's model past the slash"
+            ),
+            Self::LevelPrefixUnknown { key, prefix } => write!(
+                f,
+                "thinking.levels.{key}: the prefix '{prefix}' names no configured provider, so the level is never read"
+            ),
         }
     }
 }
