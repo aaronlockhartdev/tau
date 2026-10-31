@@ -257,3 +257,40 @@ fn an_address_resolved_for_one_model_never_names_another() {
         "any/id"
     );
 }
+
+/// A provider that hosts several vendors spells its model keys with a slash
+/// (`deepseek/chat`). §6.7 answers that id at the owning provider and addresses
+/// the request by the declared key, so the thinking level is keyed by the key —
+/// the menu's id finds nothing. Rules a prefixed level by what a provider
+/// declares, not by its prefix (#354).
+#[test]
+fn a_slash_carrying_id_carries_the_level_keyed_by_its_declared_key() {
+    let mut provider =
+        crate::config::Provider::with_model("http://127.0.0.1:9/v1", "deepseek/chat");
+    provider.models.insert(
+        "m".to_owned(),
+        crate::config::ModelDef {
+            context_window: 131_072,
+            ..Default::default()
+        },
+    );
+    let levels = BTreeMap::from([
+        ("deepseek/chat".to_owned(), ThinkingLevel::High),
+        ("m".to_owned(), ThinkingLevel::Low),
+    ]);
+    let config = Config {
+        providers: BTreeMap::from([("dev".to_owned(), provider.clone())]),
+        thinking: crate::config::Thinking {
+            levels,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let turn = derive_turn(&config, &provider, "dev/deepseek/chat", "sess-1");
+    assert_eq!(
+        turn.reasoning,
+        Some(crate::provider::ReasoningEffort::High),
+        "the level keyed by the declared key is the one that applies"
+    );
+    assert_eq!(turn.request_address("dev/deepseek/chat"), "deepseek/chat");
+}

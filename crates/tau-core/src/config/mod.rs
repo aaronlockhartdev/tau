@@ -12,6 +12,8 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
+mod spelling;
+
 /// A named OpenAI-compatible provider entry: base URL, env var holding the key,
 /// and the models it offers (spec §6: no keychain, no auto-detection).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -772,6 +774,7 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
     config.om.validate()?;
     config.subagents.validate()?;
     config.validate_providers()?;
+    spelling::validate(&config)?;
     Ok(config)
 }
 
@@ -787,7 +790,9 @@ impl LoadError {
             | Self::OmThreshold { .. }
             | Self::MissingContextWindow { .. }
             | Self::ZeroMaxTokens { .. }
-            | Self::FleetCapInversion { .. } => None,
+            | Self::FleetCapInversion { .. }
+            | Self::ProviderNameHasSlash { .. }
+            | Self::LevelUndeclared { .. } => None,
         }
     }
 }
@@ -821,6 +826,16 @@ pub enum LoadError {
     ZeroMaxTokens {
         key: String,
     },
+    /// A provider name carrying `/` (#354): an id's prefix is where its
+    /// provider's name ends, so a name with a slash leaves the prefix ambiguous.
+    ProviderNameHasSlash {
+        provider: String,
+    },
+    /// An `[thinking].levels` key no provider declares as a model (#354): a level
+    /// is read by the key a model id routes to, so the entry is read by nothing.
+    LevelUndeclared {
+        key: String,
+    },
 }
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -850,6 +865,14 @@ impl fmt::Display for LoadError {
                     "subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})"
                 )
             }
+            Self::ProviderNameHasSlash { provider } => write!(
+                f,
+                "providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name"
+            ),
+            Self::LevelUndeclared { key } => write!(
+                f,
+                "thinking.levels.{key}: no provider declares it as a model, so the level is never read"
+            ),
         }
     }
 }
