@@ -6,6 +6,12 @@ last write 2026-10-31 03:34 local). Its earlier report on the same session's
 Observer overflow is `docs/audit/2026-10-31-om-observer-overflow.md`; this
 document covers the *terminal* failure, which that report does not reach.
 
+This diagnoses the work the session was doing: GitHub issue #348, the OM route.
+The `om_pass.rs` cites below describe that file before #348 landed, and every
+line cite tracks the tree at the time of writing — `turn/mod.rs` and
+`provider/stream.rs` move with each edit, so a cite here is a name plus a
+position, and the name outlives the position.
+
 ## Symptom
 
 The session was working ticket #348 in `/Users/aaron/git/tau-348`. Its last
@@ -38,7 +44,7 @@ Two facts in that table decide the diagnosis:
 - **The hole at 682.** The call's assistant entry is minted before the
   provider is called (`turn/mod.rs:141-147`, ADR-0008), and
   `append_assistant` returns `Ok(())` without writing when the result has no
-  text, no reasoning and no calls (`turn/mod.rs:515-519`, "no content is no
+  text, no reasoning and no calls (`turn/mod.rs:509-520`, "no content is no
   entry"). The id is burned, the entry never exists, and the file shows a
   sequence gap. So the record proves the last call produced **nothing at
   all** — not a partial answer that was truncated.
@@ -78,7 +84,7 @@ worktree, because this task is diagnosis.
 | The user cut it (stop, force-send, close) | **killed** | `reported_cutoff` (`turn/mod.rs:588-590`) returns `None` for `Completed` **and** `Killed`; a user cut is recorded as `interrupted`, not `turn_cutoff`. A cutoff record means nobody asked for it. |
 | The context gate refused the call (the #343/#344 path) | **killed** | A gate refusal is a `context_overflow { prompt, budget }` record plus `AgentError::ContextOverflow` out of `process()` — pre-wire at `gate_cap` (`turn/mod.rs:104-117`) or after the provider's own numbers (`turn/mod.rs:374-378`). The record holds no `context_overflow` at all (its four diagnostics are `om_failed`, `om_stalled`, two `turn_cutoff`s), and `turn_cutoff` is written only after a call returns (`turn/mod.rs:182-187`) — the call reached the wire. |
 | The OM overflow killed the turn | **killed as the terminal mechanism, kept as the trigger** | An OM failure records `om_failed`/`om_stalled`, never `turn_cutoff`; the pass is best-effort and the turn proceeds (`turn/om_pass.rs:79-83,115-117`). |
-| Idle-timeout, then a retry ladder that gave up | **killed** | The idle deadline is 120 s; the call ended at ~75 s. A retryable failure records no `turn_cutoff` (`is_retryable` → `Err` path, `provider/stream.rs:22-32`), and the provider was called twice in the whole repro run. |
+| Idle-timeout, then a retry ladder that gave up | **killed** | The idle deadline is 120 s; the call ended at ~75 s. A retryable failure records no `turn_cutoff` (`retryable` → `Err` path, `provider/stream.rs:293-303`), and the provider was called twice in the whole repro run. |
 | A parse drop hid a real response | **killed** | A parse failure is `ProviderError::MalformedStream`, not retryable, recorded as `provider_rejected` — not `turn_cutoff` (`turn/mod.rs:394`). And `blocks: 0` means no frame decoded. |
 | A provider stream that answers nothing ends the session's work, silently | **confirmed** | Reproduced (green test above), and it matches every entry in the record's tail. |
 
@@ -113,8 +119,8 @@ could see it.
 2. **A call that produces nothing is the one dead-stream shape tau does not
    treat as a failure (the reason it ended).** A body that ends at EOF with no
    completion frame is `StreamOutcome::EofWithoutDone` returned as **`Ok`**
-   (`provider/stream.rs:444-451` → `:492-493`). Every retry rule keys on
-   `Err` (`provider/stream.rs:22-32`, and the two in-body paths that *do*
+   (`provider/stream.rs:447-452` → `:489`). Every retry rule keys on
+   `Err` (`provider/stream.rs:293-303`, and the two in-body paths that *do*
    return `Err` when nothing was received: `Ok(Err(_))` → `Request`,
    idle deadline → `IdleTimeout`, with the code's own words: *"a pre-body
    failure (nothing received) still fails and retries"*). So a 0-block dead
@@ -126,7 +132,7 @@ could see it.
    away the only thing the call could have contributed, and the turn — the
    whole agentic loop, the user's task — is over.
 3. **The silence is by design, and the design has a hole (why nobody could
-   react).** The empty result writes no entry (`turn/mod.rs:515-519`), burning
+   react).** The empty result writes no entry (`turn/mod.rs:509-520`), burning
    the minted id 682 and leaving the sequence gap. What survives is one
    diagnostic card (`turn/mod.rs:182-187`), and the GUI's rendering of it is a
    sentence about a cut, with no statement that the model produced nothing and

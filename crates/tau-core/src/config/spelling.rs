@@ -25,12 +25,14 @@ pub(crate) fn validate(config: &Config) -> Result<(), LoadError> {
     }
     for (name, provider) in &config.providers {
         for model in provider.models.keys() {
-            // Routed by its prefix, that id reaches `<named>`'s model past the
-            // slash, so the key as declared is reachable by no id.
+            // The bare id is spelled in `[generation].default_model`, an agent
+            // type's `model:`, and `[om].om_model`; routed by its prefix it names
+            // `<named>`'s model past the slash, not this key — which is
+            // addressable only as `<name>/<model>`. One string, two endpoints.
             if let Some(named) =
                 prefix_of(model).filter(|prefix| config.providers.contains_key(*prefix))
             {
-                return Err(LoadError::UnreachableModelKey {
+                return Err(LoadError::ShadowedModelKey {
                     provider: name.clone(),
                     model: model.clone(),
                     named: named.to_owned(),
@@ -39,15 +41,16 @@ pub(crate) fn validate(config: &Config) -> Result<(), LoadError> {
         }
     }
     for key in config.thinking.levels.keys() {
-        // A prefixed level is read when its id resolves; a prefix that names no
-        // provider means the entry is never read.
-        if let Some(prefix) =
-            prefix_of(key).filter(|prefix| !config.providers.contains_key(*prefix))
+        // derive_turn looks a level up by the key a model id routes to, with a
+        // configured provider's prefix stripped; a prefixed key no provider
+        // declares as a model is read by nothing.
+        if key.contains('/')
+            && !config
+                .providers
+                .values()
+                .any(|provider| provider.models.contains_key(key))
         {
-            return Err(LoadError::LevelPrefixUnknown {
-                key: key.clone(),
-                prefix: prefix.to_owned(),
-            });
+            return Err(LoadError::LevelUndeclared { key: key.clone() });
         }
     }
     Ok(())

@@ -87,10 +87,14 @@ Because the id carries the routing, its spelling has to answer for one endpoint
 and no more (#354), and two shapes that break that fail the load: a **provider
 name containing `/`** — the prefix is where a name ends, so a name with a slash
 leaves the prefix ambiguous — and a **model key whose first segment names a
-configured provider** (`providers.aaa.models."aaa/solo"`), whose id routes to
-`aaa`'s model past the slash, so the key as declared is reachable by no id. A
-model key with a slash whose first segment names no provider (`deepseek/chat`) is
-legal and is routed as a bare key.
+configured provider** (`providers.aaa.models."aaa/solo"`): the bare id
+`aaa/solo` routes to `aaa`'s model past the slash, so one string answers for two
+endpoints — the declared key is addressable only as `bbb/aaa/solo`. A model key
+with a slash whose first segment names **no** provider (`deepseek/chat`, as the
+providers that host several vendors spell it) is legal: §6.7 finds no provider
+in it, so it addresses the provider that declares it. Its id is then
+`<provider>/deepseek/chat`, and a thinking level for it is keyed by the declared
+key — see [`thinking`](#thinking-thinking-levels).
 
 ### `[providers.<name>.models.<id>]` — model facts
 `context_window` is **required**: a model entry that omits it, or writes `0`,
@@ -187,7 +191,7 @@ max_tokens = 32000
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `level` | `off` `minimal` `low` `medium` `high` `xhigh` `max` | `off` | the session's default effort |
-| `levels` | map model-id → level | empty | per-model override; a prefixed key's prefix must name a configured provider, or the entry is never read and the load fails (#354) |
+| `levels` | map model-id → level | empty | per-model override, keyed by the model key an id routes to (`harness/sessions.rs`); a key with a slash that no provider declares is read by nothing, and the load fails (#354) |
 | `budgets` | map level-name → tokens | empty | thinking room reserved for the level |
 | `summary` | bool | `false` | ask for a reasoning summary (`reasoning.summary`) |
 
@@ -415,8 +419,8 @@ partially applied.
 - `providers.{provider}.models.{model} declares max_tokens = 0; the output cap must be positive` — a declared cap of `0` arms a gate that can answer nothing (#338)
 - `subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})`
 - `providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name` — a name that makes an id's prefix ambiguous (#354)
-- `providers.{provider}.models.{model} is reachable by no id: …` — a model key whose first segment names a configured provider (#354)
-- `thinking.levels.{key}: the prefix '{prefix}' names no configured provider, so the level is never read` (#354)
+- `providers.{provider}.models.{model} is shadowed: …` — a model key whose first segment names a configured provider: the bare id addresses that provider's model, so the string answers for two endpoints (#354)
+- `thinking.levels.{key}: no provider declares it as a model, so the level is never read` (#354)
 
 The two gate facts name the entry they reject: `providers.<name>.models.<id>`
 for a model entry, `generation` for `[generation].max_tokens`.

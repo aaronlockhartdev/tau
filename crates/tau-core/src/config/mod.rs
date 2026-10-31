@@ -792,8 +792,8 @@ impl LoadError {
             | Self::ZeroMaxTokens { .. }
             | Self::FleetCapInversion { .. }
             | Self::ProviderNameHasSlash { .. }
-            | Self::UnreachableModelKey { .. }
-            | Self::LevelPrefixUnknown { .. } => None,
+            | Self::ShadowedModelKey { .. }
+            | Self::LevelUndeclared { .. } => None,
         }
     }
 }
@@ -832,20 +832,18 @@ pub enum LoadError {
     ProviderNameHasSlash {
         provider: String,
     },
-    /// A model key whose first segment names a configured provider (#354): §6.7
-    /// routes that id to the named provider's model past the slash, so the key as
-    /// declared is reachable by no id.
-    UnreachableModelKey {
+    /// A model key whose first segment names a configured provider (#354): the
+    /// bare id routes to that provider's model past the slash, while this key is
+    /// addressable only as `<provider>/<model>` — one string, two endpoints.
+    ShadowedModelKey {
         provider: String,
         model: String,
         named: String,
     },
-    /// An `[thinking].levels` key whose provider prefix names no configured
-    /// provider (#354): a prefixed level is read when its id resolves, so the
-    /// entry is never read.
-    LevelPrefixUnknown {
+    /// An `[thinking].levels` key no provider declares as a model (#354): a level
+    /// is read by the key a model id routes to, so the entry is read by nothing.
+    LevelUndeclared {
         key: String,
-        prefix: String,
     },
 }
 impl fmt::Display for LoadError {
@@ -880,17 +878,17 @@ impl fmt::Display for LoadError {
                 f,
                 "providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name"
             ),
-            Self::UnreachableModelKey {
+            Self::ShadowedModelKey {
                 provider,
                 model,
                 named,
             } => write!(
                 f,
-                "providers.{provider}.models.{model} is reachable by no id: its prefix names the provider '{named}', so the id routes to that provider's model past the slash"
+                "providers.{provider}.models.{model} is shadowed: the bare id {model} routes to provider '{named}'s model past the slash, so this key is addressable only as {provider}/{model}"
             ),
-            Self::LevelPrefixUnknown { key, prefix } => write!(
+            Self::LevelUndeclared { key } => write!(
                 f,
-                "thinking.levels.{key}: the prefix '{prefix}' names no configured provider, so the level is never read"
+                "thinking.levels.{key}: no provider declares it as a model, so the level is never read"
             ),
         }
     }

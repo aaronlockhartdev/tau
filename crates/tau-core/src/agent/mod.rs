@@ -443,7 +443,7 @@ pub(crate) struct SessionParams {
 /// Where the memory passes run (#348, §6.7). The harness resolves
 /// `[om].om_model` into this — the agent has no config to route with — and
 /// re-derives it from the live config at the turn boundary (#337).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub enum OmRoute {
     /// `om_model` resolved: the endpoint its id names, and the key that
     /// endpoint declares for it (the prefix stripped, §6.7).
@@ -453,7 +453,6 @@ pub enum OmRoute {
     },
     /// No `om_model` configured: the passes ride the session's own route and
     /// request address (spec §4).
-    #[default]
     Session,
     /// `om_model` names no model the config declares, so the passes have no
     /// address: they do not run, and the text is the `om_failed` record's reason
