@@ -33,7 +33,10 @@ fn capture_server(answer: String) -> (String, Arc<Mutex<Vec<String>>>) {
     let thread_seen = Arc::clone(&seen);
     std::thread::spawn(move || {
         for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
+            // A failed accept is the OS, not the harness: a server that stops
+            // listening answers nothing, and a silent memory pass reads as a
+            // missing record.
+            let Ok(mut stream) = stream else { continue };
             let seen = Arc::clone(&thread_seen);
             let answer = answer.clone();
             std::thread::spawn(move || {
@@ -239,6 +242,22 @@ fn om_failures(cwd: &Path, session: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The newest `om` record's model, waited for: a memory pass runs at the turn's
+/// end, so its record lands after the turn is idle — reading the file once
+/// races it.
+async fn om_record_model_settled(cwd: &Path, session: &str) -> Option<String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        if let Some(model) = om_record_model(cwd, session) {
+            return Some(model);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 /// The newest `om` record's model field: the name the pass wrote.
 fn om_record_model(cwd: &Path, session: &str) -> Option<String> {
     let mut store = SessionStore::for_workspace(cwd, session);
@@ -392,7 +411,9 @@ async fn an_empty_om_model_stamps_the_record_with_the_model_it_rides() {
     send(&core, &session).await;
 
     assert_eq!(
-        om_record_model(f.project.path(), &session).as_deref(),
+        om_record_model_settled(f.project.path(), &session)
+            .await
+            .as_deref(),
         Some("main-model"),
         "the record names the model OM is riding"
     );

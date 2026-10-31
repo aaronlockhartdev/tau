@@ -31,7 +31,6 @@ impl AgentSession {
     /// built plain for that reason.
     ///
     /// An empty `om_model` rides the session's own route and request address
-    /// An empty `om_model` rides the session's own route and request address
     /// (spec §4). An `om_model` that addresses no endpoint is
     /// `om_failed { stage: "route" }`, stated once per run, and the pass does not
     /// run: the address is not the session's to borrow. Whichever model a pass is

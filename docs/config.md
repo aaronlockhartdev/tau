@@ -213,7 +213,7 @@ The compaction model is global, not per-provider (spec §4).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key, a bare key goes to the provider that declares it. An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
+| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, a contested key elsewhere being a refusal. An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
 | `observe_threshold` | int | 30000 | |
 | `reflect_threshold` | int | 40000 | |
 | `buffer_increment` | int | 6000 | |
