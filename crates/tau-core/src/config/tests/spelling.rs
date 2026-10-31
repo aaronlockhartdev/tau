@@ -12,6 +12,11 @@ context_window = 1000
         matches!(&err, LoadError::ProviderNameHasSlash { provider } if provider == "aa/bb"),
         "{err}"
     );
+    // docs/config.md's load-failure list quotes these strings.
+    assert_eq!(
+        err.to_string(),
+        "providers.aa/bb: a provider name must not contain '/'; an id's prefix is its provider's name"
+    );
 }
 
 #[test]
@@ -119,6 +124,10 @@ context_window = 1000
         matches!(&err, LoadError::LevelUndeclared { key }
             if key == "zzz/solo"),
         "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "thinking.levels.zzz/solo: no provider declares it as a model, so the level is never read"
     );
 }
 

@@ -50,8 +50,10 @@ the interface.
 - What the app reads at **launch** is not a live value: a session keeps the
   model it opened on (`[generation]`'s `default_model` picks new sessions), the
   gate set it opened with and the `[gates]` instructions its system prompt
-  embeds, `[requests]`' timeouts — baked into the HTTP client the session is
-  built with — and `[subagents]` and `[hashline]`, copied at open. #347 tracks
+  gate set it opened with and the `[gates]` instructions its system prompt
+  embeds, `[requests]`' timeouts — read per call from the copy the session was
+  built with, and rebound only when a model switch resets the route — and
+  `[subagents]` and `[hashline]`, copied at open. #347 tracks
   widening the live set.
 - `provider_changed` is edge-triggered on the rows a model menu would newly see,
   so a save that changes nothing emits nothing.
@@ -99,8 +101,9 @@ starting address: the fallback a session with no recorded model opens on. See
 Because the id carries the routing, its spelling has to be readable as one
 address (#354), and two shapes that break that fail the load: a **provider name
 containing `/`** — the prefix is where a name ends, so a name with a slash
-leaves the prefix ambiguous — and a **`[thinking].levels` key no provider
-declares as a model**, which is then read by nothing.
+leaves the prefix ambiguous — and a **`[thinking].levels` key carrying a `/`
+that no provider declares as a model**, which is then read by nothing (a bare
+key is exempt: every id routes to a bare key, and that is the key read).
 
 A **model key may itself carry a `/`**, the spelling of the providers that host
 several vendors: `providers.openai.models."openai/gpt-5"`, a gateway whose keys
@@ -110,8 +113,9 @@ own id: the declared `openai/gpt-5` above is addressed by the full
 `openai/openai/gpt-5`, while the bare `openai/gpt-5` means provider `openai`'s
 model `gpt-5`. Under a provider that is *not* named for that prefix
 (`providers.openrouter.models."openai/gpt-5"`), §6.7 finds no provider in the
-bare spelling and addresses the provider that declares the key. A thinking level
-is keyed by the declared key in both cases — see
+bare spelling, so `openai/gpt-5` is refused (`UnownedPrefix`) and the id that
+addresses that provider is `openrouter/openai/gpt-5`. A thinking level is
+keyed by the declared key in both cases — see
 [`thinking`](#thinking-thinking-levels).
 
 ### `[providers.<name>.models.<id>]` — model facts

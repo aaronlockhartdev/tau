@@ -831,8 +831,9 @@ pub enum LoadError {
     ProviderNameHasSlash {
         provider: String,
     },
-    /// An `[thinking].levels` key no provider declares as a model (#354): a level
-    /// is read by the key a model id routes to, so the entry is read by nothing.
+    /// An `[thinking].levels` key carrying a `/` that no provider declares as a
+    /// model (#354): a level is read by the key a model id routes to, so this
+    /// entry is read by nothing. A bare key is exempt — every id routes to one.
     LevelUndeclared {
         key: String,
     },

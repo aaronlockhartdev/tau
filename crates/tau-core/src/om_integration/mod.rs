@@ -75,8 +75,6 @@ impl OmState {
     /// its mirror (ticket #86 P2).
     #[must_use]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
-        // The record is the single source of truth for the chunks; the
-        // in-memory vec is its mirror (ticket #86 P2).
         let buffered = record.buffered_chunks.clone();
         Self {
             config: om_config_of(om),
