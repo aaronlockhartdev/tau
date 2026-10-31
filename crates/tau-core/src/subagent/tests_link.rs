@@ -28,6 +28,7 @@ fn sup_with_parent(
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        routed: Arc::new(parking_lot::Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {

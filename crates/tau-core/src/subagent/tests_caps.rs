@@ -124,6 +124,7 @@ async fn a_md_type_configures_the_child_prompt_model_and_tools() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(Mutex::new(Vec::new())),
+        routed: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
@@ -208,6 +209,7 @@ async fn a_general_child_inherits_the_catalog_carrying_prompt() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(Mutex::new(Vec::new())),
+        routed: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
     let sup = Supervisor::new(SupervisorParams {
@@ -286,6 +288,7 @@ async fn the_depth_cap() {
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
             instructions: Arc::new(Mutex::new(Vec::new())),
+            routed: Arc::new(Mutex::new(Vec::new())),
         });
         let subagent_bridge: Arc<dyn SubagentBridge> = bridge;
         Supervisor::new(SupervisorParams {
@@ -367,6 +370,7 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(Mutex::new(Vec::new())),
+        routed: Arc::new(Mutex::new(Vec::new())),
     });
     let driver = Arc::new(NotifyingDriver {
         notify: Arc::new(tokio::sync::Notify::new()),

@@ -75,6 +75,7 @@ async fn an_observed_done_is_confirmed_by_the_complete_plan() {
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(Mutex::new(Vec::new())),
+        routed: Arc::new(Mutex::new(Vec::new())),
     });
     let subagent_bridge: Arc<dyn SubagentBridge> = bridge.clone();
     let sup = Supervisor::new(SupervisorParams {

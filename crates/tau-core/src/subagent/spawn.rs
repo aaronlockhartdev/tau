@@ -157,7 +157,8 @@ impl Supervisor {
         // The child's model is resolved before its provider, which the
         // factory routes by that id (#336): a `.md` type naming another
         // provider's model is addressed there, not at its parent's endpoint.
-        let child_model = ty.model.clone().unwrap_or_else(|| self.model.clone());
+        let inherited = self.inherited();
+        let child_model = ty.model.clone().unwrap_or(inherited.model);
         let provider = self.provider.create(&session_id, &child_model);
         let child_tools = tools::surface::child_specs(ty.tools.as_deref());
         // The role carries the child's wiring (R2); the spawn keeps the
@@ -172,6 +173,7 @@ impl Supervisor {
                 tools: child_tools,
                 record,
                 handle: handle.clone(),
+                turn: inherited.turn,
             },
         )
         // The child role has no fallible step (the provider, the record,

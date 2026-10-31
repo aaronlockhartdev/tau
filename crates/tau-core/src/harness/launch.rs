@@ -16,6 +16,7 @@ use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
 use crate::session::Entry;
+use crate::subagent::Inherited;
 
 /// The session's role: the wiring defaults `launch` applies.
 #[derive(Clone)]
@@ -51,8 +52,10 @@ pub enum SessionRole {
         system_prompt: Option<String>,
     },
     /// A sub-agent session: the child's link; no supervisor, no events. The
-    /// values the child inherits (cwd, turn config, OM) come from the
-    /// supervisor.
+    /// values the child inherits (cwd, OM) come from the supervisor; the
+    /// parent's current model and its facts arrive as the spawn's snapshot of
+    /// the inherited pair, so a parent's move mid-spawn cannot split the
+    /// child's view (#336).
     Child {
         supervisor: Arc<Supervisor>,
         provider: TurnProviderRef,
@@ -61,6 +64,10 @@ pub enum SessionRole {
         tools: Vec<ToolSpec>,
         record: OmRecord,
         handle: String,
+        /// The parent's turn options, as the spawn's snapshot of the pair saw
+        /// them (#336). A type naming its own model gates with these until its
+        /// first turn boundary re-derives them from its own model — S18.
+        turn: TurnConfig,
     },
     /// A bare session (the test kits): a canned provider; no supervisor,
     /// no child link, no events.
@@ -139,14 +146,22 @@ impl AgentSession {
                 tools,
                 record,
                 handle,
+                turn,
             } => {
-                let d = supervisor.inherited();
+                let Inherited {
+                    cwd,
+                    om,
+                    om_model,
+                    gates,
+                    tool_batch_on_force,
+                    hashline,
+                    ..
+                } = supervisor.inherited();
                 // The plan file (design: session-scoped, the source of
                 // truth): the child's own file, replacing any inherited section.
                 let sid = store.id().to_owned();
                 let core = supervisor.core().and_then(|w| w.upgrade());
-                let (system_prompt, core) =
-                    plan_wiring(core.as_ref(), &system_prompt, &d.cwd, &sid);
+                let (system_prompt, core) = plan_wiring(core.as_ref(), &system_prompt, &cwd, &sid);
                 // Sender labels (ADR-0001 supplement): the child's model
                 // context decorates user entries with `Parent:` / `User:`
                 // at assembly time; the prompt names the convention.
@@ -162,15 +177,15 @@ impl AgentSession {
                     system_prompt,
                     model,
                     tools,
-                    cwd: d.cwd,
+                    cwd,
                     provider,
-                    tool_batch_on_force: d.tool_batch_on_force,
-                    turn: d.turn,
-                    gates: d.gates,
+                    tool_batch_on_force,
+                    turn,
+                    gates,
                     gate_failed: false,
-                    om: Some(OmState::from_config(&d.om, record)),
-                    om_model: d.om_model,
-                    hashline: d.hashline,
+                    om: Some(OmState::from_config(&om, record)),
+                    om_model,
+                    hashline,
                     subagents: None,
                     child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
                 });

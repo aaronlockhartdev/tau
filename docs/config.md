@@ -126,6 +126,7 @@ sorts first.
 | What may `default_model` name? | any model any provider declares: a prefixed id names its provider, a bare key is taken where it is declared |
 | What does a menu switch do? | routes the new id against the provider the session is on (`switch_route`), then re-derives the turn from the owner it lands on |
 | What does a subagent child use? | the provider its own model id routes to (`Config::route_child`); an id naming no provider keeps the parent's, which the spawn already resolved |
+| Where does a child with no model of its own get one? | from its parent — the model the parent is on **when the child spawns** (#336), so a menu switch reaches children spawned after it, never a child already running |
 
 The route (`Config::route_model`, applied by `open_route` / `switch_route` in
 `harness/sessions.rs`):

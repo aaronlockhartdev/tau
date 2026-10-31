@@ -54,10 +54,13 @@ pub(crate) struct CannedFactory {
     /// The instructions (system prompt) of each child's first LLM call —
     /// the prompt-assembly oracle.
     pub(crate) instructions: Arc<Mutex<Vec<Option<String>>>>,
+    /// The model id each `create` was routed by — the child's provider address.
+    pub(crate) routed: Arc<Mutex<Vec<String>>>,
 }
 
 impl ChildProviderFactory for CannedFactory {
-    fn create(&self, _id: &str, _model: &str) -> TurnProviderRef {
+    fn create(&self, _id: &str, model: &str) -> TurnProviderRef {
+        self.routed.lock().push(model.to_string());
         let slot = self.created.fetch_add(1, Ordering::SeqCst);
         let scripts = self
             .scripts
@@ -226,6 +229,7 @@ pub(crate) fn harness_full(
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(Mutex::new(Vec::new())),
+        routed: Arc::new(Mutex::new(Vec::new())),
     });
     let provider: Arc<dyn ChildProviderFactory> = factory.clone();
     let sup = Supervisor::new(SupervisorParams {

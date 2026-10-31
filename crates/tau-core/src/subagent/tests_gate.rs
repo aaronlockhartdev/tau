@@ -28,6 +28,7 @@ fn harness_with_gate(
         created: AtomicUsize::new(0),
         calls: Arc::new(AtomicUsize::new(0)),
         instructions: Arc::new(Mutex::new(Vec::new())),
+        routed: Arc::new(Mutex::new(Vec::new())),
     });
     let provider: Arc<dyn ChildProviderFactory> = factory.clone();
     let sup = Supervisor::new(SupervisorParams {

@@ -260,6 +260,49 @@ async fn a_resolve_miss_re_adopts_a_terminal_child() {
     assert!(sup.handles().contains(&"reclaimed-child".to_owned()));
 }
 
+/// The re-adopt follows the inherit rule (#336): the pair the parent moved to
+/// is the pair the rebuilt child is addressed at — the provider its model id
+/// names, not the model the supervisor launched with.
+#[test]
+fn a_re_adopted_child_is_addressed_at_the_parents_current_model() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sup, _bridge, factory, _parent) = harness_full(
+        dir.path(),
+        vec![sse("x", &[])],
+        vec![vec![sse("", &[])]],
+        vec![],
+        SubAgents::default(),
+    );
+    done_child(dir.path(), "reclaimed-child", "parent");
+    sup.set_inherited(
+        "zzz/gpt".into(),
+        TurnConfig {
+            max_output_tokens: Some(4096),
+            ..TurnConfig::default()
+        },
+    );
+
+    sup.state_info("reclaimed-child")
+        .expect("a terminal child on disk re-adopts on a resolve miss");
+
+    assert_eq!(
+        factory.routed.lock().as_slice(),
+        ["zzz/gpt".to_string()],
+        "the re-adopt routes the parent's current model"
+    );
+    assert_eq!(
+        sup.child_agent("reclaimed-child").map(|a| a.model()),
+        Some("zzz/gpt".into()),
+        "the rebuilt child carries the parent's current model"
+    );
+    assert_eq!(
+        sup.child_agent("reclaimed-child")
+            .map(|a| a.current_turn().max_output_tokens),
+        Some(Some(4096)),
+        "the rebuilt child is gated with that model's facts, not the launch model's"
+    );
+}
+
 /// The re-adopt negative path: a parked (idle) child on disk is NOT
 /// re-adopted on a resolve miss — it is a genuine unknown, not a zombie.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

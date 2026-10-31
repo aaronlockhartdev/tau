@@ -58,12 +58,14 @@ pub struct Supervisor {
     caps: SubAgents,
     cwd: std::path::PathBuf,
     provider: Arc<dyn ChildProviderFactory>,
-    model: String,
+    /// The pair a model-less child inherits: the parent's current model and the
+    /// turn options derived from it (the gate's facts are the model's, so the
+    /// two move together, under one lock — `set_inherited`).
+    inherited: Mutex<(String, TurnConfig)>,
     system_prompt: String,
     om: Om,
     om_model: String,
     tool_batch_on_force: ToolBatchPolicy,
-    turn: TurnConfig,
     gates: Option<Gates>,
     /// The pin store's GC policy (#225): children inherit it so their
     /// session-start sweep matches the parent's config.
@@ -82,7 +84,7 @@ pub struct Supervisor {
 }
 
 /// The values a session built around this supervisor inherits (the
-/// constructor's `Root`/`Child` roles): the parent's cwd, model, prompt,
+/// constructor's `Child` and `Seam` roles): the parent's cwd, model, prompt,
 /// turn config, and OM wiring.
 pub(crate) struct Inherited {
     pub(crate) cwd: std::path::PathBuf,
@@ -186,12 +188,11 @@ impl Supervisor {
             depth: p.depth,
             cwd: p.cwd,
             provider: p.provider,
-            model: p.model,
+            inherited: Mutex::new((p.model, p.turn)),
             system_prompt: p.system_prompt,
             om: p.om,
             om_model: p.om_model,
             tool_batch_on_force: p.tool_batch_on_force,
-            turn: p.turn,
             gates: p.gates,
             hashline: p.hashline,
             bridge: p.bridge,
@@ -241,17 +242,25 @@ impl Supervisor {
 
     /// The inherited bundle (see `Inherited`).
     pub(crate) fn inherited(&self) -> Inherited {
+        let (model, turn) = self.inherited.lock().clone();
         Inherited {
             cwd: self.cwd.clone(),
-            model: self.model.clone(),
+            model,
             system_prompt: self.system_prompt.clone(),
-            turn: self.turn.clone(),
+            turn,
             om: self.om.clone(),
             om_model: self.om_model.clone(),
             tool_batch_on_force: self.tool_batch_on_force,
             gates: self.gates.clone(),
             hashline: self.hashline,
         }
+    }
+
+    /// The pair a model-less child inherits, moved together: `session_set_model`
+    /// and the config-reload boundary rebind it, so a child is routed and gated
+    /// as the parent's current model, not the one it launched on (#336).
+    pub(crate) fn set_inherited(&self, model: String, turn: TurnConfig) {
+        *self.inherited.lock() = (model, turn);
     }
 
     /// The core link (production); `None` on the test seams (no plan
@@ -394,6 +403,8 @@ mod tests_caps;
 mod tests_context_modes;
 #[cfg(test)]
 mod tests_gate;
+#[cfg(test)]
+mod tests_inherit;
 #[cfg(test)]
 mod tests_link;
 #[cfg(test)]

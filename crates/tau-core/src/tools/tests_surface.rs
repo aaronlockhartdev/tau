@@ -88,6 +88,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
             instructions: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            routed: Arc::new(parking_lot::Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),
@@ -116,6 +117,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             tools: surface::child_specs(None),
             record: OmRecord::default(),
             handle: "parent-1".into(),
+            turn: TurnConfig::default(),
         },
     )
     .unwrap();
@@ -161,6 +163,7 @@ fn the_role_specs_table_is_exact() {
         tools: vec![],
         record: OmRecord::default(),
         handle: "parent-1".into(),
+        turn: TurnConfig::default(),
     };
     let child_names = names(surface::specs_for(&child, None));
     assert_eq!(

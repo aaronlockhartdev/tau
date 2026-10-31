@@ -147,7 +147,11 @@ impl Core {
                     // re-derived from the provider that declares its facts.
                     let turn = derive_turn(&config, route.provider, &model, &session);
                     let gate = turn.context_gate();
-                    live.agent.set_turn_config(turn);
+                    live.agent.set_turn_config(turn.clone());
+                    // The pair a model-less child inherits moves with it (#336).
+                    if let Some(sup) = live.agent.subagents() {
+                        sup.set_inherited(model.clone(), turn);
+                    }
                     if let crate::agent::ContextGate::Missing { reasons } = gate {
                         // The switch landed on a model with no gate
                         // (ADR-0034): the record says so here, once,

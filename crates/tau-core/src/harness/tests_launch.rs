@@ -182,6 +182,7 @@ fn launch_seam_session_is_freed_when_dropped() {
             created: AtomicUsize::new(0),
             calls: Arc::new(AtomicUsize::new(0)),
             instructions: Arc::new(Mutex::new(Vec::new())),
+            routed: Arc::new(Mutex::new(Vec::new())),
         }),
         model: "test-model".into(),
         system_prompt: "be terse".into(),

@@ -263,7 +263,12 @@ impl Core {
         let turn = derive_turn(&config, owner.provider, &model, &session);
         let gate = turn.context_gate();
         let was_ready = live.agent.current_turn().context_gate().is_ready();
-        live.agent.set_turn_config(turn);
+        live.agent.set_turn_config(turn.clone());
+        // A child inherits the model its parent has, so the config's move reaches
+        // the pair the supervisor hands a model-less child (#336).
+        if let Some(sup) = live.agent.subagents() {
+            sup.set_inherited(model.clone(), turn);
+        }
         if let ContextGate::Missing { reasons } = gate {
             // One record per transition, not one per turn: a config that keeps
             // the model bare must not append to the session file every turn.
