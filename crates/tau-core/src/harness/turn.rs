@@ -239,10 +239,11 @@ pub(crate) async fn run_turn(core: Arc<Core>, live: Arc<LiveSession>) {
 
 impl Core {
     /// The turn boundary's config re-derivation (spec §12, #337): a session takes
-    /// the live config at the start of its next turn, never mid-stream. A model an
-    /// edit removes is the ADR-0034 case — the gate goes missing and the record
-    /// says so once (the ready→missing edge), while the session keeps running on
-    /// the model it names.
+    /// the live config at the start of its next turn, never mid-stream — its turn
+    /// from the provider its model id names, and its memory passes from the `[om]`
+    /// section (#348, #347). A model an edit removes is the ADR-0034 case — the
+    /// gate goes missing and the record says so once (the ready→missing edge),
+    /// while the session keeps running on the model it names.
     pub(crate) fn rederive_turn(&self, live: &LiveSession) {
         let (workspace, session, model) = {
             let meta = live.meta.lock();
@@ -264,10 +265,12 @@ impl Core {
         let gate = turn.context_gate();
         let was_ready = live.agent.current_turn().context_gate().is_ready();
         live.agent.set_turn_config(turn.clone());
-        // The memory passes follow the config too (#348, #337): a `[om].om_model`
-        // edit reaches the next pass, and a route the edit killed is recorded once
-        // as `om_failed { stage: "route" }`.
+        // The memory passes follow the config too (#348, #337, #347): a
+        // `[om].om_model` edit reaches the next pass, a route the edit killed is
+        // recorded once as `om_failed { stage: "route" }`, and the thresholds a
+        // pass compares against are the edited ones.
         live.agent.set_om_route(self.om_route(&config, owner));
+        live.agent.set_om_config(&config.om);
         // A child inherits the model its parent has, so the config's move reaches
         // the pair the supervisor hands a model-less child (#336).
         if let Some(sup) = live.agent.subagents() {

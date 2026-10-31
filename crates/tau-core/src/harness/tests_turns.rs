@@ -237,13 +237,6 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
 #[allow(clippy::too_many_lines)] // one end-to-end turn flow; splitting is refactoring
 async fn a_live_om_run_emits_om_status_events() {
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build().unwrap();
-    let workspace = open_ws(&core, tmp.path()).await;
-    let cwd = PathBuf::from(&workspace.cwd);
-    let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
-    store.create().unwrap();
-    let sid = store.id().to_owned();
-    let created = store.created();
     let om = crate::config::Om {
         om_model: String::new(),
         observe_threshold: 1,
@@ -252,6 +245,13 @@ async fn a_live_om_run_emits_om_status_events() {
         buffer_tokens: 0,
         retries: crate::config::OmRetries::default(),
     };
+    let (core, _system) = om_core(&om);
+    let workspace = open_ws(&core, tmp.path()).await;
+    let cwd = PathBuf::from(&workspace.cwd);
+    let mut store = SessionStore::for_workspace(&cwd, &SessionStore::new_session_id());
+    store.create().unwrap();
+    let sid = store.id().to_owned();
+    let created = store.created();
     let body = format!(
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":10,\"output_tokens\":5,\"total_tokens\":15}}}}}}\n\n",
         text = "<observations>observed</observations>"
@@ -495,7 +495,21 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     );
 
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build().unwrap();
+    // Observe fires on the first turn (the 4000-char reply is ~1000
+    // tokens at the chars/4 estimator); reflect stays below the
+    // observation count so the pass is one observer round-trip per
+    // settle — the window the fix closes. 60 ms between events keeps the
+    // window wide enough to land a send in it.
+    let om = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 100,
+        reflect_threshold: 200,
+        buffer_increment: 50,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
+    };
+    let om_state = crate::om_integration::OmState::from_config(&om, crate::om::OmRecord::default());
+    let (core, _system) = om_core(&om);
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -505,28 +519,12 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
         CommandOutput::Workspace { workspace: w } => w,
         other => panic!("expected a workspace: {other:?}"),
     };
-    // Observe fires on the first turn (the 4000-char reply is ~1000
-    // tokens at the chars/4 estimator); reflect stays below the
-    // observation count so the pass is one observer round-trip per
-    // settle — the window the fix closes. 60 ms between events keeps the
-    // window wide enough to land a send in it.
-    let om = crate::om_integration::OmState::from_config(
-        &crate::config::Om {
-            om_model: String::new(),
-            observe_threshold: 100,
-            reflect_threshold: 200,
-            buffer_increment: 50,
-            buffer_tokens: 0,
-            retries: crate::config::OmRetries::default(),
-        },
-        crate::om::OmRecord::default(),
-    );
     let live = manual_session_om(
         &core,
         &workspace,
         provider::canned_slow(&body, 60),
         TurnConfig::default(),
-        Some(om),
+        Some(om_state),
     );
 
     // The collector stands in for the ACP pump: everything it sees is
@@ -650,7 +648,23 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
     );
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build().unwrap();
+    // The reply (~1000 tokens) crosses the 100-token observe threshold,
+    // so the turn-end pass fires one observer round-trip: the wrapper's
+    // second call, which idle-times-out and exhausts its single retry.
+    let om = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 100,
+        reflect_threshold: 200,
+        buffer_increment: 50,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries {
+            observe: 1,
+            buffer: 0,
+            reflect: 0,
+        },
+    };
+    let om_state = crate::om_integration::OmState::from_config(&om, crate::om::OmRecord::default());
+    let (core, _system) = om_core(&om);
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -660,24 +674,6 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         CommandOutput::Workspace { workspace: w } => w,
         other => panic!("expected a workspace: {other:?}"),
     };
-    // The reply (~1000 tokens) crosses the 100-token observe threshold,
-    // so the turn-end pass fires one observer round-trip: the wrapper's
-    // second call, which idle-times-out and exhausts its single retry.
-    let om = crate::om_integration::OmState::from_config(
-        &crate::config::Om {
-            om_model: String::new(),
-            observe_threshold: 100,
-            reflect_threshold: 200,
-            buffer_increment: 50,
-            buffer_tokens: 0,
-            retries: crate::config::OmRetries {
-                observe: 1,
-                buffer: 0,
-                reflect: 0,
-            },
-        },
-        crate::om::OmRecord::default(),
-    );
     let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let failing: provider::TurnProviderRef = Arc::new(FailingAfter {
         inner: provider::canned(&body),
@@ -685,7 +681,13 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         served: served.clone(),
         make_error: || provider::ProviderError::IdleTimeout,
     });
-    let live = manual_session_om(&core, &workspace, failing, TurnConfig::default(), Some(om));
+    let live = manual_session_om(
+        &core,
+        &workspace,
+        failing,
+        TurnConfig::default(),
+        Some(om_state),
+    );
 
     let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
     let sink = Arc::clone(&collected);
@@ -754,7 +756,20 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
         "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\n\r\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{text}\"}}\n\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":500,\"output_tokens\":200,\"total_tokens\":700}}}}}}\n\n"
     );
     let tmp = tempfile::tempdir().unwrap();
-    let core = CoreBuilder::custom(providers()).build().unwrap();
+    let om = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 100,
+        reflect_threshold: 200,
+        buffer_increment: 50,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries {
+            observe: 8,
+            buffer: 0,
+            reflect: 0,
+        },
+    };
+    let om_state = crate::om_integration::OmState::from_config(&om, crate::om::OmRecord::default());
+    let (core, _system) = om_core(&om);
     let workspace = match core
         .dispatch(Command::WorkspaceOpen {
             cwd: tmp.path().to_string_lossy().into_owned(),
@@ -764,21 +779,6 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
         CommandOutput::Workspace { workspace: w } => w,
         other => panic!("expected a workspace: {other:?}"),
     };
-    let om = crate::om_integration::OmState::from_config(
-        &crate::config::Om {
-            om_model: String::new(),
-            observe_threshold: 100,
-            reflect_threshold: 200,
-            buffer_increment: 50,
-            buffer_tokens: 0,
-            retries: crate::config::OmRetries {
-                observe: 8,
-                buffer: 0,
-                reflect: 0,
-            },
-        },
-        crate::om::OmRecord::default(),
-    );
     let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let failing: provider::TurnProviderRef = Arc::new(FailingAfter {
         inner: provider::canned(&body),
@@ -789,7 +789,13 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
             body: String::new(),
         },
     });
-    let live = manual_session_om(&core, &workspace, failing, TurnConfig::default(), Some(om));
+    let live = manual_session_om(
+        &core,
+        &workspace,
+        failing,
+        TurnConfig::default(),
+        Some(om_state),
+    );
 
     let collected = Arc::new(Mutex::new(Vec::<Event>::new()));
     let sink = Arc::clone(&collected);

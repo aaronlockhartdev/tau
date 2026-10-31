@@ -40,9 +40,19 @@ the interface.
   an I/O failure names none, and so does a validation failure — it is a property
   of the merged config, not of one file.
 - A live session takes the new config at the **next turn boundary**, never
-  mid-stream, re-deriving its turn from the provider its model id names. A model
-  an edit removes sends its context gate to missing and records
-  `gate_unavailable` **once** per transition.
+  mid-stream. The boundary re-derives the session's **turn**: the context facts,
+  sampling and reasoning a model's request carries (`[providers]`, `[requests]`,
+  `[thinking]`, `[generation]`), the cache retention a request declares
+  (`[cache]`), and the image limits (`[limits]`). It re-derives the **memory
+  passes** too: `[om]`'s thresholds, buffer interval, retry counts and route
+  (#348, #347). A model an edit removes sends its context gate to missing and
+  records `gate_unavailable` **once** per transition.
+- What the app reads at **launch** is not a live value: a session keeps the
+  model it opened on (`[generation]`'s `default_model` picks new sessions), the
+  system prompt embeds `[gates]`'s instructions (a gate's *availability* is
+  re-read at the boundary), and `[subagents]`, `[hashline]` and `[mcp]` are
+  copied at open. #347 tracks widening the live set; `[mcp]`'s
+  lifecycle is #355.
 - `provider_changed` is edge-triggered on the rows a model menu would newly see,
   so a save that changes nothing emits nothing.
 

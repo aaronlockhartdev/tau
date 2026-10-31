@@ -82,6 +82,15 @@ impl AgentSession {
         self.inner.lock().turn = turn;
     }
 
+    /// The `[om]` section for the next pass (spec §12, #347): a live session
+    /// re-reads the thresholds, the buffer interval and the retry counts at its
+    /// turn boundary. A session with no OM has nothing to re-read.
+    pub(crate) fn set_om_config(&self, om: &crate::config::Om) {
+        if let Some(state) = self.inner.lock().om.as_mut() {
+            state.apply_config(om);
+        }
+    }
+
     /// The session's current turn options (spec §12, #35): what the next
     /// turn's calls run with. The config-reload boundary reads it to decide
     /// whether a re-derivation would change the gate (#337).

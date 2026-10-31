@@ -32,7 +32,7 @@ fn captured_model(body: &str) -> Option<String> {
 /// The capture server: every request body is recorded, every call answers the
 /// `answer` text as a completed stream. One thread per connection, one
 /// connection per call (the client's pool is idle-free in tests).
-fn capture_server(answer: String) -> (String, Arc<Mutex<Vec<String>>>) {
+pub(crate) fn capture_server(answer: String) -> (String, Arc<Mutex<Vec<String>>>) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
