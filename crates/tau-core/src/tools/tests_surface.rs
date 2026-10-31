@@ -72,7 +72,7 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
             turn: TurnConfig::default(),
             tool_batch_on_force: ToolBatchPolicy::Complete,
             om: None,
-            om_model: String::new(),
+            om_route: crate::agent::OmRoute::Session,
             gates: None,
         },
     )
@@ -93,7 +93,6 @@ fn parent_child(dir: &std::path::Path) -> (Arc<AgentSession>, Arc<Supervisor>, A
         model: "test-model".into(),
         system_prompt: "be terse".into(),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
@@ -180,7 +179,7 @@ fn the_role_specs_table_is_exact() {
         turn: TurnConfig::default(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         om: None,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         gates: None,
     };
     assert_eq!(

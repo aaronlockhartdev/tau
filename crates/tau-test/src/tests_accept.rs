@@ -19,7 +19,7 @@ pub(crate) async fn accept_tools(ctx: &Ctx) -> Result<(), String> {
             gates: None,
             tool_batch_on_force: ToolBatchPolicy::default(),
             om: None,
-            om_model: String::new(),
+            om_route: tau_core::agent::OmRoute::Session,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;
@@ -113,7 +113,7 @@ pub(crate) async fn accept_gate(ctx: &Ctx) -> Result<(), String> {
                 turn: capped(),
                 tool_batch_on_force: ToolBatchPolicy::default(),
                 om: None,
-                om_model: String::new(),
+                om_route: tau_core::agent::OmRoute::Session,
                 gates: Some(gates),
             },
         )
@@ -249,7 +249,6 @@ pub(crate) async fn accept_subagent(ctx: &Ctx) -> Result<(), String> {
             "{SUBAGENT_PROMPT}\n\nYou are a child sub-agent; keep your own plan file current and report to the parent when done."
         ),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         gates: None,
@@ -422,7 +421,6 @@ pub(crate) async fn accept_reclaim(ctx: &Ctx) -> Result<(), String> {
             "{SUBAGENT_PROMPT}\n\nYou are a reclaim probe child; call parent_notify with done true when the brief is met."
         ),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         gates: None,
@@ -619,7 +617,6 @@ pub(crate) async fn accept_sender_labels(ctx: &Ctx) -> Result<(), String> {
         // the `general` type inherits.
         system_prompt: "sender-labels child: you are the child sub-agent; keep your own plan file current and report to the parent when done.".into(),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::default(),
         turn: capped(),
         gates: None,
@@ -798,7 +795,7 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             gates: None,
             tool_batch_on_force: ToolBatchPolicy::default(),
             om: Some(om),
-            om_model: String::new(),
+            om_route: tau_core::agent::OmRoute::Session,
         },
     )
     .map_err(|e| format!("launch failed: {e:?}"))?;

@@ -221,6 +221,31 @@ pub(crate) fn session_inner(
     provider::canned_dev(p).unwrap_or_else(|| provider::production(client, p, requests))
 }
 
+/// The endpoint the memory passes are addressed at, from `[om].om_model` and
+/// §6.7 (#348): the provider its id names, asked for the key that provider
+/// declares. `current` is the route the session (or child) itself is on — the
+/// answer for a bare key several providers declare, and only for that case: an
+/// id that resolves nowhere is a refusal carrying the reason the session will
+/// record, never the session's own address borrowed.
+pub(crate) fn om_route_for(
+    client: &reqwest::Client,
+    config: &Config,
+    om_model: &str,
+    current: ProviderRef<'_>,
+) -> crate::agent::OmRoute {
+    match config.route_om(om_model, current) {
+        Ok(owner) => crate::agent::OmRoute::Configured {
+            // Plain, never the forwarding seam: an OM call is not a user-facing
+            // stream (ticket #86).
+            provider: session_inner(client, owner.provider, &config.requests),
+            model: Config::model_key_for(owner.name, om_model).to_owned(),
+        },
+        Err(miss) => crate::agent::OmRoute::Refused {
+            reason: miss.to_string(),
+        },
+    }
+}
+
 /// The child provider factory (ticket #23 N3): wraps the provider the parent's
 /// model is addressed at in the forwarding seam, per child session id.
 pub(crate) struct ForwardingChildFactory {
@@ -230,6 +255,9 @@ pub(crate) struct ForwardingChildFactory {
     /// the fallback a bare key resolves against.
     pub(crate) config: Config,
     pub(crate) provider: crate::config::Provider,
+    /// The config key of `provider`: §6.7 answers a contested bare key against a
+    /// provider's name, and the factory carries the parent's entry (#348).
+    pub(crate) provider_name: String,
     pub(crate) requests: crate::config::Requests,
     pub(crate) tx: mpsc::Sender<Event>,
     pub(crate) pipe: PipeCounters,
@@ -246,7 +274,7 @@ impl ChildProviderFactory for ForwardingChildFactory {
         let owner = self.config.route_child(
             model,
             ProviderRef {
-                name: "",
+                name: &self.provider_name,
                 provider: &self.provider,
             },
         );

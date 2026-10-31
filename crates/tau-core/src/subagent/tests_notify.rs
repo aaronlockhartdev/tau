@@ -85,7 +85,6 @@ async fn an_observed_done_is_confirmed_by_the_complete_plan() {
         model: "test-model".into(),
         system_prompt: "be terse".into(),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: TurnConfig::default(),
         gates: None,
@@ -111,7 +110,7 @@ async fn an_observed_done_is_confirmed_by_the_complete_plan() {
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om: None,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }));

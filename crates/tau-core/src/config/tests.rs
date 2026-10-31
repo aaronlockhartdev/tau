@@ -602,6 +602,122 @@ fn route_child_follows_the_child_model_and_keeps_the_parent_on_a_refusal() {
     );
 }
 
+/// §6.7 for `[om].om_model` (#348): the memory passes are addressed at the
+/// provider the id names, and the key asked of it is the prefix stripped.
+#[test]
+fn route_om_binds_the_memory_passes_to_the_provider_the_id_names() {
+    let config = routing_config();
+    let zzz = config
+        .provider_for("zzz/zzz-model")
+        .expect("zzz is a configured provider");
+    // The prefix owns the id: routed there, whatever the map's order, and the
+    // provider is asked for the stripped key.
+    let owner = config.route_om("aaa/solo", zzz).expect("aaa is configured");
+    assert_eq!(owner.name, "aaa");
+    assert_eq!(owner.provider.base_url, "http://127.0.0.1:9/aaa/v1");
+    assert_eq!(Config::model_key_for(owner.name, "aaa/solo"), "solo");
+    // A bare key with one declarer is addressed at its declarer, not at the
+    // provider the session happens to ride.
+    assert_eq!(
+        config
+            .route_om("solo", zzz)
+            .expect("only aaa declares solo")
+            .name,
+        "aaa"
+    );
+    // A contested key is answered by the provider already in use, when it
+    // declares the key: the prefix is what would disambiguate, and there is
+    // nothing to guess.
+    assert_eq!(
+        config
+            .route_om("shared", zzz)
+            .expect("zzz declares shared")
+            .name,
+        "zzz"
+    );
+}
+
+/// The negative half of #348: every spelling that addresses no endpoint is a
+/// refusal naming the config key and the id, never the session's own address.
+#[test]
+fn route_om_refuses_an_id_that_addresses_no_endpoint() {
+    let config = routing_config();
+    let zzz = config
+        .provider_for("zzz/zzz-model")
+        .expect("zzz is a configured provider");
+    let prefix = config
+        .route_om("nosuch/model", zzz)
+        .expect_err("no provider is named `nosuch`");
+    assert!(
+        matches!(prefix, crate::config::OmRouteMiss::UnownedPrefix { .. }),
+        "{prefix:?}"
+    );
+    assert!(
+        prefix.to_string().contains("om.om_model"),
+        "the refusal names the config key the author must edit: {prefix}"
+    );
+    // The footgun from the ticket: a base_url pasted into `om_model`. Its
+    // `http:` prefix names no provider, so it is a refusal, not a call to a
+    // endpoint the config never declared.
+    let url = config
+        .route_om("http://127.0.0.1:9/v1/model-x", zzz)
+        .expect_err("`http:` is not a provider");
+    assert!(
+        matches!(url, crate::config::OmRouteMiss::UnownedPrefix { prefix: ref p, .. } if p == "http:"),
+        "{url:?}"
+    );
+    // A prefix that owns the id, at a provider that does not declare the key.
+    let undeclared = config
+        .route_om("aaa/zzz-model", zzz)
+        .expect_err("aaa declares no `zzz-model`");
+    assert!(
+        matches!(undeclared, crate::config::OmRouteMiss::Undeclared { provider: Some(ref p), .. } if p == "aaa"),
+        "{undeclared:?}"
+    );
+    // A bare key no provider declares: no provider to name in the record.
+    let nowhere = config
+        .route_om("undeclared", zzz)
+        .expect_err("nothing declares `undeclared`");
+    assert!(
+        matches!(
+            nowhere,
+            crate::config::OmRouteMiss::Undeclared { provider: None, .. }
+        ),
+        "{nowhere:?}"
+    );
+}
+
+/// A bare key two providers declare, at a provider that declares neither, is a
+/// guess the harness refuses to make — and the record has to name the whole
+/// collision set, because it is the author's fix instruction (#348).
+#[test]
+fn route_om_names_every_provider_when_a_bare_key_is_contested() {
+    let mut config = routing_config();
+    config.providers.insert(
+        "bbb".to_owned(),
+        crate::config::Provider::with_model("http://127.0.0.1:9/bbb/v1", "other"),
+    );
+    let bbb = config
+        .provider_for("bbb/other")
+        .expect("bbb is a configured provider");
+    let miss = config
+        .route_om("shared", bbb)
+        .expect_err("bbb declares no `shared`");
+    assert!(
+        matches!(miss, crate::config::OmRouteMiss::Ambiguous { .. }),
+        "{miss:?}"
+    );
+    let shown = miss.to_string();
+    assert!(
+        shown.contains("aaa") && shown.contains("zzz"),
+        "the refusal names both declarers so the fix is nameable: {shown}"
+    );
+    assert!(
+        shown.contains("provider/key"),
+        "and says how to name it: {shown}"
+    );
+}
+
 /// The rejected layer's file (#337): a parse failure names the layer the user
 /// must edit, so `ConfigRejected` can carry the path.
 #[test]

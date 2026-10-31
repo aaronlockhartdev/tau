@@ -269,6 +269,10 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     let record: crate::om::OmRecord =
         serde_json::from_value(om_entry.payload.clone()).expect("inline om record");
     assert_eq!(record.buffered_chunks.len(), 1, "{record:?}");
+    // The commit point stamps the record it reloaded, so a chunk committed by a
+    // background cycle names the endpoint the cycle ran at, as a synchronous
+    // pass's does (#348). The ride is the session's own model.
+    assert_eq!(record.om_model, "model", "{record:?}");
     let chunk = &record.buffered_chunks[0];
     assert_eq!(chunk.range.0, entries[0].id);
     let tool_id = entries

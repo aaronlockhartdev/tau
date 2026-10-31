@@ -5,12 +5,27 @@ use super::{
     AgentSession, Arc, AtomicBool, Config, Core, Event, ForwardingProvider, LiveSession,
     MAX_TITLE_LEN, ModelAddress, Mutex, Ordering, Path, PathBuf, ProtocolError, SessionMeta,
     SessionRole, SessionStore, Skeleton, SkillInfo, TurnConfig, Value, ViewEntry, Workspace,
-    session_inner, session_name, session_open, skill_info, unique_name,
+    om_route_for, session_inner, session_name, session_open, skill_info, unique_name,
 };
+use crate::agent::OmRoute;
 use crate::config::{ProviderRef, Route};
 use crate::diagnostics::Diagnostics;
 use tau_protocol::EntryKind;
 impl Core {
+    /// Where a session's memory passes run (#348): `[om].om_model` resolved by
+    /// §6.7 against the live config, at the endpoint its id names — prefix
+    /// stripped, a bare key resolved among its declarers. An empty `om_model`
+    /// rides the session's own provider and model. An id that resolves to no
+    /// endpoint is a refusal the session records, naming the config key and the
+    /// key several providers declare is answered by `current`, the provider the
+    /// session's model is addressed at.
+    pub(crate) fn om_route<'c>(&self, config: &'c Config, current: ProviderRef<'c>) -> OmRoute {
+        let om_model = config.om.om_model.trim();
+        if om_model.is_empty() {
+            return OmRoute::Session;
+        }
+        om_route_for(&self.client, config, om_model, current)
+    }
     /// The workspace's skill registry (ticket #28): the per-workspace
     /// cache; a workspace with no session opened yet is discovered on
     /// demand (`skill_list` at workspace open). The watcher refreshes the
@@ -368,6 +383,7 @@ pub(crate) fn open_route(
         .map_or_else(|| default_model(config, first), Ok)?;
     let owner = config.route_model(&model, first)?;
     Ok(Route {
+        name: owner.name.to_owned(),
         model,
         provider: owner.provider.clone(),
     })

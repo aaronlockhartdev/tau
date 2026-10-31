@@ -71,7 +71,8 @@ pub enum Diagnostic {
     /// An OM round-trip exhausted its retries (#338): the compaction the
     /// context gate depends on did not run. `stage` names the trigger point
     /// (`observe` / `buffer` / `reflect`); the turn survives under the budget
-    /// and the gate refuses over it.
+    /// and the gate refuses over it. `route` is not a pass: it is
+    /// `[om].om_model` addressing no endpoint, so no round-trip ran (#348).
     OmFailed { stage: String, reason: String },
     /// A provider stream ended without a completion signal.
     TurnCutoff {

@@ -18,6 +18,7 @@ pub(crate) fn providers() -> BTreeMap<String, crate::config::Provider> {
 /// `config` is borrowed, so the caller keeps it to move into the role.
 pub(crate) fn route(config: &crate::config::Config, model: &str) -> crate::config::Route {
     crate::config::Route {
+        name: "dev".to_owned(),
         model: model.to_owned(),
         provider: config
             .providers
@@ -72,7 +73,7 @@ pub(crate) fn manual_session_om(
             turn,
             tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
             om,
-            om_model: String::new(),
+            om_route: crate::agent::OmRoute::Session,
             gates: None,
         },
     )

@@ -357,7 +357,8 @@ pub(crate) struct Inner {
     /// mirrors the record, so a restart re-records the stall it resumes into
     /// rather than re-scanning the log (ADR-0034's `LiveState` mirror).
     pub(crate) om_stall_recorded: bool,
-    pub(crate) om_model: String,
+    /// The endpoint the memory passes run at, from `[om].om_model` (#348).
+    pub(crate) om_route: OmRoute,
     /// The OM-run observer (the app emits the protocol's `om_status` event
     /// from it): core is transport-free, so the hook takes the kind string,
     /// not the event. `None` = no observer (tests, children).
@@ -425,8 +426,10 @@ pub(crate) struct SessionParams {
     /// The OM integration state (ticket #22); `None` = OM disabled and the
     /// loop behaves as before.
     pub om: Option<crate::om_integration::OmState>,
-    /// The OM model (global config, spec §4); empty = the session's model.
-    pub om_model: String,
+    /// Where the memory passes run (#348, §6.7): resolved from `[om].om_model`
+    /// by the harness, and re-derived from the live config at the turn
+    /// boundary (#337).
+    pub om_route: OmRoute,
     /// The pin store's session-start GC policy (#225, the `[hashline]`
     /// config section); defaults at the test seams.
     pub hashline: crate::hashline::pin_store::GcPolicy,
@@ -435,6 +438,42 @@ pub(crate) struct SessionParams {
     pub subagents: Option<Arc<crate::subagent::Supervisor>>,
     /// The child-side link (ticket #23); `None` for non-child sessions.
     pub child: Option<Arc<crate::subagent::ChildLink>>,
+}
+
+/// Where the memory passes run (#348, §6.7). The harness resolves
+/// `[om].om_model` into this — the agent has no config to route with — and
+/// re-derives it from the live config at the turn boundary (#337).
+#[derive(Clone, Default)]
+pub enum OmRoute {
+    /// `om_model` resolved: the endpoint its id names, and the key that
+    /// endpoint declares for it (the prefix stripped, §6.7).
+    Configured {
+        provider: TurnProviderRef,
+        model: String,
+    },
+    /// No `om_model` configured: the passes ride the session's own route and
+    /// request address (spec §4).
+    #[default]
+    Session,
+    /// `om_model` names no model the config declares, so the passes have no
+    /// address: they do not run, and the text is the `om_failed` record's reason
+    /// (#348).
+    Refused { reason: String },
+}
+
+impl std::fmt::Debug for OmRoute {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // The endpoint is a provider handle, which is not `Debug`; what identifies
+        // a route in a log is the key it asks that endpoint for, and for a refusal
+        // the reason (#348).
+        match self {
+            Self::Configured { model, .. } => {
+                f.debug_struct("Configured").field("model", model).finish()
+            }
+            Self::Session => f.write_str("Session"),
+            Self::Refused { reason } => f.debug_struct("Refused").field("reason", reason).finish(),
+        }
+    }
 }
 
 pub struct AgentSession {
@@ -479,7 +518,7 @@ impl AgentSession {
                 om_inflight: None,
                 om_buffer_boundary: 0,
                 om_stall_recorded: false,
-                om_model: p.om_model,
+                om_route: p.om_route,
                 om_status_hook: None,
                 entry_upsert_hook: None,
                 stream_delta_hook: None,

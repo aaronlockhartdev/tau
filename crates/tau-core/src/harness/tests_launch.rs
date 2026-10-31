@@ -187,7 +187,6 @@ fn launch_seam_session_is_freed_when_dropped() {
         model: "test-model".into(),
         system_prompt: "be terse".into(),
         om: Om::default(),
-        om_model: String::new(),
         tool_batch_on_force: ToolBatchPolicy::Complete,
         turn: crate::agent::TurnConfig::default(),
         gates: None,
