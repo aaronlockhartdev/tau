@@ -792,7 +792,6 @@ impl LoadError {
             | Self::ZeroMaxTokens { .. }
             | Self::FleetCapInversion { .. }
             | Self::ProviderNameHasSlash { .. }
-            | Self::ShadowedModelKey { .. }
             | Self::LevelUndeclared { .. } => None,
         }
     }
@@ -832,14 +831,6 @@ pub enum LoadError {
     ProviderNameHasSlash {
         provider: String,
     },
-    /// A model key whose first segment names a configured provider (#354): the
-    /// bare id routes to that provider's model past the slash, while this key is
-    /// addressable only as `<provider>/<model>` — one string, two endpoints.
-    ShadowedModelKey {
-        provider: String,
-        model: String,
-        named: String,
-    },
     /// An `[thinking].levels` key no provider declares as a model (#354): a level
     /// is read by the key a model id routes to, so the entry is read by nothing.
     LevelUndeclared {
@@ -877,14 +868,6 @@ impl fmt::Display for LoadError {
             Self::ProviderNameHasSlash { provider } => write!(
                 f,
                 "providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name"
-            ),
-            Self::ShadowedModelKey {
-                provider,
-                model,
-                named,
-            } => write!(
-                f,
-                "providers.{provider}.models.{model} is shadowed: the bare id {model} routes to provider '{named}'s model past the slash, so this key is addressable only as {provider}/{model}"
             ),
             Self::LevelUndeclared { key } => write!(
                 f,

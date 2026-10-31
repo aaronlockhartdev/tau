@@ -83,18 +83,23 @@ that declares it. The alphabetically-first entry is only the starting address:
 the fallback a session with no recorded model opens on, and the provider a bare
 key is looked up against at the open. See [Provider resolution](#provider-resolution).
 
-Because the id carries the routing, its spelling has to answer for one endpoint
-and no more (#354), and two shapes that break that fail the load: a **provider
-name containing `/`** — the prefix is where a name ends, so a name with a slash
-leaves the prefix ambiguous — and a **model key whose first segment names a
-configured provider** (`providers.aaa.models."aaa/solo"`): the bare id
-`aaa/solo` routes to `aaa`'s model past the slash, so one string answers for two
-endpoints — the declared key is addressable only as `bbb/aaa/solo`. A model key
-with a slash whose first segment names **no** provider (`deepseek/chat`, as the
-providers that host several vendors spell it) is legal: §6.7 finds no provider
-in it, so it addresses the provider that declares it. Its id is then
-`<provider>/deepseek/chat`, and a thinking level for it is keyed by the declared
-key — see [`thinking`](#thinking-thinking-levels).
+Because the id carries the routing, its spelling has to be readable as one
+address (#354), and two shapes that break that fail the load: a **provider name
+containing `/`** — the prefix is where a name ends, so a name with a slash
+leaves the prefix ambiguous — and a **`[thinking].levels` key no provider
+declares as a model**, which is then read by nothing.
+
+A **model key may itself carry a `/`**, the spelling of the providers that host
+several vendors: `providers.openai.models."openai/gpt-5"`, a gateway whose keys
+read `anthropic/claude-…`, `accounts/fireworks/models/…`. §6.7 reads the first
+segment of an id as a provider name and consumes it once, so every key keeps its
+own id: the declared `openai/gpt-5` above is addressed by the full
+`openai/openai/gpt-5`, while the bare `openai/gpt-5` means provider `openai`'s
+model `gpt-5`. Under a provider that is *not* named for that prefix
+(`providers.openrouter.models."openai/gpt-5"`), §6.7 finds no provider in the
+bare spelling and addresses the provider that declares the key. A thinking level
+is keyed by the declared key in both cases — see
+[`thinking`](#thinking-thinking-levels).
 
 ### `[providers.<name>.models.<id>]` — model facts
 `context_window` is **required**: a model entry that omits it, or writes `0`,
@@ -419,7 +424,6 @@ partially applied.
 - `providers.{provider}.models.{model} declares max_tokens = 0; the output cap must be positive` — a declared cap of `0` arms a gate that can answer nothing (#338)
 - `subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})`
 - `providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name` — a name that makes an id's prefix ambiguous (#354)
-- `providers.{provider}.models.{model} is shadowed: …` — a model key whose first segment names a configured provider: the bare id addresses that provider's model, so the string answers for two endpoints (#354)
 - `thinking.levels.{key}: no provider declares it as a model, so the level is never read` (#354)
 
 The two gate facts name the entry they reject: `providers.<name>.models.<id>`

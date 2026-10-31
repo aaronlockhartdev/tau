@@ -32,21 +32,40 @@ context_window = 1000
 }
 
 #[test]
-fn a_model_key_that_names_a_configured_provider_is_refused() {
-    let toml = r#"[providers.aaa]
+fn a_model_key_under_a_provider_of_its_own_prefix_loads() {
+    // The gateway shape (#354): a vendor-hosting provider's keys carry that
+    // vendor's prefix, and the provider may be named for the vendor. The ids
+    // disambiguate, so the config loads.
+    let toml = r#"[providers.openai]
 base_url = "http://x/v1"
 
-[providers.aaa.models."aaa/solo"]
+[providers.openai.models."openai/gpt-5"]
+context_window = 1000
+
+[providers.openai.models.gpt-5]
 context_window = 1000
 "#;
-    let err = load_from(toml, "").unwrap_err();
-    assert!(
-        matches!(
-            &err,
-            LoadError::ShadowedModelKey { provider, model, named }
-                if provider == "aaa" && model == "aaa/solo" && named == "aaa"
-        ),
-        "{err}"
+    let config = load_from(toml, "").expect("the standard gateway spelling loads");
+    let openai = config
+        .provider_for("openai/openai/gpt-5")
+        .expect("openai is a configured provider");
+    assert_eq!(
+        config
+            .route_model("openai/openai/gpt-5", openai)
+            .expect("the prefix names openai")
+            .name,
+        "openai"
+    );
+    // §6.7 consumes the prefix once, so the full id asks for the declared key.
+    assert_eq!(
+        Config::model_key_for("openai", "openai/openai/gpt-5"),
+        "openai/gpt-5",
+        "the declared key is addressed by the full id"
+    );
+    assert_eq!(
+        Config::model_key_for("openai", "openai/gpt-5"),
+        "gpt-5",
+        "the bare id names the tail key: §6.7 reads its prefix as the provider"
     );
 }
 
@@ -58,7 +77,7 @@ base_url = "http://x/v1"
 [providers.bbb.models."aaa/solo"]
 context_window = 1000
 "#;
-    let config = load_from(toml, "").expect("`aaa` is no provider, so the key is not shadowed");
+    let config = load_from(toml, "").expect("`aaa` is no provider, so the key is its own");
     let current = config
         .provider_for("bbb/aaa/solo")
         .expect("bbb is a configured provider");
@@ -120,71 +139,49 @@ bare = "off"
 }
 
 /// The rules read the **merged** config, as the #338 facts do: a layer replaces
-/// a section wholesale, so which provider names are configured is a fact about
-/// the merge. A per-layer check would refuse a config whose project layer removes
-/// the shadowing provider, and accept one whose project layer adds it.
+/// a section wholesale, so which model keys are declared is a fact about the
+/// merge. A per-layer check would accept a config whose project layer replaces
+/// the providers and leaves a `[thinking].levels` key naming nothing.
 #[test]
-fn a_provider_the_project_layer_removes_stops_shadowing_the_key() {
-    let system = r#"[providers.aaa]
-base_url = "http://x/v1"
-
-[providers.aaa.models.solo]
-context_window = 1000
-
-[providers.bbb]
+fn a_levels_key_the_project_layer_undeclares_is_refused() {
+    let system = r#"[providers.bbb]
 base_url = "http://y/v1"
 
-[providers.bbb.models."aaa/solo"]
+[providers.bbb.models."deepseek/chat"]
 context_window = 1000
+
+[thinking.levels]
+"deepseek/chat" = "high"
 "#;
     let project = r#"[providers.bbb]
 base_url = "http://y/v1"
 
-[providers.bbb.models."aaa/solo"]
-context_window = 1000
-"#;
-    let config = load_from(system, project).expect("the merged set names no provider `aaa`");
-    assert_eq!(
-        config
-            .providers
-            .keys()
-            .map(String::as_str)
-            .collect::<Vec<&str>>(),
-        vec!["bbb"]
-    );
-}
-
-#[test]
-fn a_provider_the_project_layer_adds_shadows_the_key() {
-    let system = r#"[providers.bbb]
-base_url = "http://y/v1"
-
-[providers.bbb.models."aaa/solo"]
-context_window = 1000
-"#;
-    let project = r#"[providers.aaa]
-base_url = "http://x/v1"
-
-[providers.aaa.models.solo]
-context_window = 1000
-
-[providers.bbb]
-base_url = "http://y/v1"
-
-[providers.bbb.models."aaa/solo"]
+[providers.bbb.models.other]
 context_window = 1000
 "#;
     assert!(
         load_from(system, "").is_ok(),
-        "the system layer alone loads"
+        "the system layer alone declares the level's model"
     );
     let err = load_from(system, project).unwrap_err();
     assert!(
-        matches!(
-            &err,
-            LoadError::ShadowedModelKey { provider, model, named }
-                if provider == "bbb" && model == "aaa/solo" && named == "aaa"
-        ),
+        matches!(&err, LoadError::LevelUndeclared { key } if key == "deepseek/chat"),
         "{err}"
     );
+}
+
+#[test]
+fn a_levels_key_the_project_layer_declares_loads() {
+    let system = "[thinking.levels]\n\"deepseek/chat\" = \"high\"\n";
+    let project = r#"[providers.bbb]
+base_url = "http://y/v1"
+
+[providers.bbb.models."deepseek/chat"]
+context_window = 1000
+"#;
+    assert!(
+        load_from(system, "").is_err(),
+        "the system layer alone names no provider that declares the key"
+    );
+    load_from(system, project).expect("the project layer's provider declares it");
 }
