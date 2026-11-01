@@ -168,13 +168,12 @@ async fn a_gate_failed_child_rests_failed_not_idle() {
         ),
         "the observed state: {info:?}"
     );
-    // A failed child auto-notifies the parent (ADR-0001 wake rules).
+    // A failed child auto-notifies the parent (ADR-0001 wake rules), and a
+    // terminal wake names no target — a finished child is parked nowhere (#368).
     assert!(
-        bridge
-            .wakes
-            .lock()
-            .iter()
-            .any(|w| w.child == s.session_id && w.kind == WakeKind::Failed)
+        bridge.wakes.lock().iter().any(|w| w.child == s.session_id
+            && w.kind == WakeKind::Failed
+            && w.waiting_on.is_none())
     );
     s.drive.await.unwrap();
 }

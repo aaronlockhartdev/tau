@@ -332,7 +332,16 @@ export interface ActivityEntry {
 export type SubagentEventKind =
   | { kind: 'spawned'; handle: string; child: string; agent_type: string; context_mode: ContextMode; title: string }
   | { kind: 'state'; handle: string; child: string; state: SubagentState; note: string | null }
-  | { kind: 'notified'; child: string; wake: string; text: string; output: unknown };
+  | {
+    kind: 'notified';
+    child: string;
+    wake: string;
+    text: string;
+    output: unknown;
+    // Where the wake leaves the child parked; null when the wake is terminal
+    // (#368) — a finished child is parked nowhere.
+    waiting_on: WaitingOn | null;
+  };
 
 // One plan step (a checkbox line of the plan file, spec §5.3): the plan
 // pane's row.

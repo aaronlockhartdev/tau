@@ -22,7 +22,6 @@ import {
   badgeOfWake,
   stateOfBadge,
   stateOfWake,
-  waitingHintOf,
   waitingOnOf,
   type ChildBadge
 } from '../display/subagent-state';
@@ -381,13 +380,11 @@ export function applySubagentEvent(
   // keeps the `other` arm — the row says the child stopped, and invents no
   // who.
   const badge = badgeOfWake(k.wake);
-  // A `waiting` wake declares no target, so the badge carries the target the
-  // row already declares: a wake re-parks a child where it was. A row parked
-  // with a question (`awaiting`) is parked on the user — the wake the core
-  // sends for that rest must not move the child to its parent, or the bell
-  // drops the one child the app exists to surface.
+  // The wake names the target it leaves the child parked on (#368): the core
+  // computed it at the rest, so this read takes it and moves no child anywhere
+  // the core did not.
   const prev = s.subagents.find((x) => x.child === k.child);
-  const st = stateOfWake(k.wake, k.text, k.output, prev ? waitingHintOf(prev.state) : null);
+  const st = stateOfWake(k.wake, k.text, k.output, k.waiting_on);
   let out = sessions;
   const child = sessions[k.child];
   if (child) {
@@ -395,9 +392,8 @@ export function applySubagentEvent(
       ...child,
       last_modified: now,
       state: badge,
-      // The target rides the badge: a terminal wake leaves no wait behind,
-      // a `waiting` wake re-parks the child where it was.
-      waiting_on: badge === 'idle' ? waitingHintOf(st) : null,
+      // The target rides the badge: a terminal state declares none.
+      waiting_on: waitingOnOf(st),
       // A notified wake is terminal or an idle re-wait — never running.
       turn: 'idle'
     };

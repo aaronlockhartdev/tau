@@ -475,6 +475,54 @@ fn subagent_state_keeps_an_unknown_tag_by_name() {
     assert_eq!(flat, SubagentState::Other { raw: String::new() });
 }
 
+/// The wake's target (#368): a frame names where it parks the child, and a
+/// frame written before the field decodes naming none — the decode never fails
+/// on a peer's older shape.
+#[test]
+fn a_wake_states_its_target_or_none() {
+    const NAMED: &str = r#"{"type":"subagent_event","workspace":"w1","session":"s1","kind":{"kind":"notified","child":"s2","wake":"waiting","text":"which call?","output":null,"waiting_on":"user"}}"#;
+    const UNNAMED: &str = r#"{"type":"subagent_event","workspace":"w1","session":"s1","kind":{"kind":"notified","child":"s2","wake":"waiting","text":"which call?","output":null}}"#;
+    const FOREIGN: &str = r#"{"type":"subagent_event","workspace":"w1","session":"s1","kind":{"kind":"notified","child":"s2","wake":"waiting","text":"which call?","output":null,"waiting_on":"child"}}"#;
+    let named: Event = serde_json::from_str(NAMED).unwrap();
+    assert!(
+        matches!(
+            &named,
+            Event::SubagentEvent {
+                kind: SubagentEventKind::Notified {
+                    wake,
+                    waiting_on: Some(WaitingOn::User),
+                    ..
+                },
+                ..
+            } if wake == "waiting"
+        ),
+        "{named:?}"
+    );
+    assert_eq!(
+        serde_json::to_value(&named).unwrap()["kind"]["waiting_on"],
+        "user"
+    );
+    let unnamed: Event = serde_json::from_str(UNNAMED).unwrap();
+    assert!(
+        matches!(
+            &unnamed,
+            Event::SubagentEvent {
+                kind: SubagentEventKind::Notified {
+                    waiting_on: None,
+                    ..
+                },
+                ..
+            }
+        ),
+        "{unnamed:?}"
+    );
+    // A target this build does not name is a data error for the frame — the
+    // strictness the bare `WaitingOn` field carries, where §5's tolerance rule
+    // lives in `SubagentState`'s hand-written decoder. Pinned as a decision
+    // (#374); the vocabulary is closed on both sides today.
+    serde_json::from_str::<Event>(FOREIGN).unwrap_err();
+}
+
 #[test]
 fn usage_defaults_when_fields_missing() {
     let u: Usage = serde_json::from_str(r#"{"input_tokens":5}"#).unwrap();

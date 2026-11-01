@@ -109,19 +109,22 @@ async fn wake_kinds_follow_the_observed_state() {
             && w.output == Some(json!({ "r": 1 }))),
         "the observed done woke the parent: {wakes:?}"
     );
-    // B: the undeclared rest is a `waiting` wake with no declared target.
+    // B: the undeclared rest is a `waiting` wake, and it names the target its
+    // `idle` state carries: the parent it reports to (#368).
     assert!(
         wakes.iter().any(|w| w.kind == WakeKind::Waiting
             && w.child == b.session_id
-            && w.waiting_on.is_none()),
+            && matches!(w.waiting_on, Some(WaitingOn::Parent))),
         "the undeclared rest woke the parent as waiting: {wakes:?}"
     );
-    // C: the question rest is a `waiting` wake.
+    // C: the question rest is a `waiting` wake parked on the human — the wake
+    // states the target the `awaiting` state implies, so the GUI's bell needs no
+    // inference of its own (#368).
     assert!(
-        wakes
-            .iter()
-            .any(|w| w.kind == WakeKind::Waiting && w.child == c.session_id),
-        "the awaiting rest woke the parent as waiting: {wakes:?}"
+        wakes.iter().any(|w| w.kind == WakeKind::Waiting
+            && w.child == c.session_id
+            && matches!(w.waiting_on, Some(WaitingOn::User))),
+        "the awaiting rest woke the parent parked on the user: {wakes:?}"
     );
     // D: the declared target rides the waiting wake as the hint.
     assert!(

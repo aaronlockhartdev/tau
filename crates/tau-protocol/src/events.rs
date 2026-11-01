@@ -1,4 +1,4 @@
-use super::{ContextMode, SkillInfo, SubagentState, Usage, snapshot};
+use super::{ContextMode, SkillInfo, SubagentState, Usage, WaitingOn, snapshot};
 use crate::payload::ResumeContract;
 use crate::snapshot::ViewEntry;
 use serde::{Deserialize, Serialize};
@@ -146,13 +146,22 @@ pub enum SubagentEventKind {
         state: SubagentState,
         note: Option<String>,
     },
-    /// A child notification reached the parent (done / failed / a
+    /// A child notification reached the parent (spec §5.2 wake rules): a
+    /// A child notification reached the parent (spec §5.2 wake rules): a
+    /// child finishing, failing, or parking. The wake names the target it
+    /// parks the child on, so the parent's view needs no inference.
     Notified {
         child: String,
         /// done | failed | waiting | stopped
         wake: String,
         text: String,
         output: Option<Value>,
+        /// Where the wake leaves the child parked: the target its `idle`
+        /// state carries, or `user` for a rest that ends on a question
+        /// (`awaiting`). `None` when the wake is terminal — a finished child
+        /// is parked nowhere. The core computes it at the rest
+        /// (`subagent/lifecycle.rs`); a frame from before #368 states none.
+        waiting_on: Option<WaitingOn>,
     },
 }
 
@@ -363,6 +372,7 @@ mod tests {
                     wake: "done".into(),
                     text: "finished".into(),
                     output: Some(json!({ "result": "ok" })),
+                    waiting_on: Some(WaitingOn::Parent),
                 },
             },
             Event::PlanChanged {
@@ -430,6 +440,7 @@ mod tests {
                 wake: "done".into(),
                 text: "t".into(),
                 output: None,
+                waiting_on: None,
             },
         ];
         for kind in &kinds {

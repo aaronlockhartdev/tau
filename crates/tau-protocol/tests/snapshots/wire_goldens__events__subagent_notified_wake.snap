@@ -1,0 +1,17 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::SubagentEvent\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), kind:\n    tau_protocol::SubagentEventKind::Notified\n    {\n        child: \"s2\".into(), wake: \"waiting\".into(), text:\n        \"which call should I patch?\".into(), output: None, waiting_on:\n        Some(tau_protocol::WaitingOn::User),\n    },\n}"
+---
+{
+  "type": "subagent_event",
+  "workspace": "w1",
+  "session": "s1",
+  "kind": {
+    "kind": "notified",
+    "child": "s2",
+    "wake": "waiting",
+    "text": "which call should I patch?",
+    "output": null,
+    "waiting_on": "user"
+  }
+}

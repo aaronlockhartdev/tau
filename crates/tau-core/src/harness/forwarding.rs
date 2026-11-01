@@ -474,6 +474,7 @@ impl SubagentBridge for SessionSubagentBridge {
                 .into(),
                 text: n.text.clone(),
                 output: n.output.clone(),
+                waiting_on: n.waiting_on.map(Into::into),
             },
         });
         // Wake the parent (ADR-0001 wake rules): the notification is already

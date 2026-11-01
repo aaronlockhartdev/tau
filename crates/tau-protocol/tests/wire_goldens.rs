@@ -188,6 +188,23 @@ mod events {
     }
 
     #[test]
+    fn subagent_notified_wake() {
+        // The wake's wire shape (#368): the frame names the target it parks the
+        // child on, so the parent's view reads a fact and infers nothing.
+        assert_json_snapshot!(Event::SubagentEvent {
+            workspace: "w1".into(),
+            session: "s1".into(),
+            kind: tau_protocol::SubagentEventKind::Notified {
+                child: "s2".into(),
+                wake: "waiting".into(),
+                text: "which call should I patch?".into(),
+                output: None,
+                waiting_on: Some(tau_protocol::WaitingOn::User),
+            },
+        });
+    }
+
+    #[test]
     fn file_tree_changed() {
         assert_json_snapshot!(Event::FileTreeChanged {
             workspace: "w1".into(),
