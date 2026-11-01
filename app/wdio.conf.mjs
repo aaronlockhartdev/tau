@@ -38,7 +38,9 @@ const MOCK_SCENARIOS = {
   'e2e-tool-turn.json': '6aca5c25e849fbb2419c525251fd6987554c6ca8248e7dcd4f5627b8683b8479',
   'e2e-multi-turn.json': '020a91b0c2e0f7ae80fa1e8d3f265bfe6f5ca66b4d41823ef2fc255eedeeb115',
   'e2e-subagent-parent.json': 'e1839a9c790fe02f753ac5a8561ab2ce299edec1e0621918bd1283e157936944',
-  'e2e-subagent-child.json': 'f713425e5d92c35eba3ef125539537d441a810ab17976b6985f0c58f7f3cae9c'
+  'e2e-subagent-child.json': 'f713425e5d92c35eba3ef125539537d441a810ab17976b6985f0c58f7f3cae9c',
+  'e2e-question-parent.json': 'e924908154b3c55449e50b518c4cb858f1696c5ff8f5a4efa8c7433cfcdf613e',
+  'e2e-question-child.json': '71d07c4dc1a030c31124a910d63a15c3e907daea31084a60b38b350bc4e36c63'
 };
 const VITE_URL = 'http://127.0.0.1:5173/';
 const OUTPUT_DIR = path.join(ROOT, 'target', 'e2e');
@@ -54,7 +56,7 @@ const legs = mode ? [mode] : ALL_LEGS;
 
 // One spec file per leg, except mock: one spec per scripted feature
 // (text streaming, tool-call rendering, multi-turn sequencing, subagent
-// spawn).
+// spawn, the child parked on a question).
 const LEG_SPECS = {
   stress: ['stress.spec.mjs'],
   mock: [
@@ -62,7 +64,8 @@ const LEG_SPECS = {
     'mock-tool.spec.mjs',
     'mock-multi.spec.mjs',
     'mock-subagent.spec.mjs',
-    'mock-workbench.spec.mjs'
+    'mock-workbench.spec.mjs',
+    'mock-question.spec.mjs'
   ]
 };
 // The isolated HOME keeps the run from touching the real ~/.config/tau; an

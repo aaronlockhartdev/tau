@@ -52,6 +52,9 @@ const storeState = (sid) => {
     currentWs: cur ? cur.meta.workspace ?? null : null,
     current: s.current,
     model: cur ? cur.meta.model ?? null : null,
+    // The tree rows are labelled by title, so a spec that names a child's
+    // row needs it.
+    title: cur ? cur.meta.title ?? null : null,
     entries: entries.length,
     entryKinds: entries.map((e) => e.kind),
     // The kind alone hides which fact a session recorded, and a count that is
