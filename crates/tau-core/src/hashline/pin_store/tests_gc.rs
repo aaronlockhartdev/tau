@@ -290,3 +290,39 @@ fn a_moved_policy_that_names_no_sweep_prunes_nothing() {
     );
     cleanup(&dir);
 }
+
+/// #347: the sweep is edge-triggered. A boundary that repeats the store's
+/// policy runs no scan — the row stands until the numbers actually move.
+#[test]
+fn a_boundary_that_repeats_the_policy_runs_no_sweep() {
+    let dir = ws("gc-live-repeat");
+    cleanup(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    let a = dir.join("a.rs");
+    fs::write(&a, "one\n").expect("write a");
+    let sweep = GcPolicy {
+        retention_days: 0,
+        gc_on_start: true,
+    };
+    let s = store(&dir, sweep);
+    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
+        .expect("save a");
+    fs::remove_file(&a).expect("rm a");
+    // The boundary repeats the open's policy: no scan, the row stands.
+    s.apply_policy(sweep);
+    assert_eq!(
+        s.paths(),
+        vec![a.to_str().expect("utf8").to_owned()],
+        "an unchanged policy runs no sweep"
+    );
+    // The numbers move: the sweep runs and prunes the absent file.
+    s.apply_policy(GcPolicy {
+        retention_days: 7,
+        gc_on_start: true,
+    });
+    assert!(
+        s.paths().is_empty(),
+        "the moved policy prunes the absent file"
+    );
+    cleanup(&dir);
+}

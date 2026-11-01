@@ -24,7 +24,9 @@ impl Supervisor {
     ) -> Result<Spawned, String> {
         // Resolve the type (spec §5.5): an unknown name is an error that
         // lists what the session can spawn.
-        let types = self.types.lock();
+        // Cloned out of the fleet lock: the guard must not span the session
+        // files this fn goes on to create (#347).
+        let types = self.fleet.lock().1.clone();
         let ty = types.iter().find(|t| t.name == agent_type).ok_or_else(|| {
             let names: Vec<&str> = types.iter().map(|t| t.name.as_str()).collect();
             format!(
@@ -33,10 +35,10 @@ impl Supervisor {
             )
         })?;
         let context_mode = context_mode.unwrap_or(ty.context_mode);
-        if self.depth + 1 > self.caps.lock().max_depth {
+        if self.depth + 1 > self.fleet.lock().0.max_depth {
             return Err(format!(
                 "subagent_spawn: depth cap reached (max_depth {}; this session is at depth {})",
-                self.caps.lock().max_depth,
+                self.fleet.lock().0.max_depth,
                 self.depth
             ));
         }

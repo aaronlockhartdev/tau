@@ -73,6 +73,15 @@ impl TurnProvider for ForwardingProvider {
     fn forwarding_inner(&self) -> Option<TurnProviderRef> {
         Some(self.route.lock().clone())
     }
+
+    /// The `[requests]` move rides through the wrapper to the endpoint behind
+    /// it (#347): a live app's session provider is this wrapper, so the
+    /// boundary's write lands on the transport that runs the next call. A
+    /// route rebind builds its endpoint from the live section (`session_inner`
+    /// at the switch), so the move survives the switch too.
+    fn set_requests(&self, requests: &crate::config::Requests) {
+        self.route.lock().set_requests(requests);
+    }
     fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let call_id = format!(
             "{}-{:08}",

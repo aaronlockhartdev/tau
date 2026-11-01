@@ -149,6 +149,77 @@ async fn the_moved_requests_policy_binds_the_next_call() {
     );
 }
 
+/// #347: the move rides the session's wrapper. A live app calls the
+/// forwarding provider, so `set_requests` on the wrapper must reach the
+/// endpoint behind it — the wrapper taking the trait's no-op is the bug.
+#[tokio::test]
+async fn the_moved_requests_policy_reaches_the_call_through_the_wrapper() {
+    let (base, count) = mock_server(vec![
+        "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 2\r\n\r\nxx".into(),
+        "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 2\r\n\r\nxx".into(),
+        ok_body(&[
+            r#"{"type":"response.output_text.delta","delta":"ok"}"#,
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}"#,
+            "[DONE]",
+        ]),
+    ])
+    .await;
+    let request = ResponseRequest::new(
+        "m",
+        None,
+        vec![InputMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }]
+        .into_iter()
+        .map(InputEntry::Message)
+        .collect(),
+    );
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let wrapper = crate::harness::forwarding::ForwardingProvider::new(
+        production(
+            &reqwest::Client::new(),
+            &provider_for(&base),
+            &fast_requests(),
+        ),
+        tx,
+        crate::harness::state::PipeCounters {
+            dropped: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            overflow_pending: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        },
+        "ws".into(),
+        "sid".into(),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    );
+    // The launch policy (retries 0) is the moved one: one attempt, the status
+    // surfaces.
+    wrapper.set_requests(&Requests {
+        retries: 0,
+        ..fast_requests()
+    });
+    let mut keep = Keep;
+    let err = wrapper
+        .call(&request, &mut keep)
+        .await
+        .expect_err("the wrapper forwards the move: one attempt");
+    match err {
+        ProviderError::Status { status, .. } => assert_eq!(status, 500),
+        other => panic!("expected Status, got {other:?}"),
+    }
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    // The boundary moves the section up: the next call walks the 5xx fleet.
+    wrapper.set_requests(&fast_requests());
+    let mut keep = Keep;
+    let result = wrapper
+        .call(&request, &mut keep)
+        .await
+        .expect("the moved policy (retries 2) walks 500, 500, 200");
+    assert_eq!(result.text, "ok");
+    // Conn 1 (phase one) took the first 500; the moved policy walks conn 2
+    // (500) to conn 3 (200).
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+}
+
 #[tokio::test]
 async fn server_4xx_fails_without_retry() {
     let (base, count) = mock_server(vec![
