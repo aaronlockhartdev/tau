@@ -8,6 +8,7 @@ use super::*;
 use crate::config::CacheRetention;
 use crate::harness::testkit::*;
 
+mod boot;
 mod boundary;
 mod opening;
 

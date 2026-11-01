@@ -261,13 +261,16 @@ mid-turn reads the record instead (`streamClock.apply` / `.settle`,
 [`wire/stream.svelte.ts`](../app/svelte/lib/wire/stream.svelte.ts)). Delta clocks are keyed
 **session → entry id**, because entry ids are minted per session and repeat across sessions.
 
-A config failure is told in two shapes. The watcher's `config_rejected` event is live and
+A config failure is told in three shapes. The watcher's `config_rejected` event is live and
 session-less: it reaches a GUI in front of the edit. The `config_rejected` diagnostic record is
 durable and session-scoped: minted by the session itself when its own config read fails — at open,
 where the watcher fires for nobody, and at a turn boundary — once per failure, naming the file and
 what the loader said, beside the turn that ran on the last config that read (#359). A
 break of the system layer is a story every open workspace has, so it marks each of
-their merges and every session under that layer records it (#364).
+their merges and every session under that layer records it (#364). The third is the
+**boot's** event: the app read the system layer before any workspace was open, and a
+break met there has no session to carry it and no workspace to route it, so the event
+rides with an empty workspace key and the GUI's banner is its audience (#363).
 
 **HITL.** Spec §8 keeps the request/response pair (timeout, default, queueing on disconnect) in
 the protocol's shape with **zero live request types** — v0 has no permission popups; the model asks

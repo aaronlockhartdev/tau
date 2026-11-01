@@ -229,7 +229,9 @@ impl Core {
     /// not one file's, so it names none. Session-less by ADR-0034, so it rides
     /// the system group; the workspace key is the routing. A session that meets
     /// the same failure in its own read adds the record inside itself (#359).
-    fn emit_config_rejected(&self, workspace: &str, err: &config::LoadError) {
+    /// The boot sends it with no workspace, the break's only voice before a
+    /// session exists (#363).
+    pub(crate) fn emit_config_rejected(&self, workspace: &str, err: &config::LoadError) {
         self.emit(Event::System {
             workspace: workspace.to_owned(),
             session: None,

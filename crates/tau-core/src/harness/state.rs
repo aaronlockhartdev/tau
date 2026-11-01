@@ -289,10 +289,18 @@ impl CoreBuilder {
 
     fn apply_startup(self, core: &Arc<Core>) -> Result<(), CoreError> {
         let mut config = Config::default();
-        if let Some(dir) = self.system_dir
-            && let Ok(loaded) = config::load(&dir, Path::new(config::NO_PROJECT_LAYER))
-        {
-            config = loaded;
+        if let Some(dir) = self.system_dir {
+            match config::load(&dir, Path::new(config::NO_PROJECT_LAYER)) {
+                Ok(loaded) => config = loaded,
+                Err(e) => {
+                    // The app boots on defaults — the one place a bad config is
+                    // allowed to ride — and the boot says so, before any session
+                    // exists to record it. The first session under this layer
+                    // reads the file itself and adds the transcript fact; the
+                    // watcher started below turns a later edit into both (#363).
+                    core.emit_config_rejected("", &e);
+                }
+            }
         }
         for (name, p) in self.providers {
             config.providers.insert(name, p);

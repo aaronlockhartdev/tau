@@ -40,6 +40,10 @@ the interface.
   an I/O failure names none, and so does a validation failure — it is a property
   of the merged config, not of one file. Every read of a layer checks it, so a
   file the code cannot read is a failure the moment it is met, not only at boot.
+  The boot is the one read allowed to ride a bad config — it keeps its defaults —
+  and it says so: before any workspace is open the break has no session to record
+  it, so the boot sends that event with no workspace, and the first session under
+  the layer reads the file itself and carries the record (#363).
 - A live session takes the new config at the **next turn boundary**, never
   mid-stream. The boundary re-derives the session's **turn**: the context facts a
   model's `[providers]` entry declares, its sampling and reasoning (`[thinking]`,
