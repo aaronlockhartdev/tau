@@ -485,7 +485,7 @@ fn root_session(
 }
 
 /// The root's hashline GC policy (config carries both fields verbatim).
-fn gc_policy(config: &Config) -> crate::hashline::pin_store::GcPolicy {
+pub(crate) fn gc_policy(config: &Config) -> crate::hashline::pin_store::GcPolicy {
     crate::hashline::pin_store::GcPolicy {
         retention_days: config.hashline.retention_days,
         gc_on_start: config.hashline.gc_on_start,

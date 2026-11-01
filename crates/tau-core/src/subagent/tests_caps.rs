@@ -481,3 +481,66 @@ async fn a_stop_resume_in_the_drive_window_does_not_double_drive() {
         "exactly the fresh drive's observed rest; the superseded drive settled none"
     );
 }
+
+/// #347: the caps are live. A boundary that lowers `max_concurrent` is
+/// enforced by the next spawn — the refusal names the new number, not the one
+/// the session opened with.
+#[tokio::test]
+async fn a_boundary_lowering_of_the_caps_is_enforced_by_the_next_spawn() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sup, _, _parent) = harness(
+        dir.path(),
+        vec![sse("x", &[])],
+        vec![vec![sse("done", &[])]],
+        SubAgents {
+            max_depth: 1,
+            max_concurrent: Some(1),
+            ..SubAgents::default()
+        },
+    );
+    sup.set_subagents(
+        SubAgents {
+            max_depth: 1,
+            max_concurrent: Some(0),
+            ..SubAgents::default()
+        },
+        crate::agent_type::discover(None, dir.path()),
+    );
+    let err = sup
+        .spawn("general", "one", Some(ContextMode::Fresh), "c0")
+        .expect_err("the boundary's cap of 0 admits no spawn");
+    assert!(err.contains("concurrency cap (0)"), "{err}");
+}
+
+/// The negative beside it: a boundary that raises the caps opens the next
+/// spawn — the launch number stops binding once the section moved.
+#[tokio::test]
+async fn a_boundary_raising_of_the_caps_opens_the_next_spawn() {
+    let dir = tempfile::tempdir().unwrap();
+    let (sup, _, _parent) = harness(
+        dir.path(),
+        vec![sse("x", &[])],
+        vec![vec![sse("done", &[])]],
+        SubAgents {
+            max_depth: 1,
+            max_concurrent: Some(0),
+            ..SubAgents::default()
+        },
+    );
+    let err = sup
+        .spawn("general", "one", Some(ContextMode::Fresh), "c0")
+        .expect_err("the launch cap of 0 admits no spawn");
+    assert!(err.contains("concurrency cap (0)"), "{err}");
+    sup.set_subagents(
+        SubAgents {
+            max_depth: 1,
+            max_concurrent: Some(1),
+            ..SubAgents::default()
+        },
+        crate::agent_type::discover(None, dir.path()),
+    );
+    let spawned = sup
+        .spawn("general", "one", Some(ContextMode::Fresh), "c1")
+        .expect("the boundary's cap of 1 admits the spawn");
+    assert!(!spawned.handle.is_empty());
+}

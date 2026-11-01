@@ -112,6 +112,13 @@ impl PinStore {
         store
     }
 
+    /// The `[hashline]` policy, moved on a live session's config reload (#347):
+    /// the sweeps run now, under the new numbers — the session-start sweep is
+    /// not the only moment the policy is honored.
+    pub fn apply_policy(&self, policy: GcPolicy) {
+        self.run_gc(policy);
+    }
+
     /// The db file: `{root}/anchors.sqlite` (sibling of the retired
     /// `anchors/` directory; the raw path is not a safe file name, so one
     /// file for the whole workspace).

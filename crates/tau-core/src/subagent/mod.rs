@@ -42,8 +42,10 @@ pub struct Supervisor {
     /// structural cap (a child carries no supervisor) already bounds v0
     /// depth to 1; this knob additionally disables spawning at 0.
     depth: u32,
-    /// The agent-type registry (spec §5.5).
-    types: Vec<crate::agent_type::AgentType>,
+    /// The agent-type registry (spec §5.5): the boundary re-discovers it, so
+    /// the next spawn sees a type file written after this session opened
+    /// (#347).
+    types: Mutex<Vec<crate::agent_type::AgentType>>,
     /// Set after the parent's own loop is constructed (the constructor
     /// cannot close over its owner). `Weak`: the supervisor is owned by the
     /// parent session, so a strong capture would be a cycle (ticket #43).
@@ -55,7 +57,10 @@ pub struct Supervisor {
     /// prune would need resume to re-adopt from the session file.
     children: Mutex<HashMap<String, Arc<Child>>>,
     next: AtomicUsize,
-    caps: SubAgents,
+    /// The `[subagents]` caps, live: the boundary writes the reloaded section,
+    /// so the next spawn is enforced by the current number (#347). Running
+    /// children keep the caps they spawned under.
+    caps: Mutex<SubAgents>,
     cwd: std::path::PathBuf,
     provider: Arc<dyn ChildProviderFactory>,
     /// The pair a model-less child inherits: the parent's current model and the
@@ -180,8 +185,8 @@ impl Supervisor {
                 &p.parent_session,
                 p.parent_entries.as_deref(),
             )),
-            caps: p.caps,
-            types: p.types,
+            caps: Mutex::new(p.caps),
+            types: Mutex::new(p.types),
             depth: p.depth,
             cwd: p.cwd,
             provider: p.provider,
@@ -258,6 +263,15 @@ impl Supervisor {
         *self.inherited.lock() = (model, turn);
     }
 
+    /// The `[subagents]` section, moved at the parent's turn boundary (#347):
+    /// the caps enforced by the next spawn, and the type registry re-discovered
+    /// from the config's directories. A running child keeps the caps it
+    /// spawned under; its parent's fleet arithmetic follows the new numbers.
+    pub(crate) fn set_subagents(&self, caps: SubAgents, types: Vec<crate::agent_type::AgentType>) {
+        *self.caps.lock() = caps;
+        *self.types.lock() = types;
+    }
+
     /// The core link (production); `None` on the test seams (no plan
     /// wiring).
     #[must_use]
@@ -306,7 +320,7 @@ impl Supervisor {
     }
 
     fn check_cap(&self, extra: bool) -> Result<(), String> {
-        match self.caps.max_concurrent {
+        match self.caps.lock().max_concurrent {
             Some(max)
                 if u32::try_from(self.live_children().len())
                     .expect("live-child counts are far below u32::MAX")

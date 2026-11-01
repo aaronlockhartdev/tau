@@ -1,4 +1,6 @@
 use super::*;
+use crate::config::Requests;
+use crate::provider::production;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -86,6 +88,65 @@ async fn server_5xx_is_retried_then_succeeds() {
     .unwrap();
     assert_eq!(result.text, "ok");
     assert_eq!(count.load(Ordering::SeqCst), 3);
+}
+
+/// #347: the `[requests]` section is live. A provider launched with retries
+/// recovers a 5xx fleet; after the boundary moves the section to `retries: 0`,
+/// the next call makes exactly one attempt and surfaces the status.
+#[tokio::test]
+async fn the_moved_requests_policy_binds_the_next_call() {
+    let (base, count) = mock_server(vec![
+        "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 2\r\n\r\nxx".into(),
+        "HTTP/1.1 500 Internal Server Error\r\ncontent-length: 2\r\n\r\nxx".into(),
+        ok_body(&[
+            r#"{"type":"response.output_text.delta","delta":"ok"}"#,
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}"#,
+            "[DONE]",
+        ]),
+    ])
+    .await;
+    let request = ResponseRequest::new(
+        "m",
+        None,
+        vec![InputMessage {
+            role: "user".into(),
+            content: "hi".into(),
+        }]
+        .into_iter()
+        .map(InputEntry::Message)
+        .collect(),
+    );
+    let provider = production(
+        &reqwest::Client::new(),
+        &provider_for(&base),
+        &fast_requests(),
+    );
+    let mut keep = Keep;
+    let result = provider
+        .call(&request, &mut keep)
+        .await
+        .expect("the launch policy (retries 2) walks 500, 500, 200");
+    assert_eq!(result.text, "ok");
+    assert_eq!(count.load(Ordering::SeqCst), 3);
+    // The boundary moves the section: the next call attempts once.
+    provider.set_requests(&Requests {
+        retries: 0,
+        ..fast_requests()
+    });
+    let mut keep = Keep;
+    let err = provider
+        .call(&request, &mut keep)
+        .await
+        .expect_err("the moved policy (retries 0) makes one attempt");
+    match err {
+        ProviderError::Status { status, .. } => assert_eq!(status, 500),
+        other => panic!("expected Status, got {other:?}"),
+    }
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        4,
+        "exactly one attempt under the moved policy"
+    );
 }
 
 #[tokio::test]

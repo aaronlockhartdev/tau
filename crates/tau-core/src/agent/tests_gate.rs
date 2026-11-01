@@ -156,6 +156,95 @@ async fn an_always_failing_gate_exhausts_retries_and_marks_gate_failed() {
     );
 }
 
+/// #347: the completion check is live. A session whose `[gates]` section moves
+/// at the turn boundary runs the new command at its next check — the record
+/// names the command that ran, not the one the session opened with.
+#[tokio::test]
+async fn a_boundary_edit_moves_the_completion_check() {
+    let dir = tempfile::tempdir().unwrap();
+    // Each turn ends on a tool call (a qualifying turn-end) and the check
+    // fails through its one repair: two records, each naming the command.
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse("", &[write_call("c1", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c2", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c3", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c4", "a.txt")]),
+        sse("done", &[]),
+    ]));
+    let agent = make_agent_with_gate(
+        dir.path(),
+        provider.clone(),
+        Gates {
+            command: "test -f first.txt".into(),
+            max_retries: 1,
+            ..Gates::default()
+        },
+    );
+    agent.send("work", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let opened = gate_records(&agent);
+    assert!(
+        matches!(&opened[0], Diagnostic::GateAttempt { command, .. }
+            if command == "test -f first.txt"),
+        "the open's section runs the first check: {opened:?}"
+    );
+    // The config moves: the boundary takes the new section, and the next check
+    // names it.
+    agent.set_gates(Some(Gates {
+        command: "test -f second.txt".into(),
+        max_retries: 1,
+        ..Gates::default()
+    }));
+    agent.send("work again", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let moved = gate_records(&agent);
+    let last = moved.last().expect("the second turn's check is recorded");
+    assert!(
+        matches!(last, Diagnostic::GateFailed { command, .. }
+            if command == "test -f second.txt"),
+        "the boundary's edit moves the check: {moved:?}"
+    );
+}
+
+/// The negative beside it: a `[gates]` section removed at the boundary leaves
+/// no check — the next qualifying turn runs none and records nothing.
+#[tokio::test]
+async fn a_boundary_edit_that_removes_the_section_ends_the_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse("", &[write_call("c1", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c2", "a.txt")]),
+        sse("done", &[]),
+        sse("", &[write_call("c3", "a.txt")]),
+        sse("done", &[]),
+    ]));
+    let agent = make_agent_with_gate(
+        dir.path(),
+        provider.clone(),
+        Gates {
+            command: "false".into(),
+            max_retries: 1,
+            ..Gates::default()
+        },
+    );
+    agent.send("work", Lane::FollowUp);
+    agent.process().await.unwrap();
+    let opened = gate_records(&agent);
+    assert_eq!(opened.len(), 2, "the open's section checks: {opened:?}");
+    agent.set_gates(None);
+    agent.send("work again", Lane::FollowUp);
+    agent.process().await.unwrap();
+    assert_eq!(
+        gate_records(&agent).len(),
+        2,
+        "a turn under no section runs no check"
+    );
+}
+
 #[tokio::test]
 async fn a_question_ending_skips_the_gate() {
     let dir = tempfile::tempdir().unwrap();

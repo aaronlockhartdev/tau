@@ -289,10 +289,34 @@ impl Core {
         // pass compares against are the edited ones.
         live.agent.set_om_route(self.om_route(&config, owner));
         live.agent.set_om_config(&config.om);
+        // The completion check follows the config too (#347): the edited
+        // command, deadline and retry cap run at the next check, and a section
+        // removed is no check at all.
+        live.agent.set_gates(config.gates.clone());
+        // The `[requests]` policy moves with the boundary (#347): the next
+        // provider call runs under the timeout and retry numbers just read.
+        live.agent.set_requests(&config.requests);
+        // The pin store follows the `[hashline]` edit too (#347): the sweeps
+        // run at the boundary under the numbers the reload just read.
+        live.agent
+            .anchors()
+            .lock()
+            .apply_gc_policy(crate::harness::launch::gc_policy(&config));
         // A child inherits the model its parent has, so the config's move reaches
         // the pair the supervisor hands a model-less child (#336).
         if let Some(sup) = live.agent.subagents() {
             sup.set_inherited(model.clone(), turn);
+            // The `[subagents]` section moves with it (#347): the next spawn
+            // is enforced by the current caps and resolves against the
+            // re-discovered type registry; running children keep what they
+            // spawned under.
+            sup.set_subagents(
+                config.subagents.clone(),
+                crate::agent_type::discover(
+                    self.system_dir.as_deref(),
+                    std::path::Path::new(&ws.cwd),
+                ),
+            );
         }
         if let ContextGate::Missing { reasons } = gate {
             // One record per transition, not one per turn: a config that keeps
