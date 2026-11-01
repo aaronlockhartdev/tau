@@ -6,7 +6,7 @@ use super::{
     PipeCounters, ProviderTurn, ReadoptNotice, ReclaimNotice, ResponseRequest, SessionMeta,
     SessionStore, Skeleton, SkillInfo, SpawnNotice, StateNotice, SubagentBridge, SubagentEventKind,
     SubagentInfo, Supervisor, TurnEvent, TurnProvider, TurnProviderRef, TurnSink, Usage, WakeKind,
-    WakeNotice, Weak, json, mpsc, pipe_send, provider, run_turn,
+    WakeNotice, Weak, mpsc, pipe_send, provider, run_turn,
 };
 use crate::config::ProviderRef;
 use std::future::Future;
@@ -187,16 +187,15 @@ pub(crate) const fn mode_to_protocol(m: crate::subagent::ContextMode) -> Context
 }
 
 /// The core's child record as the protocol's (the protocol crate is
-/// independent of the core — ADR-0002 — so the mapping lives here).
+/// independent of the core — ADR-0002 — so the mapping lives here; the
+/// state's `From` is in `subagent::states`, its one owner).
 pub(crate) fn info_to_protocol(i: &crate::subagent::SubagentInfo) -> SubagentInfo {
-    let state = i.state.kind();
     SubagentInfo {
         handle: i.handle.clone(),
         child: i.child.clone(),
         agent_type: i.agent_type.clone(),
         context_mode: mode_to_protocol(i.context_mode),
-        state: state.to_owned(),
-        waiting_on: i.waiting_on.map(|w| w.as_str().to_owned()),
+        state: i.state.clone().into(),
         last_message: i.last_message.clone(),
         created: i.created,
         usage: i.usage.as_ref().map(|u| Usage {
@@ -433,22 +432,20 @@ impl SubagentBridge for SessionSubagentBridge {
     }
 
     fn state(&self, n: &StateNotice) {
-        let detail = match &n.state {
-            crate::subagent::ChildState::Done { output } => Some(json!({ "output": output })),
-            crate::subagent::ChildState::Failed { reason } => Some(json!({ "reason": reason })),
-            crate::subagent::ChildState::Idle { waiting_on } => {
-                Some(json!({ "waiting_on": waiting_on.as_str() }))
-            }
-            // `awaiting` is self-describing in its state string.
-            crate::subagent::ChildState::Awaiting | crate::subagent::ChildState::Running => None,
-            crate::subagent::ChildState::Stopped { by } => {
-                let mut d = json!({ "by": by });
-                if let Some(rc) = &n.resume_contract {
-                    d["resume_contract"] =
-                        serde_json::to_value(rc).unwrap_or(serde_json::Value::Null);
+        // Build a `SubagentState::Stopped` with the `resume_contract` from
+        // `StateNotice` (the `From` impl sets `resume_contract: None`).
+        let state = match &n.state {
+            crate::subagent::ChildState::Stopped { .. } => {
+                let mut s: super::SubagentState = n.state.clone().into();
+                if let super::SubagentState::Stopped {
+                    resume_contract, ..
+                } = &mut s
+                {
+                    resume_contract.clone_from(&n.resume_contract);
                 }
-                Some(d)
+                s
             }
+            _ => n.state.clone().into(),
         };
         self.core.emit(Event::SubagentEvent {
             workspace: self.workspace.clone(),
@@ -456,8 +453,7 @@ impl SubagentBridge for SessionSubagentBridge {
             kind: SubagentEventKind::State {
                 handle: n.handle.clone(),
                 child: n.child.clone(),
-                state: n.state.kind().to_owned(),
-                detail,
+                state,
                 note: n.note.clone(),
             },
         });

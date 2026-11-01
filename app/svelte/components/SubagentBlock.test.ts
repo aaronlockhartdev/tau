@@ -9,6 +9,7 @@ import { userEvent } from '@testing-library/user-event';
 import type { SubagentInfo } from '../lib/wire/protocol';
 import { crewView, type SpawnRef } from '../lib/display/subagent-view';
 import SubagentBlock from './SubagentBlock.svelte';
+import { subInfo, type SubFixture } from '../lib/testing/state';
 
 const ref: SpawnRef = {
   entryId: 't1',
@@ -17,19 +18,8 @@ const ref: SpawnRef = {
   brief: 'look at the config'
 };
 
-function info(over: Partial<SubagentInfo> = {}): SubagentInfo {
-  return {
-    handle: 'h1',
-    child: 'child-1',
-    agent_type: 'general',
-    context_mode: 'fresh',
-    state: 'running',
-    waiting_on: null,
-    last_message: null,
-    usage: null,
-    resume_contract: null,
-    ...over
-  };
+function info(over: SubFixture = {}): SubagentInfo {
+  return subInfo('child-1', { handle: 'h1', state: 'running', ...over });
 }
 
 function block(over: { followed?: boolean; view?: ReturnType<typeof crewView> } = {}) {

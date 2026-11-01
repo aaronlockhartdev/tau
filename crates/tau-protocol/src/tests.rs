@@ -103,19 +103,6 @@ fn command_variants_roundtrip() {
         Command::ProviderList {
             workspace: "w1".into(),
         },
-        Command::ProviderAdd {
-            name: "p".into(),
-            base_url: "u".into(),
-            key_env: "K".into(),
-            models: vec!["m".into()],
-        },
-        Command::ProviderSet {
-            name: "p".into(),
-            base_url: "u".into(),
-            key_env: "K".into(),
-            models: vec!["m".into()],
-        },
-        Command::ProviderDelete { name: "p".into() },
         Command::FileRead {
             workspace: "w1".into(),
             path: "a/b.txt".into(),
@@ -220,8 +207,7 @@ fn command_output_variants_roundtrip() {
         child: "s2".into(),
         agent_type: "general".into(),
         context_mode: ContextMode::Fresh,
-        state: "running".into(),
-        waiting_on: None,
+        state: SubagentState::Running,
         last_message: None,
         usage: None,
         resume_contract: None,
@@ -365,10 +351,128 @@ fn subagent_info_created_defaults_when_missing() {
     // A pre-`created` wire payload (an older core's subagent event) must
     // still deserialize: the field defaults to 0, which the spawn-order
     // sort treats as "no timestamp" (all-defaults tie on the child id).
-    let json = r#"{"handle":"h1","child":"s2","agent_type":"general","context_mode":"fresh","state":"running","waiting_on":null,"last_message":null,"usage":null,"resume_contract":null}"#;
+    let json = r#"{"handle":"h1","child":"s2","agent_type":"general","context_mode":"fresh","state":{"type":"running"},"last_message":null,"usage":null,"resume_contract":null}"#;
     let i: SubagentInfo = serde_json::from_str(json).unwrap();
     assert_eq!(i.created, 0);
     assert_eq!(i.child, "s2");
+}
+
+/// The child's state is a tagged enum on the wire (item 5): each arm
+/// round-trips with its own fields, so the GUI reads `waiting_on` / `reason` /
+/// `by` off the state — there is no side `detail` object to hand-build.
+#[test]
+fn subagent_state_round_trips_with_its_fields() {
+    let cases = [
+        (SubagentState::Running, r#"{"type":"running"}"#),
+        (
+            SubagentState::Idle {
+                waiting_on: WaitingOn::User,
+            },
+            r#"{"type":"idle","waiting_on":"user"}"#,
+        ),
+        (SubagentState::Awaiting, r#"{"type":"awaiting"}"#),
+        (
+            SubagentState::Done {
+                output: Some(json!({ "report": "all green" })),
+            },
+            r#"{"type":"done","output":{"report":"all green"}}"#,
+        ),
+        (
+            SubagentState::Done { output: None },
+            r#"{"type":"done","output":null}"#,
+        ),
+        (
+            SubagentState::Failed {
+                reason: "provider 502".into(),
+            },
+            r#"{"type":"failed","reason":"provider 502"}"#,
+        ),
+        (
+            SubagentState::Stopped {
+                by: StoppedBy::Parent,
+                resume_contract: Some(payload::ResumeContract {
+                    next_action: "run the tests".into(),
+                }),
+            },
+            r#"{"type":"stopped","by":"parent","resume_contract":{"next_action":"run the tests"}}"#,
+        ),
+        (
+            SubagentState::Stopped {
+                by: StoppedBy::User,
+                resume_contract: None,
+            },
+            r#"{"type":"stopped","by":"user"}"#,
+        ),
+    ];
+    for (state, wire) in cases {
+        let encoded = serde_json::to_string(&state).unwrap();
+        assert_eq!(encoded, wire, "wire shape of {}", state.tag());
+        let back: SubagentState = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(back, state);
+        assert_eq!(back, state.tag());
+    }
+}
+
+/// The `Other` arm is reachable: a state this build does not know decodes by
+/// its own spelling (ADR-0008 forward-compat), and so does a known tag whose
+/// required field is missing — a frame that cannot state the fact is an
+/// unknown fact, never a fabricated default.
+#[test]
+fn subagent_state_keeps_an_unknown_tag_by_name() {
+    let back: SubagentState =
+        serde_json::from_str(r#"{"type":"parked","note":"new in a newer core"}"#).unwrap();
+    assert_eq!(
+        back,
+        SubagentState::Other {
+            raw: "parked".into()
+        }
+    );
+    assert_eq!(back, "parked");
+    // A known tag with no `reason` cannot claim a failure with an empty reason.
+    let truncated: SubagentState = serde_json::from_str(r#"{"type":"failed"}"#).unwrap();
+    assert_eq!(
+        truncated,
+        SubagentState::Other {
+            raw: "failed".into()
+        }
+    );
+    // No tag at all is an unknown state too — the decode never fails, so one
+    // off-shape frame cannot fail the batch it rides in.
+    let bare: SubagentState = serde_json::from_str(r#"{"note":"no tag"}"#).unwrap();
+    assert_eq!(bare, SubagentState::Other { raw: String::new() });
+    // Every arm that has a detail requires it, and an unknown detail is an
+    // unknown state: the `idle` arm's target, the `stopped` arm's storer.
+    for frame in [
+        r#"{"type":"idle"}"#,
+        r#"{"type":"idle","waiting_on":"whoever"}"#,
+        r#"{"type":"stopped"}"#,
+        r#"{"type":"failed","reason":7}"#,
+    ] {
+        let back: SubagentState = serde_json::from_str(frame).unwrap();
+        let tag = frame.split('"').nth(3).unwrap_or("");
+        assert_eq!(
+            back,
+            SubagentState::Other {
+                raw: tag.to_owned()
+            },
+            "{frame}"
+        );
+    }
+    // `resume_contract` is the one optional detail: a frame that states its
+    // storer keeps the state and loses the contract, not the reverse.
+    let partial: SubagentState =
+        serde_json::from_str(r#"{"type":"stopped","by":"user","resume_contract":"no"}"#).unwrap();
+    assert_eq!(
+        partial,
+        SubagentState::Stopped {
+            by: StoppedBy::User,
+            resume_contract: None
+        }
+    );
+    // A frame that is no object at all — the flat badge an older core sent —
+    // decodes as an unknown state by its shape, so a batch of them survives.
+    let flat: SubagentState = serde_json::from_str(r#""running""#).unwrap();
+    assert_eq!(flat, SubagentState::Other { raw: String::new() });
 }
 
 #[test]

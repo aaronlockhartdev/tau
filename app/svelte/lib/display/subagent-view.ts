@@ -6,8 +6,8 @@
 // entry (the spawn point) correlated to the live SubagentInfo by
 // (agent_type, context_mode), spawn order breaking multiplicity ties.
 
-import type { SubagentInfo } from '../wire/protocol';
-
+import type { SubagentInfo, WaitingOn } from '../wire/protocol';
+import { badgeLabel, waitingOnOf } from './subagent-state';
 // One spawn point in the parent transcript (a subagent_spawn tool entry).
 export interface SpawnRef {
   entryId: string;
@@ -64,7 +64,11 @@ export function claimCrew(
 }
 
 // The block's display phase. `waiting-user` is the red "needs you" case —
-// the single most important state in the app.
+// the single most important state in the app, and both of its sources read
+// from the typed state: an `idle` child whose declared target is the user,
+// and an `awaiting` child (the `QUESTION:` marker, spec §5.2). A state this
+// build does not know (the `other` arm) keeps its own spelling, so a state a
+// newer core adds still renders — the open-union escape `EntryKind` uses.
 export type CrewPhase =
   | 'spawn'
   | 'running'
@@ -72,17 +76,21 @@ export type CrewPhase =
   | 'waiting-parent'
   | 'done'
   | 'failed'
-  | 'stopped';
+  | 'stopped'
+  | (string & {});
 
 export interface CrewView {
   phase: CrewPhase;
+  // The badge's text: the phase's spelling, `waiting on you` for the red
+  // case, and the raw name for a state this build does not know.
+  label: string;
   agentType: string;
   contextMode: string;
   brief: string | null;
   lastMessage: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
-  waitingOn: string | null;
+  waitingOn: WaitingOn | null;
   handle: string | null;
   child: string | null;
 }
@@ -92,6 +100,7 @@ export interface CrewView {
 export function crewView(ref: SpawnRef, info: SubagentInfo | null): CrewView {
   if (!info) {
     return {
+      label: 'spawned',
       phase: 'spawn',
       agentType: ref.agentType,
       contextMode: ref.contextMode,
@@ -104,25 +113,34 @@ export function crewView(ref: SpawnRef, info: SubagentInfo | null): CrewView {
       child: null
     };
   }
-  let phase: CrewPhase;
-  if (info.state === 'idle') {
-    phase = info.waiting_on === 'user' ? 'waiting-user' : 'waiting-parent';
-  } else if (info.state === 'awaiting') {
-    // Awaiting is the `QUESTION:` marker: the child is asking the user — the
-    // same red "needs you" case as an idle child parked on the user.
-    phase = 'waiting-user';
-  } else {
-    phase = info.state;
-  }
+  const state = info.state;
+  const phase: CrewPhase =
+    state.type === 'idle'
+      ? state.waiting_on === 'user'
+        ? 'waiting-user'
+        : 'waiting-parent'
+      : state.type === 'awaiting'
+        ? // Awaiting is the `QUESTION:` marker: the child is asking the user —
+      // the same red "needs you" case as an idle child parked on the user.
+        'waiting-user'
+        : badgeLabel(state);
   return {
     phase,
+    label:
+      phase === 'waiting-user'
+        ? 'waiting on you'
+        : phase === 'waiting-parent'
+          ? 'waiting on parent'
+          : phase === 'running'
+            ? 'running'
+            : badgeLabel(state),
     agentType: ref.agentType,
     contextMode: ref.contextMode,
     brief: ref.brief,
     lastMessage: info.last_message,
     inputTokens: info.usage?.input_tokens ?? null,
     outputTokens: info.usage?.output_tokens ?? null,
-    waitingOn: info.waiting_on,
+    waitingOn: waitingOnOf(state),
     handle: info.handle,
     child: info.child
   };

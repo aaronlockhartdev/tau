@@ -34,7 +34,7 @@ use crate::subagent::{
     StateNotice, StoppedBy, SubagentBridge, Supervisor, SupervisorParams, WakeKind, WakeNotice,
 };
 use crate::tools;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tau_protocol::snapshot::{
     EntryMeta, EntryStatus, LiveState, OmSnapshot, SessionMeta, Snapshot, TurnState, ViewEntry,
     Workspace,
@@ -42,7 +42,7 @@ use tau_protocol::snapshot::{
 use tau_protocol::{
     AgentType, Command, CommandOutput, ContextMode, Event, FileEntry, FileText, MessageLane,
     OmStatusKind, ProtocolError, ProviderInfo, SkillInfo, SubagentEventKind, SubagentInfo,
-    SystemEventKind, Usage,
+    SubagentState, SystemEventKind, Usage,
 };
 use tokio::sync::mpsc;
 

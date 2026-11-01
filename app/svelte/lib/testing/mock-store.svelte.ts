@@ -11,7 +11,7 @@ import { vi } from 'vitest';
 import type { FilesCache } from '../rules/files';
 import type { OpenFiles } from '../rules/openfiles';
 import type { PaneState } from '../rules/panes';
-import type { FileEntry, GitStatus, ProviderInfo, SkillInfo, SessionMeta, Workspace } from '../wire/protocol';
+import type { FileEntry, GitStatus, ProviderInfo, SkillInfo, SessionMeta, WaitingOn, Workspace } from '../wire/protocol';
 import { attentionOf, type AttentionItem } from '../display/attention';
 import { makeStub, type SessionState } from '../rules/sessions';
 
@@ -170,7 +170,7 @@ export function seedState(
   opts: {
     parent?: string | null;
     state?: SessionState['state'];
-    waitingOn?: string | null;
+    waitingOn?: WaitingOn | null;
     last_modified?: number;
     over?: Partial<SessionState>;
   } = {}

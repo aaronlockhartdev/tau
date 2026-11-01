@@ -267,23 +267,31 @@ export interface ResumeContract {
   next_action: string;
 }
 
-// A child session's own lifecycle state (ticket #221): the `subagent` state
-// entry's projection — the badge state plus its declared wait target.
-export interface OwnState {
-  state: SubagentState;
-  waiting_on: string | null;
-}
-// The child's 6-state lifecycle (spec §5.2): the badge state, mirrored from
-// the core's `ChildState::kind`. A shared alias: `SubagentInfo.state` (the
-// parent's view) and `LiveState.own_state.state` (the child's own tab) are
-// the same value.
+// A parked child's declared wait target (spec §5.2): the `idle` state's badge
+// hint; the observed rest is the driver.
+export type WaitingOn = 'parent' | 'user' | 'subagent';
+
+// Who stopped the child (the only asymmetry between stops — ADR-0001).
+export type StoppedBy = 'user' | 'parent';
+
+// The child's lifecycle (spec §5.2): tagged enum, the protocol mirror of the
+// core's `ChildState` — every arm carries its own fields, so the GUI reads
+// `state.type` for the badge and the same arm for its detail (`idle`'s
+// `waiting_on`, `failed`'s `reason`, `stopped`'s `by`). A shared alias:
+// `SubagentInfo.state` (the parent's view) and `LiveState.own_state` (the
+// child's own tab) are the same value. The `other` arm is the forward-compat
+// escape (cf. `EntryKind`'s open union): a state this build does not know is
+// decoded, never dropped, and renders from the spelling the wire sent.
 export type SubagentState =
-  | 'running'
-  | 'idle'
-  | 'awaiting'
-  | 'done'
-  | 'failed'
-  | 'stopped';
+  | { type: 'running' }
+  | { type: 'idle'; waiting_on: WaitingOn }
+  | { type: 'awaiting' }
+  | { type: 'done'; output: unknown }
+  | { type: 'failed'; reason: string }
+  // The child's stopped state (spec §5.2): `by` is the storer, plus an
+  // optional resume contract (spec §5.3, ADR-0001).
+  | { type: 'stopped'; by: StoppedBy; resume_contract?: ResumeContract }
+  | { type: 'other'; raw: string };
 
 // Sub-agent shapes (ticket #23; crates/tau-protocol) — a child is an
 // ordinary session; this is its structured mirror in the parent's state.
@@ -293,7 +301,6 @@ export interface SubagentInfo {
   agent_type: string;
   context_mode: ContextMode;
   state: SubagentState;
-  waiting_on: string | null;
   last_message: string | null;
   /** The child session's created timestamp (epoch ms): the core's spawn-order sort key. */
   created?: number;
@@ -324,7 +331,7 @@ export interface ActivityEntry {
 }
 export type SubagentEventKind =
   | { kind: 'spawned'; handle: string; child: string; agent_type: string; context_mode: ContextMode; title: string }
-  | { kind: 'state'; handle: string; child: string; state: string; detail: unknown; note: string | null }
+  | { kind: 'state'; handle: string; child: string; state: SubagentState; note: string | null }
   | { kind: 'notified'; child: string; wake: string; text: string; output: unknown };
 
 // One plan step (a checkbox line of the plan file, spec §5.3): the plan
@@ -350,10 +357,11 @@ export interface LiveState {
   // The session's parsed plan file (spec §5.3) — the plan pane's data.
   plan: Plan;
   subagents: SubagentInfo[];
-  // A child session's own lifecycle state (ticket #221): the badge state
-  // plus its declared wait; null for a root session or a child with no
-  // recorded state. The GUI badges a child's tab by it, not by turn.
-  own_state: OwnState | null;
+  // A child session's own lifecycle state (ticket #221): the `subagent` state
+  // entry's tag, its detail riding the same arm; null for a root session or a
+  // child with no recorded state. The GUI badges a child's tab by it, not by
+  // turn.
+  own_state: SubagentState | null;
 }
 
 export interface Snapshot {
@@ -434,9 +442,6 @@ export type Command =
   | { type: 'subagent_activity'; handle: string }
   | { type: 'skill_list'; workspace: string }
   | { type: 'provider_list'; workspace: string }
-  | { type: 'provider_add'; name: string; base_url: string; key_env: string; models: string[] }
-  | { type: 'provider_set'; name: string; base_url: string; key_env: string; models: string[] }
-  | { type: 'provider_delete'; name: string }
   | { type: 'file_read'; workspace: string; path: string; offset: number | null; limit: number | null }
   | { type: 'file_list'; workspace: string; path: string }
   | { type: 'file_unlist'; workspace: string; path: string }

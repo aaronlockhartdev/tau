@@ -5,7 +5,6 @@
 //! not. The snapshot's `subagents` projection over these records lives in
 //! `snapshot.rs`.
 
-use super::states::WaitingOn;
 use super::{ChildState, ContextMode};
 use crate::session::{Entry, SessionStore, list_workspace};
 use tau_protocol::EntryKind;
@@ -49,11 +48,6 @@ pub struct DiskChild {
 /// already carries for the child; the terminal state is its last recorded
 /// ground truth.
 pub fn disk_child_to_info(d: &DiskChild) -> tau_protocol::SubagentInfo {
-    let waiting_on = match &d.state {
-        ChildState::Idle { waiting_on } => Some(waiting_on.as_str().to_owned()),
-        ChildState::Awaiting => Some(WaitingOn::User.as_str().to_owned()),
-        _ => None,
-    };
     tau_protocol::SubagentInfo {
         handle: d.handle.clone(),
         child: d.child.clone(),
@@ -63,8 +57,7 @@ pub fn disk_child_to_info(d: &DiskChild) -> tau_protocol::SubagentInfo {
             ContextMode::Compacted => tau_protocol::ContextMode::Compacted,
             ContextMode::Fork => tau_protocol::ContextMode::Fork,
         },
-        state: d.state.kind().to_owned(),
-        waiting_on,
+        state: d.state.clone().into(),
         last_message: None,
         usage: None,
         created: d.created,

@@ -20,21 +20,9 @@
     onOpen: () => void;
   } = $props();
 
-  const label = $derived(
-    view.phase === 'running'
-      ? 'running'
-      : view.phase === 'waiting-user'
-        ? 'waiting on you'
-        : view.phase === 'waiting-parent'
-          ? 'waiting on parent'
-          : view.phase === 'done'
-            ? 'done'
-            : view.phase === 'failed'
-              ? 'failed'
-              : view.phase === 'stopped'
-                ? 'stopped'
-                : 'spawned'
-  );
+  // The state's text comes off the view (#346): the badge is the typed
+  // state's tag, and a state this build does not know names itself.
+  const label = $derived(view.label);
 
   const tokens = $derived(
     view.inputTokens !== null && view.outputTokens !== null

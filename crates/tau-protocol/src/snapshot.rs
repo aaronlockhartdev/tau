@@ -3,7 +3,7 @@
 //! bounded OM observation log + live state + a durable cursor. Built on
 //! demand by the core (app launch, tab open, reconnect); never a file.
 
-use crate::{EntryKind, MessageLane};
+use crate::{EntryKind, MessageLane, SubagentState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -169,20 +169,11 @@ pub struct LiveState {
     /// only for a child session (its last observed state, restored from
     /// its own file on a restart), so the GUI badges it by state, not by
     /// turn. `None` for a root session and for a child with no state
-    /// recorded. Defaulted so older snapshots decode.
+    /// recorded. Defaulted so a snapshot written before the field decodes; a
+    /// value in the pre-#346 shape (a bare badge string) decodes to `other`, an
+    /// unknown state rather than a badge this build invents from a shape it lost.
     #[serde(default)]
-    pub own_state: Option<OwnState>,
-}
-
-/// A child session's own lifecycle state (the `subagent` state entry's
-/// projection): the badge state plus its declared wait target.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct OwnState {
-    /// running | idle | awaiting | done | failed | stopped
-    pub state: String,
-    /// parent | user | subagent (an `idle` child's declared wait; `user`
-    /// for `awaiting`); `None` otherwise.
-    pub waiting_on: Option<String>,
+    pub own_state: Option<SubagentState>,
 }
 
 /// The session's OM gauge (ticket #22): observation tokens against the
@@ -355,8 +346,7 @@ mod tests {
                 child: "s2".into(),
                 agent_type: "general".into(),
                 context_mode: crate::ContextMode::Fresh,
-                state: "running".into(),
-                waiting_on: None,
+                state: crate::SubagentState::Running,
                 last_message: None,
                 usage: None,
                 resume_contract: None,

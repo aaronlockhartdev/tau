@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event';
 import AttentionSheet from './AttentionSheet.svelte';
 import { mockStore as store, switchSession, resetMockStore, seedState } from '../lib/testing/mock-store.svelte';
 import type { SessionMeta } from '../lib/wire/protocol';
+import { subInfo } from '../lib/testing/state';
 
 vi.mock('../lib/store/store.svelte', async () => {
   const m = await import('../lib/testing/mock-store.svelte.ts');
@@ -43,17 +44,12 @@ describe('AttentionSheet', () => {
         s1: seedState(meta('s1', { title: 'hero' }), {
           over: {
             subagents: [
-              {
+              subInfo('c1', {
                 handle: 'h1',
-                child: 'c1',
                 agent_type: 'researcher',
-                context_mode: 'fresh',
                 state: 'idle',
-                waiting_on: 'user',
-                last_message: null,
-                usage: null,
-                resume_contract: null
-              }
+                waiting_on: 'user'
+              })
             ]
           }
         })
@@ -74,17 +70,12 @@ describe('AttentionSheet', () => {
         s1: seedState(meta('s1', { title: 'hero' }), {
           over: {
             subagents: [
-              {
+              subInfo('c1', {
                 handle: 'h1',
-                child: 'c1',
                 agent_type: 'researcher',
-                context_mode: 'fresh',
                 state: 'idle',
-                waiting_on: 'user',
-                last_message: null,
-                usage: null,
-                resume_contract: null
-              }
+                waiting_on: 'user'
+              })
             ]
           }
         })

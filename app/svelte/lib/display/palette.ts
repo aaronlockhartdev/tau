@@ -4,6 +4,7 @@
 
 import type { SessionState } from '../rules/sessions';
 import type { SubagentInfo } from '../wire/protocol';
+import { badgeLabel } from './subagent-state';
 
 export interface PaletteItem {
   group: 'sessions' | 'crew' | 'actions';
@@ -44,7 +45,7 @@ export function paletteItems(s: PaletteSource): PaletteItem[] {
     items.push({
       group: 'crew',
       label: a.agent_type,
-      hint: a.state,
+      hint: badgeLabel(a.state),
       run: () => s.follow(a.handle)
     });
   }

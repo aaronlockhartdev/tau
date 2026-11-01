@@ -6,7 +6,8 @@ import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { userEvent } from '@testing-library/user-event';
-import type { SessionMeta, SubagentInfo } from '../lib/wire/protocol';
+import type { SessionMeta } from '../lib/wire/protocol';
+import { subInfo } from '../lib/testing/state';
 import type { SessionState } from '../lib/rules/sessions';
 import SessionNode from './SessionNode.svelte';
 import {
@@ -106,17 +107,12 @@ describe('SessionNode', () => {
     s.parent = 'p1';
     s.state = 'idle';
     s.waiting_on = 'parent';
-    const info: SubagentInfo = {
+    const info = subInfo('s1', {
       handle: 'h1',
-      child: 's1',
       agent_type: 'worker',
-      context_mode: 'fresh',
       state: 'idle',
-      waiting_on: 'parent',
-      last_message: null,
-      usage: null,
-      resume_contract: null
-    };
+      waiting_on: 'parent'
+    });
     s.subagents = [info];
     await mount(s, { depth: 1 });
     // The rename (ticket #221): a child parked on the parent reads the plain
@@ -130,17 +126,12 @@ describe('SessionNode', () => {
     s.parent = 'p1';
     s.state = 'idle';
     s.waiting_on = 'user';
-    const info: SubagentInfo = {
+    const info = subInfo('s1', {
       handle: 'h1',
-      child: 's1',
       agent_type: 'worker',
-      context_mode: 'fresh',
       state: 'idle',
-      waiting_on: 'user',
-      last_message: null,
-      usage: null,
-      resume_contract: null
-    };
+      waiting_on: 'user'
+    });
     s.subagents = [info];
     await mount(s, { depth: 1 });
     const badge = screen.getByText('user');

@@ -7,12 +7,12 @@ import type {
   CommandOutput,
   LiveState,
   SessionMeta,
-  SubagentInfo,
   Usage,
   ViewEntry,
   Workspace
 } from '../wire/protocol';
 import { store } from '../store/store.svelte';
+import { subInfo, type SubFixture } from './state';
 
 export const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
 
@@ -70,21 +70,11 @@ export function entryView(id: string, kind: string, payload: Record<string, unkn
 
 export const USAGE: Usage = { input_tokens: 5, output_tokens: 10, total_tokens: 15, cached_prompt_tokens: 0 };
 
-// A sub-agent mirror row, complete (the wire shape the events carry).
-export function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
-  return {
-    handle: child,
-    child,
-    agent_type: 'general',
-    context_mode: 'fresh',
-    state: 'idle',
-    waiting_on: null,
-    last_message: null,
-    usage: null,
-    resume_contract: null,
-    ...extra
-  };
-}
+// A sub-agent mirror row, complete (the wire shape the events carry). The
+// state is the tagged enum (#346), so a fixture names the badge flat beside
+// the arm's field — `sub('c', { state: 'idle', waiting_on: 'user' })` — and
+// `subInfo` assembles the arm, filling an unstated field with its default.
+export { subInfo as sub, type SubFixture };
 
 // Bind the IPC helpers to a test file's hoisted mockInvoke so existing
 // mockIPC(...)/defaultIPC(...) call sites need no signature change.
@@ -121,16 +111,13 @@ export function bindIPC(mockInvoke: Mock) {
       queue_item_remove: () => ({ kind: 'none' }),
       subagent_types: () => ({ kind: 'agents', agents: [] }),
       subagent_list: () => ({ kind: 'subagents', subagents: [] }),
-      subagent_state: () => ({ kind: 'subagent', subagent: sub('c1') }),
+      subagent_state: () => ({ kind: 'subagent', subagent: subInfo('c1') }),
       subagent_activity: () => ({ kind: 'subagent_activity', activity: { observations: [], live: [], degraded: false } }),
       subagent_spawn: () => ({ kind: 'none' }),
       subagent_message: () => ({ kind: 'none' }),
       subagent_stop: () => ({ kind: 'none' }),
       skill_list: () => ({ kind: 'skills', skills: [] }),
       provider_list: () => ({ kind: 'providers', providers: [] }),
-      provider_add: () => ({ kind: 'none' }),
-      provider_set: () => ({ kind: 'none' }),
-      provider_delete: () => ({ kind: 'none' }),
       file_read: () => ({ kind: 'file', file: { text: '', truncated: false } }),
       file_list: () => ({ kind: 'files', files: [] }),
       file_unlist: () => ({ kind: 'none' }),

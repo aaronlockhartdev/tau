@@ -186,18 +186,14 @@
     return (
       s.turn === 'running' ||
       s.turn === 'starting' ||
-      s.subagents.some((x) => x.state === 'running')
+      s.subagents.some((x) => x.state.type === 'running')
     );
-  }
-  function childInfo(c: SessionState) {
-    return active?.subagents.find((x) => x.child === c.meta.id) ?? null;
   }
   // The badge label (ticket #221): a child parked on the user reads `user`
   // (its own color), a child parked on the parent reads plain `idle` —
   // the waiting target is a display detail, not a compound state.
   function badgeLabel(c: SessionState): string {
-    const w = childInfo(c)?.waiting_on;
-    if (c.state === 'idle') return w === 'user' ? 'user' : 'idle';
+    if (c.state === 'idle') return c.waiting_on === 'user' ? 'user' : 'idle';
     if (c.state === 'awaiting') return 'user';
     return c.state;
   }

@@ -174,10 +174,10 @@ kit — carries 131072 / 16384 (`Provider::default_def`).
 
 ## Provider resolution
 
-v0 has no dynamic providers (`ProviderAdd`/`Set`/`Delete` are
-`unsupported: v0 providers are config-file-driven`), and **a model id routes to
-the provider that owns it** (#336) — never to the provider the config's map
-sorts first.
+v0 has no dynamic providers: `ProviderAdd`/`Set`/`Delete` are off the command
+surface (#346), so this file is the only way a provider appears. **A model id
+routes to the provider that owns it** (#336) — never to the provider the
+config's map sorts first.
 
 | Question | Answer |
 |---|---|

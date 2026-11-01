@@ -11,10 +11,21 @@ import type {
   Snapshot,
   SubagentEventKind,
   SubagentInfo,
+  SubagentState,
   Plan,
   Usage,
+  WaitingOn,
   Workspace
 } from '../wire/protocol';
+import {
+  badgeOf,
+  badgeOfWake,
+  stateOfBadge,
+  stateOfWake,
+  waitingHintOf,
+  waitingOnOf,
+  type ChildBadge
+} from '../display/subagent-state';
 
 export interface PendingMsg {
   text: string;
@@ -42,13 +53,14 @@ export interface SessionState {
     reflector_threshold: number;
   };
   pending: PendingMsg[];
-  // The session-tree row (ticket #26): a child session's parent link,
-  // its lifecycle state, its archive flag, and its sort key.
   parent: string | null;
-  state: 'running' | 'idle' | 'awaiting' | 'done' | 'failed' | 'stopped';
-  // The child's declared wait (parent | user | subagent) — from the state
-  // event's detail; annotated on the row and the child's own header.
-  waiting_on: string | null;
+  // The lifecycle badge (the `SubagentState` tag): the row's class and label
+  // are keyed by it; the state's detail (`idle`'s `waiting_on`, `failed`'s
+  // `reason`, `stopped`'s `by`) rides the mirror row's typed `state` (#346).
+  state: ChildBadge;
+  // The child's declared wait (parent | user | subagent) — carried by the
+  // `idle` state; annotated on the row and the child's own header.
+  waiting_on: WaitingOn | null;
   archived: boolean;
   last_modified: number;
   // The session's children (the parent's view — the sub-agent panel).
@@ -82,11 +94,11 @@ function snapshotToState(snap: Snapshot): SessionState {
   const own = snap.live.own_state;
   const state =
     own && snap.live.turn !== 'running'
-      ? own.state
+      ? badgeOf(own)
       : snap.live.turn === 'running'
         ? 'running'
         : 'idle';
-  const waitingOn = own ? own.waiting_on : null;
+  const waitingOn = own ? waitingOnOf(own) : null;
   return {
     meta,
     // metadata skeleton: the card shows the preview until a paged read
@@ -129,8 +141,8 @@ function snapshotToState(snap: Snapshot): SessionState {
 export function makeStub(
   meta: SessionMeta,
   parent: string | null,
-  state: SessionState['state'],
-  waitingOn: string | null,
+  state: ChildBadge,
+  waitingOn: WaitingOn | null,
   last_modified: number
 ): SessionState {
   return {
@@ -160,9 +172,9 @@ export function touchChild(
   sessions: SessionMap,
   parentSid: string,
   childSid: string,
-  state: SessionState['state'],
+  state: ChildBadge,
   last_modified: number,
-  waitingOn: string | null = null,
+  waitingOn: WaitingOn | null = null,
   title: string | null = null
 ): SessionMap {
   const parent = sessions[parentSid];
@@ -238,15 +250,14 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
   // state). A corrected stub keeps its own last_modified, so the sort is stable.
   for (const sub of next.subagents) {
     const existing = out[sub.child];
+    const st = sub.state;
+    const badge = badgeOf(st);
+    const waitingOn = waitingOnOf(st);
     if (!existing) {
-      out = touchChild(out, sid, sub.child, sub.state, Date.now(), sub.waiting_on, null);
+      out = touchChild(out, sid, sub.child, badge, Date.now(), waitingOn, null);
       continue;
     }
-    out = touchChild(out, sid, sub.child, sub.state, existing.last_modified, sub.waiting_on, null);
-    if (sub.waiting_on === null && sub.state !== 'idle') {
-      const c = out[sub.child]!;
-      out = { ...out, [sub.child]: { ...c, waiting_on: null } };
-    }
+    out = touchChild(out, sid, sub.child, badge, existing.last_modified, waitingOn, null);
   }
   // A disk-restored child has no live supervisor listing it: synthesize
   // the tab entry from the child stub so the sub-agents tab is never
@@ -259,8 +270,7 @@ export function openSession(sessions: SessionMap, sid: string, snap: Snapshot): 
       child: child.meta.id,
       agent_type: 'general',
       context_mode: 'fresh',
-      state: child.state,
-      waiting_on: child.waiting_on ?? null,
+      state: stateOfBadge(child.state, child.waiting_on),
       last_message: null,
       usage: child.usage,
       resume_contract: null
@@ -318,8 +328,7 @@ export function applySubagentEvent(
       child: k.child,
       agent_type: k.agent_type,
       context_mode: k.context_mode,
-      state: 'running',
-      waiting_on: null,
+      state: { type: 'running' },
       last_message: null,
       usage: null,
       resume_contract: null
@@ -337,28 +346,28 @@ export function applySubagentEvent(
     );
   }
   if (k.kind === 'state') {
-    const st = k.state as SessionState['state'];
-    // The live bridge sends detail as an object (core.rs: {waiting_on}
-    // for idle, {by, resume_contract?} for stopped, {output},
-    // {reason}, null for running).
-    const d = k.detail as { waiting_on?: unknown } | null;
-    const waitingOn =
-      d && typeof d === 'object' && typeof d.waiting_on === 'string' ? d.waiting_on : null;
+    // The frame carries the typed state: the badge is its tag, the declared
+    // wait rides the `idle` arm, the resume contract the `stopped` arm
+    // (#346 — no side `detail` object to hand-read).
+    const st: SubagentState = k.state;
+    const badge = badgeOf(st);
+    const waitingOn = waitingOnOf(st);
     const prev = s.subagents.find((x) => x.handle === k.handle);
-    if (!prev) return touchChild(sessions, sid, k.child, st, now, waitingOn);
+    if (!prev) return touchChild(sessions, sid, k.child, badge, now, waitingOn);
     // A handle is unique per child for the parent's life. If the row the
     // handle claims names a different child, the handle was re-minted (a
     // re-open): re-point the row at the event's child rather than writing
     // the new child's state onto the old child's row (ticket #226).
-    const info: SubagentInfo = prev.child === k.child ? { ...prev, state: st } : { ...prev, child: k.child, state: st };
-    if (waitingOn !== null) info.waiting_on = waitingOn;
-    else if (st !== 'idle') info.waiting_on = null;
+    const info: SubagentInfo = prev.child === k.child
+      ? { ...prev, state: st }
+      : { ...prev, child: k.child, state: st };
+    if (st.type === 'stopped') info.resume_contract = st.resume_contract ?? null;
     if (k.note) info.last_message = k.note;
     return touchChild(
       { ...sessions, [sid]: { ...s, subagents: s.subagents.map((x) => (x.handle === k.handle ? info : x)) } },
       sid,
       k.child,
-      st,
+      badge,
       now,
       waitingOn
     );
@@ -366,31 +375,36 @@ export function applySubagentEvent(
   // notified: a child notification reached the parent. The wake
   // kind maps onto a terminal state (done/failed/stopped) — a
   // stopped child must not read back as idle.
-  const st =
-    k.wake === 'done'
-      ? 'done'
-      : k.wake === 'failed'
-        ? 'failed'
-        : k.wake === 'stopped'
-          ? 'stopped'
-          : 'idle';
+  // The wake settles the mirror row's state. A wake names what the parent was
+  // told (done / failed / waiting / stopped), and carries the done report and
+  // the failed reason as its text; `stopped` names no storer, so that badge
+  // keeps the `other` arm — the row says the child stopped, and invents no
+  // who.
+  const badge = badgeOfWake(k.wake);
+  // A `waiting` wake declares no target, so the badge carries the target the
+  // row already declares: a wake re-parks a child where it was. A row parked
+  // with a question (`awaiting`) is parked on the user — the wake the core
+  // sends for that rest must not move the child to its parent, or the bell
+  // drops the one child the app exists to surface.
+  const prev = s.subagents.find((x) => x.child === k.child);
+  const st = stateOfWake(k.wake, k.text, k.output, prev ? waitingHintOf(prev.state) : null);
   let out = sessions;
   const child = sessions[k.child];
   if (child) {
     const next: SessionState = {
       ...child,
       last_modified: now,
-      state: st,
+      state: badge,
+      // The target rides the badge: a terminal wake leaves no wait behind,
+      // a `waiting` wake re-parks the child where it was.
+      waiting_on: badge === 'idle' ? waitingHintOf(st) : null,
       // A notified wake is terminal or an idle re-wait — never running.
       turn: 'idle'
     };
     out = { ...out, [k.child]: next };
   }
-  const prev = s.subagents.find((x) => x.child === k.child);
   if (prev) {
     const info: SubagentInfo = { ...prev, last_message: k.text, state: st };
-    if (st === 'idle' && info.waiting_on === null) info.waiting_on = 'parent';
-    if (st !== 'idle') info.waiting_on = null;
     out = {
       ...out,
       [sid]: { ...s, subagents: s.subagents.map((x) => (x.child === k.child ? info : x)) }
@@ -411,7 +425,7 @@ export function groupIsOpen(
   sessions: SessionState[]
 ): boolean {
   if (q.openGroups !== null) return q.openGroups.includes(session.meta.id);
-  if (session.subagents.some((s) => s.state === 'running')) return true;
+  if (session.subagents.some((s) => badgeOf(s.state) === 'running')) return true;
   let a: SessionState | null = active;
   while (a) {
     if (a.meta.id === session.meta.id) return true;

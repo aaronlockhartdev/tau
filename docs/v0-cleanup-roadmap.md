@@ -85,21 +85,23 @@ Delete the stale duplicate doc line `crates/tau-core/src/subagent.rs` L410 (cont
 | 8 | `app/svelte/lib/fixture.ts:17,25,30` types `DemoSession`, `FixturePendingMsg`, `FixtureSessionState` (no importers) | un-export |
 
 **Intentionally kept** (do not delete — documented reserved surface, spec §8): `SystemEventKind::ProviderChanged`
-(+ its TS mirror `protocol.ts:307`), `Command::ProviderAdd/Set/Delete` (dispatch → `Unsupported` in v0),
-`Command::SessionFork/SessionBranch` (see C7).
+(+ its TS mirror `protocol.ts:307`), `Command::SessionFork/SessionBranch` (see C7). `Command::ProviderAdd/Set/Delete`
+left this list on 2026-10-30: a surface with no producer behind it is not reserved, it is dead, so the trio was
+deleted (#346, spec §8's errata).
 
 ### C. Protocol mirror fix (C6) — one line + a guard
 
 `app/svelte/lib/wire/protocol.ts` `Command` union is missing `provider_delete` (dropped by drive-by in `55e6284`,
 never restored — the same drift class as the `agents` `CommandOutput` a reviewer caught in `e79d705`).
-Rust has `ProviderAdd/Set/Delete` (lib.rs L300–312).
+The trio is **off the Rust surface as of #346 (2026-10-30)** — `dispatch.rs` had one arm answering `Unsupported`,
+no producer ever sent one — so there is no tag left to mirror (spec §8's errata, `docs/protocol.md` §4).
 
-- Add `| { type: 'provider_delete'; name: string }` to the TS `Command` union.
-- Add a **mirror-diff check**: derive the TS `Command` tag list from the Rust serde tags (a small script run
-  in CI) so the ADR-0006 field-for-field mirror can't silently drift again. This is the real win.
+- **Closed by #346**: `provider_list` is the seam's only provider command, and the TS union matches it.
+- The **mirror-diff check** — derive the TS `Command` tag list from the Rust serde tags and fail CI on drift —
+  is the real win, and it exists: `app/svelte/scripts/protocol-parity.mjs` holds ADR-0006's mirror honest.
 - **The drift is a class, not a one-off** (`04-deepening.md`): besides the `provider_delete`/`agents` tag
-  drops, the hand-mirrored `Task` interface and every payload shape drift silently today. Once C9 lands, the
-  guard extends from command tags to **payload shapes** — its most valuable form.
+  drops, the hand-mirrored `Task` interface and every payload shape drifted silently. The parity script guards
+  the command tags today; carrying it from tags to **payload shapes** is its most valuable form.
 
 ### D. ADR + agent-doc homogenization
 

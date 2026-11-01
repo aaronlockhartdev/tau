@@ -102,6 +102,49 @@ impl ChildState {
     }
 }
 
+/// The core's `WaitingOn` as the protocol's (ADR-0002: the crates are
+/// independent, so the mapping lives on the core's side).
+impl From<WaitingOn> for tau_protocol::WaitingOn {
+    fn from(w: WaitingOn) -> Self {
+        match w {
+            WaitingOn::Parent => Self::Parent,
+            WaitingOn::User => Self::User,
+            WaitingOn::Subagent => Self::Subagent,
+        }
+    }
+}
+
+impl From<StoppedBy> for tau_protocol::StoppedBy {
+    fn from(b: StoppedBy) -> Self {
+        match b {
+            StoppedBy::User => Self::User,
+            StoppedBy::Parent => Self::Parent,
+        }
+    }
+}
+
+/// The core's observed 6-state machine as the protocol's tagged enum
+/// (#346): the erasure to a kind `String` plus a hand-built `detail` map
+/// cost the GUI a per-string decoder; this is the one mapping. A stopped
+/// child's `resume_contract` is not on `ChildState` (it rides the
+/// `StateNotice`), so the emitter that has one fills it after this.
+impl From<ChildState> for tau_protocol::SubagentState {
+    fn from(state: ChildState) -> Self {
+        match state {
+            ChildState::Running => Self::Running,
+            ChildState::Idle { waiting_on } => Self::Idle {
+                waiting_on: waiting_on.into(),
+            },
+            ChildState::Awaiting => Self::Awaiting,
+            ChildState::Done { output } => Self::Done { output },
+            ChildState::Failed { reason } => Self::Failed { reason },
+            ChildState::Stopped { by } => Self::Stopped {
+                by: by.into(),
+                resume_contract: None,
+            },
+        }
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContextMode {

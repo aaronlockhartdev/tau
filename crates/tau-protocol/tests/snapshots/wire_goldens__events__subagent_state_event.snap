@@ -1,0 +1,22 @@
+---
+source: crates/tau-protocol/tests/wire_goldens.rs
+expression: "Event::SubagentEvent\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), kind:\n    tau_protocol::SubagentEventKind::State\n    {\n        handle: \"s1-1\".into(), child: \"s2\".into(), state:\n        tau_protocol::SubagentState::Stopped\n        {\n            by: tau_protocol::StoppedBy::Parent, resume_contract:\n            Some(tau_protocol::payload::ResumeContract\n            { next_action: \"run the suite\".into(), }),\n        }, note: Some(\"stopped by parent\".into()),\n    },\n}"
+---
+{
+  "type": "subagent_event",
+  "workspace": "w1",
+  "session": "s1",
+  "kind": {
+    "kind": "state",
+    "handle": "s1-1",
+    "child": "s2",
+    "state": {
+      "type": "stopped",
+      "by": "parent",
+      "resume_contract": {
+        "next_action": "run the suite"
+      }
+    },
+    "note": "stopped by parent"
+  }
+}

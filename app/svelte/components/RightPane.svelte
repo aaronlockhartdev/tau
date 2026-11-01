@@ -9,9 +9,10 @@
   // sub-agent's session, which is an ordinary session (a tab opens for it).
   import { store, pane, ensurePane, switchSession, currentSession, setFollow, type PaneState } from '../lib/store/store.svelte';
   import { fmtK } from '../lib/display/format';
-  import { onActivate } from '../lib/display/ui';
   import { ChevronDown } from '@lucide/svelte';
+  import { onActivate } from '../lib/display/ui';
   import type { SubagentInfo } from '../lib/wire/protocol';
+  import { badgeLabel, badgeOf, waitingHintOf } from '../lib/display/subagent-state';
   import { fleetGate, planProgress } from '../lib/display/plan';
   import PlanView from './PlanView.svelte';
 
@@ -24,10 +25,18 @@
 
 
   const subs = $derived(cur ? cur.subagents : []);
-  const isLive = (i: SubagentInfo) => i.state === 'running' || i.state === 'idle';
+  // A child is live while its badge is `running` or `idle` (the typed state's
+  // tag, #346).
+  const isLive = (i: SubagentInfo) => {
+    const badge = badgeOf(i.state);
+    return badge === 'running' || badge === 'idle';
+  };
   // Crew order (P3): running first, then waiting, then terminal — last-modified
   // the ties within a rank.
-  const crewRank = (i: SubagentInfo) => (i.state === 'running' ? 0 : i.state === 'idle' ? 1 : 2);
+  const crewRank = (i: SubagentInfo) => {
+    const badge = badgeOf(i.state);
+    return badge === 'running' ? 0 : badge === 'idle' ? 1 : 2;
+  };
   const byCrew = (a: SubagentInfo, b: SubagentInfo) =>
     crewRank(a) - crewRank(b) || childLastModified(b) - childLastModified(a);
   const liveSubs = $derived(subs.filter(isLive).sort(byCrew));
@@ -93,6 +102,7 @@
         <div class="emptyc">No sub-agents — ask the agent to spawn one</div>
       {:else}
         {#snippet subRow(r: SubagentInfo, deep: boolean)}
+          {@const hint = waitingHintOf(r.state)}
           <div
             class="srow2 crewrow"
             class:d2={deep}
@@ -104,7 +114,7 @@
             ondblclick={() => void switchSession(r.child)}
           >
             <div class="l1">
-              <span class="badge {r.state}"><span class="dot"></span>{r.state}{r.waiting_on ? ` · ${r.waiting_on}` : ''}</span>
+              <span class="badge {badgeOf(r.state)}"><span class="dot"></span>{badgeLabel(r.state)}{hint ? ` · ${hint}` : ''}</span>
               <span class="ln">{titleOf(r)}</span>
               <span class="chip">{r.agent_type}</span>
               <span class="chip dim">{r.context_mode}</span>
