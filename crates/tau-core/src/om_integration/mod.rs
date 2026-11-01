@@ -50,31 +50,45 @@ fn threshold_u32(v: u64) -> u32 {
     u32::try_from(v).expect("om thresholds are validated to fit a u32 at config load")
 }
 
+/// The thresholds the passes run with, folded from the `[om]` section: the
+/// config states the buffer's fill step as absolute tokens and the module's
+/// `buffer_activation` is a ratio of the observe threshold
+/// (1 − increment/threshold; the two forms agree at the defaults: 6k over 30k =
+/// 0.8), and `observe_threshold.max(1)` keeps that ratio defined.
+fn om_config_of(om: &crate::config::Om) -> OmConfig {
+    let observe = f64::from(threshold_u32(om.observe_threshold.max(1)));
+    let activation =
+        (1.0 - f64::from(threshold_u32(om.buffer_increment)) / observe).clamp(0.0, 1.0);
+    OmConfig {
+        observe_threshold: threshold_u32(om.observe_threshold),
+        reflect_threshold: threshold_u32(om.reflect_threshold),
+        buffer_activation: activation,
+        share_token_budget: false,
+        buffer_tokens: threshold_u32(om.buffer_tokens),
+        retries: om.retries.clone(),
+    }
+}
+
 impl OmState {
-    /// Fold the config's absolute `buffer_increment` into the module's
-    /// `buffer_activation` ratio (1 − increment/threshold; the two forms
-    /// agree at the defaults: 6k over 30k = 0.8).
+    /// The state a session's memory passes run with, over `record`: the record
+    /// is the single source of truth for the buffered chunks, the in-memory vec
+    /// its mirror (ticket #86 P2).
     #[must_use]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
-        let observe = f64::from(threshold_u32(om.observe_threshold.max(1)));
-        let activation =
-            (1.0 - f64::from(threshold_u32(om.buffer_increment)) / observe).clamp(0.0, 1.0);
-        // The record is the single source of truth for the chunks; the
-        // in-memory vec is its mirror (ticket #86 P2).
         let buffered = record.buffered_chunks.clone();
         Self {
-            config: OmConfig {
-                observe_threshold: threshold_u32(om.observe_threshold),
-                reflect_threshold: threshold_u32(om.reflect_threshold),
-                buffer_activation: activation,
-                share_token_budget: false,
-                buffer_tokens: threshold_u32(om.buffer_tokens),
-                retries: om.retries.clone(),
-            },
+            config: om_config_of(om),
             record,
             buffered,
             buffer_cursor: None,
         }
+    }
+
+    /// The `[om]` section re-read under a running session (#347): the thresholds,
+    /// the buffer interval and the retry counts follow a config edit. The record
+    /// and its buffered chunks are the session's own and stay as they are.
+    pub fn apply_config(&mut self, om: &crate::config::Om) {
+        self.config = om_config_of(om);
     }
 
     /// The current record: the last `om` entry on the active branch,
@@ -186,13 +200,16 @@ pub fn fork_record(parent: &OmRecord) -> OmRecord {
 /// where the compaction died (#338). The trigger points are the config's
 /// retry knobs: `observe`, `buffer`, `reflect`. `Session` is not a pass: it
 /// is the record store a compaction needs and could not reach, named so a
-/// card never claims a pass that did not run.
+/// card never claims a pass that did not run. `Route` is not a pass either:
+/// it is `[om].om_model` addressing no endpoint, so no round-trip ran and
+/// none will (#348).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OmStage {
     Observe,
     Buffer,
     Reflect,
     Session,
+    Route,
 }
 
 impl OmStage {
@@ -204,6 +221,7 @@ impl OmStage {
             Self::Buffer => "buffer",
             Self::Reflect => "reflect",
             Self::Session => "session",
+            Self::Route => "route",
         }
     }
 }

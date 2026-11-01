@@ -292,6 +292,9 @@ pub async fn stream_turn(
             Err(e) => {
                 let retryable = match &e {
                     ProviderError::Request(reqwest_err) => {
+                        // Deliberately narrower than the OM passes' transient class
+                        // (#353): a retried OM pass is idempotent, a retried session
+                        // turn can duplicate a half-applied one.
                         reqwest_err.is_connect() || reqwest_err.is_timeout()
                     }
                     // A dead stream before its body is a transport failure:

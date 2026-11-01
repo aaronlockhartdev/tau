@@ -466,6 +466,44 @@ async fn project_layer_models_appear_in_the_selector() {
     );
 }
 
+/// The same door, refused: a project layer that will not load is a failure the
+/// client hears, not a selector that quietly drops the workspace's models —
+/// and `session/new` creates nothing on a refusal (#356).
+#[tokio::test]
+async fn a_broken_project_layer_refuses_session_new() {
+    let home = tempfile::tempdir().expect("temp home");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("binds the mock LLM");
+    let addr = listener.local_addr().expect("bound addr");
+    tokio::spawn(tau_mock_llm::server::serve(
+        listener,
+        Arc::new(tau_mock_llm::scenario::ScenarioSet::default()),
+    ));
+    let base_url = format!("http://{addr}/v1");
+    let cwd = tempfile::tempdir().expect("temp cwd");
+    std::fs::create_dir_all(cwd.path().join(".tau")).expect("makes .tau");
+    std::fs::write(
+        cwd.path().join(".tau").join("config.toml"),
+        "[providers.proj\n",
+    )
+    .expect("writes an unparseable project config");
+
+    let mut client = Client::spawn(home.path(), &base_url, "mock-model");
+    let new = client
+        .request(1, "session/new", json!({ "cwd": cwd.path() }))
+        .await;
+    let message = new["error"]["message"]
+        .as_str()
+        .expect("a refusal, not a session")
+        .to_owned();
+    assert!(
+        message.contains("config.toml"),
+        "the refusal names the file: {message}"
+    );
+    assert!(new["result"].is_null(), "no session id on a refusal");
+}
+
 /// `session/set_config_option` answers with the updated model select: the v1
 /// schema marks `configOptions` required on this response, and
 /// `currentValue` sits on the model just set (B1; Harbor's `--model` path).

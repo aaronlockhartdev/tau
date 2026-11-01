@@ -482,6 +482,13 @@ describe('a diagnostic entry (ADR-0034)', () => {
       .toBe('compaction: the record store write failed: io: disk write failed (session)');
   });
 
+  // #348: `route` is no pass — an `om_model` that addresses no endpoint stops
+  // the passes before they start — so the GUI names the stage for what it is.
+  it('names a dead route as a dead route, not as a failed pass', () => {
+    expect(line({ code: 'om_failed', stage: 'route', reason: 'om.om_model \'dev/y\': no configured provider declares it' }))
+      .toBe('compaction: om_model addresses no endpoint: om.om_model \'dev/y\': no configured provider declares it');
+  });
+
   // The pass wording is the stage's name in the pass shape, and a stage this
   // build does not know renders that way too.
   it('names a pass by its stage, known or not', () => {

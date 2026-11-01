@@ -264,7 +264,6 @@ impl OmState {
                     .await?
                 }
             };
-            model.clone_into(&mut self.record.om_model);
             with_store(&mut |store| self.commit(store, action, &result))?;
         }
         Ok(())

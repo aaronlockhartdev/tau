@@ -83,7 +83,7 @@ async fn om_crosses_observe_and_reflect_and_every_request_carries_a_user_query()
             &cfg,
             crate::om::OmRecord::default(),
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     });
@@ -199,7 +199,7 @@ async fn om_runs_notify_the_status_hook_in_order() {
             &cfg,
             crate::om::OmRecord::default(),
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     });
@@ -282,7 +282,7 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
                 ..Default::default()
             },
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     });
@@ -371,7 +371,7 @@ async fn context_gate_fires_when_over_budget() {
             &cfg,
             crate::om::OmRecord::default(),
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     });
@@ -467,7 +467,7 @@ async fn context_gate_noop_when_under_budget() {
             &cfg,
             crate::om::OmRecord::default(),
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     });
@@ -538,7 +538,7 @@ async fn context_gate_refuses_when_the_ladder_cannot_fit() {
             &cfg,
             crate::om::OmRecord::default(),
         )),
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     });

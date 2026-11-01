@@ -38,11 +38,40 @@ the interface.
   `config_rejected { path, reason }` (ADR-0034: a failure belonging to no
   session is not a session diagnostic). A parse failure names the layer file;
   an I/O failure names none, and so does a validation failure — it is a property
-  of the merged config, not of one file.
+  of the merged config, not of one file. Every read of a layer checks it, so a
+  file the code cannot read is a failure the moment it is met, not only at boot.
+  The boot is the one read allowed to ride a bad config — it keeps its defaults —
+  and it says so: before any workspace is open the break has no session to record
+  it, so the boot sends that event with no workspace, and the first session under
+  the layer reads the file itself and carries the record (#363).
+  The ACP server reads the same layers to answer its model selector, and a layer
+  it cannot read is a refusal of `session/new` — the client hears the failure
+  with the file's name, rather than a selector listing the system layer's models
+  as if the workspace had none (#356).
 - A live session takes the new config at the **next turn boundary**, never
-  mid-stream, re-deriving its turn from the provider its model id names. A model
-  an edit removes sends its context gate to missing and records
-  `gate_unavailable` **once** per transition.
+  mid-stream. The boundary re-derives the session's **turn**: the context facts a
+  model's `[providers]` entry declares, its sampling and reasoning (`[thinking]`,
+  `[generation]`), the cache retention a request declares (`[cache]`), and the
+  image limits (`[limits]`). It re-derives the **memory passes** too: `[om]`'s
+  thresholds, buffer interval, retry counts and route (#348, #347). A model an
+  edit removes sends its context gate to missing and records `gate_unavailable`
+  **once** per transition. A layer that will not load is inert in the same
+  breath: the session keeps running on the config that last read, and the
+  failure is recorded **in the session** as `config_rejected { path, reason }`,
+  once per failure, so the transcript says why a file's edits are not showing up
+  (#359). A session that opens on a broken config is told the same way — the
+  banner rides a live event, and a cold open fires no watcher. A warm cache is no
+  exemption: the watcher's failed reload marks the workspace's merged entry stale
+  and a reload that reads clears the mark, so the boundary meets the failure the
+  turn after the edit. A break of the system layer marks every open workspace,
+  since every merge rides that layer (#364).
+- What the app reads at **launch** is not a live value: a session keeps the
+  model it opened on (`[generation]`'s `default_model` picks new sessions), the
+  gate set it opened with and the `[gates]` instructions its system prompt
+  embeds, `[requests]`' timeouts — read per call from the copy the session was
+  built with, and rebound only when a model switch resets the route — and
+  `[subagents]` and `[hashline]`, copied at open. #347 tracks
+  widening the live set.
 - `provider_changed` is edge-triggered on the rows a model menu would newly see,
   so a save that changes nothing emits nothing.
 
@@ -54,8 +83,14 @@ looked up among the providers that declare it. The route decides the `base_url`
 a request goes to, the facts it is built from, and the provider a subagent
 child is addressed at — never the provider the config's map sorts first. It
 applies to every id the harness resolves a provider's facts from, including
-`[generation].default_model`. It does **not** apply to `[om].om_model`, which is
-sent to the endpoint verbatim (`resolve_om_model`). See
+`[generation].default_model` and `[om].om_model` (`Config::route_om`, #348): the
+memory passes are addressed at the provider the id names and asked of it for the
+prefix stripped. An id whose prefix names no provider is taken where a provider
+declares the whole string — a gateway's ids read `vendor/name` (#354, #358) —
+and refused when nothing declares it. An `om_model` that addresses no endpoint
+is refused — the
+passes stop and the record carries `om_failed { stage: "route" }` naming the
+config key and the id — because the memory has no address of its own to borrow. See
 [Provider resolution](#provider-resolution).
 
 Agent types are **not** in this file: they are `agents/*.md` under
@@ -75,10 +110,35 @@ keychain, no auto-detection, spec §6).
 | `models` | map | empty | model id = key; value is the table below |
 
 Providers are a `BTreeMap`, and **a model id picks the provider it is addressed
-at** (#336) — the entry its prefix names, or, for a bare key, the one provider
-that declares it. The alphabetically-first entry is only the starting address:
-the fallback a session with no recorded model opens on, and the provider a bare
-key is looked up against at the open. See [Provider resolution](#provider-resolution).
+at** (§6.7, #336): an id whose prefix names a provider is addressed at that
+entry; a prefixed id whose prefix names no provider is **refused**, never handed
+to the first entry; a bare key goes to the one provider that declares it, and
+where two declare it **the session's own provider answers** — which is why the
+model menu spells ids prefixed. The alphabetically-first entry is only the
+starting address: the fallback a session with no recorded model opens on. See
+[Provider resolution](#provider-resolution).
+
+Because the id carries the routing, its spelling has to be readable as one
+address (#354), and two shapes that break that fail the load: a **provider name
+containing `/`** — the prefix is where a name ends, so a name with a slash
+leaves the prefix ambiguous — and a **`[thinking].levels` key carrying a `/`
+that no provider declares as a model**, which is then read by nothing (a bare
+key is exempt: every id routes to a bare key, and that is the key read).
+
+A **model key may itself carry a `/`**, the spelling of the providers that host
+several vendors: `providers.openai.models."openai/gpt-5"`, a gateway whose keys
+read `anthropic/claude-…`, `accounts/fireworks/models/…`. §6.7 reads the first
+segment of an id as a provider name and consumes it once, so every key keeps its
+own id: the declared `openai/gpt-5` above is addressed by the full
+`openai/openai/gpt-5`, while the bare `openai/gpt-5` means provider `openai`'s
+model `gpt-5`. Under a provider that is *not* named for that prefix
+(`providers.openrouter.models."openai/gpt-5"`), §6.7 finds no provider in the
+bare spelling, so the whole string is the key: `openai/gpt-5` is asked of that
+provider, and `openrouter/openai/gpt-5` addresses the same endpoint (#358). A
+slashed id no provider declares — `nosuch/gpt-5` in a file with no such key — is
+refused (`UnownedPrefix`). A thinking level is
+keyed by the declared key in both cases — see
+[`thinking`](#thinking-thinking-levels).
 
 ### `[providers.<name>.models.<id>]` — model facts
 `context_window` is **required**: a model entry that omits it, or writes `0`,
@@ -123,7 +183,7 @@ sorts first.
 |---|---|
 | Which `base_url` does a request use? | the routed provider's |
 | Where are a model's facts read from? | that provider's `models` map, keyed by §6.7's key (`Config::model_key_for`) |
-| What may `default_model` name? | any model any provider declares: a prefixed id names its provider, a bare key is taken where it is declared |
+| What may `default_model` name? | a prefixed id names its provider, a bare key is taken where it is declared, a gateway's `vendor/name` key at the provider declaring it (#358); anything else — empty, a slashed id no provider declares, an undeclared bare key — is the empty-value contract, the first provider's first model |
 | What does a menu switch do? | routes the new id against the provider the session is on (`switch_route`), then re-derives the turn from the owner it lands on |
 | What does a subagent child use? | the provider its own model id routes to (`Config::route_child`); an id naming no provider keeps the parent's, which the spawn already resolved |
 | Where does a child with no model of its own get one? | from its parent — the model the parent is on **when the child spawns** (#336), so a menu switch reaches children spawned after it, never a child already running |
@@ -163,7 +223,7 @@ max_tokens = 32000
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `default_model` | string | `""` | any model any provider declares: a `provider/` prefix names that provider, a bare key is taken where it is declared (§6.7). An empty value, a prefix naming no provider, and a key no provider declares are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`) — see [Provider resolution](#provider-resolution) |
+| `default_model` | string | `""` | a `provider/` prefix names that provider, a bare key is taken where it is declared, a gateway's `vendor/name` key at the provider declaring it (§6.7, #358). An empty value, a slashed id no provider declares, and an undeclared bare key are the empty-value contract — the first provider's first model (`default_model`, `harness/sessions.rs`) — see [Provider resolution](#provider-resolution) |
 | `temperature` | float | none | |
 | `max_tokens` | int | none | the output cap for the session, before the thinking adjustment below; a model entry's own `max_tokens` wins, and the window clamps both per call — a ceiling on the answer, never a reservation against the prompt |
 | `top_p` | float | none | |
@@ -175,7 +235,7 @@ max_tokens = 32000
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `level` | `off` `minimal` `low` `medium` `high` `xhigh` `max` | `off` | the session's default effort |
-| `levels` | map model-id → level | empty | per-model override |
+| `levels` | map model-id → level | empty | per-model override, keyed by the model key an id routes to (`harness/sessions.rs`); a key with a slash that no provider declares is read by nothing, and the load fails (#354) |
 | `budgets` | map level-name → tokens | empty | thinking room reserved for the level |
 | `summary` | bool | `false` | ask for a reasoning summary (`reasoning.summary`) |
 
@@ -210,7 +270,7 @@ The compaction model is global, not per-provider (spec §4).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `om_model` | string | `""` | empty = the session's own model. Sent to the session provider's endpoint **verbatim** — §6.7's `provider/` prefix is not stripped here (`resolve_om_model`), so a prefixed id reaches the endpoint with its provider still attached |
+| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, and a contested key that provider does not declare is a refusal. A `vendor/name` id whose prefix names no provider goes to the provider declaring that whole key, a gateway's ids reading that way (#358). An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
 | `observe_threshold` | int | 30000 | |
 | `reflect_threshold` | int | 40000 | |
 | `buffer_increment` | int | 6000 | |
@@ -312,7 +372,8 @@ max_tokens = 32768
 
 [generation]
 # Routed by §6.7: the menu's spelling (provider/key) names the provider, a bare
-# key is taken where it is declared.
+# key is taken where it is declared, a gateway's `vendor/name` id at the provider
+# declaring that key (#358).
 default_model = "lmstudio/gpt-5-mini"
 temperature = 0.0
 max_tokens = 16384
@@ -402,12 +463,21 @@ partially applied.
 - `providers.{provider}.models.{model} declares no context_window; the context gate needs it` — a model entry that omits the window (#338)
 - `providers.{provider}.models.{model} declares max_tokens = 0; the output cap must be positive` — a declared cap of `0` arms a gate that can answer nothing (#338)
 - `subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})`
+- `providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name` — a name that makes an id's prefix ambiguous (#354)
+- `thinking.levels.{key}: no provider declares it as a model, so the level is never read` (#354)
 
 The two gate facts name the entry they reject: `providers.<name>.models.<id>`
 for a model entry, `generation` for `[generation].max_tokens`.
 
 A validation failure is a property of the merged config, not of one file, so it
 names no layer path (`config_rejected` carries `path: null`, #337).
+
+A session records the same failure as its own fact — `config_rejected`, minted
+when the session opens and at each of its turn boundaries, once per failure
+(#359). That record always names a file: at a rule failure, the layer a
+mid-session edit lands in, because a rule speaks of the merged set and names no
+file of its own. The session keeps running on the config that last read, so the
+record is also the answer to "why isn't my edit taking effect?".
 
 A provider with no `models` entry, reached as a session's provider, is a runtime
 `provider {name} has no models`, not a load error.

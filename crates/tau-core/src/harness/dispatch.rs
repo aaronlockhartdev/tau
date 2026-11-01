@@ -164,7 +164,7 @@ impl Core {
                 // The workspace's config, read fresh: the project layer is one
                 // of the layers and a config edit shows up (#337).
                 Ok(CommandOutput::Providers {
-                    providers: provider_rows(&self.workspace_config(&workspace)),
+                    providers: provider_rows(&self.workspace_config_silent(&workspace)),
                 })
             }
             Command::ProviderAdd { .. }

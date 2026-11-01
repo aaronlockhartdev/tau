@@ -72,7 +72,7 @@ fn agent_with(
         gate_failed: false,
         hashline: crate::hashline::pin_store::GcPolicy::default(),
         om,
-        om_model: String::new(),
+        om_route: crate::agent::OmRoute::Session,
         subagents: None,
         child: None,
     }))

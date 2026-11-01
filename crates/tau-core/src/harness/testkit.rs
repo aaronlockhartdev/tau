@@ -18,6 +18,7 @@ pub(crate) fn providers() -> BTreeMap<String, crate::config::Provider> {
 /// `config` is borrowed, so the caller keeps it to move into the role.
 pub(crate) fn route(config: &crate::config::Config, model: &str) -> crate::config::Route {
     crate::config::Route {
+        name: "dev".to_owned(),
         model: model.to_owned(),
         provider: config
             .providers
@@ -72,7 +73,7 @@ pub(crate) fn manual_session_om(
             turn,
             tool_batch_on_force: crate::config::ToolBatchPolicy::default(),
             om,
-            om_model: String::new(),
+            om_route: crate::agent::OmRoute::Session,
             gates: None,
         },
     )
@@ -559,4 +560,45 @@ pub(crate) fn provider_changed_count(collected: &Arc<Mutex<Vec<Event>>>, ws: &st
             _ => false,
         })
         .count()
+}
+
+/// The `[om]` section a test's OM state is folded from. The turn boundary
+/// re-derives `[om]` from the live config (#347), so a leg that injects
+/// thresholds has to declare them in the file the session derives from —
+/// otherwise the boundary takes the defaults and the pass the leg studies
+/// never runs.
+pub(crate) fn om_layer(om: &crate::config::Om) -> String {
+    format!(
+        "[om]\nom_model = \"{model}\"\nobserve_threshold = {observe}\nreflect_threshold = {reflect}\nbuffer_increment = {increment}\nbuffer_tokens = {buffer}\n\n[om.retries]\nobserve = {re_observe}\nbuffer = {re_buffer}\nreflect = {re_reflect}\n",
+        model = om.om_model,
+        observe = om.observe_threshold,
+        reflect = om.reflect_threshold,
+        increment = om.buffer_increment,
+        buffer = om.buffer_tokens,
+        re_observe = om.retries.observe,
+        re_buffer = om.retries.buffer,
+        re_reflect = om.retries.reflect,
+    )
+}
+
+/// The core over a system layer whose `[om]` section is `om`. The `TempDir`
+/// outlives the core: the watcher keeps reading that directory.
+pub(crate) fn om_core(om: &crate::config::Om) -> (Arc<Core>, tempfile::TempDir) {
+    let system = tempfile::tempdir().unwrap();
+    write_config_fixture(system.path(), &om_layer(om));
+    let core = CoreBuilder::custom(providers())
+        .with_system_dir(system.path().to_path_buf())
+        .build()
+        .unwrap();
+    (core, system)
+}
+
+/// The step between a config edit and a live session seeing it: the system
+/// layer's reload. A workspace's merged config is cached, and the reload drops
+/// those entries — in production the file watcher's task reloads on the edit, and
+/// a test drives the edit by hand, so a leg that edits the file and sends
+/// without this reads the pre-edit merge (#359). The step is the system layer's
+/// reload — `Core::reload_system_config`, what the system watcher's task runs (#337).
+pub(crate) fn reload_system_layer(core: &Arc<Core>) {
+    core.reload_system_config();
 }

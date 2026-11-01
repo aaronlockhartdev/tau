@@ -40,7 +40,7 @@ fn gated_agent(dir: &std::path::Path, provider: Arc<ScriptedProvider>) -> Arc<Ag
             },
             tool_batch_on_force: ToolBatchPolicy::Complete,
             om: None,
-            om_model: String::new(),
+            om_route: crate::agent::OmRoute::Session,
             gates: None,
         },
     )

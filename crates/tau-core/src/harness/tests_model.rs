@@ -596,6 +596,70 @@ default_model = "dev/second"
     );
 }
 
+/// #358: a gateway's config declares the vendor's own ids — `openrouter`'s catalog
+/// spells all of them `vendor/name` — and a user sets the default to what the
+/// vendor prints. §6.7 takes that id to the provider declaring it. Before this,
+/// §6.7 read `openai` as a provider name, found none, and the session opened on
+/// the map's first model with nothing recorded about the substitution.
+#[tokio::test]
+async fn a_gateways_slashed_default_model_opens_on_the_model_it_names() {
+    let sys = tempfile::tempdir().unwrap();
+    // `alpha` sorts first, so landing on it is the fall-back this leg refuses.
+    std::fs::write(
+        sys.path().join("config.toml"),
+        "[providers.alpha]\nbase_url = \"http://127.0.0.1:9/a/v1\"\nkey_env = \"\"\n\n[providers.alpha.models.first]\ncontext_window = 8192\n\n[providers.openrouter]\nbase_url = \"http://127.0.0.1:9/o/v1\"\nkey_env = \"\"\n\n[providers.openrouter.models.\"openai/gpt-5\"]\ncontext_window = 200_000\nmax_tokens = 8192\n\n[generation]\ndefault_model = \"openai/gpt-5\"\n",
+    )
+    .unwrap();
+    let core = CoreBuilder::default_system()
+        .unwrap()
+        .with_system_dir(sys.path().to_path_buf())
+        .with_home(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let w = open_ws(&core, cwd.path()).await;
+    let live = match core
+        .dispatch(Command::SessionNew {
+            workspace: w.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected session: {other:?}"),
+    };
+    assert_eq!(
+        live.model.as_deref(),
+        Some("openai/gpt-5"),
+        "the vendor's id is taken at its declarer, not replaced by `alpha`'s first model"
+    );
+    // A record to project: an empty session states no facts whatever the gate says.
+    {
+        let mut store = SessionStore::for_workspace(cwd.path(), &live.id);
+        store
+            .append(EntryKind::User, json!({ "text": "a turn" }), None)
+            .unwrap();
+    }
+    core.dispatch(Command::SessionClose {
+        session: live.id.clone(),
+    })
+    .unwrap();
+    core.dispatch(Command::SessionOpen {
+        session: live.id.clone(),
+    })
+    .unwrap();
+
+    assert_eq!(
+        facts_in(&session_file(cwd.path(), &live.id)),
+        vec![Diagnostic::ModelChanged {
+            from: None,
+            to: "openai/gpt-5".into(),
+        }],
+        "the route bound openrouter's declared facts, so the gate records no gap"
+    );
+}
+
 /// The fallback survives the read: a default no provider declares opens on the
 /// first model, which is what the config's empty-value contract has always meant.
 #[tokio::test]

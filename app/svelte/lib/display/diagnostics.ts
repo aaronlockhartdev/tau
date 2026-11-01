@@ -15,7 +15,8 @@ export type DiagnosticEntry = Extract<Entry, { kind: 'diagnostic' }> | AnyEntry;
 // `context_overflow`/`gate_unavailable` are the Context gate (#227/#233).
 const KNOWN_DIAGNOSTIC_CODES: DiagnosticCode[] = [
   'model_changed', 'gate_unavailable', 'context_overflow', 'gate_attempt',
-  'gate_failed', 'om_stalled', 'om_failed', 'provider_rejected', 'missing_user_query', 'turn_cutoff'
+  'gate_failed', 'om_stalled', 'om_failed', 'provider_rejected', 'missing_user_query', 'turn_cutoff',
+  'config_rejected'
 ];
 
 // A gate_unavailable record names what the gate lacks; the card says what that
@@ -29,13 +30,16 @@ const GATE_GAP: Record<string, string> = {
 
 // An om_failed stage names where compaction died: the passes (`observe`,
 // `buffer`, `reflect`) and `session`, which is no pass at all — the record-store
-// write a compaction needs and could not reach, so a card never reports a pass
-// that never ran. A stage this build does not know renders in the pass shape.
+// write a compaction needs and could not reach, and `route`, which is no pass
+// either: `[om].om_model` addresses no endpoint, so the passes never started
+// (#348). A card never reports a pass that never ran; a stage this build does
+// not know renders in the pass shape.
 const OM_STAGE: Record<string, string> = {
   observe: 'compaction observe pass failed',
   buffer: 'compaction buffer pass failed',
   reflect: 'compaction reflect pass failed',
-  session: 'compaction: the record store write failed'
+  session: 'compaction: the record store write failed',
+  route: 'compaction: om_model addresses no endpoint'
 };
 
 export function diagnosticLabel(entry: DiagnosticEntry): string {
@@ -75,6 +79,9 @@ export function diagnosticLabel(entry: DiagnosticEntry): string {
       return `refused: assembled input has no user query (${d.items} item(s))`;
     case 'turn_cutoff':
       return `provider cut the turn (${streamOutcomeLabels[d.ended_by]}) after ${d.blocks} block(s)`;
+    case 'config_rejected':
+      // The edit is inert: the card names the file the core could not read.
+      return `config not applied (${d.path}): ${firstLine(d.reason)}`;
     default:
       // Unreachable while the list above covers every DiagnosticCode.
       return raw.code;

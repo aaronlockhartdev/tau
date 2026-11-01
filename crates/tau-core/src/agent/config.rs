@@ -82,6 +82,40 @@ impl AgentSession {
         self.inner.lock().turn = turn;
     }
 
+    /// The `[om]` section for the next pass (spec §12, #347): a live session
+    /// re-reads the thresholds, the buffer interval and the retry counts at its
+    /// turn boundary. A session with no OM has nothing to re-read.
+    pub(crate) fn set_om_config(&self, om: &crate::config::Om) {
+        if let Some(state) = self.inner.lock().om.as_mut() {
+            state.apply_config(om);
+        }
+    }
+
+    /// The config a boundary read succeeded on: the latch clears, so the next
+    /// broken edit is a new story (#359).
+    pub(crate) fn config_accepted(&self) {
+        self.inner.lock().config_rejection = None;
+    }
+
+    /// A config read that failed, by the file and what the loader said. True the
+    /// first time that pair arrives — the caller's signal to record it. The
+    /// boundary runs every turn and a broken file does not fix itself, so one
+    /// failure is stated once, not per turn, and a read that succeeds clears the
+    /// latch so a failure returning after a repair is a new story. The pair is
+    /// the key, not the reason alone: a parse failure names its file, so two
+    /// broken layers are two stories. A load rule speaks of the merged set and
+    /// names no file — the boundary files it under the project layer — so a rule
+    /// failure is stated once per session until a read succeeds (#359).
+    pub(crate) fn config_rejection_changed(&self, path: &str, reason: &str) -> bool {
+        let pair = (path.to_owned(), reason.to_owned());
+        let mut inner = self.inner.lock();
+        let fresh = inner.config_rejection.as_ref() != Some(&pair);
+        if fresh {
+            inner.config_rejection = Some(pair);
+        }
+        fresh
+    }
+
     /// The session's current turn options (spec §12, #35): what the next
     /// turn's calls run with. The config-reload boundary reads it to decide
     /// whether a re-derivation would change the gate (#337).

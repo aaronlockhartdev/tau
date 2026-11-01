@@ -10,8 +10,8 @@ use super::{
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
     TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open, tools,
 };
-use crate::agent::StreamDelta;
-use crate::config::{Route, ToolBatchPolicy};
+use crate::agent::{OmRoute, StreamDelta};
+use crate::config::{ProviderRef, Route, ToolBatchPolicy};
 use crate::om::OmRecord;
 use crate::om_integration::OmState;
 use crate::provider::{ToolSpec, TurnProviderRef};
@@ -82,8 +82,9 @@ pub enum SessionRole {
         /// The OM state; `None` = OM disabled (ticket #43: the acceptance
         /// driver's live-om suite carries its own).
         om: Option<OmState>,
-        /// The OM model; empty = the session's model.
-        om_model: String,
+        /// Where the memory passes run (#348); the test kits pass
+        /// `OmRoute::Session`, which rides the session's own model.
+        om_route: OmRoute,
         /// The completion gate (spec §5.3); `None` = no gate.
         gates: Option<crate::config::Gates>,
     },
@@ -110,7 +111,7 @@ impl AgentSession {
                 turn,
                 tool_batch_on_force,
                 om,
-                om_model,
+                om_route,
                 gates,
             } => {
                 // The plan file (design: session-scoped, the source of truth):
@@ -130,7 +131,7 @@ impl AgentSession {
                     gates,
                     gate_failed: false,
                     om,
-                    om_model,
+                    om_route,
                     // No `Config` in scope for the bare role (test kits):
                     // the default GC policy.
                     hashline: crate::hashline::pin_store::GcPolicy::default(),
@@ -151,7 +152,6 @@ impl AgentSession {
                 let Inherited {
                     cwd,
                     om,
-                    om_model,
                     gates,
                     tool_batch_on_force,
                     hashline,
@@ -172,6 +172,10 @@ impl AgentSession {
                      is a human, and an unlabeled message is your own task \
                      (the spawn brief).",
                 );
+                // The child rides its own model until its first turn boundary,
+                // where the live config re-derives the route against the
+                // provider its own model names (#348).
+
                 let agent = Self::new(SessionParams {
                     store,
                     system_prompt,
@@ -184,7 +188,7 @@ impl AgentSession {
                     gates,
                     gate_failed: false,
                     om: Some(OmState::from_config(&om, record)),
-                    om_model,
+                    om_route: OmRoute::Session,
                     hashline,
                     subagents: None,
                     child: Some(Arc::new(crate::subagent::ChildLink { supervisor, handle })),
@@ -245,7 +249,9 @@ impl AgentSession {
                     // supervisor it adopts, and no fixture gives one a command.
                     gate_failed: false,
                     om: Some(OmState::from_config(&d.om, record)),
-                    om_model: d.om_model,
+                    // The seam has no core to route with (the test seam): its
+                    // passes ride the model it is built on (#348).
+                    om_route: OmRoute::Session,
                     hashline: d.hashline,
                     subagents: Some(supervisor.clone()),
                     child: None,
@@ -324,6 +330,18 @@ fn root_session(
     let model = route.model.as_str();
     let turn = derive_turn(config, &route.provider, model, store.id());
 
+    // Where the memory passes run (#348), from the config this open read: a
+    // session with no `[om].om_model` rides the model above; each pass stamps
+    // the model it addressed into the memory record, so the record names the
+    // endpoint the memory runs on, configured or ridden.
+    let om_route = core.om_route(
+        config,
+        ProviderRef {
+            name: &route.name,
+            provider: &route.provider,
+        },
+    );
+
     let cwd = PathBuf::from(&workspace.cwd);
 
     // The per-session OM record (ticket #22): reconstructed from the
@@ -385,6 +403,7 @@ fn root_session(
             client: core.client.clone(),
             config: config.clone(),
             provider: route.provider.clone(),
+            provider_name: route.name.clone(),
             requests: config.requests.clone(),
             tx: core.events_tx.clone(),
             pipe: core.pipe.clone(),
@@ -410,7 +429,6 @@ fn root_session(
         model: model.to_owned(),
         system_prompt: system_prompt.clone(),
         om: config.om.clone(),
-        om_model: config.om.om_model.clone(),
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
         gates: config.gates.clone(),
@@ -450,7 +468,7 @@ fn root_session(
         gates: config.gates.clone(),
         gate_failed,
         om: Some(OmState::from_config(&config.om, record)),
-        om_model: config.om.om_model.clone(),
+        om_route,
         hashline: gc_policy(config),
         subagents: Some(sup.clone()),
         child: None,
