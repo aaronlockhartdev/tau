@@ -3,6 +3,7 @@
 // child is parked on the user.
 
 import type { SessionState } from '../rules/sessions';
+import { isWaitingOnUser } from './subagent-state';
 
 export interface AttentionItem {
   session: string;
@@ -19,9 +20,11 @@ export function attentionOf(sessions: Record<string, SessionState>): AttentionIt
     if (s.meta.archived) continue;
     const ws = s.meta.workspace;
     const title = s.meta.title ?? s.meta.id;
-    // A child parked on the user (spec §5.2: GUI badge, not a wake).
+    // A child parked on the user (spec §5.2: a GUI badge, not a wake) — the
+    // same predicate the sidebar's badge label reads, so a child the tree
+    // marks `user` is never left out of the bell's list.
     for (const a of s.subagents) {
-      if (a.state === 'idle' && a.waiting_on === 'user') {
+      if (isWaitingOnUser(a.state)) {
         const who = sessions[a.child]?.meta.title ?? a.agent_type;
         items.push({
           session: s.meta.id,

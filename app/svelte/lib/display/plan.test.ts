@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Plan } from '../wire/protocol';
 import { fleetGate, planProgress } from './plan';
+import { st } from '../testing/state';
+import { stateOfBadge } from './subagent-state';
 
 const plan = (over: Partial<Plan> = {}): Plan => ({
   steps: [],
@@ -38,13 +40,21 @@ describe('planProgress', () => {
 
 describe('fleetGate', () => {
   it('settles from the observed lifecycle: done passes, failed fails', () => {
-    expect(fleetGate('done')).toBe('pass');
-    expect(fleetGate('failed')).toBe('fail');
+    expect(fleetGate(st({ state: 'done' }))).toBe('pass');
+    expect(fleetGate(st({ state: 'failed' }))).toBe('fail');
   });
 
   it('a live child gate is pending', () => {
-    expect(fleetGate('running')).toBe('pending');
-    expect(fleetGate('idle')).toBe('pending');
-    expect(fleetGate('stopped')).toBe('pending');
+    expect(fleetGate(st({ state: 'running' }))).toBe('pending');
+    expect(fleetGate(st({ state: 'idle' }))).toBe('pending');
+    expect(fleetGate(st({ state: 'stopped' }))).toBe('pending');
+  });
+
+  it('a restored tab spells the state, so its verdict rides the word', () => {
+    // The tree row of a child the core no longer lists: the badge word, no arm.
+    expect(fleetGate(stateOfBadge('failed', null))).toBe('fail');
+    expect(fleetGate(stateOfBadge('done', null))).toBe('pass');
+    // A name this build does not know states no verdict (the decoder's arm).
+    expect(fleetGate({ type: 'other', raw: 'parked' })).toBe('pending');
   });
 });

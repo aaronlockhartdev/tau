@@ -1,6 +1,7 @@
-use super::{ContextMode, Deserialize, Serialize, SkillInfo, Usage, snapshot};
+use super::{ContextMode, SkillInfo, SubagentState, Usage, snapshot};
 use crate::payload::ResumeContract;
 use crate::snapshot::ViewEntry;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,13 +137,13 @@ pub enum SubagentEventKind {
         title: String,
     },
     /// A lifecycle transition (all five states, incl. stop and its
-    /// provenance); `detail` carries the state's payload (done's output,
-    /// failed's reason, idle's `waiting_on`, stopped's by).
+    /// provenance); the `state` field carries the full payload (done's
+    /// output, failed's reason, idle's `waiting_on`, stopped's `by`
+    /// plus optional `resume_contract`).
     State {
         handle: String,
         child: String,
-        state: String,
-        detail: Option<Value>,
+        state: SubagentState,
         note: Option<String>,
     },
     /// A child notification reached the parent (done / failed / a
@@ -165,9 +166,10 @@ pub struct SubagentInfo {
     pub child: String,
     pub agent_type: String,
     pub context_mode: ContextMode,
-    /// running | idle | awaiting | done | failed | stopped
-    pub state: String,
-    pub waiting_on: Option<String>,
+    /// The child's lifecycle state (the protocol's mirror of the core's
+    /// 6-state observed machine, spec §5.2): full-state per handle, so any
+    /// frame self-heals a lost batch.
+    pub state: SubagentState,
     pub last_message: Option<String>,
     /// The child session's created timestamp (epoch ms): the snapshot's
     /// spawn-order sort key (#226 variant).
@@ -347,8 +349,9 @@ mod tests {
                 kind: SubagentEventKind::State {
                     handle: "s1-1".into(),
                     child: "s2".into(),
-                    state: "done".into(),
-                    detail: Some(json!({ "output": { "result": "ok" } })),
+                    state: super::SubagentState::Done {
+                        output: Some(json!({ "result": "ok" })),
+                    },
                     note: None,
                 },
             },
@@ -419,8 +422,7 @@ mod tests {
             SubagentEventKind::State {
                 handle: "h1".into(),
                 child: "s2".into(),
-                state: "done".into(),
-                detail: None,
+                state: super::SubagentState::Done { output: None },
                 note: Some("n".into()),
             },
             SubagentEventKind::Notified {

@@ -137,7 +137,7 @@ fn state_of(rig: &Rig, handle: &str) -> String {
         })
         .unwrap()
     {
-        CommandOutput::Subagent { subagent } => subagent.state,
+        CommandOutput::Subagent { subagent } => subagent.state.tag().to_owned(),
         other => panic!("expected a subagent: {other:?}"),
     }
 }
@@ -464,22 +464,26 @@ async fn provider_list_is_served_sorted_by_name() {
     }
 }
 
-#[tokio::test]
-async fn provider_mutations_are_unsupported_in_v0() {
-    let rig = rig(done_body(), 0);
-    let err = rig
-        .core
-        .dispatch(Command::ProviderAdd {
-            name: "x".into(),
-            base_url: "http://x/v1".into(),
-            key_env: String::new(),
-            models: vec!["m".into()],
-        })
-        .unwrap_err();
-    assert!(
-        matches!(err, tau_protocol::ProtocolError::Unsupported { .. }),
-        "v0 providers are config-file-driven: {err:?}"
-    );
+#[test]
+fn provider_write_commands_are_off_the_surface() {
+    // Item 6 (#346): the write trio is deleted, so its wire tags are off the
+    // command surface — a client that sends one gets a decode error, never a
+    // silent `Unsupported` arm. The read (`provider_list`) stays.
+    for wire in [
+        r#"{"type":"provider_add","name":"x","base_url":"http://x/v1","key_env":"K","models":["m"]}"#,
+        r#"{"type":"provider_set","name":"x","base_url":"http://x/v1","key_env":"K","models":["m"]}"#,
+        r#"{"type":"provider_delete","name":"x"}"#,
+    ] {
+        let err = serde_json::from_str::<Command>(wire).unwrap_err();
+        assert_eq!(
+            err.classify(),
+            serde_json::error::Category::Data,
+            "an off-surface command is a data error: {wire}"
+        );
+    }
+    let list: Command = serde_json::from_str(r#"{"type":"provider_list","workspace":"w1"}"#)
+        .expect("the read stays on the surface");
+    assert!(matches!(list, Command::ProviderList { .. }));
 }
 
 #[tokio::test]
@@ -830,5 +834,8 @@ async fn a_restart_restores_a_child_state_from_disk() {
         .live
         .own_state
         .expect("a child carries its own_state");
-    assert_eq!(own.state, "done");
+    assert!(
+        matches!(own, tau_protocol::SubagentState::Done { .. }),
+        "a child that reported rides the `done` tag: {own:?}"
+    );
 }

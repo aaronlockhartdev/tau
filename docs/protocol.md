@@ -154,9 +154,6 @@ Identity is always the **workspace object** (`id`, `name`, `cwd`-on-host) — ne
 | | `subagent_activity` | `handle` | `subagent_activity` |
 | Skills | `skill_list` | `workspace` | `skills` |
 | Providers | `provider_list` | `workspace` | `providers` |
-| | `provider_add` | `name`, `base_url`, `key_env`, `models` | `unsupported` |
-| | `provider_set` | `name`, `base_url`, `key_env`, `models` | `unsupported` |
-| | `provider_delete` | `name` | `unsupported` |
 | Files | `file_read` | `workspace`, `path`, `offset?`, `limit?` | `file` (`{text, truncated}`) |
 | | `file_list` | `workspace`, `path` | `files` |
 | | `file_unlist` | `workspace`, `path` | `none` |
@@ -182,9 +179,10 @@ Identity is always the **workspace object** (`id`, `name`, `cwd`-on-host) — ne
 - **Providers are config-file-driven, read-only across the seam.** `provider_list` answers the
   workspace's config (`ProviderInfo {name, base_url, models}`) with no key material (§8) — `key_env`
   names an environment variable, the key never crosses the seam. `provider_add` / `_set` / `_delete`
-  are on the surface from spec §8 and answer `ProtocolError::Unsupported` ("v0 providers are
-  config-file-driven", `dispatch.rs`) — the GUI edits `config.toml`, and the config watcher's
-  `provider_changed` event carries the swap to the model menu (#337).
+  are **off the surface** (#346, spec §8's 2026-10-30 errata): they had no producer and answered only
+  `Unsupported`, so the file is the interface end to end — the GUI edits `config.toml`, and the config
+  watcher's `provider_changed` event carries the swap to the model menu (#337). A client that sends a
+  deleted tag is a decode error, not an `Unsupported` reply.
 - **Archive is parent-scoped and one-way** (ADR-0005): a child id is refused outright (archive the
   parent); a session with a running turn is refused, and a running *child* is refused **before
   anything is quiesced** — a stop is terminal, so a refused request must mutate nothing. Children
@@ -239,7 +237,7 @@ multiplexed channel needs (#13). One channel, `tau://event`, carries all groups.
 | `session_event` | `workspace, session, kind` | edge | `branch_move {leaf}` · `compaction {entry, first_kept}` |
 | `om_status` | `workspace, session, kind` | state | `observing` · `reflecting` · `idle` — the status-bar gauge |
 | `system` | `workspace, session?, kind` | edge | `workspace_opened {name, cwd}` · `provider_changed` · `config_rejected {path, reason}` · `error {message}` |
-| `subagent_event` | `workspace, session (parent), kind` | state/edge | `spawned {handle, child, agent_type, context_mode, title}` · `state {handle, child, state, detail?, note?}` · `notified {child, wake, text, output?}` |
+| `subagent_event` | `workspace, session (parent), kind` | state/edge | `spawned {handle, child, agent_type, context_mode, title}` · `state {handle, child, state, note?}` — `state` is the tagged `SubagentState` (§5), so the badge and its detail ride one value · `notified {child, wake, text, output?}` |
 | `plan_changed` | `workspace, session, plan` | full state | the plan file's parsed state (the watcher, §5.3) |
 | `skill_list_changed` | `workspace, skills[]` | full state | the skill registry (watcher, #31); session-less |
 | `file_tree_changed` | `workspace, changed[]` | invalidation | workspace-relative stale dirs; the client refetches listed dirs, never a tree (watcher, #32) |
@@ -302,6 +300,35 @@ Built on demand (app launch, tab open, reconnect), **never a file**. `session_op
   (ADR-0005 hardening 2); a payload-less `ViewEntry` with a `blob` renders as unavailable.
 - `Plan {steps: [{text, done}], criteria, notes}`; `QueuedItem {text, lane, source?}` where
   `source` is child provenance.
+
+### Child state ([`lib.rs`](../crates/tau-protocol/src/lib.rs)) — ADR-0006's mirror
+
+The child's lifecycle is a **tagged enum**, not a bare badge. `SubagentState` serializes under the
+`type` key (`SUBAGENT_STATE_TAG`) with snake_case arms, and each arm carries its own detail beside
+the tag:
+
+- `running {}` — the child is working.
+- `idle {waiting_on}` — parked; the declared target is `parent` | `user` | `subagent`.
+- `awaiting {}` — the `QUESTION:` marker: the child is asking the user (spec §5.2).
+- `done {output}` — the report the child finished with (`null` when it wrote none).
+- `failed {reason}` — the child's own words on why it stopped.
+- `stopped {by, resume_contract?}` — who stopped it (`user` | `parent`, the only asymmetry between
+  stops, ADR-0001), and the open next action when the stop left one (spec §5.3).
+- `other {raw}` — a state this build does not know.
+
+Serialize is derived; **deserialize is hand-written**, because serde's internally-tagged enum has no
+catch-all arm. An unknown `type` has to decode: a GUI built on an older protocol keeps rendering the
+child by the state name a newer core sent, rather than failing the frame. A known tag whose fields
+fail to decode lands in `other` as well — filling defaults into a truncated frame would state a
+lifecycle fact the core never sent.
+`other` is read, never re-emitted — and derived Serialize writes it as the tag alone, so `raw` is a
+decode-side fact: a state the GUI re-sent would come back stripped of the name it carried.
+
+The type rides `LiveState.own_state`, `SubagentInfo`, and the `subagent_event`'s `state` kind, which
+is why the event has no separate `detail` field: a badge arrives with its detail or not at all.
+It rides them alone. The declared wait is the `idle` arm's `waiting_on`, not a sibling field of the
+row or of `own_state`: a row states a target exactly when its state declares one, so a badge and a
+target cannot be edited apart (#346). The child's own tab reads the same value off `own_state`.
 
 ### Entry kinds ([`kind.rs`](../crates/tau-protocol/src/kind.rs))
 
@@ -395,8 +422,15 @@ the wire, not wire types** — deliberately outside the parity mirror's scope. T
 core-side records are whitelisted with a recorded reason: `SubagentPayload` (the state record the
 core writes; the crate carries its *events*, not the record) and `OmPayload` (mirrors `OmRecord`).
 
+The tagged child state reaches the DOM through `lib/display/subagent-state.ts` (#346): the badge a
+CSS class and a label key off, the declared wait from the `idle` arm, the wake's mapping, and the
+"the user owes it" predicate the bell and the sidebar share. A row the core no longer lists — a
+disk-restored tab — projects a badge back to the arm the wire would have sent, leaving an unobserved
+detail (a `failed` child's reason) in the `other` arm rather inventing it. Components narrow the tag
+where they render one arm's field; none reads a flat sibling, because the wire has none to read.
+
 The mirror is checked, not trusted. `node app/svelte/scripts/protocol-parity.mjs` (CI's
-"Protocol parity" step) diffs every enum/union tag and every struct field, Rust → TS — 52 surfaces
+"Protocol parity" step) diffs every enum/union tag and every struct field, Rust → TS — 54 surfaces
 on the current tree — with the allowance list above encoded as explicit parity directions (`Value`
 is the wire's free-form floor; `#[serde(default)]` and `skip_serializing_if` make a field
 wire-optional; serde renames are checked under their wire names — `parentSession`).
@@ -432,9 +466,9 @@ The parity guard fails CI on Rust→TS gaps; these are the accepted holes, each 
   Rust is invisible to the guard, and the decoder is the only place that tolerates its absence.
   `SubagentInfo.created` is the same hole in the checked layer: the crate carries it as `u64` with
   `#[serde(default)]`, so the TS mirror may keep it optional.
-- **`LiveState.own_state.state` / `SubagentInfo.state`** — the crate carries these as `String`;
-  the TS mirror narrows them to `SubagentState`'s six values, which the guard accepts as parity
-  (Rust `String` mirrors a union of string literals).
+- **`SubagentState` is a shared tagged enum (#346)** — both sides carry the same arms under the
+  `type` key, so a child badge never travels without its detail and the guard compares the shape
+  field-for-field; it replaced the crate's bare `String` state that the TS mirror used to narrow.
 - **Inlined mirrors** — `OmStatusKind`, `OmSnapshot`, `FileText` are parity-checked against the TS
   shape they appear inside, not as named types.
 - **`CommandOutput::Blob` is `Value`** — TS types it `unknown`; every consumer decodes.

@@ -11,7 +11,7 @@
   const rows = $derived.by(() => {
     const all = Object.values(store.sessions).filter((s) => !s.meta.archived);
     const rank = (s: (typeof all)[number]) =>
-      s.turn === 'running' || s.subagents.some((a) => a.state === 'running') ? 0 : s.turn === 'idle' ? 1 : 2;
+      s.turn === 'running' || s.subagents.some((a) => a.state.type === 'running') ? 0 : s.turn === 'idle' ? 1 : 2;
     return all
       .map((s) => {
         const entries = Object.values(s.entries);

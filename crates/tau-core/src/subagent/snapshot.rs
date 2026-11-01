@@ -10,7 +10,7 @@
 //! serde would require.
 
 use super::ContextMode;
-use super::states::WaitingOn;
+use super::states::{StoppedBy, WaitingOn};
 use crate::session::{Entry, SessionStore, list_workspace};
 use std::path::Path;
 use tau_protocol::EntryKind;
@@ -47,13 +47,6 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
                 },
                 settled,
             );
-            // waiting_on mirrors the live projection (inspect.rs): `idle`
-            // carries its declared target, `awaiting` is a user question.
-            let waiting_on = match state {
-                ChildStateRef::Idle { waiting_on } => Some(waiting_on),
-                ChildStateRef::Awaiting => Some(WaitingOn::User),
-                _ => None,
-            };
             // The spawn record is the child's provenance (ADR-0001):
             // agent type + context mode. A fresh/compacted child writes it at
             // its log's head, a fork child appends it to the copied parent
@@ -89,8 +82,7 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
                     ContextMode::Compacted => tau_protocol::ContextMode::Compacted,
                     ContextMode::Fork => tau_protocol::ContextMode::Fork,
                 },
-                state: state.kind().to_owned(),
-                waiting_on: waiting_on.map(|w| w.as_str().to_owned()),
+                state: state.to_protocol(),
                 last_message: None,
                 usage: None,
                 created: m.created,
@@ -107,20 +99,13 @@ pub fn restore_children_from_disk(cwd: &Path, parent: &str) -> Vec<tau_protocol:
 
 /// A child session's own lifecycle state for its snapshot's `own_state`
 /// (ticket #221): the last `subagent` state entry in the child's own file,
-/// projected to the protocol's `OwnState`. `None` when no state was
+/// projected to the protocol's tagged state. `None` when no state was
 /// recorded (a spawn with no rest) — the GUI then falls back to the
 /// turn-derived `idle`. A `running` record reads back as a parked child.
 #[must_use]
-pub fn own_state_for(entries: &[Entry]) -> Option<tau_protocol::snapshot::OwnState> {
+pub fn own_state_for(entries: &[Entry]) -> Option<tau_protocol::SubagentState> {
     let state = last_state(entries).map(settled)?;
-    Some(tau_protocol::snapshot::OwnState {
-        state: state.kind().to_owned(),
-        waiting_on: match state {
-            ChildStateRef::Idle { waiting_on } => Some(waiting_on.as_str().to_owned()),
-            ChildStateRef::Awaiting => Some(WaitingOn::User.as_str().to_owned()),
-            _ => None,
-        },
-    })
+    Some(state.to_protocol())
 }
 
 /// A `running` state is a restart artifact: the child process is gone, so
@@ -149,41 +134,54 @@ fn last_state(entries: &[Entry]) -> Option<ChildStateRef> {
 
 /// The child's persisted state (the `subagent` state entry's shape): a
 /// `ChildState` mirror that keeps the done output out of the record —
-/// `set_state` writes only the discriminant + non-output fields, and the
-/// full `ChildState` serde would require the `Done` output. The restore
-/// only needs the state kind (the `reason`/`by` payload fields are not
-/// projected, so they are dropped from the mirror).
+/// `set_state` writes the discriminant + non-output fields, and the full
+/// `ChildState` serde would require the `Done` output.
+/// The record has no `other` arm, unlike the wire's decoder: a record that
+/// cannot state its detail decodes to nothing and the restore reads no state,
+/// because the file was written by this same build — there is no newer name to
+/// keep, only a fact the writer failed to record.
 #[derive(serde::Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 enum ChildStateRef {
     Running,
     Idle {
-        // A state entry written without a target (none are, today) still
-        // decodes: the declared wait defaults to the delegating parent.
-        #[serde(default = "waiting_parent")]
+        // The target is what `set_state` writes; a frame that omits it
+        // states no wait, and the restore declines the record rather than
+        // picking a target (the wire decoder's rule for a truncated frame,
+        // applied to the record).
         waiting_on: WaitingOn,
     },
     Awaiting,
     Done,
-    Failed,
-    Stopped,
-}
-
-fn waiting_parent() -> WaitingOn {
-    WaitingOn::Parent
+    Failed {
+        reason: String,
+    },
+    Stopped {
+        by: StoppedBy,
+    },
 }
 
 impl ChildStateRef {
-    /// The state's kind string (the badge label): mirrors `ChildState::kind`.
+    /// The persisted state as the protocol's tagged enum (#346): the record
+    /// carries the reason and the stopper, so the restart's badge says the
+    /// same thing the live event did. Done's output is the notify record's,
+    /// never the state entry's, so it reads back absent.
     #[must_use]
-    fn kind(&self) -> &'static str {
+    fn to_protocol(&self) -> tau_protocol::SubagentState {
         match self {
-            ChildStateRef::Running => "running",
-            ChildStateRef::Idle { .. } => "idle",
-            ChildStateRef::Awaiting => "awaiting",
-            ChildStateRef::Done => "done",
-            ChildStateRef::Failed => "failed",
-            ChildStateRef::Stopped => "stopped",
+            ChildStateRef::Running => tau_protocol::SubagentState::Running,
+            ChildStateRef::Idle { waiting_on } => tau_protocol::SubagentState::Idle {
+                waiting_on: (*waiting_on).into(),
+            },
+            ChildStateRef::Awaiting => tau_protocol::SubagentState::Awaiting,
+            ChildStateRef::Done => tau_protocol::SubagentState::Done { output: None },
+            ChildStateRef::Failed { reason } => tau_protocol::SubagentState::Failed {
+                reason: reason.clone(),
+            },
+            ChildStateRef::Stopped { by } => tau_protocol::SubagentState::Stopped {
+                by: (*by).into(),
+                resume_contract: None,
+            },
         }
     }
 }
@@ -222,8 +220,11 @@ mod tests {
             state_entry("done", &serde_json::json!({})),
         ];
         let own = own_state_for(&entries).expect("a state entry yields an own_state");
-        assert_eq!(own.state, "done");
-        assert_eq!(own.waiting_on, None);
+        assert_eq!(own.tag(), "done");
+        assert!(
+            matches!(own, tau_protocol::SubagentState::Done { .. }),
+            "the tag carries the state and its fields: {own:?}"
+        );
     }
 
     #[test]
@@ -233,8 +234,12 @@ mod tests {
             &serde_json::json!({ "waiting_on": "user" }),
         )];
         let own = own_state_for(&entries).expect("an idle child has an own_state");
-        assert_eq!(own.state, "idle");
-        assert_eq!(own.waiting_on.as_deref(), Some("user"));
+        assert_eq!(own.tag(), "idle");
+        assert!(
+            matches!(&own, tau_protocol::SubagentState::Idle { waiting_on }
+                if waiting_on.as_str() == "user"),
+            "an `idle` tag carries the declared wait: {own:?}"
+        );
     }
 
     #[test]
@@ -262,16 +267,57 @@ mod tests {
         // never a resurrected live turn.
         let entries = vec![state_entry("running", &serde_json::json!({}))];
         let own = own_state_for(&entries).expect("a running record settles");
-        assert_eq!(own.state, "idle");
-        assert_eq!(own.waiting_on.as_deref(), Some("parent"));
+        assert!(
+            matches!(&own, tau_protocol::SubagentState::Idle { waiting_on }
+                if waiting_on.as_str() == "parent"),
+            "a `running` record reads back as parked on its parent, never live: {own:?}"
+        );
     }
 
     #[test]
-    fn an_awaiting_child_reads_as_a_user_question() {
+    fn an_awaiting_child_reads_as_its_own_tag() {
         let entries = vec![state_entry("awaiting", &serde_json::json!({}))];
         let own = own_state_for(&entries).expect("awaiting yields an own_state");
-        assert_eq!(own.state, "awaiting");
-        assert_eq!(own.waiting_on.as_deref(), Some("user"));
+        assert!(
+            matches!(own, tau_protocol::SubagentState::Awaiting),
+            "the `awaiting` tag says a child is asking with no field: {own:?}"
+        );
+    }
+
+    #[test]
+    fn a_recorded_failure_and_stop_read_back_their_detail() {
+        let failed = own_state_for(&[state_entry(
+            "failed",
+            &serde_json::json!({ "reason": "the provider refused" }),
+        )])
+        .expect("a recorded failure states its reason");
+        assert!(
+            matches!(&failed, tau_protocol::SubagentState::Failed { reason }
+                if reason == "the provider refused"),
+            "the reason rides the restart's tag: {failed:?}"
+        );
+        let stopped =
+            own_state_for(&[state_entry("stopped", &serde_json::json!({ "by": "user" }))])
+                .expect("a recorded stop names its storer");
+        assert!(
+            matches!(&stopped, tau_protocol::SubagentState::Stopped { by, .. }
+                if *by == tau_protocol::StoppedBy::User),
+            "the storer rides the restart's tag: {stopped:?}"
+        );
+    }
+
+    #[test]
+    fn a_truncated_record_is_no_state_not_a_defaulted_one() {
+        // A record that cannot state its fact is declined: the badge falls to
+        // the no-state path, rather than an empty reason, a parent stopper, or
+        // a picked wait target (the wire decoder's rule, applied to the record).
+        for state in ["failed", "stopped", "idle"] {
+            let entries = vec![state_entry(state, &serde_json::json!({}))];
+            assert!(
+                own_state_for(&entries).is_none(),
+                "a `{state}` record with no detail states no lifecycle fact"
+            );
+        }
     }
 
     #[test]
@@ -313,14 +359,23 @@ mod tests {
             .iter()
             .find(|c| c.child == "c1")
             .expect("c1 is listed");
-        assert_eq!(c1.state, "done");
-        assert_eq!(c1.waiting_on, None);
+        assert_eq!(c1.state.tag(), "done");
+        assert!(
+            matches!(c1.state, tau_protocol::SubagentState::Done { .. }),
+            "a restored `done` row carries its tag: {:?}",
+            c1.state
+        );
         let c2 = children
             .iter()
             .find(|c| c.child == "c2")
             .expect("c2 is listed");
-        assert_eq!(c2.state, "idle");
-        assert_eq!(c2.waiting_on.as_deref(), Some("user"));
+        assert_eq!(c2.state.tag(), "idle");
+        assert!(
+            matches!(&c2.state, tau_protocol::SubagentState::Idle { waiting_on }
+                if waiting_on.as_str() == "user"),
+            "a restored `idle` row carries the declared wait: {:?}",
+            c2.state
+        );
         // The handle is the child's session id (no live bridge to address a
         // dead child by handle).
         assert_eq!(c1.handle, "c1");
@@ -344,8 +399,12 @@ mod tests {
             .unwrap();
         let children = restore_children_from_disk(tmp.path(), "p");
         assert_eq!(children.len(), 1);
-        assert_eq!(children[0].state, "idle");
-        assert_eq!(children[0].waiting_on.as_deref(), Some("parent"));
+        assert!(
+            matches!(&children[0].state, tau_protocol::SubagentState::Idle { waiting_on }
+                if waiting_on.as_str() == "parent"),
+            "a child with no state reads as parked on its parent: {:?}",
+            children[0].state
+        );
     }
 
     #[test]

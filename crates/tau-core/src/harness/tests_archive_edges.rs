@@ -49,7 +49,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
             })
             .unwrap();
         let state = match out {
-            CommandOutput::Subagent { subagent } => subagent.state,
+            CommandOutput::Subagent { subagent } => subagent.state.tag().to_owned(),
             _ => String::new(),
         };
         if state == "running" {
@@ -112,7 +112,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
             })
             .unwrap();
         let state = match out {
-            CommandOutput::Subagent { subagent } => subagent.state,
+            CommandOutput::Subagent { subagent } => subagent.state.tag().to_owned(),
             _ => String::new(),
         };
         if state != "running" {
@@ -441,7 +441,7 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
             })
             .unwrap();
         let state = match out {
-            CommandOutput::Subagent { subagent } => subagent.state,
+            CommandOutput::Subagent { subagent } => subagent.state.tag().to_owned(),
             _ => String::new(),
         };
         if state == "running" {
@@ -467,7 +467,7 @@ async fn a_close_of_a_running_child_records_stopped_not_failed() {
             })
             .unwrap();
         let state = match out {
-            CommandOutput::Subagent { subagent } => subagent.state,
+            CommandOutput::Subagent { subagent } => subagent.state.tag().to_owned(),
             _ => String::new(),
         };
         if matches!(state.as_str(), "stopped" | "failed" | "done") {

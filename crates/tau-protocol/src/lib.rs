@@ -18,7 +18,7 @@ pub mod snapshot;
 pub use diagnostic::{Diagnostic, StreamOutcome};
 pub use kind::EntryKind;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// A message lane (spec §7; the GUI composer's 3-way selector).
@@ -37,6 +37,48 @@ pub enum ContextMode {
     Fresh,
     Compacted,
     Fork,
+}
+
+/// A parked child's declared wait target (spec §5.2: a secondary hint —
+/// the observed rest is the driver; the declaration rides the `idle`
+/// state as the GUI's badge).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitingOn {
+    Parent,
+    User,
+    Subagent,
+}
+
+/// Who stopped the child (the only asymmetry between stops — ADR-0001).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoppedBy {
+    User,
+    Parent,
+}
+
+impl WaitingOn {
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Parent => "parent",
+            Self::User => "user",
+            Self::Subagent => "subagent",
+        }
+    }
+}
+
+impl StoppedBy {
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Parent => "parent",
+        }
+    }
 }
 
 /// One provider entry as the GUI sees it (no key material, §8).
@@ -374,22 +416,6 @@ pub enum Command {
     ProviderList {
         workspace: String,
     },
-    ProviderAdd {
-        name: String,
-        base_url: String,
-        key_env: String,
-        models: Vec<String>,
-    },
-    ProviderSet {
-        name: String,
-        base_url: String,
-        key_env: String,
-        models: Vec<String>,
-    },
-    ProviderDelete {
-        name: String,
-    },
-
     FileRead {
         workspace: String,
         /// Absolute, or relative to the workspace root.
@@ -446,6 +472,147 @@ pub struct Usage {
     pub total_tokens: u64,
     /// Prompt tokens served from the server's prefix cache (0 = no hit data).
     pub cached_prompt_tokens: u64,
+}
+
+/// The child's lifecycle state (the protocol's mirror of the core's
+/// `ChildState`, spec §5.2): tagged enum — the same 6 states plus an
+/// `Other` escape for forward compatibility (cf. `EntryKind::Other` /
+/// `Diagnostic::Unknown`). The tag is `type` to match `Command`/`Event`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SubagentState {
+    Running,
+    Idle {
+        waiting_on: WaitingOn,
+    },
+    Awaiting,
+    Done {
+        output: Option<Value>,
+    },
+    Failed {
+        reason: String,
+    },
+    Stopped {
+        by: StoppedBy,
+        /// The child's resume contract (spec §5.3): present when the
+        /// child was stopped with an open next action (ADR-0001).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_contract: Option<crate::payload::ResumeContract>,
+    },
+    /// A state this build does not know — kept by name so a frame from a
+    /// newer core renders by its own spelling instead of failing the decode
+    /// (the same arm `EntryKind::Other` and `Diagnostic::Unknown` open). A
+    /// known tag whose fields do not decode lands here too: defaults filled
+    /// into a truncated frame would state a lifecycle fact the core never
+    /// sent. Read, never re-emitted.
+    Other {
+        raw: String,
+    },
+}
+
+/// The tag key `SubagentState` serializes on, and the key its decoder reads.
+pub const SUBAGENT_STATE_TAG: &str = "type";
+
+// Serialize stays derived (the `type` tag, snake_case arms). Deserialize is
+// hand-written because serde's internally-tagged enum has no catch-all arm: an
+// unknown `type` must decode, not fail the whole frame — a GUI on an old
+// protocol build keeps rendering the child by the state name the new core sent.
+impl<'de> Deserialize<'de> for SubagentState {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Ok(Self::from_value(&Value::deserialize(deserializer)?))
+    }
+}
+
+impl SubagentState {
+    /// The wire tag of this state (the `type` discriminant). An `Other` tag is
+    /// not `&'static` — it is the spelling the wire sent.
+    #[must_use]
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Running => "running",
+            Self::Idle { .. } => "idle",
+            Self::Awaiting => "awaiting",
+            Self::Done { .. } => "done",
+            Self::Failed { .. } => "failed",
+            Self::Stopped { .. } => "stopped",
+            Self::Other { raw } => raw,
+        }
+    }
+
+    /// The frame's state, its fields read by hand (`EntryKind::parse` and
+    /// `Diagnostic::from_value` are the same shape): a tag this build knows
+    /// yields its variant, anything else keeps the tag as `raw`. A known tag
+    /// whose required field is missing or is not a string decodes to `Other`
+    /// too — a frame that cannot state the fact is an unknown fact.
+    #[must_use]
+    pub fn from_value(value: &Value) -> Self {
+        let tag = value.get(SUBAGENT_STATE_TAG).and_then(Value::as_str);
+        match tag {
+            Some("running") => Self::Running,
+            Some("awaiting") => Self::Awaiting,
+            Some("idle") => match value.get("waiting_on").and_then(Value::as_str) {
+                Some("parent") => Self::Idle {
+                    waiting_on: WaitingOn::Parent,
+                },
+                Some("user") => Self::Idle {
+                    waiting_on: WaitingOn::User,
+                },
+                Some("subagent") => Self::Idle {
+                    waiting_on: WaitingOn::Subagent,
+                },
+                _ => Self::unknown(tag),
+            },
+            Some("done") => Self::Done {
+                // An absent key and an explicit null are the same: no report.
+                output: match value.get("output") {
+                    Some(v) if !v.is_null() => Some(v.clone()),
+                    _ => None,
+                },
+            },
+            Some("failed") => match value.get("reason").and_then(Value::as_str) {
+                Some(reason) => Self::Failed {
+                    reason: reason.to_owned(),
+                },
+                None => Self::unknown(tag),
+            },
+            Some("stopped") => match value.get("by").and_then(Value::as_str) {
+                Some("user") => Self::Stopped {
+                    by: StoppedBy::User,
+                    resume_contract: resume_contract(value),
+                },
+                Some("parent") => Self::Stopped {
+                    by: StoppedBy::Parent,
+                    resume_contract: resume_contract(value),
+                },
+                _ => Self::unknown(tag),
+            },
+            _ => Self::unknown(tag),
+        }
+    }
+
+    /// The escape arm for a tag that is absent, not a string, or unknown.
+    fn unknown(tag: Option<&str>) -> Self {
+        Self::Other {
+            raw: tag.unwrap_or("").to_owned(),
+        }
+    }
+}
+
+/// The stopped frame's resume contract (spec §5.3): absent, not an object, or
+/// missing its `next_action` all read as no contract — the badge stays.
+fn resume_contract(value: &Value) -> Option<crate::payload::ResumeContract> {
+    value
+        .get("resume_contract")
+        .and_then(|c| serde_json::from_value(c.clone()).ok())
+}
+
+/// A state compares equal to its wire tag, so a caller that names the badge
+/// it expects (`subagent.state == "done"`) reads the way the GUI's union
+/// discriminates on `type`; the payloads stay matchable.
+impl PartialEq<&str> for SubagentState {
+    fn eq(&self, tag: &&str) -> bool {
+        self.tag() == *tag
+    }
 }
 
 mod events;

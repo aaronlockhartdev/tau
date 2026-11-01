@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { attentionOf } from './attention';
 import { seedState } from '../testing/mock-store.svelte.ts';
 import type { SessionMeta, SubagentInfo } from '../wire/protocol';
+import { subInfo, type SubFixture } from '../testing/state';
 
 function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -19,18 +20,14 @@ function meta(id: string, over: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
-const sub = (over: Partial<SubagentInfo> = {}): SubagentInfo => ({
-  handle: 'h1',
-  child: 'c1',
-  agent_type: 'researcher',
-  context_mode: 'fresh',
-  state: 'idle',
-  waiting_on: 'user',
-  last_message: null,
-  usage: null,
-  resume_contract: null,
-  ...over
-});
+const sub = (over: SubFixture = {}): SubagentInfo =>
+  subInfo('c1', {
+    handle: 'h1',
+    agent_type: 'researcher',
+    state: 'idle',
+    waiting_on: 'user',
+    ...over
+  });
 
 describe('attentionOf', () => {
   it('finds a child parked on the user', () => {
@@ -42,6 +39,15 @@ describe('attentionOf', () => {
     expect(items).toHaveLength(1);
     expect(items[0]!.session).toBe('s1');
     expect(items[0]!.reason).toBe('researcher is waiting on you');
+  });
+
+  it('counts a child parked with a question, the badge the tree marks user', () => {
+    const items = attentionOf({
+      s1: seedState(meta('s1', { title: 'hero' }), {
+        over: { subagents: [sub({ state: 'awaiting' })] }
+      })
+    });
+    expect(items).toHaveLength(1);
   });
 
   it('names the child from its session title when known', () => {
@@ -60,7 +66,7 @@ describe('attentionOf', () => {
           subagents: [
             sub({ state: 'running' }),
             sub({ waiting_on: 'parent' }),
-            sub({ state: 'done', waiting_on: null })
+            sub({ state: 'done' })
           ]
         }
       })

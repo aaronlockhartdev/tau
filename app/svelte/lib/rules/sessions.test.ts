@@ -11,7 +11,9 @@ import {
   windowTitle,
   type SessionMap
 } from './sessions';
+import { ownState, st, subInfo } from '../testing/state';
 import type { SessionMeta, Snapshot, SubagentInfo, Workspace } from '../wire/protocol';
+import { attentionOf } from '../display/attention';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
 
@@ -30,19 +32,10 @@ function meta(id: string, extra: Partial<SessionMeta> = {}): SessionMeta {
   };
 }
 
-function sub(child: string, extra: Partial<SubagentInfo> = {}): SubagentInfo {
-  return {
-    handle: child,
-    child,
-    agent_type: 'general',
-    context_mode: 'fresh',
-    state: 'idle',
-    waiting_on: null,
-    last_message: null,
-    usage: null,
-    resume_contract: null,
-    ...extra
-  };
+// A crew mirror row. #346: the wire state is a tagged enum, so the shared
+// builder assembles the arm from a flat badge plus the arm's field.
+function sub(child: string, extra: Parameters<typeof subInfo>[1] = {}): SubagentInfo {
+  return subInfo(child, extra);
 }
 
 // A minimal snapshot: the session meta + a live state. `own_state` and
@@ -210,19 +203,18 @@ describe('groupIsOpen', () => {
 describe('applySubagentEvent (lib level)', () => {
   it('a state event for an unknown handle registers the child (no mirror — the spawn is the mirror source)', () => {
     const map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
-    const out = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: 'idle', detail: { waiting_on: 'user' }, note: null }, 7);
+    const out = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: st({ state: 'idle', waiting_on: 'user' }), note: null }, 7);
     expect(out['c']!.state).toBe('idle');
     expect(out['c']!.waiting_on).toBe('user');
     expect(out['p']!.subagents).toHaveLength(0);
   });
 
-  it('a state event updates the mirror and clears a stale wait for non-idle states', () => {
+  it('a state event replaces the mirror state, detail and all', () => {
     let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 7);
-    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: 'idle', detail: { waiting_on: 'user' }, note: null }, 8);
-    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: 'done', detail: null, note: 'finished' }, 9);
-    expect(map['p']!.subagents[0]!.state).toBe('done');
-    expect(map['p']!.subagents[0]!.waiting_on).toBeNull();
+    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: st({ state: 'idle', waiting_on: 'user' }), note: null }, 8);
+    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: st({ state: 'done' }), note: 'finished' }, 9);
+    expect(map['p']!.subagents[0]!.state).toEqual({ type: 'done', output: null });
     expect(map['p']!.subagents[0]!.last_message).toBe('finished');
   });
 
@@ -230,10 +222,50 @@ describe('applySubagentEvent (lib level)', () => {
     let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 7);
     delete map['c'];
-    const out = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'idle', text: 'hi', output: null }, 9);
-    expect(out['p']!.subagents[0]!.state).toBe('idle');
-    expect(out['p']!.subagents[0]!.waiting_on).toBe('parent');
+    const out = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'hi', output: null }, 9);
+    expect(out['p']!.subagents[0]!.state.type).toBe('idle');
+    expect(out['p']!.subagents[0]!.state).toEqual({ type: 'idle', waiting_on: 'parent' });
     expect(out['p']!.subagents[0]!.last_message).toBe('hi');
+  });
+
+  it('a wake leaves the child row a target that rides its badge', () => {
+    let map: SessionMap = {
+      p: makeStub(meta('p'), null, 'idle', null, 1),
+      c: makeStub(meta('c'), 'p', 'idle', 'user', 1)
+    };
+    map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 2);
+    // A terminal wake settles the badge and leaves no wait behind, so the row
+    // never shows a finished child as owed by the user.
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'done', text: 'report', output: 'out' }, 3);
+    expect(map['c']!.state).toBe('done');
+    expect(map['c']!.waiting_on).toBeNull();
+    // A `waiting` wake declares no target and re-parks the child: the mirror
+    // row states no wait (it settled), so the core's rule parks it on the
+    // parent it reports to (settle_rest).
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'ask', output: null }, 4);
+    expect(map['c']!.state).toBe('idle');
+    expect(map['c']!.waiting_on).toBe('parent');
+  });
+
+  it('a child parked with a question stays on the user through the wake', () => {
+    // The core's spawn-origin rest in wire order: `awaiting` (the question),
+    // then the notify wake. The wake names no target, so the target the row
+    // declares — the user, for a child with a question — is what re-parks it.
+    let map: SessionMap = {
+      p: makeStub(meta('p'), null, 'idle', null, 1),
+      c: makeStub(meta('c'), 'p', 'running', null, 1)
+    };
+    map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 2);
+    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: st({ state: 'awaiting' }), note: null }, 3);
+    expect(map['p']!.subagents[0]!.state).toEqual({ type: 'awaiting' });
+    expect(attentionOf(map).map((i) => i.session)).toEqual(['p']);
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'which call?', output: null }, 4);
+    // Mirror row, tree row, and the bell all keep the user: the red case
+    // survives the wake that reports it.
+    expect(map['p']!.subagents[0]!.state).toEqual({ type: 'idle', waiting_on: 'user' });
+    expect(map['c']!.state).toBe('idle');
+    expect(map['c']!.waiting_on).toBe('user');
+    expect(attentionOf(map).map((i) => i.reason)).toEqual(['w is waiting on you']);
   });
 
   it('a notified event on an unknown session leaves the map alone', () => {
@@ -257,9 +289,9 @@ describe('applySubagentEvent (lib level)', () => {
   it('a state event that reuses a handle for a new child does not rewrite the old child', () => {
     let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h1', child: 'old', agent_type: 'general', context_mode: 'fresh', title: 'one' }, 7);
-    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h1', child: 'old', state: 'done', detail: null, note: 'finished' }, 8);
+    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h1', child: 'old', state: st({ state: 'done' }), note: 'finished' }, 8);
     // The re-opened life re-mints h1 for a new child session.
-    const out = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h1', child: 'new', state: 'running', detail: null, note: null }, 9);
+    const out = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h1', child: 'new', state: st({ state: 'running' }), note: null }, 9);
     // The old child's stub keeps its own identity — no sibling state
     // lands on its card.
     expect(out['old']!.state).toBe('done');
@@ -278,7 +310,7 @@ describe('openSession (ticket #221 restart restore)', () => {
     // with a snapshot that says `done` must converge the row on `done`, not
     // preserve the stub's `idle` (the previous behavior).
     const stubbed: SessionMap = { c: makeStub(meta('c', { parent: 'p' }), 'p', 'idle', null, 1) };
-    const out = openSession(stubbed, 'c', snap('c', { own_state: { state: 'done', waiting_on: null } }));
+    const out = openSession(stubbed, 'c', snap('c', { own_state: ownState({ state: 'done' }) }));
     expect(out['c']!.state).toBe('done');
   });
 
@@ -291,7 +323,7 @@ describe('openSession (ticket #221 restart restore)', () => {
     const out = openSession(
       stubbed,
       'c',
-      snap('c', { own_state: { state: 'idle', waiting_on: 'user' } })
+      snap('c', { own_state: ownState({ state: 'idle', waiting_on: 'user' }) })
     );
     expect(out['c']!.state).toBe('idle');
     expect(out['c']!.waiting_on).toBe('user');
@@ -301,7 +333,7 @@ describe('openSession (ticket #221 restart restore)', () => {
     const stubbed: SessionMap = {
       c: makeStub(meta('c', { parent: 'p' }), 'p', 'idle', null, 42)
     };
-    const out = openSession(stubbed, 'c', snap('c', { own_state: { state: 'done', waiting_on: null } }));
+    const out = openSession(stubbed, 'c', snap('c', { own_state: ownState({ state: 'done' }) }));
     expect(out['c']!.last_modified).toBe(42);
     expect(out['c']!.parent).toBe('p');
   });
@@ -324,7 +356,7 @@ describe('openSession (ticket #221 restart restore)', () => {
     const out = openSession(
       {},
       'c',
-      snap('c', { turn: 'running', own_state: { state: 'idle', waiting_on: 'parent' } })
+      snap('c', { turn: 'running', own_state: ownState({ state: 'idle', waiting_on: 'parent' }) })
     );
     expect(out['c']!.state).toBe('running');
     expect(out['c']!.turn).toBe('running');
@@ -337,7 +369,7 @@ describe('openSession (ticket #221 restart restore)', () => {
     const out = openSession(
       stubbed,
       'c',
-      snap('c', { own_state: { state: 'idle', waiting_on: 'parent' } })
+      snap('c', { own_state: ownState({ state: 'idle', waiting_on: 'parent' }) })
     );
     expect(out['c']!.state).toBe('idle');
   });

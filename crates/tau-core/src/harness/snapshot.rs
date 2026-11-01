@@ -97,7 +97,7 @@ fn live_subagents(live: &LiveSession) -> Vec<tau_protocol::SubagentInfo> {
 struct Projection {
     entries: Arc<[EntryMeta]>,
     usage: Option<Usage>,
-    own_state: Option<tau_protocol::snapshot::OwnState>,
+    own_state: Option<tau_protocol::SubagentState>,
 }
 
 /// The snapshot skeleton between polls (#316). The metadata rows are a

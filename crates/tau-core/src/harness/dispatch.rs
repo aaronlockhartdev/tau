@@ -123,9 +123,6 @@ impl Core {
             | Command::SubagentActivity { .. } => self.dispatch_command(cmd),
             Command::SkillList { .. }
             | Command::ProviderList { .. }
-            | Command::ProviderAdd { .. }
-            | Command::ProviderSet { .. }
-            | Command::ProviderDelete { .. }
             | Command::FileRead { .. }
             | Command::FileList { .. }
             | Command::FileUnlist { .. }
@@ -167,11 +164,6 @@ impl Core {
                     providers: provider_rows(&self.workspace_config_silent(&workspace)),
                 })
             }
-            Command::ProviderAdd { .. }
-            | Command::ProviderSet { .. }
-            | Command::ProviderDelete { .. } => Err(ProtocolError::Unsupported {
-                message: "v0 providers are config-file-driven".into(),
-            }),
 
             Command::FileRead {
                 workspace,

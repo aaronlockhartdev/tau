@@ -87,16 +87,6 @@ mod commands {
     }
 
     #[test]
-    fn provider_add() {
-        assert_json_snapshot!(Command::ProviderAdd {
-            name: "vllm".into(),
-            base_url: "http://localhost:8000/v1".into(),
-            key_env: "VLLM_KEY".into(),
-            models: vec!["qwen3.8-27b".into()],
-        });
-    }
-
-    #[test]
     fn file_read() {
         assert_json_snapshot!(Command::FileRead {
             workspace: "w1".into(),
@@ -177,6 +167,27 @@ mod events {
     }
 
     #[test]
+    fn subagent_state_event() {
+        // The lifecycle transition's wire shape (item 5): the state is a tagged
+        // enum carrying its own fields — the frame has no `detail` map.
+        assert_json_snapshot!(Event::SubagentEvent {
+            workspace: "w1".into(),
+            session: "s1".into(),
+            kind: tau_protocol::SubagentEventKind::State {
+                handle: "s1-1".into(),
+                child: "s2".into(),
+                state: tau_protocol::SubagentState::Stopped {
+                    by: tau_protocol::StoppedBy::Parent,
+                    resume_contract: Some(tau_protocol::payload::ResumeContract {
+                        next_action: "run the suite".into(),
+                    }),
+                },
+                note: Some("stopped by parent".into()),
+            },
+        });
+    }
+
+    #[test]
     fn file_tree_changed() {
         assert_json_snapshot!(Event::FileTreeChanged {
             workspace: "w1".into(),
@@ -191,7 +202,9 @@ mod outputs {
     use tau_protocol::snapshot::{
         EntryMeta, EntryStatus, LiveState, OmSnapshot, Snapshot, TurnState,
     };
-    use tau_protocol::{CommandOutput, ContextMode, EntryKind, SkillInfo, SubagentInfo};
+    use tau_protocol::{
+        CommandOutput, ContextMode, EntryKind, SkillInfo, SubagentInfo, SubagentState,
+    };
 
     #[test]
     fn snapshot_output() {
@@ -238,8 +251,7 @@ mod outputs {
                         child: "s2".into(),
                         agent_type: "general".into(),
                         context_mode: ContextMode::Fresh,
-                        state: "running".into(),
-                        waiting_on: None,
+                        state: SubagentState::Running,
                         last_message: None,
                         usage: None,
                         resume_contract: None,

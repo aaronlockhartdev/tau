@@ -11,6 +11,7 @@ import { type Command } from '../wire/protocol';
 import { openSession } from '../rules/sessions';
 import { applyEvents, send, store } from './store.svelte';
 import { WS, bindIPC, entryView, freshStore, snap, sub } from '../testing/store-harness';
+import { st } from '../testing/state';
 
 const { defaultIPC } = bindIPC(mockInvoke);
 beforeEach(() => {
@@ -215,7 +216,7 @@ describe('subagent_event', () => {
       }
     ]);
     expect(store.sessions['p']!.subagents).toHaveLength(1);
-    expect(store.sessions['p']!.subagents[0]!.state).toBe('running');
+    expect(store.sessions['p']!.subagents[0]!.state.type).toBe('running');
     expect(store.sessions['c']).toBeTruthy();
     expect(store.sessions['c']!.state).toBe('running');
     expect(store.sessions['c']!.meta.title).toBe('worker');
@@ -231,11 +232,11 @@ describe('subagent_event', () => {
         type: 'subagent_event',
         workspace: WS.id,
         session: 'p',
-        kind: { kind: 'state', handle: 'c', child: 'c', state: 'idle', detail: { waiting_on: 'user' }, note: null }
+        kind: { kind: 'state', handle: 'c', child: 'c', state: st({ state: 'idle', waiting_on: 'user' }), note: null }
       }
     ]);
-    expect(store.sessions['p']!.subagents[0]!.state).toBe('idle');
-    expect(store.sessions['p']!.subagents[0]!.waiting_on).toBe('user');
+    expect(store.sessions['p']!.subagents[0]!.state.type).toBe('idle');
+    expect(store.sessions['p']!.subagents[0]!.state).toEqual({ type: 'idle', waiting_on: 'user' });
     expect(store.sessions['c']!.state).toBe('idle');
     expect(store.sessions['c']!.waiting_on).toBe('user');
     // #247: the state event's idle closes the child's turn (the stop button
@@ -253,7 +254,7 @@ describe('subagent_event', () => {
         kind: { kind: 'notified', child: 'c', wake: 'stopped', text: 'done', output: null }
       }
     ]);
-    expect(store.sessions['p']!.subagents[0]!.state).toBe('stopped');
+    expect(store.sessions['p']!.subagents[0]!.state).toEqual({ type: 'other', raw: 'stopped' });
     expect(store.sessions['c']!.state).toBe('stopped');
     // #247: a terminal wake leaves the child idle, not running.
     expect(store.sessions['c']!.turn).toBe('idle');

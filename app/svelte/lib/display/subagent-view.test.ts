@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { SubagentInfo } from '../wire/protocol';
+import { subInfo, type SubFixture } from '../testing/state';
 import { claimCrew, crewView, spawnRefsOf, type SpawnRef } from './subagent-view';
 
 function spawn(over: Partial<SpawnRef> = {}): SpawnRef {
@@ -15,19 +16,8 @@ function spawn(over: Partial<SpawnRef> = {}): SpawnRef {
   };
 }
 
-function info(over: Partial<SubagentInfo> = {}): SubagentInfo {
-  return {
-    handle: 'h1',
-    child: 'child-1',
-    agent_type: 'general',
-    context_mode: 'fresh',
-    state: 'running',
-    waiting_on: null,
-    last_message: null,
-    usage: null,
-    resume_contract: null,
-    ...over
-  };
+function info(over: SubFixture = {}): SubagentInfo {
+  return subInfo('child-1', { handle: 'h1', state: 'running', ...over });
 }
 
 describe('spawnRefsOf', () => {
@@ -95,6 +85,7 @@ describe('crewView', () => {
       info({ last_message: 'reading the file', usage: { input_tokens: 1200, output_tokens: 80, total_tokens: 1280, cached_prompt_tokens: 0 } })
     );
     expect(running).toEqual({
+      label: 'running',
       phase: 'running',
       agentType: 'general',
       contextMode: 'fresh',

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { paletteItems, filterItems, type PaletteSource } from './palette';
 import { seedState } from '../testing/mock-store.svelte.ts';
 import type { SessionMeta } from '../wire/protocol';
+import { subInfo } from '../testing/state';
 
 const meta = (id: string, over: Partial<SessionMeta> = {}): SessionMeta => ({
   id,
@@ -66,17 +67,11 @@ describe('paletteItems', () => {
         a: seedState(meta('a'), {
           over: {
             subagents: [
-              {
+              subInfo('c1', {
                 handle: 'h1',
-                child: 'c1',
                 agent_type: 'researcher',
-                context_mode: 'fresh',
-                state: 'running',
-                waiting_on: null,
-                last_message: null,
-                usage: null,
-                resume_contract: null
-              }
+                state: 'running'
+              })
             ]
           }
         })

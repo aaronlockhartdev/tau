@@ -74,7 +74,24 @@ const storeState = (sid) => {
     live: cur?.live ? cur.live.queue.length : 0,
     liveTexts: cur?.live ? cur.live.queue.map((l) => l.text.length) : [],
     turn: cur ? cur.turn ?? null : null,
-    subagents: cur ? cur.subagents.map((a) => ({ child: a.child, state: a.state, waiting_on: a.waiting_on })) : [],
+    // The child state rides the wire as a tag (#346); the spec-facing read
+    // keeps the badge word and the target it declares, the pair specs assert.
+    subagents: cur
+      ? cur.subagents.map((a) => ({
+          child: a.child,
+          state: a.state.type === 'other' ? a.state.raw : a.state.type,
+          // The target the state declares: the `idle` arm's field, and the
+          // user for an `awaiting` child — a question is asked of the human.
+          // The same rule the GUI's label applies, so a spec can name the red
+          // case whichever spelling the core sent.
+          waiting_on:
+            a.state.type === 'idle'
+              ? a.state.waiting_on
+              : a.state.type === 'awaiting'
+                ? 'user'
+                : null,
+        }))
+      : [],
     attentionOpen: s.attentionOpen,
     usage: cur && cur.usage ? { in: cur.usage.input_tokens, out: cur.usage.output_tokens } : null,
     renderRange: s.renderRange,

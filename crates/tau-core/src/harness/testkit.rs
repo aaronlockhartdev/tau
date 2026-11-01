@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 use std::sync::atomic::AtomicUsize;
 
 use super::*;
+use serde_json::json;
 
 pub(crate) fn providers() -> BTreeMap<String, crate::config::Provider> {
     let mut m = BTreeMap::new();
@@ -326,7 +327,6 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
     )
     .unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    let mut last: String;
     loop {
         let out = core
             .dispatch(Command::SubagentState {
@@ -335,15 +335,15 @@ pub(crate) async fn spawn_done_child(core: &Arc<Core>, parent_id: &str) -> Subag
             .unwrap();
         let state = match &out {
             CommandOutput::Subagent { subagent } => subagent.state.clone(),
-            _ => String::new(),
+            other => panic!("expected a subagent: {other:?}"),
         };
-        if state == "done" {
+        if state.tag() == "done" {
             break;
         }
-        last = state;
         assert!(
             tokio::time::Instant::now() <= deadline,
-            "the child never finished (last state: {last})"
+            "the child never finished (last state: {})",
+            state.tag()
         );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
