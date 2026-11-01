@@ -4,6 +4,7 @@
 //! there; this is the method bodies.
 
 use serde_json::{Value, json};
+use tau_core::harness::CoreError;
 use tau_protocol::{Command, CommandOutput, MessageLane};
 use tokio::sync::oneshot;
 
@@ -73,15 +74,32 @@ pub(super) async fn session_new(server: &Server, rpc: &Rpc) {
     // The model selector (Harbor's `--model` path): every configured model
     // id for this workspace (the project layer included, M4), the effective
     // default current. Absent when no model is configured (an empty select
-    // would be a contract violation).
-    let (models, default) = server.config.model_options_for(cwd).await;
+    // would be a contract violation). It is read **before** the session is
+    // created: a config the workspace cannot load is a refusal of
+    // `session/new`, not a session with a short list (#356).
+    let selector = async {
+        let (models, default) = server.config.model_options_for(cwd).await?;
+        // `model_options_for` guarantees a non-empty list carries a default;
+        // no default means an empty list, so the selector is omitted.
+        let window = match default.as_ref() {
+            Some(current) => server.config.context_window_for(cwd, current).await?,
+            None => None,
+        };
+        Ok::<(Vec<String>, Option<String>, Option<u64>), CoreError>((models, default, window))
+    }
+    .await;
+    let (models, default, context_window) = match selector {
+        Ok(selector) => selector,
+        Err(e) => {
+            server
+                .out
+                .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
+            return;
+        }
+    };
     let mut result = json!({ "sessionId": session.id });
-    let mut context_window = None;
-    // `model_options_for` guarantees a non-empty list carries a default;
-    // no default means an empty list, so the selector is omitted.
-    if let Some(current) = default {
-        result["configOptions"] = json!([model_option(&models, &current)]);
-        context_window = server.config.context_window_for(cwd, &current).await;
+    if let Some(current) = &default {
+        result["configOptions"] = json!([model_option(&models, current)]);
     }
     server.registry.lock().insert(
         session.id.clone(),
@@ -373,11 +391,26 @@ pub(super) async fn set_config_option(server: &Server, rpc: &Rpc) {
         .is_some()
     {
         // The v1 schema marks `configOptions` required on this response:
-        // the updated model select, `currentValue` on the model just set.
-        let (models, _default) = server.config.model_options_for(&cwd).await;
-        // The window follows the selection (N5): the next turn's
-        // `usage_update` sizes against the new model.
-        let context_window = server.config.context_window_for(&cwd, value).await;
+        // the updated model select, `currentValue` on the model just set. A
+        // config the workspace cannot load is a refusal, not a response with
+        // a short selector (#356).
+        let selector = async {
+            let (models, _default) = server.config.model_options_for(&cwd).await?;
+            // The window follows the selection (N5): the next turn's
+            // `usage_update` sizes against the new model.
+            let window = server.config.context_window_for(&cwd, value).await?;
+            Ok::<(Vec<String>, Option<u64>), CoreError>((models, window))
+        }
+        .await;
+        let (models, context_window) = match selector {
+            Ok(selector) => selector,
+            Err(e) => {
+                server
+                    .out
+                    .send(&transport::error(id, INTERNAL_ERROR, &e.to_string()));
+                return;
+            }
+        };
         {
             let mut reg = server.registry.lock();
             if let Some(state) = reg.get_mut(session_id) {

@@ -40,9 +40,12 @@ impl AcpConfig {
         let system_dir = home.join(".config").join("tau");
         // No project at startup: the core layers the workspace's
         // `.tau/config.toml` itself at workspace open (spec §12).
+        // The system layer is the ACP process's whole config: read it, or say
+        // why not. A swallowed failure here is a CLI that starts and lists no
+        // models (#356).
         let base =
             tau_core::config::load(&system_dir, Path::new(tau_core::config::NO_PROJECT_LAYER))
-                .unwrap_or_default();
+                .map_err(|e| CoreError(e.to_string()))?;
         Ok(Self {
             base,
             system_dir,
@@ -75,13 +78,15 @@ impl AcpConfig {
     /// The file layers as seen from a workspace: the system config plus the
     /// project's `.tau/config.toml` — the same load the core performs at
     /// workspace open (spec §12), so the model selector sees project-layer
-    /// providers and a project-level default model.
-    fn file_layers(&self, cwd: &str) -> Config {
+    /// providers and a project-level default model. A layer that will not load
+    /// is the answer, not the system layer behind it: an ACP client that asks
+    /// what models exist deserves the failure, not a shorter list (#356).
+    fn file_layers(&self, cwd: &str) -> Result<Config, CoreError> {
         let project = Path::new(cwd).join(".tau");
         if project.exists() {
-            tau_core::config::load(&self.system_dir, &project).unwrap_or_else(|_| self.base.clone())
+            tau_core::config::load(&self.system_dir, &project).map_err(|e| CoreError(e.to_string()))
         } else {
-            self.base.clone()
+            Ok(self.base.clone())
         }
     }
 
@@ -113,23 +118,26 @@ impl AcpConfig {
     /// The file layers as seen from a workspace, with the env and `_meta`
     /// providers layered on — the merge the model selector and the window
     /// lookup share.
-    async fn merged(&self, cwd: &str) -> Config {
-        let mut merged = self.file_layers(cwd);
+    async fn merged(&self, cwd: &str) -> Result<Config, CoreError> {
+        let mut merged = self.file_layers(cwd)?;
         if let Some(p) = self.env_provider() {
             merged.providers.insert(ENV_PROVIDER.to_owned(), p);
         }
         if let Some(p) = self.meta.lock().await.clone() {
             merged.providers.insert(META_PROVIDER.to_owned(), p);
         }
-        merged
+        Ok(merged)
     }
 
     /// The model selector's options for one workspace: every configured model
     /// id (file layers + env + `_meta`), and the effective default
     /// (`generation.default_model` winning, else the first provider's first
     /// model — the launch.rs rule).
-    pub async fn model_options_for(&self, cwd: &str) -> (Vec<String>, Option<String>) {
-        let merged = self.merged(cwd).await;
+    pub async fn model_options_for(
+        &self,
+        cwd: &str,
+    ) -> Result<(Vec<String>, Option<String>), CoreError> {
+        let merged = self.merged(cwd).await?;
         let models: Vec<String> = merged
             .providers
             .values()
@@ -154,7 +162,7 @@ impl AcpConfig {
                 }
             })
             .or_else(|| models.first().cloned());
-        (models, default)
+        Ok((models, default))
     }
 
     /// The model's declared context window, when any layer declares one: a
@@ -162,15 +170,19 @@ impl AcpConfig {
     /// as "no window" (N5 — the `usage_update` `size` must not be guessed).
     /// Config requires the fact (#338), so a 0 is an entry that reached the
     /// map without the load's validation, not a 0-token model.
-    #[must_use]
-    pub async fn context_window_for(&self, cwd: &str, model: &str) -> Option<u64> {
-        self.merged(cwd)
-            .await
+    pub async fn context_window_for(
+        &self,
+        cwd: &str,
+        model: &str,
+    ) -> Result<Option<u64>, CoreError> {
+        Ok(self
+            .merged(cwd)
+            .await?
             .providers
             .values()
             .filter_map(|p| p.models.get(model))
             .map(|m| u64::from(m.context_window))
-            .find(|window| *window > 0)
+            .find(|window| *window > 0))
     }
     /// `authenticate` `_meta` install: connection-scoped, never written to
     /// the user's config file.
@@ -270,8 +282,8 @@ mod tests {
         };
         full.models.insert("m1".into(), def);
         c.base.providers.insert("full".into(), full);
-        assert_eq!(c.context_window_for("/p", "m1").await, Some(4096));
-        assert_eq!(c.context_window_for("/p", "nope").await, None);
+        assert_eq!(c.context_window_for("/p", "m1").await.unwrap(), Some(4096));
+        assert_eq!(c.context_window_for("/p", "nope").await.unwrap(), None);
     }
 
     #[tokio::test]
@@ -294,13 +306,74 @@ mod tests {
         full.models.insert("m1".into(), ModelDef::default());
         c.base.providers.insert("bbb-full".into(), full);
 
-        let (models, default) = c.model_options_for("/p").await;
+        let (models, default) = c.model_options_for("/p").await.unwrap();
         assert_eq!(models, vec!["m1".to_owned()]);
         assert_eq!(default.as_deref(), Some("m1"));
 
         // Negative: no models anywhere — no list, no default.
-        let (models, default) = AcpConfig::test_empty().model_options_for("/p").await;
+        let (models, default) = AcpConfig::test_empty()
+            .model_options_for("/p")
+            .await
+            .unwrap();
         assert!(models.is_empty());
         assert!(default.is_none());
+    }
+
+    /// An `AcpConfig` over given system and project dirs, the shape the
+    /// loader-facing legs need: the real `load()` reads `$HOME`, these read
+    /// the fixture.
+    fn acp_over(sys_dir: &std::path::Path, base: Config) -> AcpConfig {
+        AcpConfig {
+            base,
+            system_dir: sys_dir.to_path_buf(),
+            meta: TokioMutex::new(None),
+        }
+    }
+
+    /// A workspace dir with a `.tau/config.toml` carrying `body`.
+    fn workspace_with(body: &str) -> tempfile::TempDir {
+        let proj = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(proj.path().join(".tau")).unwrap();
+        std::fs::write(proj.path().join(".tau").join("config.toml"), body).unwrap();
+        proj
+    }
+
+    #[tokio::test]
+    async fn a_readable_project_layer_reaches_the_selector() {
+        // M4's rule, restated as a load: the workspace's `.tau/config.toml`
+        // is part of the answer — the selector lists its models, the window
+        // reads its fact.
+        let sys = tempfile::tempdir().unwrap();
+        let proj = workspace_with(
+            "[providers.dev]\nbase_url = \"http://x/v1\"\nkey_env = \"TAU_DEV_KEY\"\n\
+             [providers.dev.models]\n\"dev/x\" = { context_window = 2048 }\n",
+        );
+        let c = acp_over(sys.path(), Config::default());
+        let cwd = proj.path().to_str().unwrap();
+        let (models, default) = c.model_options_for(cwd).await.expect("the layer reads");
+        assert_eq!(models, vec!["dev/x".to_owned()]);
+        assert_eq!(default.as_deref(), Some("dev/x"));
+        assert_eq!(
+            c.context_window_for(cwd, "dev/x").await.unwrap(),
+            Some(2048)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_broken_project_layer_is_the_answer_not_the_layer_behind_it() {
+        // #356: the load used to fall back to the system layer, so a workspace
+        // with an unreadable config listed the system's models and the client
+        // never heard why its own were missing.
+        let sys = tempfile::tempdir().unwrap();
+        let proj = workspace_with("[providers.dev\n");
+        let c = acp_over(sys.path(), Config::default());
+        let cwd = proj.path().to_str().unwrap();
+        let err = c
+            .model_options_for(cwd)
+            .await
+            .expect_err("a broken layer is refused");
+        assert!(err.to_string().contains("config.toml"), "{err}");
+        // The window lookup shares the rule: a failed read is not "no window".
+        assert!(c.context_window_for(cwd, "dev/x").await.is_err());
     }
 }

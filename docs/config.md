@@ -44,6 +44,10 @@ the interface.
   and it says so: before any workspace is open the break has no session to record
   it, so the boot sends that event with no workspace, and the first session under
   the layer reads the file itself and carries the record (#363).
+  The ACP server reads the same layers to answer its model selector, and a layer
+  it cannot read is a refusal of `session/new` — the client hears the failure
+  with the file's name, rather than a selector listing the system layer's models
+  as if the workspace had none (#356).
 - A live session takes the new config at the **next turn boundary**, never
   mid-stream. The boundary re-derives the session's **turn**: the context facts a
   model's `[providers]` entry declares, its sampling and reasoning (`[thinking]`,
