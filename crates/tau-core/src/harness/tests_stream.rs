@@ -2,7 +2,7 @@ use super::*;
 use serde_json::json;
 
 use crate::harness::testkit::*;
-use tau_protocol::EntryKind;
+use tau_protocol::{EntryKind, WaitingOn};
 /// #261: a child's own live snapshot must report `turn: Running` while it is
 /// driving a turn — not the `Idle` its never-set `turn` flag always gave. The
 /// GUI derives a child's composer/stop from this, so an always-idle snapshot
@@ -243,11 +243,18 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
         if let Ok(Some(ev)) =
             tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await
             && let Event::SubagentEvent {
-                kind: SubagentEventKind::Notified { wake, .. },
+                kind:
+                    SubagentEventKind::Notified {
+                        wake, waiting_on, ..
+                    },
                 ..
             } = ev
             && wake == "done"
         {
+            assert!(
+                waiting_on.is_none(),
+                "a done wake parks the child nowhere, so it names no target"
+            );
             notified = true;
             break;
         }
@@ -266,6 +273,90 @@ async fn a_spawned_child_finishes_and_wakes_the_parent() {
         core.sessions.lock().get(&info.child).is_some(),
         "the child's live session was not registered"
     );
+    drop(core);
+}
+
+/// #368: a child whose rest ends on a question is parked on the human, and the
+/// wake that reports the rest states that target. The GUI read used to infer it
+/// and moved the child to its parent, which took the app's red case off the bell.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_child_parked_on_a_question_wakes_the_parent_parked_on_the_user() {
+    let data = r#"data: {"type":"response.output_text.delta","delta":"QUESTION: which call should I patch?"}"#;
+    let core = CoreBuilder::custom(providers())
+        .with_child_factory(Arc::new(CannedChildFactory {
+            body: format!("{data}\n\ndata: [DONE]\n\n"),
+        }))
+        .build()
+        .unwrap();
+    let collected = collect_events(&core);
+    let tmp = tempfile::tempdir().unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let session = match core
+        .dispatch(Command::SessionNew {
+            workspace: workspace.id.clone(),
+            title: None,
+            base_prompt: None,
+        })
+        .unwrap()
+    {
+        CommandOutput::Session { session } => session,
+        other => panic!("expected a session: {other:?}"),
+    };
+    let info = match core
+        .dispatch(Command::SubagentSpawn {
+            session: session.id.clone(),
+            agent_type: "general".into(),
+            brief: "do the thing".into(),
+            context_mode: ContextMode::Fresh,
+        })
+        .unwrap()
+    {
+        CommandOutput::Subagent { subagent } => subagent,
+        other => panic!("expected a subagent: {other:?}"),
+    };
+    let child = info.child.clone();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let seen: Vec<Event> = collected.lock().clone();
+        let woken = seen.iter().any(|ev| {
+            matches!(
+                ev,
+                Event::SubagentEvent {
+                    kind: SubagentEventKind::Notified {
+                        child: c,
+                        wake,
+                        waiting_on: Some(WaitingOn::User),
+                        ..
+                    },
+                    ..
+                } if c == &child && wake == "waiting"
+            )
+        });
+        if woken {
+            // The state the rest recorded is the question itself: the wake and
+            // the state say the same thing about where the child sits.
+            assert!(
+                seen.iter().any(|ev| matches!(
+                    ev,
+                    Event::SubagentEvent {
+                        kind: SubagentEventKind::State {
+                            child: c,
+                            state: SubagentState::Awaiting,
+                            ..
+                        },
+                        ..
+                    } if c == &child
+                )),
+                "the question rest recorded no `awaiting` state for the child"
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() <= deadline,
+            "the question rest never woke the parent parked on the user: {seen:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     drop(core);
 }
 

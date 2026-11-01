@@ -237,7 +237,7 @@ multiplexed channel needs (#13). One channel, `tau://event`, carries all groups.
 | `session_event` | `workspace, session, kind` | edge | `branch_move {leaf}` · `compaction {entry, first_kept}` |
 | `om_status` | `workspace, session, kind` | state | `observing` · `reflecting` · `idle` — the status-bar gauge |
 | `system` | `workspace, session?, kind` | edge | `workspace_opened {name, cwd}` · `provider_changed` · `config_rejected {path, reason}` · `error {message}` |
-| `subagent_event` | `workspace, session (parent), kind` | state/edge | `spawned {handle, child, agent_type, context_mode, title}` · `state {handle, child, state, note?}` — `state` is the tagged `SubagentState` (§5), so the badge and its detail ride one value · `notified {child, wake, text, output?}` |
+| `subagent_event` | `workspace, session (parent), kind` | state/edge | `spawned {handle, child, agent_type, context_mode, title}` · `state {handle, child, state, note?}` — `state` is the tagged `SubagentState` (§5), so the badge and its detail ride one value · `notified {child, wake, text, output?, waiting_on?}` — a `waiting` wake names the target it parks the child on (§5); a terminal wake names none |
 | `plan_changed` | `workspace, session, plan` | full state | the plan file's parsed state (the watcher, §5.3) |
 | `skill_list_changed` | `workspace, skills[]` | full state | the skill registry (watcher, #31); session-less |
 | `file_tree_changed` | `workspace, changed[]` | invalidation | workspace-relative stale dirs; the client refetches listed dirs, never a tree (watcher, #32) |
@@ -329,6 +329,11 @@ is why the event has no separate `detail` field: a badge arrives with its detail
 It rides them alone. The declared wait is the `idle` arm's `waiting_on`, not a sibling field of the
 row or of `own_state`: a row states a target exactly when its state declares one, so a badge and a
 target cannot be edited apart (#346). The child's own tab reads the same value off `own_state`.
+The `notified` wake carries the same value in `waiting_on` when it leaves the child parked: the
+target its `idle` state declares, or `user` for a rest that ends on a question (`awaiting`). A
+terminal wake carries none — a finished child is parked nowhere. The core computes it at the rest
+(`subagent/lifecycle.rs`), so where a child sits is a fact the parent's view reads off the wire,
+not a guess from the row it already had (#368).
 
 ### Entry kinds ([`kind.rs`](../crates/tau-protocol/src/kind.rs))
 

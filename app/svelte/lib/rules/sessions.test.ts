@@ -222,7 +222,7 @@ describe('applySubagentEvent (lib level)', () => {
     let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 7);
     delete map['c'];
-    const out = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'hi', output: null }, 9);
+    const out = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'hi', output: null, waiting_on: null }, 9);
     expect(out['p']!.subagents[0]!.state.type).toBe('idle');
     expect(out['p']!.subagents[0]!.state).toEqual({ type: 'idle', waiting_on: 'parent' });
     expect(out['p']!.subagents[0]!.last_message).toBe('hi');
@@ -236,21 +236,50 @@ describe('applySubagentEvent (lib level)', () => {
     map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 2);
     // A terminal wake settles the badge and leaves no wait behind, so the row
     // never shows a finished child as owed by the user.
-    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'done', text: 'report', output: 'out' }, 3);
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'done', text: 'report', output: 'out', waiting_on: null }, 3);
     expect(map['c']!.state).toBe('done');
     expect(map['c']!.waiting_on).toBeNull();
-    // A `waiting` wake declares no target and re-parks the child: the mirror
-    // row states no wait (it settled), so the core's rule parks it on the
-    // parent it reports to (settle_rest).
-    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'ask', output: null }, 4);
+    // A wake that names no target re-parks on the delegating parent — the rule
+    // settle_rest applies to a child that ended without a question.
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'ask', output: null, waiting_on: null }, 4);
     expect(map['c']!.state).toBe('idle');
     expect(map['c']!.waiting_on).toBe('parent');
   });
 
+  it('the wake names the target, so the read parks the child where the core parked it', () => {
+    // The row observed the child parked on its parent; the wake says the rest
+    // parked it on the human. The read follows the wake — the inference this
+    // replaced kept the row's target, and the bell never heard the question.
+    let map: SessionMap = {
+      p: makeStub(meta('p'), null, 'idle', null, 1),
+      c: makeStub(meta('c'), 'p', 'idle', 'parent', 1)
+    };
+    map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 2);
+    map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: st({ state: 'idle', waiting_on: 'parent' }), note: null }, 3);
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'which call?', output: null, waiting_on: 'user' }, 4);
+    expect(map['p']!.subagents[0]!.state).toEqual({ type: 'idle', waiting_on: 'user' });
+    expect(map['c']!.state).toBe('idle');
+    expect(map['c']!.waiting_on).toBe('user');
+    expect(attentionOf(map).map((i) => i.reason)).toEqual(['w is waiting on you']);
+  });
+
+  it('a terminal wake that names a target leaves the row with none', () => {
+    // Contract says a terminal wake names no target; the read enforces it
+    // structurally, so an off-contract frame cannot leave a finished child
+    // shown as owed by the user.
+    let map: SessionMap = { p: makeStub(meta('p'), null, 'idle', null, 1) };
+    map = applySubagentEvent(map, 'p', { kind: 'spawned', handle: 'h', child: 'c', agent_type: 'general', context_mode: 'fresh', title: 'w' }, 2);
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'done', text: 'report', output: null, waiting_on: 'user' }, 3);
+    expect(map['p']!.subagents[0]!.state).toEqual({ type: 'done', output: null });
+    expect(map['c']!.state).toBe('done');
+    expect(map['c']!.waiting_on).toBeNull();
+    expect(attentionOf(map)).toEqual([]);
+  });
+
   it('a child parked with a question stays on the user through the wake', () => {
     // The core's spawn-origin rest in wire order: `awaiting` (the question),
-    // then the notify wake. The wake names no target, so the target the row
-    // declares — the user, for a child with a question — is what re-parks it.
+    // then the notify wake, which names the human as the target it parks the
+    // child on — the same target the `awaiting` state implies.
     let map: SessionMap = {
       p: makeStub(meta('p'), null, 'idle', null, 1),
       c: makeStub(meta('c'), 'p', 'running', null, 1)
@@ -259,7 +288,7 @@ describe('applySubagentEvent (lib level)', () => {
     map = applySubagentEvent(map, 'p', { kind: 'state', handle: 'h', child: 'c', state: st({ state: 'awaiting' }), note: null }, 3);
     expect(map['p']!.subagents[0]!.state).toEqual({ type: 'awaiting' });
     expect(attentionOf(map).map((i) => i.session)).toEqual(['p']);
-    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'which call?', output: null }, 4);
+    map = applySubagentEvent(map, 'p', { kind: 'notified', child: 'c', wake: 'waiting', text: 'which call?', output: null, waiting_on: 'user' }, 4);
     // Mirror row, tree row, and the bell all keep the user: the red case
     // survives the wake that reports it.
     expect(map['p']!.subagents[0]!.state).toEqual({ type: 'idle', waiting_on: 'user' });
@@ -270,7 +299,7 @@ describe('applySubagentEvent (lib level)', () => {
 
   it('a notified event on an unknown session leaves the map alone', () => {
     const map: SessionMap = {};
-    expect(applySubagentEvent(map, 'ghost', { kind: 'notified', child: 'c', wake: 'idle', text: 'x', output: null }, 9)).toBe(map);
+    expect(applySubagentEvent(map, 'ghost', { kind: 'notified', child: 'c', wake: 'idle', text: 'x', output: null, waiting_on: null }, 9)).toBe(map);
   });
 
   it('a spawn replaces a duplicate mirror (same handle or child)', () => {

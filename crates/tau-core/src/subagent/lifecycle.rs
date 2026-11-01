@@ -149,9 +149,14 @@ impl Supervisor {
             );
             return;
         }
-        // The declared target (a `parent_notify` hint) rides the observed
-        // rest's wake as the badge — `None` when the child declared none.
+        // The `parent_notify` hint is the input to where the rest parks; the
+        // wake states that place, not the hint.
         let declared_waiting = child.take_declared_waiting();
+        // Where an autonomous rest parks the child: the declared target, or
+        // the delegating parent. The state's `idle` arm and the wake that
+        // reports it state the same target — one value, no inference at the
+        // receiving end (#368).
+        let parked = declared_waiting.unwrap_or(WaitingOn::Parent);
         // A `parent_notify(done: true)` declaration is sufficient evidence
         // of completion on its own: the child committed to a result, so
         // the observed rest is `Done` whether or not the plan file is
@@ -164,9 +169,7 @@ impl Supervisor {
                 output: declared_output,
             }
         } else {
-            ChildState::Idle {
-                waiting_on: declared_waiting.unwrap_or(WaitingOn::Parent),
-            }
+            ChildState::Idle { waiting_on: parked }
         };
         child.set_rest_requested(false);
         if let Err(e) = child.set_state(&state) {
@@ -185,10 +188,18 @@ impl Supervisor {
             // names what it has / needs in the final output); a reply to a
             // direct message stays silent — the sender is engaged.
             ChildState::Idle { .. } if origin == TurnOrigin::Spawn => {
-                self.emit_wake(child, WakeKind::Waiting, final_text, declared_waiting, None);
+                self.emit_wake(child, WakeKind::Waiting, final_text, Some(parked), None);
             }
             ChildState::Awaiting if origin == TurnOrigin::Spawn => {
-                self.emit_wake(child, WakeKind::Waiting, final_text, None, None);
+                // A rest that ends on a question is parked on the human: the
+                // wake states the target the `awaiting` state implies.
+                self.emit_wake(
+                    child,
+                    WakeKind::Waiting,
+                    final_text,
+                    Some(WaitingOn::User),
+                    None,
+                );
             }
             _ => {}
         }

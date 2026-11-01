@@ -177,7 +177,7 @@ describe('applyEvents: last_modified (#282/#283)', () => {
         type: 'subagent_event',
         workspace: WS.id,
         session: 's1',
-        kind: { kind: 'notified', child: 'c1', wake: 'done', text: 'result', output: null }
+        kind: { kind: 'notified', child: 'c1', wake: 'done', text: 'result', output: null, waiting_on: null }
       }
     ]);
     expect(store.sessions['s1']!.last_modified).toBe(5000);
@@ -251,7 +251,7 @@ describe('subagent_event', () => {
         type: 'subagent_event',
         workspace: WS.id,
         session: 'p',
-        kind: { kind: 'notified', child: 'c', wake: 'stopped', text: 'done', output: null }
+        kind: { kind: 'notified', child: 'c', wake: 'stopped', text: 'done', output: null, waiting_on: null }
       }
     ]);
     expect(store.sessions['p']!.subagents[0]!.state).toEqual({ type: 'other', raw: 'stopped' });

@@ -90,12 +90,13 @@ export function badgeOfWake(wake: string): ChildBadge {
 // The wake's state for a mirror row whose state event never arrived (a lost
 // batch — the stream's self-heal is the next snapshot). A `done` wake carries
 // the report, a `failed` wake states the reason in its text, and a `waiting`
-// wake declares no target — it re-parks a child where it was, so the caller
-// hands in the target the row already declares; a row with no observed wait is
-// parked on the delegating parent, the rule `settle_rest` applies when the
-// notify parks a child that ended without a question (lifecycle.rs). A `stopped` wake names no storer — the stop event does,
-// and `stopped` sends no wake at all (spec §5.2) — so that badge keeps the
-// `other` arm rather than inventing a `who`.
+// wake names the target it parks the child on (#368): the caller hands that
+// over, so the state is read from the wake rather than guessed from the row.
+// A wake that names no target re-parks on the delegating parent, the rule
+// `settle_rest` applies to a child that ended without a question
+// (lifecycle.rs). A `stopped` wake names no storer — the stop event does, and
+// `stopped` sends no wake at all (spec §5.2) — so that badge keeps the `other`
+// arm rather than inventing a `who`.
 export function stateOfWake(
   wake: string,
   text: string | null,
