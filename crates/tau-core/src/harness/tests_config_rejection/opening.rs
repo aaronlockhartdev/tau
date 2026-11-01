@@ -277,3 +277,129 @@ async fn a_cold_read_of_a_repaired_layer_leaves_no_mark_behind_it() {
         "the boundary is told nothing about a layer that reads"
     );
 }
+
+/// A transcript entry straight to the store: the history a session carries
+/// between opens, written without running a turn.
+fn history_entry(cwd: &Path, session: &str, text: &str) {
+    let mut store = SessionStore::for_workspace(cwd, session);
+    store.open().unwrap();
+    let leaf = store.leaf_cached().unwrap().map(|e| e.id);
+    store
+        .append(
+            EntryKind::User,
+            serde_json::json!({ "text": text }),
+            leaf.as_deref(),
+        )
+        .unwrap();
+}
+
+/// #378: a session's history is the record of what it was told. Closed and
+/// reopened under one unfixed failure, with turns between the opens, it states
+/// the failure once: the app's close and open (`SessionClose` detaches the live
+/// session, `SessionOpen` re-registers the file), and the open's fold reads the
+/// whole branch, not the window the store renders.
+#[tokio::test]
+async fn a_reopen_under_one_unfixed_failure_states_it_once_across_history() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &broken_layer("short")).await;
+    let session = new_session(&core, &ws);
+    let cwd = Path::new(&ws.cwd);
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        1,
+        "the open under the break states it"
+    );
+    for open in 1..=3 {
+        core.dispatch(Command::SessionClose {
+            session: session.clone(),
+        })
+        .unwrap();
+        history_entry(cwd, &session, &format!("the turn before open {open}"));
+        core.dispatch(Command::SessionOpen {
+            session: session.clone(),
+        })
+        .unwrap();
+        assert_eq!(
+            config_records(cwd, &session).len(),
+            1,
+            "open {open}: a file left broken is one story the session already knows: {:?}",
+            config_records(cwd, &session)
+        );
+    }
+}
+
+/// The dogfood's shape (#378): the app boots on a good system layer, the file
+/// breaks under it (the watcher's reload marks every open workspace, #364), and
+/// the session lives through opens, turns, a tab close and reopen, and a
+/// workspace close and reopen. One unfixed failure is one record.
+#[tokio::test]
+async fn a_system_layer_broken_after_the_boot_is_stated_once_across_reopens() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &project_layer("short")).await;
+    // The layer breaks after the boot read it, as a live edit does.
+    write_config_fixture(system.path(), &broken_system());
+    reload_system_layer(&core);
+    let session = new_session(&core, &ws);
+    let cwd = Path::new(&ws.cwd);
+    assert_eq!(
+        config_records(cwd, &session).len(),
+        1,
+        "the open under the broken system layer states it"
+    );
+    let live = core
+        .sessions
+        .lock()
+        .get(&session)
+        .cloned()
+        .expect("the session the open registered");
+    carry_model(&live, "model");
+    core.rederive_turn(&live);
+    for open in 1..=2 {
+        core.dispatch(Command::SessionClose {
+            session: session.clone(),
+        })
+        .unwrap();
+        history_entry(cwd, &session, &format!("the turn before tab open {open}"));
+        core.dispatch(Command::SessionOpen {
+            session: session.clone(),
+        })
+        .unwrap();
+        let live = core
+            .sessions
+            .lock()
+            .get(&session)
+            .cloned()
+            .expect("the session the reopen registered");
+        carry_model(&live, "model");
+        core.rederive_turn(&live);
+    }
+    // The workspace closes and reopens under the same unfixed failure.
+    core.close_workspace(&ws.id).unwrap();
+    let ws = open_ws(&core, project.path()).await;
+    core.session_reopen(&ws, &session).unwrap();
+    let live = core
+        .sessions
+        .lock()
+        .get(&session)
+        .cloned()
+        .expect("the session the reopen registered");
+    carry_model(&live, "model");
+    core.rederive_turn(&live);
+    let records = config_records(Path::new(&ws.cwd), &session);
+    assert_eq!(
+        records.len(),
+        1,
+        "a system layer left broken is one story across every reopen and turn: {records:?}"
+    );
+}
+
+/// The system layer with a provider name the spelling rules refuse: the boot
+/// read the good one, this is the edit that lands after it.
+fn broken_system() -> String {
+    SYSTEM.replace(
+        "[generation]",
+        "[providers.\"sys/x\"]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[generation]",
+    )
+}
