@@ -98,6 +98,43 @@ Agent types are **not** in this file: they are `agents/*.md` under
 collision (`agent_type.rs`). Presentation preferences are not here either — they
 are an in-app per-user store (spec §12).
 
+## What an edit does to a running app
+
+Every file here is watched (#347, #353): saving one reloads the merge and moves
+what a live session runs on at its **turn boundary** — the same seam that
+re-derives the context gate. A running turn keeps the values it started with;
+a reload that changes no live fact records nothing; a rejected edit applies
+nothing and records itself to every session under the broken layer (ADR-0034,
+#364). Per section:
+
+| Section | A live session |
+|---|---|
+| `[providers.<name>]` | **Live**: the next turn routes on the new address and key; an in-flight stream finishes on the route it started. |
+| `[providers.<name>.models.<id>]` | **Live**: the next turn's gate reads the new window, cap, and output. |
+| `[generation]` | **Live**: the next turn samples with the new knobs; `default_model` is per-session — a session keeps the model it opened on. |
+| `[thinking]` | **Live**: the next turn's calls carry the new effort. |
+| `[cache]` | **Live**: the next turn's calls carry the new breakpoints. |
+| `[requests]` | **Live**: the next provider call runs under the new timeout and retries (#347). |
+| `[om]` | **Live**: the next memory pass uses the thresholds, the interval, and the route; `observe_max_chars` applies to the next observation. |
+| `[subagents]` | **Live at the next spawn**: the caps are enforced and the type registry re-discovered; a running child keeps the caps it spawned under (#347). A type file written after launch is seen; a type naming a model the config gained after launch spawns on the session's launch route for that model — the next open is fully current. |
+| `[limits]` | **Live**: the next turn's overflow caps and tool budgets. |
+| `[gates]` | **Live at the next check**: the command, deadline, and retry cap (#347). The section's text in the system prompt is a launch copy — the next open speaks it. |
+| `[hashline]` | **Live at the boundary**: the pin store sweeps under the new numbers (#347); `gc_on_start` names the sweep at a session open. |
+
+The table lists every section the core accepts: the load is
+`deny_unknown_fields`, so naming a section this build does not read —
+`[mcp]`, `[logging]`, `[ui]`, `[telemetry]` — is a **load failure**, not a
+quiet ignore. The MCP server set, when it lands, is a boot section by design:
+a server process is not hot-swapped. The write-coalescing window is a code
+constant (spec §12), not a config key.
+
+Per-user presentation is not in this file at all (the `display.*` settings save
+to the GUI's own store, spec §12).
+
+The boot is the one place a broken config is allowed to ride: the app starts on
+defaults and says so (#363) — the record lands in every session opened under
+the layer, and the first session's transcript carries the fact too.
+
 ## `[providers.<name>]` — connection
 
 One entry per OpenAI-compatible endpoint (ADR-0003: that protocol only; no

@@ -38,7 +38,7 @@ impl Supervisor {
     /// exists to keep the fleet under this, so a spawn that would still
     /// exceed it is a defensive refusal, not a user-facing failure path.
     pub(super) fn check_fleet_cap(&self) -> Result<(), String> {
-        let Some(hard) = hard_cap(&self.caps) else {
+        let Some(hard) = hard_cap(&self.fleet.lock().0) else {
             return Ok(());
         };
         let total = self.children.lock().len();
@@ -54,7 +54,7 @@ impl Supervisor {
     /// `Awaiting` children are never evicted — a parked child is resting on
     /// a live interaction (the #187/#188 resume contract).
     pub(super) fn reclaim_terminal(&self) {
-        let Some(soft) = soft_bound(&self.caps) else {
+        let Some(soft) = soft_bound(&self.fleet.lock().0) else {
             return;
         };
         let mut children = self.children.lock();

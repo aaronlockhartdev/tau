@@ -244,3 +244,85 @@ fn gc_prunes_a_retired_record_past_retention() {
     );
     cleanup(&dir);
 }
+
+/// #347: the policy is live. A store that is open sweeps when the boundary
+/// moves the `[hashline]` numbers — no reopen is needed for the new policy to
+/// prune.
+#[test]
+fn a_moved_policy_sweeps_the_open_store() {
+    let dir = ws("gc-live");
+    cleanup(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    let a = dir.join("a.rs");
+    fs::write(&a, "one\n").expect("write a");
+    let s = store(&dir, no_gc());
+    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
+        .expect("save a");
+    fs::remove_file(&a).expect("rm a");
+    s.apply_policy(GcPolicy {
+        retention_days: 0,
+        gc_on_start: true,
+    });
+    assert!(
+        s.paths().is_empty(),
+        "the moved policy prunes the absent file"
+    );
+    cleanup(&dir);
+}
+
+/// The negative beside it: a policy that names no sweep leaves the rows alone.
+#[test]
+fn a_moved_policy_that_names_no_sweep_prunes_nothing() {
+    let dir = ws("gc-live-off");
+    cleanup(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    let a = dir.join("a.rs");
+    fs::write(&a, "one\n").expect("write a");
+    let s = store(&dir, no_gc());
+    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
+        .expect("save a");
+    fs::remove_file(&a).expect("rm a");
+    s.apply_policy(no_gc());
+    assert_eq!(
+        s.paths(),
+        vec![a.to_str().expect("utf8").to_owned()],
+        "no sweep is named, so the row stands"
+    );
+    cleanup(&dir);
+}
+
+/// #347: the sweep is edge-triggered. A boundary that repeats the store's
+/// policy runs no scan — the row stands until the numbers actually move.
+#[test]
+fn a_boundary_that_repeats_the_policy_runs_no_sweep() {
+    let dir = ws("gc-live-repeat");
+    cleanup(&dir);
+    fs::create_dir_all(&dir).expect("mkdir");
+    let a = dir.join("a.rs");
+    fs::write(&a, "one\n").expect("write a");
+    let sweep = GcPolicy {
+        retention_days: 0,
+        gc_on_start: true,
+    };
+    let s = store(&dir, sweep);
+    s.save(&pins(a.to_str().expect("utf8"), &["AAAA"], &["c1"]))
+        .expect("save a");
+    fs::remove_file(&a).expect("rm a");
+    // The boundary repeats the open's policy: no scan, the row stands.
+    s.apply_policy(sweep);
+    assert_eq!(
+        s.paths(),
+        vec![a.to_str().expect("utf8").to_owned()],
+        "an unchanged policy runs no sweep"
+    );
+    // The numbers move: the sweep runs and prunes the absent file.
+    s.apply_policy(GcPolicy {
+        retention_days: 7,
+        gc_on_start: true,
+    });
+    assert!(
+        s.paths().is_empty(),
+        "the moved policy prunes the absent file"
+    );
+    cleanup(&dir);
+}

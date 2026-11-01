@@ -24,6 +24,11 @@ pub trait TurnProvider: Send + Sync {
     fn forwarding_inner(&self) -> Option<TurnProviderRef> {
         None
     }
+    /// The `[requests]` policy, moved on a live session's config reload
+    /// (#347): the next provider call runs under the new timeout and retry
+    /// numbers. A provider with no transport of its own (the canned scripts)
+    /// has nothing to move.
+    fn set_requests(&self, _requests: &Requests) {}
 }
 
 pub type TurnProviderRef = Arc<dyn TurnProvider>;
@@ -38,21 +43,27 @@ pub fn production(
     Arc::new(ProductionProvider {
         client: client.clone(),
         provider: provider.clone(),
-        requests: requests.clone(),
+        requests: parking_lot::Mutex::new(requests.clone()),
     })
 }
 
 struct ProductionProvider {
     client: reqwest::Client,
     provider: Provider,
-    requests: Requests,
+    /// The `[requests]` section, live: the config boundary writes it, and the
+    /// next `call` runs under the new numbers (#347).
+    requests: parking_lot::Mutex<Requests>,
 }
 
 impl TurnProvider for ProductionProvider {
+    fn set_requests(&self, requests: &Requests) {
+        *self.requests.lock() = requests.clone();
+    }
+
     fn call<'a>(&self, request: &ResponseRequest, sink: &'a mut dyn TurnSink) -> ProviderTurn<'a> {
         let client = self.client.clone();
         let provider = self.provider.clone();
-        let requests = self.requests.clone();
+        let requests = self.requests.lock().clone();
         let request = request.clone();
         Box::pin(async move { stream_turn(&client, &provider, &requests, &request, sink).await })
     }

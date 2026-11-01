@@ -97,6 +97,15 @@ impl Registry {
             ..Self::default()
         }
     }
+
+    /// The live `[hashline]` policy (#347): the store sweeps now, under the
+    /// numbers the boundary just read. A registry with no store (the test
+    /// seam) has nothing to sweep.
+    pub fn apply_gc_policy(&self, policy: pin_store::GcPolicy) {
+        if let Some(store) = self.store.as_ref() {
+            store.apply_policy(policy);
+        }
+    }
     fn touch(&mut self, path: &str) {
         self.usage_clock += 1;
         self.last_used.insert(path.to_owned(), self.usage_clock);

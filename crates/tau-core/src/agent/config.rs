@@ -91,6 +91,22 @@ impl AgentSession {
         }
     }
 
+    /// The `[gates]` section for the next check (spec §12, #347): a live
+    /// session re-reads the command, the deadline and the retry cap at its turn
+    /// boundary, and the check runs the new one. The section's text in the
+    /// system prompt is a launch copy — the next open speaks it.
+    pub(crate) fn set_gates(&self, gates: Option<crate::config::Gates>) {
+        self.inner.lock().gates = gates;
+    }
+
+    /// The `[requests]` section for the next provider call (#347): the timeout
+    /// and retry numbers the transport runs under move at the boundary. The
+    /// provider a session launched with is the one that moves; a canned
+    /// provider has no transport and ignores the write.
+    pub(crate) fn set_requests(&self, requests: &crate::config::Requests) {
+        self.provider.set_requests(requests);
+    }
+
     /// The config a boundary read succeeded on: the latch clears, so the next
     /// broken edit is a new story (#359).
     pub(crate) fn config_accepted(&self) {

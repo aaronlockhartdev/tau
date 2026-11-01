@@ -85,6 +85,9 @@ impl std::error::Error for StoreError {}
 pub struct PinStore {
     root: PathBuf,
     conn: Mutex<Option<Connection>>,
+    /// The policy the last sweep ran under (#347): the boundary's write
+    /// sweeps on a change, not per turn.
+    last_policy: Mutex<GcPolicy>,
 }
 
 /// Epoch ms since the Unix epoch (0 on clock failure).
@@ -101,6 +104,7 @@ impl PinStore {
         let store = Self {
             root: root.clone(),
             conn: Mutex::new(None),
+            last_policy: Mutex::new(policy),
         };
         {
             let mut slot = store.conn.lock();
@@ -110,6 +114,25 @@ impl PinStore {
         }
         store.run_gc(policy);
         store
+    }
+
+    /// The `[hashline]` policy, moved on a live session's config reload (#347):
+    /// the store sweeps under the new numbers — the session-start sweep is not
+    /// the only moment the policy is honored. The sweep is edge-triggered: a
+    /// boundary that reads the same numbers has nothing to redo, the last
+    /// sweep already ran under them. `run_gc`'s full-table scan (one stat per
+    /// pinned path, under the conn lock) is why the trigger is the change,
+    /// not the turn.
+    pub fn apply_policy(&self, policy: GcPolicy) {
+        let changed = {
+            let mut last = self.last_policy.lock();
+            let changed = *last != policy;
+            *last = policy;
+            changed
+        };
+        if policy.gc_on_start && changed {
+            self.run_gc(policy);
+        }
     }
 
     /// The db file: `{root}/anchors.sqlite` (sibling of the retired
