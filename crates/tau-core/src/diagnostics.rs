@@ -91,13 +91,13 @@ pub(crate) fn append_facts(
         // second store over the same file may have appended since this one
         // opened (the closed session's `session_set_model` opens its own
         // store, #380). Skipping this mints a duplicate id — every store
-        // counts ids from its open — and the branch walk's cycle guard strands
-        // the facts on a self-parented entry (the live-om 80GB shape).
+        // counts ids from its open — and the walk strands the earlier fact
+        // under the later line's id.
         store.refresh_if_grown()?;
-        // And take the parent from the file's tip, the rule the agent's own
-        // writer follows (`Inner::record_diagnostic`, `store.leaf()`), so both
-        // audit-fact writers hang facts off the one tip.
-        let leaf = store.leaf()?.map(|e| e.id);
+        // The parent is the tip of the reloaded view, which is the file's tip
+        // from the line above: the facts hang off it, and the id mint counts
+        // from it.
+        let leaf = store.leaf_cached()?.map(|e| e.id);
         store.append(EntryKind::Diagnostic, fact.to_value(), leaf.as_deref())?;
     }
     Ok(())
@@ -292,9 +292,6 @@ mod tests {
         let mut first = crate::session::SessionStore::for_workspace(cwd, "fork-leg");
         first.create().expect("create");
         first.open().expect("open first");
-        first
-            .entries_tail_cached(1)
-            .expect("touch: the log loads empty — the live store's view before the fact");
         // The second writer: its own store, its own append (the closed-arm
         // `session_set_model` shape), landing after the first store loaded.
         let mut second = crate::session::SessionStore::for_workspace(cwd, "fork-leg");
