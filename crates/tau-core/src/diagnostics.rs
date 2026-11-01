@@ -87,7 +87,17 @@ pub(crate) fn append_facts(
     facts: &[Diagnostic],
 ) -> Result<(), crate::session::Error> {
     for fact in facts {
-        let leaf = store.leaf_cached()?.map(|e| e.id);
+        // Reload the store when the file has grown past its loaded view: a
+        // second store over the same file may have appended since this one
+        // opened (the closed session's `session_set_model` opens its own
+        // store, #380). Skipping this mints a duplicate id — every store
+        // counts ids from its open — and the branch walk's cycle guard strands
+        // the facts on a self-parented entry (the live-om 80GB shape).
+        store.refresh_if_grown()?;
+        // And take the parent from the file's tip, the rule the agent's own
+        // writer follows (`Inner::record_diagnostic`, `store.leaf()`), so both
+        // audit-fact writers hang facts off the one tip.
+        let leaf = store.leaf()?.map(|e| e.id);
         store.append(EntryKind::Diagnostic, fact.to_value(), leaf.as_deref())?;
     }
     Ok(())
@@ -268,5 +278,95 @@ mod tests {
             json!({ "note": "provider rejection" }),
         )];
         assert_eq!(project(&branch), Diagnostics::default());
+    }
+
+    // The two-writer shape (#380): a second store over the same file appends
+    // between this store's open and its fact. The fact must hang off the
+    // file's tip, not the loaded log's — a pre-computed leaf makes the two
+    // appends siblings, and the branch walk from the tip visits one and
+    // strands the other.
+    #[test]
+    fn audit_facts_join_the_tip_a_second_writer_left_behind() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cwd = dir.path();
+        let mut first = crate::session::SessionStore::for_workspace(cwd, "fork-leg");
+        first.create().expect("create");
+        first.open().expect("open first");
+        first
+            .entries_tail_cached(1)
+            .expect("touch: the log loads empty — the live store's view before the fact");
+        // The second writer: its own store, its own append (the closed-arm
+        // `session_set_model` shape), landing after the first store loaded.
+        let mut second = crate::session::SessionStore::for_workspace(cwd, "fork-leg");
+        second.open().expect("open second");
+        append_facts(
+            &mut second,
+            &[Diagnostic::ModelChanged {
+                from: None,
+                to: "gated".into(),
+            }],
+        )
+        .expect("second writer appends");
+        append_facts(
+            &mut first,
+            &[Diagnostic::GateUnavailable {
+                model: "gated".into(),
+                missing: vec!["no facts".into()],
+            }],
+        )
+        .expect("first store appends");
+        // A fresh reader sees one chain: both facts, none orphaned.
+        let mut reader = crate::session::SessionStore::for_workspace(cwd, "fork-leg");
+        reader.open().expect("open reader");
+        let branch = reader.branch().expect("branch");
+        let codes: Vec<String> = branch
+            .iter()
+            .filter(|e| e.kind == EntryKind::Diagnostic)
+            .filter_map(|e| {
+                e.payload
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect();
+        assert_eq!(
+            codes,
+            vec!["model_changed".to_owned(), "gate_unavailable".to_owned()],
+            "one branch carries both facts"
+        );
+    }
+
+    /// The helper's own rule, at the file: two facts chain, each hanging off
+    /// the fact before it.
+    #[test]
+    fn audit_facts_hang_off_the_fact_before_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut store = crate::session::SessionStore::for_workspace(dir.path(), "chain-leg");
+        store.create().expect("create");
+        append_facts(
+            &mut store,
+            &[
+                Diagnostic::ConfigRejected {
+                    path: "/p/config.toml".into(),
+                    reason: "unclosed table".into(),
+                },
+                Diagnostic::GateUnavailable {
+                    model: "m".into(),
+                    missing: vec!["no facts".into()],
+                },
+            ],
+        )
+        .expect("append facts");
+        let mut reader = crate::session::SessionStore::for_workspace(dir.path(), "chain-leg");
+        reader.open().expect("open");
+        let branch = reader.branch().expect("branch");
+        assert_eq!(
+            branch
+                .iter()
+                .filter(|e| e.kind == EntryKind::Diagnostic)
+                .count(),
+            2,
+            "the walk reaches both facts"
+        );
     }
 }
