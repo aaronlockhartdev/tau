@@ -298,7 +298,7 @@ async fn continuous_settles_activate_on_tokens_alone() {
     let recorder = std::sync::Arc::new(RecordingProvider::new("observed the round"));
     let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
     let mut activations = 0;
-    for round in 0..10 {
+    for round in 0..20 {
         append_entries(&mut store, 3, 8_000); // ~6k tokens per round
         let raw_before = state.unobserved_tokens(&mut store).unwrap();
         let cursor_before = state.record.cursor.clone();
