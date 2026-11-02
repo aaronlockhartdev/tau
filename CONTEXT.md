@@ -56,6 +56,9 @@ _Avoid_: summarization, truncation
 The memory model introduced by Mastra that tau's compaction is built on (ADR-0004): an Observer LLM converts raw messages into a dense, append-only, date-grouped observation log; a Reflector LLM rewrites the log to keep it bounded; raw messages stay in storage, recoverable via `recall`.
 _Avoid_: "the OM feature", "memory feature"
 
+**Unobserved window**:
+The raw session entries after the observation cursor — the volume every turn-end gate reads (activation, buffer step) and the `om_stalled` diagnostic names (spec §4). Buffered chunks are compressions of the same material, so their token count is never a gate's number (#392).
+_Avoid_: pending (the durable field, whose value a promote rewrites), tail (the window is the whole span, not its end)
 **User query**:
 The `role: user` item a model request must carry to be answerable. OM compaction can prune it away, so the raw window anchors the newest user entry of the active branch and a harness assembly with none is refused before the wire (#334).
 _Avoid_: prompt (the whole request), instruction (a declared directive), filler (the string tau refuses to invent)
