@@ -578,8 +578,8 @@ async fn context_gate_refuses_when_the_ladder_cannot_fit() {
     );
 }
 
-/// The `[om]` a test reaches cheaply: a 1000-token activation, a 600-token
-/// buffer increment, and the sync Buffer arm on.
+/// The `[om]` a test reaches cheaply: a 1000-token activation threshold, a
+/// 230-token buffer increment, and the sync Buffer arm on.
 fn small_om() -> crate::config::Om {
     crate::config::Om {
         om_model: String::new(),

@@ -95,8 +95,11 @@ impl OmState {
             .iter()
             .map(|c| om::ChunkTokens(c.tokens))
             .collect();
-        let remove =
-            om::projected_message_removal(&chunks, &self.config, self.record.pending_tokens);
+        // The removal target is computed against the raw window, not the
+        // stored field: a prior promote leaves chunk tokens there, and the
+        // compressed chunks understate the volume the ladder must clear (#392).
+        let raw = self.unobserved_tokens(store)?;
+        let remove = om::projected_message_removal(&chunks, &self.config, raw);
         if remove == 0 {
             // Pending is already at or below the retention floor: the
             // chunks stay buffered for the next activation.
