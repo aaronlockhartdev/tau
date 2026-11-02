@@ -3,7 +3,7 @@
   // across all open workspaces — state dot, name, workspace, latest line,
   // tokens. A list, deliberately: the fleet scales as rows, not a board.
   import { store, switchSession } from '../lib/store/store.svelte';
-  import { fmtK } from '../lib/display/format';
+  import { bucketAge, fmtK } from '../lib/display/format';
   import Overlay from './Overlay.svelte';
 
   const open = $derived(store.fleetOpen);
@@ -22,7 +22,9 @@
           line: last?.text ? last.text.slice(0, 90) : ''
         };
       })
-      .sort((a, b) => rank(a.s) - rank(b.s) || b.s.last_modified - a.s.last_modified);
+      // The attention rank first; within a rank, the displayed age, so a row
+      // settles under the cursor between clock ticks (#322).
+      .sort((a, b) => rank(a.s) - rank(b.s) || bucketAge(a.s.last_modified, store.now) - bucketAge(b.s.last_modified, store.now));
   });
 
   const wsName = (id: string) => store.workspaces.find((w) => w.id === id)?.name ?? id;

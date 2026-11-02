@@ -144,6 +144,36 @@ describe('LeftPane', () => {
   });
 
 
+  // The pane sorts on the age the row *displays* (#322): a clock tick that
+  // changes no label leaves the rows where the cursor left them.
+  it('keeps two same-bucket rows put across a tick, and moves one that crosses', async () => {
+    const HOUR = 3_600_000;
+    const MIN = 60_000;
+    const NOW = new Date('2026-01-01T12:00:00Z').getTime();
+    seed({
+      sessions: {
+        // Both read "2h". The raw stamps rank s2 first, which is the churn: any
+        // write to last_modified swapped the row under the cursor.
+        s1: seedState(meta('s1'), { last_modified: NOW - (2 * HOUR + 40 * MIN) }),
+        s2: seedState(meta('s2'), { last_modified: NOW - (2 * HOUR + 5 * MIN) })
+      }
+    });
+    mockStore.now = NOW;
+    const { container } = render(LeftPane);
+    await tick();
+    const first = (): string => (container.querySelector('.trow')?.textContent ?? '').trim();
+    expect(first()).toContain('s1');
+    // A tick inside the bucket: the labels are the same, so the order is.
+    mockStore.now = NOW + MIN;
+    await tick();
+    expect(first()).toContain('s1');
+    // The tick that crosses the label is the reorder: s1 now reads "3h" and drops
+    // below s2's "2h".
+    mockStore.now = NOW + 21 * MIN;
+    await tick();
+    expect(first()).toContain('s2');
+  });
+
   it('a click away from the rows clears the selection', async () => {
     await mount();
     const q = mockStore.pane[WS]!;
