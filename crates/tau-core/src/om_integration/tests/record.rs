@@ -121,3 +121,71 @@ fn a_record_over_the_blob_threshold_round_trips() {
     );
     assert_eq!(reloaded.cursor, state.record.cursor);
 }
+
+/// A record holding one buffered chunk over `1..=5`, as a session file
+/// leaves it.
+fn record_with_a_chunk() -> OmRecord {
+    OmRecord {
+        buffered_chunks: vec![BufferedChunk {
+            range: ("00000001".into(), "00000005".into()),
+            last_ts: 100,
+            text: "observed the head".into(),
+            tokens: 120,
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn reopen_restores_the_buffer_cursor_from_the_durable_chunks() {
+    // #392: the saved chunks mark their own end. A state that forgets the
+    // cursor hands every later buffer run the whole branch — the Observer is
+    // fed history the chunks already stand for.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 10, 4_000);
+    let state = OmState::from_config(&crate::config::Om::default(), record_with_a_chunk());
+    assert_eq!(state.buffer_cursor.as_deref(), Some("00000005"));
+    let tail = state.unbuffered(&mut store).unwrap();
+    assert_eq!(
+        tail.len(),
+        5,
+        "the material past the chunks is entries 6..10, not the whole branch"
+    );
+    assert_eq!(tail[0].id, "00000006");
+}
+
+#[test]
+fn a_state_without_chunks_buffers_from_the_branch_head() {
+    // The negative pair: no durable chunks, no cursor — the first run covers
+    // the branch from its head.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 10, 4_000);
+    let state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    assert_eq!(state.buffer_cursor, None);
+    assert_eq!(state.unbuffered(&mut store).unwrap().len(), 10);
+}
+
+#[test]
+fn a_reopened_buffer_pass_covers_only_the_new_tail() {
+    // The Buffer arm on a reopened session (kill-switch config, so the sync
+    // arm runs): its transcript is the entries past the restored cursor, not
+    // the branch the durable chunks already stand for (#392).
+    let dir = tempfile::tempdir().unwrap();
+    // 10 × 4k chars ≈ 10k tokens: past the 6k increment, under the 30k
+    // activation.
+    let mut store = store_with_text_entries(dir.path(), 10, 4_000);
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, record_with_a_chunk());
+    let unobserved = state.unobserved(&mut store).unwrap();
+    match state.plan(&unobserved) {
+        TurnEndAction::Buffer { transcript } => assert_eq!(
+            transcript.matches(&"w".repeat(4_000)).count(),
+            5,
+            "the buffer transcript re-covered material the chunks hold"
+        ),
+        other => panic!("expected Buffer, got {other:?}"),
+    }
+}

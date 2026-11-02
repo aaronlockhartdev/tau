@@ -309,15 +309,20 @@ The compaction model is global, not per-provider (spec §4).
 | Key | Type | Default | Notes |
 |---|---|---|---|
 | `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, and a contested key that provider does not declare is a refusal. A `vendor/name` id whose prefix names no provider goes to the provider declaring that whole key, a gateway's ids reading that way (#358). An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
-| `observe_threshold` | int | 30000 | |
+| `observe_threshold` | int | 30000 | activation, measured on the raw tokens after the observation cursor (spec §4) |
 | `reflect_threshold` | int | 40000 | |
-| `buffer_increment` | int | 6000 | |
+| `buffer_increment` | int | 6000 | the same quantity as above: the raw tokens after the observation cursor (#392) |
 | `buffer_tokens` | int | 6000 | the async boundary trigger's token count; `0` disables that trigger |
 | `retries` | table | `{8, 8, 8}` | `{ observe, buffer, reflect }` — retries *after* the first failure, per trigger point, before the cycle is abandoned (#86) |
 
 The four thresholds are validated at the parse boundary: each must be ≤
 `u32::MAX` (`LoadError::OmThreshold`, ticket #46). An oversized threshold is a
 config error, never a launch panic.
+
+`buffer_tokens = 0` leaves the async trigger off, so the turn-end pass's own Buffer
+arm absorbs a sub-activation tail. It changes nothing about activation: both arms
+are measured on the raw window, so no config value can leave a past-activation
+window that the turn-end pass cannot see (#392).
 
 ## `[subagents]` — delegation
 
