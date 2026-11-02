@@ -511,10 +511,16 @@ names no layer path (`config_rejected` carries `path: null`, #337).
 
 A session records the same failure as its own fact — `config_rejected`, minted
 when the session opens and at each of its turn boundaries, once per failure
-(#359). That record always names a file: at a rule failure, the layer a
-mid-session edit lands in, because a rule speaks of the merged set and names no
-file of its own. The session keeps running on the config that last read, so the
-record is also the answer to "why isn't my edit taking effect?".
+(#359). The record names the file that failed to read; at a rule failure it names
+the **merged config** — the sentinel `<merged config>` — because a rule speaks of
+the merged set and the project file is only where a mid-session edit lands: a rule
+the system layer introduced was being filed as the project file's fault (#366).
+The GUI renders the sentinel as "the merged config", so a session's record stops
+naming a file the user never edited; the session-less event keeps sending
+`path: null` (it has never blamed a file), and the banner names no location. Naming
+the layer that introduced the key is the honest fix once the loader carries
+provenance. The session keeps running on the config that last read, so the record
+is also the answer to "why isn't my edit taking effect?".
 
 A provider with no `models` entry, reached as a session's provider, is a runtime
 `provider {name} has no models`, not a load error.

@@ -659,8 +659,7 @@ impl Core {
     }
 
     /// The project layer's directory: where a workspace's own config file lives.
-    /// A load rule names no file, so a merged-set failure is attributed here — a
-    /// rule the system layer introduced is filed under this path (#366).
+    /// Reading it is the merge rule; a load rule's failure names no file here (#366).
     pub(crate) fn project_layer_dir(workspace: &Workspace) -> PathBuf {
         Path::new(&workspace.cwd).join(".tau")
     }
@@ -758,32 +757,36 @@ impl Core {
                 // so it is called with no guard held.
                 let warm = self.configs.lock().get(&workspace.id).cloned();
                 let kept = warm.unwrap_or_else(|| self.system_config());
-                (kept, Some(Self::rejection_of(workspace, &e)))
+                (kept, Some(Self::rejection_of(&e)))
             }
         }
     }
 
-    /// What to tell a session about a load failure: what the loader said, and the
-    /// file to name. A load rule names no file — it speaks of the merged set — so
-    /// the path given is the layer a mid-session edit lands in.
-    pub(crate) fn rejection_of(workspace: &Workspace, e: &config::LoadError) -> ConfigRejection {
-        Self::rejection_at(
-            Self::project_layer_dir(workspace).join(config::CONFIG_FILE),
-            e,
-        )
+    /// What a load failure tells a session: what the loader said, and the file to
+    /// name. A parse failure carries its own layer. A load rule speaks of the
+    /// merged set and names no file, so its record names the merged config — the
+    /// project file is where a mid-session edit lands, not the layer that
+    /// introduced the offending key, so a system-layer rule was being filed as the
+    /// project file's fault (#366, option (a); option (b), naming the layer, waits
+    /// on the loader carrying provenance). The watcher's session-less event for
+    /// the same failure has never blamed a file (`path: null`), so neither surface
+    /// points at a file the user did not edit.
+    pub(crate) fn rejection_of(e: &config::LoadError) -> ConfigRejection {
+        Self::rejection(tau_protocol::MERGED_CONFIG_SENTINEL, e)
     }
 
-    /// The same story with the fallback path chosen by the caller: the system
+    /// The same story for a caller that names the layer it read: the system
     /// layer's reload names the system file, because that is the layer whose edit
     /// failed (#364).
-    pub(crate) fn rejection_at(fallback: PathBuf, e: &config::LoadError) -> ConfigRejection {
-        let path = e
-            .path()
-            .map_or_else(|| fallback, Path::to_path_buf)
-            .display()
-            .to_string();
+    pub(crate) fn rejection_at(file: &Path, e: &config::LoadError) -> ConfigRejection {
+        Self::rejection(&file.display().to_string(), e)
+    }
+
+    fn rejection(fallback: &str, e: &config::LoadError) -> ConfigRejection {
         ConfigRejection {
-            path,
+            path: e
+                .path()
+                .map_or_else(|| fallback.to_owned(), |p| p.display().to_string()),
             reason: e.to_string(),
         }
     }

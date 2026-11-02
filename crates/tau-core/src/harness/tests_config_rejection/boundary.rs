@@ -33,9 +33,12 @@ async fn a_broken_layer_at_the_boundary_is_recorded_once_and_the_edit_is_inert()
     core.rederive_turn(&live);
     let records = config_records(cwd, &session);
     assert_eq!(records.len(), 1, "the unreadable layer is recorded");
-    assert!(
-        records[0].0.ends_with(".tau/config.toml"),
-        "the record names the file the user edits: {}",
+    // A load rule speaks of the merged set, so the record names the merged config
+    // and not the project file the edit landed in (#366).
+    assert_eq!(
+        records[0].0,
+        tau_protocol::MERGED_CONFIG_SENTINEL,
+        "a rule failure is the merged config's, not one file's: {}",
         records[0].0
     );
     assert!(

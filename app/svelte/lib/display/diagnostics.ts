@@ -3,7 +3,7 @@
 // does not know renders by its own name, never as a blank card.
 
 import { fmtK } from './format';
-import { streamOutcomeLabels } from '../wire/protocol';
+import { MERGED_CONFIG_SENTINEL, streamOutcomeLabels } from '../wire/protocol';
 import type { AnyEntry, Diagnostic, DiagnosticCode, Entry } from '../wire/protocol';
 
 // A card renders for an older build's spelling too (AnyEntry.kind is a
@@ -80,8 +80,13 @@ export function diagnosticLabel(entry: DiagnosticEntry): string {
     case 'turn_cutoff':
       return `provider cut the turn (${streamOutcomeLabels[d.ended_by]}) after ${d.blocks} block(s)`;
     case 'config_rejected':
-      // The edit is inert: the card names the file the core could not read.
-      return `config not applied (${d.path}): ${firstLine(d.reason)}`;
+      // The edit is inert: the card names the file the core could not read. A load
+      // rule is the merged config's property and names no file, so the core sends
+      // the sentinel and the card says so — a rule the system layer introduced is
+      // not the project file's fault (#366).
+      return d.path === MERGED_CONFIG_SENTINEL
+        ? `config not applied (the merged config): ${firstLine(d.reason)}`
+        : `config not applied (${d.path}): ${firstLine(d.reason)}`;
     default:
       // Unreachable while the list above covers every DiagnosticCode.
       return raw.code;

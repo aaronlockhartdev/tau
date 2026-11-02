@@ -154,7 +154,7 @@ impl Core {
                 // is a story each of them has to be told (#364). The mark is what
                 // a warm cache cannot give the boundary.
                 let rejection =
-                    Self::rejection_at(self.system_dir_of().join(config::CONFIG_FILE), &e);
+                    Self::rejection_at(&self.system_dir_of().join(config::CONFIG_FILE), &e);
                 let mut stale = self.config_stale.lock();
                 for ws in &workspaces {
                     stale.insert(ws.id.clone(), rejection.clone());
@@ -195,7 +195,7 @@ impl Core {
             Err(e) => {
                 self.config_stale
                     .lock()
-                    .insert(workspace.id.clone(), Self::rejection_of(workspace, &e));
+                    .insert(workspace.id.clone(), Self::rejection_of(&e));
                 self.emit_config_rejected(&workspace.id, &e);
             }
         }

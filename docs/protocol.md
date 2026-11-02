@@ -263,9 +263,14 @@ A config failure is told in three shapes. The watcher's `config_rejected` event 
 session-less: it reaches a GUI in front of the edit. The `config_rejected` diagnostic record is
 durable and session-scoped: minted by the session itself when its own config read fails — at open,
 where the watcher fires for nobody, and at a turn boundary — once per failure, naming the file and
-what the loader said, beside the turn that ran on the last config that read (#359). A
-break of the system layer is a story every open workspace has, so it marks each of
-their merges and every session under that layer records it (#364). The third is the
+what the loader said, beside the turn that ran on the last config that read (#359). A rule failure
+has no file to name — it is a property of the merged set — so the record carries the sentinel
+`<merged config>` (`MERGED_CONFIG_SENTINEL`) in its `path` and the GUI renders it as the merged
+config, while the event's `path: null` renders no location at all: neither surface
+blames a file the user never edited. The project file is where a mid-session edit
+lands, not the layer that introduced the offending key (#366). A break of the
+system layer is a story every open workspace has, so it marks each of their merges
+and every session under that layer records it (#364). The third is the
 **boot's** event: the app read the system layer before any workspace was open, and a
 break met there has no session to carry it and no workspace to route it, so the event
 rides with an empty workspace key and the GUI's banner is its audience (#363).
@@ -462,6 +467,11 @@ wire-optional; serde renames are checked under their wire names — `parentSessi
 The parity guard fails CI on Rust→TS gaps; these are the accepted holes, each with its reason.
 
 - **`AgentType` → `AgentInfo`** — the crate names a type the GUI renames. Whitelisted alias.
+- **The `MERGED_CONFIG_SENTINEL` value is copied, not checked.** The crate's const and the TS
+  mirror's const (both `<merged config>`, #366) are values, and the guard diffs enum/struct shapes,
+  not consts — the same hole `streamOutcomeLabels` lives in. The card renders the sentinel as the
+  merged config; a crate-side change to the string leaves the TS comparison silently unmatched, and
+  the record then prints the raw sentinel.
 - **Two usage dialects** — `Usage` (protocol) and `TurnUsage` (record) both mirror onto TS `Usage`;
   the field diff runs on the former, so a field added to `TurnUsage` has no TS check.
 - **The C9 payload types have no TS mirror.** The parity run reports `UserPayload`,
