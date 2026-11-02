@@ -285,8 +285,11 @@ impl Inner {
 impl AgentSession {
     /// Record the stalled-window fact when a completed pass left the unobserved
     /// window at or past the activation threshold: OM runs but can no longer
-    /// keep the prompt inside what it has observed (ADR-0034). Once per run —
-    /// `om_stall_recorded` mirrors the record once the append lands, so a
+    /// keep the prompt inside what it has observed (ADR-0034). The window is
+    /// the raw volume after the observation cursor — the quantity `plan`
+    /// gates on — so a settle that completed with no wire call records nothing
+    /// beside a stall, because the gate saw the same number (#392). Once per
+    /// run — `om_stall_recorded` mirrors the record once the append lands, so a
     /// restart re-records the stall it resumes into instead of re-scanning the
     /// log.
     fn record_om_stall(&self) {
@@ -301,10 +304,9 @@ impl AgentSession {
             let Some(om) = om.as_mut() else {
                 return;
             };
-            let Ok(unobserved) = om.unobserved(store) else {
+            let Ok(pending) = om.unobserved_tokens(store) else {
                 return;
             };
-            let pending = om.pending_tokens(&unobserved);
             let activation = om
                 .config
                 .observe_threshold_for(om.record.observation_tokens);
@@ -390,14 +392,14 @@ impl AgentSession {
         if om.config.buffer_tokens == 0 {
             return None;
         }
-        let Ok(unobserved) = om.unobserved(store) else {
+        let Ok(raw) = om.unobserved_tokens(store) else {
             // A store read failure degrades: keep the last known pending,
             // no trigger this round (the turn-end pass retries the read).
             return None;
         };
-        om.record.pending_tokens = om.pending_tokens(&unobserved);
-        let pending = u64::from(om.record.pending_tokens);
-        if om.activation_reached(om.record.pending_tokens) {
+        om.record.pending_tokens = raw;
+        let pending = u64::from(raw);
+        if om.activation_reached(raw) {
             // Activation: promote the buffered chunks into the log (no LLM
             // call); the sync turn-end pass owns the at/above-threshold
             // range from here (the mastra partition).

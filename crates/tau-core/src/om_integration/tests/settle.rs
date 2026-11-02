@@ -164,3 +164,178 @@ async fn record_size_tracks_the_observation_not_the_input() {
         state.record.active_observations.len()
     );
 }
+
+/// A buffered chunk over the entries `range.0..=range.1`, as a cycle's
+/// commit leaves it.
+fn chunk_covering(range: (String, String), last_ts: u64, text: &str, tokens: u32) -> BufferedChunk {
+    BufferedChunk {
+        range,
+        last_ts,
+        text: text.into(),
+        tokens,
+    }
+}
+
+fn append_entries(store: &mut SessionStore, n: usize, chars: usize) {
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    let mut parent = leaf;
+    for _ in 0..n {
+        let e = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "w".repeat(chars), "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id);
+    }
+}
+
+#[tokio::test]
+async fn settle_promotes_the_chunks_then_observes_the_raw_tail_at_activation() {
+    // #392: activation with chunks pending runs the rung that costs no LLM
+    // call first (the promote), and the plan's gate then reads the raw window
+    // that remains — so a tail past the promoted chunks is observed in the
+    // same settle, over the tail alone.
+    let dir = tempfile::tempdir().unwrap();
+    // 26 × 8k chars ≈ 52k tokens, past the 30k activation.
+    let mut store = store_with_text_entries(dir.path(), 26, 8_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    let head = chunk_covering(
+        ("00000001".into(), "00000006".into()),
+        100,
+        "observed the head",
+        120,
+    );
+    state.buffered = vec![head.clone()];
+    state.record.buffered_chunks = vec![head];
+    state.buffer_cursor = Some("00000006".into());
+    let recorder = std::sync::Arc::new(RecordingProvider::new("observed the tail"));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    let mut with_store =
+        |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+    state
+        .settle_turn(&mut with_store, &provider, "om-model", None)
+        .await
+        .unwrap();
+
+    // The free rung: the chunk's text is in the log.
+    assert!(
+        state
+            .record
+            .active_observations
+            .contains("observed the head")
+    );
+    // The gate on the raw volume that remains (20 entries, ~40k tokens): the
+    // tail is observed by the same settle, not left for a later trigger.
+    assert!(
+        state
+            .record
+            .active_observations
+            .contains("observed the tail"),
+        "the tail past the promoted chunks stayed unobserved: {:?}",
+        state.record.active_observations
+    );
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000026");
+    assert!(state.buffered.is_empty());
+    // The Observer's transcript is the tail, not the window the chunks cover.
+    assert_eq!(recorder.observer_calls(), 1);
+    assert_eq!(
+        recorder.observer_transcripts()[0]
+            .matches(&"w".repeat(8_000))
+            .count(),
+        20
+    );
+}
+
+#[tokio::test]
+async fn settle_below_activation_promotes_nothing_and_calls_no_observer() {
+    // The negative pair: a window under activation with chunks pending leaves
+    // the chunks buffered, the cursor where it was, and no Observer call. The
+    // stamped quantity is the raw window, not the chunks' tokens.
+    let dir = tempfile::tempdir().unwrap();
+    // 3 × 8k chars ≈ 6k tokens, under the 30k activation.
+    let mut store = store_with_text_entries(dir.path(), 3, 8_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    let head = chunk_covering(
+        ("00000001".into(), "00000002".into()),
+        100,
+        "observed the head",
+        120,
+    );
+    state.buffered = vec![head.clone()];
+    state.record.buffered_chunks = vec![head];
+    let recorder = std::sync::Arc::new(RecordingProvider::new("observed the tail"));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    let mut with_store =
+        |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+    state
+        .settle_turn(&mut with_store, &provider, "om-model", None)
+        .await
+        .unwrap();
+
+    assert_eq!(recorder.observer_calls(), 0);
+    assert!(state.record.cursor.is_none());
+    assert_eq!(state.buffered.len(), 1);
+    let raw = state.unobserved_tokens(&mut store).unwrap();
+    assert!(matches!(raw, 6_000..30_000), "raw window {raw}");
+    assert_eq!(state.record.pending_tokens, raw);
+}
+
+#[tokio::test]
+async fn continuous_settles_activate_on_tokens_alone() {
+    // #392: continuous turns reach activation on tokens, with no idle gap.
+    // The kill-switch config (`buffer_tokens = 0`) has the sync Buffer arm
+    // absorb the sub-threshold tail every settle, so a settle that gates on
+    // what the chunks are worth never sees the window again.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 0, 0);
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
+    let recorder = std::sync::Arc::new(RecordingProvider::new("observed the round"));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    let mut activations = 0;
+    for round in 0..10 {
+        append_entries(&mut store, 3, 8_000); // ~6k tokens per round
+        let raw_before = state.unobserved_tokens(&mut store).unwrap();
+        let cursor_before = state.record.cursor.clone();
+        let mut with_store =
+            |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+        state
+            .settle_turn(&mut with_store, &provider, "om-model", None)
+            .await
+            .unwrap();
+        let raw_after = state.unobserved_tokens(&mut store).unwrap();
+        // One quantity: what the settle stamps is the window its gate read, so
+        // the stall diagnostic beside it cannot name a number the gate missed.
+        assert_eq!(
+            state.record.pending_tokens, raw_after,
+            "round {round} stamped the buffered chunks, not the raw window"
+        );
+        if state.activation_reached(raw_before) {
+            activations += 1;
+            assert!(
+                state.record.cursor.is_some() && state.record.cursor != cursor_before,
+                "round {round}: activation at {raw_before} tokens moved no cursor",
+            );
+            assert!(
+                raw_after < raw_before,
+                "round {round}: activation left the {raw_before}-token window whole",
+            );
+        }
+    }
+    assert!(activations > 0, "no round ever reached activation");
+    assert!(recorder.observer_calls() > 0, "the Observer never ran");
+    assert!(state.record.observation_tokens > 0);
+    // The rounds ran back to back: no settle here had the idle escape.
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    assert!(
+        crate::om_integration::idle_gap_secs(&all, leaf.as_deref())
+            < crate::om_integration::IDLE_ACTIVATION_SECS,
+        "the test's own premise: the rounds sat idle"
+    );
+}

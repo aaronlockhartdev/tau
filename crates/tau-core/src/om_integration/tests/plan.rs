@@ -3,9 +3,9 @@ use super::*;
 #[test]
 fn plan_picks_observe_at_activation_and_commit_advances_the_cursor() {
     let dir = tempfile::tempdir().unwrap();
-    let mut store = store_with_text_entries(dir.path(), 3, 100);
+    // 3 × 50k chars ≈ 37.5k tokens: the raw window past the 30k activation.
+    let mut store = store_with_text_entries(dir.path(), 3, 50_000);
     let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
-    state.record.pending_tokens = state.config.observe_threshold;
     let unobserved = state.unobserved(&mut store).unwrap();
     match state.plan(&unobserved) {
         TurnEndAction::Observe { .. } => {}
@@ -78,8 +78,8 @@ fn plan_buffers_below_activation_and_commit_holds_the_chunk() {
         ..crate::config::Om::default()
     };
     let mut state = OmState::from_config(&om, OmRecord::default());
-    // 25k tokens: below the 30k threshold, past the 6k increment.
-    state.record.pending_tokens = 25_000;
+    // 25 × 1000 chars ≈ 6.3k raw tokens: below the 30k threshold, past the
+    // 6k increment.
     let unobserved = state.unobserved(&mut store).unwrap();
     match state.plan(&unobserved) {
         TurnEndAction::Buffer { .. } => {}
@@ -103,22 +103,20 @@ fn plan_buffer_arm_is_the_kill_switch_path_only() {
     // pass does no sync buffering (D2, I5).
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 25, 1000);
-    // Async on (the production default): the 25k pending sits in the
+    // Async on (the production default): the 6.3k raw window sits in the
     // [increment, threshold) band the sync arm would have buffered.
     let mut on = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
-    on.record.pending_tokens = 25_000;
     let unobserved = on.unobserved(&mut store).unwrap();
     match on.plan(&unobserved) {
         TurnEndAction::Done => {}
         other => panic!("async on: expected Done, got {other:?}"),
     }
-    // Kill switch: the same pending yields the sync Buffer.
+    // Kill switch: the same raw window yields the sync Buffer.
     let om = crate::config::Om {
         buffer_tokens: 0,
         ..crate::config::Om::default()
     };
     let mut off = OmState::from_config(&om, OmRecord::default());
-    off.record.pending_tokens = 25_000;
     let unobserved = off.unobserved(&mut store).unwrap();
     match off.plan(&unobserved) {
         TurnEndAction::Buffer { .. } => {}
@@ -250,4 +248,43 @@ fn the_frozen_prompt_carries_the_marker_and_the_suffix_only() {
     assert!(prompt.contains("LIVE SUFFIX"));
     // The compression guidance for level 2 is appended.
     assert!(prompt.contains(crate::om::COMPRESSION_GUIDANCE[1]));
+}
+
+#[test]
+fn plan_gates_on_the_raw_window_a_promote_left_behind_the_chunks() {
+    // #392: a promote stamps `pending_tokens` with the tokens of the chunks it
+    // left buffered (promote_moves_the_chunks_to_the_log_… pins that). The
+    // gate is the raw window, so a window past activation is observed while
+    // chunks remain buffered, and a window under it is not.
+    let chunk = BufferedChunk {
+        range: ("00000001".into(), "00000002".into()),
+        last_ts: 100,
+        text: "obs one".into(),
+        tokens: 120,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    // 20 × 50k chars ≈ 250k tokens, far past the 30k activation.
+    let mut store = store_with_text_entries(dir.path(), 20, 50_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.buffered = vec![chunk.clone()];
+    state.record.buffered_chunks = vec![chunk.clone()];
+    state.record.pending_tokens = chunk.tokens;
+    let unobserved = state.unobserved(&mut store).unwrap();
+    match state.plan(&unobserved) {
+        TurnEndAction::Observe { .. } => {}
+        other => panic!("expected Observe over the raw window, got {other:?}"),
+    }
+
+    // The negative pair: the same chunks over a window under activation.
+    let small = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(small.path(), 3, 100);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.buffered = vec![chunk.clone()];
+    state.record.buffered_chunks = vec![chunk];
+    state.record.pending_tokens = 120;
+    let unobserved = state.unobserved(&mut store).unwrap();
+    match state.plan(&unobserved) {
+        TurnEndAction::Done => {}
+        other => panic!("expected Done under activation, got {other:?}"),
+    }
 }

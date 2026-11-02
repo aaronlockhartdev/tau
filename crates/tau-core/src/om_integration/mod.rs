@@ -40,8 +40,9 @@ pub struct OmState {
     pub buffered: Vec<BufferedChunk>,
     /// The last entry a buffered run covered (mastra's buffer cursor, the
     /// port's `lastBufferedAtTokens`): runs are disjoint — a new buffer run
-    /// covers only entries after this one. In memory like the chunks
-    /// themselves (a restart re-observes via the threshold path).
+    /// covers only entries after this one. Restored from the durable chunks on
+    /// reopen, as the chunks are, so a reopened pass keeps covering new ground
+    /// (#392).
     buffer_cursor: Option<String>,
 }
 /// A config threshold as a u32: the config validates these fit a u32 at load,
@@ -76,11 +77,15 @@ impl OmState {
     #[must_use]
     pub fn from_config(om: &crate::config::Om, record: OmRecord) -> Self {
         let buffered = record.buffered_chunks.clone();
+        // The durable chunks mark the head of the branch they covered; a
+        // reopened state that buffers from the branch head would re-cover that
+        // head in one chunk (spec §4: the raw material is the unobserved tail).
+        let buffer_cursor = buffered.last().map(|c| c.range.1.clone());
         Self {
             config: om_config_of(om),
             record,
             buffered,
-            buffer_cursor: None,
+            buffer_cursor,
         }
     }
 

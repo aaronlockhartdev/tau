@@ -71,6 +71,15 @@ impl OmState {
             .sum()
     }
 
+    /// The raw unobserved volume: the tokens of the entries after the
+    /// observation cursor. Every activation gate reads this quantity (spec §4)
+    /// and the `om_stalled` record carries it. The buffered chunks are
+    /// compressions of the same raw material, so counting them (as a promote
+    /// leaves `pending_tokens` set) reports a window no gate can see (#392).
+    pub fn unobserved_tokens(&self, store: &mut SessionStore) -> Result<u32, OmError> {
+        Ok(self.pending_tokens(&self.unobserved(store)?))
+    }
+
     /// Activation (no LLM call, mastra `swapBufferedToActive`): promote
     /// buffered chunks to the log up to the boundary that lands the
     /// remaining raw at or below the retention floor
@@ -146,13 +155,14 @@ impl OmState {
 
 impl OmState {
     /// The turn-end policy sequence (R4): the unobserved read and pending
-    /// count, the buffered-chunk activation (token threshold or the fixed
-    /// idle timeout), the plan, and the observe/reflect/buffer/commit loop
-    /// until `Done`. The state owns the sequence; `with_store` is the
-    /// caller's re-lock — each sync store phase runs under the session
-    /// lock and releases it before the LLM round-trips (a std guard cannot
-    /// cross an await in a spawned future), so the pass never holds the
-    /// lock across a provider call.
+    /// count, the buffered-chunk activation (token threshold, or the fixed
+    /// idle timeout, with pending chunks — it runs first, costs no LLM call,
+    /// and the plan's gate then reads the raw window that remains), the plan,
+    /// and the observe/reflect/buffer/commit loop until `Done`. The state owns
+    /// the sequence; `with_store` is the caller's re-lock — each sync store
+    /// phase runs under the session lock and releases it before the LLM
+    /// round-trips (a std guard cannot cross an await in a spawned future), so
+    /// the pass never holds the lock across a provider call.
     pub async fn settle_turn<W>(
         &mut self,
         with_store: &mut W,
@@ -168,7 +178,7 @@ impl OmState {
             unobserved = Some(self.unobserved(store)?);
             Ok(())
         })?;
-        let unobserved = unobserved.expect("the phase ran");
+        let mut unobserved = unobserved.expect("the phase ran");
         self.record.pending_tokens = self.pending_tokens(&unobserved);
         // Activation (no LLM call): the token threshold, or the fixed idle
         // timeout with pending chunks (spec §4).
@@ -184,7 +194,23 @@ impl OmState {
         if !self.buffered.is_empty()
             && (self.activation_reached(self.record.pending_tokens) || idle >= IDLE_ACTIVATION_SECS)
         {
-            with_store(&mut |store| self.promote(store).map(|_| ()))?;
+            let mut promoted = false;
+            with_store(&mut |store| {
+                promoted = self.promote(store)?;
+                Ok(())
+            })?;
+            if promoted {
+                // Promotion moved the observation cursor over the chunk
+                // ranges: the plan's gate quantity is the raw window that
+                // remains, so a tail that still reaches activation is observed
+                // in this settle instead of waiting for the next idle gap
+                // (#392).
+                with_store(&mut |store| {
+                    unobserved = self.unobserved(store)?;
+                    Ok(())
+                })?;
+                self.record.pending_tokens = self.pending_tokens(&unobserved);
+            }
         }
         let mut action = self.plan(&unobserved);
         self.run_actions(with_store, provider, model, hook, &mut action)
@@ -312,22 +338,25 @@ impl OmState {
     /// The turn-end decision (pure over the record — `settle_turn` feeds it
     /// the unobserved entries it just read): reflect at the observation
     /// threshold, observe at activation, buffer at the increment (spec §4).
+    /// Activation and the increment are evaluated on the raw volume of those
+    /// entries — the quantity the stall diagnostic reports — never on
+    /// `pending_tokens`, which a promote rewrites with the tokens of the
+    /// chunks it left buffered (#392).
     /// The sync Buffer arm is the kill-switch path only: with async
     /// buffering enabled (`buffer_tokens > 0`) the mid-loop background
     /// cycles own the sub-threshold range (ticket #86 P2, D2/T6), so the
     /// turn-end pass never buffers.
     pub fn plan(&mut self, unobserved: &[Entry]) -> TurnEndAction {
+        let raw = self.pending_tokens(unobserved);
         if om::should_reflect(self.record.observation_tokens, &self.config) {
             return TurnEndAction::Reflect { level: 0 };
         }
-        if self.activation_reached(self.record.pending_tokens) {
+        if self.activation_reached(raw) {
             return TurnEndAction::Observe {
                 transcript: transcript(unobserved),
             };
         }
-        if self.config.buffer_tokens == 0
-            && self.record.pending_tokens >= self.config.buffer_increment()
-        {
+        if self.config.buffer_tokens == 0 && raw >= self.config.buffer_increment() {
             // The transcript covers only the not-yet-buffered tail of the
             // unobserved range (the buffer cursor keeps runs disjoint).
             let start = match &self.buffer_cursor {
