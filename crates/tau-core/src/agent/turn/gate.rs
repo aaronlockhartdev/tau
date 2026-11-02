@@ -110,10 +110,22 @@ impl AgentSession {
         }
         // Rung 2: the synchronous observe/reflect pass. Its prompt is the
         // unobserved raw, so an over-window main prompt is not necessarily an
-        // over-window observe call.
-        self.om_turn_end().await?;
-        if self.rung_fits(budget, &mut compacted, priced)? {
-            return Ok(());
+        // over-window observe call. A settle observes a bounded slice of the
+        // window, not all of it (#394), so this rung repeats while the passes
+        // keep compacting: a window the size of a session's history drains a
+        // slice per pass. The bound's floor advances the cursor by at least one
+        // entry per observing pass, so the window's entry count bounds the
+        // passes, and a pass that compacts nothing ends the rung — the rungs
+        // below are the only compaction left.
+        for _ in 0..self.unobserved_entries().max(1) {
+            self.om_turn_end().await?;
+            if !self.rung_moves(&mut compacted) {
+                break;
+            }
+            self.reprice(priced)?;
+            if *priced.prompt <= budget {
+                return Ok(());
+            }
         }
         // Rung 3: reflect at the escalating levels, then demote the frozen
         // prefix. The gate invokes `prefix_demoted` itself: the turn-end pass
@@ -146,6 +158,32 @@ impl AgentSession {
         *since = now;
         self.reprice(priced)?;
         Ok(*priced.prompt <= budget)
+    }
+
+    /// Whether the compaction state moved since the last counted rung: the
+    /// drain loop's continuation test, with no re-pricing of its own (the loop
+    /// reprices only after a rung that moved the state).
+    fn rung_moves(&self, since: &mut OmFingerprint) -> bool {
+        let Some(now) = self.om_fingerprint() else {
+            return false;
+        };
+        if &now == since {
+            return false;
+        }
+        *since = now;
+        true
+    }
+
+    /// The entries the window holds now: the ceiling on the observe passes a
+    /// drain can need, since each observing pass advances the cursor over at
+    /// least one entry (#394's bound floor).
+    fn unobserved_entries(&self) -> usize {
+        let mut guard = self.inner.lock();
+        let Inner { om, store, .. } = &mut *guard;
+        match om.as_mut() {
+            None => 0,
+            Some(state) => state.unobserved(store).map_or(0, |e| e.len()),
+        }
     }
 
     /// The durable refusal every exhausted ladder ends in: the `context_overflow`

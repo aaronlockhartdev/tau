@@ -97,10 +97,11 @@ async fn om_crosses_observe_and_reflect_and_every_request_carries_a_user_query()
         .om
         .clone()
         .expect("the om state is written back");
-    // Observe: the log is non-empty and the cursor sits on turn 1's
-    // last raw entry (the raw window for turn 2 is the new user entry).
+    // Observe: the log is non-empty, and the cursor sits on the bounded slice
+    // the settle observed — 4 × 225 tokens is under the 1000-token bound, a fifth
+    // entry passes it, so the window's tail rides into turn 2 (#394).
     assert!(state.record.active_observations.contains("obs"));
-    assert_eq!(state.record.cursor.unwrap().entry_id, "00000007");
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000004");
     // Reflect: the tagged reflection committed its <observations>
     // content only, as generation 1.
     assert_eq!(state.record.generation, 1);
@@ -345,11 +346,14 @@ async fn context_gate_fires_when_over_budget() {
     };
     // A small observation so the re-assembled prompt drops under budget.
     let obs_text = "<observations>did the work</observations>";
-    let provider = Arc::new(ScriptedProvider::new(vec![
-        sse_json(obs_text), // observer call (from the gate)
-        sse("a1", &[]),     // main call, turn 1
-        sse("a2", &[]),     // main call, turn 2 (no gate)
-    ]));
+    // The gate's observe rung drains the window a bounded slice per pass
+    // (#394): 12 entries of 800 tokens, and the 1000-token bound admits one per
+    // pass, so the drain is 12 Observer calls. The ladder stops the moment the
+    // prompt fits, so this is the rung's cost, not a fixed tariff.
+    let mut script: Vec<String> = (0..12).map(|_| sse_json(obs_text)).collect();
+    script.push(sse("a1", &[])); // main call, turn 1
+    script.push(sse("a2", &[])); // main call, turn 2 (no gate)
+    let provider = Arc::new(ScriptedProvider::new(script));
     let turn = TurnConfig {
         context_window: 16_096,
         max_output_tokens: Some(8000),
@@ -378,42 +382,50 @@ async fn context_gate_fires_when_over_budget() {
     agent.send("go1", Lane::FollowUp);
     agent.send("go2", Lane::FollowUp);
     agent.process().await.unwrap();
-
     let seen = provider.seen.lock();
-    // Turn 1: gate fires (observer + main). Turn 2: no gate (main only).
-    assert_eq!(seen.len(), 3, "obs + main + main: {seen:?}");
-    // The first call is the observer, not the main prompt.
-    assert_ne!(
-        seen[0].0.as_deref(),
-        Some("be terse"),
-        "first call is the observer"
-    );
+    // The gate's compaction is the drain: a settle observes a bounded slice of
+    // the window, so the ladder runs one pass per slice (#394) and the count is
+    // the rung's cost. The assertions read calls by role, not by position.
+    let main_calls: Vec<usize> = (0..seen.len())
+        .filter(|i| {
+            seen[*i]
+                .0
+                .as_deref()
+                .is_some_and(|s| s.starts_with("be terse"))
+        })
+        .collect();
+    let observer_calls = seen.len() - main_calls.len();
+    assert!(observer_calls >= 1, "the gate ran no observer: {seen:?}");
     // Turn 1's main call and turn 2's main call both use the session prompt
     // (with the observation log appended by assemble_context).
-    assert!(
-        seen[1]
-            .0
-            .as_deref()
-            .is_some_and(|s| s.starts_with("be terse")),
-        "turn 1 main call: {:?}",
-        seen[1].0
+    assert_eq!(
+        main_calls.len(),
+        2,
+        "one main call per turn, the drain is the observer's: {seen:?}"
     );
+    for i in &main_calls {
+        assert!(
+            seen[*i]
+                .0
+                .as_deref()
+                .is_some_and(|s| s.starts_with("be terse")),
+            "main call {i}: {:?}",
+            seen[*i].0
+        );
+    }
+    // The drain shrank the window before the first main call. The ladder stops
+    // the moment the prompt fits, so the tail rides on unobserved and later
+    // settles observe it (#394) — the gate compacts the prompt, not the whole
+    // window.
+    let first_main = main_calls[0];
+    let raw_in_first_main = seen[first_main]
+        .1
+        .as_deref()
+        .map_or(0, |c| c.matches(&"a".repeat(3200)).count());
     assert!(
-        seen[2]
-            .0
-            .as_deref()
-            .is_some_and(|s| s.starts_with("be terse")),
-        "turn 2 main call: {:?}",
-        seen[2].0
-    );
-    // The re-assembled input has no raw entries (all observed after the gate).
-    assert!(
-        seen[1]
-            .1
-            .as_deref()
-            .is_none_or(|c| !c.contains(&"a".repeat(100))),
-        "raw window is empty after the gate: {:?}",
-        seen[1].1
+        raw_in_first_main > 0 && raw_in_first_main < 10,
+        "the gate's drain left the {raw_in_first_main} raw entries as they were: {:?}",
+        seen[first_main].1
     );
     // The window came back inside activation, so the stall stays unrecorded:
     // the record is for what compaction could not fix (ADR-0034).
@@ -712,8 +724,10 @@ async fn a_window_compaction_cannot_drain_records_one_stall_at_the_gate_quantity
 async fn a_settle_that_drains_the_window_acts_on_tokens_and_records_no_stall() {
     // The negative pair, and the activation itself: the two turns run back to
     // back (the idle rung needs IDLE_ACTIVATION_SECS), so it is the 1130-token
-    // window that moves the cursor. The window then sits under activation, and
-    // no stall is recorded.
+    // window that moves the cursor. The settle observes the bounded slice — four
+    // entries, 900 tokens, under the 1000-token bound (#394) — so the cursor
+    // stops on entry 4 and the tail rides on. The window then sits under
+    // activation, and no stall is recorded.
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path());
     seed_past_activation(&mut store);
@@ -739,7 +753,8 @@ async fn a_settle_that_drains_the_window_acts_on_tokens_and_records_no_stall() {
         .clone()
         .expect("the om state is written back");
     assert!(state.record.active_observations.contains("did the work"));
-    assert_eq!(state.record.cursor.unwrap().entry_id, "00000007");
+    assert!(state.record.active_observations.contains("did the work"));
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000004");
     assert!(
         stalled_in(dir.path()).is_empty(),
         "a drained window records no stall"

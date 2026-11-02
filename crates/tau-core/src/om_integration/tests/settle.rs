@@ -64,9 +64,12 @@ async fn settle_turn_runs_the_observe_pass_and_commits() {
         .await
         .unwrap();
     // The observation is in the record, the cursor advanced, and the
-    // record persisted to the session file.
+    // record persisted to the session file. The cursor lands on the bounded
+    // span, not the window's end: 3 × 12.5k tokens over a 30k bound admits two
+    // entries, and the third is left for the next settle (#394).
     assert!(state.record.active_observations.contains("workbench"));
-    assert_eq!(state.record.cursor.as_ref().unwrap().entry_id, "00000003");
+    assert_eq!(state.record.cursor.as_ref().unwrap().entry_id, "00000002");
+    assert_eq!(state.record.pending_tokens, 12_500);
     assert!(
         OmState::load_record(&mut store)
             .unwrap()
@@ -227,7 +230,9 @@ async fn settle_promotes_the_chunks_then_observes_the_raw_tail_at_activation() {
             .contains("observed the head")
     );
     // The gate on the raw volume that remains (20 entries, ~40k tokens): the
-    // tail is observed by the same settle, not left for a later trigger.
+    // The span is the bound's slice, not the whole tail (#394): 15 of the 20
+    // tail entries (30k of the 40k), cursor on entry 21, the rest for the next
+    // settle.
     assert!(
         state
             .record
@@ -236,15 +241,16 @@ async fn settle_promotes_the_chunks_then_observes_the_raw_tail_at_activation() {
         "the tail past the promoted chunks stayed unobserved: {:?}",
         state.record.active_observations
     );
-    assert_eq!(state.record.cursor.unwrap().entry_id, "00000026");
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000021");
     assert!(state.buffered.is_empty());
-    // The Observer's transcript is the tail, not the window the chunks cover.
+    // The Observer's transcript is the tail, not the window the chunks cover,
+    // and the tail's slice, not the whole tail (#394).
     assert_eq!(recorder.observer_calls(), 1);
     assert_eq!(
         recorder.observer_transcripts()[0]
             .matches(&"w".repeat(8_000))
             .count(),
-        20
+        15
     );
 }
 

@@ -39,6 +39,7 @@ mod plan;
 mod promote;
 mod record;
 mod settle;
+mod settle_bound;
 mod transcript;
 mod window;
 /// A provider that records what each Observer call was asked — the transcript
