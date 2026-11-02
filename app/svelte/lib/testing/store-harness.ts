@@ -12,6 +12,7 @@ import type {
   Workspace
 } from '../wire/protocol';
 import { store } from '../store/store.svelte';
+import { payloadFor } from '../wire/entries';
 import { subInfo, type SubFixture } from './state';
 
 export const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
@@ -62,7 +63,7 @@ export function entryView(id: string, kind: string, payload: Record<string, unkn
     parent: null,
     kind,
     timestamp: 1,
-    payload,
+    payload: payloadFor(kind, payload),
     blob: null,
     first_kept: null
   };

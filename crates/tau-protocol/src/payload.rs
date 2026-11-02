@@ -4,8 +4,8 @@
 //! writers construct and what the projections carry (the snapshot and
 //! `LiveState` shapes are built from them, never from raw maps).
 
+use crate::EntryKind;
 use crate::diagnostic::StreamOutcome;
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -81,7 +81,7 @@ pub struct AssistantPayload {
 /// wire entry for the card, structurally ignored by context assembly. `None`
 /// for every tool that does not split its result (the common case) — a payload
 /// written before the field existed deserializes to `None`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolPayload {
     pub call_id: String,
     pub name: String,
@@ -213,6 +213,89 @@ payload_value!(ToolPayload);
 payload_value!(SystemPayload);
 payload_value!(SpawnSnapshotPayload);
 
+/// The typed entry payload (ticket #346, spec §8): the shape each entry
+/// kind carries across the core↔GUI seam. The session file stays free-form
+/// at the ADR-0005 storage level; `EntryPayload` is what the wire carries —
+/// so a payload added in Rust can no longer be invisible to the parity
+/// guard, which is the C9 hole this closes.
+///
+/// Adjacently tagged (`{type, data}`), not internally: serde rejects a
+/// newtype variant on an internally tagged enum, and the payload types are
+/// reused verbatim rather than re-declared field-for-field. `Other` keeps
+/// forward compatibility (a kind this build has no type for rides its raw
+/// JSON, the `EntryKind::Other` / `Diagnostic::Unknown` rule).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data", rename_all = "snake_case")]
+pub enum EntryPayload {
+    /// A user entry's payload (spec §5).
+    User(UserPayload),
+    /// An assistant entry's payload (spec §6).
+    Assistant(AssistantPayload),
+    /// A tool entry's payload (spec §5.4).
+    Tool(ToolPayload),
+    /// A system entry's payload.
+    System(SystemPayload),
+    /// A spawn-snapshot entry's payload (ticket #22).
+    SpawnSnapshot(SpawnSnapshotPayload),
+    /// A kind with no typed payload in v0: `om`, `subagent`, `diagnostic`,
+    /// and any kind an older core has never heard of.
+    Other(Value),
+}
+
+impl EntryPayload {
+    /// Project a stored payload (the entry's JSONL line) onto the wire type.
+    /// `None` is the sidecar case (ADR-0005): the payload lives in a blob and
+    /// the entry carries only the pointer.
+    ///
+    /// A payload that does not decode as its kind's shape lands in `Other`
+    /// with its bytes intact: a page read shows a record it cannot type, it
+    /// never drops one. That is the storage-level freedom ADR-0005 allows —
+    /// free-form at rest, typed in transit.
+    #[must_use]
+    pub fn from_entry(kind: &EntryKind, payload: &Value) -> Option<Self> {
+        if payload.is_null() {
+            return None;
+        }
+        let typed = match kind {
+            EntryKind::User => {
+                serde_json::from_value::<UserPayload>(payload.clone()).map(Self::User)
+            }
+            EntryKind::Assistant => {
+                serde_json::from_value::<AssistantPayload>(payload.clone()).map(Self::Assistant)
+            }
+            EntryKind::Tool => {
+                serde_json::from_value::<ToolPayload>(payload.clone()).map(Self::Tool)
+            }
+            EntryKind::System => {
+                serde_json::from_value::<SystemPayload>(payload.clone()).map(Self::System)
+            }
+            EntryKind::SpawnSnapshot => {
+                serde_json::from_value::<SpawnSnapshotPayload>(payload.clone())
+                    .map(Self::SpawnSnapshot)
+            }
+            EntryKind::Om | EntryKind::Subagent | EntryKind::Diagnostic | EntryKind::Other(_) => {
+                return Some(Self::Other(payload.clone()));
+            }
+        };
+        Some(typed.unwrap_or_else(|_| Self::Other(payload.clone())))
+    }
+
+    /// The payload's JSON as a flat object, the shape the session file
+    /// stores. A consumer that has not adopted the typed shape (the ACP
+    /// mapper reads free-form fields) reaches the wire through here.
+    #[must_use]
+    pub fn to_value(&self) -> Value {
+        match self {
+            Self::User(p) => p.to_value(),
+            Self::Assistant(p) => p.to_value(),
+            Self::Tool(p) => p.to_value(),
+            Self::System(p) => p.to_value(),
+            Self::SpawnSnapshot(p) => p.to_value(),
+            Self::Other(raw) => raw.clone(),
+        }
+    }
+}
+
 /// What a provider reported consuming for one response, as the record keeps
 /// it. The stored shape names the concepts, never one API's spelling (§6.5):
 /// each provider decodes its own wire shape into this (`provider::usage`).
@@ -268,6 +351,85 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Positive: a stored payload of a typed kind projects onto its arm, and
+    /// the wire shape is the adjacent `{type, data}` tag.
+    #[test]
+    fn a_typed_kind_projects_onto_its_arm() {
+        let stored = json!({ "text": "hello", "lane": "steering" });
+        let wire = EntryPayload::from_entry(&EntryKind::User, &stored).unwrap();
+        assert!(matches!(&wire, EntryPayload::User(p) if p.text == "hello"));
+        assert_eq!(
+            serde_json::to_value(&wire).unwrap(),
+            json!({ "type": "user", "data": { "text": "hello", "lane": "steering" } })
+        );
+    }
+
+    /// Positive: the sidecar case is `None` — the entry carries the pointer,
+    /// not the payload (ADR-0005).
+    #[test]
+    fn a_null_payload_is_the_sidecar_case() {
+        assert_eq!(
+            EntryPayload::from_entry(&EntryKind::Assistant, &Value::Null),
+            None
+        );
+    }
+
+    /// Negative: a payload that is not its kind's shape keeps its bytes in
+    /// `Other` — a page read never drops a record it cannot type.
+    #[test]
+    fn a_malformed_payload_survives_as_other() {
+        let stored = json!("not an object");
+        let wire = EntryPayload::from_entry(&EntryKind::User, &stored).unwrap();
+        assert_eq!(wire, EntryPayload::Other(json!("not an object")));
+        assert_eq!(wire.to_value(), stored, "the bytes are intact");
+        assert_eq!(
+            serde_json::to_value(&wire).unwrap(),
+            json!({ "type": "other", "data": "not an object" }),
+            "the escape arm tags like every other arm"
+        );
+    }
+
+    /// The kinds with no v0 payload type — and an unknown kind — ride `Other`.
+    #[test]
+    fn an_untyped_kind_rides_other() {
+        for kind in [
+            EntryKind::Om,
+            EntryKind::Subagent,
+            EntryKind::Diagnostic,
+            EntryKind::Other("quantum".into()),
+        ] {
+            let stored = json!({ "note": "from a newer core" });
+            let wire = EntryPayload::from_entry(&kind, &stored).unwrap();
+            assert_eq!(wire, EntryPayload::Other(stored));
+        }
+    }
+
+    /// `to_value` is the inverse: the typed payload is the JSON the file stores.
+    #[test]
+    fn a_typed_payload_returns_its_stored_shape() {
+        let stored = json!({ "note": "model changed" });
+        let wire = EntryPayload::from_entry(&EntryKind::System, &stored).unwrap();
+        assert_eq!(wire.to_value(), stored);
+    }
+
+    /// A tool payload round-trips with its GUI-only channel intact (#243).
+    #[test]
+    fn a_tool_payload_keeps_its_gui_channel() {
+        let stored = json!({
+            "call_id": "c1",
+            "name": "edit",
+            "args": {"path": "a.txt"},
+            "output": "edited a.txt",
+            "ui_detail": "--- a\n+++ b",
+            "status": "ok"
+        });
+        let wire = EntryPayload::from_entry(&EntryKind::Tool, &stored).unwrap();
+        assert!(
+            matches!(&wire, EntryPayload::Tool(p)
+                if matches!(&p.ui_detail, Some(ToolOutput::Text(s)) if s == "--- a\n+++ b")),
+            "ui_detail survives the typed hop"
+        );
+    }
     /// #34: text stays a bare JSON string (the common, cheap path); an
     /// image is the tagged block.
     #[test]

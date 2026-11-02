@@ -279,7 +279,11 @@ mod tests {
                     parent: None,
                     kind: EntryKind::Assistant,
                     timestamp: 123,
-                    payload: json!({ "text": "hello" }),
+                    payload: crate::payload::EntryPayload::from_entry(
+                        &EntryKind::Assistant,
+                        &json!({ "text": "hello", "reasoning": "", "interrupted": false, "calls": [] }),
+                    )
+                    .map(Box::new),
                     blob: None,
                     first_kept: None,
                 },

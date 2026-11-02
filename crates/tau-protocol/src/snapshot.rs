@@ -3,9 +3,9 @@
 //! bounded OM observation log + live state + a durable cursor. Built on
 //! demand by the core (app launch, tab open, reconnect); never a file.
 
+use crate::payload;
 use crate::{EntryKind, MessageLane, SubagentState};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::sync::Arc;
 
 /// A workspace as identity (spec §8: no local paths as identity; `cwd` is
@@ -103,10 +103,27 @@ pub struct ViewEntry {
     pub parent: Option<String>,
     pub kind: EntryKind,
     pub timestamp: u64,
-    pub payload: Value,
+    /// The typed payload (#346), or `None` when the payload lives in the
+    /// sidecar blob the `blob` pointer names (ADR-0005). Boxed: a page read
+    /// clones one `ViewEntry` per record and the payload is the variable-sized
+    /// part of it; `Box` is transparent to serde, so the wire is unchanged.
+    pub payload: Option<Box<payload::EntryPayload>>,
     /// A sidecar pointer (ADR-0005) when the payload lives out-of-band.
     pub blob: Option<BlobRef>,
     pub first_kept: Option<String>,
+}
+
+impl ViewEntry {
+    /// The payload as a flat JSON object (the pre-#346 free-form view), for
+    /// the consumers that read fields by name — the ACP mapper projects the
+    /// wire onto ACP's own shapes and does not model the entry taxonomy.
+    /// `Null` is the sidecar case: the bytes live behind the `blob` pointer.
+    #[must_use]
+    pub fn payload_value(&self) -> serde_json::Value {
+        self.payload
+            .as_deref()
+            .map_or(serde_json::Value::Null, payload::EntryPayload::to_value)
+    }
 }
 
 /// A message sitting on a lane, as the GUI's vertical queue shows it.
@@ -292,7 +309,17 @@ mod tests {
             parent: Some("e0".into()),
             kind: EntryKind::Assistant,
             timestamp: 7,
-            payload: json!({ "text": "hi" }),
+            payload: Some(Box::new(payload::EntryPayload::Assistant(
+                payload::AssistantPayload {
+                    text: "hi".into(),
+                    reasoning: String::new(),
+                    interrupted: false,
+                    stop_reason: None,
+                    usage: None,
+                    duration_secs: None,
+                    calls: Vec::new(),
+                },
+            ))),
             blob: Some(blob),
             first_kept: Some("e2".into()),
         };

@@ -460,7 +460,7 @@ async fn a_notified_steer_lands_in_id_order_while_the_parent_call_is_in_flight()
                 e,
                 Event::EntryUpsert { session, entry, .. }
                     if *session == sid
-                        && entry.payload["source"] == json!(sub.child)
+                        && entry.payload_value()["source"] == json!(sub.child)
             )
         }),
         "no queue-time upsert for the steering report"
@@ -852,8 +852,8 @@ async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
     // the final result ("exit 0"): the card was visible mid-flight.
     let has_inflight = tools.iter().any(|t| {
         t.id == tool_id
-            && t.payload["output"] != serde_json::json!("")
-            && !t.payload["output"]
+            && t.payload_value()["output"] != serde_json::json!("")
+            && !t.payload_value()["output"]
                 .as_str()
                 .is_some_and(|s| s.contains("exit 0"))
     });
@@ -865,7 +865,7 @@ async fn a_slow_bash_streams_inflight_output_before_the_final_entry() {
     // The final upsert carries the full result.
     let has_final = tools.iter().any(|t| {
         t.id == tool_id
-            && t.payload["output"]
+            && t.payload_value()["output"]
                 .as_str()
                 .is_some_and(|s| s.contains("exit 0"))
     });

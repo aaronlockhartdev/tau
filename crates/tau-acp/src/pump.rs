@@ -281,7 +281,7 @@ fn track_last_assistant(
         return;
     };
     let text = entry
-        .payload
+        .payload_value()
         .get("text")
         .and_then(serde_json::Value::as_str)
         .unwrap_or("")

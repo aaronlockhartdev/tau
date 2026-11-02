@@ -108,11 +108,8 @@ impl Mapper {
     }
 
     fn on_user(entry: &ViewEntry) -> Vec<Value> {
-        let text = entry
-            .payload
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+        let payload = entry.payload_value();
+        let text = payload.get("text").and_then(Value::as_str).unwrap_or("");
         if text.is_empty() {
             return Vec::new();
         }
@@ -136,16 +133,13 @@ impl Mapper {
 
     fn on_assistant(&mut self, entry: &ViewEntry) -> Vec<Value> {
         let mut out = Vec::new();
+        let payload = entry.payload_value();
         self.track_assistant(&entry.id);
         for (sent, field, variant) in [
             (&mut self.text_sent, "text", "agent_message_chunk"),
             (&mut self.reasoning_sent, "reasoning", "agent_thought_chunk"),
         ] {
-            let text = entry
-                .payload
-                .get(field)
-                .and_then(Value::as_str)
-                .unwrap_or("");
+            let text = payload.get(field).and_then(Value::as_str).unwrap_or("");
             let sent_chars = sent.get(&entry.id).copied().unwrap_or(0);
             let chars = text.chars().count();
             if chars > sent_chars {
@@ -164,13 +158,10 @@ impl Mapper {
     }
 
     fn on_tool(&mut self, entry: &ViewEntry) -> Vec<Value> {
-        let name = entry
-            .payload
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("");
-        let args = entry.payload.get("args").cloned().unwrap_or(Value::Null);
-        let output = entry.payload.get("output");
+        let payload = entry.payload_value();
+        let name = payload.get("name").and_then(Value::as_str).unwrap_or("");
+        let args = payload.get("args").cloned().unwrap_or(Value::Null);
+        let output = payload.get("output");
         let output_text = output.and_then(Value::as_str);
         // Image outputs (the `read` tool on a .png) have no text surface in
         // v0: the create carries the input, the result is rawOutput only.
@@ -235,13 +226,14 @@ fn tool_kind(name: &str) -> &'static str {
 mod tests {
     use super::*;
 
-    fn entry(id: &str, kind: &str, payload: Value) -> ViewEntry {
+    fn entry(id: &str, kind: &str, payload: &Value) -> ViewEntry {
+        let kind = EntryKind::parse(kind);
         ViewEntry {
             id: id.to_owned(),
             parent: None,
-            kind: EntryKind::parse(kind),
+            kind: kind.clone(),
             timestamp: 1,
-            payload,
+            payload: tau_protocol::payload::EntryPayload::from_entry(&kind, payload).map(Box::new),
             blob: None,
             first_kept: None,
         }
@@ -287,7 +279,7 @@ mod tests {
         let out = m.on_entry(&entry(
             "e1",
             "assistant",
-            json!({ "text": "Hello", "reasoning": "thinking" }),
+            &json!({ "text": "Hello", "reasoning": "thinking" }),
         ));
         assert!(
             out.is_empty(),
@@ -303,7 +295,7 @@ mod tests {
     fn a_multibyte_delta_counts_characters_for_the_record() {
         let mut m = Mapper::default();
         m.on_delta("e1", 1, "ταυ", "");
-        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "ταυ" })));
+        let out = m.on_entry(&entry("e1", "assistant", &json!({ "text": "ταυ" })));
         assert!(out.is_empty(), "bytes were counted, not chars: {out:?}");
     }
 
@@ -321,7 +313,7 @@ mod tests {
             m.on_delta("e1", 3, "cd", "").is_empty(),
             "a frame out of order owes nothing"
         );
-        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "abcdef" })));
+        let out = m.on_entry(&entry("e1", "assistant", &json!({ "text": "abcdef" })));
         assert_eq!(out[0]["content"]["text"], "cdef");
     }
 
@@ -331,14 +323,18 @@ mod tests {
         m.on_delta("e1", 1, "ab", "");
         assert!(m.on_delta("e1", 1, "ab", "").is_empty());
         assert!(m.on_delta("e1", 5, "zz", "").is_empty());
-        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "abcdef" })));
+        let out = m.on_entry(&entry("e1", "assistant", &json!({ "text": "abcdef" })));
         assert_eq!(out[0]["content"]["text"], "cdef");
     }
 
     #[test]
     fn assistant_snapshots_diff_to_chunks() {
         let mut m = Mapper::default();
-        let first = entry("e1", "assistant", json!({ "text": "Hel", "reasoning": "" }));
+        let first = entry(
+            "e1",
+            "assistant",
+            &json!({ "text": "Hel", "reasoning": "" }),
+        );
         let out = m.on_entry(&first);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["sessionUpdate"], "agent_message_chunk");
@@ -348,7 +344,7 @@ mod tests {
         let grown = entry(
             "e1",
             "assistant",
-            json!({ "text": "Hello", "reasoning": "" }),
+            &json!({ "text": "Hello", "reasoning": "" }),
         );
         let out = m.on_entry(&grown);
         assert_eq!(out.len(), 1);
@@ -361,8 +357,8 @@ mod tests {
     #[test]
     fn multibyte_text_never_splits_mid_char() {
         let mut m = Mapper::default();
-        m.on_entry(&entry("e1", "assistant", json!({ "text": "ταυ" })));
-        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "ταυ ✓" })));
+        m.on_entry(&entry("e1", "assistant", &json!({ "text": "ταυ" })));
+        let out = m.on_entry(&entry("e1", "assistant", &json!({ "text": "ταυ ✓" })));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["content"]["text"], " ✓");
     }
@@ -373,7 +369,7 @@ mod tests {
         let out = m.on_entry(&entry(
             "e1",
             "assistant",
-            json!({ "text": "", "reasoning": "hmm" }),
+            &json!({ "text": "", "reasoning": "hmm" }),
         ));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0]["sessionUpdate"], "agent_thought_chunk");
@@ -382,19 +378,19 @@ mod tests {
     #[test]
     fn stream_end_finalizes_every_in_flight() {
         let mut m = Mapper::default();
-        m.on_entry(&entry("e1", "assistant", json!({ "text": "a" })));
+        m.on_entry(&entry("e1", "assistant", &json!({ "text": "a" })));
         // An in-flight entry's unchanged snapshot owes nothing.
-        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "a" })));
+        let out = m.on_entry(&entry("e1", "assistant", &json!({ "text": "a" })));
         assert!(out.is_empty(), "unchanged in-flight snapshot owes nothing");
-        m.on_entry(&entry("e2", "assistant", json!({ "text": "b" })));
+        m.on_entry(&entry("e2", "assistant", &json!({ "text": "b" })));
         // The turn-settled `StreamEnd` (issue #82) closes the whole turn:
         // every in-flight entry finalizes at once.
         m.on_stream_end();
         // A resumed (finalized) entry is the current call again: a fresh
         // message with the full text, newest in the finalize queue.
-        let out = m.on_entry(&entry("e1", "assistant", json!({ "text": "ab" })));
+        let out = m.on_entry(&entry("e1", "assistant", &json!({ "text": "ab" })));
         assert_eq!(out[0]["content"]["text"], "ab");
-        let out = m.on_entry(&entry("e2", "assistant", json!({ "text": "b" })));
+        let out = m.on_entry(&entry("e2", "assistant", &json!({ "text": "b" })));
         assert_eq!(out[0]["content"]["text"], "b");
     }
 
@@ -404,7 +400,7 @@ mod tests {
         let start = entry(
             "t1",
             "tool",
-            json!({
+            &json!({
                 "name": "bash", "call_id": "c1",
                 "args": { "command": "cargo test" }, "output": ""
             }),
@@ -419,7 +415,7 @@ mod tests {
         let done = entry(
             "t1",
             "tool",
-            json!({
+            &json!({
                 "name": "bash", "call_id": "c1",
                 "args": { "command": "cargo test" }, "output": "ok"
             }),
@@ -449,7 +445,7 @@ mod tests {
             let out = m.on_entry(&entry(
                 &format!("t-{name}"),
                 "tool",
-                json!({ "name": name, "args": {}, "output": "" }),
+                &json!({ "name": name, "args": {}, "output": "" }),
             ));
             assert_eq!(out[0]["kind"], kind, "{name}");
         }
@@ -461,7 +457,7 @@ mod tests {
         let out = m.on_entry(&entry(
             "t1",
             "tool",
-            json!({ "name": "read", "args": { "path": "/src/main.rs" }, "output": "" }),
+            &json!({ "name": "read", "args": { "path": "/src/main.rs" }, "output": "" }),
         ));
         assert_eq!(out[0]["title"], "/src/main.rs");
     }
@@ -475,7 +471,7 @@ mod tests {
         let start = entry(
             "t1",
             "tool",
-            json!({ "name": "bash", "args": { "command": "ls" }, "output": null }),
+            &json!({ "name": "bash", "args": { "command": "ls" }, "output": null }),
         );
         assert_eq!(m.on_entry(&start).len(), 1);
 
@@ -484,7 +480,7 @@ mod tests {
         let mut done = entry(
             "t1",
             "tool",
-            json!({ "name": "bash", "args": { "command": "ls" }, "output": "the bytes" }),
+            &json!({ "name": "bash", "args": { "command": "ls" }, "output": "the bytes" }),
         );
         done.blob = Some(tau_protocol::snapshot::BlobRef {
             id: "t1".into(),

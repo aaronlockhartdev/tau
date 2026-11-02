@@ -14,7 +14,8 @@ async fn result_tool_entry(
             matches!(
                 e,
                 Event::EntryUpsert { entry, .. }
-                    if entry.kind == EntryKind::Tool && entry.payload["output"] != serde_json::json!("")
+                    if entry.kind == EntryKind::Tool
+                        && entry.payload_value()["output"] != serde_json::json!("")
             )
         }) {
             return entry.clone();
@@ -47,8 +48,8 @@ async fn a_successful_tool_emits_status_ok_in_the_entry_payload() {
     })
     .unwrap();
     let entry = result_tool_entry(&collected).await;
-    assert_eq!(entry.payload["name"], "bash");
-    assert_eq!(entry.payload["status"], serde_json::json!("ok"));
+    assert_eq!(entry.payload_value()["name"], "bash");
+    assert_eq!(entry.payload_value()["status"], serde_json::json!("ok"));
 }
 
 #[tokio::test]
@@ -81,6 +82,6 @@ async fn a_failing_tool_emits_status_error_in_the_entry_payload() {
     })
     .unwrap();
     let entry = result_tool_entry(&collected).await;
-    assert_eq!(entry.payload["name"], "read");
-    assert_eq!(entry.payload["status"], serde_json::json!("error"));
+    assert_eq!(entry.payload_value()["name"], "read");
+    assert_eq!(entry.payload_value()["status"], serde_json::json!("error"));
 }

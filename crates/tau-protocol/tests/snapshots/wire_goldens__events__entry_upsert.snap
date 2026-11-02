@@ -12,7 +12,13 @@ expression: "Event::EntryUpsert\n{ workspace: \"w1\".into(), session: \"s1\".int
     "kind": "assistant",
     "timestamp": 1700000000123,
     "payload": {
-      "text": "hello"
+      "type": "assistant",
+      "data": {
+        "text": "hello",
+        "reasoning": "",
+        "interrupted": false,
+        "calls": []
+      }
     },
     "blob": null,
     "first_kept": null

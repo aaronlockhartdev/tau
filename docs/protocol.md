@@ -35,11 +35,20 @@ has no mirror for fails that check — so this page cannot drift from the code e
 | `SessionEventKind` / `SystemEventKind` / `SubagentEventKind` | `kind` | `snake_case` |
 | `ProtocolError` | `kind` | `snake_case` |
 | `Diagnostic` | `code` | `snake_case` |
+| `EntryPayload` | `type` + `data` (adjacent) | `snake_case` |
 | Entry kinds (on-disk, ADR-0005) | — | `user` `assistant` `tool` `system` `om` `subagent` `spawn-snapshot` `diagnostic` |
 
 Struct-variant payloads are **named-field struct variants, never newtypes**. `CommandOutput` is
 internally tagged, and serde merges the tag into the map — a newtype variant would flatten its
 fields to the top level and break the GUI's field-name contract.
+
+`EntryPayload` is the exception, and the tag style is what earns it: it is **adjacently** tagged
+(`{type, data}`), so a newtype variant is legal (serde forbids newtypes only on an *internally*
+tagged enum) and the payload structs ride the wire verbatim instead of being re-declared
+field-for-field. The entry's `kind` and the payload's `type` are the same vocabulary except for
+`spawn-snapshot` / `spawn_snapshot`: the kind is `EntryKind`'s hand-written on-disk spelling, the
+payload tag is serde's `snake_case` of the variant. `Other(Value)` is the escape arm — a payload
+that does not decode as its kind's shape rides its raw bytes (#346).
 
 An unknown tag is a **data error**, never a silent no-op: the snapshot self-heal that makes the
 event stream loss-tolerant only works if bad frames fail decode. See
@@ -301,8 +310,10 @@ Built on demand (app launch, tab open, reconnect), **never a file**. `session_op
   part. `turn` ∈ `idle` | `running`.
 - `cursor` is the last entry id, the durable `since` key.
 - `ViewEntry {id, parent, kind, timestamp, payload, blob?, first_kept?}` is the **paged-read**
-  shape — same as `EntryMeta` plus the payload. `BlobRef {id, size, hash}` points at a zstd sidecar
-  (ADR-0005 hardening 2); a payload-less `ViewEntry` with a `blob` renders as unavailable.
+  shape — same as `EntryMeta` plus the payload. `payload` is the `EntryPayload` tag (`{type, data}`)
+  or `null` when the bytes live in the sidecar the `blob` pointer names. `BlobRef {id, size, hash}`
+  points at a zstd sidecar (ADR-0005 hardening 2); a payload-less `ViewEntry` with a `blob` renders
+  as unavailable.
 - `Plan {steps: [{text, done}], criteria, notes}`; `QueuedItem {text, lane, source?}` where
   `source` is child provenance.
 
@@ -474,13 +485,14 @@ The parity guard fails CI on Rust→TS gaps; these are the accepted holes, each 
   the record then prints the raw sentinel.
 - **Two usage dialects** — `Usage` (protocol) and `TurnUsage` (record) both mirror onto TS `Usage`;
   the field diff runs on the former, so a field added to `TurnUsage` has no TS check.
-- **The C9 payload types have no TS mirror.** The parity run reports `UserPayload`,
-  `AssistantPayload`, `ToolPayload`, `ToolOutput`, `ImageBlock`, `FunctionCall`, `SystemPayload`,
-  `SpawnSnapshotPayload` as skipped ("no TS mirror found"). Their shapes reach the GUI through
-  `ViewEntry.payload: unknown`, decoded by hand in `wire/entries.ts` — so a payload field added in
-  Rust is invisible to the guard, and the decoder is the only place that tolerates its absence.
-  `SubagentInfo.created` is the same hole in the checked layer: the crate carries it as `u64` with
-  `#[serde(default)]`, so the TS mirror may keep it optional.
+- **The payload types are mirrored** (#346): `ViewEntry.payload` is `EntryPayload | null` and the
+  eight payload shapes (`UserPayload`, `AssistantPayload`, `ToolPayload`, `ToolOutput`, `ImageBlock`,
+  `FunctionCall`, `SystemPayload`, `SpawnSnapshotPayload`) are diffed field-for-field, so a payload
+  field added in Rust with no TS mirror fails the guard. The one hole left is `EntryPayload`'s
+  `Other` arm: a payload the core cannot type reaches the GUI as `unknown` and the decoder reads it
+  field by field, so a *kind* the crate has no arm for stays tolerated by design.
+- **`SubagentInfo.created`** — the crate carries it as `u64` with `#[serde(default)]`, so the TS
+  mirror may keep it optional: a default-filled field is wire-optional to the guard.
 - **`SubagentState` is a shared tagged enum (#346)** — both sides carry the same arms under the
   `type` key, so a child badge never travels without its detail and the guard compares the shape
   field-for-field; it replaced the crate's bare `String` state that the TS mirror used to narrow.

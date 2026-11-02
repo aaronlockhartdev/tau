@@ -521,9 +521,9 @@ async fn a_live_session_serves_paged_reads_from_its_in_memory_store() {
     };
     assert_eq!(window.len(), 2);
     assert_eq!(window[0].id, "00000002");
-    assert_eq!(window[0].payload["text"], "msg 1");
+    assert_eq!(window[0].payload_value()["text"], "msg 1");
     assert_eq!(window[1].id, "00000003");
-    assert_eq!(window[1].payload["text"], "msg 2");
+    assert_eq!(window[1].payload_value()["text"], "msg 2");
     // A since-read from the first entry: everything after it.
     let out = core
         .dispatch(Command::SessionEntries {

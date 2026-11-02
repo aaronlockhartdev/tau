@@ -38,7 +38,16 @@ fn view_entry() -> ViewEntry {
         parent: Some("00000006".into()),
         kind: EntryKind::Assistant,
         timestamp: 1_700_000_000_123,
-        payload: json!({ "text": "hello" }),
+        payload: tau_protocol::payload::EntryPayload::from_entry(
+            &EntryKind::Assistant,
+            &json!({
+                "text": "hello",
+                "reasoning": "",
+                "interrupted": false,
+                "calls": []
+            }),
+        )
+        .map(Box::new),
         blob: None,
         first_kept: None,
     }

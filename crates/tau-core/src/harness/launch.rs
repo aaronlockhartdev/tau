@@ -8,7 +8,8 @@ use super::{
     AgentSession, Arc, ChildProviderFactory, Config, Core, Event, ForwardingChildFactory, HashMap,
     Mutex, OmStatusKind, Ordering, Path, PathBuf, ProtocolError, SessionParams, SessionStore,
     SessionSubagentBridge, SubagentBridge, Supervisor, SupervisorParams, TurnChildDriver,
-    TurnConfig, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open, tools,
+    TurnConfig, Value, ViewEntry, Workspace, context, derive_turn, entry_to_view, session_open,
+    tools,
 };
 use crate::agent::{OmRoute, StreamDelta};
 use crate::config::{ProviderRef, Route, ToolBatchPolicy};
@@ -661,9 +662,12 @@ impl UpsertView {
                 hash: blob.hash.clone(),
             };
             if let Ok(bytes) = SessionStore::read_blob(&self.blob_root, &core_ref)
-                && let Ok(payload) = serde_json::from_slice(&bytes)
+                && let Ok(raw) = serde_json::from_slice::<Value>(&bytes)
             {
-                view.payload = payload;
+                // Resolving the sidecar fills the `None` slot its pointer
+                // left: the inline is the same typed shape as an inline line.
+                view.payload =
+                    tau_protocol::payload::EntryPayload::from_entry(&view.kind, &raw).map(Box::new);
             }
         }
         view
