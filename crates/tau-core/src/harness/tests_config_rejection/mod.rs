@@ -11,6 +11,7 @@ use crate::harness::testkit::*;
 mod boot;
 mod boundary;
 mod opening;
+mod two_writers;
 
 /// The system layer: the provider whose model carries the gate's facts, and the
 /// default model. No `[cache]` — the project layer's is what the boundary
