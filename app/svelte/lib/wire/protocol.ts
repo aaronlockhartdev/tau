@@ -153,6 +153,12 @@ export const streamOutcomeLabels: Record<StreamOutcome, string> = {
   killed: 'stopped'
 };
 
+// The `config_rejected` path for a failure that belongs to no file: a load rule
+// is a property of the merged config, so the core sends this in place of a path
+// and the card names the merged config rather than blaming a layer file the
+// user never touched (#366). Mirrors `MERGED_CONFIG_SENTINEL` in the crate.
+export const MERGED_CONFIG_SENTINEL = '<merged config>';
+
 // The cut nobody asked for, or null when the ending is neither: a cut is an
 // ending neither clean nor willed. The core decides the same way in `cutoff()`
 // (#307, plan §6.11).

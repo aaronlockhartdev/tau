@@ -1,9 +1,9 @@
 use super::*;
-/// #359 at open: a config broken before the session opens is stated to it,
-/// because the GUI's banner rides the watcher's event and a cold open never
-/// fires the watcher.
+/// The record's `path` for a rule failure: the merged config, not the project
+/// file. A cold open reads the layers and meets the rule; the project layer here
+/// reads cleanly, so naming it blamed the one file the user did not break (#366).
 #[tokio::test]
-async fn a_broken_layer_at_open_is_recorded_as_the_session_opens() {
+async fn a_rule_failure_at_open_names_the_merged_config() {
     let system = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
     let (core, ws) = core_over(&system, &project, &broken_layer("short")).await;
@@ -14,8 +14,39 @@ async fn a_broken_layer_at_open_is_recorded_as_the_session_opens() {
         1,
         "a session opened on an unreadable config says so"
     );
-    assert!(records[0].1.contains("dev/x"), "{}", records[0].1);
+    assert_eq!(
+        records[0].0,
+        tau_protocol::MERGED_CONFIG_SENTINEL,
+        "the session's record and the watcher's path-less event agree"
+    );
+    assert!(
+        records[0].1.contains("dev/x"),
+        "the reason carries the whole story: {}",
+        records[0].1
+    );
 }
+
+/// The sentinel's negative: the system layer breaks on a parse error after the
+/// boot read it, and the session's record names the system file — the layer this
+/// reload read. A parse failure carries its own path, so the sentinel is for a
+/// rule with no file, never for a file the code can point at (#364, #366).
+#[tokio::test]
+async fn a_parse_failure_of_the_system_layer_still_names_that_file() {
+    let system = tempfile::tempdir().unwrap();
+    let project = tempfile::tempdir().unwrap();
+    let (core, ws) = core_over(&system, &project, &project_layer("short")).await;
+    write_config_fixture(system.path(), "[providers.dev\n");
+    reload_system_layer(&core);
+    let session = new_session(&core, &ws);
+    let records = config_records(Path::new(&ws.cwd), &session);
+    assert_eq!(records.len(), 1, "the break is stated to the session");
+    assert_eq!(
+        records[0].0,
+        system.path().join("config.toml").display().to_string(),
+        "a file the code can point at is named, not the merged-config sentinel"
+    );
+}
+
 /// The negative beside it: a config that reads mints nothing at open.
 #[tokio::test]
 async fn a_readable_layer_at_open_records_nothing() {

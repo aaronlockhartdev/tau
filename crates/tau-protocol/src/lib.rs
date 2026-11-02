@@ -519,6 +519,12 @@ pub enum SubagentState {
 /// The tag key `SubagentState` serializes on, and the key its decoder reads.
 pub const SUBAGENT_STATE_TAG: &str = "type";
 
+/// What a `config_rejected` names when the failure belongs to no file: a load
+/// rule speaks of the merged config, so its record has no layer to blame (#366).
+/// Angle brackets are not a name a layer file can carry, and the GUI renders it
+/// as the merged config.
+pub const MERGED_CONFIG_SENTINEL: &str = "<merged config>";
+
 // Serialize stays derived (the `type` tag, snake_case arms). Deserialize is
 // hand-written because serde's internally-tagged enum has no catch-all arm: an
 // unknown `type` must decode, not fail the whole frame — a GUI on an old

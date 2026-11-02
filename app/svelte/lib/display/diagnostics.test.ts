@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { diagnosticLabel } from './diagnostics';
+import { MERGED_CONFIG_SENTINEL } from '../wire/protocol';
 import type { Diagnostic, DiagnosticCode, Entry } from '../wire/protocol';
 
 // A config the core could not read is inert, so its card names the file and
@@ -25,6 +26,15 @@ describe('the config_rejected card', () => {
     expect(diagnosticLabel(rejected('/tmp/tau/.tau/config.toml', 'toml parse error\nat line 3'))).toBe(
       'config not applied (/tmp/tau/.tau/config.toml): toml parse error'
     );
+  });
+
+  // A load rule is the merged config's property and names no file, so the core
+  // sends the sentinel: the card says the merged config, never a path the user
+  // did not edit (#366).
+  it('names the merged config for a rule failure, not a file', () => {
+    const reason = 'thinking.levels.a/b: no provider declares it as a model, so the level is never read';
+    expect(diagnosticLabel(rejected(MERGED_CONFIG_SENTINEL, reason)))
+      .toBe(`config not applied (the merged config): ${reason}`);
   });
 });
 
