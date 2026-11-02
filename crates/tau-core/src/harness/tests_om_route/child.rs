@@ -75,6 +75,19 @@ fn memory_passes(seen: &Arc<Mutex<Vec<String>>>) -> usize {
         .count()
 }
 
+/// The memory-pass count at an endpoint, waited for past `before`: the pass runs
+/// on the agent task, so its request lands after the turn settles.
+async fn passes_after(seen: &Arc<Mutex<Vec<String>>>, before: usize) -> usize {
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    loop {
+        let now = memory_passes(seen);
+        if now > before || tokio::time::Instant::now() >= deadline {
+            return now;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 /// A route refusal in the session's own record, waited for: the agent task
 /// appends the diagnostic and this reader opens its own handle to the file, so
 /// it polls for the append rather than assuming it landed (#348).
@@ -150,12 +163,15 @@ async fn a_config_move_reaches_a_child_that_is_already_alive() {
         "the child opens on a pass stamped with the contested key"
     );
     let opened = om_record_models(f.project.path(), &child).len();
-
+    let aaa_before = memory_passes(&f.aaa_seen);
+    let zzz_before = memory_passes(&f.zzz_seen);
     f.write_config("aaa/om-model");
     reload_system_layer(&core);
-    // The turn after the edit repeats the brief: a pass reads the transcript
-    // after its cursor, so the body it sends is this turn's text and a request
-    // naming BRIEF at an endpoint is attributable to the child.
+    // The turn after the edit repeats the brief. Attribution is the pass count
+    // at each endpoint, not the transcript: a settle observes a bounded slice of
+    // the window (#394), so a pass's body is the slice at its cursor, not this
+    // turn's text. A pass that arrives at aaa and not at zzz after the edit is
+    // the child's, addressed where the new id names it.
     send_text(&core, &child, &BRIEF.repeat(200)).await;
 
     assert_eq!(
@@ -165,11 +181,18 @@ async fn a_config_move_reaches_a_child_that_is_already_alive() {
         Some("om-model"),
         "the pass after the edit is stamped with the model the new id selects"
     );
+    let aaa_after = passes_after(&f.aaa_seen, aaa_before).await;
     assert!(
-        saw_memory_pass(&f.aaa_seen, "om-model", BRIEF),
+        aaa_after > aaa_before,
         "the child's pass after the edit asks the provider the new id names for \
          its key: {:?}",
         models_seen(&f.aaa_seen)
+    );
+    assert_eq!(
+        memory_passes(&f.zzz_seen),
+        zzz_before,
+        "the child's moved route reached the parent's provider: {:?}",
+        models_seen(&f.zzz_seen)
     );
 }
 

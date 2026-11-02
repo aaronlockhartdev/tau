@@ -7,23 +7,25 @@ fn plan_picks_observe_at_activation_and_commit_advances_the_cursor() {
     let mut store = store_with_text_entries(dir.path(), 3, 50_000);
     let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
     let unobserved = state.unobserved(&mut store).unwrap();
-    match state.plan(&unobserved) {
-        TurnEndAction::Observe { .. } => {}
+    // The plan's own action carries the span the commit stamps — the pair is the
+    // contract, so this leg feeds `commit` what `plan` produced.
+    let mut action = match state.plan(&unobserved) {
+        action @ TurnEndAction::Observe { .. } => action,
         other => panic!("expected Observe, got {other:?}"),
-    }
-    let result = turn_result("<observations>user is setting up a workbench</observations>");
-    let mut action = TurnEndAction::Observe {
-        transcript: String::new(),
     };
+    let result = turn_result("<observations>user is setting up a workbench</observations>");
     state.commit(&mut store, &mut action, &result).unwrap();
     assert_eq!(action, TurnEndAction::Done);
     let cursor = state.record.cursor.clone().unwrap();
-    assert_eq!(cursor.entry_id, "00000003");
+    // The bounded span (#394): 3 × 12.5k tokens observed up to the removal
+    // target (37.5k − the 6k floor = 31.5k), which lands inside entry 3 — the
+    // cursor stops on entry 2 and entry 3 is left for the next settle.
+    assert_eq!(cursor.entry_id, "00000002");
     let groups = crate::om::parse_observation_groups(&state.record.active_observations);
     assert_eq!(groups.len(), 1);
-    assert_eq!(groups[0].range, "00000001:00000003");
+    assert_eq!(groups[0].range, "00000001:00000002");
     assert!(groups[0].content.contains("workbench"));
-    assert_eq!(state.record.pending_tokens, 0);
+    assert_eq!(state.record.pending_tokens, 12_500);
     // The observation persists across a re-load from the session file.
     assert!(
         OmState::load_record(&mut store)
@@ -50,6 +52,11 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
     };
     let mut action = TurnEndAction::Observe {
         transcript: "the observed transcript".into(),
+        span: ObservedSpan {
+            first_id: "00000001".into(),
+            last_id: "00000003".into(),
+            last_ts: 3,
+        },
     };
     state.commit(&mut store, &mut action, &result).unwrap();
 
@@ -202,6 +209,11 @@ fn commit_keeps_the_cursor_on_degenerate_observation_output() {
     let result = turn_result(&format!("<observations>{body}</observations>"));
     let mut action = TurnEndAction::Observe {
         transcript: String::new(),
+        span: ObservedSpan {
+            first_id: "00000001".into(),
+            last_id: "00000003".into(),
+            last_ts: 3,
+        },
     };
     state.commit(&mut store, &mut action, &result).unwrap();
     assert_eq!(action, TurnEndAction::Done);

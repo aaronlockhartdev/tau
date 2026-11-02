@@ -1,4 +1,4 @@
-pub use self::commit::TurnEndAction;
+pub use self::commit::{ObservedSpan, TurnEndAction};
 use super::{
     Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore, boundary_ts, entry_text,
     idle_gap_secs, is_raw, om, transcript,
@@ -253,7 +253,7 @@ impl OmState {
                 // The Observer's call at two trigger points, each with its own
                 // retry knob (ticket #86); the stage is what names a failure's
                 // place in the `om_failed` record (#338).
-                TurnEndAction::Observe { transcript } => {
+                TurnEndAction::Observe { transcript, .. } => {
                     let request = Self::observer_request(model, transcript);
                     super::retry::call_with_retry(
                         provider,
@@ -355,9 +355,16 @@ impl OmState {
             return TurnEndAction::Reflect { level: 0 };
         }
         if self.activation_reached(raw) {
-            return TurnEndAction::Observe {
-                transcript: transcript(unobserved),
-            };
+            // A settle observes a bounded span, not the whole window: the bound
+            // is the activation threshold, the volume one Observer pass is sized
+            // for. A window that clears activation by more than that — a sunken
+            // session, a first settle over a frozen cursor — pays a
+            // threshold-sized slice per settle instead of the whole window in one
+            // Observer call (#394; the gate is #392). The span the Observer was
+            // shown is the span the commit stamps, so the tail stays unobserved
+            // for the next settle.
+            let (span, transcript) = self.observe_head(unobserved);
+            return TurnEndAction::Observe { transcript, span };
         }
         if self.config.buffer_tokens == 0 && raw >= self.config.buffer_increment() {
             // The transcript covers only the not-yet-buffered tail of the
@@ -374,6 +381,47 @@ impl OmState {
             };
         }
         TurnEndAction::Done
+    }
+
+    /// The span one Observer call covers: the leading entries of the unobserved
+    /// window, up to the activation threshold, and that span's transcript. The
+    /// threshold is the volume one Observer pass is sized for (spec §4: raw
+    /// oscillates between the retention floor and the threshold), so a window
+    /// that clears activation by more than that — a sunken session's history, a
+    /// first settle over a frozen cursor — is observed a threshold-sized slice
+    /// per settle instead of in one call whose input is the whole window
+    /// (#394; the gate is #392).
+    ///
+    /// Two floors keep the span worth a round-trip. It ends at an entry
+    /// boundary, the way the §4 window cut does, so a tool call and its result
+    /// stay in one span. And it reaches the first entry that carries text: a
+    /// span of content-less entries (an opening entry with an empty payload) is
+    /// a call that observes nothing, and the cursor would advance over material
+    /// the Observer was never shown. A window at activation is never observed by
+    /// nothing.
+    #[must_use]
+    fn observe_head(&self, unobserved: &[Entry]) -> (ObservedSpan, String) {
+        let bound = self
+            .config
+            .observe_threshold_for(self.record.observation_tokens);
+        // The span reaches the first entry with prompt material, so the Observer
+        // is given something to observe.
+        let content_floor = unobserved
+            .iter()
+            .position(|e| !entry_text(e).trim().is_empty())
+            .map_or(unobserved.len(), |i| i + 1);
+        let mut len = content_floor;
+        let mut seen = self.pending_tokens(&unobserved[..len]);
+        for entry in &unobserved[len..] {
+            let tokens = self.pending_tokens(std::slice::from_ref(entry));
+            if seen.saturating_add(tokens) > bound {
+                break;
+            }
+            seen = seen.saturating_add(tokens);
+            len += 1;
+        }
+        let head = &unobserved[..len];
+        (ObservedSpan::of(head), transcript(head))
     }
 
     /// The raw entries not yet covered by a buffered run: after the buffer

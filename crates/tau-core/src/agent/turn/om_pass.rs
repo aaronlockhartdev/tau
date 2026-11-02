@@ -181,6 +181,18 @@ impl AgentSession {
         // storage error) must not kill the turn (ticket #86): the entries
         // stay unobserved and the next turn-end retries; the partial state
         // is written back as-is.
+        // The window the settle starts with, for the stall record below.
+        let window_before = {
+            let mut guard = self.inner.lock();
+            let Inner { om, store, .. } = &mut *guard;
+            om.as_mut()
+                .and_then(|om| om.unobserved_tokens(store).ok())
+                .unwrap_or(0)
+        };
+        // A failed pass (a provider error that survived its retries, a
+        // storage error) must not kill the turn (ticket #86): the entries
+        // stay unobserved and the next turn-end retries; the partial state
+        // is written back as-is.
         if let Err(e) = state
             .settle_turn(&mut with_store, &om_provider, &model, hook.as_ref())
             .await
@@ -197,10 +209,14 @@ impl AgentSession {
             }
         }
         self.write_back_om(state);
-        // A pass that leaves the window at or past activation is a fact the
-        // harness has to be able to see afterwards (ADR-0034): it is the
-        // condition that ends in a provider cutoff.
-        self.record_om_stall();
+        // A pass that leaves the window no smaller than it found it, at or past
+        // activation, is a fact the harness has to be able to see afterwards
+        // (ADR-0034): it is the condition that ends in a provider cutoff. A
+        // settle that observed a bounded slice leaves the window past activation
+        // on purpose — the tail is the next settle's work (#394) — so the record
+        // marks a window that stops shrinking, not one that sits above the
+        // threshold while the drain works.
+        self.record_om_stall(window_before);
         Ok(())
     }
 
@@ -284,15 +300,19 @@ impl Inner {
 
 impl AgentSession {
     /// Record the stalled-window fact when a completed pass left the unobserved
-    /// window at or past the activation threshold: OM runs but can no longer
-    /// keep the prompt inside what it has observed (ADR-0034). The window is
-    /// the raw volume after the observation cursor — the quantity `plan`
-    /// gates on — so a settle that completed with no wire call records nothing
-    /// beside a stall, because the gate saw the same number (#392). Once per
-    /// run — `om_stall_recorded` mirrors the record once the append lands, so a
+    /// window at or past the activation threshold **and no smaller than the pass
+    /// found it**: OM runs but can no longer keep the prompt inside what it has
+    /// observed (ADR-0034). The window is the raw volume after the observation
+    /// cursor — the quantity `plan` gates on — so a settle that completed with no
+    /// wire call records nothing beside a stall, because the gate saw the same
+    /// number (#392). The progress comparison is the bound's floor (#394): a
+    /// settle that observed a bounded slice leaves the window past activation on
+    /// purpose, the tail being the next settle's work, and a record per settle
+    /// would report a drain that is working as a stall. Once per run —
+    /// `om_stall_recorded` mirrors the record once the append lands, so a
     /// restart re-records the stall it resumes into instead of re-scanning the
     /// log.
-    fn record_om_stall(&self) {
+    fn record_om_stall(&self, window_before: u32) {
         let stalled = {
             let mut guard = self.inner.lock();
             let Inner {
@@ -310,7 +330,7 @@ impl AgentSession {
             let activation = om
                 .config
                 .observe_threshold_for(om.record.observation_tokens);
-            if !om.activation_reached(pending) || *om_stall_recorded {
+            if !om.activation_reached(pending) || pending < window_before || *om_stall_recorded {
                 return;
             }
             *om_stall_recorded = true;
