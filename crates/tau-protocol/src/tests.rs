@@ -169,7 +169,11 @@ fn command_output_variants_roundtrip() {
         parent: None,
         kind: EntryKind::Other("message".into()),
         timestamp: 1,
-        payload: json!({ "text": "hi" }),
+        payload: payload::EntryPayload::from_entry(
+            &EntryKind::Other("message".into()),
+            &json!({ "text": "hi" }),
+        )
+        .map(Box::new),
         blob: None,
         first_kept: None,
     };

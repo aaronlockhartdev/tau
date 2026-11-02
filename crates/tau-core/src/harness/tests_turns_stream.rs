@@ -92,9 +92,9 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     else {
         panic!("no final assistant upsert: {events:?}");
     };
-    assert_eq!(final_assistant.payload["reasoning"], "thinking");
+    assert_eq!(final_assistant.payload_value()["reasoning"], "thinking");
     assert_eq!(
-        final_assistant.payload["calls"]
+        final_assistant.payload_value()["calls"]
             .as_array()
             .map(std::vec::Vec::len),
         Some(1)
@@ -128,7 +128,8 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
         ("text", deltas.iter().map(|d| d.1).collect::<String>()),
         ("reasoning", deltas.iter().map(|d| d.2).collect::<String>()),
     ] {
-        let committed = final_assistant.payload[field].as_str().unwrap_or("");
+        let record = final_assistant.payload_value();
+        let committed = record[field].as_str().unwrap_or("");
         assert!(
             committed.starts_with(&streamed),
             "the {field} deltas are not a prefix of the record: {streamed:?} in {committed:?}"
@@ -176,16 +177,16 @@ async fn the_event_pipe_carries_a_canned_turn_to_the_sink() {
     assert!(
         tools
             .iter()
-            .any(|t| t.id == first_tool_id && t.payload["output"] == serde_json::json!("")),
+            .any(|t| t.id == first_tool_id && t.payload_value()["output"] == serde_json::json!("")),
         "no call-phase emission for {first_tool_id}: {tools:?}"
     );
     assert!(
-        tools
-            .iter()
-            .any(|t| { t.id == first_tool_id && t.payload["output"] != serde_json::json!("") }),
+        tools.iter().any(|t| {
+            t.id == first_tool_id && t.payload_value()["output"] != serde_json::json!("")
+        }),
         "no result emission for {first_tool_id}: {tools:?}"
     );
-    assert_eq!(tools[0].payload["name"], "bash");
+    assert_eq!(tools[0].payload_value()["name"], "bash");
     let queues: Vec<&Event> = events
         .iter()
         .filter(|e| matches!(e, Event::Queue { .. }))

@@ -570,7 +570,8 @@ pub(crate) fn entry_to_view(entry: &crate::session::Entry) -> ViewEntry {
         parent: entry.parent.clone(),
         kind: entry.kind.clone(),
         timestamp: entry.timestamp,
-        payload: entry.payload.clone(),
+        payload: tau_protocol::payload::EntryPayload::from_entry(&entry.kind, &entry.payload)
+            .map(Box::new),
         blob: entry
             .blob
             .as_ref()

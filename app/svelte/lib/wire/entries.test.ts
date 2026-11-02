@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyDelta, decodeEntry, resolveBlobs, toolStatus, upsertEntry } from './entries';
-import type { Entry, ViewEntry } from './protocol';
+import { applyDelta, decodeEntry, payloadFor, resolveBlobs, toolStatus, upsertEntry } from './entries';
+import type { BlobRef, Entry, EntryPayload, ViewEntry } from './protocol';
 
 // The om entry carries the newest observation (its provenance-group wrapper
 // stripped) plus the run's display details for the observation card.
@@ -22,7 +22,7 @@ function omView(): ViewEntry {
     parent: null,
     kind: 'om',
     timestamp: 123,
-    payload,
+    payload: payloadFor('om', payload),
     blob: null,
     first_kept: null
   };
@@ -42,7 +42,7 @@ describe('upsertEntry (ADR-0008)', () => {
       parent: null,
       kind: 'assistant',
       timestamp: 1,
-      payload: { text, reasoning: 'r' },
+      payload: payloadFor('assistant', { text, reasoning: 'r' }),
       blob: null,
       first_kept: null
     });
@@ -62,7 +62,7 @@ describe('decodeEntry (how the response ended, #307)', () => {
     parent: null,
     kind: 'assistant',
     timestamp: 1,
-    payload,
+    payload: payloadFor('assistant', payload),
     blob: null,
     first_kept: null
   });
@@ -114,7 +114,7 @@ describe('applyDelta (#303)', () => {
       parent: null,
       kind: 'assistant',
       timestamp: 9,
-      payload: { text: 'first line', interrupted: false, usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } },
+      payload: payloadFor('assistant', { text: 'first line', interrupted: false, usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } }),
       blob: null,
       first_kept: null
     });
@@ -159,7 +159,7 @@ describe('applyDelta (#303)', () => {
       parent: null,
       kind: 'assistant',
       timestamp: 9,
-      payload: { text: 'the record', interrupted: true },
+      payload: payloadFor('assistant', { text: 'the record', interrupted: true }),
       blob: null,
       first_kept: null
     });
@@ -203,7 +203,7 @@ describe('decodeEntry (om)', () => {
 
   it('leaves the display fields undefined when the payload has none', () => {
     const v = omView();
-    v.payload = { active_observations: 'plain observation, no group tags' };
+    v.payload = payloadFor('om', { active_observations: 'plain observation, no group tags' });
     const e = decodeEntry(v) as {
       text: string;
       thinking?: string;
@@ -213,7 +213,81 @@ describe('decodeEntry (om)', () => {
   });
 });
 
-describe('resolveBlobs (om)', () => {
+// #346: the payload crosses the seam typed — the adjacent `{type, data}` tag,
+// with `other` as the escape arm for a payload the core could not type.
+describe('decodeEntry (the typed payload, #346)', () => {
+  const view = (kind: string, payload: EntryPayload | null, blob: BlobRef | null = null): ViewEntry => ({
+    id: '00000001',
+    parent: null,
+    kind,
+    timestamp: 1,
+    payload,
+    blob,
+    first_kept: null
+  });
+
+  it('reads a field out of the arm the core typed', () => {
+    const e = decodeEntry(
+      view('assistant', { type: 'assistant', data: { text: 'typed', reasoning: 'r', interrupted: false, calls: [] } })
+    ) as { kind: string; text: string };
+    expect(e.kind).toBe('message');
+    expect(e.text).toBe('typed');
+  });
+
+  it('reads a tool arm with its GUI-only channel', () => {
+    const e = decodeEntry(
+      view('tool', {
+        type: 'tool',
+        data: { call_id: 'c1', name: 'edit', args: { path: 'a.txt' }, output: 'edited', ui_detail: '--- a\n+++ b', status: 'ok' }
+      })
+    ) as { name?: string; output?: string; ui_detail?: string; status?: string };
+    expect(e.name).toBe('edit');
+    expect(e.ui_detail).toBe('--- a\n+++ b');
+    expect(e.status).toBe('ok');
+  });
+
+  it('the payload tag is serde\'s, not the kind\'s hyphenated spelling', () => {
+    const e = decodeEntry(
+      view('spawn-snapshot', { type: 'spawn_snapshot', data: { parentSession: 'p', range: '0:1', log: 'the frozen prefix' } })
+    ) as { kind: string; text: string };
+    expect(e.kind).toBe('spawn-snapshot');
+    expect(e.text).toBe('the frozen prefix');
+  });
+
+  // The negative: the core keeps a payload it cannot type in `other`, with its
+  // bytes intact. The card must read those bytes, not blank on the tag miss.
+  it('the escape arm renders the raw map', () => {
+    const e = decodeEntry(view('user', { type: 'other', data: { text: 'a core newer than this build' } })) as {
+      kind: string;
+      text: string;
+    };
+    expect(e.kind).toBe('user');
+    expect(e.text).toBe('a core newer than this build');
+  });
+
+  // The other negative: a payload whose arm is not the kind the entry claims —
+  // the card reads defaults from an empty map, it never renders a field of the
+  // wrong shape as if it belonged.
+  it('an arm under the wrong kind reads as empty, not as the other kind\'s fields', () => {
+    const e = decodeEntry(view('user', { type: 'system', data: { note: 'a note' } })) as { text: string };
+    expect(e.text).toBe('');
+  });
+
+  it('a sidecar payload is tagged by kind on the way in', async () => {
+    const v = view('tool', null, { id: '00000001', size: 218_000, hash: '0'.repeat(16) });
+    const views = await resolveBlobs([v], () => Promise.resolve({ name: 'read', call_id: 'c1', args: {}, output: 'file' }));
+    const e = decodeEntry(views[0]!) as { name?: string; output?: string; unavailable?: boolean };
+    expect(e.name).toBe('read');
+    expect(e.output).toBe('file');
+    expect(e.unavailable).toBeUndefined();
+  });
+
+  it('a kind the payload module has no arm for tags as other', () => {
+    expect(payloadFor('quantum', { note: 'x' })).toEqual({ type: 'other', data: { note: 'x' } });
+  });
+});
+
+describe('decodeEntry (tool status, B5)', () => {
   it('substitutes the fetched payload before decode', async () => {
     // The dogfood shape: a 218KB observation stored as sidecar blob 00000063.
     const v: ViewEntry = {
@@ -256,7 +330,7 @@ describe('decodeEntry (tool status, B5)', () => {
       parent: null,
       kind: 'tool',
       timestamp: 1,
-      payload: { name: 'read', output, status, ui_detail },
+      payload: payloadFor('tool', { name: 'read', output, status, ui_detail }),
       blob: null,
       first_kept: null
     };
@@ -284,7 +358,7 @@ describe('decodeEntry (tool status, B5)', () => {
     // The heuristic would read the "bash: " prefix as an error; the core's
     // explicit cancelled wins so the card renders neutral, not red.
     const bashView = (status: unknown) =>
-      decodeEntry({ ...toolView(status, 'bash: cancelled by user stop'), payload: { name: 'bash', output: 'bash: cancelled by user stop', status } });
+      decodeEntry({ ...toolView(status, 'bash: cancelled by user stop'), payload: payloadFor('tool', { name: 'bash', output: 'bash: cancelled by user stop', status }) });
     expect((bashView('cancelled') as { status?: string }).status).toBe('cancelled');
   });
 
@@ -297,7 +371,7 @@ describe('decodeEntry (tool status, B5)', () => {
     expect(
       decoded({
         ...toolView(undefined, 'bash: cancelled by user stop'),
-        payload: { name: 'bash', output: 'bash: cancelled by user stop' }
+        payload: payloadFor('tool', { name: 'bash', output: 'bash: cancelled by user stop' })
       })
     ).toBe('error');
   });
@@ -334,7 +408,7 @@ describe('a diagnostic entry (ADR-0034)', () => {
       parent: null,
       kind: 'diagnostic',
       timestamp: 123,
-      payload,
+      payload: payloadFor('diagnostic', payload),
       blob: null,
       first_kept: null
     };
@@ -383,7 +457,7 @@ it('an unknown kind renders its own name', () => {
     parent: null,
     kind: 'quantum',
     timestamp: 123,
-    payload: { note: 'from a newer core' },
+    payload: payloadFor('quantum', { note: 'from a newer core' }),
     blob: null,
     first_kept: null
   });

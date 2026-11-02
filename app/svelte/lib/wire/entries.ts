@@ -5,8 +5,9 @@
 import type {
   Diagnostic,
   Entry,
+  EntryPayload,
   SubagentPayload,
-  Usage,
+  ToolPayload,
   ViewEntry
 } from './protocol';
 import { asStreamOutcome } from './protocol';
@@ -51,23 +52,60 @@ function stripObservationGroup(s: string): string {
     .trim();
 }
 
+// The wire's typed payload (#346) read as the fields a card needs. The core
+// types a payload by decoding it into its kind's arm; a payload that will not
+// decode rides `other` with its bytes intact. The GUI reaches both through
+// here: its own arm when the core typed it, the escape arm's map when it did
+// not — a record the core cannot type still renders what it can.
+type PayloadOf<T extends EntryPayload['type']> = Extract<EntryPayload, { type: T }>['data'];
+
+function dataOf<T extends EntryPayload['type']>(payload: EntryPayload | null, tag: T): PayloadOf<T> {
+  const data = payload?.type === tag ? payload.data : payload?.type === 'other' ? payload.data : {};
+  return (data && typeof data === 'object' ? data : {}) as PayloadOf<T>;
+}
+
+// The kinds with no payload type (v0: `om`, `subagent`, `diagnostic`, and any
+// kind this build has never heard of) ride `other`, so the card reads them
+// field by field off the raw map.
+function freeform(payload: EntryPayload | null): Record<string, unknown> {
+  return dataOf(payload, 'other') as Record<string, unknown>;
+}
+
+// A sidecar payload (ADR-0005) is fetched as the stored map, not as the wire's
+// tagged shape, so the read tags it by the entry's kind before decode. Only the
+// arm name is needed — every field read is guarded, so a map that is not its
+// arm's shape decodes to defaults, the way `other` does.
+const payloadTags: Record<string, EntryPayload['type']> = {
+  user: 'user',
+  assistant: 'assistant',
+  tool: 'tool',
+  system: 'system',
+  'spawn-snapshot': 'spawn_snapshot'
+};
+
+export function payloadFor(kind: string, raw: unknown): EntryPayload {
+  return { type: payloadTags[kind] ?? 'other', data: raw } as EntryPayload;
+}
+
 export function decodeEntry(v: ViewEntry): Entry {
-  const p = (v.payload && typeof v.payload === 'object' ? v.payload : {}) as Record<string, unknown>;
   switch (v.kind) {
     case 'user': {
+      const p = dataOf(v.payload, 'user');
       const text = typeof p.text === 'string' ? p.text : '';
       const source = typeof p.source === 'string' ? p.source : undefined;
       // The lane rides the payload (the queue-delivery divider's source).
       const lane =
         p.lane === 'force' || p.lane === 'steering' || p.lane === 'follow_up' ? p.lane : undefined;
-      const sk = p.skill as { name?: unknown; location?: unknown } | undefined;
+      const sk = p.skill;
       return {
         id: v.id,
         kind: 'user',
         text,
         source,
         lane,
-        skill: sk ? { name: typeof sk.name === 'string' ? sk.name : '', location: typeof sk.location === 'string' ? sk.location : '' } : undefined,
+        skill: sk
+          ? { name: typeof sk.name === 'string' ? sk.name : '', location: typeof sk.location === 'string' ? sk.location : '' }
+          : undefined,
         // The child → parent direction is payload-derived (source); the
         // parent → child case needs the session's parent link, so the
         // card splits that one itself.
@@ -75,7 +113,8 @@ export function decodeEntry(v: ViewEntry): Entry {
       };
     }
     case 'assistant': {
-      const interrupted = Boolean(p.interrupted);
+      const p = dataOf(v.payload, 'assistant');
+      const interrupted = p.interrupted === true;
       return {
         id: v.id,
         kind: interrupted ? 'interrupted' : 'message',
@@ -92,10 +131,11 @@ export function decodeEntry(v: ViewEntry): Entry {
             })
             .filter(Boolean)
           : undefined,
-        usage: 'usage' in p ? (p.usage as Usage | undefined) : undefined
+        usage: p.usage
       };
     }
     case 'tool': {
+      const p = dataOf(v.payload, 'tool');
       const a = p.args;
       return {
         id: v.id,
@@ -116,7 +156,7 @@ export function decodeEntry(v: ViewEntry): Entry {
       };
     }
     case 'om': {
-      const o = p as {
+      const o = freeform(v.payload) as {
         active_observations?: string;
         om_thinking?: string;
         om_input?: string;
@@ -140,16 +180,23 @@ export function decodeEntry(v: ViewEntry): Entry {
         model: o.om_model || undefined
       };
     }
-    case 'system':
+    case 'system': {
+      const p = dataOf(v.payload, 'system');
       return { id: v.id, kind: 'system', text: typeof p.note === 'string' ? p.note : '' };
-    case 'spawn-snapshot':
+    }
+    case 'spawn-snapshot': {
+      const p = dataOf(v.payload, 'spawn_snapshot');
       return { id: v.id, kind: 'spawn-snapshot', text: typeof p.log === 'string' ? p.log : '' };
-    case 'subagent':
-      return { id: v.id, kind: 'subagent', text: JSON.stringify(p ?? v.id), payload: p as SubagentPayload };
-    case 'diagnostic':
+    }
+    case 'subagent': {
+      const p = freeform(v.payload);
+      return { id: v.id, kind: 'subagent', text: JSON.stringify(p), payload: p as SubagentPayload };
+    }
+    case 'diagnostic': {
       // ADR-0034: the payload is the tagged fact; the card composes the
       // sentence from the code. A code this build does not know keeps its
       // name and renders generically.
+      const p = freeform(v.payload);
       return {
         id: v.id,
         kind: 'diagnostic',
@@ -158,8 +205,9 @@ export function decodeEntry(v: ViewEntry): Entry {
         text: typeof p.code === 'string' ? p.code : 'unknown',
         diagnostic: typeof p.code === 'string' ? (p as unknown as Diagnostic) : { code: 'unknown' }
       };
+    }
     default:
-      return { id: v.id, kind: v.kind, text: JSON.stringify(p ?? v.id) };
+      return { id: v.id, kind: v.kind, text: JSON.stringify(freeform(v.payload)) };
   }
 }
 
@@ -195,6 +243,8 @@ export function applyDelta(
 
 // Sidecar blob (ADR-0005): an oversized payload arrives null with a blob
 // pointer; the payload is fetched on demand and substituted before decode.
+// The blob file holds the stored map, not the wire's tagged shape, so the
+// fetched bytes are tagged by the entry's kind on the way in.
 // A fetch that fails keeps the pointer — one unreadable blob must not sink
 // the window read.
 export async function resolveBlobs(
@@ -205,7 +255,7 @@ export async function resolveBlobs(
     views.map(async (v) => {
       if (v.payload !== null || !v.blob) return v;
       try {
-        return { ...v, payload: await fetchBlob(v) };
+        return { ...v, payload: payloadFor(v.kind, await fetchBlob(v)) };
       } catch {
         return v;
       }
@@ -247,7 +297,7 @@ export function toolStatus(name: string, output: unknown): 'running' | 'ok' | 'e
 // the back-compat fallback for records written before it existed. A running
 // call has neither an explicit status nor an output, so it falls through to
 // toolStatus's 'running'.
-function decodeToolStatus(p: Record<string, unknown>): 'ok' | 'running' | 'error' | 'cancelled' {
+function decodeToolStatus(p: ToolPayload): 'ok' | 'running' | 'error' | 'cancelled' {
   const s = p.status;
   if (s === 'ok' || s === 'error' || s === 'cancelled') return s;
   return toolStatus(typeof p.name === 'string' ? p.name : '', p.output);

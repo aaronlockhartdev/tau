@@ -9,6 +9,8 @@
 //   it is parity with any TS type — the C9 typed layer sits on top of it.
 // - Rust `Arc<[T]>` is a shared array: the wire is a JSON array, so it mirrors
 //   `T[]` exactly as `Vec<T>` does (the sharing is Rust's, not the wire's).
+// - Rust `Box<T>` is an owned pointer: serde serializes it as `T`, so it mirrors
+//   `T` (ViewEntry.payload is boxed to keep an entry copy cheap).
 // - Rust `String` is parity with a TS union of string literals, named or
 //   inline (the mirror names the known values; the wire stays a string —
 //   MessageLane).
@@ -24,6 +26,13 @@
 // - `TurnUsage` (the payload module's usage) is name-parity with the TS
 //   `Usage` — the crate carries two usage dialects; the field diff runs on
 //   lib.rs's `Usage`.
+// - An adjacently tagged enum whose variants are newtypes (`#[serde(tag,
+//   content)]`; #346's EntryPayload): the arm's mirror is a TS member carrying
+//   the tag key and the inner type under the content key, so each payload
+//   struct is diffed field-for-field by name. A payload field with no TS
+//   mirror is drift — the C9 hole this closes.
+// - An untagged enum (`#[serde(untagged)]`; ToolOutput) tags nothing on the
+//   wire: its mirror is a TS union of the arms' types.
 import { readFileSync, globSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -127,6 +136,9 @@ function rustEnums(src) {
     const attrs = serde ? serde[1].split(',') : [];
     const tag = (attrs.find((a) => a.includes('tag')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
     const rename = (attrs.find((a) => a.includes('rename_all')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
+    // The adjacent tag's sibling key: a newtype variant's payload rides under it.
+    const content = (attrs.find((a) => a.includes('content')) ?? '').split('=')[1]?.trim().replace(/"/g, '');
+    const untagged = attrs.some((a) => a.trim() === 'untagged');
     const variants = [];
     // A hand-written Serialize spells its tags in code, not with a serde attr:
     // the `as_str` arm is the wire spelling (EntryKind's is `spawn-snapshot`).
@@ -146,8 +158,30 @@ function rustEnums(src) {
         .join(' ')
         .trim();
       const vm = p2.match(/^(\w+)(\s*\{[^]*\})?$/);
-      if (!vm) continue;
+      const tm = vm ? null : p2.match(/^(\w+)\s*\(([\s\S]*)\)$/);
+      // A tuple variant carries its payload in the wire's own value: an
+      // untagged enum's arm, an adjacent tag's newtype, or (EntryKind) a
+      // hand-written Serialize that spells the whole wire line. A tuple
+      // variant on any other enum has no parity rule to check, and saying so
+      // is the point — an arm the guard silently skips is the C9 hole.
+      if (tm && !handwritten && !untagged && !content) {
+        throw new Error(`${name}.${tm[1]}: a newtype variant needs #[serde(tag, content)] to be checkable`);
+      }
+      if (vm === null && (handwritten || (untagged && topParts(tm[2]).length > 1))) {
+        continue;
+      }
+      if (untagged && tm) {
+        const arms = topParts(tm[2]);
+        if (arms.length !== 1) {
+          throw new Error(`${name}.${tm[1]}: a multi-field untagged arm has no parity rule to check`);
+        }
+        variants.push({ name: tm[1], tag: tm[1], arm: arms[0], fields: {} });
+        continue;
+      }
       const fields = {};
+      if (tm) {
+        fields[content] = { type: topParts(tm[2])[0], skip: false };
+      }
       // The attrs live in the unstripped part: a field's serde attr says whether
       // the key reaches the wire at all, which is what a TS optional mirrors.
       const body = part.match(/\{([\s\S]*)\}/);
@@ -162,10 +196,11 @@ function rustEnums(src) {
           fields[fmm[1]] = { type: fmm[2].trim(), skip: attrs.some((a) => a.includes('skip')) };
         }
       }
-      const tag = wire[vm[1]] ?? (rename === 'lowercase' ? vm[1].toLowerCase() : snake(vm[1]));
-      variants.push({ name: vm[1], tag, fields });
+      const variantName = tm ? tm[1] : vm[1];
+      const tag = wire[variantName] ?? (rename === 'lowercase' ? variantName.toLowerCase() : snake(variantName));
+      variants.push({ name: variantName, tag, fields });
     }
-    out[name] = { tag: tag ?? 'kind', variants };
+    out[name] = { tag: untagged ? null : (tag ?? 'kind'), untagged, variants };
   }
   return out;
 }
@@ -309,8 +344,36 @@ const rustE = rustEnums(rustSrc);
 const rustS = rustStructs(rustSrc);
 const tsK = tsKinds(tsSrc);
 
+// `Box<T>` is an owned pointer serde serializes as `T`; the box is Rust's,
+// not the wire's. Stripped at any nesting depth, so `Option<Box<T>>` reads as
+// the `Option<T>` its mirror marks optional.
+function unwrapBox(t) {
+  for (;;) {
+    const at = t.indexOf('Box<');
+    if (at < 0) return t;
+    let depth = 0;
+    let end = -1;
+    for (let i = at + 3; i < t.length; i++) {
+      if (t[i] === '<') depth++;
+      else if (t[i] === '>') {
+        depth--;
+        if (depth === 0) {
+          end = i;
+          break;
+        }
+      }
+    }
+    if (end < 0) return t;
+    t = `${t.slice(0, at)}${t.slice(at + 4, end)}${t.slice(end + 1)}`;
+  }
+}
+
 function normRust(t) {
-  t = t.trim().replace(/^snapshot::/, '').replace(/^crate::/, '').replace(/^payload::/, '').replace(/\s+/g, ' ');
+  // A path-qualified name (`payload::EntryPayload`) names the same wire type as
+  // the bare one: the module is Rust's, not the wire's.
+  t = t.trim().replace(/\b(?:snapshot|crate|payload)::/g, '').replace(/\s+/g, ' ');
+  // An owned pointer is invisible on the wire, so unwrap it: `Box<T>` reads as `T`.
+  t = unwrapBox(t);
   if (t === 'String') return 'string';
   if (t === 'bool') return 'boolean';
   if (/^(u8|u16|u32|u64|i8|i16|i32|i64|usize|isize|f32|f64)$/.test(t)) return 'number';
@@ -396,6 +459,15 @@ function diffUnion(rustName, tsName = rustName) {
   if (!r) return;
   if (!t || t.kind !== 'union') {
     errors.push(`${rustName}: missing TS union mirror`);
+    return;
+  }
+  // An untagged enum puts no key on the wire: the arm *is* the value, so the
+  // mirror is a TS union of the arms' types and the tag rules below do not apply.
+  if (r.untagged) {
+    const arms = r.variants.map((v) => normRust(v.arm));
+    const mirror = t.members.map((m) => (m.named ?? '').trim()).sort();
+    for (const arm of arms) if (!mirror.includes(arm)) errors.push(`${rustName}: missing TS arm '${arm}'`);
+    for (const m of mirror) if (!arms.includes(m)) errors.push(`${rustName}: TS-only arm '${m}'`);
     return;
   }
   const rtags = r.variants.map((v) => v.tag);

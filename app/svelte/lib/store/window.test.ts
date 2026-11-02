@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn(() => Promise.resolve(
 
 import type { Command, CommandOutput, EntryMeta, LiveState, SessionMeta, ViewEntry, Workspace } from '../wire/protocol';
 import { applySessionList, openSession } from '../rules/sessions';
-import { decodeEntry } from '../wire/entries';
+import { decodeEntry, payloadFor } from '../wire/entries';
 import { fetchWindow, openWorkspace, store } from './store.svelte';
 
 const WS: Workspace = { id: 'w1', name: 'proj', cwd: '/tmp/proj' };
@@ -53,7 +53,7 @@ function entryView(id: string, kind: string, payload: Record<string, unknown>): 
     parent: null,
     kind,
     timestamp: 1,
-    payload,
+    payload: payloadFor(kind, payload),
     blob: null,
     first_kept: null
   };

@@ -341,7 +341,11 @@ fn upsert_inlines_a_blob_backed_entry() {
             .unwrap();
     let view = upsert_view(dir.path()).entry(&entry);
 
-    assert_eq!(view.payload, payload, "the decoded payload is inlined");
+    assert_eq!(
+        view.payload_value(),
+        payload,
+        "the decoded payload is inlined"
+    );
     assert_eq!(
         view.blob.as_ref().map(|b| b.id.as_str()),
         Some("e1"),
@@ -364,7 +368,7 @@ fn upsert_leaves_a_small_entry_alone() {
         crc: None,
     };
     let view = upsert_view(dir.path()).entry(&entry);
-    assert_eq!(view.payload, payload);
+    assert_eq!(view.payload_value(), payload);
     assert!(view.blob.is_none());
 }
 
@@ -387,7 +391,7 @@ fn upsert_falls_through_when_the_blob_file_is_missing() {
     };
     // No blob file on disk: the view is the blobless one, no panic.
     let view = upsert_view(dir.path()).entry(&entry);
-    assert!(view.payload.is_null());
+    assert!(view.payload.is_none());
     assert_eq!(view.blob.as_ref().map(|b| b.id.as_str()), Some("e3"));
 }
 

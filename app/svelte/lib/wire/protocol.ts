@@ -99,7 +99,7 @@ export interface ViewEntry {
   parent: string | null;
   kind: EntryKind;
   timestamp: number;
-  payload: unknown;
+  payload: EntryPayload | null;
   blob: BlobRef | null;
   first_kept: string | null;
 }
@@ -108,6 +108,78 @@ export interface ViewEntry {
 // ADR-0006 mirror of the crate's payload module. The file stays free-form
 // at the ADR-0005 storage level; these types own the shapes the GUI decodes.
 export type SkillRef = { name: string; location: string };
+
+// A function call the model emitted on a turn (spec §5.4).
+export interface FunctionCall {
+  id: string;
+  call_id: string;
+  name: string;
+  /** Raw JSON, as the server sent it. */
+  arguments: string;
+}
+
+export interface UserPayload {
+  text: string;
+  lane: string;
+  source?: string;
+  skill?: SkillRef;
+}
+
+export interface AssistantPayload {
+  text: string;
+  reasoning: string;
+  interrupted: boolean;
+  stop_reason?: StreamOutcome;
+  usage?: Usage;
+  duration_secs?: number;
+  calls: FunctionCall[];
+}
+
+// A tool result's content (#34): plain text — the common, cheap path — or an
+// image block a vision-capable endpoint can see. The Rust enum is
+// `#[serde(untagged)]`: the wire is the arm's own value, tagged by nothing.
+export type ToolOutput = string | ImageBlock;
+
+export interface ImageBlock {
+  type: string;
+  media_type: string;
+  data_base64: string;
+  note?: string;
+}
+
+export interface ToolPayload {
+  call_id: string;
+  name: string;
+  args: unknown;
+  output: ToolOutput;
+  /** GUI-only result detail (#243); absent when the tool does not split. */
+  ui_detail?: ToolOutput;
+  status?: string;
+}
+
+export interface SystemPayload {
+  note: string;
+}
+
+export interface SpawnSnapshotPayload {
+  parentSession: string;
+  range: string;
+  log: string;
+}
+
+// The typed entry payload (#346): the adjacent `{type, data}` tag the core
+// puts on the wire. `kind` and `type` are the same vocabulary except for
+// `spawn_snapshot` — the payload tag is serde's snake_case of the variant,
+// the entry's `kind` is EntryKind's hand-written `spawn-snapshot`.
+// `other` is the escape arm: a kind with no v0 payload type (om, subagent,
+// diagnostic) and any payload that does not decode as its kind's shape.
+export type EntryPayload =
+  | { type: 'user'; data: UserPayload }
+  | { type: 'assistant'; data: AssistantPayload }
+  | { type: 'tool'; data: ToolPayload }
+  | { type: 'system'; data: SystemPayload }
+  | { type: 'spawn_snapshot'; data: SpawnSnapshotPayload }
+  | { type: 'other'; data: unknown };
 
 export type SubagentPayload =
   | { event: 'spawn'; type: string; brief: string; context_mode: string; parent: string; call: string }

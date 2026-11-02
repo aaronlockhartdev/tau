@@ -137,5 +137,5 @@ async fn a_10k_session_snapshots_below_2mb_with_zero_payloads() {
         other => panic!("expected entries: {other:?}"),
     };
     assert_eq!(entries.len(), 100);
-    assert!(entries[0].payload.get("text").is_some());
+    assert!(entries[0].payload_value().get("text").is_some());
 }
