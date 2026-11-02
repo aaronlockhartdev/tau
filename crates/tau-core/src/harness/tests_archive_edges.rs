@@ -68,6 +68,7 @@ async fn a_running_child_refusal_leaves_the_child_running() {
         .unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
+        ProtocolError::Busy { what } => what.as_str(),
         other => panic!("expected a plain refusal: {other:?}"),
     };
     assert!(
@@ -193,6 +194,7 @@ async fn an_archive_turn_started_in_the_window_aborts_with_reinsertion() {
     let err = core.archive_turn_recheck(&id, &live).unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
+        ProtocolError::Busy { what } => what.as_str(),
         other => panic!("expected a plain refusal: {other:?}"),
     };
     assert!(
@@ -245,6 +247,7 @@ async fn a_send_to_an_archived_session_is_refused() {
         .unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
+        ProtocolError::Busy { what } => what.as_str(),
         other => panic!("expected a plain refusal: {other:?}"),
     };
     assert!(
@@ -516,6 +519,7 @@ async fn a_delete_of_a_running_session_is_refused() {
         .unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
+        ProtocolError::Busy { what } => what.as_str(),
         other => panic!("expected a plain refusal: {other:?}"),
     };
     assert!(

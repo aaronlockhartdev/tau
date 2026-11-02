@@ -146,6 +146,7 @@ async fn a_rename_of_a_running_session_is_refused() {
         .unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
+        ProtocolError::Busy { what } => what.as_str(),
         other => panic!("expected a plain refusal: {other:?}"),
     };
     assert!(
@@ -223,6 +224,7 @@ async fn a_branch_of_a_running_session_is_refused() {
         .unwrap_err();
     let msg = match &err {
         ProtocolError::Other { message } => message.as_str(),
+        ProtocolError::Busy { what } => what.as_str(),
         other => panic!("expected a plain refusal: {other:?}"),
     };
     assert!(

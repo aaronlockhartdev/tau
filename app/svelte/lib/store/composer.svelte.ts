@@ -42,35 +42,16 @@ export async function stop(): Promise<void> {
   }
 }
 
-export async function deleteQueueItem(
-  text: string,
-  lane: PendingMsg['lane'],
-  source: string | null,
-  idx: number
-): Promise<void> {
+// Delete a queued item by the id the core minted for it (#346): the row
+// drops optimistically, and the core's queue event is the resync authority.
+export async function deleteQueueItem(id: string): Promise<void> {
   const sid = store.current;
   if (sid === null) return;
   const s = sessionOf(sid);
-  // Duplicates are keyed by occurrence (text + lane + source); delete only
-  // the idx-th of them. `pending` is the queue's global order, so the
-  // occurrence's position in it is the global index the core deletes by.
-  let seen = 0;
-  let global = -1;
-  for (let i = 0; i < s.pending.length; i++) {
-    const p = s.pending[i]!;
-    if (p.text === text && p.lane === lane && (p.source ?? null) === source) {
-      if (seen === idx) {
-        global = i;
-        break;
-      }
-      seen++;
-    }
-  }
-  if (global === -1) return;
-  s.pending = s.pending.filter((_, i) => i !== global);
+  s.pending = s.pending.filter((p) => p.id !== id);
   try {
     clearError();
-    await command({ type: 'queue_item_remove', session: sid, index: global });
+    await command({ type: 'queue_item_remove', session: sid, item: id });
   } catch {
     // optimistic: a queue event will resync (a concurrent turn boundary
     // may have consumed the item, in which case the resync is the truth)

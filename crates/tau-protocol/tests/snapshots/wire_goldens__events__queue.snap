@@ -1,6 +1,6 @@
 ---
 source: crates/tau-protocol/tests/wire_goldens.rs
-expression: "Event::Queue\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), items:\n    vec![QueuedItem\n    {\n        text: \"next\".into(), lane: tau_protocol::MessageLane::FollowUp,\n        source: Some(\"s2\".into()),\n    }],\n}"
+expression: "Event::Queue\n{\n    workspace: \"w1\".into(), session: \"s1\".into(), items:\n    vec![QueuedItem\n    {\n        id: \"q1\".into(), text: \"next\".into(), lane:\n        tau_protocol::MessageLane::FollowUp, source: Some(\"s2\".into()),\n    }],\n}"
 ---
 {
   "type": "queue",
@@ -8,6 +8,7 @@ expression: "Event::Queue\n{\n    workspace: \"w1\".into(), session: \"s1\".into
   "session": "s1",
   "items": [
     {
+      "id": "q1",
       "text": "next",
       "lane": "follow_up",
       "source": "s2"

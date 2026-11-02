@@ -107,24 +107,26 @@ impl Core {
                 live.agent.stop_flag().store(true, Ordering::SeqCst);
                 Ok(CommandOutput::None)
             }
-            Command::QueueItemRemove { session, index } => {
+            Command::QueueItemRemove { session, item } => {
                 let live = self.live(&session)?;
-                // A child session's queue is the parent's projection: there
-                // is no top-level delete for a child (its items are the
-                // parent's), so refuse — the GUI only offers it for
-                // top-level sessions.
+                // A child's queue is unmutatable through the seam: its items are
+                // the parent's. A structural fact about the target, not a transient
+                // condition, so `Unsupported`; the GUI never offers the control for
+                // a child, so this path is the guard, not the flow (#346).
                 if live.agent.child_link().is_some() {
-                    return Err(ProtocolError::Other {
+                    return Err(ProtocolError::Unsupported {
                         message: "a child session's queue is managed by its parent".into(),
                     });
                 }
-                // Out of bounds (the item was consumed first) is a clean,
-                // specific error — never a silent success.
-                if live.agent.remove_queued(index).is_none() {
-                    return Err(ProtocolError::Other {
-                        message: "queue index out of bounds".into(),
+                // An unknown id — the item was consumed first, or never entered
+                // this queue — is a clean, specific refusal, never a silent success.
+                if live.agent.remove_queued(&item).is_none() {
+                    return Err(ProtocolError::NotFound {
+                        what: format!("queue item {item}"),
                     });
                 }
+                // The queue's resync authority is the full-state `Event::Queue`
+                // this emit sends, so the command answers none (#346).
                 self.emit_queue(&live);
                 Ok(CommandOutput::None)
             }

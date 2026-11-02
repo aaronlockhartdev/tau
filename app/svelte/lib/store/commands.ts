@@ -5,7 +5,7 @@
 // viewer.svelte (#320), so no import cycle reaches the facade.
 import { command, type Command, type CommandOutput, type SessionMeta } from '../wire/protocol';
 import { applySessionList, openSession, setArchived } from '../rules/sessions';
-import { errText } from '../wire/errors';
+import { errText, BusyError } from '../wire/errors';
 import { pane, store } from './state.svelte';
 import { reconcileActiveFile } from './viewer.svelte';
 
@@ -24,6 +24,9 @@ export async function runSessionCommand(
     await followUp(out);
     return true;
   } catch (e) {
+    // `busy` is a transient refusal: the caller's composer re-enables, and a
+    // retryable refusal is not an error to show in the banner (#346).
+    if (e instanceof BusyError) return false;
     store.error = errText(e);
     onFail?.();
     return false;
@@ -68,9 +71,10 @@ export async function newSession(ws: string, title: string | null = null): Promi
 export async function renameSession(sid: string, title: string): Promise<void> {
   const t = title.trim();
   if (!t) return;
-  await runSessionCommand({ type: 'session_rename', session: sid, title: t }, () => {
+  await runSessionCommand({ type: 'session_rename', session: sid, title: t }, (out) => {
+    if (out.kind !== 'session') throw new Error('unexpected session_rename output');
     const s = store.sessions[sid];
-    if (s) s.meta.title = t;
+    if (s) s.meta.title = out.session.title;
   });
 }
 

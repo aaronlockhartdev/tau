@@ -3,6 +3,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tau_protocol::EntryKind;
 
+/// The next queued item's id, minted from the session's monotonic counter:
+/// stable for the item's life in the queue (#346).
+fn new_queue_id(seq: &mut u64) -> String {
+    *seq += 1;
+    format!("q{seq}")
+}
+
 impl AgentSession {
     /// Queue `text` on `lane` (shared by `send`/`send_skill`): clears a
     /// prior stop (ticket #23) — a stop means "interrupt current work", not
@@ -18,6 +25,7 @@ impl AgentSession {
         let mut inner = self.inner.lock();
         self.stop.store(false, Ordering::SeqCst);
         let msg = Queued {
+            id: new_queue_id(&mut inner.queue_seq),
             text: text.into(),
             lane,
             source,
@@ -102,7 +110,10 @@ impl AgentSession {
         } else {
             None
         };
+        // The id is minted before the push: the push borrows the queue.
+        let id = new_queue_id(&mut inner.queue_seq);
         inner.queue.push_back(Queued {
+            id,
             text,
             lane,
             source: Some(source),
@@ -118,17 +129,15 @@ impl AgentSession {
         self.stop.store(true, Ordering::SeqCst);
     }
 
-    /// Delete a queued message by its position in the lane queue (the
-    /// global index the GUI's queue pane shows, ticket #223): the item
-    /// leaves the queue and never runs. Returns the deleted text; `None`
-    /// when the index is out of bounds (the item was consumed first).
+    /// Delete a queued message by its queue id (the id every projection
+    /// carries, #346): the item leaves the queue and never runs. Returns the
+    /// deleted text; `None` when no queued item carries the id (the item was
+    /// consumed first, or belongs to a previous queue generation).
     #[must_use]
-    pub fn remove_queued(&self, index: usize) -> Option<String> {
+    pub fn remove_queued(&self, item: &str) -> Option<String> {
         let mut inner = self.inner.lock();
-        if index >= inner.queue.len() {
-            return None;
-        }
-        inner.queue.remove(index).map(|q| q.text)
+        let at = inner.queue.iter().position(|q| q.id == item)?;
+        inner.queue.remove(at).map(|q| q.text)
     }
 
     /// Mark the session closed: a one-way transition that interrupts the
@@ -175,6 +184,7 @@ impl AgentSession {
             .queue
             .iter()
             .map(|q| tau_protocol::snapshot::QueuedItem {
+                id: q.id.clone(),
                 text: q.text.clone(),
                 lane: crate::harness::lane_to_message_lane(q.lane),
                 source: q.source.clone(),
