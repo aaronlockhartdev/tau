@@ -124,8 +124,9 @@ nothing and records itself to every session under the broken layer (ADR-0034,
 The table lists every section the core accepts: the load is
 `deny_unknown_fields`, so naming a section this build does not read —
 `[mcp]`, `[logging]`, `[ui]`, `[telemetry]` — is a **load failure**, not a
-quiet ignore. The MCP server set, when it lands, is a boot section by design:
-a server process is not hot-swapped. The write-coalescing window is a code
+quiet ignore. Tau hosts no MCP servers (#355, owner decision 2026-10-31): the
+section is refused by name, and `tau-acp` advertises `mcpCapabilities:
+{ supports: false }`. The write-coalescing window is a code
 constant (spec §12), not a config key.
 
 Per-user presentation is not in this file at all (the `display.*` settings save
