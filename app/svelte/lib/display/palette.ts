@@ -5,6 +5,7 @@
 import type { SessionState } from '../rules/sessions';
 import type { SubagentInfo } from '../wire/protocol';
 import { badgeLabel } from './subagent-state';
+import { bucketAge } from './format';
 
 export interface PaletteItem {
   group: 'sessions' | 'crew' | 'actions';
@@ -31,7 +32,9 @@ export function paletteItems(s: PaletteSource): PaletteItem[] {
   const items: PaletteItem[] = [];
   const sessions = Object.values(s.sessions)
     .filter((x) => !x.meta.archived)
-    .sort((a, b) => b.last_modified - a.last_modified);
+    // The palette reads a store snapshot with no clock, so the bucket is keyed to
+    // now — the same label the pane's row shows (#322).
+    .sort((a, b) => bucketAge(a.last_modified) - bucketAge(b.last_modified));
   for (const x of sessions) {
     items.push({
       group: 'sessions',

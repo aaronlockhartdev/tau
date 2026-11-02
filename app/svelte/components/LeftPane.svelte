@@ -12,6 +12,7 @@
   import { groupIsOpen } from '../lib/rules/sessions';
   import { ChevronDown, Plus } from '@lucide/svelte';
   import FileNode from './FileNode.svelte';
+  import { bucketAge } from '../lib/display/format';
 
   const ws = $derived(currentSession()?.meta.workspace ?? null);
   const p = $derived<PaneState | null>(pane(ws));
@@ -23,11 +24,17 @@
     if (ws === null) return [];
     return Object.values(store.sessions).filter((s) => s.meta.workspace === ws);
   });
-  const top = $derived(sessions.filter((s) => !s.parent && !s.archived).sort((a, b) => b.last_modified - a.last_modified));
+  // Sorted on the age the row *displays* (`fmtAgo`'s bucket), not the raw stamp: a
+  // tick that changes no label leaves the rows where the cursor left them, and
+  // crossing a label is the only reorder (#322). An age, so ascending is newest
+  // first — the order the raw `b - a` stamp sort produced.
+  const byAge = (a: { last_modified: number }, b: { last_modified: number }): number =>
+    bucketAge(a.last_modified, store.now) - bucketAge(b.last_modified, store.now);
+  const top = $derived(sessions.filter((s) => !s.parent && !s.archived).sort(byAge));
   // Roots only: a child's archive flag is its parent's cascade (the core
   // archives the children with the parent), so listing children here would
   // show them twice — once top-level, once under their parent.
-  const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort((a, b) => b.last_modified - a.last_modified));
+  const archived = $derived(sessions.filter((s) => s.archived && !s.parent).sort(byAge));
   // The red-edge tint (P5): the shared attention fold, keyed by session.
   const attSessions = $derived(new Set(attention().map((i) => i.session)));
 
@@ -45,7 +52,7 @@
         const s = store.sessions[id]!;
         const kids = sessions
           .filter((k) => k.parent === id)
-          .sort((a, b) => b.last_modified - a.last_modified)
+          .sort(byAge)
           .map((k) => k.meta.id);
         if (q && kids.length && groupIsOpen(q, s, active, sessions)) walk(kids);
       }

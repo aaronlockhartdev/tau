@@ -20,7 +20,7 @@
   import { tick } from 'svelte';
   import { Archive } from '@lucide/svelte';
   import { useContextMenu } from '../lib/display/useContextMenu.svelte';
-  import { fmtAgo } from '../lib/display/format';
+  import { bucketAge, fmtAgo } from '../lib/display/format';
   import SessionNode from './SessionNode.svelte';
   import TreeNode from './TreeNode.svelte';
 
@@ -44,7 +44,11 @@
 
   const active = $derived(currentSession());
   const kids = $derived(
-    sessions.filter((s) => s.parent === session.meta.id).sort((a, b) => b.last_modified - a.last_modified)
+    // The displayed age, so a child row does not jump under the cursor on a tick
+    // that changes no label (#322).
+    sessions
+      .filter((s) => s.parent === session.meta.id)
+      .sort((a, b) => bucketAge(a.last_modified, store.now) - bucketAge(b.last_modified, store.now))
   );
 
   function groupOpen(sid: string, s: SessionState = session): boolean {

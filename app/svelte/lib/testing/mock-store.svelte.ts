@@ -33,6 +33,9 @@ export function paneDefault(): PaneState {
 export function freshDefaults() {
   return {
     focus: false,
+    // The shared clock the age labels and the session sorts read (the real store
+    // ticks it every 30 s; a test sets it to pin a bucket).
+    now: Date.now(),
     fullscreen: false,
     follow: null as string | null,
     modelMenuOpen: false,
