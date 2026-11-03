@@ -618,3 +618,104 @@ fn write_back_merge_preserves_a_durable_background_chunk() {
         "the durable background chunk must survive the merge"
     );
 }
+
+/// The mid-loop activation over spent material (#395): `om_mid_loop`'s promote
+/// rung runs the same `promote` walk as the gate's rung 1, and a chunk whose
+/// range ends at or behind the observation cursor is spent — the cursor's pass
+/// already saw the raw it summarizes. Pre-fix the mid-loop stamp lands the
+/// cursor on the chunk's end (behind where it started, un-observing the entries
+/// between) and re-appends its text to the log, and the turn-end observe's
+/// window slides back over material the log carries.
+#[tokio::test]
+async fn a_mid_loop_promote_over_a_covered_chunk_moves_the_cursor_nowhere() {
+    let title = "A".repeat(3_200);
+    // observe 600 (one tool round of ~820 raw tokens reaches activation at the
+    // first mid-loop check); increment 300 (the retention floor, so the promote
+    // walk has a target); buffer 200 (the mid-loop trigger is on, not the kill
+    // switch); no retries (a pass that dies is over in one call).
+    let om = om_config(600, 10_000, 300, 200, 0, 0);
+    // The durable chunk covers entry 1 — the user entry the session's first
+    // pass observed — and the cursor sits past it, on entry 2.
+    let chunk = crate::om_integration::BufferedChunk {
+        range: ("00000001".into(), "00000001".into()),
+        last_ts: 1_000,
+        text: "<observation-group id=\"g1\" range=\"00000001:00000001\">pre-observed chunk</observation-group>".into(),
+        tokens: 500,
+    };
+    let record = crate::om::OmRecord {
+        cursor: Some(crate::om::Cursor {
+            entry_id: "00000002".into(),
+            timestamp: 1_000,
+        }),
+        buffered_chunks: vec![chunk],
+        ..Default::default()
+    };
+    // Two rounds, so the raw window past the cursor clears the 600-token
+    // activation at the mid-loop check after the second tool round — the rung
+    // that costs no LLM call is where the spent chunk gets promoted.
+    let mut scripts = read_round("c1", &title);
+    scripts.extend(read_round("c2", &title));
+    scripts.push(crate::agent::testkit::sse("done", &[]));
+    let (p, served, seen) = scripted_om(
+        scripts,
+        "<observations>observed the tool round</observations>",
+        false,
+        10,
+    );
+    let rig = rig(&om, record, p);
+    rig.run_turn("go").await;
+    Rig::settled_cleanly(&rig.events());
+
+    // Five main calls and the turn-end observe: the mid-loop rung is the
+    // no-LLM-call promote, and no interval cycle fires once activation is met.
+    assert_eq!(served.load(Ordering::SeqCst), 6);
+
+    let records: Vec<crate::om::OmRecord> = rig
+        .entries()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Om)
+        .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
+        .collect();
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.cursor.as_ref().is_some_and(|c| c.entry_id == "00000001")),
+        "no record carries a cursor behind the covered material: {:?}",
+        records
+            .iter()
+            .map(|r| r.cursor.clone().map(|c| c.entry_id))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.active_observations.contains("pre-observed chunk")),
+        "the spent chunk reaches no log: {:?}",
+        records
+            .iter()
+            .map(|r| r.active_observations.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !records
+            .iter()
+            .any(|r| r.buffered_chunks.iter().any(|c| c.range.1 == "00000001")),
+        "the spent chunk drains from every record, or a reopen re-promotes it: {:?}",
+        records
+            .iter()
+            .map(|r| r.buffered_chunks.len())
+            .collect::<Vec<_>>()
+    );
+    // The Observer's one round-trip is the window past the cursor: a cursor
+    // stamped behind the covered material hands the Observer material the log
+    // already carries.
+    let seen_calls = seen.lock().clone();
+    let observer_bodies: Vec<String> = seen_calls
+        .iter()
+        .filter(|(instructions, _)| {
+            instructions.as_deref() == Some(crate::om::observer_system_prompt().as_str())
+        })
+        .map(|(_, input)| input.clone())
+        .collect();
+    assert_eq!(observer_bodies.len(), 1, "one turn-end observe");
+}
