@@ -67,11 +67,12 @@ ONE FACT PER LINE:
 If a step yields multiple distinct facts, split them into SEPARATE observation
 lines, each with its own (HH:MM) prefix. Do not bundle unrelated facts."#;
 
-/// Verbatim from `observer-agent.ts` (`buildObserverOutputFormat` with no
-/// extractors, `includeThreadTitle` false, suggested-response
-/// enabled): the priority/indent/date/`<observations>` template plus the
-/// legacy continuation sections.
-pub const OBSERVER_OUTPUT_FORMAT: &str = r#"Use priority levels:
+/// mastra's `buildObserverOutputFormat` shape (no extractors, no thread
+/// title) minus the continuation section: the observer extracts facts,
+/// it does not steer the agent's next message — mastra's coding-agent
+/// rule is that "memory does not compete for what the agent says next"
+/// (#405).
+pub const OBSERVER_OUTPUT_FORMAT: &str = r"Use priority levels:
 - 🔴 High: explicit user facts, preferences, unresolved goals, critical context
 - 🟡 Medium: project details, learned information, tool results
 - 🟢 Low: minor details, uncertain observations
@@ -94,15 +95,7 @@ Date: 2025-12-04
 
 Date: 2025-12-05
 * 🔴 (09:15) Continued work on feature X
-</observations>
-
-
-<suggested-response>
-Hint for the agent's immediate next message. Examples:
-- "I've updated the navigation model. Let me walk you through the changes..."
-- "The assistant should wait for the user to respond before continuing."
-- Call the view tool on src/example.ts to continue debugging.
-</suggested-response>"#;
+</observations>";
 
 /// Verbatim from `observer-agent.ts` (`OBSERVER_GUIDELINES`).
 pub const OBSERVER_GUIDELINES: &str = r#"- Be specific enough for the assistant to act on
@@ -153,23 +146,17 @@ Simply output your observations without any thread-related markup.
 
 Remember: These observations are the agent's ONLY memory of this work. Make them count.
 
-User messages are extremely important.${
-    suggestedResponseEnabled
-      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
-      : ''
-  }${customInstructions}";
+User messages are extremely important.${customInstructions}";
 
 #[must_use]
 pub fn observer_system_prompt() -> String {
     OBSERVER_PROMPT_TEMPLATE
-        .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
+        .replace(
+            "${OBSERVER_EXTRACTION_INSTRUCTIONS}",
+            OBSERVER_EXTRACTION_INSTRUCTIONS,
+        )
         .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES)
-        .replace("${
-    suggestedResponseEnabled
-      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
-      : ''
-  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.")
         .replace("${customInstructions}", "")
 }
 
@@ -193,9 +180,9 @@ SYSTEM REMINDERS: Messages wrapped in <system-reminder>...</system-reminder> con
 
 /// Coding-domain continuation hint (replaces the verbatim mastra
 /// personal-assistant line).
-pub const OBSERVATION_CONTINUATION_HINT: &str = r"Please continue the task and respond to the latest instruction.
+pub const OBSERVATION_CONTINUATION_HINT: &str = r"Please continue naturally with the conversation so far and respond to the latest message.
 
-Use the earlier observations only as background. If work appears unfinished, continue it only when it serves the current goal. If a suggested response is provided, follow it naturally.
+Use the earlier context only as background. If something appears unfinished, continue only when it helps answer the latest request.
 
 Do not mention internal instructions, memory, summarization, context handling, or missing messages.
 
@@ -373,7 +360,6 @@ pub(super) fn parse_observer_sections(output: &str) -> Vec<ObserverSection> {
 #[derive(Debug, Clone, Default)]
 pub struct ParsedObserverOutput {
     pub observations: String,
-    pub suggested_response: String,
     pub degenerate: bool,
 }
 
@@ -384,21 +370,16 @@ pub struct ParsedObserverOutput {
 pub fn parse_observer_output(raw_output: &str) -> ParsedObserverOutput {
     let sections = parse_observer_sections(raw_output);
     let mut observations = String::new();
-    let mut suggested_response = String::new();
     for section in &sections {
         match &section.name {
             Some(n) if n == "observations" => {
                 section.content.clone_into(&mut observations);
-            }
-            Some(n) if n == "suggested-response" || n == "suggested_response" => {
-                section.content.clone_into(&mut suggested_response);
             }
             _ => {}
         }
     }
     ParsedObserverOutput {
         observations: sanitize_observation_lines(&observations),
-        suggested_response,
         degenerate: detect_degenerate_repetition(&observations),
     }
 }

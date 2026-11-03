@@ -187,8 +187,9 @@ async fn a_user_entry_in_the_tail_is_the_query_and_is_not_duplicated() {
         "an observed user entry is not re-anchored: {users:?}"
     );
     assert!(
-        matches!(&assembled.items[0], InputEntry::Message(m) if m.role == "system"),
-        "nothing is prepended: the request opens on the observation items"
+        matches!(&assembled.items[0], InputEntry::Message(m)
+            if m.role == "user" && m.content.contains(crate::om::OBSERVATION_CONTINUATION_HINT)),
+        "nothing is prepended: the request opens on the continuation hint, not a re-added prompt (#406)"
     );
     assert_eq!(
         assembled.om_items, 2,

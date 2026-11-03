@@ -225,11 +225,13 @@ pub struct OmRecord {
     /// re-admitted when space frees).
     #[serde(default)]
     pub prefix_demoted: bool,
-    /// Observation-card metadata: model is display-only; suggested-response
-    /// also steers the main agent (injected with the continuation hint,
-    /// spec §4).
+    /// The steering signal retired in #405 — the observer no longer produces
+    /// it and the assembler no longer injects it. Kept (default-empty, never
+    /// read) so `deny_unknown_fields` still accepts pre-#405 session files.
     #[serde(default)]
     pub om_suggested_response: String,
+    /// Observation-card metadata, display-only (#405 retired the steering
+    /// half of this pair).
     #[serde(default)]
     pub om_model: String,
     /// Buffered Observer chunks (ticket #86 P2, mastra

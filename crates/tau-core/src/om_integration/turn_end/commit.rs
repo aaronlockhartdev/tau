@@ -73,14 +73,6 @@ impl OmState {
         result: &TurnResult,
     ) -> Result<(), OmError> {
         let parsed = om::parse_observer_output(&result.text);
-        // Capture the suggested-response steering for the observation-producing
-        // actions (Observe/Buffer). A Reflect commit reuses save() too, but its
-        // suggested-response is the reflector's, not an observation's.
-        if let TurnEndAction::Observe { .. } | TurnEndAction::Buffer { .. } = action {
-            parsed
-                .suggested_response
-                .clone_into(&mut self.record.om_suggested_response);
-        }
         match action {
             TurnEndAction::Observe { span, .. } => {
                 if !parsed.degenerate && !parsed.observations.trim().is_empty() {

@@ -230,7 +230,6 @@ describe('present', () => {
       text: 'the observation',
       model: 'om-1',
       thinking: 'thought deeply',
-      suggestedResponse: 'do X',
       input: 'some input'
     });
     expect(c.cls).toBe('obs');
@@ -244,7 +243,6 @@ describe('present', () => {
     expect(c.reveal?.group).toBe(false);
     expect(c.reveal?.sections).toEqual([
       { type: 'md', text: 'the observation', dim: true },
-      { type: 'kv', rows: [{ k: 'suggested', lines: ['do X'] }] },
       { type: 'md', text: 'thought deeply', cls: 'thinkbody', label: 'thinking' },
       { type: 'pre', text: 'some input', label: 'input' }
     ]);

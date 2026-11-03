@@ -160,7 +160,6 @@ export function decodeEntry(v: ViewEntry): Entry {
         active_observations?: string;
         om_thinking?: string;
         om_input?: string;
-        om_suggested_response?: string;
         om_model?: string;
       };
       // The record's active_observations is the whole managed suffix; the
@@ -176,7 +175,6 @@ export function decodeEntry(v: ViewEntry): Entry {
         text: stripObservationGroup(raw),
         thinking: o.om_thinking || undefined,
         input: o.om_input || undefined,
-        suggestedResponse: o.om_suggested_response || undefined,
         model: o.om_model || undefined
       };
     }

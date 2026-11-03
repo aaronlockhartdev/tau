@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn parse_observer_output_extracts_observations_and_response() {
+fn parse_observer_output_extracts_observations_and_ignores_legacy_sections() {
     let raw = concat!(
         "<observations>",
         "* 🔴 (14:30) User prefers direct answers",
@@ -15,8 +15,21 @@ fn parse_observer_output_extracts_observations_and_response() {
         parsed.observations,
         "* 🔴 (14:30) User prefers direct answers"
     );
-    assert_eq!(parsed.suggested_response, "Walk through the changes.");
     assert!(!parsed.degenerate);
+}
+
+#[test]
+fn observer_and_reflector_prompts_carry_no_suggested_response_steering() {
+    // #405: the observer extracts, it does not steer — mastra's coding-agent
+    // rule ("memory does not compete for what the agent says next"). The
+    // prompts must not ask for the section back.
+    assert!(!OBSERVER_OUTPUT_FORMAT.contains("<suggested-response>"));
+    assert!(!observer_system_prompt().contains("<suggested-response>"));
+    assert!(!reflector_system_prompt().contains("<suggested-response>"));
+    // The hint names no steering target and keeps no "follow it naturally"
+    // clause (#405, #406).
+    assert!(!OBSERVATION_CONTINUATION_HINT.contains("suggested"));
+    assert!(OBSERVATION_CONTINUATION_HINT.contains("continue naturally"));
 }
 
 #[test]

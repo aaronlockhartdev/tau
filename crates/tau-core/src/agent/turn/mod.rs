@@ -428,10 +428,10 @@ impl AgentSession {
             .leaf()
             .map_err(AgentError::Session)?
             .map(|e| e.id);
-        // Assembly runs on the persistent state, not a clone: it is pure over
-        // the record, and the suggested-response it consumes must be consumed
-        // from the state the om_turn_end write-back replaces (a clone's
-        // consume would be dropped and a stale steering signal re-injected).
+        // Assembly is pure over the record (#405 retired its one-shot
+        // consume); it runs on the persistent state so the om items and
+        // `raw_window_from`'s tail read derive from one state under the
+        // same lock.
         if let Some(om) = inner.om.as_mut() {
             let assembled = om.assemble_context(&base);
             let window = om.raw_window_from(&entries, leaf_id.as_deref());
