@@ -156,6 +156,9 @@ impl Core {
                 let rejection =
                     Self::rejection_at(&self.system_dir_of().join(config::CONFIG_FILE), &e);
                 let mut stale = self.config_stale.lock();
+                // The system key carries the cause to the cold read of a
+                // workspace not yet open (#419).
+                stale.insert(String::new(), rejection.clone());
                 for ws in &workspaces {
                     stale.insert(ws.id.clone(), rejection.clone());
                 }
@@ -215,6 +218,8 @@ impl Core {
             configs.remove(&ws.id);
             stale.remove(&ws.id);
         }
+        // A system layer that reads well clears its own mark (#419).
+        stale.remove(&String::new());
     }
     fn emit_provider_changed(&self, workspace: &str) {
         self.emit(Event::System {

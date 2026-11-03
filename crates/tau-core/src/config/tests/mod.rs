@@ -7,12 +7,18 @@ mod spelling;
 
 /// The two layers written to temp dirs, the shape every leg below loads.
 fn load_from(system: &str, project: &str) -> Result<Config, LoadError> {
-    let (sys_dir, proj_dir) = (tempfile::tempdir()?, tempfile::tempdir()?);
+    let io = |path: std::path::PathBuf, e: std::io::Error| LoadError::Io { path, source: e };
+    let (sys_dir, proj_dir) = (
+        tempfile::tempdir().map_err(|e| io("<tempdir>".into(), e))?,
+        tempfile::tempdir().map_err(|e| io("<tempdir>".into(), e))?,
+    );
     if !system.is_empty() {
-        std::fs::write(sys_dir.path().join("config.toml"), system)?;
+        let path = sys_dir.path().join("config.toml");
+        std::fs::write(&path, system).map_err(|e| io(path, e))?;
     }
     if !project.is_empty() {
-        std::fs::write(proj_dir.path().join("config.toml"), project)?;
+        let path = proj_dir.path().join("config.toml");
+        std::fs::write(&path, project).map_err(|e| io(path, e))?;
     }
     load(sys_dir.path(), proj_dir.path())
 }

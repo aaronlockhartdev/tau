@@ -299,6 +299,16 @@ impl CoreBuilder {
                     // reads the file itself and adds the transcript fact; the
                     // watcher started below turns a later edit into both (#363).
                     core.emit_config_rejected("", &e);
+                    // The mark every cold read folds in. A workspace with no
+                    // project layer reads the kept defaults and would see no
+                    // cause; the session-open headline chains this mark, so a
+                    // rejected layer is never reported as "no providers"
+                    // (#419). The system key is the empty workspace, the
+                    // watcher's own routing.
+                    core.config_stale.lock().insert(
+                        String::new(),
+                        Core::rejection_at(&dir.join(config::CONFIG_FILE), &e),
+                    );
                 }
             }
         }
@@ -680,6 +690,8 @@ impl Core {
             // the same-named root entry, others coexist.
             if project.exists() {
                 let loaded = config::load(&self.system_dir_of(), &project)?;
+                // #419: a read that touched the system layer clears its mark.
+                self.config_stale.lock().remove(&String::new());
                 for (name, p) in loaded.providers {
                     c.providers.insert(name, p);
                 }
@@ -691,7 +703,12 @@ impl Core {
         // re-applied over it: the merge was built from files alone and would
         // shadow them.
         let mut c = if project.exists() {
-            config::load(&self.system_dir_of(), &project)?
+            let merged = config::load(&self.system_dir_of(), &project)?;
+            // A load that read the system file proves the boot's rejection
+            // answered: the repair self-heals at the next read, even where
+            // no watcher is parked to reload (#419).
+            self.config_stale.lock().remove(&String::new());
+            merged
         } else {
             self.system_config()
         };
@@ -745,7 +762,7 @@ impl Core {
                 // a config read off disk now is current by construction (#359).
                 self.configs.lock().insert(workspace.id.clone(), c.clone());
                 self.config_stale.lock().remove(&workspace.id);
-                (c, None)
+                (c, self.system_rejection())
             }
             Err(e) => {
                 // What the session keeps running on: the cache's entry, if a
@@ -762,6 +779,15 @@ impl Core {
         }
     }
 
+    /// The system layer's live rejection: set by a boot load that failed, and
+    /// by the system watcher's failed reload, for workspaces not yet open to
+    /// meet (#419). Every workspace's merge rides that layer, so a cold read
+    /// that succeeds still carries the cause: a session opened under a
+    /// refused layer is told the layer was refused, not that providers are
+    /// missing.
+    fn system_rejection(&self) -> Option<ConfigRejection> {
+        self.config_stale.lock().get("").cloned()
+    }
     /// What a load failure tells a session: what the loader said, and the file to
     /// name. A parse failure carries its own layer. A load rule speaks of the
     /// merged set and names no file, so its record names the merged config — the

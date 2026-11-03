@@ -381,3 +381,34 @@ fn a_generation_profile_unknown_key_is_rejected() {
         "the role profile is deny_unknown_fields"
     );
 }
+
+/// The read failure names its file: a layer path that exists and cannot be
+/// read (a directory in its place) fails as the typed read error with the
+/// path in the message — the session-open headline chains this cause, and
+/// "which file" is the answer (#419).
+#[test]
+fn an_unreadable_layer_names_the_file_the_read_failed_on() {
+    let sys = tempfile::tempdir().unwrap();
+    std::fs::create_dir(sys.path().join(crate::config::CONFIG_FILE)).unwrap();
+    let err = load(
+        sys.path(),
+        std::path::Path::new(crate::config::NO_PROJECT_LAYER),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&err, LoadError::Io { .. }),
+        "the failure is the typed read error: {err}"
+    );
+    let text = err.to_string();
+    assert!(
+        text.contains("config.toml") && text.contains("reading"),
+        "the message names the file: {text}"
+    );
+    assert_eq!(
+        err.path()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned()),
+        Some("config.toml".to_owned()),
+        "path() carries the file for the headline's chain"
+    );
+}

@@ -389,7 +389,12 @@ impl ConfigFile {
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
-            Err(e) => return Err(LoadError::Io(e)),
+            Err(e) => {
+                return Err(LoadError::Io {
+                    path: path.to_path_buf(),
+                    source: e,
+                });
+            }
         };
         let file: ConfigFile =
             toml::from_str(&text).map_err(|e| LoadError::Parse(path.to_path_buf(), e))?;
@@ -480,17 +485,18 @@ pub fn load(system_dir: &Path, project_dir: &Path) -> Result<Config, LoadError> 
 }
 
 impl LoadError {
-    /// The layer file a parse failure names. A validation failure (an `om`
-    /// threshold, a fleet-cap inversion, a model with no window) is the merged
-    /// config's property, not one file's, so it names no layer (#337).
+    /// The layer file a failure names: a parse failure, an unreadable layer,
+    /// a retired key. A validation failure (an `om` threshold, a fleet-cap
+    /// inversion, a model with no window) is the merged config's property,
+    /// not one file's, so it names no layer (#337).
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::Parse(path, _)
+            | Self::Io { path, .. }
             | Self::OmBufferTokensRetired { path }
             | Self::OmModelRenamed { path } => Some(path),
-            Self::Io(_)
-            | Self::OmThreshold { .. }
+            Self::OmThreshold { .. }
             | Self::OmThresholdZero { .. }
             | Self::MissingContextWindow { .. }
             | Self::ZeroMaxTokens { .. }
@@ -503,7 +509,13 @@ impl LoadError {
 
 #[derive(Debug)]
 pub enum LoadError {
-    Io(std::io::Error),
+    /// A layer file that exists but cannot be read (permissions, a directory
+    /// in place of a file). The path is part of the variant: the session-open
+    /// headline chains this cause, and "which file" is the whole answer (#419).
+    Io {
+        path: std::path::PathBuf,
+        source: std::io::Error,
+    },
     Parse(std::path::PathBuf, toml::de::Error),
     /// An `[om]` threshold above `u32::MAX` (ticket #46).
     OmThreshold {
@@ -565,7 +577,9 @@ pub enum LoadError {
 impl fmt::Display for LoadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Io(e) => write!(f, "reading config: {e}"),
+            Self::Io { path, source } => {
+                write!(f, "reading {}: {source}", path.display())
+            }
             Self::Parse(path, e) => write!(f, "parsing {}: {e}", path.display()),
             Self::OmThreshold {
                 field,
@@ -617,12 +631,6 @@ impl fmt::Display for LoadError {
 }
 
 impl Error for LoadError {}
-
-impl From<std::io::Error> for LoadError {
-    fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
-    }
-}
 
 #[cfg(test)]
 mod tests;

@@ -270,7 +270,16 @@ impl Core {
         // record's last switch, else the config default — and the provider its
         // id names, never the provider the config's map sorts first.
         let opened = session_open::facts(&mut store)?;
-        let route = open_route(&config, opened.as_ref())?;
+        let route = open_route(&config, opened.as_ref()).map_err(|e| match &rejection {
+            // The route failed with a rejection live: the refused layer
+            // is the user's story, and the headline tells it. "add a
+            // [providers.x]" would misstate a config refused sight
+            // unseen (#419).
+            Some(r) => ProtocolError::Other {
+                message: format!("the config was rejected: {}", r.reason),
+            },
+            None => e,
+        })?;
         let self_arc = self.self_arc().expect("session_new on a built core");
         // The live shell's provider (the stream-forwarding seam); the
         // constructor takes the same resolved provider for the supervisor's
