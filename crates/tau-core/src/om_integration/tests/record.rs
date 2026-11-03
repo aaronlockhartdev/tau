@@ -350,3 +350,76 @@ fn a_reopen_restores_the_furthest_chunk_end() {
     let state = OmState::from_config(&crate::config::Om::default(), record);
     assert_eq!(state.buffer_cursor.as_deref(), Some("00000044"));
 }
+
+#[test]
+fn the_merge_drops_a_late_chunk_that_intersects_a_durable_range() {
+    // #402: a late commit (a fork, a join timeout) must not append a second
+    // observation over raw a durable chunk already covers, and the buffer
+    // cursor must ride the surviving range, not the dropped one's end.
+    let mut state = OmState::from_config(
+        &crate::config::Om::default(),
+        OmRecord {
+            buffered_chunks: vec![BufferedChunk {
+                range: ("00000001".into(), "00000003".into()),
+                last_ts: 300,
+                text: "one".into(),
+                tokens: 300,
+            }],
+            ..OmRecord::default()
+        },
+    );
+    let late = OmRecord {
+        buffered_chunks: vec![BufferedChunk {
+            range: ("00000003".into(), "00000005".into()),
+            last_ts: 500,
+            text: "late".into(),
+            tokens: 500,
+        }],
+        last_buffered_at_tokens: 900,
+        ..OmRecord::default()
+    };
+    state.merge_turn_end(&late);
+    assert_eq!(state.record.buffered_chunks.len(), 1);
+    assert_eq!(state.record.buffered_chunks[0].text, "one");
+    assert_eq!(
+        state.buffer_cursor.as_deref(),
+        Some("00000003"),
+        "the dropped late range's end must not skip raw past the buffer"
+    );
+    // A disjoint late chunk keeps its range and carries the cursor to its end.
+    let disjoint = OmRecord {
+        buffered_chunks: vec![BufferedChunk {
+            range: ("00000006".into(), "00000008".into()),
+            last_ts: 800,
+            text: "after".into(),
+            tokens: 200,
+        }],
+        last_buffered_at_tokens: 1200,
+        ..OmRecord::default()
+    };
+    state.merge_turn_end(&disjoint);
+    assert_eq!(state.record.buffered_chunks.len(), 2);
+    assert_eq!(state.buffer_cursor.as_deref(), Some("00000008"));
+}
+
+#[test]
+fn range_overlap_reads_numeric_spans_and_falls_back_to_equality() {
+    use crate::om_integration::ranges_overlap;
+    let r = |a: &str, b: &str| (a.into(), b.into());
+    assert!(ranges_overlap(
+        &r("00000001", "00000005"),
+        &r("00000005", "00000009")
+    ));
+    assert!(ranges_overlap(
+        &r("00000001", "00000009"),
+        &r("00000004", "00000005")
+    ));
+    assert!(!ranges_overlap(
+        &r("00000001", "00000003"),
+        &r("00000004", "00000009")
+    ));
+    // Group ids (the fixture shape) do not parse: equality is the answer.
+    assert!(ranges_overlap(&r("e1", "e1"), &r("e1", "e1")));
+    assert!(!ranges_overlap(&r("e1", "e1"), &r("e2", "e2")));
+    assert!(!ranges_overlap(&r("e1", "e1"), &r("00000001", "00000002")));
+}

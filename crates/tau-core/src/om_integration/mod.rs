@@ -150,11 +150,14 @@ impl OmState {
     /// (`commit_chunk` writes the file and mirrors the state under the lock), so
     /// the mirror adds nothing and would resurrect chunks a promotion just
     /// drained (#107). The boundary is the max; the buffer cursor rides the
-    /// largest boundary (a cycle sets its cursor and boundary together).
+    /// the largest boundary (a cycle sets its cursor and boundary together).
+    /// A fresh chunk that intersects a durable range is a late re-observe of
+    /// the same raw — the durable range wins and the late one is dropped, so
+    /// the promote never appends one span's text twice (#402).
     pub(crate) fn merge_turn_end(&mut self, fresh: &OmRecord) {
         let mut chunks = self.record.buffered_chunks.clone();
         for c in &fresh.buffered_chunks {
-            if !chunks.iter().any(|k| k.range == c.range) {
+            if !chunks.iter().any(|k| ranges_overlap(&k.range, &c.range)) {
                 chunks.push(c.clone());
             }
         }
@@ -164,6 +167,9 @@ impl OmState {
             .max(fresh.last_buffered_at_tokens);
         let mut cursor = self.buffer_cursor.clone();
         if fresh.last_buffered_at_tokens > self.record.last_buffered_at_tokens {
+            // The cursor rides the surviving chunks' furthest end: a
+            // dropped late chunk's end must not skip its raw past the
+            // buffer, and out-of-order commits do not order the vec (#402).
             cursor = last_chunk_end(&chunks).or(cursor);
         }
         self.record.buffered_chunks = chunks;
@@ -183,6 +189,20 @@ pub(crate) fn last_chunk_end(chunks: &[BufferedChunk]) -> Option<String> {
         .max_by_key(|c| c.range.1.parse::<u64>().ok())
         .map(|c| c.range.1.clone())
 }
+
+/// Two chunk ranges intersect. Entry ids are zero-padded decimal strings and
+/// a range is the closed `[first, last]` id span; ids that do not parse (the
+/// group-id fixture shape) overlap only when equal. This is the double-
+/// observe guard a plain equality miss leaves open: a late commit, a fork
+/// inheriting the parent's vec (#402).
+pub(crate) fn ranges_overlap(a: &(String, String), b: &(String, String)) -> bool {
+    let span = |r: &(String, String)| (r.0.parse::<u64>().ok(), r.1.parse::<u64>().ok());
+    match (span(a), span(b)) {
+        ((Some(a0), Some(a1)), (Some(b0), Some(b1))) => a0.max(b0) <= a1.min(b1),
+        _ => a == b,
+    }
+}
+
 /// A fork copies the parent's record at the fork point (observations +
 /// cursor); a fork owns its copy outright (ADR-0004: a fork is the same
 /// session's history) — so it copies the FULL log, including a demoted

@@ -204,10 +204,13 @@ fn read_candidates(
 /// The cycle's phase 2 (D10): the commit point — under the lock, reload
 /// the freshest record (the turn-end pass may have saved during the
 /// round-trip), push the chunk, advance the persisted boundary, save,
-/// then mirror into the live state and clear the in-flight flag.
+/// then mirror into the live state and clear the in-flight flag. A chunk
+/// whose range intersects a durable one is a late re-observe of the same
+/// raw and is dropped — the interval stays consumed, the span is observed
+/// once (#402).
 /// The record names the endpoint the pass ran at, so a chunk committed by a
 /// background cycle is attributed like a synchronous pass's (#348).
-fn commit_chunk(
+pub(crate) fn commit_chunk(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     candidates: &[crate::session::Entry],
     range: (String, String),
@@ -226,7 +229,11 @@ fn commit_chunk(
         }
     };
     model.clone_into(&mut latest.om_model);
-    if !latest.buffered_chunks.iter().any(|c| c.range == range) {
+    if !latest
+        .buffered_chunks
+        .iter()
+        .any(|c| crate::om_integration::ranges_overlap(&c.range, &range))
+    {
         latest.buffered_chunks.push(BufferedChunk {
             range,
             last_ts: candidates
