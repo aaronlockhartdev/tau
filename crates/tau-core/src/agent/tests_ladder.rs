@@ -726,3 +726,105 @@ async fn a_healthy_om_pass_records_no_om_failed() {
         "a pass that ran files no failure"
     );
 }
+
+/// Rung 1 over spent material (#395): the chunks' ranges end behind the
+/// observation cursor, so the cursor has already seen everything they cover.
+/// Promotion takes them as the free rung's compaction — and its walk stamps the
+/// cursor at the last chunk's end, behind the cursor it started at, un-observing
+/// the raw between the two, while the chunk's text re-appends to the log.
+/// Rung 1 is the compaction that costs no LLM call, so this is where the
+/// session pays for it: the cursor moves backwards, the log grows with
+/// duplicated material, and the re-priced prompt is bigger than it started.
+#[tokio::test]
+async fn rung_one_over_chunks_the_cursor_covers_moves_neither_cursor_nor_log() {
+    let dir = tempfile::tempdir().unwrap();
+    // 10 × 3200 chars ≈ 8000 tokens of raw; the cursor sits on the sixth, so
+    // the window is entries 7..10 (~3200 tokens) — past the 3000 activation,
+    // over the 230 retention floor, so the promote walk has a target.
+    let store = store_with_raw(dir.path(), 10, 3_200);
+    let mut om = state(
+        3_000,
+        crate::om::OmRecord {
+            // The log prices the prompt over the 7904 budget on its own: the
+            // window is 3200 tokens, so the ladder runs and only compaction
+            // can save the turn.
+            active_observations: log(1, 400),
+            observation_tokens: 5_100,
+            cursor: Some(crate::om::Cursor {
+                entry_id: "00000006".into(),
+                timestamp: 100,
+            }),
+            buffered_chunks: vec![
+                spent_chunk("00000001", "00000002"),
+                spent_chunk("00000003", "00000005"),
+            ],
+            ..Default::default()
+        },
+    );
+    om.record.pending_tokens = 3_200;
+    let provider = OmScript::dead();
+    let agent = agent_on(dir.path(), store, provider.clone(), om);
+    agent.send("go", Lane::FollowUp);
+    let err = agent
+        .process()
+        .await
+        .expect_err("a prompt no compaction shrinks is refused");
+    assert!(
+        matches!(&err, AgentError::ContextOverflow { prompt, budget } if *prompt > *budget),
+        "expected ContextOverflow, got {err:?}"
+    );
+
+    let om = agent
+        .inner
+        .lock()
+        .om
+        .clone()
+        .expect("the om state is written back");
+    assert_eq!(
+        om.record.cursor.as_ref().map(|c| c.entry_id.as_str()),
+        Some("00000006"),
+        "the free rung never moves the cursor behind the raw it did not cover"
+    );
+    assert!(
+        !om.record
+            .active_observations
+            .contains("spent chunk material"),
+        "spent material is not summarized into the log a second time: {:?}",
+        om.record.active_observations
+    );
+    assert!(
+        om.buffered.is_empty(),
+        "the spent chunks drain, so the next activation does not walk them again"
+    );
+
+    let mut reopened = SessionStore::for_workspace(dir.path(), "s1");
+    reopened.open().unwrap();
+    let durable = crate::om_integration::OmState::load_record(&mut reopened).unwrap();
+    assert_eq!(
+        durable.cursor.as_ref().map(|c| c.entry_id.as_str()),
+        Some("00000006"),
+        "the durable cursor never sat behind the covered material"
+    );
+    assert!(
+        durable.buffered_chunks.is_empty(),
+        "spent chunks drain from the record, or a reopen re-promotes them: {:?}",
+        durable.buffered_chunks
+    );
+    assert_eq!(
+        provider.main_requests.lock().len(),
+        0,
+        "the refusal is pre-wire"
+    );
+}
+
+/// A buffered chunk whose whole range sits behind the observation cursor: the
+/// cursor's pass saw the raw it summarizes, so promoting it re-summarizes
+/// material the log carries and stamps the cursor on spent entries (#395).
+fn spent_chunk(first: &str, last: &str) -> crate::om_integration::BufferedChunk {
+    crate::om_integration::BufferedChunk {
+        range: (first.into(), last.into()),
+        last_ts: 100,
+        text: "spent chunk material".into(),
+        tokens: 5_000,
+    }
+}

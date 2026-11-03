@@ -641,6 +641,10 @@ mod tests_ladder;
 #[cfg(test)]
 mod tests_om;
 #[cfg(test)]
+mod tests_om_gate;
+#[cfg(test)]
+mod tests_om_stall;
+#[cfg(test)]
 mod tests_overflow;
 #[cfg(test)]
 mod tests_queue;

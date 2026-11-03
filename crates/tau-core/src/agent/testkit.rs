@@ -171,3 +171,17 @@ impl crate::provider::TurnProvider for ScriptedProvider {
 pub(crate) fn entries_of(store: &SessionStore) -> Vec<Entry> {
     store.entries_range(0, usize::MAX).unwrap()
 }
+
+/// The `om_stalled` records a session file holds.
+pub(crate) fn stalled_in(dir: &std::path::Path) -> Vec<Diagnostic> {
+    let mut store = SessionStore::for_workspace(dir, "s1");
+    store.open().unwrap();
+    store
+        .entries_range(0, usize::MAX)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == EntryKind::Diagnostic)
+        .filter_map(|e| Diagnostic::from_value(&e.payload))
+        .filter(|d| matches!(d, Diagnostic::OmStalled { .. }))
+        .collect()
+}
