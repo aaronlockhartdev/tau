@@ -188,7 +188,9 @@ fn raw_window_is_the_full_unobserved_tail() {
     let all = store.entries_range(0, usize::MAX).unwrap();
     let leaf = store.leaf().unwrap().map(|e| e.id);
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230, // = the retention floor at this threshold
@@ -230,7 +232,9 @@ fn raw_window_retains_unsummarized_head_past_the_floor() {
     let all = store.entries_range(0, usize::MAX).unwrap();
     let leaf = store.leaf().unwrap().map(|e| e.id);
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230, // = the retention floor at this threshold
@@ -278,7 +282,9 @@ fn raw_window_cuts_a_leading_orphaned_tool_run() {
     let all = store.entries_range(0, usize::MAX).unwrap();
     let leaf = store.leaf().unwrap().map(|e| e.id);
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230, // = the retention floor at this threshold
@@ -453,7 +459,9 @@ fn append_chain(store: &mut SessionStore, entries: &[(EntryKind, String)]) -> Ve
 
 fn state_with_cursor_on(entry_id: &str) -> OmState {
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -475,7 +483,9 @@ fn state_with_cursor_on(entry_id: &str) -> OmState {
 #[test]
 fn the_assembly_is_bounded_and_the_continuation_hint_is_per_assembly() {
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -540,7 +550,9 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_per_assembly() {
 #[test]
 fn the_main_agent_view_has_no_boundary_markers() {
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -587,7 +599,9 @@ fn the_main_agent_view_has_no_boundary_markers() {
 #[test]
 fn the_suggested_response_is_injected_once_then_cleared() {
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,

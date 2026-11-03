@@ -770,7 +770,9 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
     let store = SessionStore::for_workspace(ws.path(), &id);
     let om = OmState::from_config(
         &Om {
-            om_model: String::new(),
+            model: String::new(),
+            om_model: None,
+            generation: tau_core::config::GenerationProfile::default(),
             observe_threshold: 4000,
             // 10, not 150: a live observation can legitimately be short; the
             // suite must prove the reflector FIRES once an observation exists,

@@ -83,11 +83,11 @@ looked up among the providers that declare it. The route decides the `base_url`
 a request goes to, the facts it is built from, and the provider a subagent
 child is addressed at — never the provider the config's map sorts first. It
 applies to every id the harness resolves a provider's facts from, including
-`[generation].default_model` and `[om].om_model` (`Config::route_om`, #348): the
+`[generation].default_model` and `[om].model` (`Config::route_om`, #348): the
 memory passes are addressed at the provider the id names and asked of it for the
 prefix stripped. An id whose prefix names no provider is taken where a provider
 declares the whole string — a gateway's ids read `vendor/name` (#354, #358) —
-and refused when nothing declares it. An `om_model` that addresses no endpoint
+and refused when nothing declares it. An `[om] model` that addresses no endpoint
 is refused — the
 passes stop and the record carries `om_failed { stage: "route" }` naming the
 config key and the id — because the memory has no address of its own to borrow. See
@@ -115,7 +115,7 @@ nothing and records itself to every session under the broken layer (ADR-0034,
 | `[thinking]` | **Live**: the next turn's calls carry the new effort. |
 | `[cache]` | **Live**: the next turn's calls carry the new breakpoints. |
 | `[requests]` | **Live**: the next provider call runs under the new timeout and retries (#347). |
-| `[om]` | **Live**: the next memory pass uses the thresholds, the interval, and the route; `observe_max_chars` applies to the next observation. |
+| `[om]` | **Live**: the next memory pass uses the thresholds, the interval, the route, and `[om.generation]` (#407); `observe_max_chars` applies to the next observation. |
 | `[subagents]` | **Live at the next spawn**: the caps are enforced and the type registry re-discovered; a running child keeps the caps it spawned under (#347). A type file written after launch is seen; a type naming a model the config gained after launch spawns on the session's launch route for that model — the next open is fully current. |
 | `[limits]` | **Live**: the next turn's overflow caps and tool budgets. |
 | `[gates]` | **Live at the next check**: the command, deadline, and retry cap (#347). The section's text in the system prompt is a launch copy — the next open speaks it. |
@@ -268,6 +268,26 @@ max_tokens = 32000
 | `frequency_penalty` | float | none | |
 | `presence_penalty` | float | none | |
 
+The sampling keys are one profile — `GenerationProfile` — that appears in
+three places (#407): the global `[generation]` section, a model's
+`[providers.<name>.models.<id>.generation]` table, and the memory role's
+`[om.generation]` table (§`[om]`). A call resolves them key by key: the
+role's profile wins, then the model profile of the model the call addresses,
+then the global section; a key set in none is omitted from the request. The
+main call's model is the session's model; the Observer's and Reflector's is
+the `[om] model`, falling back to the session's. Two keys are the profile's
+own:
+
+- `thinking` — `off` `minimal` `low` `medium` `high` `xhigh` `max`: the
+  reasoning level for the call. A profile's `thinking` leads the
+  `[thinking]` section: `thinking = "off"` on the OM role silences
+  reasoning on memory calls even while the session's model reasons.
+- `extra_body` — a table of scalars (int, float, bool, string) flattened
+  verbatim into the request body as top-level keys — the passthrough for
+  endpoint knobs tau does not model (a vendor's `thinkingBudget`, a
+  served-model version tag). A table key with a non-scalar value is a load
+  failure.
+
 ## `[thinking]` — reasoning effort
 
 | Key | Type | Default | Notes |
@@ -308,7 +328,7 @@ The compaction model is global, not per-provider (spec §4).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, and a contested key that provider does not declare is a refusal. A `vendor/name` id whose prefix names no provider goes to the provider declaring that whole key, a gateway's ids reading that way (#358). An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
+| `model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, and a contested key that provider does not declare is a refusal. A `vendor/name` id whose prefix names no provider goes to the provider declaring that whole key, a gateway's ids reading that way (#358). An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
 | `observe_threshold` | int | 30000 | activation, measured on the raw tokens after the observation cursor (spec §4) |
 | `reflect_threshold` | int | 40000 | |
 | `buffer_increment` | int | 6000 | the Observer's one interval knob, measured on the raw tokens past the observation cursor: a background cycle fires once this much is new, its call is cut to this slice, and it is the raw volume retained after activation. Slices cut at entry boundaries: one entry larger than the increment rides whole (#392, #399, #408) |
@@ -338,6 +358,15 @@ for twice; the turn is never blocked by memory lag. No config
 value can leave a past-activation window that the turn-end pass cannot see
 (#392); observation runs forward in the background, not deferred to the
 boundary (#399).
+
+`[om.generation]` is the memory role's generation profile
+(`GenerationProfile`, #407) — the sampling, the `thinking` level, and the
+`extra_body` passthrough described under [§`[generation]`](#generation--sampling).
+It resolves over the OM model's own model profile and the global
+`[generation]`, key by key, and rides every memory call: the turn-bound
+Observe, the Reflect, and the background slices. A local worker that needs
+`thinkingBudget = 0` for non-reasoning says so once here; the model profile
+carries its `max_tokens` cap; the global section carries the defaults.
 
 ## `[subagents]` — delegation
 
@@ -454,7 +483,7 @@ tool_batch_on_force = "complete"
 [om]
 # Sent to the endpoint verbatim: §6.7's prefix is not stripped for this key, so
 # write the id the endpoint expects.
-om_model = "qwen3-coder"
+model = "qwen3-coder"
 observe_threshold = 30000
 reflect_threshold = 40000
 buffer_increment = 6000
@@ -522,6 +551,9 @@ partially applied.
 - `subagents.fleet_soft_bound ({soft}) must not exceed fleet_hard_cap ({hard})`
 - `providers.{provider}: a provider name must not contain '/'; an id's prefix is its provider's name` — a name that makes an id's prefix ambiguous (#354)
 - `thinking.levels.{key}: no provider declares it as a model, so the level is never read` (#354)
+- `{path} names [om] buffer_tokens, which is retired: … buffer_increment is the interval` — a layer naming the retired key (#408)
+- `{path} names [om] om_model, which is renamed: the section is [om], the key is model` — move the value under `model` (#407)
+- `{field} = 0: … use at least 1` — an `[om]` threshold of zero, naming the field (#413)
 
 The two gate facts name the entry they reject: `providers.<name>.models.<id>`
 for a model entry, `generation` for `[generation].max_tokens`.

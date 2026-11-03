@@ -429,7 +429,7 @@ fn root_session(
         provider: factory,
         model: model.to_owned(),
         system_prompt: system_prompt.clone(),
-        om: config.om.clone(),
+        om: config.normalized_om(),
         tool_batch_on_force: config.requests.tool_batch_on_force,
         turn: turn.clone(),
         gates: config.gates.clone(),

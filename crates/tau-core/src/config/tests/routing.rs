@@ -215,7 +215,7 @@ fn route_om_refuses_an_id_that_addresses_no_endpoint() {
         "{prefix:?}"
     );
     assert!(
-        prefix.to_string().contains("om.om_model"),
+        prefix.to_string().contains("om.model"),
         "the refusal names the config key the author must edit: {prefix}"
     );
     // The footgun from the ticket: a base_url pasted into `om_model`. Its

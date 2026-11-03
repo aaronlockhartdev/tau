@@ -33,7 +33,9 @@ fn tool_run(store: &mut SessionStore) -> String {
 
 fn om_state(cursor: Option<&str>) -> crate::om_integration::OmState {
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,

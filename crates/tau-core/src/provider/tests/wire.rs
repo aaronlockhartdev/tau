@@ -469,3 +469,19 @@ fn response_wire_line_consolidates_consecutive_blocks() {
     );
     assert!(TurnResult::default().consolidated_blocks().is_empty());
 }
+
+// #407: `extra_body` rides the body as top-level scalars, verbatim.
+#[test]
+fn extra_body_entries_flatten_into_the_body_verbatim() {
+    let mut extra = std::collections::BTreeMap::new();
+    extra.insert("thinkingBudget".to_owned(), ExtraValue::Int(215));
+    extra.insert("preserveReasoning".to_owned(), ExtraValue::Bool(true));
+    let wire =
+        serde_json::to_value(ResponseRequest::new("m", None, vec![]).with_extra(&extra)).unwrap();
+    assert_eq!(wire["thinkingBudget"], 215);
+    assert_eq!(wire["preserveReasoning"], true);
+    // The negative: with no entries the body gains nothing.
+    let plain = serde_json::to_value(ResponseRequest::new("m", None, vec![])).unwrap();
+    assert!(plain.get("thinkingBudget").is_none());
+    assert!(plain.get("extra").is_none());
+}

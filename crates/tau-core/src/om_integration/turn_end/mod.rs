@@ -288,7 +288,10 @@ impl OmState {
                 // retry knob (ticket #86); the stage is what names a failure's
                 // place in the `om_failed` record (#338).
                 TurnEndAction::Observe { transcript, .. } => {
-                    let request = Self::observer_request(model, transcript);
+                    let request = super::apply_generation(
+                        Self::observer_request(model, transcript),
+                        &self.config.generation,
+                    );
                     super::retry::call_with_retry(
                         provider,
                         &request,
@@ -300,13 +303,16 @@ impl OmState {
                 TurnEndAction::Reflect { level } => {
                     let prompt = self.reflector_prompt(*level);
                     let system = om::reflector_system_prompt();
-                    let request = ResponseRequest::new(
-                        model.to_owned(),
-                        Some(system.as_str()),
-                        vec![InputEntry::Message(InputMessage {
-                            role: "user".into(),
-                            content: prompt,
-                        })],
+                    let request = super::apply_generation(
+                        ResponseRequest::new(
+                            model.to_owned(),
+                            Some(system.as_str()),
+                            vec![InputEntry::Message(InputMessage {
+                                role: "user".into(),
+                                content: prompt,
+                            })],
+                        ),
+                        &self.config.generation,
                     );
                     super::retry::call_with_retry(
                         provider,

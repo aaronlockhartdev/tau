@@ -34,6 +34,7 @@ fn model_facts_override_the_global_generation() {
         max_tokens: Some(8192),
         reasoning: Some(true),
         cost: None,
+        generation: None,
     };
     let generation = crate::config::Generation {
         temperature: Some(0.7),
@@ -293,4 +294,111 @@ fn a_slash_carrying_id_carries_the_level_keyed_by_its_declared_key() {
         "the level keyed by the declared key is the one that applies"
     );
     assert_eq!(turn.request_address("dev/deepseek/chat"), "deepseek/chat");
+}
+
+// ---- #407: the per-model generation profile ----
+
+#[test]
+fn the_generation_profile_overrides_the_global_sampling() {
+    let def = crate::config::ModelDef {
+        context_window: 32768,
+        max_tokens: Some(8192),
+        reasoning: Some(true),
+        cost: None,
+        generation: Some(crate::config::GenerationProfile {
+            temperature: Some(0.4),
+            top_p: Some(0.25),
+            max_tokens: Some(2048),
+            extra_body: BTreeMap::from([(
+                "vendorFlag".to_owned(),
+                crate::config::ExtraValue::Bool(true),
+            )]),
+            ..Default::default()
+        }),
+    };
+    let generation = crate::config::Generation {
+        temperature: Some(0.7),
+        max_tokens: Some(4096),
+        ..Default::default()
+    };
+    let (config, provider) = setup(
+        def,
+        generation,
+        crate::config::Thinking::default(),
+        crate::config::CacheRetention::None,
+    );
+    let turn = derive_turn(&config, &provider, "m", "sess-1");
+    assert_eq!(
+        turn.temperature,
+        Some(0.4),
+        "the profile's sampling overrides [generation]"
+    );
+    assert_eq!(turn.top_p, Some(0.25));
+    assert_eq!(
+        turn.max_output_tokens,
+        Some(2048),
+        "the profile's cap leads the model fact and the global"
+    );
+    assert_eq!(
+        turn.extra_body.get("vendorFlag"),
+        Some(&crate::provider::ExtraValue::Bool(true)),
+        "the passthrough is converted and rides the turn config"
+    );
+}
+
+#[test]
+fn the_profile_thinking_level_leads_the_chain_and_off_silences() {
+    let thinking = crate::config::Thinking {
+        level: ThinkingLevel::High,
+        levels: BTreeMap::from([("m".to_owned(), ThinkingLevel::Medium)]),
+        ..Default::default()
+    };
+    let def = crate::config::ModelDef {
+        context_window: 32768,
+        ..Default::default()
+    };
+    // The chain alone: `levels` answers for `m`.
+    let (config, provider) = setup(
+        def.clone(),
+        crate::config::Generation::default(),
+        thinking.clone(),
+        crate::config::CacheRetention::None,
+    );
+    assert_eq!(
+        derive_turn(&config, &provider, "m", "s").reasoning,
+        Some(crate::provider::ReasoningEffort::Medium)
+    );
+    // The profile pins the level: it wins over the chain, and `off`
+    // silences a model the chain would run reasoning on.
+    let def = crate::config::ModelDef {
+        generation: Some(crate::config::GenerationProfile {
+            thinking: Some(ThinkingLevel::Off),
+            ..Default::default()
+        }),
+        ..def.clone()
+    };
+    let (config, provider) = setup(
+        def.clone(),
+        crate::config::Generation::default(),
+        thinking.clone(),
+        crate::config::CacheRetention::None,
+    );
+    assert_eq!(derive_turn(&config, &provider, "m", "s").reasoning, None);
+    // The model fact still gates: a model recorded non-reasoning carries no
+    // effort no matter what the profile asks.
+    let def = crate::config::ModelDef {
+        reasoning: Some(false),
+        generation: Some(crate::config::GenerationProfile {
+            thinking: Some(ThinkingLevel::High),
+            ..Default::default()
+        }),
+        ..def
+    };
+    let (config, provider) = setup(
+        def,
+        crate::config::Generation::default(),
+        thinking,
+        crate::config::CacheRetention::None,
+    );
+    assert_eq!(derive_turn(&config, &provider, "m", "s").reasoning, None);
 }

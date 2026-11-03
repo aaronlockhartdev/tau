@@ -90,13 +90,16 @@ pub(crate) async fn buffer_cycle(
 
     let addressed = model.clone();
     let system = observer_system_prompt();
-    let request = ResponseRequest::new(
-        model,
-        Some(system.as_str()),
-        vec![InputEntry::Message(InputMessage {
-            role: "user".into(),
-            content: super::transcript(&candidates),
-        })],
+    let request = super::apply_generation(
+        ResponseRequest::new(
+            model,
+            Some(system.as_str()),
+            vec![InputEntry::Message(InputMessage {
+                role: "user".into(),
+                content: super::transcript(&candidates),
+            })],
+        ),
+        &config.generation,
     );
     let result = match super::retry::call_with_retry(
         &provider,

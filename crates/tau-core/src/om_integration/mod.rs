@@ -56,6 +56,42 @@ fn threshold_u32(v: u64) -> u32 {
 /// `buffer_activation` is a ratio of the observe threshold
 /// (1 − increment/threshold; the two forms agree at the defaults: 6k over 30k =
 /// 0.8), and `observe_threshold.max(1)` keeps that ratio defined.
+/// Apply the resolved OM generation profile to a request (#407): the
+/// Observer and Reflector calls carry temperature, penalties, the output
+/// cap, the reasoning policy, and the `extra_body` passthrough.
+pub(crate) fn apply_generation(
+    mut request: crate::provider::ResponseRequest,
+    generation: &crate::config::GenerationProfile,
+) -> crate::provider::ResponseRequest {
+    if let Some(t) = generation.temperature {
+        request = request.with_temperature(t);
+    }
+    if let Some(p) = generation.top_p {
+        request = request.with_top_p(p);
+    }
+    if let Some(p) = generation.frequency_penalty {
+        request = request.with_frequency_penalty(p);
+    }
+    if let Some(p) = generation.presence_penalty {
+        request = request.with_presence_penalty(p);
+    }
+    if let Some(n) = generation.max_tokens {
+        request = request.with_max_output_tokens(u64::from(n));
+    }
+    if let Some(effort) = generation.thinking.and_then(Option::from) {
+        request = request.with_reasoning(effort);
+    }
+    if !generation.extra_body.is_empty() {
+        let extra: std::collections::BTreeMap<String, crate::provider::ExtraValue> = generation
+            .extra_body
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone().into()))
+            .collect();
+        request = request.with_extra(&extra);
+    }
+    request
+}
+
 fn om_config_of(om: &crate::config::Om) -> OmConfig {
     let observe = f64::from(threshold_u32(om.observe_threshold.max(1)));
     let activation =
@@ -66,6 +102,7 @@ fn om_config_of(om: &crate::config::Om) -> OmConfig {
         buffer_activation: activation,
         share_token_budget: false,
         retries: om.retries.clone(),
+        generation: om.generation.clone(),
     }
 }
 

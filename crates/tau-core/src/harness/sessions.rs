@@ -20,7 +20,7 @@ impl Core {
     /// key several providers declare is answered by `current`, the provider the
     /// session's model is addressed at.
     pub(crate) fn om_route<'c>(&self, config: &'c Config, current: ProviderRef<'c>) -> OmRoute {
-        let om_model = config.om.om_model.trim();
+        let om_model = config.om.model.trim();
         if om_model.is_empty() {
             return OmRoute::Session;
         }
@@ -516,12 +516,17 @@ pub(crate) fn derive_turn(
 ) -> TurnConfig {
     let key = config.model_key(model);
     let def = provider.models.get(key);
-    let level = config
-        .thinking
-        .levels
-        .get(key)
-        .copied()
-        .unwrap_or(config.thinking.level);
+    // The per-model generation profile (#407): it overrides the global
+    // sampling keys and the `[thinking]` level chain for this model.
+    let profile = def.and_then(|d| d.generation.clone()).unwrap_or_default();
+    let level = profile.thinking.unwrap_or_else(|| {
+        config
+            .thinking
+            .levels
+            .get(key)
+            .copied()
+            .unwrap_or(config.thinking.level)
+    });
     let reasoning = match def.and_then(|d| d.reasoning) {
         // A model recorded as non-reasoning never carries the effort: the
         // server would reject it.
@@ -530,7 +535,9 @@ pub(crate) fn derive_turn(
     };
     TurnConfig {
         max_output_tokens: thinking_adjusted_max_output(
-            def.and_then(|d| d.max_tokens)
+            profile
+                .max_tokens
+                .or(def.and_then(|d| d.max_tokens))
                 .or(config.generation.max_tokens)
                 // The contract's sane default (#338): a declared window with no
                 // declared cap gates on the default cap, it does not refuse.
@@ -541,10 +548,19 @@ pub(crate) fn derive_turn(
         ),
         reasoning,
         reasoning_summary: config.thinking.summary,
-        temperature: config.generation.temperature,
-        top_p: config.generation.top_p,
-        frequency_penalty: config.generation.frequency_penalty,
-        presence_penalty: config.generation.presence_penalty,
+        temperature: profile.temperature.or(config.generation.temperature),
+        top_p: profile.top_p.or(config.generation.top_p),
+        frequency_penalty: profile
+            .frequency_penalty
+            .or(config.generation.frequency_penalty),
+        presence_penalty: profile
+            .presence_penalty
+            .or(config.generation.presence_penalty),
+        extra_body: profile
+            .extra_body
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone().into()))
+            .collect(),
         prompt_cache: (config.cache.retention != crate::config::CacheRetention::None)
             .then(|| (session.to_owned(), config.cache.retention)),
         // A model the config declares always carries a window (the load

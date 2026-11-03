@@ -29,8 +29,9 @@ context_window = 131072
             reasoning: Some(true),
             cost: Some(Cost {
                 input: 0.5,
-                output: 2.0
-            })
+                output: 2.0,
+            }),
+            generation: None,
         }
     );
     // The window is the one required fact; the rest stay at their defaults.
@@ -190,7 +191,7 @@ idle_timeout_secs = 90
 tool_batch_on_force = "kill"
 
 [om]
-om_model = "qwen3.8-32b"
+model = "qwen3.8-32b"
 observe_threshold = 1000
 
 [subagents]
@@ -227,7 +228,7 @@ retention = "short"
     assert_eq!(config.requests.timeout_secs, 60);
     assert_eq!(config.requests.idle_timeout_secs, 90);
     assert_eq!(config.requests.tool_batch_on_force, ToolBatchPolicy::Kill);
-    assert_eq!(config.om.om_model, "qwen3.8-32b");
+    assert_eq!(config.om.model, "qwen3.8-32b");
     assert_eq!(config.om.observe_threshold, 1000);
     assert_eq!(config.om.reflect_threshold, 40_000);
     assert_eq!(config.subagents.max_depth, 2);

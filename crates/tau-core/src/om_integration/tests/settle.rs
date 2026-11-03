@@ -392,7 +392,9 @@ async fn settles_observe_bounded_slices_never_the_whole_window() {
 /// enough to be irrelevant at these volumes (#409).
 fn drain_config(retries: crate::config::OmRetries) -> crate::config::Om {
     crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1_000,
         reflect_threshold: 1_000_000,
         buffer_increment: 200,
