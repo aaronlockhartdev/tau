@@ -249,8 +249,8 @@ impl Rig {
 
 /// T3: one tool round below the observe threshold crosses the 200-token
 /// buffer boundary; the background cycle commits ONE durable chunk and
-/// the turn settles with no observe (822 < 1000) and no sync buffer
-/// (the arm is gated while `buffer_tokens > 0`).
+/// the turn settles with no observe of its own (822 < 1000; the settle's
+/// backstop fires only at activation).
 #[tokio::test]
 async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     let title = "A".repeat(3200);
@@ -411,12 +411,12 @@ async fn a_buffer_cycle_that_commits_a_chunk_records_no_om_failed() {
     );
 }
 
-/// T6: a failing cycle with zero retries makes exactly one attempt and
-/// the turn-end pass adds no sync-buffer attempt of its own — with
-/// `buffer_tokens > 0` the turn-end pass never buffers (D2), even for a
-/// pending (809) sitting in the old sync-buffer band [400, 1000).
+/// T6: a failing cycle with zero retries makes exactly one attempt, and a
+/// pending (809) below activation (1000) leaves the settle planning no Observe
+/// of its own — the backstop fires at activation, not in the cycles' band
+/// (D2, #408).
 #[tokio::test]
-async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
+async fn the_turn_end_settle_adds_no_pass_below_activation() {
     let title = "A".repeat(3200);
     let om = om_config(1000, 10_000, 400, 0, 0);
     let mut scripts = read_round("c1", &title);

@@ -181,7 +181,7 @@ fn a_layer_naming_the_retired_buffer_tokens_key_fails_naming_the_successor() {
     ] {
         let err = load_from(toml, "").unwrap_err();
         assert!(
-            matches!(err, LoadError::OmBufferTokensRetired),
+            matches!(err, LoadError::OmBufferTokensRetired { .. }),
             "retired key accepted: {err:?}"
         );
         assert!(
@@ -192,6 +192,29 @@ fn a_layer_naming_the_retired_buffer_tokens_key_fails_naming_the_successor() {
     // The layer that omits the key loads with the interval knob alone.
     let config = load_from("[om]\nbuffer_increment = 4000\n", "").unwrap();
     assert_eq!(config.om.buffer_increment, 4_000);
+}
+
+/// The losing layer still fails the load (#408): the merge replaces `[om]`
+/// wholesale, so a merged-config check would let a project section without
+/// the retired key hide the system layer's intent. The read catches it and
+/// names the file to edit.
+#[test]
+fn a_losing_layer_naming_the_retired_key_still_fails_the_load() {
+    let sys = tempfile::tempdir().unwrap();
+    let proj = tempfile::tempdir().unwrap();
+    let system_file = sys.path().join(CONFIG_FILE);
+    std::fs::write(&system_file, "[om]\nbuffer_tokens = 6000\n").unwrap();
+    std::fs::write(
+        proj.path().join(CONFIG_FILE),
+        "[om]\nobserve_threshold = 1000\n",
+    )
+    .unwrap();
+    let err = load(sys.path(), proj.path()).unwrap_err();
+    assert!(
+        matches!(err, LoadError::OmBufferTokensRetired { .. }),
+        "the winning layer hid the retired key: {err:?}"
+    );
+    assert_eq!(err.path(), Some(system_file.as_path()));
 }
 
 /// The rejected layer's file (#337): a parse failure names the layer the user

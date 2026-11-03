@@ -377,3 +377,39 @@ fn an_empty_window_with_a_zero_threshold_plans_done() {
         other => panic!("expected Done over an empty window, got {other:?}"),
     }
 }
+
+#[test]
+fn an_off_branch_buffer_cursor_cuts_by_id_not_by_absence() {
+    // #402, mirroring #395's rule for the observation cursor: a branch switch
+    // moves the leaf and never touches the buffer cursor. A cursor naming the
+    // abandoned side must cut the raw at the cursor's id number — taking the
+    // whole window would re-observe the raw a durable chunk already covers.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 40, 1_000);
+    let om = crate::config::Om {
+        observe_threshold: 1_000,
+        reflect_threshold: 2_000,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
+    let chunk = BufferedChunk {
+        range: ("00000001".into(), "00000024".into()),
+        last_ts: 100,
+        text: "observed the head".into(),
+        tokens: 6_000,
+    };
+    state.buffered = vec![chunk.clone()];
+    state.record.buffered_chunks = vec![chunk];
+    // The abandoned side's cursor: no entry on this branch carries the id,
+    // and every id on the branch is behind the cursor's number.
+    state.buffer_cursor = Some("00000060".into());
+    let unobserved = state.unobserved(&mut store).unwrap();
+    assert!(
+        !unobserved.is_empty(),
+        "the window must carry raw for the mutation to bite"
+    );
+    match state.plan(&unobserved) {
+        TurnEndAction::Done => {}
+        other => panic!("the off-branch cursor re-covered chunk material: {other:?}"),
+    }
+}

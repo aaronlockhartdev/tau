@@ -301,3 +301,52 @@ fn a_reopen_with_an_unparseable_cursor_falls_back_to_the_branch() {
     let state = OmState::from_config(&crate::config::Om::default(), record);
     assert_eq!(state.unobserved(&mut store).unwrap().len(), 7);
 }
+
+/// A chunk spanning `[from, to]` with filler text.
+fn span(from: &str, to: &str) -> BufferedChunk {
+    BufferedChunk {
+        range: (from.into(), to.into()),
+        last_ts: 100,
+        text: "observed".into(),
+        tokens: 10,
+    }
+}
+
+#[test]
+fn the_furthest_chunk_end_wins_over_commit_order() {
+    // #408 (review): chunks arrive in commit order — a merge appends a late
+    // cycle's span after newer ones — and the buffer cursor must be the end
+    // that reaches furthest along the branch. `last()` re-covered raw the
+    // chunks already observed.
+    assert_eq!(
+        crate::om_integration::last_chunk_end(&[
+            span("00000001", "00000020"),
+            span("00000021", "00000044"),
+            span("00000045", "00000030"),
+        ])
+        .as_deref(),
+        Some("00000044")
+    );
+    // Ids this build cannot order count as 0: the first end stands.
+    assert_eq!(
+        crate::om_integration::last_chunk_end(&[span("legacy-a", "legacy-b"),]).as_deref(),
+        Some("legacy-b")
+    );
+    assert_eq!(crate::om_integration::last_chunk_end(&[]).as_deref(), None);
+}
+
+#[test]
+fn a_reopen_restores_the_furthest_chunk_end() {
+    // The cursor `from_config` restores is the cycles' resume point: a durable
+    // record with an out-of-order late chunk must not resume behind it.
+    let record = OmRecord {
+        buffered_chunks: vec![
+            span("00000001", "00000020"),
+            span("00000021", "00000044"),
+            span("00000045", "00000030"),
+        ],
+        ..Default::default()
+    };
+    let state = OmState::from_config(&crate::config::Om::default(), record);
+    assert_eq!(state.buffer_cursor.as_deref(), Some("00000044"));
+}

@@ -220,7 +220,7 @@ impl AgentSession {
         // The turn-end trigger (#399): a turn with no tool round never reaches
         // the mid-loop trigger, so a crossed interval at the settle would wait
         // for the next turn's first tool round to spawn its slice. Spawn-only:
-        // the kill switch, the in-flight flag, and the activation rung are the
+        // the trickle floor, the in-flight flag, and the interval boundary are
         // mid-loop trigger's own rules, and the next settle's D13.1 join
         // bounds the cycle.
         self.om_mid_loop();

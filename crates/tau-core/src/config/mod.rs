@@ -727,7 +727,17 @@ impl ConfigFile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(LoadError::Io(e)),
         };
-        toml::from_str(&text).map_err(|e| LoadError::Parse(path.to_path_buf(), e))
+        let file: ConfigFile =
+            toml::from_str(&text).map_err(|e| LoadError::Parse(path.to_path_buf(), e))?;
+        // The retired key check rides the read, not the merged validate:
+        // the merge replaces `[om]` wholesale, so a retired key in a losing
+        // layer is invisible to the merged config (#408).
+        if file.om.as_ref().is_some_and(|o| o.buffer_tokens.is_some()) {
+            return Err(LoadError::OmBufferTokensRetired {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(file)
     }
 
     fn merge_into(&self, config: &mut Config) {
@@ -804,15 +814,14 @@ impl LoadError {
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::Parse(path, _) => Some(path),
+            Self::Parse(path, _) | Self::OmBufferTokensRetired { path } => Some(path),
             Self::Io(_)
             | Self::OmThreshold { .. }
             | Self::MissingContextWindow { .. }
             | Self::ZeroMaxTokens { .. }
             | Self::FleetCapInversion { .. }
             | Self::ProviderNameHasSlash { .. }
-            | Self::LevelUndeclared { .. }
-            | Self::OmBufferTokensRetired => None,
+            | Self::LevelUndeclared { .. } => None,
         }
     }
 }
@@ -853,8 +862,12 @@ pub enum LoadError {
     },
     /// `[om] buffer_tokens` named in a layer (#408): the key is retired — the
     /// background slice is always on — and the load says so instead of
-    /// silently dropping the intent.
-    OmBufferTokensRetired,
+    /// silently dropping the intent. Checked per layer at read: the merge
+    /// replaces the section wholesale, so a retired key in a losing layer
+    /// would vanish from the merged config this check reads.
+    OmBufferTokensRetired {
+        path: std::path::PathBuf,
+    },
     /// An `[thinking].levels` key carrying a `/` that no provider declares as a
     /// model (#354): a level is read by the key a model id routes to, so this
     /// entry is read by nothing. A bare key is exempt — every id routes to one.
@@ -874,9 +887,10 @@ impl fmt::Display for LoadError {
             } => {
                 write!(f, "{field} = {value} exceeds the u32 token limit ({limit})")
             }
-            Self::OmBufferTokensRetired => write!(
+            Self::OmBufferTokensRetired { path } => write!(
                 f,
-                "[om] buffer_tokens is retired: the background slice is always on; buffer_increment is the interval"
+                "{} names [om] buffer_tokens, which is retired: the background slice is always on; buffer_increment is the interval",
+                path.display()
             ),
             Self::MissingContextWindow { provider, model } => write!(
                 f,

@@ -311,7 +311,7 @@ The compaction model is global, not per-provider (spec §4).
 | `om_model` | string | `""` | empty = the session's own model. §6.7 applies (#348): a prefix naming a provider addresses the memory passes there and asks it for the stripped key; a bare key goes to the provider that declares it — the provider the session rides when several declare it, and a contested key that provider does not declare is a refusal. A `vendor/name` id whose prefix names no provider goes to the provider declaring that whole key, a gateway's ids reading that way (#358). An id that addresses no endpoint stops the passes and records `om_failed { stage: "route" }` — compaction stops, so the window gate can refuse the turn, and the config edit is the fix |
 | `observe_threshold` | int | 30000 | activation, measured on the raw tokens after the observation cursor (spec §4) |
 | `reflect_threshold` | int | 40000 | |
-| `buffer_increment` | int | 6000 | the Observer's one interval knob, measured on the raw tokens past the observation cursor: a background cycle fires once this much is new, its call is cut to this slice, the turn-end backstop slices the tail by it, and it is the raw volume retained after activation. Slices cut at entry boundaries: one entry larger than the increment rides whole (#392, #399, #408) |
+| `buffer_increment` | int | 6000 | the Observer's one interval knob, measured on the raw tokens past the observation cursor: a background cycle fires once this much is new, its call is cut to this slice, and it is the raw volume retained after activation. Slices cut at entry boundaries: one entry larger than the increment rides whole (#392, #399, #408) |
 | `retries` | table | `{8, 8, 8}` | `{ observe, buffer, reflect }` — retries *after* the first failure, per trigger point, before the cycle is abandoned (#86) |
 
 The three thresholds are validated at the parse boundary: each must be ≤
@@ -321,8 +321,9 @@ config error, never a launch panic.
 `buffer_tokens` is retired (#408): the background slice is always on and
 `buffer_increment` is the only interval knob. A layer naming the old key fails
 the load, naming the successor — no silent ignore. The turn-end pass keeps its
-bounded backstop (at most one increment slice per settle) and the promote, the
-free swap that makes buffered observations active with no model call. No config
+bounded backstop (at most one threshold-sized slice per settle, past the
+buffered range) and the promote, the free swap that makes buffered
+observations active with no model call. No config
 value can leave a past-activation window that the turn-end pass cannot see
 (#392); observation runs forward in the background, not deferred to the
 boundary (#399).

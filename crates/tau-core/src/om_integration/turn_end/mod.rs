@@ -1,5 +1,5 @@
 pub use self::commit::{ObservedSpan, TurnEndAction};
-use self::window::{branch_of, raw_after};
+use self::window::{branch_of, raw_after, unobserved_slice};
 use super::{
     BufferedChunk, Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore,
     boundary_ts, entry_text, idle_gap_secs, om, transcript,
@@ -371,14 +371,12 @@ impl OmState {
         // AND past the buffer cursor. A durable chunk already carries an
         // observation over the raw it covers; observing it again pays twice
         // for one span (#408).
-        let start = match &self.buffer_cursor {
-            Some(id) => match unobserved.iter().position(|e| e.id == *id) {
-                Some(i) => i + 1,
-                None => 0,
-            },
-            None => 0,
-        };
-        let fresh = &unobserved[start..];
+        // The cut is the one the cycles and the reopen make: in-branch by
+        // position, off-branch by id number (a branch switch never touches the
+        // buffer cursor), a non-numeric cursor taking the whole window.
+        // Exact-position-with-absence-fallback re-covered chunk material when
+        // the cursor named the abandoned side (#402, mirroring #395's rule).
+        let fresh = unobserved_slice(unobserved, self.buffer_cursor.as_deref());
         let raw = self.pending_tokens(fresh);
         if om::should_reflect(self.record.observation_tokens, &self.config) {
             return TurnEndAction::Reflect { level: 0 };

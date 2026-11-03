@@ -30,6 +30,13 @@ fn effective_interval(pending: u64, config: &OmConfig) -> u64 {
     }
 }
 
+/// The trickle floor (D7): below half an interval of spawned volume, a
+/// cycle gets no chunk and no LLM call. The basis is the interval knob —
+/// #408 retired the quantity that used to name it.
+#[must_use]
+fn trickle_floor(config: &OmConfig) -> u32 {
+    config.buffer_increment() / 2
+}
 /// An interval boundary was crossed since the last commit (D5): floor
 /// division over the effective interval, comparing against the LARGER of
 /// the persisted boundary (record) and the in-process boundary (spawn
@@ -75,7 +82,7 @@ pub(crate) async fn buffer_cycle(
     // no chunk and no LLM call; the interval is consumed (the in-process
     // boundary advanced at spawn) and the tail rides raw until the next
     // crossing.
-    if volume < 3000 {
+    if volume < trickle_floor(&config) {
         clear_inflight(&inner);
         return;
     }
@@ -181,8 +188,7 @@ fn read_candidates(
         return None;
     }
     // The cycle's call is the next increment-sized slice, not every
-    // unbuffered entry: the same bound the foreground Buffer arm honors,
-    // so no Observer call's input is a whole window (#399).
+    // unbuffered entry: no Observer call's input is a whole window (#399).
     let (span, _, coverage) = live.observe_head(&candidates, config.buffer_increment());
     let cut = candidates
         .iter()
@@ -243,11 +249,7 @@ fn commit_chunk(
             } else if let Some(slot) = g.om.as_mut() {
                 slot.record = latest;
                 slot.buffered = slot.record.buffered_chunks.clone();
-                slot.buffer_cursor = slot
-                    .record
-                    .buffered_chunks
-                    .last()
-                    .map(|c| c.range.1.clone());
+                slot.buffer_cursor = super::last_chunk_end(&slot.record.buffered_chunks);
             }
         }
     }
@@ -316,5 +318,16 @@ mod tests {
         assert_eq!(cfg.buffer_increment(), 0);
         assert!(!boundary_crossed(60_000, &cfg, 0, 0));
         assert!(!boundary_crossed(60_000, &cfg, 12_000, 30_000));
+    }
+
+    #[test]
+    fn the_trickle_floor_is_half_the_increment() {
+        // #408: the floor's basis is `buffer_increment`, not a constant.
+        // The fixture-shape increment (230) gets a 115 floor — a 675-volume
+        // cycle passes — and a wide 40k increment gets a 20k floor, so a
+        // 5k trickle pays no Observer round-trip.
+        assert_eq!(trickle_floor(&config(1_000, 230)), 115);
+        assert_eq!(trickle_floor(&config(50_000, 40_000)), 20_000);
+        assert_eq!(trickle_floor(&config(30_000, 6_000)), 3_000);
     }
 }
