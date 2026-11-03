@@ -288,7 +288,7 @@ impl Core {
         // recorded once as `om_failed { stage: "route" }`, and the thresholds a
         // pass compares against are the edited ones.
         live.agent.set_om_route(self.om_route(&config, owner));
-        live.agent.set_om_config(&config.om);
+        live.agent.set_om_config(&config.normalized_om());
         // The completion check follows the config too (#347): the edited
         // command, deadline and retry cap run at the next check, and a section
         // removed is no check at all.

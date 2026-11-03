@@ -238,7 +238,9 @@ async fn a_mid_turn_send_is_queued_not_a_second_turn() {
 async fn a_live_om_run_emits_om_status_events() {
     let tmp = tempfile::tempdir().unwrap();
     let om = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1,
         reflect_threshold: 40_000,
         buffer_increment: 1,
@@ -501,7 +503,9 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
     // settle — the window the fix closes. 60 ms between events keeps the
     // window wide enough to land a send in it.
     let om = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 100,
         reflect_threshold: 200,
         buffer_increment: 50,
@@ -652,7 +656,9 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
     // so the turn-end pass fires one observer round-trip: the wrapper's
     // second call, which idle-times-out and exhausts its single retry.
     let om = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 100,
         reflect_threshold: 200,
         buffer_increment: 50,
@@ -757,7 +763,9 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
     );
     let tmp = tempfile::tempdir().unwrap();
     let om = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 100,
         reflect_threshold: 200,
         buffer_increment: 50,

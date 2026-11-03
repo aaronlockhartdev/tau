@@ -136,7 +136,7 @@ impl Fixture {
         let model_line = if om.is_empty() {
             String::new()
         } else {
-            format!("om_model = \"{om}\"\n")
+            format!("model = \"{om}\"\n")
         };
         let raw = format!(
             r#"
@@ -326,7 +326,7 @@ async fn om_record_model_after(cwd: &Path, session: &str, before: usize) -> Opti
     }
 }
 
-/// The positive: `om_model = "aaa/om-model"` while the session rides `zzz`.
+/// The positive: `model = "aaa/om-model"` while the session rides `zzz`.
 /// The Observer call goes to **aaa** — the provider the id names — carrying the
 /// prefix-stripped key, and its observation lands.
 #[tokio::test]
@@ -400,7 +400,7 @@ async fn an_om_model_prefix_naming_no_provider_is_refused_and_recorded() {
     let failures = om_failures(f.project.path(), &session);
     assert!(
         failures.iter().any(|(stage, reason)| {
-            stage == "route" && reason.contains("om.om_model") && reason.contains("nope/om-model")
+            stage == "route" && reason.contains("om.model") && reason.contains("nope/om-model")
         }),
         "the dead route is a durable record naming the config key and the id: {failures:?}"
     );

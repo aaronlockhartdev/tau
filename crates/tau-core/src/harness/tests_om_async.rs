@@ -99,7 +99,9 @@ fn om_config(
     buffer_retries: u32,
 ) -> crate::config::Om {
     crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: observe,
         reflect_threshold: reflect,
         buffer_increment: increment,

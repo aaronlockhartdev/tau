@@ -141,6 +141,9 @@ pub struct TurnConfig {
     pub top_p: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub presence_penalty: Option<f32>,
+    /// The model profile's `extra_body` passthrough (#407): scalars the
+    /// endpoint reads and tau does not, verbatim on every turn's request.
+    pub extra_body: std::collections::BTreeMap<String, crate::provider::ExtraValue>,
     /// A stable cache key (the session id) plus the `cache.retention`.
     pub prompt_cache: Option<(String, crate::config::CacheRetention)>,
     /// Where the endpoint is addressed, and the model id that resolution was
@@ -176,6 +179,7 @@ impl Default for TurnConfig {
             top_p: None,
             frequency_penalty: None,
             presence_penalty: None,
+            extra_body: std::collections::BTreeMap::new(),
             prompt_cache: None,
             address: None,
             context_window: crate::config::Provider::DEFAULT_WINDOW,

@@ -24,7 +24,9 @@ async fn context_gate_fires_when_over_budget() {
         parent = Some(e.id);
     }
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -137,7 +139,9 @@ async fn context_gate_noop_when_under_budget() {
         )
         .unwrap();
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -200,7 +204,9 @@ async fn context_gate_refuses_when_the_ladder_cannot_fit() {
         parent = Some(e.id);
     }
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         // High enough that the huge observation doesn't trigger a reflect
         // call — the test is about the gate, not reflect.

@@ -32,6 +32,11 @@ pub struct OmConfig {
     pub share_token_budget: bool,
     /// Per-trigger-point retry counts for the OM round-trips (ticket #86).
     pub retries: crate::config::OmRetries,
+    /// The OM role's resolved generation profile (#407): `[om.generation]`
+    /// over the OM model's profile over the global `[generation]`/`[thinking]`.
+    /// Every OM request applies it; the session folds it once, the live move
+    /// re-folds it at the turn boundary.
+    pub generation: crate::config::GenerationProfile,
 }
 
 impl Default for OmConfig {
@@ -42,6 +47,7 @@ impl Default for OmConfig {
             buffer_activation: 0.8,
             share_token_budget: false,
             retries: crate::config::OmRetries::default(),
+            generation: crate::config::GenerationProfile::default(),
         }
     }
 }

@@ -230,7 +230,7 @@ async fn a_config_move_that_leaves_a_child_routeless_is_recorded_by_that_child()
         .await
         .expect("a child whose route the edit killed records the refusal");
     assert!(
-        refusal.1.contains("om.om_model") && refusal.1.contains("zzz/ghost"),
+        refusal.1.contains("om.model") && refusal.1.contains("zzz/ghost"),
         "the refusal names the config key and the id it cannot address: {}",
         refusal.1
     );

@@ -64,6 +64,29 @@ const fn cache_retention_wire(retention: CacheRetention) -> Option<&'static str>
     }
 }
 
+/// One `extra_body` entry as it rides the wire: a typed scalar, never a
+/// free-form JSON value (#407). The config layer authors its own
+/// `config::ExtraValue`; this is the transport face of the same fact.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ExtraValue {
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Str(String),
+}
+
+impl From<crate::config::ExtraValue> for ExtraValue {
+    fn from(v: crate::config::ExtraValue) -> Self {
+        match v {
+            crate::config::ExtraValue::Bool(b) => Self::Bool(b),
+            crate::config::ExtraValue::Int(n) => Self::Int(n),
+            crate::config::ExtraValue::Float(n) => Self::Float(n),
+            crate::config::ExtraValue::Str(t) => Self::Str(t),
+        }
+    }
+}
+
 /// One request to `POST {base}/responses` (streaming; v0 is responses-only,
 /// ADR-0003).
 #[derive(Debug, Clone, Serialize)]
@@ -98,6 +121,10 @@ pub struct ResponseRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     prompt_cache_options: Option<PromptCacheOptions>,
     stream: bool,
+    /// `extra_body` passthrough (#407): provider-specific scalars the
+    /// endpoint reads and tau does not, flattened into the body verbatim.
+    #[serde(flatten, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    extra: std::collections::BTreeMap<String, ExtraValue>,
 }
 
 impl ResponseRequest {
@@ -122,7 +149,15 @@ impl ResponseRequest {
             prompt_cache_key: None,
             prompt_cache_options: None,
             stream: true,
+            extra: std::collections::BTreeMap::new(),
         }
+    }
+
+    /// The `extra_body` entries, verbatim into the body (#407).
+    #[must_use]
+    pub fn with_extra(mut self, entries: &std::collections::BTreeMap<String, ExtraValue>) -> Self {
+        self.extra = entries.clone();
+        self
     }
 
     /// The #98 wire log's delta view (agent-side seam): log only the input

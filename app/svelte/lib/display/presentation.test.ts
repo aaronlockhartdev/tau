@@ -465,7 +465,7 @@ describe('a diagnostic entry (ADR-0034)', () => {
     expect(line({ code: 'om_stalled', pending: 24000, activation: 24000 }))
       .toBe('compaction stalled: 24.0k pending at activation 24.0k');
     // #338: an OM pass that exhausts its retries records the stage it died at,
-    // so the card names the trigger point of a dead om_model route.
+    // so the card names the trigger point of a dead [om] model route.
     expect(line({ code: 'om_failed', stage: 'observe', reason: 'provider: provider returned 404: no model named dev/x (observe)' }))
       .toBe('compaction observe pass failed: provider: provider returned 404: no model named dev/x (observe)');
     // A provider body is multi-line; the card is one line.
@@ -482,11 +482,11 @@ describe('a diagnostic entry (ADR-0034)', () => {
       .toBe('compaction: the record store write failed: io: disk write failed (session)');
   });
 
-  // #348: `route` is no pass — an `om_model` that addresses no endpoint stops
+  // #348: `route` is no pass — an `[om] model` that addresses no endpoint stops
   // the passes before they start — so the GUI names the stage for what it is.
   it('names a dead route as a dead route, not as a failed pass', () => {
-    expect(line({ code: 'om_failed', stage: 'route', reason: 'om.om_model \'dev/y\': no configured provider declares it' }))
-      .toBe('compaction: om_model addresses no endpoint: om.om_model \'dev/y\': no configured provider declares it');
+    expect(line({ code: 'om_failed', stage: 'route', reason: 'om.model \'dev/y\': no configured provider declares it' }))
+      .toBe('compaction: [om] model addresses no endpoint: om.model \'dev/y\': no configured provider declares it');
   });
 
   // The pass wording is the stage's name in the pass shape, and a stage this

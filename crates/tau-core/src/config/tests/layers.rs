@@ -127,7 +127,7 @@ fn om_thresholds_within_u32_load() {
     // The default layout sits far under u32::MAX; a value exactly at the
     // limit is still in-domain and must load (ticket #46).
     let toml = format!(
-        "[om]\nom_model = \"om\"\nobserve_threshold = {max}\n",
+        "[om]\nmodel = \"om\"\nobserve_threshold = {max}\n",
         max = u32::MAX
     );
     let config = load_from(&toml, "").unwrap();
@@ -187,7 +187,7 @@ fn a_zero_om_threshold_is_rejected_naming_the_field() {
         }
     }
     // The negative: the section alone loads on its defaults.
-    let cfg = load_from("[om]\nom_model = \"m\"\n", "").unwrap();
+    let cfg = load_from("[om]\nmodel = \"m\"\n", "").unwrap();
     assert_eq!(cfg.om.observe_threshold, 30_000);
 }
 
@@ -278,4 +278,106 @@ fn a_validation_failure_names_no_layer() {
     .unwrap_err();
     assert!(matches!(no_window, LoadError::MissingContextWindow { .. }));
     assert_eq!(no_window.path(), None);
+}
+
+// ---- #407: the generation profiles and the `[om] model` rename ----
+
+#[test]
+fn the_om_model_key_is_renamed_naming_the_successor() {
+    let err = load_from("[om]\nom_model = \"dev/m\"\n", "").unwrap_err();
+    assert!(
+        matches!(err, LoadError::OmModelRenamed { .. }),
+        "the renamed key must fail the load: {err}"
+    );
+    let msg = err.to_string();
+    assert!(
+        msg.contains("om_model") && msg.contains("model"),
+        "the refusal names both the retired key and its successor: {msg}"
+    );
+    assert!(err.path().is_some(), "the refusal names the layer file");
+    // The successor key loads.
+    let config = load_from("[om]\nmodel = \"dev/m\"\n", "").unwrap();
+    assert_eq!(config.om.model, "dev/m");
+    // The read-time rule (#408): a losing layer's renamed key is invisible to
+    // the merged config, so the check rides every layer's read.
+    let err = load_from("[om]\nom_model = \"dev/m\"\n", "[om]\nmodel = \"x\"\n").unwrap_err();
+    assert!(matches!(err, LoadError::OmModelRenamed { .. }));
+}
+
+#[test]
+fn the_generation_profiles_parse_and_resolve_role_over_model_over_global() {
+    let config = load_from(
+        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n\
+         [providers.dev.models.m]\ncontext_window = 1000\n\n\
+         [providers.dev.models.m.generation]\ntemperature = 0.2\nmax_tokens = 512\n\n\
+         [providers.dev.models.m.generation.extra_body]\nthinkingBudget = 215\nterse = true\n\n\
+         [om]\nmodel = \"dev/m\"\n\n\
+         [om.generation]\ntemperature = 0.3\nthinking = \"off\"\n\n\
+         [generation]\ntemperature = 0.9\n",
+        "",
+    )
+    .unwrap();
+    let model = config.providers["dev"].models["m"]
+        .generation
+        .clone()
+        .expect("the per-model profile parses");
+    assert_eq!(model.temperature, Some(0.2));
+    assert_eq!(model.max_tokens, Some(512));
+    assert_eq!(model.extra_body["thinkingBudget"], ExtraValue::Int(215));
+    assert_eq!(model.extra_body["terse"], ExtraValue::Bool(true));
+    assert_eq!(config.om.generation.temperature, Some(0.3));
+    assert_eq!(config.om.generation.thinking, Some(ThinkingLevel::Off));
+    // Resolution is key by key: the role's 0.3 wins, the model's 512 fills
+    // the role's gap, the model's extra_body rides under the role.
+    let resolved = config.om_generation();
+    assert_eq!(resolved.temperature, Some(0.3));
+    assert_eq!(resolved.max_tokens, Some(512));
+    assert_eq!(resolved.thinking, Some(ThinkingLevel::Off));
+    assert_eq!(resolved.extra_body["thinkingBudget"], ExtraValue::Int(215));
+    assert_eq!(resolved.extra_body["terse"], ExtraValue::Bool(true));
+}
+
+#[test]
+fn om_generation_falls_through_to_the_global_chain() {
+    // No role keys, no model profile: the global `[generation]` sampling and
+    // the `[thinking]` level reach the OM call.
+    let config = load_from(
+        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n\
+         [providers.dev.models.m]\ncontext_window = 1000\n\n\
+         [generation]\ntemperature = 0.9\n\n[thinking]\nlevel = \"high\"\n\n\
+         [om]\nmodel = \"dev/m\"\n",
+        "",
+    )
+    .unwrap();
+    let resolved = config.om_generation();
+    assert_eq!(resolved.temperature, Some(0.9));
+    assert_eq!(resolved.thinking, Some(ThinkingLevel::High));
+    // An empty `[om] model` names no model: the chain is global only, and the
+    // level is the `[thinking]` default.
+    let config = load_from("[generation]\ntemperature = 0.9\n", "").unwrap();
+    let resolved = config.om_generation();
+    assert_eq!(resolved.temperature, Some(0.9));
+    assert_eq!(resolved.thinking, Some(config.thinking.level));
+}
+
+#[test]
+fn a_generation_profile_unknown_key_is_rejected() {
+    assert!(
+        load_from(
+            "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n\
+             [providers.dev.models.m]\ncontext_window = 1000\n\n\
+             [providers.dev.models.m.generation]\nvibe = \"warm\"\n",
+            "",
+        )
+        .is_err(),
+        "the per-model profile is deny_unknown_fields"
+    );
+    assert!(
+        load_from(
+            "[om]\nmodel = \"dev/m\"\n\n[om.generation]\nvibe = \"warm\"\n",
+            ""
+        )
+        .is_err(),
+        "the role profile is deny_unknown_fields"
+    );
 }

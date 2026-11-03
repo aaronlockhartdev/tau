@@ -322,6 +322,9 @@ impl AgentSession {
         if let Some(p) = turn.presence_penalty {
             request = request.with_presence_penalty(p);
         }
+        if !turn.extra_body.is_empty() {
+            request = request.with_extra(&turn.extra_body);
+        }
         if let Some((key, retention)) = &turn.prompt_cache {
             request = request.with_prompt_cache(key.clone(), *retention);
         }

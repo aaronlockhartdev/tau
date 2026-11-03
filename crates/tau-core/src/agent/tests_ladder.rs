@@ -172,7 +172,9 @@ fn agent_wish_at(
 /// by the caller in tokens.
 fn om_config(observe_threshold: u64) -> crate::config::Om {
     crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold,
         reflect_threshold: 100_000,
         buffer_increment: 230,

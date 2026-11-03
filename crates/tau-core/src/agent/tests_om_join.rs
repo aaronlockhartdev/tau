@@ -70,7 +70,9 @@ async fn a_cycle_committing_during_the_join_moves_the_settles_plan() {
     // ~505) clears it. The 250-increment floor lets one promote drain both
     // durable chunks (#392's target math).
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 400,
         reflect_threshold: 100_000,
         buffer_increment: 250,
@@ -256,7 +258,9 @@ async fn the_cycle_skips_raw_the_observation_cursor_has_covered() {
         ..Default::default()
     };
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 400,
         reflect_threshold: 100_000,
         buffer_increment: 300,

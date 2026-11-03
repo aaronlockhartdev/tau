@@ -25,7 +25,9 @@ async fn om_crosses_observe_and_reflect_and_every_request_carries_a_user_query()
         parent = Some(e.id);
     }
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -142,7 +144,9 @@ async fn om_runs_notify_the_status_hook_in_order() {
         parent = Some(e.id);
     }
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -222,7 +226,9 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
         parent = Some(e.id);
     }
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
@@ -325,7 +331,9 @@ async fn a_turn_end_spawns_the_buffer_cycle_on_a_crossed_interval() {
         parent = Some(e.id);
     }
     let cfg = crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1_000,
         reflect_threshold: 2_000,
         buffer_increment: 230,

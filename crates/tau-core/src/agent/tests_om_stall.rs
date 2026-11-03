@@ -7,7 +7,9 @@ use tau_protocol::Diagnostic;
 /// 230-token buffer increment — the cycles' interval at these volumes.
 fn small_om() -> crate::config::Om {
     crate::config::Om {
-        om_model: String::new(),
+        model: String::new(),
+        om_model: None,
+        generation: crate::config::GenerationProfile::default(),
         observe_threshold: 1000,
         reflect_threshold: 100_000,
         buffer_increment: 230,
