@@ -52,6 +52,11 @@ pub enum TurnEndAction {
     },
     Buffer {
         transcript: String,
+        span: ObservedSpan,
+        /// The raw tokens the span covers — what the chunk counts, so the
+        /// promote target (a raw-window quantity) reads coverage the
+        /// observation's compression cannot understate (#399).
+        coverage: u32,
     },
     Done,
 }
@@ -83,9 +88,9 @@ impl OmState {
                 }
                 *action = TurnEndAction::Done;
             }
-            TurnEndAction::Buffer { .. } => {
+            TurnEndAction::Buffer { span, coverage, .. } => {
                 if !parsed.degenerate && !parsed.observations.trim().is_empty() {
-                    self.apply_buffer(store, &parsed.observations)?;
+                    self.apply_buffer(&parsed.observations, span, *coverage);
                 }
                 *action = TurnEndAction::Done;
             }
@@ -164,29 +169,23 @@ impl OmState {
         Ok(())
     }
 
-    /// Apply one buffered observation over the entries NOT already covered
-    /// by a previous run (the buffer cursor keeps runs disjoint, mastra's
-    /// `lastBufferedAtTokens`): no observation-cursor advance and no save —
-    /// the buffer is in memory until activation (the shared tail of the
-    /// observe path).
-    fn apply_buffer(
-        &mut self,
-        store: &mut SessionStore,
-        observations: &str,
-    ) -> Result<(), OmError> {
-        let entries = self.unbuffered(store)?;
-        let Some(last) = entries.last() else {
-            return Ok(());
-        };
-        let first = entries.first().unwrap_or(last);
-        let range = format!("{}:{}", first.id, last.id);
+    /// Apply one buffered observation over the plan's bounded slice (the
+    /// buffer cursor keeps runs disjoint, mastra's `lastBufferedAtTokens`):
+    /// no observation-cursor advance and no save — the buffer is in memory
+    /// until activation (the shared tail of the observe path). The chunk
+    /// counts the raw tokens the slice covers, not the observation's
+    /// compressed tokens: the promote target is a raw-window quantity, and a
+    /// coverage understated by compression computes the next target from a
+    /// window no gate can see (#399).
+    fn apply_buffer(&mut self, observations: &str, span: &ObservedSpan, coverage: u32) {
+        let range = format!("{}:{}", span.first_id, span.last_id);
         let id = om::generate_group_id(observations);
         let wrapped = om::wrap_in_observation_group(observations, &range, &id, None);
         let chunk = BufferedChunk {
-            range: (first.id.clone(), last.id.clone()),
-            last_ts: last.timestamp,
+            range: (span.first_id.clone(), span.last_id.clone()),
+            last_ts: span.last_ts,
             text: wrapped,
-            tokens: om::token_count(observations),
+            tokens: coverage,
         };
         // The record is the durable chunk store (ticket #86 P2): the sync
         // path writes there too, so the turn-end write-back merge (which
@@ -194,7 +193,6 @@ impl OmState {
         // chunk.
         self.record.buffered_chunks.push(chunk.clone());
         self.buffered.push(chunk);
-        self.buffer_cursor = Some(last.id.clone());
-        Ok(())
+        self.buffer_cursor = Some(span.last_id.clone());
     }
 }

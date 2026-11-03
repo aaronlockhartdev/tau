@@ -66,14 +66,16 @@ pub(crate) async fn buffer_cycle(
 ) {
     // Phase 1 (under the lock): fresh record + candidates. The spawn-site
     // snapshot may be stale if the turn advanced; the file wins.
-    let Some((candidates, candidate_tokens, range)) = read_candidates(&inner, &config) else {
+    let Some((candidates, coverage, range, volume)) = read_candidates(&inner, &config) else {
         return;
     };
 
-    // Trickle floor (D7): below half an interval, no chunk and no LLM
-    // call — the interval is consumed (the in-process boundary advanced at
-    // spawn) and the tail rides raw until the next crossing.
-    if candidate_tokens < config.buffer_tokens / 2 {
+    // Trickle floor (D7): the spawned volume — all not-yet-buffered
+    // material, not the call's bounded slice — below half an interval gets
+    // no chunk and no LLM call; the interval is consumed (the in-process
+    // boundary advanced at spawn) and the tail rides raw until the next
+    // crossing.
+    if volume < config.buffer_tokens / 2 {
         clear_inflight(&inner);
         return;
     }
@@ -120,12 +122,17 @@ pub(crate) async fn buffer_cycle(
         &inner,
         &candidates,
         range,
-        candidate_tokens,
+        coverage,
         text,
         boundary,
         &addressed,
     );
 }
+
+/// What one background slice call consumes: the bounded entries, their raw
+/// coverage, the covered range, and the whole spawned volume the trickle
+/// floor gates on.
+type SliceBatch = (Vec<crate::session::Entry>, u32, (String, String), u32);
 
 /// The cycle's phase 1 (D4): under the lock, load the freshest record,
 /// rebuild the in-memory buffer mirror (the newest committed range end —
@@ -134,7 +141,7 @@ pub(crate) async fn buffer_cycle(
 fn read_candidates(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     config: &OmConfig,
-) -> Option<(Vec<crate::session::Entry>, u32, (String, String))> {
+) -> Option<SliceBatch> {
     let mut g = inner.lock();
     let record = match OmState::load_record(&mut g.store) {
         Ok(record) => record,
@@ -164,27 +171,28 @@ fn read_candidates(
             return None;
         }
     };
-    let tokens = live.pending_tokens(&candidates);
     // The turn-end pass may have committed everything the spawn snapshot
     // saw (D4: the file cursor wins over the snapshot): nothing left to
     // buffer. Consume the trigger and stop — a panic under the session's
     // inner lock would leave a half-mutated `Inner` that no later reader
     // could tell apart from a good one.
-    let Some(range) = candidate_range(&candidates) else {
+    if candidates.is_empty() {
         g.om_inflight = None;
         return None;
-    };
-    Some((candidates, tokens, range))
-}
-
-/// The (first, last) entry id range of a candidate batch; `None` for an
-/// empty batch (the turn-end pass committed everything the spawn snapshot
-/// saw) — the caller consumes the in-flight flag in that case.
-fn candidate_range(candidates: &[crate::session::Entry]) -> Option<(String, String)> {
-    candidates
-        .first()
-        .zip(candidates.last())
-        .map(|(first, last)| (first.id.clone(), last.id.clone()))
+    }
+    // The cycle's call is the next increment-sized slice, not every
+    // unbuffered entry: the same bound the foreground Buffer arm honors,
+    // so no Observer call's input is a whole window (#399).
+    let (span, _, coverage) = live.observe_head(&candidates, config.buffer_increment());
+    let cut = candidates
+        .iter()
+        .position(|e| e.id == span.last_id)
+        .map_or(candidates.len(), |i| i + 1);
+    let head = candidates[..cut].to_vec();
+    // The floor in `buffer_cycle` reads this, the volume the trigger
+    // covered, not the clipped slice's coverage.
+    let volume = live.pending_tokens(&candidates);
+    Some((head, coverage, (span.first_id, span.last_id), volume))
 }
 
 /// The cycle's phase 2 (D10): the commit point — under the lock, reload
@@ -307,34 +315,5 @@ mod tests {
         let cfg = config(30_000, 0);
         assert!(!boundary_crossed(60_000, &cfg, 0, 0));
         assert!(!boundary_crossed(60_000, &cfg, 12_000, 30_000));
-    }
-
-    #[test]
-    fn empty_candidate_batch_yields_no_range_not_a_panic() {
-        // The turn-end pass may commit everything the spawn snapshot saw
-        // before the cycle's phase-1 read (D4: the file cursor wins): an
-        // empty batch must degrade to `None`, never panic — a panic under
-        // the session's inner lock leaves a half-mutated `Inner` behind
-        // with nothing to signal it.
-        assert_eq!(candidate_range(&[]), None);
-        let a = entry("a", 1);
-        let b = entry("b", 2);
-        assert_eq!(
-            candidate_range(&[a.clone(), b.clone()]),
-            Some(("a".to_owned(), "b".to_owned()))
-        );
-    }
-
-    fn entry(id: &str, ts: u64) -> crate::session::Entry {
-        crate::session::Entry {
-            id: id.to_owned(),
-            parent: None,
-            timestamp: ts,
-            kind: EntryKind::User,
-            payload: serde_json::Value::Null,
-            blob: None,
-            first_kept_entry_id: None,
-            crc: None,
-        }
     }
 }

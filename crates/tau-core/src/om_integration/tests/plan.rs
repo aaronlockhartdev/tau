@@ -93,9 +93,7 @@ fn plan_buffers_below_activation_and_commit_holds_the_chunk() {
         other => panic!("expected Buffer, got {other:?}"),
     }
     let result = turn_result("<observations>chunk</observations>");
-    let mut action = TurnEndAction::Buffer {
-        transcript: String::new(),
-    };
+    let mut action = state.plan(&unobserved);
     state.commit(&mut store, &mut action, &result).unwrap();
     assert_eq!(state.buffered.len(), 1);
     assert!(state.record.active_observations.is_empty());
@@ -298,5 +296,128 @@ fn plan_gates_on_the_raw_window_a_promote_left_behind_the_chunks() {
     match state.plan(&unobserved) {
         TurnEndAction::Done => {}
         other => panic!("expected Done under activation, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_buffer_arm_observes_the_next_increment_slice_not_the_tail() {
+    // #399: the Buffer arm is a bounded Observer call. 40 × 1000 chars ≈ 10k
+    // raw: over the 6k increment, under the 30k activation. The slice covers
+    // one increment, the chunk counts the raw it covers, and the rest of the
+    // tail stays unbuffered — the next slice starts where this one ended.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 40, 1_000);
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
+    let unobserved = state.unobserved(&mut store).unwrap();
+    let mut action = state.plan(&unobserved);
+    match &action {
+        TurnEndAction::Buffer {
+            span,
+            coverage,
+            transcript,
+        } => {
+            // 1000 chars ≈ 250 tokens: 24 entries fit the 6k increment; the
+            // 25th passes it.
+            assert_eq!(*coverage, 6_000, "the slice is not increment-sized");
+            assert_eq!(span.first_id, "00000001");
+            assert_eq!(span.last_id, "00000024", "the slice overran the increment");
+            assert_eq!(
+                transcript.matches(&"w".repeat(1_000)).count(),
+                24,
+                "the transcript is not the slice's entries"
+            );
+        }
+        other => panic!("expected Buffer, got {other:?}"),
+    }
+    state
+        .commit(
+            &mut store,
+            &mut action,
+            &turn_result("<observations>tiny</observations>"),
+        )
+        .unwrap();
+    let chunk = &state.buffered[0];
+    assert_eq!(chunk.range, ("00000001".into(), "00000024".into()));
+    assert_eq!(
+        chunk.tokens, 6_000,
+        "the chunk counts the observation's tokens, not the raw it covers (#399)"
+    );
+    assert_eq!(state.buffer_cursor.as_deref(), Some("00000024"));
+    // The 16k of tail past the slice stands untouched: the next slice starts
+    // at entry 25 and covers the remainder (4k, under one increment).
+    let unobserved = state.unobserved(&mut store).unwrap();
+    match state.plan(&unobserved) {
+        TurnEndAction::Buffer { span, coverage, .. } => {
+            assert_eq!(
+                span.first_id, "00000025",
+                "the next slice re-covered material the chunk holds"
+            );
+            assert_eq!(coverage, 4_000);
+        }
+        other => panic!("expected Buffer, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_fully_buffered_window_plans_done_not_an_empty_slice() {
+    // #399: the durable chunks can cover the whole window while the gate
+    // quantity stays past the increment (buffering advances no observation
+    // cursor, #392). The Buffer arm's tail is then empty — the plan is Done,
+    // not a span over no entries.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 40, 1_000);
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
+    let chunk = BufferedChunk {
+        range: ("00000001".into(), "00000040".into()),
+        last_ts: 100,
+        text: "observed the whole window".into(),
+        tokens: 10_000,
+    };
+    state.buffered = vec![chunk.clone()];
+    state.record.buffered_chunks = vec![chunk];
+    state.buffer_cursor = Some("00000040".into());
+    let unobserved = state.unobserved(&mut store).unwrap();
+    // The leg's premise: the gate quantity is the raw window, unchanged by
+    // buffering, and the arm's gate passes.
+    assert!(state.pending_tokens(&unobserved) >= state.config.buffer_increment());
+    match state.plan(&unobserved) {
+        TurnEndAction::Done => {}
+        other => panic!("expected Done over a fully-buffered window, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_empty_window_with_a_zero_threshold_plans_done() {
+    // #399: `observe_threshold = 0` is a legal config and clears activation
+    // on zero raw tokens. With the cursor past every entry the window is
+    // empty — the plan is Done, not a span over no entries.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 3, 100);
+    let om = crate::config::Om {
+        observe_threshold: 0,
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let record = OmRecord {
+        cursor: Some(crate::om::Cursor {
+            entry_id: "00000003".into(),
+            timestamp: u64::MAX,
+        }),
+        ..OmRecord::default()
+    };
+    let mut state = OmState::from_config(&om, record);
+    let unobserved = state.unobserved(&mut store).unwrap();
+    assert!(unobserved.is_empty(), "the cursor is past every entry");
+    match state.plan(&unobserved) {
+        TurnEndAction::Done => {}
+        other => panic!("expected Done over an empty window, got {other:?}"),
     }
 }

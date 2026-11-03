@@ -286,14 +286,11 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     assert_eq!(record.om_model, "model", "{record:?}");
     let chunk = &record.buffered_chunks[0];
     assert_eq!(chunk.range.0, entries[0].id);
-    let tool_id = entries
-        .iter()
-        .rev()
-        .find(|e| e.kind == EntryKind::Tool)
-        .expect("the tool entry")
-        .id
-        .clone();
-    assert_eq!(chunk.range.1, tool_id);
+    // The slice is bounded: it stops before the entry that crosses the
+    // increment on its own — the round's read tool (~1.1k raw) rides whole
+    // to the next slice, so the chunk covers the four small entries only
+    // (#399).
+    assert_eq!(chunk.range.1, entries[3].id);
     // Below the observe threshold (1000), so no observe fires. Assert the
     // relationship, not the exact count: the plan section carries the
     // session's plan path, whose length varies by OS, so the count is
@@ -481,9 +478,18 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     let events = rig.events();
     Rig::settled_cleanly(&events);
 
-    // Main 7 + the cycle + the turn-end observe sweep (all rounds are
-    // unobserved at the end: 2.4k ≥ 1k).
-    assert_eq!(served.load(Ordering::SeqCst), 9);
+    // 7 main + at least one background slice + the turn-end observe sweep
+    // (all rounds are unobserved at the end: 2.4k ≥ 1k). The spawned
+    // cycles are 1–2: each mid-loop crossing spawns when no cycle is
+    // in flight, and the in-flight flag clears at the cycle's commit —
+    // scheduling decides whether the last crossing finds it clear.
+    // Mechanism pins below: 7 main calls, the promoted chunk in the final
+    // call's context, the cursor at the bounded chunk's last entry.
+    let served = served.load(Ordering::SeqCst);
+    assert!(
+        (9..=10).contains(&served),
+        "served {served}, outside 7 main + 1..2 slices + the sweep"
+    );
 
     // The final main-turn call's input carries the PROMOTED observation (a
     // `role: system` item, #96) — the mid-loop activation ran before it
@@ -499,29 +505,40 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
         "the final call's context lacks the promoted observation"
     );
 
-    // The promotion committed a record with the cursor at round 1's tool
-    // entry (an intermediate om entry, before the turn-end sweep's).
+    // The promotion committed a drained record with the cursor inside
+    // round 1: the promote fires mid-round-2, and how many bounded slices
+    // the background cycles committed by then is scheduling (chunk 1 is
+    // always ids 00000001..00000004; a second slice 00000005.. rides on
+    // Linux, so the cursor is 4 there, 5 locally — both round 1).
     let entries = rig.entries();
-    let tool_ids: Vec<&str> = entries
-        .iter()
-        .filter(|e| e.kind == EntryKind::Tool)
-        .map(|e| e.id.as_str())
-        .collect();
-    assert_eq!(tool_ids.len(), 6);
+    let round1 = [
+        entries[2].id.as_str(),
+        entries[3].id.as_str(),
+        entries[4].id.as_str(),
+    ];
     let promoted = entries
         .iter()
         .filter(|e| e.kind == EntryKind::Om)
         .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
-        .find(|r| r.cursor.as_ref().is_some_and(|c| c.entry_id == tool_ids[1]));
+        .find(|r| {
+            r.cursor
+                .as_ref()
+                .is_some_and(|c| round1.contains(&c.entry_id.as_str()))
+        });
     assert!(
         promoted.is_some(),
-        "no record with the cursor at round 1's read entry: {entries:?}"
+        "no record with the cursor inside round 1: {entries:?}"
     );
+    let promoted = promoted.expect("checked");
     assert!(
-        promoted
-            .expect("checked")
-            .active_observations
-            .contains("observed the work")
+        promoted.buffered_chunks.is_empty(),
+        "the promote drained the chunks"
+    );
+    assert!(promoted.active_observations.contains("observed the work"));
+    assert!(
+        promoted.active_observations.contains("00000001:00000004"),
+        "the first promoted group is the bounded slice: {}",
+        promoted.active_observations
     );
 }
 

@@ -292,7 +292,7 @@ impl OmState {
                     )
                     .await?
                 }
-                TurnEndAction::Buffer { transcript } => {
+                TurnEndAction::Buffer { transcript, .. } => {
                     let request = Self::observer_request(model, transcript);
                     super::retry::call_with_retry(
                         provider,
@@ -383,6 +383,13 @@ impl OmState {
         if om::should_reflect(self.record.observation_tokens, &self.config) {
             return TurnEndAction::Reflect { level: 0 };
         }
+        if unobserved.is_empty() {
+            // Nothing unobserved, no paid call. A legal `observe_threshold = 0`
+            // clears activation on an empty window, and `observe_head`'s span
+            // needs a first entry — the empty window is Done, not an empty
+            // Observer round-trip (#399).
+            return TurnEndAction::Done;
+        }
         if self.activation_reached(raw) {
             // A settle observes a bounded span, not the whole window: the bound
             // is the activation threshold, the volume one Observer pass is sized
@@ -392,12 +399,20 @@ impl OmState {
             // Observer call (#394; the gate is #392). The span the Observer was
             // shown is the span the commit stamps, so the tail stays unobserved
             // for the next settle.
-            let (span, transcript) = self.observe_head(unobserved);
+            let bound = self
+                .config
+                .observe_threshold_for(self.record.observation_tokens);
+            let (span, transcript, _) = self.observe_head(unobserved, bound);
             return TurnEndAction::Observe { transcript, span };
         }
         if self.config.buffer_tokens == 0 && raw >= self.config.buffer_increment() {
-            // The transcript covers only the not-yet-buffered tail of the
-            // unobserved range (the buffer cursor keeps runs disjoint).
+            // The slice covers only the not-yet-buffered tail of the
+            // unobserved range (the buffer cursor keeps runs disjoint), and
+            // only the next increment of it: the Buffer arm is a bounded
+            // Observer call, never a call whose input is the whole tail
+            // (#399). The chunk it stores counts the raw tokens the slice
+            // covers, so the promote target — a raw-window quantity — reads
+            // coverage the observation's compression cannot understate.
             let start = match &self.buffer_cursor {
                 Some(id) => match unobserved.iter().position(|e| e.id == *id) {
                     Some(i) => i + 1,
@@ -405,34 +420,42 @@ impl OmState {
                 },
                 None => 0,
             };
+            let tail = &unobserved[start..];
+            if tail.is_empty() {
+                // The durable chunks already cover the window: Done, not an
+                // empty span (#399).
+                return TurnEndAction::Done;
+            }
+            let (span, transcript, coverage) =
+                self.observe_head(tail, self.config.buffer_increment());
             return TurnEndAction::Buffer {
-                transcript: transcript(&unobserved[start..]),
+                transcript,
+                span,
+                coverage,
             };
         }
         TurnEndAction::Done
     }
 
-    /// The span one Observer call covers: the leading entries of the unobserved
-    /// window, up to the activation threshold, and that span's transcript. The
-    /// threshold is the volume one Observer pass is sized for (spec §4: raw
-    /// oscillates between the retention floor and the threshold), so a window
-    /// that clears activation by more than that — a sunken session's history, a
-    /// first settle over a frozen cursor — is observed a threshold-sized slice
-    /// per settle instead of in one call whose input is the whole window
-    /// (#394; the gate is #392).
+    /// The span one Observer call covers: the leading entries of the given
+    /// window, up to `bound`, and that span's transcript plus the raw tokens
+    /// it covers. The bound is the volume one Observer pass is sized for —
+    /// the activation threshold at the observe arm (spec §4: raw oscillates
+    /// between the retention floor and the threshold), the buffer increment
+    /// at the Buffer arm (#399). A window that clears the bound by more than
+    /// that — a sunken session's history, a first settle over a frozen
+    /// cursor — is observed a bound-sized slice per settle instead of in one
+    /// call whose input is the whole window (#394; the gate is #392).
     ///
     /// Two floors keep the span worth a round-trip. It ends at an entry
-    /// boundary, the way the §4 window cut does, so a tool call and its result
-    /// stay in one span. And it reaches the first entry that carries text: a
-    /// span of content-less entries (an opening entry with an empty payload) is
-    /// a call that observes nothing, and the cursor would advance over material
-    /// the Observer was never shown. A window at activation is never observed by
-    /// nothing.
+    /// boundary, the way the §4 window cut does, so a tool call and its
+    /// result stay in one span. And it reaches the first entry that carries
+    /// text: a span of content-less entries (an opening entry with an empty
+    /// payload) is a call that observes nothing, and the cursor would advance
+    /// over material the Observer was never shown. A window at activation is
+    /// never observed by nothing.
     #[must_use]
-    fn observe_head(&self, unobserved: &[Entry]) -> (ObservedSpan, String) {
-        let bound = self
-            .config
-            .observe_threshold_for(self.record.observation_tokens);
+    pub fn observe_head(&self, unobserved: &[Entry], bound: u32) -> (ObservedSpan, String, u32) {
         // The span reaches the first entry with prompt material, so the Observer
         // is given something to observe.
         let content_floor = unobserved
@@ -450,7 +473,7 @@ impl OmState {
             len += 1;
         }
         let head = &unobserved[..len];
-        (ObservedSpan::of(head), transcript(head))
+        (ObservedSpan::of(head), transcript(head), seen)
     }
 
     /// The Reflector prompt for a level (spec §4): the frozen variant

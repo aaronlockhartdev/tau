@@ -345,3 +345,50 @@ async fn continuous_settles_activate_on_tokens_alone() {
         "the test's own premise: the rounds sat idle"
     );
 }
+
+#[tokio::test]
+async fn settles_buffer_bounded_slices_never_the_whole_window() {
+    // #399: every paid Observer call a settle makes is a bounded slice, and
+    // the chunks count the raw they cover. Kill-switch config; 28 × 2_000
+    // chars ≈ 14k raw: over two increments, under the 30k activation. Two
+    // settles buffer two 6k slices; the third takes the 2k remainder as the
+    // window's last slice; a fourth finds a fully-buffered window and plans
+    // Done without a call (#399).
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 28, 2_000);
+    let om = crate::config::Om {
+        buffer_tokens: 0,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
+    let recorder = std::sync::Arc::new(RecordingProvider::new("observed the slice"));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    for _ in 0..4 {
+        let mut with_store =
+            |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+        state
+            .settle_turn(&mut with_store, &provider, "om-model", None)
+            .await
+            .unwrap();
+    }
+    // Two 6k slices, then the 2k remainder (the arm's gate is the raw
+    // window, so the tail's last slice rides out the window), and a fourth
+    // settle finds no unbuffered material and calls nothing. No call ever
+    // carried more than a slice — the whole-window request is gone.
+    assert_eq!(recorder.observer_calls(), 3, "the settle count is off");
+    let spans: Vec<usize> = recorder
+        .observer_transcripts()
+        .iter()
+        .map(|seen| seen.matches(&"w".repeat(2_000)).count())
+        .collect();
+    assert_eq!(spans, vec![12, 12, 4], "a call carried more than a slice");
+    let coverage: u32 = state.buffered.iter().map(|c| c.tokens).sum();
+    assert_eq!(
+        coverage, 14_000,
+        "the chunks do not count the raw they cover"
+    );
+    // Buffering advances no observation cursor: the gate quantity is the
+    // whole window the chunks stand for (#392), and the stall beside it.
+    assert!(state.record.cursor.is_none());
+    assert_eq!(state.record.pending_tokens, 14_000);
+}

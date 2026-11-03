@@ -217,6 +217,13 @@ impl AgentSession {
         // marks a window that stops shrinking, not one that sits above the
         // threshold while the drain works.
         self.record_om_stall(window_before);
+        // The turn-end trigger (#399): a turn with no tool round never reaches
+        // the mid-loop trigger, so a crossed interval at the settle would wait
+        // for the next turn's first tool round to spawn its slice. Spawn-only:
+        // the kill switch, the in-flight flag, and the activation rung are the
+        // mid-loop trigger's own rules, and the next settle's D13.1 join
+        // bounds the cycle.
+        self.om_mid_loop();
         Ok(())
     }
 
