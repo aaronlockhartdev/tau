@@ -117,6 +117,185 @@ fn promote_stops_at_the_boundary_and_keeps_the_rest_buffered() {
     assert_eq!(state.buffered[0].text, "obs two");
 }
 
+/// A buffered chunk the observation cursor already covers, for the #395 legs:
+/// the cursor has seen its range, so it is spent material.
+fn covered_chunk(first: &str, last: &str, tokens: u32, text: &str) -> BufferedChunk {
+    BufferedChunk {
+        range: (first.into(), last.into()),
+        last_ts: 100,
+        text: text.into(),
+        tokens,
+    }
+}
+
+#[test]
+fn a_chunk_the_cursor_covers_promotes_neither_text_nor_cursor() {
+    // The #395 pin. Ten raw entries (7500 tokens each); the cursor has observed
+    // through 00000006, and the two buffered chunks cover 00000001..00000004 —
+    // material the log already carries. The raw window (4 × 7500) is over the
+    // 6000 floor, so the walk selects both chunks; stamping the cursor at the
+    // second's end lands on 00000004, behind the 00000006 it started at, and
+    // the entries between the two are un-observed. Their text also re-appends.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 10, 30_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.record.cursor = Some(Cursor {
+        entry_id: "00000006".into(),
+        timestamp: 600,
+    });
+    state.record.active_observations = "prior observation".into();
+    state.buffered = vec![
+        covered_chunk("00000001", "00000002", 3000, "obs one"),
+        covered_chunk("00000003", "00000004", 3000, "obs two"),
+    ];
+    state.record.buffered_chunks = state.buffered.clone();
+
+    assert!(
+        !state.promote(&mut store).unwrap(),
+        "a chunk the cursor covers is spent: it compacts nothing"
+    );
+    assert_eq!(
+        state.record.cursor,
+        Some(Cursor {
+            entry_id: "00000006".into(),
+            timestamp: 600,
+        }),
+        "the cursor never moves behind the raw the promote did not cover"
+    );
+    assert!(
+        !state.record.active_observations.contains("obs one")
+            && !state.record.active_observations.contains("obs two"),
+        "spent material is not summarized into the log a second time: {:?}",
+        state.record.active_observations
+    );
+    assert!(
+        state.buffered.is_empty(),
+        "the spent chunks leave the buffer"
+    );
+    assert!(
+        state.record.buffered_chunks.is_empty(),
+        "and the durable record, or a reload re-promotes them"
+    );
+}
+
+#[test]
+fn a_covered_prefix_is_skipped_and_the_walk_promotes_from_the_first_open_chunk() {
+    // The positive: the cursor covers the walk's first two chunks and the third
+    // is open. Raw 00000005..00000006 (2 × 7500) is over the floor, so the
+    // third chunk promotes and the cursor moves forward from 00000004 to
+    // 00000006; the skipped pair reaches neither log nor cursor.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 6, 30_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.record.cursor = Some(Cursor {
+        entry_id: "00000004".into(),
+        timestamp: 400,
+    });
+    state.buffered = vec![
+        covered_chunk("00000001", "00000002", 3000, "obs one"),
+        covered_chunk("00000003", "00000004", 3000, "obs two"),
+        covered_chunk("00000005", "00000006", 3000, "obs three"),
+    ];
+    state.record.buffered_chunks = state.buffered.clone();
+
+    assert!(
+        state.promote(&mut store).unwrap(),
+        "the open chunk promotes"
+    );
+    assert_eq!(
+        state.record.cursor,
+        Some(Cursor {
+            entry_id: "00000006".into(),
+            timestamp: 100,
+        }),
+        "the cursor advances over the chunk the walk promoted"
+    );
+    assert!(state.record.active_observations.contains("obs three"));
+    assert!(
+        !state.record.active_observations.contains("obs one")
+            && !state.record.active_observations.contains("obs two"),
+        "the covered prefix reaches the log: {:?}",
+        state.record.active_observations
+    );
+    assert!(state.buffered.is_empty());
+}
+
+#[test]
+fn spent_chunks_drain_when_the_floor_leaves_nothing_to_remove() {
+    // The stale-target pin: raw sits at 5000 tokens, under the 6000 floor, so
+    // the removal target is 0 and the walk promotes nothing. The covered chunk
+    // must still drain, or every later activation recomputes the same target
+    // over the same spent chunk and it is buffered forever.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 2, 10_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.record.cursor = Some(Cursor {
+        entry_id: "00000002".into(),
+        timestamp: 200,
+    });
+    state.buffered = vec![covered_chunk("00000001", "00000002", 3000, "obs one")];
+    state.record.buffered_chunks = state.buffered.clone();
+
+    assert!(!state.promote(&mut store).unwrap());
+    assert!(
+        state.buffered.is_empty(),
+        "a spent chunk is not kept for an activation that can never take it"
+    );
+    assert!(state.record.buffered_chunks.is_empty());
+    assert_eq!(
+        state.record.cursor,
+        Some(Cursor {
+            entry_id: "00000002".into(),
+            timestamp: 200,
+        })
+    );
+}
+
+#[test]
+fn a_spent_chunk_at_the_tail_leaves_and_the_open_one_advances_the_cursor() {
+    // The vec holds commit order, not id order: a background cycle tail-pushes
+    // and `merge_turn_end` tail-appends (#395). The spent chunk (ending at 3,
+    // behind the cursor at 4) is LAST here. A prefix scan stops at the open head
+    // and never reaches it: it promotes both and stamps the cursor at 00000003,
+    // backwards from 00000006, un-observing entries 4..6 with the spent text in
+    // the log a second time.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 6, 30_000);
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
+    state.record.cursor = Some(Cursor {
+        entry_id: "00000004".into(),
+        timestamp: 400,
+    });
+    state.buffered = vec![
+        covered_chunk("00000005", "00000006", 3000, "obs five"),
+        covered_chunk("00000001", "00000003", 3000, "obs spent"),
+    ];
+    state.record.buffered_chunks = state.buffered.clone();
+
+    assert!(
+        state.promote(&mut store).unwrap(),
+        "the open chunk promotes"
+    );
+    assert!(state.record.active_observations.contains("obs five"));
+    assert!(
+        !state.record.active_observations.contains("obs spent"),
+        "the tail's spent text reached the log: {:?}",
+        state.record.active_observations
+    );
+    assert_eq!(
+        state.record.cursor,
+        Some(Cursor {
+            entry_id: "00000006".into(),
+            timestamp: 100,
+        }),
+        "the cursor advanced over the open chunk, never to the spent one's 3"
+    );
+    assert!(
+        state.buffered.is_empty() && state.record.buffered_chunks.is_empty(),
+        "the spent tail chunk leaves too, or every later target is computed over it"
+    );
+}
+
 #[test]
 fn promote_drains_the_durable_record_chunks() {
     // The record is the durable chunk store (ticket #86 P2): promote must

@@ -333,6 +333,55 @@ fn raw_window_anchors_the_newest_user_entry_when_the_tail_is_all_tool_calls() {
 }
 
 #[test]
+fn a_rewound_branchs_raw_window_starts_past_the_off_branch_cursor() {
+    // The assembly's own cursor walk shares `raw_after`'s rule (#395): the leaf
+    // moved to the second entry and a sixth was appended past it, so the
+    // cursor's id (the fifth) is off-branch. Its number is where the pass
+    // reached, so 1 and 2 — the shared prefix — stay covered and the window is
+    // the branch's own entry. Pre-fix the window was all three: the rewound
+    // material re-entered the request.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = SessionStore::for_workspace(dir.path(), "s1");
+    store.create().unwrap();
+    append_chain(
+        &mut store,
+        &[
+            (EntryKind::User, "a".repeat(900)),
+            (EntryKind::Assistant, "b".repeat(900)),
+            (EntryKind::User, "c".repeat(900)),
+            (EntryKind::Assistant, "d".repeat(900)),
+            (EntryKind::User, "e".repeat(900)),
+        ],
+    );
+    store.set_leaf("00000002").unwrap();
+    let forked = store
+        .append(
+            EntryKind::User,
+            json!({ "text": "fresh", "lane": "follow-up" }),
+            Some("00000002"),
+        )
+        .unwrap();
+    store.set_leaf(&forked.id).unwrap();
+    let all = store.entries_range(0, usize::MAX).unwrap();
+    let leaf = store.leaf().unwrap().map(|e| e.id);
+    let state = state_with_cursor_on("00000005");
+    let window = state.raw_window_from(&all, leaf.as_deref());
+    assert_eq!(
+        window
+            .tail
+            .iter()
+            .map(|e| e.id.as_str())
+            .collect::<Vec<_>>(),
+        [forked.id.as_str()],
+        "the window is the branch's own material: {window:?}"
+    );
+    assert!(
+        window.anchor.is_none(),
+        "the tail carries a user entry, so nothing is re-anchored: {window:?}"
+    );
+}
+
+#[test]
 fn raw_window_anchors_the_newest_user_entry_not_an_older_one() {
     // Sessions carry many user entries (steering, follow-ups, parent
     // messages). The anchor is the newest, so the model is pinned to the

@@ -189,3 +189,108 @@ fn a_reopened_buffer_pass_covers_only_the_new_tail() {
         other => panic!("expected Buffer, got {other:?}"),
     }
 }
+
+/// The same session rewound and continued: the leaf moves to entry 5, two
+/// entries are appended from it, and the leaf follows the new tip (the shape
+/// `Command::SessionBranch` leaves: it moves the leaf, and the appends that
+/// follow are parented on the branch, which never touches `OmState`). The active
+/// branch is 1..5 + the two new ids, so a cursor naming anything past 5 sits on
+/// the abandoned side.
+fn store_rewound_at_five(dir: &std::path::Path) -> SessionStore {
+    let mut store = store_with_text_entries(dir, 10, 4_000);
+    store.set_leaf("00000005").unwrap();
+    let mut parent = Some("00000005".to_string());
+    let mut tip = String::new();
+    for _ in 0..2 {
+        let entry = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "n".repeat(4_000), "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        tip = entry.id.clone();
+        parent = Some(entry.id);
+    }
+    store.set_leaf(&tip).unwrap();
+    store
+}
+
+#[test]
+fn a_reopen_over_a_rewound_branch_covers_only_the_new_material() {
+    // #395: the chunks end at 00000009, on the side the leaf left behind. The
+    // ids settle where its pass reached — a parent is minted before its child,
+    // so a branch's ids rise root-to-leaf and the branch's 1..5 prefix is that
+    // covered material. The whole-branch fallback re-covers the prefix; a clamp
+    // to the branch tip leaves the new pair unobserved. Neither: the window is
+    // the two entries past the cursor's number.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_rewound_at_five(dir.path());
+    let record = OmRecord {
+        buffered_chunks: vec![BufferedChunk {
+            range: ("00000001".into(), "00000009".into()),
+            last_ts: 100,
+            text: "observed the head".into(),
+            tokens: 120,
+        }],
+        cursor: Some(Cursor {
+            entry_id: "00000009".into(),
+            timestamp: 100,
+        }),
+        ..Default::default()
+    };
+    let state = OmState::from_config(&crate::config::Om::default(), record);
+    assert_eq!(state.buffer_cursor.as_deref(), Some("00000009"));
+    let tail = state.unbuffered(&mut store).unwrap();
+    let ids: Vec<&str> = tail.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["00000011", "00000012"],
+        "the reopened window is the branch's own material, not the prefix the chunks stand for"
+    );
+    assert_eq!(
+        state.unobserved(&mut store).unwrap().len(),
+        2,
+        "the observe window agrees: the prefix the cursor covered stays covered"
+    );
+}
+
+#[test]
+fn a_reopen_whose_cursor_is_past_the_whole_branch_observes_nothing() {
+    // The negative: the rewind left the branch entirely behind the cursor. The
+    // fallback made that window the whole branch — a settled session re-observes
+    // material its log already carries; the comparison makes it empty.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 4, 4_000);
+    store.set_leaf("00000002").unwrap();
+    let record = OmRecord {
+        cursor: Some(Cursor {
+            entry_id: "00000004".into(),
+            timestamp: 400,
+        }),
+        ..Default::default()
+    };
+    let state = OmState::from_config(&crate::config::Om::default(), record);
+    assert!(
+        state.unobserved(&mut store).unwrap().is_empty(),
+        "a branch the cursor walked past is not raw material"
+    );
+}
+
+#[test]
+fn a_reopen_with_an_unparseable_cursor_falls_back_to_the_branch() {
+    // The fallback's floor: a record this build cannot order (an id minted by
+    // another scheme) observes everything rather than skipping material no
+    // number can name.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_rewound_at_five(dir.path());
+    let record = OmRecord {
+        cursor: Some(Cursor {
+            entry_id: "legacy-head".into(),
+            timestamp: 100,
+        }),
+        ..Default::default()
+    };
+    let state = OmState::from_config(&crate::config::Om::default(), record);
+    assert_eq!(state.unobserved(&mut store).unwrap().len(), 7);
+}

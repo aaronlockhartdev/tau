@@ -1,60 +1,33 @@
 pub use self::commit::{ObservedSpan, TurnEndAction};
+use self::window::{branch_of, raw_after};
 use super::{
-    Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore, boundary_ts, entry_text,
-    idle_gap_secs, is_raw, om, transcript,
+    BufferedChunk, Cursor, Entry, IDLE_ACTIVATION_SECS, OmError, OmState, SessionStore,
+    boundary_ts, entry_text, idle_gap_secs, om, transcript,
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
-use tau_protocol::EntryKind;
 
-/// The assembled main-turn context: the stable `instructions` (system prompt)
-/// plus the OM-derived `input` items — the continuation hint and, per
-/// assembly, the observation groups (#96). `om_input_items` is a `Vec` so the
-/// groups append without reshaping this seam.
-#[derive(Debug, Clone, Default)]
-pub struct AssembledContext {
-    pub instructions: String,
-    pub om_input_items: Vec<InputEntry>,
-}
-
-/// The raw window: the material a main-turn assembly sends after the OM
-/// items. `tail` is the unobserved raw (the live compaction unit); `anchor` is
-/// the newest user entry on the branch, present only when `tail` does not
-/// already carry it (#334).
-#[derive(Debug, Clone, Default)]
-pub struct RawWindow {
-    /// The leading user anchor — the entry that keeps the request answering a
-    /// query. `None` when `tail` carries the newest user entry itself.
-    pub anchor: Option<Entry>,
-    /// The unobserved raw tail, §4 leading-tool-run cut applied.
-    pub tail: Vec<Entry>,
-}
-
-/// The active-branch's newest user entry (file order): the live instruction
-/// OM must never drop from a request (#334).
-fn newest_user(branch: &[Entry]) -> Option<&Entry> {
-    branch.iter().rev().find(|e| e.kind == EntryKind::User)
-}
-
-fn branch_of(store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-    store.branch().map_err(OmError::Session)
-}
-/// The raw entries strictly after `cursor_id` in `branch` (all of them when the
-/// cursor is absent or not on the branch).
-fn raw_after(branch: &[Entry], cursor_id: Option<&str>) -> Vec<Entry> {
-    let after = match cursor_id {
-        Some(id) => match branch.iter().position(|e| e.id == id) {
-            Some(i) => &branch[i + 1..],
-            None => branch,
-        },
-        None => branch,
+/// Whether the observation cursor already covers a buffered chunk: the chunk's
+/// range ends at or behind the cursor. The ids are minted session-sequentially
+/// (`SessionStore::mint_id`), so the id's number is the entry's place in the
+/// session's chronology and the comparison needs no branch walk; `<=` because a
+/// fork inherits the parent's chunks and then observes onto a chunk's exact end.
+/// A covered chunk is spent: appending its text re-summarizes raw the log
+/// carries, and stamping the cursor at its end moves the cursor backwards,
+/// un-observing the entries between it and the cursor (#395).
+fn chunk_covered(cursor: Option<&Cursor>, chunk: &BufferedChunk) -> bool {
+    let Some(cursor) = cursor else {
+        return false;
     };
-    after.iter().filter(|e| is_raw(e)).cloned().collect()
+    match (cursor.entry_id.parse::<u64>(), chunk.range.1.parse::<u64>()) {
+        (Ok(seen), Ok(end)) => end <= seen,
+        _ => false,
+    }
 }
+
 impl OmState {
     /// The unobserved raw on the active branch: the entries after the
-    /// cursor. A missing cursor means the whole branch; a cursor not on
-    /// this branch (a branch switch) means the branch is unobserved —
-    /// the cursor is path-scoped (spec §4).
+    /// cursor. A missing cursor means the whole branch; a cursor the branch
+    /// does not carry is cut by id number, as `raw_after` does (spec §4).
     pub fn unobserved(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
         let branch = branch_of(store)?;
         let Some(cursor) = &self.record.cursor else {
@@ -90,33 +63,65 @@ impl OmState {
         if self.buffered.is_empty() {
             return Ok(false);
         }
-        let chunks: Vec<om::ChunkTokens> = self
-            .buffered
-            .iter()
-            .map(|c| om::ChunkTokens(c.tokens))
+        // A chunk the cursor covers is spent material: its text re-summarizes
+        // raw the log carries, and stamping its end moves the cursor backwards
+        // (#395). Chunks arrive in commit order, not id order — a background
+        // cycle tail-pushes, `merge_turn_end` tail-appends, and a fork inherits
+        // the parent's vec — so a spent chunk sits anywhere in it. The walk
+        // tests each chunk against the cursor as it advances, so a chunk the
+        // promote itself covers counts as spent too.
+        let mut running = self.record.cursor.clone();
+        let mut open: Vec<usize> = Vec::new();
+        for (i, chunk) in self.buffered.iter().enumerate() {
+            if !chunk_covered(running.as_ref(), chunk) {
+                open.push(i);
+                running = Some(Cursor {
+                    entry_id: chunk.range.1.clone(),
+                    timestamp: chunk.last_ts,
+                });
+            }
+        }
+        let spent: Vec<usize> = (0..self.buffered.len())
+            .filter(|i| !open.contains(i))
             .collect();
         // The removal target is computed against the raw window, not the
         // stored field: a prior promote leaves chunk tokens there, and the
         // compressed chunks understate the volume the ladder must clear (#392).
-        let raw = self.unobserved_tokens(store)?;
-        let remove = om::projected_message_removal(&chunks, &self.config, raw);
-        if remove == 0 {
-            // Pending is already at or below the retention floor: the
-            // chunks stay buffered for the next activation.
-            return Ok(false);
-        }
-        // The returned count is the cumulative at the selected boundary;
-        // the cumulative sums are monotone, so the walk lands exactly on it.
+        let remove = if open.is_empty() {
+            0
+        } else {
+            let chunks: Vec<om::ChunkTokens> = open
+                .iter()
+                .map(|i| om::ChunkTokens(self.buffered[*i].tokens))
+                .collect();
+            let raw = self.unobserved_tokens(store)?;
+            om::projected_message_removal(&chunks, &self.config, raw)
+        };
         let mut count = 0usize;
-        let mut cumulative = 0u32;
-        for chunk in &self.buffered {
-            cumulative = cumulative.saturating_add(chunk.tokens);
-            count += 1;
-            if cumulative >= remove {
-                break;
+        if remove > 0 {
+            // The returned count is the cumulative at the selected boundary;
+            // the cumulative sums are monotone, so the walk lands exactly on it.
+            let mut cumulative = 0u32;
+            for i in &open {
+                cumulative = cumulative.saturating_add(self.buffered[*i].tokens);
+                count += 1;
+                if cumulative >= remove {
+                    break;
+                }
             }
         }
-        for chunk in &self.buffered[..count] {
+        if count == 0 {
+            // Pending is already at or below the retention floor: the open
+            // chunks stay buffered for the next activation. The spent ones
+            // leave — kept, they are the stale material every later target is
+            // computed over.
+            if !spent.is_empty() {
+                self.drain_to(store, &open)?;
+            }
+            return Ok(false);
+        }
+        for i in &open[..count] {
+            let chunk = &self.buffered[*i];
             self.record.active_observations = om::append_observation(
                 &self.record.active_observations,
                 &boundary_ts(),
@@ -128,15 +133,39 @@ impl OmState {
             });
         }
         self.record.observation_tokens = om::token_count(&self.record.active_observations);
-        self.record.pending_tokens = self.buffered.iter().skip(count).map(|c| c.tokens).sum();
-        self.buffered.drain(0..count);
-        // The record is the durable chunk store (ticket #86 P2): promote
-        // drains it in lockstep, or the promoted chunks would be re-promoted
-        // (their text appended to the log a second time) on the next
-        // activation.
-        self.record.buffered_chunks.drain(0..count);
-        self.save(store)?;
+        let kept: Vec<usize> = open[count..].to_vec();
+        self.record.pending_tokens = kept.iter().map(|i| self.buffered[*i].tokens).sum();
+        self.drain_to(store, &kept)?;
         Ok(true)
+    }
+
+    /// The promote's drain, in lockstep with the durable record: every chunk at
+    /// an index outside `kept` leaves both — spent material (its text reaches no
+    /// log) and promoted material alike. A promoted chunk that survives in the
+    /// record is re-promoted, its text appended a second time (ticket #86 P2).
+    /// The record is written only when something left: a promote that changes
+    /// nothing appends no `om` entry.
+    fn drain_to(&mut self, store: &mut SessionStore, kept: &[usize]) -> Result<(), OmError> {
+        let keep = |i: usize| kept.contains(&i);
+        if self.buffered.len() == kept.len() {
+            return Ok(());
+        }
+        self.buffered = self
+            .buffered
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| keep(*i))
+            .map(|(_, c)| c.clone())
+            .collect();
+        self.record.buffered_chunks = self
+            .record
+            .buffered_chunks
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| keep(*i))
+            .map(|(_, c)| c.clone())
+            .collect();
+        self.save(store).map_err(OmError::from)
     }
 
     #[must_use]
@@ -424,15 +453,6 @@ impl OmState {
         (ObservedSpan::of(head), transcript(head))
     }
 
-    /// The raw entries not yet covered by a buffered run: after the buffer
-    /// cursor, or the whole branch when no run has happened (the buffer
-    /// cursor never lags the observation cursor — promotion advances the
-    /// latter to the buffered material's end).
-    pub(super) fn unbuffered(&self, store: &mut SessionStore) -> Result<Vec<Entry>, OmError> {
-        let branch = branch_of(store)?;
-        Ok(raw_after(&branch, self.buffer_cursor.as_deref()))
-    }
-
     /// The Reflector prompt for a level (spec §4): the frozen variant
     /// (ADR-0004) when a frozen prefix is present — the prefix never
     /// enters the prompt body and stays byte-verbatim.
@@ -445,110 +465,8 @@ impl OmState {
             om::build_reflector_prompt_frozen(&self.record.frozen_prefix, source, level)
         }
     }
-
-    /// The assembled main-turn context (spec §4). `instructions` is the stable
-    /// system prompt: the base prompt and the observation framing. The
-    /// volatile observation content is NOT in `instructions` — each
-    /// observation group rides as its own `role: system` item in
-    /// `om_input_items` (#96), so the prompt stays byte-stable across appends and
-    /// reflector rewrites. The continuation hint is the trailing `role: user`
-    /// item, carried on every assembly once observations exist (#97, #334:
-    /// mastra's gate — the stable user item is the request's query anchor).
-    /// Pure over the record (no store access), so the `om_suggested_response`
-    /// consumption sticks when the loop runs it on the persistent state under
-    /// the lock.
-    pub fn assemble_context(&mut self, base: &str) -> AssembledContext {
-        let mut instructions = base.to_owned();
-        let observations = self.record.agent_observations();
-        if !observations.is_empty() {
-            instructions.push_str("\n\n");
-            instructions.push_str(om::OBSERVATION_CONTEXT_PROMPT);
-            instructions.push('\n');
-            instructions.push_str(om::OBSERVATION_CONTEXT_INSTRUCTIONS);
-        }
-        // One `role: system` message per observation group (mastra parity,
-        // #96), pushed before the hint so its "messages following are newer"
-        // framing stays true.
-        let mut om_input_items = Vec::new();
-        for group in om::parse_observation_groups(&observations) {
-            om_input_items.push(InputEntry::Message(InputMessage {
-                role: "system".to_owned(),
-                content: group.content,
-            }));
-        }
-        // The continuation hint rides as a `role: user` item on every assembly
-        // that has observations — mastra's form (their `om-continuation`
-        // message, gated on `activeObservations`). Two jobs, one item: the model
-        // must not react to the raw history vanishing (#97), and the request
-        // must always answer a query — a chat template that finds no user
-        // message once the observations (system) and tool calls are pruned
-        // rejects the request (#334). Per-assembly is what makes the second job
-        // structural; the text is constant, so the vLLM prefix cache survives,
-        // and only the suggested response varies — consumed once below.
-        if !observations.is_empty() {
-            // One-shot steering: hand the observer's suggested-response to the
-            // model alongside the hint (which says to follow it), then clear it
-            // so a later reflect/promote can't re-inject a stale signal.
-            let suggested = self.record.om_suggested_response.clone();
-            self.record.om_suggested_response = String::new();
-            let mut content = String::from("<system-reminder>");
-            content.push_str(om::OBSERVATION_CONTINUATION_HINT);
-            if !suggested.trim().is_empty() {
-                content.push_str("\n\nSuggested response: ");
-                content.push_str(&suggested);
-            }
-            content.push_str("</system-reminder>");
-            om_input_items.push(InputEntry::Message(InputMessage {
-                role: "user".to_owned(),
-                content,
-            }));
-        }
-        AssembledContext {
-            instructions,
-            om_input_items,
-        }
-    }
-    /// The raw window over already-read entries (pure — no store
-    /// access): the active-branch raw entries after the cursor (the
-    /// unobserved tail), bounded by the observe threshold via promotion,
-    /// not by a per-assembly floor prune. A leading tool run is cut so
-    /// no result is orphaned from its call (spec §4). The newest user entry
-    /// leads the window as `anchor` when the tail no longer carries one
-    /// (#334): the cursor advances past it freely, the entry never leaves
-    /// the request.
-    #[must_use]
-    pub fn raw_window_from(&self, entries: &[Entry], leaf_id: Option<&str>) -> RawWindow {
-        let branch = crate::session::branch(entries, leaf_id);
-        let unobserved = match self.record.cursor.as_ref() {
-            Some(cursor) => match branch.iter().position(|e| e.id == cursor.entry_id) {
-                Some(i) => &branch[i + 1..],
-                None => &branch[..],
-            },
-            None => &branch[..],
-        };
-        let mut tail: Vec<Entry> = unobserved.iter().filter(|e| is_raw(e)).cloned().collect();
-        // A window starting at a tool result would orphan it from its call:
-        // advance past the leading tool run (spec §4 cut rule). No floor prune:
-        // unsummarized raw stays in the window until promotion advances the cursor.
-        while let Some(entry) = tail.first() {
-            if entry.kind == EntryKind::Tool {
-                tail.remove(0);
-            } else {
-                break;
-            }
-        }
-        // A fallback, never a duplicate: when the tail carries a user entry that
-        // entry is the request's query, so nothing is prepended; a tail of only
-        // tool calls pulls the branch's newest user entry forward. The cut runs
-        // first, so the anchor cannot orphan a tool result, and older user
-        // entries stay observed (re-anchoring them would undo the §4 prune).
-        let anchor = if tail.iter().any(|e| e.kind == EntryKind::User) {
-            None
-        } else {
-            newest_user(&branch).cloned()
-        };
-        RawWindow { anchor, tail }
-    }
 }
 
+mod assemble;
 mod commit;
+mod window;
