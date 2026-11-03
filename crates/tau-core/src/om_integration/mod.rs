@@ -150,7 +150,7 @@ impl OmState {
     /// (`commit_chunk` writes the file and mirrors the state under the lock), so
     /// the mirror adds nothing and would resurrect chunks a promotion just
     /// drained (#107). The boundary is the max; the buffer cursor rides the
-    /// the largest boundary (a cycle sets its cursor and boundary together).
+    /// largest boundary (a cycle sets its cursor and boundary together).
     /// A fresh chunk that intersects a durable range is a late re-observe of
     /// the same raw — the durable range wins and the late one is dropped, so
     /// the promote never appends one span's text twice (#402).

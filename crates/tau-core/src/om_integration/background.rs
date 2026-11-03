@@ -219,6 +219,8 @@ fn read_candidates(
 /// once (#402).
 /// The record names the endpoint the pass ran at, so a chunk committed by a
 /// background cycle is attributed like a synchronous pass's (#348).
+// `pub(crate)`, not `pub(super)`: the agent test module drives the commit
+// point directly — the join interlock (#402) is an agent-level mechanism.
 pub(crate) fn commit_chunk(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     candidates: &[crate::session::Entry],

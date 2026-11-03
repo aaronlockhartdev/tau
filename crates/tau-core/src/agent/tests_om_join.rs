@@ -9,7 +9,46 @@ use crate::agent::testkit::*;
 /// The settle plans from the post-commit state: the state clone is taken
 /// again after the join, so raw a late commit already covered is never
 /// observed a second time.
-#[tokio::test]
+/// The in-flight cycle for the join leg: a real `commit_chunk` of entry 4,
+/// released the moment the join takes the handle. The boundary rides far
+/// past the branch's size: the turn-end trigger spawns no second cycle.
+fn spawn_late_commit(
+    inner2: std::sync::Arc<parking_lot::Mutex<crate::agent::Inner>>,
+    e4: crate::session::Entry,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        // The spin is a safety valve, not the mechanism. If it ever exhausts,
+        // the commit would land before the join — and the leg would pass
+        // vacuously — so the task asserts the join took the handle first. A
+        // task panic surfaces as a `JoinError`: the join reports `timed_out`,
+        // the settle plans from the pre-clone state, and the leg fails red
+        // with its own #402 message.
+        let mut released = false;
+        for _ in 0..100_000 {
+            if inner2.lock().om_inflight.is_none() {
+                released = true;
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(released, "the join must take the handle before the commit");
+        crate::om_integration::background::commit_chunk(
+            &inner2,
+            &[e4],
+            ("00000004".to_owned(), "00000004".to_owned()),
+            250,
+            "<observations>CYC-B</observations>".to_owned(),
+            100_000,
+            "test-model",
+        );
+    })
+}
+
+// `current_thread` is the leg's stage: the join's `timeout` is the main task's
+// first Pending, so the runtime polls the cycle task, which commits
+// synchronously, and the join resolves on its completion — the commit lands
+// between the pre-join clone and the plan with no timing dependency.
+#[tokio::test(flavor = "current_thread")]
 async fn a_cycle_committing_during_the_join_moves_the_settles_plan() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = session_in(dir.path());
@@ -69,9 +108,6 @@ async fn a_cycle_committing_during_the_join_moves_the_settles_plan() {
     });
     // The in-flight cycle: the real commit point, released the moment the
     // join takes the handle — so the commit lands after the pre-join clone.
-    // The boundary rides far past the branch's size: the turn-end trigger
-    // spawns no second cycle after this one.
-    let inner2 = agent.inner.clone();
     let e4 = agent
         .inner
         .lock()
@@ -82,23 +118,8 @@ async fn a_cycle_committing_during_the_join_moves_the_settles_plan() {
         .find(|e| e.id == "00000004")
         .cloned()
         .expect("entry 4 is on the branch");
-    agent.inner.lock().om_inflight = Some(tokio::spawn(async move {
-        for _ in 0..100_000 {
-            if inner2.lock().om_inflight.is_none() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        crate::om_integration::background::commit_chunk(
-            &inner2,
-            &[e4],
-            ("00000004".to_owned(), "00000004".to_owned()),
-            250,
-            "<observations>CYC-B</observations>".to_owned(),
-            100_000,
-            "test-model",
-        );
-    }));
+    let inner2 = agent.inner.clone();
+    agent.inner.lock().om_inflight = Some(spawn_late_commit(inner2, e4));
     agent.send("go1", Lane::FollowUp);
     agent.process().await.unwrap();
 
@@ -135,9 +156,6 @@ async fn a_cycle_committing_during_the_join_moves_the_settles_plan() {
     assert!(state.record.buffered_chunks.is_empty());
 }
 
-/// A commit whose range intersects a durable chunk is a late re-observe of
-/// the same raw: dropped, the interval stays consumed, the span is observed
-/// once. A disjoint commit still lands.
 /// A branch of eight entries with a durable chunk covering 3..7, plus a
 /// fresh agent over it. The tempdir must outlive the agent.
 fn overlap_fixture(dir: &tempfile::TempDir) -> AgentSession {
@@ -206,6 +224,9 @@ fn entry8(agent: &AgentSession) -> crate::session::Entry {
 }
 
 #[test]
+/// A commit whose range intersects a durable chunk is a late re-observe of
+/// the same raw: dropped, the interval stays consumed, the span is observed
+/// once.
 fn a_late_commit_that_intersects_a_durable_range_is_dropped() {
     // #402: a late commit over raw a durable chunk covers must not append a
     // second observation over the same span, and the drop must not touch the
