@@ -84,9 +84,11 @@ fn branch_after<'b>(branch: &'b [Entry], cursor_id: &str) -> &'b [Entry] {
 
 impl OmState {
     /// The raw entries not yet covered by a buffered run: after the buffer
-    /// cursor, or the whole branch when no run has happened (the buffer
-    /// cursor never lags the observation cursor — promotion advances the
-    /// latter to the buffered material's end).
+    /// cursor, or the whole branch when no run has happened. The cycles'
+    /// candidates are gated on the observation cursor too (their own
+    /// read), so this is the buffer-cursor view alone — the shape the
+    /// record's chunk ranges describe.
+    #[cfg(test)]
     pub(in crate::om_integration) fn unbuffered(
         &self,
         store: &mut SessionStore,
@@ -94,7 +96,6 @@ impl OmState {
         let branch = branch_of(store)?;
         Ok(raw_after(&branch, self.buffer_cursor.as_deref()))
     }
-
     /// The raw window over already-read entries (pure — no store
     /// access): the active-branch raw entries after the cursor (the
     /// unobserved tail), bounded by the observe threshold via promotion,

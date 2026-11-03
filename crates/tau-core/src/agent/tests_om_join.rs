@@ -223,6 +223,108 @@ fn entry8(agent: &AgentSession) -> crate::session::Entry {
         .expect("entry 8 is on the branch")
 }
 
+/// The settle's Observe advances the observation cursor without moving the
+/// buffer cursor. A cycle planning from the buffer cursor alone pays again
+/// for the span the settle just paid for — and with no durable chunk to
+/// intersect, #402's commit dedup cannot see the duplicate. The cycle's
+/// candidates are raw past BOTH cursors.
+#[tokio::test]
+async fn the_cycle_skips_raw_the_observation_cursor_has_covered() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = session_in(dir.path());
+    // Eight entries of 250 tokens: entry k carries MARK-k, so the Observer
+    // transcript names exactly the span the call was shown.
+    let mut parent: Option<String> = None;
+    for k in 1..=8 {
+        let e = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": format!("MARK-{k} {}", "y".repeat(992)), "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id);
+    }
+    // The durable record: the settle observed entries 1..4; nothing is
+    // buffered, so the buffer cursor is None and a buffer-cursor-only plan
+    // would hand the Observer the whole branch.
+    let record = crate::om::OmRecord {
+        cursor: Some(crate::om::Cursor {
+            entry_id: "00000004".into(),
+            timestamp: 400,
+        }),
+        ..Default::default()
+    };
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 400,
+        reflect_threshold: 100_000,
+        buffer_increment: 300,
+        buffer_tokens: None,
+        retries: crate::config::OmRetries::default(),
+    };
+    let provider = Arc::new(ScriptedProvider::new(vec![sse(
+        "<observations>POST</observations>",
+        &[],
+    )]));
+    // The cycle reloads the record from the file ("the file wins"), so the
+    // record has to be durable, not just the in-memory state.
+    let om_state = crate::om_integration::OmState::from_config(&cfg, record);
+    om_state.save(&mut store).unwrap();
+    let agent = AgentSession::new(SessionParams {
+        store,
+        system_prompt: "be terse".into(),
+        model: "test-model".into(),
+        tools: tools::tool_specs(),
+        cwd: dir.path().to_path_buf(),
+        provider: provider.clone(),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: TurnConfig::default(),
+        gates: None,
+        gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
+        om: Some(om_state),
+        om_route: crate::agent::OmRoute::Session,
+        subagents: None,
+        child: None,
+    });
+    let inner2 = agent.inner.clone();
+    let config = agent.inner.lock().om.as_ref().unwrap().config.clone();
+    let route: crate::provider::TurnProviderRef = provider.clone();
+    agent.inner.lock().om_inflight = Some(tokio::spawn(
+        crate::om_integration::background::buffer_cycle(
+            inner2,
+            config,
+            route,
+            "test-model".into(),
+            300,
+        ),
+    ));
+    let handle = agent
+        .inner
+        .lock()
+        .om_inflight
+        .take()
+        .expect("the cycle spawned");
+    tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+        .await
+        .expect("the cycle completed")
+        .expect("the cycle task ran");
+    let transcripts = provider.user_contents.lock().clone();
+    assert_eq!(transcripts.len(), 1, "the cycle served exactly one call");
+    let shown = transcripts[0].join("\n");
+    assert!(
+        shown.contains("MARK-5"),
+        "the cycle skipped raw past both cursors: {shown}"
+    );
+    for k in 1..=4 {
+        assert!(
+            !shown.contains(&format!("MARK-{k}")),
+            "the cycle re-showed the observed MARK-{k}"
+        );
+    }
+}
+
 #[test]
 /// A commit whose range intersects a durable chunk is a late re-observe of
 /// the same raw: dropped, the interval stays consumed, the span is observed

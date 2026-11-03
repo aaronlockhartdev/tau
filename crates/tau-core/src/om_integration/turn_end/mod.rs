@@ -245,7 +245,12 @@ impl OmState {
             }
         }
         let mut action = self.plan(&unobserved);
-        self.run_actions(with_store, provider, model, hook, &mut action)
+        // Backpressure (#409, mastra's `blockAfter` parity): under the drain
+        // line the settle pays its single backstop slice, as before. At or
+        // past it the settle drains bounded slices until the window drops
+        // under the line — the valve, its cost bound, and its honesty live
+        // in `drain`.
+        self.run_and_drain(with_store, provider, model, hook, &mut action)
             .await
     }
 
@@ -461,4 +466,5 @@ impl OmState {
 
 mod assemble;
 mod commit;
-mod window;
+mod drain;
+pub(in crate::om_integration) mod window;

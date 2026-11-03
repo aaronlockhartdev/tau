@@ -314,16 +314,27 @@ The compaction model is global, not per-provider (spec §4).
 | `buffer_increment` | int | 6000 | the Observer's one interval knob, measured on the raw tokens past the observation cursor: a background cycle fires once this much is new, its call is cut to this slice, and it is the raw volume retained after activation. Slices cut at entry boundaries: one entry larger than the increment rides whole (#392, #399, #408) |
 | `retries` | table | `{8, 8, 8}` | `{ observe, buffer, reflect }` — retries *after* the first failure, per trigger point, before the cycle is abandoned (#86) |
 
-The three thresholds are validated at the parse boundary: each must be ≤
-`u32::MAX` (`LoadError::OmThreshold`, ticket #46). An oversized threshold is a
-config error, never a launch panic.
+The three thresholds are validated at the parse boundary: each must be greater
+than zero (`LoadError::OmThresholdZero`) and ≤ `u32::MAX`
+(`LoadError::OmThreshold`, ticket #46). A zero `observe_threshold` drops the
+settle's plan gate and turns every entry into a blocking Observer call; a zero
+`reflect_threshold` collapses the ladder; a zero `buffer_increment` crosses a
+boundary per entry. Any of them is a config error, never a launch panic.
 
 `buffer_tokens` is retired (#408): the background slice is always on and
 `buffer_increment` is the only interval knob. A layer naming the old key fails
 the load, naming the successor — no silent ignore. The turn-end pass keeps its
 bounded backstop (at most one threshold-sized slice per settle, past the
 buffered range) and the promote, the free swap that makes buffered
-observations active with no model call. No config
+observations active with no model call. Past the **drain line** — 1.2× the
+effective (ramped) `observe_threshold` of unobserved raw at a settle — the
+backstop stops being one slice and drains: threshold-sized slices,
+oldest-first, until the window drops under the line, capped at a fixed slice
+count per settle so one settle's cost stays bounded (#409). A settle that also
+meets the reflect rung runs the reflect ladder first; the drain resumes at the
+next settle. A failing slice ends the drain and latches `om_failed`; the
+frozen-slice break ends it when a slice advances nothing, so no span is paid
+for twice; the turn is never blocked by memory lag. No config
 value can leave a past-activation window that the turn-end pass cannot see
 (#392); observation runs forward in the background, not deferred to the
 boundary (#399).
