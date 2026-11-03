@@ -333,7 +333,7 @@ fn raw_window_anchors_the_newest_user_entry_when_the_tail_is_all_tool_calls() {
 }
 
 #[test]
-fn a_rewound_branchs_raw_window_starts_past_the_off_branch_cursor() {
+fn raw_window_of_a_rewound_branch_starts_past_the_off_branch_cursor() {
     // The assembly's own cursor walk shares `raw_after`'s rule (#395): the leaf
     // moved to the second entry and a sixth was appended past it, so the
     // cursor's id (the fifth) is off-branch. Its number is where the pass
