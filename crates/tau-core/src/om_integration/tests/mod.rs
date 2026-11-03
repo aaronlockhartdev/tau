@@ -92,6 +92,69 @@ impl crate::provider::TurnProvider for RecordingProvider {
     }
 }
 
+/// A provider that answers the Observer calls in sequence — landed, degenerate,
+/// dead — repeating the last answer once the list runs out. The drain's
+/// sequence stage: which slice lands, which freezes, which dies.
+pub(crate) struct SequenceProvider {
+    calls: std::sync::Mutex<Vec<(bool, String)>>,
+    bodies: Vec<String>,
+}
+
+impl SequenceProvider {
+    /// `Some(text)` answers with that observation body; `None` fails with 500.
+    pub(crate) fn new(responses: &[Option<&str>]) -> Self {
+        Self {
+            calls: std::sync::Mutex::new(Vec::new()),
+            bodies: responses
+                .iter()
+                .map(|r| match r {
+                    Some(text) => crate::agent::testkit::sse_json(&format!(
+                        "<observations>{text}</observations>"
+                    )),
+                    None => String::new(),
+                })
+                .collect(),
+        }
+    }
+    pub(crate) fn observer_calls(&self) -> usize {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(is_observer, _)| *is_observer)
+            .count()
+    }
+}
+
+impl crate::provider::TurnProvider for SequenceProvider {
+    fn call<'a>(
+        &self,
+        request: &crate::provider::ResponseRequest,
+        sink: &'a mut dyn crate::provider::TurnSink,
+    ) -> crate::provider::ProviderTurn<'a> {
+        let is_observer = request
+            .instructions()
+            .is_some_and(|i| i == crate::om::observer_system_prompt());
+        let transcript = serde_json::to_string(&request.input()).unwrap_or_default();
+        let served = self.calls.lock().unwrap().len();
+        self.calls.lock().unwrap().push((is_observer, transcript));
+        let body = self
+            .bodies
+            .get(served)
+            .unwrap_or_else(|| self.bodies.last().expect("the sequence is non-empty"));
+        if body.is_empty() {
+            Box::pin(async {
+                Err(crate::provider::ProviderError::Status {
+                    status: 500,
+                    body: "canned sequence failure".into(),
+                })
+            })
+        } else {
+            crate::provider::canned(body).call(request, sink)
+        }
+    }
+}
+
 /// A provider every call fails with a transient 500, counting attempts. The
 /// drain's negative: the retry budget is the attempt count, and the pass
 /// returns the failure — the loop never spins on a dead endpoint (#409).

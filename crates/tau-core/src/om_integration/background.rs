@@ -167,11 +167,9 @@ fn read_candidates(
         buffer_cursor: None,
     };
     live.buffered = live.record.buffered_chunks.clone();
-    live.buffer_cursor = live
-        .record
-        .buffered_chunks
-        .last()
-        .map(|c| c.range.1.clone());
+    // The furthest chunk end, not the last committed: chunks arrive in
+    // commit order, not id order (#402).
+    live.buffer_cursor = super::last_chunk_end(&live.buffered);
     // The cycle's material: raw past BOTH cursors. Raw the observation
     // cursor has already covered is observed — re-showing it to the
     // Observer pays twice for one span, and with no durable chunk to

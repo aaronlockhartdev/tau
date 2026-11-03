@@ -6,12 +6,6 @@ use super::{
 };
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 
-/// The drain line's ratio (#409): 1.2× the observe threshold, mastra's
-/// `blockAfter: 1.2` parity. A window at 120% of the threshold is the point
-/// where "catch up when idle" stops being a schedule and becomes lag, so
-/// from there the settle drains the backlog itself.
-const DRAIN_AFTER: (u64, u64) = (12, 10);
-
 /// Whether the observation cursor already covers a buffered chunk: the chunk's
 /// range ends at or behind the cursor. The ids are minted session-sequentially
 /// (`SessionStore::mint_id`), so the id's number is the entry's place in the
@@ -253,52 +247,11 @@ impl OmState {
         let mut action = self.plan(&unobserved);
         // Backpressure (#409, mastra's `blockAfter` parity): under the drain
         // line the settle pays its single backstop slice, as before. At or
-        // past it the settle DRAINS: bounded slices, each planned from the
-        // state the previous slice's commit moved — the cursor rides the
-        // span the Observer was shown, so the next plan cannot re-show a
-        // span this settle just paid for. Lag blocks the settle, never the
-        // turn: a failed slice returns `Err` (the agent latches `om_failed`
-        // and the turn proceeds, #86), and a slice that advances nothing
-        // (a degenerate answer) stops the drain — never paying twice for
-        // one frozen span.
-        let draining = self.record.pending_tokens >= self.drain_line();
-        let cursor_before = self.record.cursor.clone();
-        self.run_actions(with_store, provider, model, hook, &mut action)
-            .await?;
-        if draining && self.record.cursor != cursor_before {
-            loop {
-                with_store(&mut |store| {
-                    unobserved = self.unobserved(store)?;
-                    Ok(())
-                })?;
-                self.record.pending_tokens = self.pending_tokens(&unobserved);
-                if self.record.pending_tokens < self.drain_line() {
-                    break;
-                }
-                let cursor_before = self.record.cursor.clone();
-                let mut slice = self.plan(&unobserved);
-                if matches!(slice, TurnEndAction::Done) {
-                    break;
-                }
-                self.run_actions(with_store, provider, model, hook, &mut slice)
-                    .await?;
-                if self.record.cursor == cursor_before {
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// The drain line (#409): `DRAIN_AFTER` × the session's observe
-    /// threshold. The settle's gate quantity is the same raw window the
-    /// plan gates on, so the line and the plan read one number.
-    fn drain_line(&self) -> u32 {
-        let threshold = u64::from(
-            self.config
-                .observe_threshold_for(self.record.observation_tokens),
-        );
-        u32::try_from(threshold * DRAIN_AFTER.0 / DRAIN_AFTER.1).unwrap_or(u32::MAX)
+        // past it the settle drains bounded slices until the window drops
+        // under the line — the valve, its cost bound, and its honesty live
+        // in `drain`.
+        self.run_and_drain(with_store, provider, model, hook, &mut action)
+            .await
     }
 
     /// The observe/reflect round-trips for one action, run to `Done`: the
@@ -513,4 +466,5 @@ impl OmState {
 
 mod assemble;
 mod commit;
+mod drain;
 pub(in crate::om_integration) mod window;
