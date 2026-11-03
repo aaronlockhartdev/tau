@@ -171,6 +171,27 @@ fn om_threshold_above_u32_max_is_rejected() {
 }
 
 #[test]
+fn a_zero_om_threshold_is_rejected_naming_the_field() {
+    // #409: a zero observe threshold drops the settle's plan gate — every
+    // entry becomes a blocking LLM call at the turn end; a zero reflect
+    // threshold collapses the ladder; a zero increment crosses a boundary
+    // per entry. All three fail the load by name.
+    for (field, toml) in [
+        ("om.observe_threshold", "[om]\nobserve_threshold = 0\n"),
+        ("om.reflect_threshold", "[om]\nreflect_threshold = 0\n"),
+        ("om.buffer_increment", "[om]\nbuffer_increment = 0\n"),
+    ] {
+        match load_from(toml, "").unwrap_err() {
+            LoadError::OmThresholdZero { field: got } => assert_eq!(got, field),
+            other => panic!("expected a zero-threshold error for {field}, got {other:?}"),
+        }
+    }
+    // The negative: the section alone loads on its defaults.
+    let cfg = load_from("[om]\nom_model = \"m\"\n", "").unwrap();
+    assert_eq!(cfg.om.observe_threshold, 30_000);
+}
+
+#[test]
 fn a_layer_naming_the_retired_buffer_tokens_key_fails_naming_the_successor() {
     // #408: `buffer_tokens` is retired — any layer naming it fails the load,
     // and the error names the interval knob that replaced it. The bound check

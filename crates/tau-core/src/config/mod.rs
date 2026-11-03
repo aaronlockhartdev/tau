@@ -248,6 +248,9 @@ impl Om {
             ("om.reflect_threshold", self.reflect_threshold),
             ("om.buffer_increment", self.buffer_increment),
         ] {
+            if value == 0 {
+                return Err(LoadError::OmThresholdZero { field });
+            }
             if value > u64::from(limit) {
                 return Err(LoadError::OmThreshold {
                     field,
@@ -817,6 +820,7 @@ impl LoadError {
             Self::Parse(path, _) | Self::OmBufferTokensRetired { path } => Some(path),
             Self::Io(_)
             | Self::OmThreshold { .. }
+            | Self::OmThresholdZero { .. }
             | Self::MissingContextWindow { .. }
             | Self::ZeroMaxTokens { .. }
             | Self::FleetCapInversion { .. }
@@ -835,6 +839,13 @@ pub enum LoadError {
         field: &'static str,
         value: u64,
         limit: u32,
+    },
+    /// An `[om]` threshold of zero (#409): the activation rung, the
+    /// Observer's slice bound, and the drain line all compute from it, so
+    /// zero folds the Observer into a per-entry call inside one settle.
+    /// A load-time refusal, never a grind.
+    OmThresholdZero {
+        field: &'static str,
     },
     /// A model with no declared `context_window` (#338): the context gate is
     /// computed from that fact, so a config that omits it leaves the session's
@@ -887,6 +898,10 @@ impl fmt::Display for LoadError {
             } => {
                 write!(f, "{field} = {value} exceeds the u32 token limit ({limit})")
             }
+            Self::OmThresholdZero { field } => write!(
+                f,
+                "{field} = 0: the activation rung, the Observer's slice bound, and the drain line compute from it, folding the Observer into a per-entry call; use at least 1"
+            ),
             Self::OmBufferTokensRetired { path } => write!(
                 f,
                 "{} names [om] buffer_tokens, which is retired: the background slice is always on; buffer_increment is the interval",

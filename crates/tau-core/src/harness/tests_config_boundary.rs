@@ -276,17 +276,33 @@ fn system_layer(base_url: &str, observe: u64) -> String {
     )
 }
 
-/// The `om` entries a session file holds — the durable witness that a memory
-/// pass ran.
-fn om_records(cwd: &Path, session: &str) -> usize {
+/// The observation cards a session file holds — the durable witness that a
+/// turn-end pass ran: an `om` record whose cursor advances the cursor the
+/// last `om` record left. A background cycle's chunk commit rides the same
+/// entry kind carrying the record it merged into, cursor where it was, so
+/// counting the kind — or a non-empty observation — cannot tell a pass
+/// from a cycle (#399).
+fn om_cards(cwd: &Path, session: &str) -> usize {
     let mut store = SessionStore::for_workspace(cwd, session);
     store.open().unwrap();
-    store
-        .entries_range(0, usize::MAX)
-        .unwrap()
-        .iter()
-        .filter(|e| e.kind == EntryKind::Om)
-        .count()
+    let mut seen: Option<String> = None;
+    let mut cards = 0;
+    for e in store.entries_range(0, usize::MAX).unwrap() {
+        if e.kind != EntryKind::Om {
+            continue;
+        }
+        let cursor = e
+            .payload
+            .get("cursor")
+            .and_then(|c| c.get("entry_id"))
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        if cursor.is_some() && cursor != seen {
+            cards += 1;
+        }
+        seen = cursor;
+    }
+    cards
 }
 
 /// A message sent and its turn settled: `ended` counts the `StreamEnd` events
@@ -367,21 +383,24 @@ async fn an_observe_threshold_edit_runs_the_next_turn_s_pass() {
         other => panic!("expected a session: {other:?}"),
     };
     let collected = collect_events(&core);
-    // ~1800 soft tokens per send: over the edited 1, under the opened 100k.
+    // ~1650 soft tokens per send: the second settle's window is ~3300 —
+    // over the edited 3,200, under the opened 100k, and under that
+    // threshold's drain line (1.2× = 3,840, #409): the pass is one slice,
+    // so the count pins one pass per settled turn.
     let work = "work through this task carefully ".repeat(200);
 
     send_and_settle(&core, &collected, &session, &work).await;
     assert_eq!(
-        om_records(project.path(), &session),
+        om_cards(project.path(), &session),
         0,
         "the threshold the session opened with runs no pass"
     );
 
-    write_config_fixture(system.path(), &system_layer(&base, 1));
+    write_config_fixture(system.path(), &system_layer(&base, 3_200));
     reload_system_layer(&core);
     send_and_settle(&core, &collected, &session, &work).await;
     assert_eq!(
-        om_records(project.path(), &session),
+        om_cards(project.path(), &session),
         1,
         "the edited threshold runs the session's next pass"
     );
@@ -390,9 +409,9 @@ async fn an_observe_threshold_edit_runs_the_next_turn_s_pass() {
     reload_system_layer(&core);
     send_and_settle(&core, &collected, &session, &work).await;
     assert_eq!(
-        om_records(project.path(), &session),
+        om_cards(project.path(), &session),
         1,
-        "a raised threshold runs no pass; the record the pass wrote stays"
+        "a raised threshold runs no pass; the card the pass wrote stays"
     );
 }
 

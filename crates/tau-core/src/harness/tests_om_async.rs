@@ -701,9 +701,12 @@ async fn a_mid_loop_promote_over_a_covered_chunk_moves_the_cursor_nowhere() {
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());
 
-    // Five main calls and the turn-end observe: the mid-loop rung is the
-    // no-LLM-call promote, and no interval cycle fires once activation is met.
-    assert_eq!(served.load(Ordering::SeqCst), 6);
+    // Five main calls and the settle's drain slices: the mid-loop rung is
+    // the no-LLM-call promote, and no interval cycle fires once activation
+    // is met. The window past the cursor sits past the 720-token drain
+    // line (1.2×600, #409), so the settle observes 600-token slices — four
+    // of them here — until the window drops under the line.
+    assert_eq!(served.load(Ordering::SeqCst), 9);
 
     let records: Vec<crate::om::OmRecord> = rig
         .entries()
@@ -741,9 +744,9 @@ async fn a_mid_loop_promote_over_a_covered_chunk_moves_the_cursor_nowhere() {
             .map(|r| r.buffered_chunks.len())
             .collect::<Vec<_>>()
     );
-    // The Observer's one round-trip is the window past the cursor: a cursor
-    // stamped behind the covered material hands the Observer material the log
-    // already carries.
+    // The Observer's round-trips are slices of the window past the cursor:
+    // a cursor stamped behind the covered material would hand the Observer
+    // material the log already carries, and no slice may reach entry 1.
     let seen_calls = seen.lock().clone();
     let observer_bodies: Vec<String> = seen_calls
         .iter()
@@ -752,5 +755,5 @@ async fn a_mid_loop_promote_over_a_covered_chunk_moves_the_cursor_nowhere() {
         })
         .map(|(_, input)| input.clone())
         .collect();
-    assert_eq!(observer_bodies.len(), 1, "one turn-end observe");
+    assert_eq!(observer_bodies.len(), 4, "the drain's slices");
 }

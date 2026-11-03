@@ -12,6 +12,7 @@ use crate::om::{
     OmConfig, generate_group_id, observer_system_prompt, parse_observer_output,
     wrap_in_observation_group,
 };
+use crate::om_integration::turn_end::window::unobserved_slice;
 use crate::om_integration::{BufferedChunk, OmState};
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 use tau_protocol::EntryKind;
@@ -143,8 +144,9 @@ type SliceBatch = (Vec<crate::session::Entry>, u32, (String, String), u32);
 
 /// The cycle's phase 1 (D4): under the lock, load the freshest record,
 /// rebuild the in-memory buffer mirror (the newest committed range end —
-/// a restart loses the in-memory cursor), and select the not-yet-buffered
-/// candidates. Failure clears the in-flight flag and returns `None`.
+/// a restart loses the in-memory cursor), and select the candidates: raw
+/// neither observed nor buffered. Failure clears the in-flight flag and
+/// returns `None`.
 fn read_candidates(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     config: &OmConfig,
@@ -165,19 +167,24 @@ fn read_candidates(
         buffer_cursor: None,
     };
     live.buffered = live.record.buffered_chunks.clone();
-    live.buffer_cursor = live
-        .record
-        .buffered_chunks
-        .last()
-        .map(|c| c.range.1.clone());
-    let candidates = match live.unbuffered(&mut g.store) {
-        Ok(c) => c,
+    // The furthest chunk end, not the last committed: chunks arrive in
+    // commit order, not id order (#402).
+    live.buffer_cursor = super::last_chunk_end(&live.buffered);
+    // The cycle's material: raw past BOTH cursors. Raw the observation
+    // cursor has already covered is observed — re-showing it to the
+    // Observer pays twice for one span, and with no durable chunk to
+    // intersect, the #402 commit dedup cannot see it. The settle's Observe
+    // advances the observation cursor without moving the buffer cursor, so
+    // the buffer cursor alone is not a sound cut (#402's invariant).
+    let window = match live.unobserved(&mut g.store) {
+        Ok(w) => w,
         Err(e) => {
             tracing::warn!("om: buffer cycle: candidate read failed: {e}");
             g.om_inflight = None;
             return None;
         }
     };
+    let candidates = unobserved_slice(&window, live.buffer_cursor.as_deref()).to_vec();
     // The turn-end pass may have committed everything the spawn snapshot
     // saw (D4: the file cursor wins over the snapshot): nothing left to
     // buffer. Consume the trigger and stop — a panic under the session's
@@ -204,10 +211,15 @@ fn read_candidates(
 /// The cycle's phase 2 (D10): the commit point — under the lock, reload
 /// the freshest record (the turn-end pass may have saved during the
 /// round-trip), push the chunk, advance the persisted boundary, save,
-/// then mirror into the live state and clear the in-flight flag.
+/// then mirror into the live state and clear the in-flight flag. A chunk
+/// whose range intersects a durable one is a late re-observe of the same
+/// raw and is dropped — the interval stays consumed, the span is observed
+/// once (#402).
 /// The record names the endpoint the pass ran at, so a chunk committed by a
 /// background cycle is attributed like a synchronous pass's (#348).
-fn commit_chunk(
+// `pub(crate)`, not `pub(super)`: the agent test module drives the commit
+// point directly — the join interlock (#402) is an agent-level mechanism.
+pub(crate) fn commit_chunk(
     inner: &Arc<Mutex<crate::agent::Inner>>,
     candidates: &[crate::session::Entry],
     range: (String, String),
@@ -226,7 +238,11 @@ fn commit_chunk(
         }
     };
     model.clone_into(&mut latest.om_model);
-    if !latest.buffered_chunks.iter().any(|c| c.range == range) {
+    if !latest
+        .buffered_chunks
+        .iter()
+        .any(|c| crate::om_integration::ranges_overlap(&c.range, &range))
+    {
         latest.buffered_chunks.push(BufferedChunk {
             range,
             last_ts: candidates

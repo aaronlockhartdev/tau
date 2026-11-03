@@ -166,6 +166,16 @@ impl AgentSession {
                 );
             }
         }
+        // #402: a cycle that commits during the join advanced the buffer
+        // cursor and the chunks in the live state. Planning from the pre-join
+        // mirror re-observes raw that late commit already covered — the same
+        // span paid for twice. Take the post-commit state; the live slot is
+        // never taken after open, so the pre-join clone is only the fallback.
+        state = {
+            let inner = self.inner.lock();
+            inner.om.clone().unwrap_or_else(|| state.clone())
+        };
+        Self::stamp_om_model(&model, &mut state.record);
         // The re-lock: each sync store phase takes the session lock and
         // releases it before the next provider call.
         let mut with_store =
