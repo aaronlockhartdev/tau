@@ -215,8 +215,9 @@ async fn a_config_move_that_leaves_a_child_routeless_is_recorded_by_that_child()
     // memory prompt, and the capture server logs a request before it answers, so a
     // pass shows up whatever model it rides. A pass's stamp is no such witness — it
     // reaches a record only with a chunk delta, so a refused pass can leave the
-    // records untouched. `buffer_tokens` is 0 in this fixture, so no detached
-    // background cycle can add a request outside the turn's settle.
+    // records untouched. The 6000-token interval keeps the cycles quiet at
+    // this fixture's volumes, so no detached background cycle adds a request
+    // outside the turn's settle.
     let passes = memory_passes(&f.aaa_seen) + memory_passes(&f.zzz_seen);
 
     f.write_config("zzz/ghost");

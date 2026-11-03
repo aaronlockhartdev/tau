@@ -167,26 +167,33 @@ fn a_state_without_chunks_buffers_from_the_branch_head() {
 
 #[test]
 fn a_reopened_buffer_pass_covers_only_the_new_tail() {
-    // The Buffer arm on a reopened session (kill-switch config, so the sync
-    // arm runs): its transcript is the entries past the restored cursor, not
-    // the branch the durable chunks already stand for (#392).
+    // The settle's backstop on a reopened session: its transcript is the
+    // entries past the restored buffer cursor, bounded by the threshold —
+    // never the branch the durable chunks already stand for (#392, #408).
     let dir = tempfile::tempdir().unwrap();
-    // 10 × 4k chars ≈ 10k tokens: past the 6k increment, under the 30k
-    // activation.
+    // 10 × 4k chars ≈ 10k tokens; the durable chunk covers entries 1-5,
+    // so the fresh tail is entries 6-10 (≈ 5k tokens).
     let mut store = store_with_text_entries(dir.path(), 10, 4_000);
     let om = crate::config::Om {
-        buffer_tokens: 0,
+        observe_threshold: 2_000,
         ..crate::config::Om::default()
     };
     let mut state = OmState::from_config(&om, record_with_a_chunk());
     let unobserved = state.unobserved(&mut store).unwrap();
     match state.plan(&unobserved) {
-        TurnEndAction::Buffer { transcript, .. } => assert_eq!(
-            transcript.matches(&"w".repeat(4_000)).count(),
-            5,
-            "the buffer transcript re-covered material the chunks hold"
-        ),
-        other => panic!("expected Buffer, got {other:?}"),
+        TurnEndAction::Observe { span, transcript } => {
+            assert_eq!(
+                span.first_id, "00000006",
+                "the backstop re-observed the span the chunks stand for"
+            );
+            // 4k chars ≈ 1k tokens: the 2k bound fits two entries.
+            assert_eq!(
+                transcript.matches(&"w".repeat(4_000)).count(),
+                2,
+                "the backstop overran its bound"
+            );
+        }
+        other => panic!("expected Observe, got {other:?}"),
     }
 }
 
@@ -293,4 +300,53 @@ fn a_reopen_with_an_unparseable_cursor_falls_back_to_the_branch() {
     };
     let state = OmState::from_config(&crate::config::Om::default(), record);
     assert_eq!(state.unobserved(&mut store).unwrap().len(), 7);
+}
+
+/// A chunk spanning `[from, to]` with filler text.
+fn span(from: &str, to: &str) -> BufferedChunk {
+    BufferedChunk {
+        range: (from.into(), to.into()),
+        last_ts: 100,
+        text: "observed".into(),
+        tokens: 10,
+    }
+}
+
+#[test]
+fn the_furthest_chunk_end_wins_over_commit_order() {
+    // #408 (review): chunks arrive in commit order — a merge appends a late
+    // cycle's span after newer ones — and the buffer cursor must be the end
+    // that reaches furthest along the branch. `last()` re-covered raw the
+    // chunks already observed.
+    assert_eq!(
+        crate::om_integration::last_chunk_end(&[
+            span("00000001", "00000020"),
+            span("00000021", "00000044"),
+            span("00000045", "00000030"),
+        ])
+        .as_deref(),
+        Some("00000044")
+    );
+    // Ids this build cannot order count as 0: the first end stands.
+    assert_eq!(
+        crate::om_integration::last_chunk_end(&[span("legacy-a", "legacy-b"),]).as_deref(),
+        Some("legacy-b")
+    );
+    assert_eq!(crate::om_integration::last_chunk_end(&[]).as_deref(), None);
+}
+
+#[test]
+fn a_reopen_restores_the_furthest_chunk_end() {
+    // The cursor `from_config` restores is the cycles' resume point: a durable
+    // record with an out-of-order late chunk must not resume behind it.
+    let record = OmRecord {
+        buffered_chunks: vec![
+            span("00000001", "00000020"),
+            span("00000021", "00000044"),
+            span("00000045", "00000030"),
+        ],
+        ..Default::default()
+    };
+    let state = OmState::from_config(&crate::config::Om::default(), record);
+    assert_eq!(state.buffer_cursor.as_deref(), Some("00000044"));
 }

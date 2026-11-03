@@ -4,14 +4,14 @@ use crate::agent::testkit::*;
 use tau_protocol::Diagnostic;
 
 /// The `[om]` a test reaches cheaply: a 1000-token activation threshold, a
-/// 230-token buffer increment, and the sync Buffer arm on.
+/// 230-token buffer increment — the cycles' interval at these volumes.
 fn small_om() -> crate::config::Om {
     crate::config::Om {
         om_model: String::new(),
         observe_threshold: 1000,
         reflect_threshold: 100_000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     }
 }

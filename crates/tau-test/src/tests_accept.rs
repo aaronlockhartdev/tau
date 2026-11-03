@@ -777,7 +777,7 @@ async fn accept_om_once(ctx: &Ctx) -> Result<Option<u32>, String> {
             // not that the model writes long observations
             reflect_threshold: 10,
             buffer_increment: 500,
-            buffer_tokens: 0,
+            buffer_tokens: None,
             retries: OmRetries::default(),
         },
         OmRecord::default(),

@@ -291,16 +291,12 @@ async fn settle_below_activation_promotes_nothing_and_calls_no_observer() {
 #[tokio::test]
 async fn continuous_settles_activate_on_tokens_alone() {
     // #392: continuous turns reach activation on tokens, with no idle gap.
-    // The kill-switch config (`buffer_tokens = 0`) has the sync Buffer arm
-    // absorb the sub-threshold tail every settle, so a settle that gates on
-    // what the chunks are worth never sees the window again.
+    // Cycles are always on (#408): a settle below activation does nothing,
+    // so the window accumulates until the threshold makes the settle
+    // observe.
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 0, 0);
-    let om = crate::config::Om {
-        buffer_tokens: 0,
-        ..crate::config::Om::default()
-    };
-    let mut state = OmState::from_config(&om, OmRecord::default());
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
     let recorder = std::sync::Arc::new(RecordingProvider::new("observed the round"));
     let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
     let mut activations = 0;
@@ -347,17 +343,17 @@ async fn continuous_settles_activate_on_tokens_alone() {
 }
 
 #[tokio::test]
-async fn settles_buffer_bounded_slices_never_the_whole_window() {
-    // #399: every paid Observer call a settle makes is a bounded slice, and
-    // the chunks count the raw they cover. Kill-switch config; 28 × 2_000
-    // chars ≈ 14k raw: over two increments, under the 30k activation. Two
-    // settles buffer two 6k slices; the third takes the 2k remainder as the
-    // window's last slice; a fourth finds a fully-buffered window and plans
-    // Done without a call (#399).
+async fn settles_observe_bounded_slices_never_the_whole_window() {
+    // #408: every paid Observer call a settle makes is a bounded slice. The
+    // sync Buffer arm is gone — the sub-activation band belongs to the
+    // background cycles — so what a settle may pay for is the activation
+    // backstop: threshold-sized, never the whole window. 28 × 2_000 chars
+    // ≈ 14k raw; the threshold sits at 6k. Two settles observe two 6k
+    // slices; the third finds 2k left under activation and calls nothing.
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 28, 2_000);
     let om = crate::config::Om {
-        buffer_tokens: 0,
+        observe_threshold: 6_000,
         ..crate::config::Om::default()
     };
     let mut state = OmState::from_config(&om, OmRecord::default());
@@ -371,24 +367,22 @@ async fn settles_buffer_bounded_slices_never_the_whole_window() {
             .await
             .unwrap();
     }
-    // Two 6k slices, then the 2k remainder (the arm's gate is the raw
-    // window, so the tail's last slice rides out the window), and a fourth
-    // settle finds no unbuffered material and calls nothing. No call ever
-    // carried more than a slice — the whole-window request is gone.
-    assert_eq!(recorder.observer_calls(), 3, "the settle count is off");
+    // Two 6k slices and a third settle with 2k under activation: no call
+    // ever carried more than a slice — the whole-window request is gone.
+    assert_eq!(recorder.observer_calls(), 2, "the settle count is off");
     let spans: Vec<usize> = recorder
         .observer_transcripts()
         .iter()
         .map(|seen| seen.matches(&"w".repeat(2_000)).count())
         .collect();
-    assert_eq!(spans, vec![12, 12, 4], "a call carried more than a slice");
-    let coverage: u32 = state.buffered.iter().map(|c| c.tokens).sum();
-    assert_eq!(
-        coverage, 14_000,
-        "the chunks do not count the raw they cover"
+    assert_eq!(spans, vec![12, 12], "a call carried more than a slice");
+    // The backstop advances the observation cursor as it goes; the gate
+    // quantity it leaves behind is the raw window, and the stall beside it
+    // reads the same number (#392).
+    assert!(state.record.cursor.is_some());
+    assert!(
+        state.buffered.is_empty(),
+        "the settle buffered: the sync arm is retired (#408)"
     );
-    // Buffering advances no observation cursor: the gate quantity is the
-    // whole window the chunks stand for (#392), and the stall beside it.
-    assert!(state.record.cursor.is_none());
-    assert_eq!(state.record.pending_tokens, 14_000);
+    assert_eq!(state.record.pending_tokens, 2_000);
 }

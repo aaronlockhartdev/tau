@@ -228,10 +228,11 @@ pub struct Om {
     pub observe_threshold: u64,
     pub reflect_threshold: u64,
     pub buffer_increment: u64,
-    /// Async buffer-interval token count (mastra `bufferTokens`); 0 disables
-    /// the async boundary trigger entirely (mastra's own enable condition).
-    /// Consumed by the mid-loop boundary trigger that lands with #86 P2.
-    pub buffer_tokens: u64,
+    /// #408 retired this key: the background slice is always on and
+    /// `buffer_increment` is the only interval knob. Captured solely so the
+    /// load fails naming the successor; the value is never read.
+    #[serde(default)]
+    pub buffer_tokens: Option<u64>,
     /// Per-trigger-point retry counts for the OM round-trips.
     pub retries: OmRetries,
 }
@@ -246,7 +247,6 @@ impl Om {
             ("om.observe_threshold", self.observe_threshold),
             ("om.reflect_threshold", self.reflect_threshold),
             ("om.buffer_increment", self.buffer_increment),
-            ("om.buffer_tokens", self.buffer_tokens),
         ] {
             if value > u64::from(limit) {
                 return Err(LoadError::OmThreshold {
@@ -267,7 +267,7 @@ impl Default for Om {
             observe_threshold: 30_000,
             reflect_threshold: 40_000,
             buffer_increment: 6_000,
-            buffer_tokens: 6_000,
+            buffer_tokens: None,
             retries: OmRetries::default(),
         }
     }
@@ -727,7 +727,17 @@ impl ConfigFile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(LoadError::Io(e)),
         };
-        toml::from_str(&text).map_err(|e| LoadError::Parse(path.to_path_buf(), e))
+        let file: ConfigFile =
+            toml::from_str(&text).map_err(|e| LoadError::Parse(path.to_path_buf(), e))?;
+        // The retired key check rides the read, not the merged validate:
+        // the merge replaces `[om]` wholesale, so a retired key in a losing
+        // layer is invisible to the merged config (#408).
+        if file.om.as_ref().is_some_and(|o| o.buffer_tokens.is_some()) {
+            return Err(LoadError::OmBufferTokensRetired {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(file)
     }
 
     fn merge_into(&self, config: &mut Config) {
@@ -804,7 +814,7 @@ impl LoadError {
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::Parse(path, _) => Some(path),
+            Self::Parse(path, _) | Self::OmBufferTokensRetired { path } => Some(path),
             Self::Io(_)
             | Self::OmThreshold { .. }
             | Self::MissingContextWindow { .. }
@@ -850,6 +860,14 @@ pub enum LoadError {
     ProviderNameHasSlash {
         provider: String,
     },
+    /// `[om] buffer_tokens` named in a layer (#408): the key is retired — the
+    /// background slice is always on — and the load says so instead of
+    /// silently dropping the intent. Checked per layer at read: the merge
+    /// replaces the section wholesale, so a retired key in a losing layer
+    /// would vanish from the merged config this check reads.
+    OmBufferTokensRetired {
+        path: std::path::PathBuf,
+    },
     /// An `[thinking].levels` key carrying a `/` that no provider declares as a
     /// model (#354): a level is read by the key a model id routes to, so this
     /// entry is read by nothing. A bare key is exempt — every id routes to one.
@@ -869,6 +887,11 @@ impl fmt::Display for LoadError {
             } => {
                 write!(f, "{field} = {value} exceeds the u32 token limit ({limit})")
             }
+            Self::OmBufferTokensRetired { path } => write!(
+                f,
+                "{} names [om] buffer_tokens, which is retired: the background slice is always on; buffer_increment is the interval",
+                path.display()
+            ),
             Self::MissingContextWindow { provider, model } => write!(
                 f,
                 "providers.{provider}.models.{model} declares no context_window; the context gate needs it"

@@ -30,9 +30,6 @@ pub struct OmConfig {
     /// threshold expands into unused observation space up to the shared total
     /// budget (`fixtures/references/mastra-om/thresholds.ts` `calculateDynamicThreshold`).
     pub share_token_budget: bool,
-    /// Async buffer-interval token count (mastra `bufferTokens`); `0`
-    /// disables the mid-loop boundary trigger entirely (ticket #86 P2).
-    pub buffer_tokens: u32,
     /// Per-trigger-point retry counts for the OM round-trips (ticket #86).
     pub retries: crate::config::OmRetries,
 }
@@ -44,7 +41,6 @@ impl Default for OmConfig {
             reflect_threshold: 40_000,
             buffer_activation: 0.8,
             share_token_budget: false,
-            buffer_tokens: 0,
             retries: crate::config::OmRetries::default(),
         }
     }

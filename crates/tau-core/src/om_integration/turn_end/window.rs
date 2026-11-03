@@ -53,7 +53,10 @@ pub(in crate::om_integration) fn raw_after(
 /// past it are this branch's own material. Taking the whole branch re-covers the
 /// prefix (the volume #392 removed, reappearing on reopen); clamping to the
 /// branch tip leaves the new material never observed (#395).
-fn unobserved_slice<'b>(branch: &'b [Entry], cursor_id: Option<&str>) -> &'b [Entry] {
+pub(in crate::om_integration) fn unobserved_slice<'b>(
+    branch: &'b [Entry],
+    cursor_id: Option<&str>,
+) -> &'b [Entry] {
     let Some(id) = cursor_id else {
         return branch;
     };

@@ -65,7 +65,6 @@ fn om_config_of(om: &crate::config::Om) -> OmConfig {
         reflect_threshold: threshold_u32(om.reflect_threshold),
         buffer_activation: activation,
         share_token_budget: false,
-        buffer_tokens: threshold_u32(om.buffer_tokens),
         retries: om.retries.clone(),
     }
 }
@@ -80,7 +79,7 @@ impl OmState {
         // The durable chunks mark the head of the branch they covered; a
         // reopened state that buffers from the branch head would re-cover that
         // head in one chunk (spec §4: the raw material is the unobserved tail).
-        let buffer_cursor = buffered.last().map(|c| c.range.1.clone());
+        let buffer_cursor = last_chunk_end(&buffered);
         Self {
             config: om_config_of(om),
             record,
@@ -165,11 +164,7 @@ impl OmState {
             .max(fresh.last_buffered_at_tokens);
         let mut cursor = self.buffer_cursor.clone();
         if fresh.last_buffered_at_tokens > self.record.last_buffered_at_tokens {
-            cursor = fresh
-                .buffered_chunks
-                .last()
-                .map(|c| c.range.1.clone())
-                .or(cursor);
+            cursor = last_chunk_end(&chunks).or(cursor);
         }
         self.record.buffered_chunks = chunks;
         self.record.last_buffered_at_tokens = boundary;
@@ -178,6 +173,16 @@ impl OmState {
     }
 }
 
+/// The end id of the chunk that reaches furthest along the branch (numeric
+/// `range.1`; chunks arrive in commit order, not id order). Ids that do not
+/// parse count as 0.
+#[must_use]
+pub(crate) fn last_chunk_end(chunks: &[BufferedChunk]) -> Option<String> {
+    chunks
+        .iter()
+        .max_by_key(|c| c.range.1.parse::<u64>().ok())
+        .map(|c| c.range.1.clone())
+}
 /// A fork copies the parent's record at the fork point (observations +
 /// cursor); a fork owns its copy outright (ADR-0004: a fork is the same
 /// session's history) — so it copies the FULL log, including a demoted

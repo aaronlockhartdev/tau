@@ -168,15 +168,15 @@ fn agent_wish_at(
 }
 
 /// The OM config these runs share: the reflect threshold out of reach (so a
-/// turn-end pass plans no reflect of its own), the sync buffer (the kill
-/// switch) on, and an observe threshold set by the caller in tokens.
+/// turn-end pass plans no reflect of its own), and an observe threshold set
+/// by the caller in tokens.
 fn om_config(observe_threshold: u64) -> crate::config::Om {
     crate::config::Om {
         om_model: String::new(),
         observe_threshold,
         reflect_threshold: 100_000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     }
 }

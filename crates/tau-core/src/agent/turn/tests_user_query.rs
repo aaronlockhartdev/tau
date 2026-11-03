@@ -37,7 +37,7 @@ fn om_state(cursor: Option<&str>) -> crate::om_integration::OmState {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     crate::om_integration::OmState::from_config(

@@ -138,7 +138,7 @@ fn om_thresholds_within_u32_load() {
 
 #[test]
 fn om_threshold_above_u32_max_is_rejected() {
-    // Each of the four u64 thresholds is checked; the error names the
+    // Each of the three u64 thresholds is checked; the error names the
     // offending field and the limit (ticket #46).
     for (field, toml) in [
         (
@@ -153,7 +153,6 @@ fn om_threshold_above_u32_max_is_rejected() {
             "om.buffer_increment",
             "[om]\nbuffer_increment = 5000000000\n",
         ),
-        ("om.buffer_tokens", "[om]\nbuffer_tokens = 5000000000\n"),
     ] {
         let err = load_from(toml, "").unwrap_err();
         match err {
@@ -169,6 +168,53 @@ fn om_threshold_above_u32_max_is_rejected() {
             other => panic!("expected an om threshold error for {field}, got {other:?}"),
         }
     }
+}
+
+#[test]
+fn a_layer_naming_the_retired_buffer_tokens_key_fails_naming_the_successor() {
+    // #408: `buffer_tokens` is retired — any layer naming it fails the load,
+    // and the error names the interval knob that replaced it. The bound check
+    // is gone with the key; presence alone is the verdict.
+    for toml in [
+        "[om]\nbuffer_tokens = 6000\n",
+        "[om]\nbuffer_tokens = 5000000000\n",
+    ] {
+        let err = load_from(toml, "").unwrap_err();
+        assert!(
+            matches!(err, LoadError::OmBufferTokensRetired { .. }),
+            "retired key accepted: {err:?}"
+        );
+        assert!(
+            err.to_string().contains("buffer_increment"),
+            "the retired-key error does not name the successor: {err}"
+        );
+    }
+    // The layer that omits the key loads with the interval knob alone.
+    let config = load_from("[om]\nbuffer_increment = 4000\n", "").unwrap();
+    assert_eq!(config.om.buffer_increment, 4_000);
+}
+
+/// The losing layer still fails the load (#408): the merge replaces `[om]`
+/// wholesale, so a merged-config check would let a project section without
+/// the retired key hide the system layer's intent. The read catches it and
+/// names the file to edit.
+#[test]
+fn a_losing_layer_naming_the_retired_key_still_fails_the_load() {
+    let sys = tempfile::tempdir().unwrap();
+    let proj = tempfile::tempdir().unwrap();
+    let system_file = sys.path().join(CONFIG_FILE);
+    std::fs::write(&system_file, "[om]\nbuffer_tokens = 6000\n").unwrap();
+    std::fs::write(
+        proj.path().join(CONFIG_FILE),
+        "[om]\nobserve_threshold = 1000\n",
+    )
+    .unwrap();
+    let err = load(sys.path(), proj.path()).unwrap_err();
+    assert!(
+        matches!(err, LoadError::OmBufferTokensRetired { .. }),
+        "the winning layer hid the retired key: {err:?}"
+    );
+    assert_eq!(err.path(), Some(system_file.as_path()));
 }
 
 /// The rejected layer's file (#337): a parse failure names the layer the user

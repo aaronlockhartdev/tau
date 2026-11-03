@@ -16,12 +16,12 @@ use crate::om_integration::{BufferedChunk, OmState};
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 use tau_protocol::EntryKind;
 
-/// The effective buffer interval at a pending level (D5): the full
-/// `buffer_tokens` below the ramp point, `buffer_tokens / 2` from there
-/// on, so the cycle cadence doubles as the observe threshold approaches
-/// (mastra `calculateObservationInterval`: `threshold - 1.1 * bufferTokens`).
+/// The effective buffer interval at a pending level (D5, #408): the full
+/// `buffer_increment` below the ramp point, `buffer_increment / 2` from
+/// there on, so the cycle cadence doubles as the observe threshold approaches
+/// (mastra `calculateObservationInterval`: `threshold - 1.1 * interval`).
 fn effective_interval(pending: u64, config: &OmConfig) -> u64 {
-    let full = u64::from(config.buffer_tokens);
+    let full = u64::from(config.buffer_increment());
     let ramp_point = u64::from(config.observe_threshold).saturating_sub(full * 11 / 10);
     if pending >= ramp_point {
         full / 2
@@ -30,6 +30,13 @@ fn effective_interval(pending: u64, config: &OmConfig) -> u64 {
     }
 }
 
+/// The trickle floor (D7): below half an interval of spawned volume, a
+/// cycle gets no chunk and no LLM call. The basis is the interval knob —
+/// #408 retired the quantity that used to name it.
+#[must_use]
+fn trickle_floor(config: &OmConfig) -> u32 {
+    config.buffer_increment() / 2
+}
 /// An interval boundary was crossed since the last commit (D5): floor
 /// division over the effective interval, comparing against the LARGER of
 /// the persisted boundary (record) and the in-process boundary (spawn
@@ -75,7 +82,7 @@ pub(crate) async fn buffer_cycle(
     // no chunk and no LLM call; the interval is consumed (the in-process
     // boundary advanced at spawn) and the tail rides raw until the next
     // crossing.
-    if volume < config.buffer_tokens / 2 {
+    if volume < trickle_floor(&config) {
         clear_inflight(&inner);
         return;
     }
@@ -181,8 +188,7 @@ fn read_candidates(
         return None;
     }
     // The cycle's call is the next increment-sized slice, not every
-    // unbuffered entry: the same bound the foreground Buffer arm honors,
-    // so no Observer call's input is a whole window (#399).
+    // unbuffered entry: no Observer call's input is a whole window (#399).
     let (span, _, coverage) = live.observe_head(&candidates, config.buffer_increment());
     let cut = candidates
         .iter()
@@ -243,11 +249,7 @@ fn commit_chunk(
             } else if let Some(slot) = g.om.as_mut() {
                 slot.record = latest;
                 slot.buffered = slot.record.buffered_chunks.clone();
-                slot.buffer_cursor = slot
-                    .record
-                    .buffered_chunks
-                    .last()
-                    .map(|c| c.range.1.clone());
+                slot.buffer_cursor = super::last_chunk_end(&slot.record.buffered_chunks);
             }
         }
     }
@@ -264,10 +266,10 @@ fn clear_inflight(inner: &Arc<Mutex<crate::agent::Inner>>) {
 mod tests {
     use super::*;
 
-    fn config(observe: u32, buffer: u32) -> OmConfig {
+    fn config(observe: u32, increment: u32) -> OmConfig {
         OmConfig {
             observe_threshold: observe,
-            buffer_tokens: buffer,
+            buffer_activation: 1.0 - f64::from(increment) / f64::from(observe),
             ..Default::default()
         }
     }
@@ -308,12 +310,24 @@ mod tests {
     }
 
     #[test]
-    fn disabled_when_buffer_tokens_is_zero() {
-        // The kill switch (D1): buffer_tokens = 0 makes the effective
-        // interval 0, so no boundary ever crosses — the sync turn-end
-        // path owns everything.
+    fn a_zero_increment_never_crosses() {
+        // #408: the interval knob is the increment. A config that folds to a
+        // zero increment — the retention floor at 1.0 — leaves the boundary
+        // math no multiples to cross: the cycles stay silent at any volume.
         let cfg = config(30_000, 0);
+        assert_eq!(cfg.buffer_increment(), 0);
         assert!(!boundary_crossed(60_000, &cfg, 0, 0));
         assert!(!boundary_crossed(60_000, &cfg, 12_000, 30_000));
+    }
+
+    #[test]
+    fn the_trickle_floor_is_half_the_increment() {
+        // #408: the floor's basis is `buffer_increment`, not a constant.
+        // The fixture-shape increment (230) gets a 115 floor — a 675-volume
+        // cycle passes — and a wide 40k increment gets a 20k floor, so a
+        // 5k trickle pays no Observer round-trip.
+        assert_eq!(trickle_floor(&config(1_000, 230)), 115);
+        assert_eq!(trickle_floor(&config(50_000, 40_000)), 20_000);
+        assert_eq!(trickle_floor(&config(30_000, 6_000)), 3_000);
     }
 }

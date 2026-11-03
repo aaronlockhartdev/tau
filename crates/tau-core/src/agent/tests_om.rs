@@ -29,7 +29,7 @@ async fn om_crosses_observe_and_reflect_and_every_request_carries_a_user_query()
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let obs_text = format!(
@@ -146,7 +146,7 @@ async fn om_runs_notify_the_status_hook_in_order() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let obs_text = format!(
@@ -226,7 +226,7 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let obs_text = format!(
@@ -329,7 +329,7 @@ async fn a_turn_end_spawns_the_buffer_cycle_on_a_crossed_interval() {
         observe_threshold: 1_000,
         reflect_threshold: 2_000,
         buffer_increment: 230,
-        buffer_tokens: 600,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let provider = Arc::new(ScriptedProvider::new(vec![
@@ -391,74 +391,4 @@ async fn a_turn_end_spawns_the_buffer_cycle_on_a_crossed_interval() {
         chunk.tokens
     );
     assert!(state.record.last_buffered_at_tokens >= 600);
-}
-
-#[tokio::test]
-async fn the_kill_switch_leaves_the_turn_end_spawning_nothing() {
-    // The negative pair (#399): with `buffer_tokens = 0` the sync Buffer arm
-    // owns the sub-threshold range — the settle observes the bounded slice
-    // itself, and the turn end spawns no cycle.
-    let dir = tempfile::tempdir().unwrap();
-    let mut store = session_in(dir.path());
-    let mut parent: Option<String> = None;
-    for _ in 0..3 {
-        let e = store
-            .append(
-                EntryKind::User,
-                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
-                parent.as_deref(),
-            )
-            .unwrap();
-        parent = Some(e.id);
-    }
-    let cfg = crate::config::Om {
-        om_model: String::new(),
-        observe_threshold: 1_000,
-        reflect_threshold: 2_000,
-        buffer_increment: 230,
-        buffer_tokens: 0,
-        retries: crate::config::OmRetries::default(),
-    };
-    let provider = Arc::new(ScriptedProvider::new(vec![
-        sse("done", &[]),
-        sse_json("<observations>the slice, observed</observations>"),
-    ]));
-    let agent = AgentSession::new(SessionParams {
-        store,
-        system_prompt: "be terse".into(),
-        model: "test-model".into(),
-        tools: tools::tool_specs(),
-        cwd: dir.path().to_path_buf(),
-        provider: provider.clone(),
-        tool_batch_on_force: ToolBatchPolicy::Complete,
-        turn: TurnConfig::default(),
-        gates: None,
-        gate_failed: false,
-        hashline: crate::hashline::pin_store::GcPolicy::default(),
-        om: Some(crate::om_integration::OmState::from_config(
-            &cfg,
-            crate::om::OmRecord::default(),
-        )),
-        om_route: crate::agent::OmRoute::Session,
-        subagents: None,
-        child: None,
-    });
-    agent.send("go", Lane::FollowUp);
-    agent.process().await.unwrap();
-    assert!(
-        agent.inner.lock().om_inflight.is_none(),
-        "the kill switch must spawn no background cycle"
-    );
-    let state = agent
-        .inner
-        .lock()
-        .om
-        .clone()
-        .expect("the om state is written back");
-    assert_eq!(state.record.buffered_chunks.len(), 1);
-    assert!(
-        state.record.buffered_chunks[0]
-            .text
-            .contains("the slice, observed")
-    );
 }

@@ -75,58 +75,22 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
 }
 
 #[test]
-fn plan_buffers_below_activation_and_commit_holds_the_chunk() {
+fn plan_below_activation_is_done_the_cycles_own_the_interval() {
+    // #408: the background slice is always on. The [increment, threshold)
+    // band belongs to the cycles: a settle over that window does nothing —
+    // there is no sync Buffer arm left to absorb the tail.
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 25, 1000);
-    // Kill-switch config: the sync Buffer arm is the buffer_tokens == 0
-    // path (ticket #86 P2); with it on, the mid-loop cycles buffer.
-    let om = crate::config::Om {
-        buffer_tokens: 0,
-        ..crate::config::Om::default()
-    };
-    let mut state = OmState::from_config(&om, OmRecord::default());
+    let mut state = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
     // 25 × 1000 chars ≈ 6.3k raw tokens: below the 30k threshold, past the
     // 6k increment.
     let unobserved = state.unobserved(&mut store).unwrap();
     match state.plan(&unobserved) {
-        TurnEndAction::Buffer { .. } => {}
-        other => panic!("expected Buffer, got {other:?}"),
-    }
-    let result = turn_result("<observations>chunk</observations>");
-    let mut action = state.plan(&unobserved);
-    state.commit(&mut store, &mut action, &result).unwrap();
-    assert_eq!(state.buffered.len(), 1);
-    assert!(state.record.active_observations.is_empty());
-    assert!(state.record.cursor.is_none());
-}
-
-#[test]
-fn plan_buffer_arm_is_the_kill_switch_path_only() {
-    // T2: the sync Buffer arm fires only when async buffering is off
-    // (buffer_tokens == 0). With buffer_tokens > 0 the mid-loop
-    // background cycles own the sub-threshold range, so the turn-end
-    // pass does no sync buffering (D2, I5).
-    let dir = tempfile::tempdir().unwrap();
-    let mut store = store_with_text_entries(dir.path(), 25, 1000);
-    // Async on (the production default): the 6.3k raw window sits in the
-    // [increment, threshold) band the sync arm would have buffered.
-    let mut on = OmState::from_config(&crate::config::Om::default(), OmRecord::default());
-    let unobserved = on.unobserved(&mut store).unwrap();
-    match on.plan(&unobserved) {
         TurnEndAction::Done => {}
-        other => panic!("async on: expected Done, got {other:?}"),
+        other => panic!("expected Done, got {other:?}"),
     }
-    // Kill switch: the same raw window yields the sync Buffer.
-    let om = crate::config::Om {
-        buffer_tokens: 0,
-        ..crate::config::Om::default()
-    };
-    let mut off = OmState::from_config(&om, OmRecord::default());
-    let unobserved = off.unobserved(&mut store).unwrap();
-    match off.plan(&unobserved) {
-        TurnEndAction::Buffer { .. } => {}
-        other => panic!("kill switch: expected Buffer, got {other:?}"),
-    }
+    assert!(state.buffered.is_empty());
+    assert!(state.record.cursor.is_none());
 }
 
 #[test]
@@ -300,38 +264,45 @@ fn plan_gates_on_the_raw_window_a_promote_left_behind_the_chunks() {
 }
 
 #[test]
-fn the_buffer_arm_observes_the_next_increment_slice_not_the_tail() {
-    // #399: the Buffer arm is a bounded Observer call. 40 × 1000 chars ≈ 10k
-    // raw: over the 6k increment, under the 30k activation. The slice covers
-    // one increment, the chunk counts the raw it covers, and the rest of the
-    // tail stays unbuffered — the next slice starts where this one ended.
+fn the_observe_backstop_starts_past_the_buffer_cursor_not_over_chunk_material() {
+    // #408: a durable chunk already carries an observation over the raw it
+    // covers. The settle's backstop observes past the chunk's end, bounded
+    // by the threshold, and never shows the Observer the span the chunk
+    // stands for.
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 40, 1_000);
     let om = crate::config::Om {
-        buffer_tokens: 0,
+        observe_threshold: 1_000,
+        reflect_threshold: 2_000,
         ..crate::config::Om::default()
     };
     let mut state = OmState::from_config(&om, OmRecord::default());
+    let chunk = BufferedChunk {
+        range: ("00000001".into(), "00000024".into()),
+        last_ts: 100,
+        text: "observed the head".into(),
+        tokens: 6_000,
+    };
+    state.buffered = vec![chunk.clone()];
+    state.record.buffered_chunks = vec![chunk];
+    state.buffer_cursor = Some("00000024".into());
     let unobserved = state.unobserved(&mut store).unwrap();
     let mut action = state.plan(&unobserved);
     match &action {
-        TurnEndAction::Buffer {
-            span,
-            coverage,
-            transcript,
-        } => {
-            // 1000 chars ≈ 250 tokens: 24 entries fit the 6k increment; the
-            // 25th passes it.
-            assert_eq!(*coverage, 6_000, "the slice is not increment-sized");
-            assert_eq!(span.first_id, "00000001");
-            assert_eq!(span.last_id, "00000024", "the slice overran the increment");
+        TurnEndAction::Observe { span, transcript } => {
+            assert_eq!(
+                span.first_id, "00000025",
+                "the backstop re-observed the span the chunk stands for"
+            );
+            // 1000 chars ≈ 250 tokens: the 1k bound fits four entries.
+            assert_eq!(span.last_id, "00000028", "the backstop overran its bound");
             assert_eq!(
                 transcript.matches(&"w".repeat(1_000)).count(),
-                24,
-                "the transcript is not the slice's entries"
+                4,
+                "the transcript is not the bounded slice"
             );
         }
-        other => panic!("expected Buffer, got {other:?}"),
+        other => panic!("expected Observe, got {other:?}"),
     }
     state
         .commit(
@@ -340,26 +311,13 @@ fn the_buffer_arm_observes_the_next_increment_slice_not_the_tail() {
             &turn_result("<observations>tiny</observations>"),
         )
         .unwrap();
-    let chunk = &state.buffered[0];
-    assert_eq!(chunk.range, ("00000001".into(), "00000024".into()));
     assert_eq!(
-        chunk.tokens, 6_000,
-        "the chunk counts the observation's tokens, not the raw it covers (#399)"
+        state.record.cursor.as_ref().map(|c| c.entry_id.as_str()),
+        Some("00000028")
     );
-    assert_eq!(state.buffer_cursor.as_deref(), Some("00000024"));
-    // The 16k of tail past the slice stands untouched: the next slice starts
-    // at entry 25 and covers the remainder (4k, under one increment).
-    let unobserved = state.unobserved(&mut store).unwrap();
-    match state.plan(&unobserved) {
-        TurnEndAction::Buffer { span, coverage, .. } => {
-            assert_eq!(
-                span.first_id, "00000025",
-                "the next slice re-covered material the chunk holds"
-            );
-            assert_eq!(coverage, 4_000);
-        }
-        other => panic!("expected Buffer, got {other:?}"),
-    }
+    // The chunk stands until activation promotes it; the backstop's
+    // observation and the chunk's are disjoint spans of the branch.
+    assert_eq!(state.buffered.len(), 1);
 }
 
 #[test]
@@ -371,7 +329,6 @@ fn a_fully_buffered_window_plans_done_not_an_empty_slice() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = store_with_text_entries(dir.path(), 40, 1_000);
     let om = crate::config::Om {
-        buffer_tokens: 0,
         ..crate::config::Om::default()
     };
     let mut state = OmState::from_config(&om, OmRecord::default());
@@ -403,7 +360,6 @@ fn an_empty_window_with_a_zero_threshold_plans_done() {
     let mut store = store_with_text_entries(dir.path(), 3, 100);
     let om = crate::config::Om {
         observe_threshold: 0,
-        buffer_tokens: 0,
         ..crate::config::Om::default()
     };
     let record = OmRecord {
@@ -419,5 +375,41 @@ fn an_empty_window_with_a_zero_threshold_plans_done() {
     match state.plan(&unobserved) {
         TurnEndAction::Done => {}
         other => panic!("expected Done over an empty window, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_off_branch_buffer_cursor_cuts_by_id_not_by_absence() {
+    // #402, mirroring #395's rule for the observation cursor: a branch switch
+    // moves the leaf and never touches the buffer cursor. A cursor naming the
+    // abandoned side must cut the raw at the cursor's id number — taking the
+    // whole window would re-observe the raw a durable chunk already covers.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 40, 1_000);
+    let om = crate::config::Om {
+        observe_threshold: 1_000,
+        reflect_threshold: 2_000,
+        ..crate::config::Om::default()
+    };
+    let mut state = OmState::from_config(&om, OmRecord::default());
+    let chunk = BufferedChunk {
+        range: ("00000001".into(), "00000024".into()),
+        last_ts: 100,
+        text: "observed the head".into(),
+        tokens: 6_000,
+    };
+    state.buffered = vec![chunk.clone()];
+    state.record.buffered_chunks = vec![chunk];
+    // The abandoned side's cursor: no entry on this branch carries the id,
+    // and every id on the branch is behind the cursor's number.
+    state.buffer_cursor = Some("00000060".into());
+    let unobserved = state.unobserved(&mut store).unwrap();
+    assert!(
+        !unobserved.is_empty(),
+        "the window must carry raw for the mutation to bite"
+    );
+    match state.plan(&unobserved) {
+        TurnEndAction::Done => {}
+        other => panic!("the off-branch cursor re-covered chunk material: {other:?}"),
     }
 }
