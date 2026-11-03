@@ -12,7 +12,6 @@ use super::{
 #[derive(Debug, Clone, Default)]
 pub struct ParsedReflectorOutput {
     pub observations: String,
-    pub suggested_response: String,
     pub degenerate: bool,
 }
 
@@ -32,7 +31,6 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
     }
     let sections = parse_observer_sections(raw_output);
     let mut observations = String::new();
-    let mut suggested_response = String::new();
     for section in &sections {
         match &section.name {
             Some(n) if n == "observations" => {
@@ -44,12 +42,6 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
                     observations.push('\n');
                 }
                 observations.push_str(content);
-            }
-            Some(n)
-                if (n == "suggested-response" || n == "suggested_response")
-                    && suggested_response.is_empty() =>
-            {
-                suggested_response.clone_from(&section.content);
             }
             _ => {}
         }
@@ -74,7 +66,6 @@ pub fn parse_reflector_output(raw_output: &str, source: Option<&str>) -> ParsedR
     };
     ParsedReflectorOutput {
         observations,
-        suggested_response,
         degenerate: false,
     }
 }
@@ -173,11 +164,7 @@ Date: 2025-12-04
 
 ${outputFormat}
 
-User instructions are extremely important.${
-    suggestedResponseEnabled
-      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
-      : ''
-  }${customInstructions}"#;
+User instructions are extremely important.${customInstructions}"#;
 
 /// Compression guidance per level (verbatim from `reflector-agent.ts`
 /// `COMPRESSION_GUIDANCE` 1-4). Level 0 is the empty string.
@@ -256,19 +243,17 @@ Aim for a 2/10 detail level. Fewer, more generic observations are better than ma
 
 /// Fill the Reflector template slots the way `buildReflectorSystemPrompt()`
 /// does with no extractors: the Observer's extraction instructions, output
-/// format (twice), guidelines, both enabled continuation sentences, no custom
-/// instruction.
+/// format (twice), guidelines, no continuation steering sentence (#405),
+/// no custom instruction.
 #[must_use]
 pub fn reflector_system_prompt() -> String {
     REFLECTOR_PROMPT_TEMPLATE
-        .replace("${OBSERVER_EXTRACTION_INSTRUCTIONS}", OBSERVER_EXTRACTION_INSTRUCTIONS)
+        .replace(
+            "${OBSERVER_EXTRACTION_INSTRUCTIONS}",
+            OBSERVER_EXTRACTION_INSTRUCTIONS,
+        )
         .replace("${outputFormat}", OBSERVER_OUTPUT_FORMAT)
         .replace("${OBSERVER_GUIDELINES}", OBSERVER_GUIDELINES)
-        .replace("${
-    suggestedResponseEnabled
-      ? ' If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.'
-      : ''
-  }", " If the assistant needs to respond to the user, indicate in <suggested-response> that it should pause for user reply before continuing other tasks.")
         .replace("${customInstructions}", "")
 }
 

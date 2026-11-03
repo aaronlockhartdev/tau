@@ -152,22 +152,22 @@ describe('EntryCard', () => {
     expect(screen.getByText('cat big.txt ' + 'x'.repeat(250))).toBeInTheDocument();
   });
 
-  it('an observation card expands to its suggested, thinking and input sections', async () => {
+  it('an observation card expands to its thinking and input sections, never a suggested row', async () => {
+    // #405 retired the suggested-response steering; a record's legacy key
+    // never reaches the card.
     mount({
       id: 'e1',
       kind: 'om',
       text: 'the observation',
       model: 'om-1',
       thinking: 'thought deeply',
-      suggestedResponse: 'do X',
       input: 'some input'
     });
     expect(screen.getByText('observation')).toBeInTheDocument();
     expect(screen.getByText('om-1')).toBeInTheDocument();
     expect(screen.queryByText('suggested:')).toBeNull();
     await user.dblClick(screen.getByRole('button', { name: /observation/ }));
-    expect(screen.getByText('suggested:')).toBeInTheDocument();
-    expect(screen.getByText('do X')).toBeInTheDocument();
+    expect(screen.queryByText('suggested:')).toBeNull();
     expect(screen.getByText('thought deeply')).toBeInTheDocument();
     expect(screen.getByText('some input')).toBeInTheDocument();
   });

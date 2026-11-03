@@ -268,8 +268,6 @@ function observationShell(e: OmEntry, text: string): Shell {
   // Collapsible: the body (observation text + details)
   // lives in the reveal, so a closed card is just its header.
   const body: Section[] = [{ type: 'md', text: text.trim(), dim: true }];
-  if (e.suggestedResponse)
-    body.push({ type: 'kv', rows: [{ k: 'suggested', lines: [e.suggestedResponse] }] });
   if (e.thinking)
     body.push({ type: 'md', text: e.thinking.trim(), cls: 'thinkbody', label: 'thinking' });
   if (e.input) body.push({ type: 'pre', text: e.input, label: 'input' });

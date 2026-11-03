@@ -75,9 +75,9 @@ impl Supervisor {
 /// One child's activity window: the tail of its observation log plus its
 /// un-observed raw tail, assembled on a **throwaway** `OmState` built from
 /// the child's record (research `subagent-transcript-sourcing.md`): the
-/// seam is pure, and the suggested-response `assemble_context` consumes
-/// stays unconsumed on the throwaway. Never mutates the child's persistent
-/// OM state.
+/// the child's record (research `subagent-transcript-sourcing.md`). The OM
+/// seams are pure since #405; the throwaway stays so a preview can never
+/// mutate the child's persistent OM state.
 pub(crate) fn read_activity(
     cwd: &std::path::Path,
     session_id: &str,
@@ -105,9 +105,9 @@ pub(crate) fn read_activity(
     // The observation groups are the child's actual log text (boundary
     // markers stripped) — the same source `assemble_context` projects them
     // from, so the GUI's window stays byte-faithful to what the child's
-    // model sees. `assemble_context` itself is NOT run here: it consumes the
-    // suggested-response on the state it runs on, and that consumption
-    // belongs to the child's live turn, not a preview.
+    // model sees. `assemble_context` itself is NOT run here: the preview
+    // wants the log's groups, not the continuation hint — the hint steers
+    // the child's live turns, not a preview.
     let groups = om::parse_observation_groups(&record.agent_observations());
     let state = OmState::from_config(om, record);
     let observations: Vec<ActivityGroup> = groups

@@ -64,12 +64,14 @@ fn commit_persists_functional_fields_and_omits_raw_input() {
     let om = entries.iter().find(|e| e.kind == EntryKind::Om).unwrap();
     let p = &om.payload;
     // The raw observer input/reasoning must NOT be persisted (mastra parity);
-    // only the functional suggested-response and the model name are.
+    // the model name is. The canned reply's legacy `<suggested-response>`
+    // section is dropped outright (#405); the record key stays default-empty
+    // only for pre-#405 decode compatibility.
     assert!(p.get("om_input").is_none());
     assert!(p.get("om_thinking").is_none());
     assert_eq!(
         p.get("om_suggested_response").and_then(|v| v.as_str()),
-        Some("Walk through it.")
+        Some("")
     );
     assert!(p.get("om_model").is_some());
 }

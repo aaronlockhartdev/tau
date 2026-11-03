@@ -188,17 +188,19 @@ describe('decodeEntry (om)', () => {
     expect(e.text).not.toContain('</observation-group>');
   });
 
-  it('carries the run display fields onto the om entry', () => {
+  it('carries the run display fields onto the om entry, ignoring the retired key', () => {
+    // #405: the record may carry the legacy om_suggested_response (pre-#405
+    // files); the decoder drops it.
     const e = decodeEntry(omView()) as {
       thinking?: string;
       input?: string;
-      suggestedResponse?: string;
       model?: string;
+      suggestedResponse?: unknown;
     };
     expect(e.thinking).toBe('deciding what to keep');
     expect(e.input).toBe('the transcript');
-    expect(e.suggestedResponse).toBe('walk through it');
     expect(e.model).toBe('dev/qwen3.8-27b');
+    expect(e.suggestedResponse).toBeUndefined();
   });
 
   it('leaves the display fields undefined when the payload has none', () => {

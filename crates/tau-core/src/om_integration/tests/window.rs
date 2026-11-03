@@ -482,7 +482,7 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_per_assembly() {
         buffer_tokens: 0,
         retries: crate::config::OmRetries::default(),
     };
-    let mut state = OmState::from_config(
+    let state = OmState::from_config(
         &cfg,
         OmRecord {
             active_observations: om::wrap_in_observation_group(
@@ -514,13 +514,13 @@ fn the_assembly_is_bounded_and_the_continuation_hint_is_per_assembly() {
     let second = state.assemble_context("base prompt");
     assert!(om_user_content(&second.om_input_items).contains(om::OBSERVATION_CONTINUATION_HINT));
     // Negative: with no observations there is no hint to carry.
-    let mut bare = OmState::from_config(&cfg, OmRecord::default());
+    let bare = OmState::from_config(&cfg, OmRecord::default());
     assert!(
         !om_user_content(&bare.assemble_context("base prompt").om_input_items)
             .contains(om::OBSERVATION_CONTINUATION_HINT)
     );
     // A demoted prefix drops out of the live context.
-    let mut state3 = OmState::from_config(
+    let state3 = OmState::from_config(
         &cfg,
         OmRecord {
             frozen_prefix: "demoted prefix".into(),
@@ -571,7 +571,7 @@ fn the_main_agent_view_has_no_boundary_markers() {
     assert!(clean.contains("second obs"), "{clean}");
     assert!(clean.contains("<observation-group"), "{clean}");
     // And the assembled main-agent context is clean end-to-end.
-    let mut state = OmState::from_config(&cfg, record);
+    let state = OmState::from_config(&cfg, record);
     let ctx = state.assemble_context("base prompt");
     assert!(
         !ctx.instructions.contains("--- message boundary ("),
@@ -585,7 +585,7 @@ fn the_main_agent_view_has_no_boundary_markers() {
 }
 
 #[test]
-fn the_suggested_response_is_injected_once_then_cleared() {
+fn the_continuation_hint_leads_the_om_items_on_every_assembly() {
     let cfg = crate::config::Om {
         om_model: String::new(),
         observe_threshold: 1000,
@@ -594,30 +594,41 @@ fn the_suggested_response_is_injected_once_then_cleared() {
         buffer_tokens: 0,
         retries: crate::config::OmRetries::default(),
     };
-    let mut state = OmState::from_config(
+    let state = OmState::from_config(
         &cfg,
         OmRecord {
-            active_observations: "the log".into(),
+            active_observations: concat!(
+                r#"<observation-group id="g1" range="1-2">\n- first\n</observation-group>"#,
+                r#"<observation-group id="g2" range="3-4">\n- second\n</observation-group>"#
+            )
+            .into(),
             om_suggested_response: "pause and answer the user".into(),
             ..Default::default()
         },
     );
     let first = state.assemble_context("base prompt");
-    // The steering signal is handed to the model alongside the hint...
-    let first_om = om_user_content(&first.om_input_items);
-    // The steering signal is handed to the model alongside the hint...
-    assert!(first_om.contains(om::OBSERVATION_CONTINUATION_HINT));
-    assert!(first_om.contains("pause and answer the user"), "{first_om}");
-    // ...and consumed: the next assembly carries the hint again (it is
-    // per-assembly) but must not re-inject the now-stale signal.
+    // The hint is item 0 — before the observation groups: mastra's
+    // epoch-0 `om-continuation` sorts before every real message, and the
+    // positional order is tau's equivalent (#406).
+    let roles: Vec<&str> = first
+        .om_input_items
+        .iter()
+        .map(|item| match item {
+            crate::provider::InputEntry::Message(m) => m.role.as_str(),
+            _ => "other",
+        })
+        .collect();
+    assert_eq!(roles, vec!["user", "system", "system"]);
+    // A legacy `om_suggested_response` on the record never rides the wire:
+    // the assembler never reads it (#405), on every assembly.
+    let content = om_user_content(&first.om_input_items);
+    assert!(content.contains(om::OBSERVATION_CONTINUATION_HINT));
+    assert!(!content.contains("pause and answer the user"), "{content}");
+    // Per-assembly, and the hint is constant: every assembly leads with the
+    // same item (#334's structural query anchor).
     let second = state.assemble_context("base prompt");
-    let second_om = om_user_content(&second.om_input_items);
-    assert!(second_om.contains(om::OBSERVATION_CONTINUATION_HINT));
-    assert!(
-        !second_om.contains("pause and answer the user"),
-        "{second_om}"
-    );
-    assert!(state.record.om_suggested_response.is_empty());
+    assert_eq!(second.om_input_items.len(), first.om_input_items.len());
+    assert_eq!(om_user_content(&second.om_input_items), content);
 }
 #[test]
 fn the_idle_gap_measures_the_pause_before_the_current_turn() {
