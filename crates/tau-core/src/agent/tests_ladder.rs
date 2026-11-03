@@ -176,7 +176,7 @@ fn om_config(observe_threshold: u64) -> crate::config::Om {
         observe_threshold,
         reflect_threshold: 100_000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     }
 }

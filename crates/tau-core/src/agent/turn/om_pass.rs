@@ -363,8 +363,7 @@ impl AgentSession {
     /// buffer cycle when an interval boundary was crossed. The spawn
     /// happens INSIDE the lock section: the in-flight flag is set before
     /// the task can re-acquire the lock (D14), so the cycle and the
-    /// trigger never race on it. With `buffer_tokens = 0` (kill switch)
-    /// this is a no-op and the pass keeps today's sync behavior.
+    /// trigger never race on it.
     pub(super) fn om_mid_loop(&self) {
         let Some(pending) = self.om_buffer_due() else {
             return;
@@ -403,10 +402,10 @@ impl AgentSession {
         ));
     }
 
-    /// Whether a buffer cycle is due after a tool round (D3/D5): OM is on, the
-    /// kill switch is off, and the interval boundary was crossed. At the
-    /// activation threshold it promotes the chunks — the rung that costs no LLM
-    /// call — and reports no cycle due.
+    /// Whether a buffer cycle is due after a tool round (D3/D5): OM is on and
+    /// the interval boundary was crossed — cycles are always on (#408). At
+    /// the activation threshold it promotes the chunks — the rung that costs
+    /// no LLM call — and reports no cycle due.
     fn om_buffer_due(&self) -> Option<u64> {
         let mut guard = self.inner.lock();
         let Inner {
@@ -416,9 +415,6 @@ impl AgentSession {
             ..
         } = &mut *guard;
         let om = om.as_mut()?;
-        if om.config.buffer_tokens == 0 {
-            return None;
-        }
         let Ok(raw) = om.unobserved_tokens(store) else {
             // A store read failure degrades: keep the last known pending,
             // no trigger this round (the turn-end pass retries the read).

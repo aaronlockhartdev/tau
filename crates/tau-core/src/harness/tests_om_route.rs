@@ -163,7 +163,6 @@ default_model = "zzz/main-model"
 {model_line}observe_threshold = 1
 reflect_threshold = 100000
 buffer_increment = 100000
-buffer_tokens = 0
 "#,
             aaa = self.aaa_base,
             zzz = self.zzz_base,

@@ -569,12 +569,11 @@ pub(crate) fn provider_changed_count(collected: &Arc<Mutex<Vec<Event>>>, ws: &st
 /// never runs.
 pub(crate) fn om_layer(om: &crate::config::Om) -> String {
     format!(
-        "[om]\nom_model = \"{model}\"\nobserve_threshold = {observe}\nreflect_threshold = {reflect}\nbuffer_increment = {increment}\nbuffer_tokens = {buffer}\n\n[om.retries]\nobserve = {re_observe}\nbuffer = {re_buffer}\nreflect = {re_reflect}\n",
+        "[om]\nom_model = \"{model}\"\nobserve_threshold = {observe}\nreflect_threshold = {reflect}\nbuffer_increment = {increment}\n\n[om.retries]\nobserve = {re_observe}\nbuffer = {re_buffer}\nreflect = {re_reflect}\n",
         model = om.om_model,
         observe = om.observe_threshold,
         reflect = om.reflect_threshold,
         increment = om.buffer_increment,
-        buffer = om.buffer_tokens,
         re_observe = om.retries.observe,
         re_buffer = om.retries.buffer,
         re_reflect = om.retries.reflect,

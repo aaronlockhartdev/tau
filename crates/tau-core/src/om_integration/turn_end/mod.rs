@@ -272,7 +272,7 @@ impl OmState {
             if let Some(hook) = hook {
                 let kind = match &action {
                     TurnEndAction::Done => "idle",
-                    TurnEndAction::Observe { .. } | TurnEndAction::Buffer { .. } => "observing",
+                    TurnEndAction::Observe { .. } => "observing",
                     TurnEndAction::Reflect { .. } => "reflecting",
                 };
                 hook(kind);
@@ -289,16 +289,6 @@ impl OmState {
                         &request,
                         super::OmStage::Observe,
                         self.config.retries.observe,
-                    )
-                    .await?
-                }
-                TurnEndAction::Buffer { transcript, .. } => {
-                    let request = Self::observer_request(model, transcript);
-                    super::retry::call_with_retry(
-                        provider,
-                        &request,
-                        super::OmStage::Buffer,
-                        self.config.retries.buffer,
                     )
                     .await?
                 }
@@ -369,25 +359,35 @@ impl OmState {
 
     /// The turn-end decision (pure over the record — `settle_turn` feeds it
     /// the unobserved entries it just read): reflect at the observation
-    /// threshold, observe at activation, buffer at the increment (spec §4).
-    /// Activation and the increment are evaluated on the raw volume of those
-    /// entries — the quantity the stall diagnostic reports — never on
-    /// `pending_tokens`, which a promote rewrites with the tokens of the
-    /// chunks it left buffered (#392).
-    /// The sync Buffer arm is the kill-switch path only: with async
-    /// buffering enabled (`buffer_tokens > 0`) the mid-loop background
-    /// cycles own the sub-threshold range (ticket #86 P2, D2/T6), so the
-    /// turn-end pass never buffers.
+    /// threshold, observe at activation (spec §4). Activation is evaluated on
+    /// the raw volume of those entries — the quantity the stall diagnostic
+    /// reports — never on `pending_tokens`, which a promote rewrites with the
+    /// tokens of the chunks it left buffered (#392).
+    /// The settle observes only what no background cycle has buffered: the
+    /// chunks past the buffer cursor already carry an observation, and paying
+    /// twice for one span is the bug (#408).
     pub fn plan(&mut self, unobserved: &[Entry]) -> TurnEndAction {
-        let raw = self.pending_tokens(unobserved);
+        // The material the settle may observe: raw past the observation cursor
+        // AND past the buffer cursor. A durable chunk already carries an
+        // observation over the raw it covers; observing it again pays twice
+        // for one span (#408).
+        let start = match &self.buffer_cursor {
+            Some(id) => match unobserved.iter().position(|e| e.id == *id) {
+                Some(i) => i + 1,
+                None => 0,
+            },
+            None => 0,
+        };
+        let fresh = &unobserved[start..];
+        let raw = self.pending_tokens(fresh);
         if om::should_reflect(self.record.observation_tokens, &self.config) {
             return TurnEndAction::Reflect { level: 0 };
         }
-        if unobserved.is_empty() {
-            // Nothing unobserved, no paid call. A legal `observe_threshold = 0`
-            // clears activation on an empty window, and `observe_head`'s span
-            // needs a first entry — the empty window is Done, not an empty
-            // Observer round-trip (#399).
+        if fresh.is_empty() {
+            // Nothing left for the settle to observe, no paid call. A legal
+            // `observe_threshold = 0` clears activation on an empty window,
+            // and `observe_head`'s span needs a first entry — the empty
+            // window is Done, not an empty Observer round-trip (#399).
             return TurnEndAction::Done;
         }
         if self.activation_reached(raw) {
@@ -402,37 +402,8 @@ impl OmState {
             let bound = self
                 .config
                 .observe_threshold_for(self.record.observation_tokens);
-            let (span, transcript, _) = self.observe_head(unobserved, bound);
+            let (span, transcript, _) = self.observe_head(fresh, bound);
             return TurnEndAction::Observe { transcript, span };
-        }
-        if self.config.buffer_tokens == 0 && raw >= self.config.buffer_increment() {
-            // The slice covers only the not-yet-buffered tail of the
-            // unobserved range (the buffer cursor keeps runs disjoint), and
-            // only the next increment of it: the Buffer arm is a bounded
-            // Observer call, never a call whose input is the whole tail
-            // (#399). The chunk it stores counts the raw tokens the slice
-            // covers, so the promote target — a raw-window quantity — reads
-            // coverage the observation's compression cannot understate.
-            let start = match &self.buffer_cursor {
-                Some(id) => match unobserved.iter().position(|e| e.id == *id) {
-                    Some(i) => i + 1,
-                    None => 0,
-                },
-                None => 0,
-            };
-            let tail = &unobserved[start..];
-            if tail.is_empty() {
-                // The durable chunks already cover the window: Done, not an
-                // empty span (#399).
-                return TurnEndAction::Done;
-            }
-            let (span, transcript, coverage) =
-                self.observe_head(tail, self.config.buffer_increment());
-            return TurnEndAction::Buffer {
-                transcript,
-                span,
-                coverage,
-            };
         }
         TurnEndAction::Done
     }

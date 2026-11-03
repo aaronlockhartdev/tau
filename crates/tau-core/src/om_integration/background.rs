@@ -16,12 +16,12 @@ use crate::om_integration::{BufferedChunk, OmState};
 use crate::provider::{InputEntry, InputMessage, ResponseRequest, TurnProviderRef};
 use tau_protocol::EntryKind;
 
-/// The effective buffer interval at a pending level (D5): the full
-/// `buffer_tokens` below the ramp point, `buffer_tokens / 2` from there
-/// on, so the cycle cadence doubles as the observe threshold approaches
-/// (mastra `calculateObservationInterval`: `threshold - 1.1 * bufferTokens`).
+/// The effective buffer interval at a pending level (D5, #408): the full
+/// `buffer_increment` below the ramp point, `buffer_increment / 2` from
+/// there on, so the cycle cadence doubles as the observe threshold approaches
+/// (mastra `calculateObservationInterval`: `threshold - 1.1 * interval`).
 fn effective_interval(pending: u64, config: &OmConfig) -> u64 {
-    let full = u64::from(config.buffer_tokens);
+    let full = u64::from(config.buffer_increment());
     let ramp_point = u64::from(config.observe_threshold).saturating_sub(full * 11 / 10);
     if pending >= ramp_point {
         full / 2
@@ -75,7 +75,7 @@ pub(crate) async fn buffer_cycle(
     // no chunk and no LLM call; the interval is consumed (the in-process
     // boundary advanced at spawn) and the tail rides raw until the next
     // crossing.
-    if volume < config.buffer_tokens / 2 {
+    if volume < 3000 {
         clear_inflight(&inner);
         return;
     }
@@ -264,10 +264,10 @@ fn clear_inflight(inner: &Arc<Mutex<crate::agent::Inner>>) {
 mod tests {
     use super::*;
 
-    fn config(observe: u32, buffer: u32) -> OmConfig {
+    fn config(observe: u32, increment: u32) -> OmConfig {
         OmConfig {
             observe_threshold: observe,
-            buffer_tokens: buffer,
+            buffer_activation: 1.0 - f64::from(increment) / f64::from(observe),
             ..Default::default()
         }
     }
@@ -308,11 +308,12 @@ mod tests {
     }
 
     #[test]
-    fn disabled_when_buffer_tokens_is_zero() {
-        // The kill switch (D1): buffer_tokens = 0 makes the effective
-        // interval 0, so no boundary ever crosses — the sync turn-end
-        // path owns everything.
+    fn a_zero_increment_never_crosses() {
+        // #408: the interval knob is the increment. A config that folds to a
+        // zero increment — the retention floor at 1.0 — leaves the boundary
+        // math no multiples to cross: the cycles stay silent at any volume.
         let cfg = config(30_000, 0);
+        assert_eq!(cfg.buffer_increment(), 0);
         assert!(!boundary_crossed(60_000, &cfg, 0, 0));
         assert!(!boundary_crossed(60_000, &cfg, 12_000, 30_000));
     }

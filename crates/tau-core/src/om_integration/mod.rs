@@ -65,7 +65,6 @@ fn om_config_of(om: &crate::config::Om) -> OmConfig {
         reflect_threshold: threshold_u32(om.reflect_threshold),
         buffer_activation: activation,
         share_token_budget: false,
-        buffer_tokens: threshold_u32(om.buffer_tokens),
         retries: om.retries.clone(),
     }
 }

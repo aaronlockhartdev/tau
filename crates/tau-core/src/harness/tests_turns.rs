@@ -242,7 +242,7 @@ async fn a_live_om_run_emits_om_status_events() {
         observe_threshold: 1,
         reflect_threshold: 40_000,
         buffer_increment: 1,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let (core, _system) = om_core(&om);
@@ -505,7 +505,7 @@ async fn a_send_after_the_final_stream_end_starts_a_new_turn() {
         observe_threshold: 100,
         reflect_threshold: 200,
         buffer_increment: 50,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let om_state = crate::om_integration::OmState::from_config(&om, crate::om::OmRecord::default());
@@ -656,7 +656,7 @@ async fn a_failed_om_pass_does_not_kill_the_turn() {
         observe_threshold: 100,
         reflect_threshold: 200,
         buffer_increment: 50,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries {
             observe: 1,
             buffer: 0,
@@ -761,7 +761,7 @@ async fn a_non_transient_om_failure_makes_no_retry_attempts() {
         observe_threshold: 100,
         reflect_threshold: 200,
         buffer_increment: 50,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries {
             observe: 8,
             buffer: 0,

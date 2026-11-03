@@ -95,7 +95,6 @@ fn om_config(
     observe: u64,
     reflect: u64,
     increment: u64,
-    buffer: u64,
     observe_retries: u32,
     buffer_retries: u32,
 ) -> crate::config::Om {
@@ -104,7 +103,7 @@ fn om_config(
         observe_threshold: observe,
         reflect_threshold: reflect,
         buffer_increment: increment,
-        buffer_tokens: buffer,
+        buffer_tokens: None,
         retries: crate::config::OmRetries {
             observe: observe_retries,
             buffer: buffer_retries,
@@ -255,7 +254,7 @@ impl Rig {
 #[tokio::test]
 async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
     let title = "A".repeat(3200);
-    let om = om_config(1000, 10_000, 400, 200, 0, 0);
+    let om = om_config(1000, 10_000, 400, 0, 0);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) =
@@ -321,7 +320,7 @@ async fn a_boundary_trigger_buffers_a_chunk_in_the_background() {
 #[tokio::test]
 async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
     let title = "A".repeat(3200);
-    let om = om_config(1000, 10_000, 400, 200, 0, 1);
+    let om = om_config(1000, 10_000, 400, 0, 1);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) = scripted_om(
@@ -362,7 +361,7 @@ async fn an_exhausted_buffer_cycle_leaves_no_chunk_and_a_clean_turn() {
 #[tokio::test]
 async fn an_exhausted_buffer_cycle_records_om_failed_naming_the_buffer_stage() {
     let title = "A".repeat(3200);
-    let om = om_config(1000, 10_000, 400, 200, 0, 1);
+    let om = om_config(1000, 10_000, 400, 0, 1);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, _served, _seen) = scripted_om(
@@ -387,7 +386,7 @@ async fn an_exhausted_buffer_cycle_records_om_failed_naming_the_buffer_stage() {
 #[tokio::test]
 async fn a_buffer_cycle_that_commits_a_chunk_records_no_om_failed() {
     let title = "A".repeat(3200);
-    let om = om_config(1000, 10_000, 400, 200, 0, 1);
+    let om = om_config(1000, 10_000, 400, 0, 1);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, _served, _seen) =
@@ -419,7 +418,7 @@ async fn a_buffer_cycle_that_commits_a_chunk_records_no_om_failed() {
 #[tokio::test]
 async fn the_turn_end_pass_does_not_sync_buffer_with_async_on() {
     let title = "A".repeat(3200);
-    let om = om_config(1000, 10_000, 400, 200, 0, 0);
+    let om = om_config(1000, 10_000, 400, 0, 0);
     let mut scripts = read_round("c1", &title);
     scripts.push(crate::agent::testkit::sse("done", &[]));
     let (p, served, _seen) = scripted_om(
@@ -462,7 +461,7 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
     let a = "A".repeat(2300);
     let b = "B".repeat(2300);
     let c = "C".repeat(2300);
-    let om = om_config(1000, 10_000, 400, 200, 0, 0);
+    let om = om_config(1000, 10_000, 400, 0, 0);
     let mut scripts = read_round("c1", &a);
     scripts.extend(read_round("c2", &b));
     scripts.extend(read_round("c3", &c));
@@ -549,7 +548,7 @@ async fn a_threshold_reach_mid_loop_promotes_the_buffered_chunk() {
 /// unobserved entries (the 10k-entry acceptance stress leg pins this).
 #[tokio::test]
 async fn a_done_turn_appends_no_om_entry() {
-    let om = om_config(1000, 10_000, 400, 200, 0, 0);
+    let om = om_config(1000, 10_000, 400, 0, 0);
     let (p, served, _seen) =
         scripted_om(vec![crate::agent::testkit::sse("done", &[])], "", false, 10);
     let rig = rig(&om, crate::om::OmRecord::default(), p);
@@ -566,12 +565,13 @@ async fn a_done_turn_appends_no_om_entry() {
     assert_eq!(om_entries, 0, "a Done turn must not append an om entry");
 }
 
-/// #107: a turn-end pass that promotes (drains the buffered chunks) writes
-/// exactly one `om` record. Before the fix, the write-back merge re-introduced
-/// the drained chunks from the stale in-memory mirror (`inner.om`), so a second
-/// record saved with the same `active_observations` — the duplicate card.
+/// #107: a promoted card is written exactly once. Before the fix, the
+/// write-back merge re-introduced the drained chunks from the stale in-memory
+/// mirror (`inner.om`), saving the same `active_observations` twice — the
+/// duplicate card. With cycles always on (#408) other records are legal; the
+/// card's uniqueness and the drained chunks' absence are the invariants.
 #[tokio::test]
-async fn a_promoting_turn_end_writes_one_record_not_two() {
+async fn a_promoting_turn_end_writes_the_card_once_and_never_the_drained_chunks() {
     let chunk = |id: &str| crate::om_integration::BufferedChunk {
         range: (id.to_owned(), id.to_owned()),
         last_ts: 1000,
@@ -585,9 +585,8 @@ async fn a_promoting_turn_end_writes_one_record_not_two() {
         ..Default::default()
     };
     // observe 1000 (the round crosses it at turn end); increment 900 (a low
-    // retention floor so the promotion removes both chunks); buffer 0
-    // (disables the mid-loop trigger, so the promote fires only at turn end).
-    let om = om_config(1000, 10_000, 900, 0, 0, 0);
+    // retention floor so the promotion removes both chunks).
+    let om = om_config(1000, 10_000, 900, 0, 0);
     // One ~1150-token round crosses the observe threshold at turn end, so the
     // turn-end activation promotes the two pre-buffered chunks.
     let a = "A".repeat(4600);
@@ -598,15 +597,34 @@ async fn a_promoting_turn_end_writes_one_record_not_two() {
     rig.run_turn("go").await;
     Rig::settled_cleanly(&rig.events());
 
-    let om_entries = rig
+    let om_records = rig
         .entries()
         .iter()
         .filter(|e| e.kind == EntryKind::Om)
-        .count();
-    assert_eq!(
-        om_entries, 1,
-        "a promoting turn-end writes exactly one om record; the write-back merge \
-         must not re-introduce the drained chunks (got {om_entries})"
+        .filter_map(|e| serde_json::from_value::<crate::om::OmRecord>(e.payload.clone()).ok())
+        .collect::<Vec<_>>();
+    // The bug this leg pins is the duplicate card: the write-back merge
+    // re-saving the promoted observations with the drained chunks from the
+    // stale in-memory mirror. Promote steps may follow each other (a
+    // retention-floor drain keeps one chunk, the turn-end drain takes the
+    // rest), so the card must GROW STRICTLY: no two records carry the same
+    // card, and the settled record promotes every chunk and drains none back.
+    for pair in om_records.windows(2) {
+        assert!(
+            pair[1].active_observations.len() > pair[0].active_observations.len()
+                || pair[1].cursor != pair[0].cursor,
+            "the card did not grow between records: {om_records:?}"
+        );
+    }
+    let last = om_records.last().expect("the promote wrote no record");
+    assert!(
+        last.buffered_chunks.is_empty(),
+        "the settled record re-introduced chunks: {:?}",
+        last.buffered_chunks
+    );
+    assert!(
+        last.active_observations.contains("obs e1") && last.active_observations.contains("obs e2"),
+        "the settled record did not promote every chunk: {last:?}"
     );
 }
 
@@ -615,7 +633,7 @@ async fn a_promoting_turn_end_writes_one_record_not_two() {
 /// in-memory mirror, must not clobber it.
 #[test]
 fn write_back_merge_preserves_a_durable_background_chunk() {
-    let config = om_config(1000, 10_000, 400, 200, 0, 0);
+    let config = om_config(1000, 10_000, 400, 0, 0);
     let fresh = crate::om::OmRecord {
         buffered_chunks: vec![crate::om_integration::BufferedChunk {
             range: ("e1".into(), "e2".into()),
@@ -647,10 +665,10 @@ fn write_back_merge_preserves_a_durable_background_chunk() {
 async fn a_mid_loop_promote_over_a_covered_chunk_moves_the_cursor_nowhere() {
     let title = "A".repeat(3_200);
     // observe 600 (one tool round of ~820 raw tokens reaches activation at the
-    // first mid-loop check); increment 300 (the retention floor, so the promote
-    // walk has a target); buffer 200 (the mid-loop trigger is on, not the kill
-    // switch); no retries (a pass that dies is over in one call).
-    let om = om_config(600, 10_000, 300, 200, 0, 0);
+    // first mid-loop check); increment 300 (the retention floor, so the
+    // promote walk has a target); no retries (a pass that dies is over in
+    // one call).
+    let om = om_config(600, 10_000, 300, 0, 0);
     // The durable chunk covers entry 1 — the user entry the session's first
     // pass observed — and the cursor sits past it, on entry 2.
     let chunk = crate::om_integration::BufferedChunk {

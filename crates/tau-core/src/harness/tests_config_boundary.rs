@@ -271,7 +271,7 @@ async fn a_gate_lost_at_the_turn_boundary_records_once() {
 /// so every memory round-trip in these legs belongs to a turn.
 fn system_layer(base_url: &str, observe: u64) -> String {
     format!(
-        "[providers.dev]\nbase_url = \"{base_url}/v1\"\n\n[providers.dev.models.model]\ncontext_window = 32768\nmax_tokens = 8192\n\n[generation]\ndefault_model = \"dev/model\"\n\n[om]\nom_model = \"\"\nobserve_threshold = {observe}\nreflect_threshold = 100000\nbuffer_increment = 6000\nbuffer_tokens = 0\n"
+        "[providers.dev]\nbase_url = \"{base_url}/v1\"\n\n[providers.dev.models.model]\ncontext_window = 32768\nmax_tokens = 8192\n\n[generation]\ndefault_model = \"dev/model\"\n\n[om]\nom_model = \"\"\nobserve_threshold = {observe}\nreflect_threshold = 100000\nbuffer_increment = 6000\n"
     )
 }
 

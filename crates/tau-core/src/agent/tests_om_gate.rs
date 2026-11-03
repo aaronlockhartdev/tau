@@ -28,7 +28,7 @@ async fn context_gate_fires_when_over_budget() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     // A small observation so the re-assembled prompt drops under budget.
@@ -141,7 +141,7 @@ async fn context_gate_noop_when_under_budget() {
         observe_threshold: 1000,
         reflect_threshold: 2000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     let provider = Arc::new(ScriptedProvider::new(vec![sse("a1", &[])]));
@@ -206,7 +206,7 @@ async fn context_gate_refuses_when_the_ladder_cannot_fit() {
         // call — the test is about the gate, not reflect.
         reflect_threshold: 100_000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     };
     // A huge observation: 40000 chars ≈ 10000 tokens, still over budget.

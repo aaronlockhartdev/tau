@@ -11,7 +11,7 @@ fn small_om() -> crate::config::Om {
         observe_threshold: 1000,
         reflect_threshold: 100_000,
         buffer_increment: 230,
-        buffer_tokens: 0,
+        buffer_tokens: None,
         retries: crate::config::OmRetries::default(),
     }
 }
