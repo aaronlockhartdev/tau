@@ -544,7 +544,7 @@ validated on the merged config (#338).
 partially applied.
 
 - `parsing {path}: …` — TOML error, including any unknown key
-- `reading config: …` — I/O error on a file that exists
+- `reading {path}: …` — I/O error on a layer file that exists (permission, directory in place)
 - `{field} = {value} exceeds the u32 token limit (…)` — an `[om]` threshold
 - `providers.{provider}.models.{model} declares no context_window; the context gate needs it` — a model entry that omits the window (#338)
 - `providers.{provider}.models.{model} declares max_tokens = 0; the output cap must be positive` — a declared cap of `0` arms a gate that can answer nothing (#338)

@@ -224,6 +224,101 @@ async fn an_invalid_system_config_keeps_the_boot_config_live() {
     );
 }
 
+/// The session-open headline under a boot-rejected system layer: the layer
+/// names a provider and a retired `[om]` key, so the load refuses it and the
+/// boot keeps defaults. The open says the layer was refused and carries the
+/// loader's reason; "add a [providers.x]" would misstate a config that names
+/// a provider (#419).
+#[tokio::test]
+async fn a_session_under_a_rejected_system_layer_hears_the_reason() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sys = tempfile::tempdir().unwrap();
+    write_config_fixture(
+        sys.path(),
+        "[providers.dev]\nbase_url = \"http://127.0.0.1:9/v1\"\n\n[om]\nom_model = \"dev/model\"\n",
+    );
+    let core = CoreBuilder::custom(BTreeMap::new())
+        .with_system_dir(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    let err = core
+        .session_new(&workspace, None, None)
+        .expect_err("a session cannot open under a refused layer");
+    let message = match err {
+        tau_protocol::ProtocolError::Other { message } => message,
+        other => panic!("expected the refused-config headline, got {other:?}"),
+    };
+    assert!(
+        message.contains("the config was rejected")
+            && message.contains("om_model")
+            && message.contains("the key is model"),
+        "the headline carries the loader's reason: {message}"
+    );
+    assert!(
+        !message.contains("add a [providers.x]"),
+        "a configured provider is never told to add one: {message}"
+    );
+}
+
+/// The cold read's fold, pinned directly: a workspace with no project layer
+/// meets the system layer's live rejection — the mark rides the config, so
+/// the session's surfaces have the cause (#419).
+#[tokio::test]
+async fn a_cold_read_folds_the_system_layers_rejection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sys = tempfile::tempdir().unwrap();
+    write_config_fixture(sys.path(), "[om]\nom_model = \"dev/model\"\n");
+    let core = CoreBuilder::custom(BTreeMap::new())
+        .with_system_dir(sys.path().to_path_buf())
+        .build()
+        .unwrap();
+    let workspace = Workspace {
+        id: "w-fold".to_owned(),
+        name: "fold".to_owned(),
+        cwd: tmp.path().display().to_string(),
+    };
+    let (_config, rejection) = core.workspace_config_checked(&workspace);
+    let reason = rejection
+        .expect("the cold read carries the system layer's rejection")
+        .reason;
+    assert!(
+        reason.contains("om_model") && reason.contains("the key is model"),
+        "the folded rejection names the retired key: {reason}"
+    );
+}
+/// Self-healing under the unwatchable-shape of the mark: the boot fails
+/// reading the system layer (a file where the directory belongs), the mark
+/// lands; the user repairs the layer; the next read touched the system file,
+/// so it clears the mark and the headline stops reliving the repair (#419).
+#[tokio::test]
+async fn a_repaired_system_layer_clears_its_mark() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sys_parent = tempfile::tempdir().unwrap();
+    let sys = sys_parent.path().join("tau");
+    std::fs::write(&sys, "not a directory").unwrap();
+    let core = CoreBuilder::custom(BTreeMap::new())
+        .with_system_dir(sys.clone())
+        .build()
+        .unwrap();
+    let workspace = open_ws(&core, tmp.path()).await;
+    // Repair: the directory and a clean layer.
+    std::fs::remove_file(&sys).unwrap();
+    std::fs::create_dir(&sys).unwrap();
+    write_config_fixture(&sys, "[om]\nmodel = \"dev/model\"\n");
+    let err = core
+        .session_new(&workspace, None, None)
+        .expect_err("custom core carries no providers; the open still routes nowhere");
+    let message = match err {
+        tau_protocol::ProtocolError::Other { message } => message,
+        other => panic!("expected the route headline, got {other:?}"),
+    };
+    assert!(
+        !message.contains("the config was rejected"),
+        "the repaired layer is not relived: {message}"
+    );
+}
+
 /// The edge, negatively: a reload whose rows are the ones already live emits no
 /// `ProviderChanged` — a save that changes nothing must not churn the menu.
 #[tokio::test]
