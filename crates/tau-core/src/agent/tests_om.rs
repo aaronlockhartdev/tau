@@ -299,3 +299,166 @@ async fn a_compacted_seed_keeps_the_frozen_prefix_byte_identical_across_reflect(
         "{reflect:?}"
     );
 }
+
+#[tokio::test]
+async fn a_turn_end_spawns_the_buffer_cycle_on_a_crossed_interval() {
+    // #399: a turn with no tool round never reaches the mid-loop trigger, so
+    // a crossed interval at the settle used to wait for the next turn to
+    // spawn its slice. Seeded raw past one interval (under activation, with
+    // async on): the settle plans Done, the turn end spawns the cycle, and
+    // the cycle's commit lands as an observation chunk counting the raw of
+    // the slice it covered — the cycle's call is bounded, not a call over
+    // the whole unbuffered window (#399).
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = session_in(dir.path());
+    // 3 × 900 chars ≈ 675 tokens: past the 600 interval, under the 1000
+    // activation.
+    let mut parent: Option<String> = None;
+    for _ in 0..3 {
+        let e = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id);
+    }
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1_000,
+        reflect_threshold: 2_000,
+        buffer_increment: 230,
+        buffer_tokens: 600,
+        retries: crate::config::OmRetries::default(),
+    };
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse("done", &[]),
+        sse_json("<observations>the slice, observed</observations>"),
+    ]));
+    let agent = AgentSession::new(SessionParams {
+        store,
+        system_prompt: "be terse".into(),
+        model: "test-model".into(),
+        tools: tools::tool_specs(),
+        cwd: dir.path().to_path_buf(),
+        provider: provider.clone(),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: TurnConfig::default(),
+        gates: None,
+        gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
+        om: Some(crate::om_integration::OmState::from_config(
+            &cfg,
+            crate::om::OmRecord::default(),
+        )),
+        om_route: crate::agent::OmRoute::Session,
+        subagents: None,
+        child: None,
+    });
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+    // The cycle is spawned, not awaited: the turn ends with it in flight,
+    // and it lands its commit when the runtime next runs it.
+    // The guard must drop before the join: the cycle re-acquires the
+    // session's lock to commit, and a guard held across the await deadlocks it.
+    let handle = agent.inner.lock().om_inflight.take();
+    if let Some(handle) = handle {
+        handle.await.unwrap();
+    }
+    let state = agent
+        .inner
+        .lock()
+        .om
+        .clone()
+        .expect("the om state is written back");
+    assert_eq!(
+        state.record.buffered_chunks.len(),
+        1,
+        "the cycle committed no chunk"
+    );
+    let chunk = &state.record.buffered_chunks[0];
+    assert!(
+        chunk.text.contains("the slice, observed"),
+        "the chunk is not the cycle's observation"
+    );
+    // The cycle's call is the next increment slice, not the whole
+    // unbuffered window: the 230-increment floor is one seeded entry (900
+    // chars ≈ 225 tokens); the window is 675 plus the turn's records.
+    assert!(
+        (200..675).contains(&chunk.tokens),
+        "the chunk counts {}, not one entry-bounded increment slice",
+        chunk.tokens
+    );
+    assert!(state.record.last_buffered_at_tokens >= 600);
+}
+
+#[tokio::test]
+async fn the_kill_switch_leaves_the_turn_end_spawning_nothing() {
+    // The negative pair (#399): with `buffer_tokens = 0` the sync Buffer arm
+    // owns the sub-threshold range — the settle observes the bounded slice
+    // itself, and the turn end spawns no cycle.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = session_in(dir.path());
+    let mut parent: Option<String> = None;
+    for _ in 0..3 {
+        let e = store
+            .append(
+                EntryKind::User,
+                serde_json::json!({ "text": "a".repeat(900), "lane": "follow-up" }),
+                parent.as_deref(),
+            )
+            .unwrap();
+        parent = Some(e.id);
+    }
+    let cfg = crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1_000,
+        reflect_threshold: 2_000,
+        buffer_increment: 230,
+        buffer_tokens: 0,
+        retries: crate::config::OmRetries::default(),
+    };
+    let provider = Arc::new(ScriptedProvider::new(vec![
+        sse("done", &[]),
+        sse_json("<observations>the slice, observed</observations>"),
+    ]));
+    let agent = AgentSession::new(SessionParams {
+        store,
+        system_prompt: "be terse".into(),
+        model: "test-model".into(),
+        tools: tools::tool_specs(),
+        cwd: dir.path().to_path_buf(),
+        provider: provider.clone(),
+        tool_batch_on_force: ToolBatchPolicy::Complete,
+        turn: TurnConfig::default(),
+        gates: None,
+        gate_failed: false,
+        hashline: crate::hashline::pin_store::GcPolicy::default(),
+        om: Some(crate::om_integration::OmState::from_config(
+            &cfg,
+            crate::om::OmRecord::default(),
+        )),
+        om_route: crate::agent::OmRoute::Session,
+        subagents: None,
+        child: None,
+    });
+    agent.send("go", Lane::FollowUp);
+    agent.process().await.unwrap();
+    assert!(
+        agent.inner.lock().om_inflight.is_none(),
+        "the kill switch must spawn no background cycle"
+    );
+    let state = agent
+        .inner
+        .lock()
+        .om
+        .clone()
+        .expect("the om state is written back");
+    assert_eq!(state.record.buffered_chunks.len(), 1);
+    assert!(
+        state.record.buffered_chunks[0]
+            .text
+            .contains("the slice, observed")
+    );
+}

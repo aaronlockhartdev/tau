@@ -181,7 +181,7 @@ fn a_reopened_buffer_pass_covers_only_the_new_tail() {
     let mut state = OmState::from_config(&om, record_with_a_chunk());
     let unobserved = state.unobserved(&mut store).unwrap();
     match state.plan(&unobserved) {
-        TurnEndAction::Buffer { transcript } => assert_eq!(
+        TurnEndAction::Buffer { transcript, .. } => assert_eq!(
             transcript.matches(&"w".repeat(4_000)).count(),
             5,
             "the buffer transcript re-covered material the chunks hold"
