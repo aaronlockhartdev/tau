@@ -14,12 +14,12 @@ async fn settle(
 }
 
 #[tokio::test]
-async fn a_sunken_session_pays_its_window_a_bounded_slice_per_settle() {
-    // #394: a sunken session (cursor frozen at the branch head, no chunks
-    // buffered) clears activation with a window the size of its whole history.
-    // The first settle observes a threshold-sized slice and leaves the tail; the
-    // next settle takes the next slice. The window is paid a slice per settle,
-    // never handed to the Observer whole.
+async fn a_sunken_session_pays_its_window_in_bounded_slices() {
+    // #394, #409: a sunken session (cursor frozen at the branch head, no
+    // chunks buffered) clears activation with a window the size of its whole
+    // history. The settle observes threshold-sized slices — never the window
+    // whole — draining to the 1.2× line, and the cycles own the material
+    // below it.
     let dir = tempfile::tempdir().unwrap();
     // 20 × 16k chars ≈ 80k tokens: past the 30k activation, and past the
     // threshold-sized span the bound names.
@@ -36,24 +36,29 @@ async fn a_sunken_session_pays_its_window_a_bounded_slice_per_settle() {
             .matches(&"w".repeat(16_000))
             .count(),
         7,
-        "the first settle's span is not the threshold-sized slice the bound names"
+        "the first slice is not the threshold-sized slice the bound names"
     );
-    assert_eq!(state.record.cursor.as_ref().unwrap().entry_id, "00000007");
-    let raw_after_first = state.unobserved_tokens(&mut store).unwrap();
-    assert_eq!(raw_after_first, 52_000);
-    // The stamped quantity is the window the cursor left behind, never 0 for a
-    // span that stopped short (#392's gate quantity).
-    assert_eq!(state.record.pending_tokens, raw_after_first);
-
-    // The tail is observed by the next settle, not lost to the bound.
-    settle(&mut state, &mut store, &provider).await;
+    // The 80k window sits past the 36k drain line (1.2×30k, #409), so the
+    // settle keeps taking slices: the second is the next 7 entries, and the
+    // 24k window the cursor leaves under the line closes the drain.
     assert_eq!(
         recorder.observer_transcripts()[1]
             .matches(&"w".repeat(16_000))
             .count(),
-        7
+        7,
+        "the second slice tiles the window, it does not re-show the first"
     );
+    assert_eq!(recorder.observer_calls(), 2);
     assert_eq!(state.record.cursor.as_ref().unwrap().entry_id, "00000014");
+    let raw_after_first = state.unobserved_tokens(&mut store).unwrap();
+    assert_eq!(raw_after_first, 24_000);
+    // The stamped quantity is the window the cursor left behind, never 0 for
+    // a span that stopped short (#392's gate quantity).
+    assert_eq!(state.record.pending_tokens, raw_after_first);
+
+    // The 24k tail is under the 30k activation: the next settle runs no pass,
+    // and the cycles own the tail from here.
+    settle(&mut state, &mut store, &provider).await;
     assert_eq!(recorder.observer_calls(), 2);
 
     // The spans are consecutive and disjoint: the slices tile the window, so the

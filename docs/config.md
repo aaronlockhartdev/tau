@@ -323,7 +323,11 @@ config error, never a launch panic.
 the load, naming the successor — no silent ignore. The turn-end pass keeps its
 bounded backstop (at most one threshold-sized slice per settle, past the
 buffered range) and the promote, the free swap that makes buffered
-observations active with no model call. No config
+observations active with no model call. Past the **drain line** — 1.2×
+`observe_threshold` of unobserved raw at a settle — the backstop stops being
+one slice and drains: threshold-sized slices, oldest-first, until the window
+drops under the line (#409). A failing slice ends the drain and latches
+`om_failed`; the turn is never blocked by memory lag. No config
 value can leave a past-activation window that the turn-end pass cannot see
 (#392); observation runs forward in the background, not deferred to the
 boundary (#399).

@@ -386,3 +386,140 @@ async fn settles_observe_bounded_slices_never_the_whole_window() {
     );
     assert_eq!(state.record.pending_tokens, 2_000);
 }
+
+/// The drain fixture's config: a 1000-token activation (a 1200-token drain
+/// line), a reflect rung far out of reach, and the cycles' interval small
+/// enough to be irrelevant at these volumes (#409).
+fn drain_config(retries: crate::config::OmRetries) -> crate::config::Om {
+    crate::config::Om {
+        om_model: String::new(),
+        observe_threshold: 1_000,
+        reflect_threshold: 1_000_000,
+        buffer_increment: 200,
+        buffer_tokens: None,
+        retries,
+    }
+}
+
+#[tokio::test]
+async fn a_backlogged_window_drains_in_bounded_slices() {
+    // #409 (mastra `blockAfter` parity): a window at 1.2× activation is not
+    // left for the next settle — the settle drains bounded slices, each
+    // planned from the state the last slice's commit moved, until the
+    // window drops under the drain line.
+    let dir = tempfile::tempdir().unwrap();
+    // 12 × 1600 chars = 400 tokens each: 4800 raw, past the 1200 drain line.
+    let mut store = store_with_text_entries(dir.path(), 12, 1_600);
+    let mut state = OmState::from_config(
+        &drain_config(crate::config::OmRetries::default()),
+        OmRecord::default(),
+    );
+    let recorder = std::sync::Arc::new(RecordingProvider::new("drained a slice"));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    let mut with_store =
+        |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+    state
+        .settle_turn(&mut with_store, &provider, "om-model", None)
+        .await
+        .unwrap();
+    // Each slice is bound-sized — two entries (800 tokens; a third would
+    // cross the 1000 bound) — and the cursor rides the shown span: five
+    // slices drain to 800 raw, under the 1200 line.
+    let transcripts = recorder.observer_transcripts();
+    assert_eq!(recorder.observer_calls(), 5);
+    for t in &transcripts {
+        assert_eq!(t.matches(&"w".repeat(1_600)).count(), 2);
+    }
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000010");
+    assert_eq!(state.record.pending_tokens, 800);
+    assert!(state.record.active_observations.contains("drained a slice"));
+}
+
+#[tokio::test]
+async fn a_window_under_the_drain_line_pays_one_slice() {
+    // The negative pair: between activation (1000) and the drain line
+    // (1200) the settle pays its single backstop slice and stops — the
+    // async cycles own that band; the valve adds no new blocking in the
+    // healthy path.
+    let dir = tempfile::tempdir().unwrap();
+    // 11 × 400 chars = 100 tokens each: 1100 raw — past activation, under
+    // the drain line.
+    let mut store = store_with_text_entries(dir.path(), 11, 400);
+    let mut state = OmState::from_config(
+        &drain_config(crate::config::OmRetries::default()),
+        OmRecord::default(),
+    );
+    let recorder = std::sync::Arc::new(RecordingProvider::new("one backstop slice"));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    let mut with_store =
+        |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+    state
+        .settle_turn(&mut with_store, &provider, "om-model", None)
+        .await
+        .unwrap();
+    assert_eq!(recorder.observer_calls(), 1);
+    // The bound is inclusive: ten entries ride to exactly 1000.
+    assert_eq!(state.record.cursor.unwrap().entry_id, "00000010");
+}
+
+#[tokio::test]
+async fn a_drain_slice_that_fails_costs_the_retry_budget_and_returns() {
+    // Lag blocks the settle, death never loops it (#409): a dead endpoint
+    // costs the observe retry budget — attempts, not slices — the cursor
+    // stays frozen, and the failure reaches the caller, which latches
+    // `om_failed` and lets the turn through (#86).
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 12, 1_600);
+    let mut state = OmState::from_config(
+        &drain_config(crate::config::OmRetries {
+            observe: 2,
+            buffer: 0,
+            reflect: 0,
+        }),
+        OmRecord::default(),
+    );
+    let failing = std::sync::Arc::new(FailingProvider::new());
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = failing.clone();
+    let mut with_store =
+        |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+    let outcome = state
+        .settle_turn(&mut with_store, &provider, "om-model", None)
+        .await;
+    assert!(matches!(
+        outcome,
+        Err(OmError::Provider(
+            OmStage::Observe,
+            crate::provider::ProviderError::Status { status: 500, .. }
+        ))
+    ));
+    assert_eq!(
+        failing.calls.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "the drain paid past the retry budget"
+    );
+    assert!(state.record.cursor.is_none());
+}
+
+#[tokio::test]
+async fn a_degenerate_slice_stops_the_drain() {
+    // The observer answers, the answer observes nothing: the cursor does not
+    // move, and the settle never pays twice for one frozen span — the drain
+    // stops on no-progress, the window stays pending for the cycles and the
+    // next settle.
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = store_with_text_entries(dir.path(), 12, 1_600);
+    let mut state = OmState::from_config(
+        &drain_config(crate::config::OmRetries::default()),
+        OmRecord::default(),
+    );
+    let recorder = std::sync::Arc::new(RecordingProvider::new(""));
+    let provider: std::sync::Arc<dyn crate::provider::TurnProvider> = recorder.clone();
+    let mut with_store =
+        |f: &mut dyn FnMut(&mut SessionStore) -> Result<(), OmError>| f(&mut store);
+    state
+        .settle_turn(&mut with_store, &provider, "om-model", None)
+        .await
+        .unwrap();
+    assert_eq!(recorder.observer_calls(), 1);
+    assert!(state.record.cursor.is_none());
+}

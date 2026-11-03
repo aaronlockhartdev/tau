@@ -91,3 +91,34 @@ impl crate::provider::TurnProvider for RecordingProvider {
         crate::provider::canned(&self.body).call(request, sink)
     }
 }
+
+/// A provider every call fails with a transient 500, counting attempts. The
+/// drain's negative: the retry budget is the attempt count, and the pass
+/// returns the failure — the loop never spins on a dead endpoint (#409).
+pub(crate) struct FailingProvider {
+    pub(crate) calls: std::sync::atomic::AtomicUsize,
+}
+
+impl FailingProvider {
+    pub(crate) fn new() -> Self {
+        Self {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+}
+
+impl crate::provider::TurnProvider for FailingProvider {
+    fn call<'a>(
+        &self,
+        _request: &crate::provider::ResponseRequest,
+        _sink: &'a mut dyn crate::provider::TurnSink,
+    ) -> crate::provider::ProviderTurn<'a> {
+        self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async {
+            Err(crate::provider::ProviderError::Status {
+                status: 500,
+                body: "canned drain failure".into(),
+            })
+        })
+    }
+}
