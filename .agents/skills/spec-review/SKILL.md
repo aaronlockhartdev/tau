@@ -19,8 +19,8 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 | # | S | Check | Fail → |
 |---|---|---|---|
 | 1 | D | `grep -ril "<key phrase>" spec changes tests` finds no prior owner | duplicate: edit the owner, delete the copy |
-| 2 | D | New requirement: ID from `tools/spec id`, one EARS clause, `Acceptance: @…` | block |
-| 3 | B | Cited `@R-…` exists in `tests/features/`; scenario uses only steps in `STEPS.md` | block |
+| 2 | D | New requirement: ID from `cargo run -p tau-tools --bin spec -- id`, one EARS clause, `Acceptance: @…` | block |
+| 3 | B | Cited `@R-…` exists in `crates/tau-test/tests/features/`; scenario uses only steps in `STEPS.md` | block |
 | 4 | D | No Given/When/Then text inside any spec | block |
 | 5 | D | ID integrity per spec-change §3 (MODIFIED / REMOVED+Supersedes, no rename, renumber, reuse) | block |
 | 6 | D | Delta paths mirror `spec/…` paths | fix |

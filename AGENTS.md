@@ -22,8 +22,10 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | `spec/<domain>/<area>/spec.md` | leaf: EARS requirements + acceptance refs | implementing that area |
 | `changes/<id>/` | active change: proposal, deltas, tasks | before coding a behaviour change |
 | `changes/archive/` | closed changes, the record of *why* | history of a rule |
-| `tests/features/` | Gherkin acceptance, tagged `@R-…` | writing/reading acceptance |
-| `tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
+| `crates/` | workspace members: core, protocol, acp, app, test, tools | any code |
+| `crates/tau-test/tests/features/` | Gherkin acceptance, tagged `@R-…` | writing/reading acceptance |
+| `crates/tau-test/tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
+| `crates/tau-test/suites/` | eval suites, run by hand | deciding whether a feature is worth building |
 | `contracts/` | generated wire/tool schemas | touching the wire |
 | `docs/glossary.md` | canonical terms | a term is ambiguous |
 | `.agents/skills/`, `.agents/agents/` | skills (below); subagent definitions | task matches |
@@ -34,12 +36,13 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 
 | Gate | Command | State |
 |---|---|---|
-| spec tool | `tools/spec {id,new,count,archive}` | M0 |
-| spec lint | `cargo run -p tau-test --bin tau-spec -- --check` | M0 |
+| spec tool | `cargo run -p tau-tools --bin spec -- {id,new,count,archive}` | M0 |
+| spec lint | `cargo run -p tau-tools --bin spec -- --check` | M0 |
 | doc lint | `rumdl lint spec changes docs AGENTS.md README.md` | M0 |
 | links | `lychee spec changes docs AGENTS.md README.md` | M0 |
 | unit + surface | `cargo nextest run` | M0 |
-| behaviour | `cargo test --test features` | M0 |
+| behaviour | `cargo test -p tau-test --test features` | M0 |
+| core has no gpui | `cargo tree -p tau-core` lists no gpui package | M0 |
 | lints | `cargo fmt && cargo clippy -- -D warnings` | M0 |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
 | desktop | `cargo run -p tau-app` | M0 |
@@ -51,7 +54,7 @@ Decided, with pins; deviations need a change.
 
 | Layer | Choice | Pin |
 |---|---|---|
-| Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` · `tau-mock-llm` | workspace |
+| Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` (mock LLM, harness, eval) · `tau-tools` (spec CLI) | workspace |
 | Toolchain | Rust stable, latest release, bumped on release; `rust-toolchain.toml` pins it, `resolver = "3"` resolves MSRV-aware | 1.100.0 (2026-11-12) |
 | UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
 | Async | tokio | latest stable |

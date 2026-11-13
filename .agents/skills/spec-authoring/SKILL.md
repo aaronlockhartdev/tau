@@ -12,7 +12,7 @@ description: Write or edit tau requirement specs under spec/: EARS clauses, R-ID
 | Content | Goes in | Never in |
 |---|---|---|
 | A rule the system must follow | leaf `spec/<domain>/<area>/spec.md` | README, code comments, AGENTS.md (link, don't restate) |
-| Observable behaviour, examples | `tests/features/<domain>.feature` tagged `@R-…` | spec; the spec cites the tag |
+| Observable behaviour, examples | `crates/tau-test/tests/features/<domain>.feature` tagged `@R-…` | spec; the spec cites the tag |
 | Why a rule exists, the chosen option | `changes/<id>/proposal.md`, then archive | spec `Why:` (one line) |
 | Term definition | `docs/glossary.md` | inline in any spec |
 | Wire/tool shape | Rust types → generated `contracts/` | hand-written schema prose |
@@ -37,15 +37,15 @@ WHEN <trigger> THE SYSTEM SHALL <response>.
 Acceptance: @R-<DOMAIN>-<NN>
 ```
 
-- Allocate the number with `tools/spec id <domain>`. Never hand-pick, reuse, renumber, or rename.
+- Allocate the number with `cargo run -p tau-tools --bin spec -- id <domain>`. Never hand-pick, reuse, renumber, or rename.
 - One `###` per clause. "shall A and B" splits when A and B need separate tests.
 - No `SHOULD` / `MAY` / "as much as possible": bound it or write no rule.
 - Replace vague words with a number or a name: fast, large, minimal, appropriate, graceful, robust, seamless, user-friendly.
 
 ## Acceptance
 
-Scenarios live in `tests/features/<domain>.feature`, tagged with the requirement's ID.
-Use only steps listed in `tests/features/STEPS.md`; adding a step is a code change, listed in `tasks.md`.
+Scenarios live in `crates/tau-test/tests/features/<domain>.feature`, tagged with the requirement's ID.
+Use only steps listed in `crates/tau-test/tests/features/STEPS.md`; adding a step is a code change, listed in `tasks.md`.
 `Background` for shared preconditions, `Scenario Outline` + `Examples` for matrices. The spec never contains Given/When/Then.
 
 ## Why: notes

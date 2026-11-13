@@ -10,7 +10,7 @@ A closed change in `changes/archive/` is the record of *why*; there is no separa
 
 ## 1. Open
 
-`tools/spec new <verb>_<noun>` copies `changes/_template/` → `changes/<id>/`.
+`cargo run -p tau-tools --bin spec -- new <verb>_<noun>` copies `changes/_template/` → `changes/<id>/`.
 Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `scaffold_`, `change_domains_`.
 
 ## 2. Proposal (`proposal.md`, ≤100 lines)
@@ -44,7 +44,7 @@ Supersedes: R-<DOMAIN>-<NN> → R-<DOMAIN>-<MM>
 
 - Describe the difference, never the whole file.
 - Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`. IDs are never renamed, renumbered, or reused.
-- Markers, one each: a delta clause that blocks coding carries `[NEEDS CLARIFICATION]`; an unresolved question in a proposal goes on the `Open:` line. `tau-spec --check` counts `[NEEDS CLARIFICATION]` and the count must not rise across a change.
+- Markers, one each: a delta clause that blocks coding carries `[NEEDS CLARIFICATION]`; an unresolved question in a proposal goes on the `Open:` line. `cargo run -p tau-tools --bin spec -- --check` counts `[NEEDS CLARIFICATION]` and the count must not rise across a change.
 
 ## 4. Tasks (`tasks.md`, ≤15 lines)
 
@@ -53,7 +53,7 @@ One line per committable unit, ≤15 words each; implementation lines name an `R
 ```markdown
 - [ ] spike: cold build of {dep}, gate {n}s
 - [ ] R-<DOMAIN>-<NN>: implement resume ({crate/src/path})
-- [ ] R-<DOMAIN>-<NN>: scenario in tests/features/{domain}.feature
+- [ ] R-<DOMAIN>-<NN>: scenario in crates/tau-test/tests/features/{domain}.feature
 - [ ] spec: update spec/{domain}/…, bump spec/index.md
 - [ ] spec-review (reviewer ticks)
 ```
@@ -66,5 +66,5 @@ Run the gates in `AGENTS.md`. Gates that exist must be green; gates marked `M0` 
 
 ## 6. Archive
 
-`tools/spec archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
+`cargo run -p tau-tools --bin spec -- archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
 Archive is append-only: never edited afterwards. New facts are a new change.

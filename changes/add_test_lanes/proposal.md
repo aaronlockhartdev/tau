@@ -17,7 +17,7 @@ Cost of the chosen option, beyond the dependencies: the full suite runs on every
 
 Three lanes.
 
-- Behaviour: Gherkin in `tests/features/`, run by cucumber-rs (0.23.x), scenarios tagged `@R-…`.
+- Behaviour: Gherkin in `crates/tau-test/tests/features/`, run by cucumber-rs (0.23.x), scenarios tagged `@R-…`.
 - Surface: `#[gpui::test]` over a headless GPUI tree, driven by gpui-kit's `TestWindowExt`, asserting the event stream, state, focus and layout. No window server, no screenshot diff.
 - Eval: real models, run by hand (existing invariant).
 
@@ -25,7 +25,7 @@ No wall-clock budget and no measured gate. Every lane runs on every commit, and 
 
 ## Consequences
 
-`cargo nextest run` and `cargo test --test features` become the real gates, and the M0 note on them goes away. A slow lane blocks the commit it belongs to, so it gets fixed in place. CI runs a real build, so cache misses and GPUI build cost appear now. Eval gains a cost-per-run number. The proposal adds 32 lines to the corpus and no tokens per turn.
+`cargo nextest run` and `cargo test -p tau-test --test features` become the real gates, and the M0 note on them goes away. A slow lane blocks the commit it belongs to, so it gets fixed in place. CI runs a real build, so cache misses and GPUI build cost appear now. Eval gains a cost-per-run number. The proposal adds 32 lines to the corpus and no tokens per turn.
 
 Eval: none needed. The lanes are the gate, and eval keeps its own cost-per-run number.
 
