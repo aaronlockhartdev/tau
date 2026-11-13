@@ -13,3 +13,5 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fork`: a child session that copies the parent's history and prompt cache.
 `steer`: send input to a running child, applied at its next turn boundary.
 `roster`: the view listing a session's children with their states.
+`config layer`: the global config file, or the project file merged over it key by key.
+`project`: the working directory's git root, or the working directory when it is not a git tree.

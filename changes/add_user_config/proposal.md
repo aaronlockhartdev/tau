@@ -15,14 +15,14 @@ Cost of the chosen option: two dependencies (`toml_edit`, `notify`), a config le
 
 ## Decision
 
-TOML, one file, at `<root>/config.toml`, `<root>` being `~/.tau`, with `$XDG_CONFIG_HOME/tau/config.toml` preferred when that variable is set. `toml_edit` for read, write, and merge, and `notify` (8.2.x) for reload. `config` is not used; layering is a merge over `toml_edit` documents. JSONL is confined to logs and telemetry. Layout and key names are designed in the delta.
+TOML, one file per layer: the global layer at `<root>/config.toml`, `<root>` being `~/.tau` and `$XDG_CONFIG_HOME/tau/config.toml` in place of it when set, and an optional project layer at `<project>/.tau/config.toml` merged over it key by key. Tables merge, arrays replace. `toml_edit` for read, write, and merge, and `notify` (8.2.x) for reload. `config` is not used; layering is a merge over `toml_edit` documents. JSONL is confined to logs and telemetry. Layout and key names are designed in the delta.
 
 Reload rule: any key that can be applied live is applied live. A key that needs a restart is named as such in the file, and the app says so at the moment it changes.
 
 ## Consequences
 
-Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario. The clauses are in `changes/add_user_config/specs/config/reload/spec.md` as `R-config-01..11`, archived to `spec/config/reload/spec.md`. IDs are allocated by hand until `spec -- id` exists (M0), and are renumbered here because no scenario has cited them.
+Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario. The clauses are in `changes/add_user_config/specs/config/reload/spec.md` as `R-config-01..12`, archived to `spec/config/reload/spec.md`. IDs are allocated by hand until `spec -- id` exists (M0), and are renumbered here because no scenario has cited them.
 
 Eval: none needed. Reload and key application are deterministic, and the behaviour lane covers them.
 
-Open: where the session store lives: `<root>/state.db` keyed by project directory, as `~/.pi/agent/sessions/--<cwd>--/` does, versus `.tau/state.db` inside the repo. Decided with the storage owner.
+Open: none. The store is per-project, at `<project>/.tau/state.db`; that clause is R-session-18 in `add_session_storage`, and the two changes land together. Placement outside git is R-workspace-06's rule, not restated here.
