@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Independent quality gate for tau spec docs: duplication, ID integrity, "Why:" relevance, traceability, prose, index accuracy. Use when reviewing staged doc changes, before committing spec/ or changes/, when a tasks.md line says "spec-review", or when asked to review documentation.
+description: 'Independent quality gate for tau spec docs: duplication, ID integrity, "Why:" relevance, traceability, prose, index accuracy. Use when reviewing staged doc changes, before committing spec/ or changes/, when a tasks.md line says "spec-review", or when asked to review documentation.'
 ---
 
 # Spec review
@@ -33,7 +33,7 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 | 12 | D | Prose passes the ban list in spec-authoring | rewrite |
 | 13 | A | `README.md` gained nothing internal (architecture, internal commands, doc map) | revert |
 | 14 | A | No new dependency from core to a frontend; no CI step runs a real-LLM eval | block |
-| 15 | A | The gate report follows `AGENTS.md` §Gates | block |
+| 15 | A | The gate report covers every `AGENTS.md` §Gates row, each with its own status; an unimplemented row is `skipped (M0)`, never a pass | block |
 
 ## Report
 

@@ -1,6 +1,6 @@
 ---
 name: spec-authoring
-description: Write or edit tau requirement specs under spec/: EARS clauses, R-IDs, where content belongs, acceptance refs, prose rules, and the relevance test for "Why:" notes. Use when adding a requirement, changing specified behaviour, editing spec/*.md, indexing a domain, or writing acceptance scenarios.
+description: 'Write or edit tau requirement specs under spec/: EARS clauses, R-IDs, where content belongs, acceptance refs, prose rules, and the relevance test for "Why:" notes. Use when adding a requirement, changing specified behaviour, editing spec/*.md, indexing a domain, or writing acceptance scenarios.'
 ---
 
 # Spec authoring
@@ -64,6 +64,7 @@ account of an earlier implementation; the record lives in `changes/archive/`.
 
 Fragments are fine. Tables beat sentences. One sentence beats a paragraph. In `spec/`, rationale is a `Why:` line, never a paragraph.
 Banned: "this document describes", "it is important to note", "ensure that", leverage/robust/seamless, marketing voice, tutorials (README's job), commentary restating the EARS text.
+Frontmatter is YAML: quote a `name:` or `description:` value that contains ": ", and check it parses (`ruby -ryaml -e 'p YAML.safe_load(File.read("SKILL.md").split("---")[1])'`).
 
 ## Before saving
 

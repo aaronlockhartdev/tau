@@ -1,6 +1,6 @@
 ---
 name: spec-change
-description: Run tau's change workflow: proposal with researched options, delta specs (ADDED/MODIFIED/REMOVED), tasks, apply, archive. Use when starting or continuing a behaviour change, adding a feature, deciding whether a feature is worth building, or archiving a finished change.
+description: 'Run tau''s change workflow: proposal with researched options, delta specs (ADDED/MODIFIED/REMOVED), tasks, apply, archive. Use when starting or continuing a behaviour change, adding a feature, deciding whether a feature is worth building, or archiving a finished change.'
 ---
 
 # Change workflow
