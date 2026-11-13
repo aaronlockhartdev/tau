@@ -15,14 +15,14 @@ Cost of the chosen option: two dependencies (`toml_edit`, `notify`), a config le
 
 ## Decision
 
-TOML, one file, at `<agent-dir>/tau/config.toml`. `toml_edit` for read, write, and merge, and `notify` (8.2.x) for reload. `config` is not used; layering is a merge over `toml_edit` documents. JSONL is confined to logs and telemetry. Layout and key names are designed in the delta.
+TOML, one file, at `<root>/config.toml`, `<root>` being `~/.tau`, with `$XDG_CONFIG_HOME/tau/config.toml` preferred when that variable is set. `toml_edit` for read, write, and merge, and `notify` (8.2.x) for reload. `config` is not used; layering is a merge over `toml_edit` documents. JSONL is confined to logs and telemetry. Layout and key names are designed in the delta.
 
 Reload rule: any key that can be applied live is applied live. A key that needs a restart is named as such in the file, and the app says so at the moment it changes.
 
 ## Consequences
 
-Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario. The clauses are in `changes/add_user_config/specs/config/reload/spec.md` as `R-config-01..09`, archived to `spec/config/reload/spec.md`.
+Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario. The clauses are in `changes/add_user_config/specs/config/reload/spec.md` as `R-config-01..11`, archived to `spec/config/reload/spec.md`. IDs are allocated by hand until `spec -- id` exists (M0), and are renumbered here because no scenario has cited them.
 
 Eval: none needed. Reload and key application are deterministic, and the behaviour lane covers them.
 
-Open: none.
+Open: where the session store lives: `<root>/state.db` keyed by project directory, as `~/.pi/agent/sessions/--<cwd>--/` does, versus `.tau/state.db` inside the repo. Decided with the storage owner.
