@@ -1,29 +1,26 @@
-# design_user_config
+# Design the user config
 
 ## Context
 
-One unified user config, applied live without restarting the app. Settings scattered across files,
-each needing a restart, is the failure this change removes.
+One unified user config, applied live without restarting the app. Settings scattered across files, each needing a restart, is the failure this change removes.
 
 ## Options
 
-### A. TOML, format-preserving, hot-reloaded
-`toml_edit` 0.25.19 is "yet another format-preserving TOML parser", so tau can write a key without
-rewriting the user's comments and ordering; `notify` 8.2.2 gives cross-platform file watching.
-Human-editable, comments allowed, typed via serde. Evidence: crates.io 2026-11-13.
+- TOML with `toml_edit` (0.25.x): preserves comments, formatting, and key order, so a human-owned file survives a round-trip (crates.io and the `toml_edit` docs, read 2026-11-13). Cost: 1 dependency.
+- JSON with serde: no comments, no format preservation (serde docs, read 2026-11-13). Cost: 0 dependencies, and a file the user cannot annotate.
+- JSONL: an append-only log format, not a document format (JSONL convention, read 2026-11-13). Cost: a parser per consumer, for one document.
+- `config` (0.15.x): layered merge with no write-back, so a user's comments are rewritten on save (crates.io, read 2026-11-13). Cost: 1 dependency, and the human-owned file is lost.
 
-### B. JSONL
-Append-only, no comments, no nesting ergonomics; suits event and session logs, not settings.
-Rejected as config; kept for logs.
-
-### C. Layered loader crate (`config` 0.15.27)
-Adds user → project → env layering on top of A. Take it only if layering is required at v1.
+Cost of the chosen option: two dependencies (`toml_edit`, `notify`), a config leaf spec, and a reload path in each frontend.
 
 ## Decision
 
-A: TOML in `toml_edit`, watched by `notify`, validated by a typed schema; a bad file keeps the last
-good values and surfaces the error in the GUI rather than falling back silently. JSONL stays the
-append-only format for logs and tapes.
+TOML, one file, at `<agent-dir>/tau/config.toml`. `toml_edit` for read, write, and merge, and `notify` (8.2.x) for reload. `config` is not used; layering is a merge over `toml_edit` documents. JSONL is confined to logs and telemetry. Layout and key names are designed in the delta.
 
-Open: single file vs `config.toml` + secrets split; which keys apply live vs need restart — the
-list is a spec, not a guess. `[NEEDS CLARIFICATION]`
+Reload rule: any key that can be applied live is applied live. A key that needs a restart is named as such in the file, and the app says so at the moment it changes.
+
+## Consequences
+
+Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario.
+
+Open: none.

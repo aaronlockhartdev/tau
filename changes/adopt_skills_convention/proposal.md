@@ -1,17 +1,27 @@
-# adopt_skills_convention
+# Adopt the skills convention
 
 ## Context
 
-Skills in `.agents/skills/` must load identically in pi, Claude Code, Cursor, and Codex.
+Three skill sets already sit on this machine, under `.agents/skills/`, `.pi/skills/`, and `~/.agents/skills/`. tau loads none of them.
+
+## Options
+
+- Adopt Agent Skills as pi implements it: pi 1.5.2 `docs/skills.md` and the Agent Skills specification (read 2026-11-13); three skill sets are already installed in that layout on this machine. Cost: one tools leaf spec, no new dependency.
+- tau-specific skill format: no external evidence; it loads none of the installed sets and no external agent loads its own.
 
 ## Decision
 
-Follow the Agent Skills convention as documented by `pi` 1.5.2 `docs/skills.md` (frontmatter fields,
-discovery locations, name/description-only startup load, malformed-file handling) and the Agent
-Skills specification for portability. The references define the format; tau implements it verbatim.
+Adopt the Agent Skills convention as pi implements it. For mechanics, read pi 1.5.2 `docs/skills.md` and the Agent Skills specification. Do not restate them here, and do not diverge. That covers discovery, frontmatter, the name and description limits, `${CLAUDE_SKILL_DIR}`, invocation, and the `SKILL.md` template.
 
-Consequences owned by tau: descriptions are routing code — a bad description means the skill never
-loads; skill bodies stay ≤60 lines because they enter context on invocation; project skills are
-trust-gated like other project files.
+Tau's own rules:
 
-Open: support the experimental `allowed-tools` field at v1? `[NEEDS CLARIFICATION]`
+- Load order: `<project>/skills`, `<project>/.agents/skills`, `<agent-dir>/skills`, `<agent-dir>/.agents/skills`, then the `extraSkillDirs` paths in user config. Same-name skills stay separate, listed with their directory.
+- Skills are read-only, and a skill never grants a permission.
+- Ship the experimental `allowed-tools` field at v1, with the same field names.
+- Skill bodies are read by file path. Skills use the canonical glossary terms.
+
+## Consequences
+
+Skills are input to context assembly in core, so both frontends see the same set. The repo's `.agents/skills/` is read by the built product as well as by external agents, which makes the doc skills an executable spec. Skill text enters the prompt, so loading reports name, path, and description length per session.
+
+Open: none.

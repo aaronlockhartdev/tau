@@ -1,4 +1,4 @@
-# Tasks — {id}
+# Tasks: {id}
 
 One line per committable unit. Implementation lines name an `R-ID`. Spikes and gates first.
 

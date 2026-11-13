@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Independent quality gate for tau spec docs — duplication, budgets, ID integrity, "Why:" relevance, traceability, prose, index accuracy. Use when reviewing staged doc changes, before committing spec/ or changes/, when a tasks.md line says "spec-review", or when asked to review documentation.
+description: Independent quality gate for tau spec docs: duplication, budgets, ID integrity, "Why:" relevance, traceability, prose, index accuracy. Use when reviewing staged doc changes, before committing spec/ or changes/, when a tasks.md line says "spec-review", or when asked to review documentation.
 ---
 
 # Spec review

@@ -1,4 +1,4 @@
-# tau — agent guide
+# tau: agent guide
 
 Agent-facing. `README.md` is user-facing; nothing here belongs there.
 Auto-loaded: this file (nested `AGENTS.md` files, nearest wins) and each skill's name + description. Everything else is read by path, on demand.
@@ -6,7 +6,7 @@ Auto-loaded: this file (nested `AGENTS.md` files, nearest wins) and each skill's
 ## Read order for a task
 
 1. This file.
-2. `spec/index.md` — cross-cutting invariants, then the 1–2 domains the task touches.
+2. `spec/index.md`: cross-cutting invariants, then the 1–2 domains the task touches.
 3. That domain's `spec.md`, then only the leaf `spec.md` you need.
 4. Changing behaviour? `changes/<id>/` if one exists; if not, open one (skill: spec-change).
 5. A skill, when the task matches its description.
@@ -21,7 +21,7 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | `spec/<domain>/spec.md` | area index: invariants, child links | entering a domain |
 | `spec/<domain>/<area>/spec.md` | leaf: EARS requirements + acceptance refs | implementing that area |
 | `changes/<id>/` | active change: proposal, deltas, tasks | before coding a behaviour change |
-| `changes/archive/` | closed changes — the record of *why* | history of a rule |
+| `changes/archive/` | closed changes, the record of *why* | history of a rule |
 | `tests/features/` | Gherkin acceptance, tagged `@R-…` | writing/reading acceptance |
 | `tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
 | `contracts/` | generated wire/tool schemas | touching the wire |
@@ -60,8 +60,7 @@ Decided, with pins; deviations need a change.
 | Markdown / diff | `pulldown-cmark`, `similar` | spike in M0 |
 | Config | TOML + hot reload (`design_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
 
-Undecided: storage engine, memory model (`adopt_observational_memory`), project dir name
-(`adopt_context_file_loading`), config file layout (`design_user_config`).
+Undecided: storage engine, and the tool config surface in `adopt_hash_anchor_editing`.
 
 ## Budgets
 
@@ -74,16 +73,16 @@ Undecided: storage engine, memory model (`adopt_observational_memory`), project 
 | proposal / tasks | 100 / 15 lines |
 | `spec/` corpus | 40k tokens |
 
-Owner of authoring and review rules is the skill, not this file — don't restate them here.
+Authoring and review rules belong to the skills; don't restate them here.
 
 ## Working tree
 
 Land on `main`: signed commits, one committable unit each, linear history (rebase, never a merge commit). Commit body names the change id and the gate status, including `skipped (M0)`.
 A branch is only for work that can't land today (a spike with a build gate, a migration). Name it after the change id; delete it at land.
-No worktrees by default. Trigger: two writer agents running at once, or a bisect/repro that needs a clean tree. Then one worktree per writer at `../tau-<id>` (never inside the repo), `CARGO_TARGET_DIR=$HOME/.cache/tau-target` shared — disk stays 1×, builds serialize, and cargo flags shared target dirs as unsafe upstream. Create and remove it in the same session; leave no uncommitted state; `git worktree prune` after any manual cleanup.
+No worktrees by default. Trigger: two writer agents running at once, or a bisect/repro that needs a clean tree. Then one worktree per writer at `../tau-<id>` (never inside the repo), with `CARGO_TARGET_DIR=$HOME/.cache/tau-target` shared, so disk stays 1x and builds serialize. Cargo flags shared target dirs as unsafe upstream. Create and remove it in the same session; leave no uncommitted state; `git worktree prune` after any manual cleanup.
 
 ## Skills
 
-- **spec-authoring** — write/edit requirements: EARS, IDs, where content goes, prose, `Why:`
-- **spec-change** — proposal → deltas → tasks → apply → archive
-- **spec-review** — gate before committing docs
+- **spec-authoring**: write/edit requirements: EARS, IDs, where content goes, prose, `Why:`
+- **spec-change**: proposal, deltas, tasks, apply, archive
+- **spec-review**: gate before committing docs

@@ -10,7 +10,7 @@ Cross-cutting invariants live here and are never restated in a domain:
 ## Domains
 
 One row per domain: read its `spec.md` before any leaf. Counts come from `tools/spec count` (manual until M0).
-Domains are navigation, not taxonomy — split into children, or merge, through a change (`change_domains_*`). The `owns` column follows the crate layout, which moves.
+Domains are navigation, not taxonomy: split into children, or merge, through a change (`change_domains_*`). The `owns` column follows the crate layout, which moves.
 
 | Domain | Owns | Spec | Leaves | Lines |
 |---|---|---|---|---|
@@ -24,4 +24,4 @@ Domains are navigation, not taxonomy — split into children, or merge, through 
 | harness | `crates/tau-test`, `crates/tau-mock-llm`, `tests/` | [harness/spec.md](harness/spec.md) | — | 3 |
 | config | `crates/tau-core/config` | [config/spec.md](config/spec.md) | — | 3 |
 
-Corpus: 0 requirements, 0 / 40k tokens. No requirements are seeded — each arrives through a change.
+Corpus: 0 requirements, 0 / 40k tokens. Each requirement arrives through a change.

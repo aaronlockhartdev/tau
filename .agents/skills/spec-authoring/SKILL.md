@@ -1,6 +1,6 @@
 ---
 name: spec-authoring
-description: Write or edit tau requirement specs under spec/ — EARS clauses, R-IDs, where content belongs, acceptance refs, prose rules, and the relevance test for "Why:" notes. Use when adding a requirement, changing specified behaviour, editing spec/*.md, indexing a domain, or writing acceptance scenarios.
+description: Write or edit tau requirement specs under spec/: EARS clauses, R-IDs, where content belongs, acceptance refs, prose rules, and the relevance test for "Why:" notes. Use when adding a requirement, changing specified behaviour, editing spec/*.md, indexing a domain, or writing acceptance scenarios.
 ---
 
 # Spec authoring
@@ -12,8 +12,8 @@ description: Write or edit tau requirement specs under spec/ — EARS clauses, R
 | Content | Goes in | Never in |
 |---|---|---|
 | A rule the system must follow | leaf `spec/<domain>/<area>/spec.md` | README, code comments, AGENTS.md (link, don't restate) |
-| Observable behaviour, examples | `tests/features/<domain>.feature` tagged `@R-…` | spec — the spec cites the tag |
-| Why a rule exists, the chosen option | `changes/<id>/proposal.md` → archive | spec `Why:` (one line) |
+| Observable behaviour, examples | `tests/features/<domain>.feature` tagged `@R-…` | spec; the spec cites the tag |
+| Why a rule exists, the chosen option | `changes/<id>/proposal.md`, then archive | spec `Why:` (one line) |
 | Term definition | `docs/glossary.md` | inline in any spec |
 | Wire/tool shape | Rust types → generated `contracts/` | hand-written schema prose |
 | Domain invariants, child index | `spec/<domain>/spec.md` | repeating a leaf rule |
@@ -25,11 +25,11 @@ Over budget → split into children and add index lines. Don't compress prose un
 
 One clause = one testable obligation:
 
-- `WHEN <trigger> THE SYSTEM SHALL <response>` — event
-- `WHILE <state> THE SYSTEM SHALL <response>` — state
-- `WHERE <feature present> THE SYSTEM SHALL <response>` — context
-- `IF <condition> THEN THE SYSTEM SHALL <response>` — exception
-- `THE SYSTEM SHALL <response>` — invariant
+- `WHEN <trigger> THE SYSTEM SHALL <response>`: event
+- `WHILE <state> THE SYSTEM SHALL <response>`: state
+- `WHERE <feature present> THE SYSTEM SHALL <response>`: context
+- `IF <condition> THEN THE SYSTEM SHALL <response>`: exception
+- `THE SYSTEM SHALL <response>`: invariant
 
 ```markdown
 ### R-<DOMAIN>-<NN>  <name ≤6 words>
@@ -39,13 +39,13 @@ Acceptance: @R-<DOMAIN>-<NN>
 
 - Allocate the number with `tools/spec id <domain>`. Never hand-pick, reuse, renumber, or rename.
 - One `###` per clause. "shall A and B" splits when A and B need separate tests.
-- No `SHOULD` / `MAY` / "as much as possible" — bound it or write no rule.
+- No `SHOULD` / `MAY` / "as much as possible": bound it or write no rule.
 - Replace vague words with a number or a name: fast, large, minimal, appropriate, graceful, robust, seamless, user-friendly.
 
 ## Acceptance
 
 Scenarios live in `tests/features/<domain>.feature`, tagged with the requirement's ID.
-Use only steps listed in `tests/features/STEPS.md`; adding a step is a code change — list it in `tasks.md`.
+Use only steps listed in `tests/features/STEPS.md`; adding a step is a code change, listed in `tasks.md`.
 `Background` for shared preconditions, `Scenario Outline` + `Examples` for matrices. The spec never contains Given/When/Then.
 
 ## Why: notes
@@ -55,7 +55,7 @@ Test: *does this sentence change what code gets written?* If not, delete it.
 
 Keep: a constraint the rule can't express (hardware, wire compatibility, a hard budget), a deliberate surprise.
 Cut: how the decision was reached, benchmark numbers, citations, what competitors do, dates, and any
-account of an earlier implementation — that is `changes/archive/` material.
+account of an earlier implementation; the record lives in `changes/archive/`.
 
 ## Prose
 
@@ -64,7 +64,7 @@ Banned: "this document describes", "it is important to note", "ensure that", lev
 
 ## Before saving
 
-1. `grep -ril "<key phrase>" spec changes tests` — if it hits, edit the owner, don't add a copy.
+1. `grep -ril "<key phrase>" spec changes tests`: if it hits, edit the owner, don't add a copy.
 2. New requirement: allocated ID, EARS clause, `Acceptance:` tag, index line in the parent `spec.md`.
 3. Each edited file within budget; update the counts in `spec/index.md`.
 4. Run the gates in `AGENTS.md`.
