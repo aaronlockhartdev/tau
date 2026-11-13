@@ -21,7 +21,7 @@ Tau's own rules:
 
 ## Consequences
 
-Context loading lives in core, so the ACP and desktop frontends load identically. Loading becomes observable as a prompt prefix, cached per session. Any pi change needs a delta here.
+Context loading lives in core, so the ACP and desktop frontends load identically. Loading becomes observable as a prompt prefix, cached per session. Any pi change needs a delta here. The clauses are in `changes/adopt_context_file_loading/specs/context/load-order/spec.md` as `R-context-01..10`, archived to `spec/context/load-order/spec.md`.
 
 Eval: none needed. Discovery and precedence are deterministic; the behaviour lane asserts the order.
 

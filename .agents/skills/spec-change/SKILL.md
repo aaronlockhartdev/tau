@@ -71,6 +71,8 @@ No code lands before its delta clause exists; a docs-only delta lands alone whil
 
 Run the gates in `AGENTS.md`. Gates that exist must be green; gates marked `M0` are reported in the commit body as skipped.
 
+A decision worth keeping past the session lands in `spec/` through a change; prompt state is not a record.
+
 ## 6. Archive
 
 `archive` needs each clause's acceptance ref to have run: a scenario that has never run, or a gate that has never passed, keeps the change open.

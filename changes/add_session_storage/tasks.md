@@ -12,3 +12,4 @@
 - [ ] R-session-01..13: scenarios in crates/tau-test/tests/features/session.feature
 - [ ] check: nextest · features · spec --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
+- [ ] Scenario: R-session-18 store opens at `<project>/.tau/state.db`
