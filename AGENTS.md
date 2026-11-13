@@ -52,12 +52,12 @@ Decided, with pins; deviations need a change.
 | Layer | Choice | Pin |
 |---|---|---|
 | Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` · `tau-mock-llm` | workspace |
-| UI | GPUI + `gpui-component` | pinned Zed main rev · 0.9.x |
+| UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
 | Async | tokio | latest stable |
 | Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
 | Unit + surface tests | `cargo nextest`, `#[gpui::test]` | — |
 | Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
-| Markdown / diff | `pulldown-cmark`, `similar` | spike in M0 |
+| Markdown / diff | core parses with `pulldown-cmark`; the app renders with `gpui-kit`'s `TextView` and `Diff` | spike in M0 |
 | Config | TOML + hot reload (`design_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
 | Storage | SQLite via `rusqlite` (`bundled`, WAL): append-only `events` + state tables, JSONL by export | rusqlite 0.41 · migrations 2.7 |
 
