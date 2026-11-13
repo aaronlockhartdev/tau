@@ -13,15 +13,18 @@ The user watches the agent work as it happens: tokens, tool calls, diffs, memory
 
 One event stream in core carries every state change. The desktop app (GPUI) renders it, and ACP projects it. No frontend polls, and no state lives in a view.
 
-Rendering targets:
+Rendering rules:
 
-- Token deltas append in place; a block re-renders only when its structure changes.
+- Markdown renders as a block tree. A closed block is immutable: its layout is retained and never re-parsed.
+- Only the tail block is re-parsed per token delta.
+- An open block shows as monospace text and renders fully once it closes; a table lays out as a grid at close.
+- ATX headings only, so no line restyles a block above it.
 - Tool calls, approvals, and diffs stream as they happen.
-- The transcript scrolls live without a layout stall, with a frame budget fixed by a spike.
+- Frame budget, block-split cost, and the restyle at close are measured by the M0 spike.
 - The text field, IME, and paste behave under load.
 
 ## Consequences
 
 The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence in a headless GPUI test, so the gate has no pixels, no window server, and no scheduler.
 
-Open: incremental markdown strategy for streaming code blocks and tables: re-render, append, or defer an open fenced block.
+Open: none.

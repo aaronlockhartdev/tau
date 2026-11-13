@@ -20,7 +20,7 @@ Tau's own rules:
 - The same tools face the user, ACP, and the desktop app: a tool surface in core.
 - Anchors are session state, so they live in the session store and survive a restart.
 - An anchor resolves to the file it was served for.
-- Add `outline` (tree-sitter symbol skeleton), off by default.
+- Ship `outline`: a tree-sitter symbol skeleton, one anchored row per declaration, body spans read on demand. Off by default behind a config key, on in tau's own repo, with the corpus count as its cost meter.
 - These tool names are tau's canonical vocabulary, recorded in the glossary.
 
 ## Consequences
