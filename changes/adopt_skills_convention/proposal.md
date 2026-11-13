@@ -22,7 +22,7 @@ Tau's own rules:
 
 ## Consequences
 
-Cost: skill descriptions enter the prompt every turn at the length limits the convention sets; no new dependency. Skills are input to context assembly in core, so both frontends see the same set. The repo's `.agents/skills/` is read by the built product as well as by external agents, which makes the doc skills an executable spec. Skill text enters the prompt, so loading reports name, path, and description length per session.
+Cost: skill descriptions enter the prompt every turn at the length limits the convention sets; no new dependency. Skills are input to context assembly in core, so both frontends see the same set. The repo's `.agents/skills/` is read by the built product as well as by external agents, which makes the doc skills an executable spec. Skill text enters the prompt, so loading reports name, path, and description length per session. The clauses are in `changes/adopt_skills_convention/specs/tools/skills/spec.md` as `R-tools-15..22`, archived to `spec/tools/skills/spec.md`.
 
 Eval: none needed.
 
