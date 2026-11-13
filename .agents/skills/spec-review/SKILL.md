@@ -18,9 +18,9 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 
 | # | S | Check | Fail → |
 |---|---|---|---|
-| 1 | D | `grep -ril "<key phrase>" spec changes tests` finds no prior owner | duplicate: edit the owner, delete the copy |
-| 2 | D | New requirement: ID from `cargo run -p tau-tools --bin spec -- id`, one EARS clause, `Acceptance:` naming a tag `@R-…` or `gate <name>` in `AGENTS.md` | block |
-| 3 | B | Acceptance ref resolves: a tagged scenario in `crates/tau-test/tests/features/`, or a gate row in `AGENTS.md`; scenario uses only steps in `STEPS.md` | block |
+| 1 | D | `grep -ril "<key phrase>" spec changes crates/tau-test` finds no prior owner | duplicate: edit the owner, delete the copy |
+| 2 | D | New requirement: ID from `cargo run -p tau-tools --bin spec -- id <domain>`, one EARS clause, `Acceptance:` naming a tag `@R-…` or `gate <name>` in `AGENTS.md` | block |
+| 3 | D | Acceptance ref resolves: a tagged scenario in `crates/tau-test/tests/features/`, or a gate row in `AGENTS.md`; a scenario uses only steps in `STEPS.md` | block |
 | 4 | D | No Given/When/Then text inside any spec | block |
 | 5 | D | ID integrity per spec-change §3 (MODIFIED / REMOVED+Supersedes, no rename, renumber, reuse) | block |
 | 6 | D | Delta paths mirror `spec/…` paths | fix |
@@ -33,7 +33,7 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 | 12 | D | Prose passes the ban list in spec-authoring | rewrite |
 | 13 | A | `README.md` gained nothing internal (architecture, internal commands, doc map) | revert |
 | 14 | A | No new dependency from core to a frontend; no CI step runs a real-LLM eval | block |
-| 15 | A | Gates that exist are green; `M0` gates reported as skipped, not passed | block |
+| 15 | A | The gate report follows `AGENTS.md` §Gates | block |
 
 ## Report
 

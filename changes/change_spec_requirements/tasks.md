@@ -6,7 +6,7 @@
 - [x] skills: check 11b, `Why:` enumeration, index edited in place
 - [x] templates: delta clause, step definition, `Why:` under ADDED
 - [x] `workspace` domain row and stub
-- [ ] gates exist to run: workspace layout · no local state tracked · toolchain pinned
+- [x] gate rows exist: workspace layout · no local state tracked · toolchain pinned (skipped, M0)
 - [ ] spec lint parses `Acceptance: gate <name>` against the `AGENTS.md` gate table
 - [ ] steps generator emits crates/tau-test/tests/features/STEPS.md (placeholder text today)
 - [ ] check: spec --check · contracts --check · steps --check · doc lint · links

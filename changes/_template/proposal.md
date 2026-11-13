@@ -12,7 +12,7 @@
 ## Decision
 
 {option}: {what gets easier}.
-Consequences: {what you now own: invariants, budgets, migrations, deletions, upkeep}. {each rule → the delta clause in `specs/…` and the leaf spec it lands in; a rule with no delta clause never enters `spec/`}. See spec-authoring.
+Consequences: {what you now own: invariants, budgets, migrations, deletions, upkeep}. {each rule → the delta clause in `specs/…` and the leaf spec it lands in; a `spec/index.md` invariant is an in-place bullet naming its proof; a rule with neither never enters `spec/`}. See spec-authoring.
 Eval: {none needed | suite name, run by hand}
 
 Open: {`none` when there are none}

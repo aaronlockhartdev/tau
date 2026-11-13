@@ -26,22 +26,26 @@ If the value depends on real-LLM quality, name the eval suite in the proposal an
 
 ## 3. Deltas
 
-Delta files mirror the target: `changes/<id>/specs/<domain>/spec.md` for a domain index, `changes/<id>/specs/<domain>/<area>/spec.md` for a leaf. A domain with no children keeps its rules in `spec/<domain>/spec.md`, and the delta sits at the same path. A domain index gains an invariant only through the change that names its proof. `spec/index.md` is edited in place by the change that touches it: its invariants name a proof and carry no `R-` ID.
+`spec --new` copies `changes/_template/specs/_domain_/[<area>/]spec.md`; rename `_domain_` (and `_area_`) to the target's directory names, so the delta path mirrors the target. `changes/<id>/specs/<domain>/spec.md` is a domain index, `changes/<id>/specs/<domain>/<area>/spec.md` for a leaf. A domain with no children keeps its rules in `spec/<domain>/spec.md`, and the delta sits at the same path. A domain index gains an invariant only through the change that names its proof. `spec/index.md` is edited in place by the change that touches it: its invariants name a proof and carry no `R-` ID.
 
 ```markdown
 ## ADDED Requirements
-### R-<DOMAIN>-<NN>  <name>
+### R-<domain>-<NN>  <name>
 WHEN <trigger> THE SYSTEM SHALL <response>.
-Acceptance: @R-<DOMAIN>-<NN>
+Acceptance: @R-<domain>-<NN>
+
+### R-<domain>-<NN>  <name> (build fact the lanes cannot observe)
+THE SYSTEM SHALL <response>.
+Acceptance: gate <name in AGENTS.md>
 
 ## MODIFIED Requirements
-### R-<DOMAIN>-<NN>  <name>
+### R-<domain>-<NN>  <name>
 WHEN <trigger> THE SYSTEM SHALL <new response>.
-Acceptance: @R-<DOMAIN>-<NN>
+Acceptance: @R-<domain>-<NN>
 
 ## REMOVED Requirements
-### R-<DOMAIN>-<NN>  <name>
-Supersedes: R-<DOMAIN>-<NN> → R-<DOMAIN>-<MM>
+### R-<domain>-<NN>  <name>
+Supersedes: R-<domain>-<NN> → R-<domain>-<MM>
 ```
 
 - Describe the difference, never the whole file.
@@ -54,9 +58,10 @@ One line per committable unit, ≤15 words each; implementation lines name an `R
 
 ```markdown
 - [ ] spike: cold build of {dep}, gate {n}s
-- [ ] R-<DOMAIN>-<NN>: implement resume ({crate/src/path})
-- [ ] R-<DOMAIN>-<NN>: scenario in crates/tau-test/tests/features/{domain}.feature
-- [ ] spec: update spec/{domain}/…, bump spec/index.md
+- [ ] R-<domain>-<NN>: delta clause in changes/{id}/specs/{domain}/…, then implement resume ({crate/src/path})
+- [ ] R-<domain>-<NN>: scenario in crates/tau-test/tests/features/{domain}.feature
+- [ ] R-<domain>-<NN>: step {name} in crates/tau-test/src/steps/ (STEPS.md regenerates)
+- [ ] check: nextest · features · spec --check · contracts --check · steps --check · clippy · fmt
 - [ ] spec-review (reviewer ticks)
 ```
 
