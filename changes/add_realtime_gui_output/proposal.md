@@ -26,7 +26,7 @@ Rendering rules:
 
 ## Consequences
 
-The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence, per `add_test_lanes`. Live text reaches the screen ahead of durability, per the live-output invariant in `spec/index.md`, so a turn that never committed rolls back with its transaction. The trade is a re-parse per token delta for one re-parse per block close. These rendering rules land as `R-surface-NN` in `spec/surface/transcript/spec.md`, with the frame-cost assertion in the behaviour lane and the equivalence assertion in the surface lane.
+The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence, per `add_test_lanes`. Live text reaches the screen ahead of durability, per the live-output invariant in `spec/index.md`, so a turn that never committed rolls back with its transaction. The trade is a re-parse per token delta for one re-parse per block close. The rendering clauses are in `changes/add_realtime_gui_output/specs/surface/transcript/spec.md` as `R-surface-08..18`, with frame cost at the `live output under load` gate and stream equivalence in the surface lane.
 
 Eval: none needed. The spike measures the frame budget and the surface lane asserts stream equivalence.
 
