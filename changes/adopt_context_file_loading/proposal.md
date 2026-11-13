@@ -23,4 +23,6 @@ Tau's own rules:
 
 Context loading lives in core, so the ACP and desktop frontends load identically. Loading becomes observable as a prompt prefix, cached per session. Any pi change needs a delta here.
 
+Eval: none needed. Discovery and precedence are deterministic; the behaviour lane asserts the order.
+
 Open: none.
