@@ -54,7 +54,8 @@ One line, ≤25 words, and only when an implementer reading the rule would other
 Test: *does this sentence change what code gets written?* If not, delete it.
 
 Keep: a constraint the rule can't express (hardware, wire compatibility, a hard budget), a deliberate surprise.
-Cut: how the decision was reached, benchmark numbers, citations, what competitors do, dates — that is `changes/archive/` material.
+Cut: how the decision was reached, benchmark numbers, citations, what competitors do, dates, and any
+account of an earlier implementation — that is `changes/archive/` material.
 
 ## Prose
 

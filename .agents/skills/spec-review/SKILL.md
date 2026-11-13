@@ -25,7 +25,7 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 | 5 | D | ID integrity per spec-change §3 (MODIFIED / REMOVED+Supersedes, no rename, renumber, reuse) | block |
 | 6 | D | Delta paths mirror `spec/…` paths | fix |
 | 7 | D | Each `Why:` passes "changes what code gets written?" and is ≤25 words | delete the line |
-| 8 | D | No research provenance, benchmarks, citations, vendor news, or dates in `spec/` | move to archive |
+| 8 | D | No research provenance, benchmarks, citations, vendor news, dates, or accounts of an earlier implementation in `spec/` | move to archive |
 | 9 | D | Files within the budgets in `AGENTS.md`; `spec/index.md` counts, links, and child lines updated | fix |
 | 10 | D | Terms come from `docs/glossary.md`, not defined inline | move |
 | 11 | D | Proposal names evidence per option, states the cost, marks unverified claims | block |

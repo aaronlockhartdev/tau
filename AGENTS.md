@@ -45,6 +45,24 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | desktop | `cargo run -p tau-app` | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite suites/<x>.md` | manual |
 
+## Stack
+
+Decided, with pins; deviations need a change.
+
+| Layer | Choice | Pin |
+|---|---|---|
+| Crates | `tau-core` (no frontend deps) · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` · `tau-mock-llm` | workspace |
+| UI | GPUI + `gpui-component` | pinned Zed main rev · 0.9.x |
+| Async | tokio | latest stable |
+| Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
+| Unit + surface tests | `cargo nextest`, `#[gpui::test]` | — |
+| Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
+| Markdown / diff | `pulldown-cmark`, `similar` | spike in M0 |
+| Config | TOML + hot reload (`design_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
+
+Undecided: storage engine, memory model (`adopt_observational_memory`), project dir name
+(`adopt_context_file_loading`), config file layout (`design_user_config`).
+
 ## Budgets
 
 | Item | Max |
