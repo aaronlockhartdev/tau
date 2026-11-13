@@ -79,9 +79,3 @@ Acceptance: @R-tools-12
 WHEN a parent session's cost is reported THE SYSTEM SHALL include the cost of its children.
 
 Acceptance: @R-tools-13
-
-### R-tools-14  Isolation runs a child in a worktree
-
-WHEN a `task` call requests `isolation: "worktree"` THE SYSTEM SHALL run the child in a worktree under the Working tree rules in `AGENTS.md`.
-
-Acceptance: @R-tools-14

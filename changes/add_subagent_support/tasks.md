@@ -2,7 +2,7 @@
 
 - [ ] Scenario: R-tools-01..05 definition load, `task`, `send`, targets
 - [ ] Scenario: R-tools-06..09 caps and inherited permissions
-- [ ] Scenario: R-tools-10..14 fork history, cache, no spawn, cost, worktree
+- [ ] Scenario: R-tools-10..13 fork history, cache, no spawn, cost
 - [ ] Scenario: R-session-14..17 parentage, directed messages, cascade
 - [ ] Scenario: R-acp-01..05 announce, deliver, states, approval, steer
 - [ ] Scenario: R-surface-19..22 roster, count, attach, per-child cancel
