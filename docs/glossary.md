@@ -9,3 +9,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
 `invariant`: a rule in `spec/index.md` or a domain index that names the gate, lint, lane, or review check proving it.
+`agent-dir`: the agent directory's tau root, `~/.tau/agent`.
+`fork`: a child session that copies the parent's history and prompt cache.
+`steer`: send input to a running child, applied at its next turn boundary.
+`roster`: the view listing a session's children with their states.
