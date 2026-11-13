@@ -25,7 +25,7 @@ No wall-clock budget and no measured gate. Every lane runs on every commit, and 
 
 ## Consequences
 
-`cargo nextest run` and `cargo test -p tau-test --test features` become the real gates, and the M0 note on them goes away. A slow lane blocks the commit it belongs to, so it gets fixed in place. CI runs a real build, so cache misses and GPUI build cost appear now. Eval gains a cost-per-run number. The lane rules land as `R-harness-NN` in `spec/harness/lanes/spec.md`, and the step dictionary lands in `STEPS.md`.
+`cargo nextest run` and `cargo test -p tau-test --test features` become the real gates, and the M0 note on them goes away. A slow lane blocks the commit it belongs to, so it gets fixed in place. CI runs a real build, so cache misses and GPUI build cost appear now. Eval gains a cost-per-run number. The lane clauses are in `changes/add_test_lanes/specs/harness/lanes/spec.md` as `R-harness-04..09`, archived to `spec/harness/lanes/spec.md`. The step dictionary stays generated in `STEPS.md`.
 
 Eval: none needed. The lanes are the gate, and eval keeps its own cost-per-run number.
 
