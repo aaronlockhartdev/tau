@@ -10,7 +10,7 @@ Cross-cutting invariants live here and are never restated in a domain:
 ## Domains
 
 One row per domain: read its `spec.md` before any leaf. Counts come from `tools/spec count` (manual until M0).
-Domains are navigation, not taxonomy: split into children, or merge, through a change (`change_domains_*`). The `owns` column follows the crate layout, which moves.
+Split a domain into children, or merge domains, through a change (`change_domains_*`). The `owns` column follows the crate layout, which moves.
 
 | Domain | Owns | Spec | Leaves | Lines |
 |---|---|---|---|---|

@@ -21,10 +21,11 @@ Tau's own rules:
 - Anchors are session state, so they live in the session store and survive a restart.
 - An anchor resolves to the file it was served for.
 - Ship `outline`: a tree-sitter symbol skeleton, one anchored row per declaration, body spans read on demand. Off by default behind a config key, on in tau's own repo, with the corpus count as its cost meter.
+- Ship the upstream config surface in tau user config, every knob at its upstream default: auto-read anchors, auto-read all, git repos only, ignore lists, diff context lines, per-tool toggles, required `path`, strict input, undo retention.
 - These tool names are tau's canonical vocabulary, recorded in the glossary.
 
 ## Consequences
 
 Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible.
 
-Open: adopt the upstream config surface in tau user config (auto-read all, diff context lines, per-tool toggles), and what default each ships with?
+Open: none.

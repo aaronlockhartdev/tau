@@ -60,7 +60,7 @@ Decided, with pins; deviations need a change.
 | Markdown / diff | `pulldown-cmark`, `similar` | spike in M0 |
 | Config | TOML + hot reload (`design_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
 
-Undecided: storage engine, and the tool config surface in `adopt_hash_anchor_editing`.
+Undecided: storage engine.
 
 ## Budgets
 

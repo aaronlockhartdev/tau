@@ -15,7 +15,7 @@ Mirror pi's loading exactly. For mechanics, read pi 1.5.2 `docs/configuration.md
 
 Tau's own rules:
 
-- Project directory is `.tau/`. `.pi/` is never read.
+- Project directory is `.tau/`; its fallbacks mirror pi's, and `AGENTS.md` always wins over `CLAUDE.md`. `.pi/` is never read.
 - Two files are supported: `SYSTEM.md` replaces the system prompt, `APPEND_SYSTEM.md` appends to it. A project file wins over the agent-directory file; only one of each loads.
 - `AGENTS.md` auto-discovery is the only unrequested loading: root, plus the nearest one in a subtree on conflict. Other documents are read by path, when a skill or index points at them.
 
@@ -23,4 +23,4 @@ Tau's own rules:
 
 Context loading lives in core, so the ACP and desktop frontends load identically. Loading becomes observable as a prompt prefix, cached per session. Any pi change needs a delta here.
 
-Open: does `.tau/` mirror pi's `AGENTS.override.md` and `CLAUDE.md` fallbacks, or load `AGENTS.md` alone?
+Open: none.
