@@ -1,0 +1,12 @@
+# build
+/target
+**/node_modules
+# runtime state (sessions, plans, tapes) — never committed
+/.tau
+# tooling caches
+/.cache
+*.log
+.DS_Store
+
+# generated docs site (if added)
+/site
