@@ -6,12 +6,12 @@ The user watches the agent work as it happens: tokens, tool calls, diffs, memory
 
 ## Options
 
-- One event stream in core, frontends render it: carried by the invariant that no frontend owns state, so one stream is the only shape that cannot diverge between them. Supporting evidence: Zed drives its editor on GPUI with agent output arriving token by token (Zed repo, read 2026-11-13; `unverified` at the API level, so the M0 spike carries the decision). Cost: the protocol widens to streaming events and `contracts/` regenerates.
+- One event stream in core, frontends render it: carried by the invariant that no frontend owns state, so one stream is the only shape that cannot diverge between them. Supporting evidence: Zed drives its editor on GPUI with agent output arriving token by token ([Zed repo](https://github.com/zed-industries/zed), read 2026-11-13; `unverified` at the API level, so the M0 spike carries the decision). Cost: the protocol widens to streaming events and `contracts/` regenerates.
 - Frontends poll session state: each frontend re-implements reconciliation, and the poll interval is the lag ceiling. Evidence: none measured, none external. Cost: two reconciliation paths to keep equal.
 
 ## Decision
 
-One event stream in core carries every state change. The desktop app renders it through `gpui-kit` (`design_surface_components`), and ACP projects it. No frontend polls, and no state lives in a view.
+One event stream in core carries every state change. The desktop app renders it through `gpui-kit` (`add_surface_components`), and ACP projects it. No frontend polls, and no state lives in a view.
 
 Rendering rules:
 

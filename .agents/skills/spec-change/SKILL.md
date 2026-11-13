@@ -11,7 +11,7 @@ A closed change in `changes/archive/` is the record of *why*; there is no separa
 ## 1. Open
 
 `tools/spec new <verb>_<noun>` copies `changes/_template/` → `changes/<id>/`.
-Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `change_domains_`.
+Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `scaffold_`, `change_domains_`.
 
 ## 2. Proposal (`proposal.md`, ≤100 lines)
 
