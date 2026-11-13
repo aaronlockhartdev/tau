@@ -59,7 +59,7 @@ Decided, with pins; deviations need a change.
 | Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
 | Markdown / diff | `pulldown-cmark`, `similar` | spike in M0 |
 | Config | TOML + hot reload (`design_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
-| Storage | SQLite via `rusqlite` (`bundled`), WAL, one file at `.tau/sessions.db` | 0.41 · migrations 2.7 |
+| Storage | JSONL transcript (authoritative) + SQLite state via `rusqlite` (`bundled`, WAL) | rusqlite 0.41 · migrations 2.7 |
 
 ## Budgets
 
