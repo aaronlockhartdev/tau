@@ -6,6 +6,7 @@ Cross-cutting invariants live here and are never restated in a domain:
 - Every requirement has an allocated `R-<DOMAIN>-<NN>` and ≥1 scenario in `tests/features/` tagged with it.
 - Wire shapes live in Rust types; `contracts/` is generated, never hand-edited.
 - Real-LLM eval is run by hand when deciding whether a feature is worth building; never in CI.
+- Live output is independent of storage. Frontends consume core's in-memory event stream, rendering reads no storage, and no storage write, checkpoint, or reader gates emission. The committed marker is a storage fact, set by the transaction that commits a turn.
 
 ## Domains
 

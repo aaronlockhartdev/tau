@@ -20,11 +20,11 @@ Rendering rules:
 - An open block shows as monospace text and renders fully once it closes; a table lays out as a grid at close.
 - ATX headings only, so no line restyles a block above it.
 - Tool calls, approvals, and diffs stream as they happen.
-- Frame budget, block-split cost, and the restyle at close are measured by the M0 spike.
+- Frame budget, block-split cost, and the restyle at close are measured by the M0 spike, which includes rendering a tape at full token rate with a storage writer and a checkpoint running alongside.
 - The text field, IME, and paste behave under load.
 
 ## Consequences
 
-The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence in a headless GPUI test, so the gate has no pixels, no window server, and no scheduler.
+The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence in a headless GPUI test, so the gate has no pixels, no window server, and no scheduler. Live text reaches the screen as core produces it, ahead of durability, so a turn that never committed rolls back with its transaction. The live-output invariant in `spec/index.md` is what keeps the storage choice from showing up in the frame budget.
 
 Open: none.

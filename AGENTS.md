@@ -51,7 +51,7 @@ Decided, with pins; deviations need a change.
 
 | Layer | Choice | Pin |
 |---|---|---|
-| Crates | `tau-core` (no frontend deps) · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` · `tau-mock-llm` | workspace |
+| Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` · `tau-mock-llm` | workspace |
 | UI | GPUI + `gpui-component` | pinned Zed main rev · 0.9.x |
 | Async | tokio | latest stable |
 | Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
