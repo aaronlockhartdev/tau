@@ -13,11 +13,11 @@ A closed change in `changes/archive/` is the record of *why*; there is no separa
 `cargo run -p tau-tools --bin spec -- new <verb>_<noun>` copies `changes/_template/` → `changes/<id>/`.
 Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `scaffold_`, `change_domains_`.
 
-## 2. Proposal (`proposal.md`, ≤100 lines)
+## 2. Proposal (`proposal.md`)
 
 - **Context**: the problem in 3–6 sentences; existing behaviour by `R-ID`.
 - **Options**: 2–4, each one line + evidence + cost. Evidence = measured in this repo (a number, a spike, a repro) or an external source with a link and a date. "Feels idiomatic", "widely used" is not evidence; mark anything unverified `unverified` and it cannot carry the decision. A mirror decision keeps the same shape: the options are mirror the reference and design it in-house, and the evidence names the reference's version and the section read.
-- **Decision + consequences**: the option, what gets easier, what you now own (invariants, budgets, migrations, deletions), and the leaf spec each new rule lands in. A rule you own and do not write as a delta clause never enters `spec/`.
+- **Decision + consequences**: the option, what gets easier, what you now own (invariants, migrations, deletions), and the leaf spec each new rule lands in. A rule you own and do not write as a delta clause never enters `spec/`.
 
 - **Eval**: `none needed`, or the suite name, when the value depends on real-LLM quality.
 
@@ -49,12 +49,12 @@ Supersedes: R-<domain>-<NN> → R-<domain>-<MM>
 ```
 
 - Describe the difference, never the whole file.
-- Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`. IDs are never renamed, renumbered, or reused.
+- Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`. A clause keeps its ID from the first scenario citation: never renamed, renumbered, or reused. A delta clause no scenario has run yet may be renumbered inside its own change.
 - Markers, one each: a delta clause that blocks coding carries `[NEEDS CLARIFICATION]`; an unresolved question in a proposal goes on the `Open:` line. `cargo run -p tau-tools --bin spec -- --check` counts `[NEEDS CLARIFICATION]` and the count must not rise across a change.
 
-## 4. Tasks (`tasks.md`, ≤15 lines)
+## 4. Tasks (`tasks.md`)
 
-One line per committable unit, ≤15 words each; implementation lines name an `R-ID`; spikes and gates first.
+One line per committable unit, phrased as an action; implementation lines name an `R-ID`; spikes and gates first.
 
 ```markdown
 - [ ] spike: cold build of {dep}, gate {n}s

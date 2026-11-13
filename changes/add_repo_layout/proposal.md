@@ -2,7 +2,7 @@
 
 ## Context
 
-The corpus names paths without a tree: `crates/tau-core/storage`, `crates/tau-app`, `tests/features/`, `tools/spec`, `contracts/`, `.tau/state.db`. The planned `scaffold_workspace` change cannot start until the tree, the workspace manifest shape, and the directory each gate command runs from are settled. Six crates are already named in `AGENTS.md`, and `spec/index.md` names module directories inside `crates/tau-core/` in its `owns` column, so `tau-core` holds modules and not crates. Two constraints come from tooling: cargo's own guidance on member layout, and cucumber-rs, whose feature paths in the crate's docs start at the crate root (`/tests/features/...`), so a feature tree placed outside the package that runs it is not reachable by the documented call. The app crate carries the whole GPUI dependency weight, so the layout has to keep that crate separate and checkable.
+The corpus names paths without a tree: `crates/tau-core/storage`, `crates/tau-app`, `tests/features/`, `tools/spec`, `contracts/`, `.tau/state.db`. The planned `scaffold_workspace` change cannot start until the tree, the workspace manifest shape, and the directory each gate command runs from are settled. Six crates are already named in the `spec/workspace/spec.md` stack table, and `spec/index.md` names module directories inside `crates/tau-core/` in its `owns` column, so `tau-core` holds modules and not crates. Two constraints come from tooling: cargo's own guidance on member layout, and cucumber-rs, whose feature paths in the crate's docs start at the crate root (`/tests/features/...`), so a feature tree placed outside the package that runs it is not reachable by the documented call. The app crate carries the whole GPUI dependency weight, so the layout has to keep that crate separate and checkable.
 
 ## Options
 
@@ -29,7 +29,7 @@ spec/  changes/  docs/  contracts/  .agents/  .tau/
 
 Consequences:
 
-- The corpus moves two paths, `tools/spec` → `cargo run -p tau-tools --bin spec --` and `tests/features/` → `crates/tau-test/tests/features/` (gate: `cargo test -p tau-test --test features`), in `AGENTS.md`, both skills, `STEPS.md` and `spec/index.md`; the `AGENTS.md` Crates row gains `tau-tools`, and the harness `owns` row in `spec/index.md` gains the moved feature tree and `crates/tau-tools`; `spec/index.md`'s `owns` column names module directories inside `crates/tau-core/`, matching the unified package rule.
+- The corpus moves two paths, `tools/spec` → `cargo run -p tau-tools --bin spec --` and `tests/features/` → `crates/tau-test/tests/features/` (gate: `cargo test -p tau-test --test features`), in `AGENTS.md`, both skills, `STEPS.md` and `spec/index.md`; the `spec/workspace/spec.md` Crates row gains `tau-tools`, and the harness `owns` row in `spec/index.md` gains the moved feature tree and `crates/tau-tools`; `spec/index.md`'s `owns` column names module directories inside `crates/tau-core/`, matching the unified package rule.
 - The core-decoupling invariant gains a gate row in `AGENTS.md`.
 - `.tau/` is runtime state and gitignored; `.agents/` is tracked.
 - `resolver = "3"` and `[workspace.lints]` are set at the root, so members inherit the lint set and the MSRV-aware floor.

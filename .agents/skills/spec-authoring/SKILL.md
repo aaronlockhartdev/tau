@@ -5,7 +5,7 @@ description: Write or edit tau requirement specs under spec/: EARS clauses, R-ID
 
 # Spec authoring
 
-`spec/` = today's truth. `changes/` = proposals. `changes/archive/` = why. Budgets and gates: `AGENTS.md`.
+`spec/` = today's truth. `changes/` = proposals. `changes/archive/` = why. Gates: `AGENTS.md`.
 
 ## Where content goes
 
@@ -19,7 +19,7 @@ description: Write or edit tau requirement specs under spec/: EARS clauses, R-ID
 | Domain invariants, child index | `spec/<domain>/spec.md` | repeating a leaf rule |
 | Cross-cutting invariant | `spec/index.md` | repeating it in a domain |
 
-Over budget → split into children and add index lines. Don't compress prose until it's unreadable.
+A file that spans areas → split into children and add index lines. Prose: the shortest form that stays readable.
 
 Every line in a leaf spec is a requirement heading, an obligation, an acceptance ref, a reference to a `docs/glossary.md` term, or a one-line `Why:`. An invariant in `spec/index.md` or a domain index names the gate, lint, lane, or review check that proves it; a rule with no proof command is a leaf requirement with an `R-` ID.
 
@@ -69,6 +69,6 @@ Banned: "this document describes", "it is important to note", "ensure that", lev
 
 1. `grep -ril "<key phrase>" spec changes crates/tau-test`: if it hits, edit the owner, don't add a copy.
 2. New requirement: allocated ID, EARS clause, `Acceptance:` ref, a line in the parent `spec.md`. A childless domain has no parent index; its count comes from `cargo run -p tau-tools --bin spec -- count` and the corpus line in `spec/index.md`.
-3. Each edited file within budget; update the counts in `spec/index.md`.
+3. Each edited file states only its own area; `spec/index.md` links and child lines updated.
 4. Run the gates in `AGENTS.md`.
 5. New terms go in `docs/glossary.md`.

@@ -28,6 +28,6 @@ Acceptance: gate contracts current
 
 ### R-workspace-05  Toolchain pinned to the named stable release
 
-THE SYSTEM SHALL pin `rust-toolchain.toml` to the stable release named in `AGENTS.md`.
+THE SYSTEM SHALL pin `rust-toolchain.toml` to the stable release named in `docs/stack.md`.
 Acceptance: gate toolchain pinned
 Why: a dependency's MSRV is a floor, not the pin; the named release is what a checkout builds on.

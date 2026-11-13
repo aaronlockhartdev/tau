@@ -1,6 +1,6 @@
 ---
 name: spec-review
-description: Independent quality gate for tau spec docs: duplication, budgets, ID integrity, "Why:" relevance, traceability, prose, index accuracy. Use when reviewing staged doc changes, before committing spec/ or changes/, when a tasks.md line says "spec-review", or when asked to review documentation.
+description: Independent quality gate for tau spec docs: duplication, ID integrity, "Why:" relevance, traceability, prose, index accuracy. Use when reviewing staged doc changes, before committing spec/ or changes/, when a tasks.md line says "spec-review", or when asked to review documentation.
 ---
 
 # Spec review
@@ -26,7 +26,7 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 | 6 | D | Delta paths mirror `spec/…` paths | fix |
 | 7 | D | Each `Why:` passes "changes what code gets written?" and is ≤25 words | delete the line |
 | 8 | D | No research provenance, benchmarks, citations, vendor news, dates, or accounts of an earlier implementation in `spec/` | move to archive |
-| 9 | D | Files within the budgets in `AGENTS.md`; `spec/index.md` counts, links, and child lines updated | fix |
+| 9 | D | A file states only facts of its own area; `AGENTS.md` states no fact a `spec/` file owns; `spec/index.md` links and child lines match the tree | fix |
 | 10 | D | Terms come from `docs/glossary.md`, not defined inline | move |
 | 11 | D | Proposal names evidence per option, states the cost per option, marks unverified claims | block |
 | 11b | D | Every rule the proposal claims to own lands as a delta clause naming its leaf spec (own directory or the named owning change), or, for a `spec/index.md` invariant, as an in-place bullet naming its proof | block |

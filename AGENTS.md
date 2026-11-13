@@ -6,30 +6,13 @@ Auto-loaded: this file (nested `AGENTS.md` files, nearest wins) and each skill's
 ## Read order for a task
 
 1. This file.
-2. `spec/index.md`: cross-cutting invariants, then the 1–2 domains the task touches.
+2. `spec/index.md`: cross-cutting invariants and the layout table, then the 1–2 domains the task touches.
 3. That domain's `spec.md`, then only the leaf `spec.md` you need.
 4. Changing behaviour? `changes/<id>/` if one exists; if not, open one (skill: spec-change).
 5. A skill, when the task matches its description.
 
 Read nothing else by default. If the load feels heavy, you are reading files you don't need.
-
-## Layout
-
-| Path | What | Read when |
-|---|---|---|
-| `spec/index.md` | cross-cutting invariants, domain table, corpus count | any spec work |
-| `spec/<domain>/spec.md` | domain index: invariants, child links; rules too when the domain has no children | entering a domain |
-| `spec/<domain>/<area>/spec.md` | leaf: EARS requirements + acceptance refs | implementing that area |
-| `changes/<id>/` | active change: proposal, deltas, tasks | before coding a behaviour change |
-| `changes/archive/` | closed changes, the record of *why* | history of a rule |
-| `crates/` | workspace members, listed in the Stack table below | any code |
-| `crates/tau-test/tests/features/` | Gherkin acceptance, tagged `@R-…` | writing/reading acceptance |
-| `crates/tau-test/tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
-| `crates/tau-test/suites/` | eval suites, run by hand | deciding whether a feature is worth building |
-| `contracts/` | generated wire/tool schemas | touching the wire |
-| `.rumdl.toml` | doc-gate tool config | changing a doc gate |
-| `docs/glossary.md` | canonical terms | a term is ambiguous |
-| `.agents/skills/`, `.agents/agents/` | skills (below); subagent definitions | task matches |
+Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `docs/glossary.md`, pins in `docs/stack.md`, steps in `STEPS.md`. This file carries commands and the rules that bind every task.
 
 ## Gates
 
@@ -45,43 +28,15 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | unit + surface | `cargo nextest run` | M0 |
 | behaviour | `cargo test -p tau-test --test features` | M0 |
 | steps current | `cargo run -p tau-test --bin steps -- --check` | M0 |
-| workspace layout | `cargo metadata --no-deps` members match the Stack Crates row here, each crate named after its directory, and the root manifest sets `resolver = "3"` | M0 |
+| workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | M0 |
 | no local state tracked | `git ls-files target .tau` is empty | M0 |
-| toolchain pinned | `rust-toolchain.toml` names the stable release in `AGENTS.md` | M0 |
+| toolchain pinned | `rust-toolchain.toml` names the stable release in `docs/stack.md` | M0 |
 | core has no UI logic | `cargo tree -p tau-core` lists no UI crate: no gpui, no `tau-app`, no `tau-acp` | M0 |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
 | lints | `cargo fmt && cargo clippy -- -D warnings` | M0 |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
 | desktop | `cargo run -p tau-app` | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |
-
-## Stack
-
-Decided, with pins; deviations need a change.
-
-| Layer | Choice | Pin |
-|---|---|---|
-| Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` (mock LLM, harness, eval) · `tau-tools` (spec CLI) | workspace |
-| Toolchain | Rust stable, latest release, bumped on release; `rust-toolchain.toml` pins it, `resolver = "3"` resolves MSRV-aware | 1.100.0 (2026-11-12) |
-| UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
-| Async | tokio | latest stable |
-| Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
-| Unit + surface tests | `cargo nextest`, `#[gpui::test]` | — |
-| Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
-| Markdown / diff | core parses with `pulldown-cmark`; the app renders it | spike in M0 |
-| Config | TOML + hot reload (`add_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
-| Storage | SQLite via `rusqlite` (`bundled`, WAL): append-only `events` + state tables, JSONL by export | rusqlite 0.41 · migrations 2.7 |
-
-## Budgets
-
-| Item | Max |
-|---|---|
-| `AGENTS.md` | 120 lines |
-| `spec/index.md` | 60 lines |
-| domain index | 120 lines |
-| leaf spec | 150 lines |
-| proposal / tasks | 100 / 15 lines |
-| `spec/` corpus | 40k tokens |
 
 Authoring and review rules belong to the skills; don't restate them here.
 
@@ -93,6 +48,4 @@ No worktrees by default. Trigger: two writer agents running at once, or a bisect
 
 ## Skills
 
-- **spec-authoring**: write/edit requirements: EARS, IDs, where content goes, prose, `Why:`
-- **spec-change**: proposal, deltas, tasks, apply, archive
-- **spec-review**: gate before committing docs
+`.agents/skills/` holds spec-authoring, spec-change, and spec-review; the harness loads each by description, so read a file only when its description matches.
