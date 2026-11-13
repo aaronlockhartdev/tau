@@ -31,3 +31,10 @@ Acceptance: gate contracts current
 THE SYSTEM SHALL pin `rust-toolchain.toml` to the stable release named in `docs/stack.md`.
 Acceptance: gate toolchain pinned
 Why: a dependency's MSRV is a floor, not the pin; the named release is what a checkout builds on.
+
+### R-workspace-06  A project's tau directory stays untracked
+
+WHEN tau creates `<project>/.tau` inside a git working tree THE SYSTEM SHALL append `.tau/` to that repository's `.git/info/exclude`.
+
+Acceptance: @R-workspace-06
+Why: a per-project store and config sit inside the checkout, and `.git/info/exclude` keeps them out of commits without editing the tracked `.gitignore`.

@@ -12,3 +12,4 @@
 - [ ] R-harness-03: steps generator emits crates/tau-test/tests/features/STEPS.md
 - [ ] check: spec --check · contracts --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
+- [ ] Implement: `.tau/` appended to `.git/info/exclude` at first use (R-workspace-06)
