@@ -27,6 +27,7 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | `crates/tau-test/tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
 | `crates/tau-test/suites/` | eval suites, run by hand | deciding whether a feature is worth building |
 | `contracts/` | generated wire/tool schemas | touching the wire |
+| `.rumdl.toml` | doc-gate tool config | changing a doc gate |
 | `docs/glossary.md` | canonical terms | a term is ambiguous |
 | `.agents/skills/`, `.agents/agents/` | skills (below); subagent definitions | task matches |
 
@@ -39,7 +40,7 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | spec tool | `cargo run -p tau-tools --bin spec -- {id,new,count,archive}` | M0 |
 | spec lint | `cargo run -p tau-tools --bin spec -- --check` | M0 |
 | contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | M0 |
-| doc lint | `rumdl lint spec changes docs AGENTS.md README.md` | M0 |
+| doc lint | `rumdl check spec changes docs AGENTS.md README.md` | M0 |
 | links | `lychee spec changes docs AGENTS.md README.md` | M0 |
 | unit + surface | `cargo nextest run` | M0 |
 | behaviour | `cargo test -p tau-test --test features` | M0 |

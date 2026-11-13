@@ -1,0 +1,4 @@
+# Gate config for `rumdl check` (AGENTS.md: doc lint).
+[global]
+# House style: one sentence per line, and two spaces between an ID and a heading summary.
+disable = ["MD013", "MD064"]
