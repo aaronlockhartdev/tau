@@ -16,7 +16,7 @@ Split a domain into children, or merge domains, through a change (`change_domain
 |---|---|---|---|---|
 | domain-model | `crates/tau-core/model` | [domain-model/spec.md](domain-model/spec.md) | — | 3 |
 | protocol | `crates/tau-protocol` | [protocol/spec.md](protocol/spec.md) | — | 3 |
-| session | `crates/tau-core/session` | [session/spec.md](session/spec.md) | — | 3 |
+| session | `crates/tau-core/session`, `crates/tau-core/storage` | [session/spec.md](session/spec.md) | — | 3 |
 | context | `crates/tau-core/context` | [context/spec.md](context/spec.md) | — | 3 |
 | tools | `crates/tau-core/tools` | [tools/spec.md](tools/spec.md) | — | 3 |
 | acp | `crates/tau-acp` | [acp/spec.md](acp/spec.md) | — | 3 |
