@@ -58,6 +58,12 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 
 Owner of authoring and review rules is the skill, not this file — don't restate them here.
 
+## Working tree
+
+Land on `main`: signed commits, one committable unit each, linear history (rebase, never a merge commit). Commit body names the change id and the gate status, including `skipped (M0)`.
+A branch is only for work that can't land today (a spike with a build gate, a migration). Name it after the change id; delete it at land.
+No worktrees by default. Trigger: two writer agents running at once, or a bisect/repro that needs a clean tree. Then one worktree per writer at `../tau-<id>` (never inside the repo), `CARGO_TARGET_DIR=$HOME/.cache/tau-target` shared — disk stays 1×, builds serialize, and cargo flags shared target dirs as unsafe upstream. Create and remove it in the same session; leave no uncommitted state; `git worktree prune` after any manual cleanup.
+
 ## Skills
 
 - **spec-authoring** — write/edit requirements: EARS, IDs, where content goes, prose, `Why:`
