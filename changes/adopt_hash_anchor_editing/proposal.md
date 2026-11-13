@@ -26,7 +26,7 @@ Tau's own rules:
 
 ## Consequences
 
-Cost: an anchor store per session in storage, and one tree-sitter dependency in the crate that serves the outline tool when enabled. Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible.
+Cost: an anchor store per session in storage, and one tree-sitter dependency in the crate that serves the outline tool when enabled. Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible. The clauses are in `changes/adopt_hash_anchor_editing/specs/tools/editing/spec.md` as `R-tools-23..30`, archived to `spec/tools/editing/spec.md`.
 
 Eval: none needed.
 
