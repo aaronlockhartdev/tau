@@ -15,7 +15,7 @@ Performance settles nothing here. [redb's benchmark](https://github.com/cberner/
 
 ## Decision
 
-A. `.tau/state.db`, SQLite via `rusqlite` (`bundled`, WAL). Separation of duties is by schema: the `events` table is append-only, rows never updated, and the mutable tables hold anchors, observations, reflections, approvals, and prompt prefixes. One transaction per event, so a tool call commits its event and its state change together, and no fact has two owners.
+A. `<project>/.tau/state.db`, SQLite via `rusqlite` (`bundled`, WAL). Separation of duties is by schema: the `events` table is append-only, rows never updated, and the mutable tables hold anchors, observations, reflections, approvals, and prompt prefixes. One transaction per event, so a tool call commits its event and its state change together, and no fact has two owners.
 
 Export is a command (`tau sessions export <id>` writes JSONL), and text views exist for eval and logs while the store stays unread by hand.
 

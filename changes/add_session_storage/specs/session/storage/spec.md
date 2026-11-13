@@ -6,7 +6,7 @@ Apply to `spec/session/storage/spec.md` at archive time. Describe the difference
 
 ### R-session-01  One write connection
 
-WHILE a session is open THE SYSTEM SHALL hold one write connection to `.tau/state.db` in core.
+WHILE a session is open THE SYSTEM SHALL hold one write connection to the project's store in core.
 Acceptance: @R-session-01
 
 ### R-session-02  Event and state commit together
@@ -73,3 +73,9 @@ Why: WAL needs shared memory on one host.
 
 WHEN the eval harness reads a run THE SYSTEM SHALL answer from store queries, not a per-tool log format.
 Acceptance: @R-session-13
+
+### R-session-18  The store is per project
+
+WHEN a session starts THE SYSTEM SHALL open its store at `<project>/.tau/state.db`.
+
+Acceptance: @R-session-18
