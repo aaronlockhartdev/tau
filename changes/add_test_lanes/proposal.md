@@ -6,7 +6,7 @@ A suite that is flaky, or slow enough to belong on a nightly job, is a suite an 
 
 ## Options
 
-- Behaviour as Markdown prose: no step vocabulary to reuse and nothing machine-checkable. Evidence: none measured, none external. Cost: 0 dependencies, and every scenario repeats the vocabulary.
+- Behaviour as Markdown prose: no step vocabulary to reuse and nothing machine-checkable. Evidence: `unverified`, nothing measured and no external source. Cost: 0 dependencies, and every scenario repeats the vocabulary.
 - Behaviour as Gherkin with cucumber-rs (0.23.x) and gherkin (0.16.x): step reuse, tags, and reports of undefined and unused steps, run by `cargo test`. Evidence: [crates.io](https://crates.io/crates/cucumber) and the [cucumber-rs repo](https://github.com/cucumber-rs/cucumber) (read 2026-11-13). Cost: 2 dev-dependencies, a steps target.
 - Surface as Playwright over a webview: browser automation against a real window. Evidence: [playwright.dev](https://playwright.dev/docs/intro) requires a browser and a page (read 2026-11-13); no measurement here. Cost: a webview to own, browsers in CI, pixels that flake.
 - Surface as `#[gpui::test]` on a GPUI tree, driving components through gpui-kit's `TestWindowExt`: headless, in-process, no window server. Evidence: Zed's [`gpui-test` skill](https://github.com/zed-industries/zed) describes running GPUI tests in process (read 2026-11-13), and [gpui-kit's docs](https://gpui-kit.com/) (read 2026-11-13) render components in headless windows with pointer, keyboard, focus, layout and accessibility assertions. Cost: these tests join `cargo nextest`, 0 extra runners.

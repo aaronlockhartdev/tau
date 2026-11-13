@@ -2,12 +2,12 @@
 
 ## Context
 
-Line-number and fuzzy-matched edits silently hit the wrong line. Anchor-addressed editing is the precondition for letting an agent edit files at all.
+Line-number and fuzzy-matched edits silently hit the wrong line. Anchor-addressed editing is the precondition for letting an agent edit files at all. tau's own doc workflow runs on anchored edits, so the tool set is used by the corpus it documents, and its refusals and post-edit diffs are surface behaviour the app has to render. pi-hashline-edit-pro 7.1.1 is a shipped extension in daily use on this repo's documents, so the open question is how much of it tau mirrors.
 
 ## Options
 
 - Mirror pi-hashline-edit-pro 7.1.1: its README and `docs/` (read 2026-11-13), a shipped extension in daily use on this repo's own documents. Cost: one tools leaf spec, an anchor store in session state.
-- Line numbers with fuzzy matching: no external evidence in its favour; a stale line number edits the wrong line without an error.
+- Line numbers with fuzzy matching: `unverified`, no external source; a stale line number edits the wrong line without an error.
 
 ## Decision
 
@@ -26,6 +26,8 @@ Tau's own rules:
 
 ## Consequences
 
-Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible.
+Cost: 31 corpus lines, read on demand; an anchor store per session in storage, and one tree-sitter dependency in the crate that serves the outline tool when enabled. Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible.
+
+Eval: none needed.
 
 Open: none.
