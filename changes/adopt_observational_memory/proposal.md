@@ -11,7 +11,7 @@ A tau session must run for days without compaction. Rolling summaries destroy ea
 
 ## Decision
 
-Mirror Mastra's observational memory as used by Mastra Code. For mechanics, read `@mastra/memory` (≥1.1.0) docs, Observational Memory section, and the `packages/memory` source. Do not restate them here, and do not diverge. That covers the three layers, the Observer and Reflector roles, the token thresholds and their defaults, the compression ratios, and the cache-first ordering.
+Mirror Mastra's observational memory as used by Mastra Code. For mechanics, read `@mastra/memory` (≥1.1.0) docs, Observational Memory section, and the `packages/memory` source. That covers the three layers, the Observer and Reflector roles, the token thresholds and their defaults, the compression ratios, and the cache-first ordering.
 
 Tau's own rules:
 

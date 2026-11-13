@@ -21,12 +21,12 @@ Rendering rules:
 - An open block shows as monospace text and renders fully once it closes; a table lays out as a grid at close.
 - ATX headings only, so no line restyles a block above it.
 - Tool calls, approvals, and diffs stream as they happen.
-- Frame budget, block-split cost, closed-block immutability in `TextView`, and the restyle at close are measured by the M0 spike, which renders a tape at full token rate with a storage writer and a checkpoint running alongside, reading frame time from `gpui-fps`.
+- The M0 spike measures this: `changes/spike_gpui_surface/tasks.md`.
 - The text field, IME, and paste behave under load.
 
 ## Consequences
 
-The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence in a headless GPUI test through gpui-kit's `TestWindowExt`, so the gate has no pixels, no window server, and no scheduler. Live text reaches the screen as core produces it, ahead of durability, so a turn that never committed rolls back with its transaction. The live-output invariant in `spec/index.md` is what keeps the storage choice from showing up in the frame budget. The proposal adds 33 lines to the corpus and no tokens per turn, trading a re-parse per delta for one per block close.
+The protocol widens to streaming events, and `contracts/` regenerates. The surface lane asserts stream equivalence, per `add_test_lanes`. Live text reaches the screen ahead of durability, per the live-output invariant in `spec/index.md`, so a turn that never committed rolls back with its transaction. The trade is a re-parse per token delta for one re-parse per block close. These rendering rules land as `R-SURFACE-NN` in `spec/surface/transcript/spec.md`, with the frame-cost assertion in the behaviour lane and the equivalence assertion in the surface lane.
 
 Eval: none needed. The spike measures the frame budget and the surface lane asserts stream equivalence.
 

@@ -61,7 +61,7 @@ Decided, with pins; deviations need a change.
 | Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
 | Unit + surface tests | `cargo nextest`, `#[gpui::test]` | — |
 | Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
-| Markdown / diff | core parses with `pulldown-cmark`; the app renders with `gpui-kit`'s `TextView` and `Diff` | spike in M0 |
+| Markdown / diff | core parses with `pulldown-cmark`; the app renders it | spike in M0 |
 | Config | TOML + hot reload (`add_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
 | Storage | SQLite via `rusqlite` (`bundled`, WAL): append-only `events` + state tables, JSONL by export | rusqlite 0.41 · migrations 2.7 |
 
@@ -82,7 +82,7 @@ Authoring and review rules belong to the skills; don't restate them here.
 
 Land on `main`: signed commits, one committable unit each, linear history (rebase, never a merge commit). Commit body names the change id and the gate status, including `skipped (M0)`.
 A branch is only for work that can't land today (a spike with a build gate, a migration). Name it after the change id; delete it at land.
-No worktrees by default. Trigger: two writer agents running at once, or a bisect/repro that needs a clean tree. Then one worktree per writer at `../tau-<id>` (never inside the repo), with `CARGO_TARGET_DIR=$HOME/.cache/tau-target` shared, so disk stays 1x and builds serialize. Cargo flags shared target dirs as unsafe upstream. Create and remove it in the same session; leave no uncommitted state; `git worktree prune` after any manual cleanup.
+No worktrees by default. Trigger: two writer agents running at once, or a bisect/repro that needs a clean tree. Then one worktree per writer at `../tau-<id>` (never inside the repo), with `CARGO_TARGET_DIR=$HOME/.cache/tau-target` shared, so disk stays 1x and builds serialize. Create and remove it in the same session; leave no uncommitted state.
 
 ## Skills
 

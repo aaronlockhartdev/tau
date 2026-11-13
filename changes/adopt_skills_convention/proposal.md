@@ -11,7 +11,7 @@ Three skill sets already sit on this machine, under `.agents/skills/`, `.pi/skil
 
 ## Decision
 
-Adopt the Agent Skills convention as pi implements it. For mechanics, read pi 1.5.2 `docs/skills.md` and the Agent Skills specification. Do not restate them here, and do not diverge. That covers discovery, frontmatter, the name and description limits, `${CLAUDE_SKILL_DIR}`, invocation, and the `SKILL.md` template.
+Adopt the Agent Skills convention as pi implements it. For mechanics, read pi 1.5.2 `docs/skills.md` and the Agent Skills specification. That covers discovery, frontmatter, the name and description limits, `${CLAUDE_SKILL_DIR}`, invocation, and the `SKILL.md` template.
 
 Tau's own rules:
 
@@ -22,7 +22,7 @@ Tau's own rules:
 
 ## Consequences
 
-Cost: 27 corpus lines, read on demand; skill descriptions enter the prompt every turn at the length limits the convention sets; no new dependency. Skills are input to context assembly in core, so both frontends see the same set. The repo's `.agents/skills/` is read by the built product as well as by external agents, which makes the doc skills an executable spec. Skill text enters the prompt, so loading reports name, path, and description length per session.
+Cost: skill descriptions enter the prompt every turn at the length limits the convention sets; no new dependency. Skills are input to context assembly in core, so both frontends see the same set. The repo's `.agents/skills/` is read by the built product as well as by external agents, which makes the doc skills an executable spec. Skill text enters the prompt, so loading reports name, path, and description length per session.
 
 Eval: none needed.
 

@@ -21,6 +21,6 @@ Reload rule: any key that can be applied live is applied live. A key that needs 
 
 ## Consequences
 
-Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario.
+Config is read in core, and the frontends subscribe to it, so ACP exposes the same state as the desktop app. The file lives outside the repo, so a secret is never committed, and it never enters a session log. Hot reload is testable through `tau-test` by writing the file mid-scenario. The reload rule and the key list land as `R-CONFIG-NN` in `spec/config/reload/spec.md`.
 
 Open: none.

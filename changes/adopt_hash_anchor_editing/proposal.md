@@ -11,7 +11,7 @@ Line-number and fuzzy-matched edits silently hit the wrong line. Anchor-addresse
 
 ## Decision
 
-Mirror `pi-hashline-edit-pro` 7.1.1 exactly. For mechanics, read its README and `docs/`. Do not restate them here, and do not diverge. That covers the anchor format and alphabet, anchor lifetime, stale and ambiguous refusals, batching, the post-edit diff and its anchor rows, undo, and the caps.
+Mirror `pi-hashline-edit-pro` 7.1.1 exactly. For mechanics, read its README and `docs/`. That covers the anchor format and alphabet, anchor lifetime, stale and ambiguous refusals, batching, the post-edit diff and its anchor rows, undo, and the caps.
 
 The tool set mirrors its default surface: `read`, `replace`, `replace_match`, `insert`, `copy`, `move`, `grep`, `undo_last_change`. `read` answers in `anchor│content` rows, and the built-in line editor is not registered.
 
@@ -26,7 +26,7 @@ Tau's own rules:
 
 ## Consequences
 
-Cost: 31 corpus lines, read on demand; an anchor store per session in storage, and one tree-sitter dependency in the crate that serves the outline tool when enabled. Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible.
+Cost: an anchor store per session in storage, and one tree-sitter dependency in the crate that serves the outline tool when enabled. Anchors are owned by core. The surface renders refusals and the post-edit diff. The tape format records anchored edits. The spec corpus uses anchored editing, so anchor churn becomes visible.
 
 Eval: none needed.
 

@@ -17,9 +17,11 @@ Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `scaffold
 
 - **Context**: the problem in 3–6 sentences; existing behaviour by `R-ID`.
 - **Options**: 2–4, each one line + evidence + cost. Evidence = measured in this repo (a number, a spike, a repro) or an external source with a link and a date. "Feels idiomatic", "widely used" is not evidence; mark anything unverified `unverified` and it cannot carry the decision. A mirror decision keeps the same shape: the options are mirror the reference and design it in-house, and the evidence names the reference's version and the section read.
-- **Decision + consequences**: the option, what gets easier, what you now own (invariants, budgets, migrations, deletions).
+- **Decision + consequences**: the option, what gets easier, what you now own (invariants, budgets, migrations, deletions), and the leaf spec each new rule lands in.
 
-State the cost: lines added to the corpus, tokens per turn, new dependencies. A feature that can't state its cost is not accepted.
+- **Eval**: `none needed`, or the suite name, when the value depends on real-LLM quality.
+
+State the cost: new dependencies, runtime cost, and tokens per turn where a turn pays it. A feature that can't state its cost is not accepted.
 If the value depends on real-LLM quality, name the eval suite in the proposal and run it by hand (invariant in `spec/index.md`).
 
 ## 3. Deltas

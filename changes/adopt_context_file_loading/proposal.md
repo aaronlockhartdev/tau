@@ -11,7 +11,7 @@ The harness loads `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md` from the agent di
 
 ## Decision
 
-Mirror pi's loading exactly. For mechanics, read pi 1.5.2 `docs/configuration.md` sections Agent directory, Project `.pi`, Context files, and Skills. Do not restate them here, and do not diverge.
+Mirror pi's loading exactly. For mechanics, read pi 1.5.2 `docs/configuration.md` sections Agent directory, Project `.pi`, Context files, and Skills.
 
 Tau's own rules:
 

@@ -37,7 +37,7 @@ WHEN <trigger> THE SYSTEM SHALL <response>.
 Acceptance: @R-<DOMAIN>-<NN>
 ```
 
-- Allocate the number with `cargo run -p tau-tools --bin spec -- id <domain>`. Never hand-pick, reuse, renumber, or rename.
+- Allocate the number with `cargo run -p tau-tools --bin spec -- id <domain>`. `<DOMAIN>` is the domain directory name verbatim (so `domain-model` gives `R-domain-model-01`); `<NN>` is digits, so the last hyphen separates them. Never hand-pick, reuse, renumber, or rename.
 - One `###` per clause. "shall A and B" splits when A and B need separate tests.
 - No `SHOULD` / `MAY` / "as much as possible": bound it or write no rule.
 - Replace vague words with a number or a name: fast, large, minimal, appropriate, graceful, robust, seamless, user-friendly.
@@ -45,7 +45,7 @@ Acceptance: @R-<DOMAIN>-<NN>
 ## Acceptance
 
 Scenarios live in `crates/tau-test/tests/features/<domain>.feature`, tagged with the requirement's ID.
-Use only steps listed in `crates/tau-test/tests/features/STEPS.md`; adding a step is a code change, listed in `tasks.md`.
+Use only steps listed in `crates/tau-test/tests/features/STEPS.md`.
 `Background` for shared preconditions, `Scenario Outline` + `Examples` for matrices. The spec never contains Given/When/Then.
 
 ## Why: notes

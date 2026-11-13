@@ -15,14 +15,14 @@ Split a domain into children, or merge domains, through a change (`change_domain
 
 | Domain | Owns | Spec | Leaves | Lines |
 |---|---|---|---|---|
-| domain-model | `crates/tau-core/model` | [domain-model/spec.md](domain-model/spec.md) | — | 3 |
-| protocol | `crates/tau-protocol` | [protocol/spec.md](protocol/spec.md) | — | 3 |
-| session | `crates/tau-core/session`, `crates/tau-core/storage` | [session/spec.md](session/spec.md) | — | 3 |
-| context | `crates/tau-core/context` | [context/spec.md](context/spec.md) | — | 3 |
-| tools | `crates/tau-core/tools` | [tools/spec.md](tools/spec.md) | — | 3 |
-| acp | `crates/tau-acp` | [acp/spec.md](acp/spec.md) | — | 3 |
-| surface | `crates/tau-app` | [surface/spec.md](surface/spec.md) | — | 3 |
-| harness | `crates/tau-test`, `crates/tau-test/suites`, `crates/tau-tools` | [harness/spec.md](harness/spec.md) | — | 3 |
-| config | `crates/tau-core/config` | [config/spec.md](config/spec.md) | — | 3 |
+| domain-model | `crates/tau-core/model` | [domain-model/spec.md](domain-model/spec.md) | — | 2 |
+| protocol | `crates/tau-protocol` | [protocol/spec.md](protocol/spec.md) | — | 2 |
+| session | `crates/tau-core/session`, `crates/tau-core/storage` | [session/spec.md](session/spec.md) | — | 2 |
+| context | `crates/tau-core/context` | [context/spec.md](context/spec.md) | — | 2 |
+| tools | `crates/tau-core/tools` | [tools/spec.md](tools/spec.md) | — | 2 |
+| acp | `crates/tau-acp` | [acp/spec.md](acp/spec.md) | — | 2 |
+| surface | `crates/tau-app` | [surface/spec.md](surface/spec.md) | — | 2 |
+| harness | `crates/tau-test`, `crates/tau-test/suites`, `crates/tau-tools` | [harness/spec.md](harness/spec.md) | — | 2 |
+| config | `crates/tau-core/config` | [config/spec.md](config/spec.md) | — | 2 |
 
 Corpus: 0 requirements, 0 / 40k tokens. Each requirement arrives through a change.
