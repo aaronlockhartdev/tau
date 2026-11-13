@@ -12,4 +12,4 @@
 - [ ] R-harness-03: steps generator emits crates/tau-test/tests/features/STEPS.md
 - [ ] check: spec --check · contracts --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
-- [ ] Implement: `.tau/` in the common dir's exclude file, once, disclosed at start (R-workspace-06..08)
+- [ ] Implement: `<project>/.tau/.gitignore` containing `*`, written once, disclosed at start (R-workspace-06..08)

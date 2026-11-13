@@ -34,20 +34,19 @@ Why: a dependency's MSRV is a floor, not the pin; the named release is what a ch
 
 ### R-workspace-06  A project's tau directory stays untracked
 
-WHEN tau creates `<project>/.tau` inside a git working tree THE SYSTEM SHALL append `.tau/` to the exclude file in that repository's common git directory.
+WHEN tau creates `<project>/.tau` inside a git working tree THE SYSTEM SHALL write `<project>/.tau/.gitignore` containing only `*`.
 
 Acceptance: @R-workspace-06
-Why: a per-project store and config sit inside the checkout, and `.git/info/exclude` keeps them out of commits without editing the tracked `.gitignore`.
+Why: a store, config, and tapes sit in a checkout tau does not own; an ignore file inside the directory needs no tracked-file edit.
 
-### R-workspace-07  The exclusion is written once
+### R-workspace-07  The ignore file is written once
 
-WHEN `.tau/` already appears in the exclude file THE SYSTEM SHALL NOT append it again.
+WHEN `<project>/.tau/.gitignore` exists THE SYSTEM SHALL leave it unchanged.
 
 Acceptance: @R-workspace-07
 
-### R-workspace-08  The exclusion is disclosed
+### R-workspace-08  The write is disclosed
 
-WHEN tau appends to an exclude file THE SYSTEM SHALL name the file and the line in its session start output.
+WHEN tau writes `<project>/.tau/.gitignore` THE SYSTEM SHALL name it in its session start output.
 
 Acceptance: @R-workspace-08
-Why: the write lands in a checkout tau does not own, and a user finds it faster in a log line than in a `git config` spelunk.
