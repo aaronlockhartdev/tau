@@ -21,6 +21,8 @@ description: Write or edit tau requirement specs under spec/: EARS clauses, R-ID
 
 Over budget → split into children and add index lines. Don't compress prose until it's unreadable.
 
+Every line in a leaf spec is an obligation, an acceptance ref, a reference to a `docs/glossary.md` term, or a one-line `Why:`. An invariant in `spec/index.md` or a domain index names the gate, lint, lane, or review check that proves it; a rule with no proof command is a leaf requirement with an `R-` ID.
+
 ## Requirement form (EARS)
 
 One clause = one testable obligation:
@@ -37,14 +39,15 @@ WHEN <trigger> THE SYSTEM SHALL <response>.
 Acceptance: @R-<DOMAIN>-<NN>
 ```
 
-- Allocate the number with `cargo run -p tau-tools --bin spec -- id <domain>`. `<DOMAIN>` is the domain directory name verbatim (so `domain-model` gives `R-domain-model-01`); `<NN>` is digits, so the last hyphen separates them. Never hand-pick, reuse, renumber, or rename.
+- Allocate the number with `cargo run -p tau-tools --bin spec -- id <domain>`. `<DOMAIN>` is the domain directory name verbatim (so `domain-model` gives `R-domain-model-01`); `<NN>` is digits, so the last hyphen separates them; both parts stay lowercase, exactly as `spec --id` prints them. Never hand-pick, reuse, renumber, or rename.
 - One `###` per clause. "shall A and B" splits when A and B need separate tests.
 - No `SHOULD` / `MAY` / "as much as possible": bound it or write no rule.
 - Replace vague words with a number or a name: fast, large, minimal, appropriate, graceful, robust, seamless, user-friendly.
 
 ## Acceptance
 
-Scenarios live in `crates/tau-test/tests/features/<domain>.feature`, tagged with the requirement's ID.
+Scenarios live in `crates/tau-test/tests/features/<domain>.feature`, tagged with the requirement's ID: `Acceptance: @R-<DOMAIN>-<NN>`.
+A rule about a build fact the lanes cannot observe takes a gate instead: `Acceptance: gate <name>`, naming a row in `AGENTS.md`. A gate never replaces a scenario for observable behaviour.
 Use only steps listed in `crates/tau-test/tests/features/STEPS.md`.
 `Background` for shared preconditions, `Scenario Outline` + `Examples` for matrices. The spec never contains Given/When/Then.
 
@@ -59,7 +62,7 @@ account of an earlier implementation; the record lives in `changes/archive/`.
 
 ## Prose
 
-Fragments are fine. Tables beat sentences. One sentence beats a paragraph.
+Fragments are fine. Tables beat sentences. One sentence beats a paragraph. In `spec/`, rationale is a `Why:` line, never a paragraph.
 Banned: "this document describes", "it is important to note", "ensure that", leverage/robust/seamless, marketing voice, tutorials (README's job), commentary restating the EARS text.
 
 ## Before saving

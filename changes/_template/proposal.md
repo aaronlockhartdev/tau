@@ -12,7 +12,7 @@
 ## Decision
 
 {option}: {what gets easier}.
-Consequences: {new invariants, budgets, migrations, deletions, owned upkeep; the leaf spec each new rule lands in}.
+Consequences: {what you now own: invariants, budgets, migrations, deletions, upkeep}. {each rule → the delta clause in `specs/…` and the leaf spec it lands in; a rule with no delta clause never enters `spec/`}. See spec-authoring.
 Eval: {none needed | suite name, run by hand}
 
 Open: {`none` when there are none}

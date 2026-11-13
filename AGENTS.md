@@ -18,7 +18,7 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 | Path | What | Read when |
 |---|---|---|
 | `spec/index.md` | cross-cutting invariants, domain table, corpus count | any spec work |
-| `spec/<domain>/spec.md` | area index: invariants, child links | entering a domain |
+| `spec/<domain>/spec.md` | domain index: invariants, child links; rules too when the domain has no children | entering a domain |
 | `spec/<domain>/<area>/spec.md` | leaf: EARS requirements + acceptance refs | implementing that area |
 | `changes/<id>/` | active change: proposal, deltas, tasks | before coding a behaviour change |
 | `changes/archive/` | closed changes, the record of *why* | history of a rule |
@@ -38,11 +38,17 @@ Read nothing else by default. If the load feels heavy, you are reading files you
 |---|---|---|
 | spec tool | `cargo run -p tau-tools --bin spec -- {id,new,count,archive}` | M0 |
 | spec lint | `cargo run -p tau-tools --bin spec -- --check` | M0 |
+| contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | M0 |
 | doc lint | `rumdl lint spec changes docs AGENTS.md README.md` | M0 |
 | links | `lychee spec changes docs AGENTS.md README.md` | M0 |
 | unit + surface | `cargo nextest run` | M0 |
 | behaviour | `cargo test -p tau-test --test features` | M0 |
-| core has no gpui | `cargo tree -p tau-core` lists no gpui package | M0 |
+| steps current | `cargo run -p tau-test --bin steps -- --check` | M0 |
+| workspace layout | `cargo metadata --no-deps` members match the `AGENTS.md` Crates row, each crate named after its directory, and the root manifest sets `resolver = "3"` | M0 |
+| no local state tracked | `git ls-files target .tau` is empty | M0 |
+| toolchain pinned | `rust-toolchain.toml` names the stable release in `AGENTS.md` | M0 |
+| core has no UI logic | `cargo tree -p tau-core` lists no UI crate: no gpui, no `tau-app`, no `tau-acp` | M0 |
+| live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` | M0 |
 | lints | `cargo fmt && cargo clippy -- -D warnings` | M0 |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
 | desktop | `cargo run -p tau-app` | M0 |

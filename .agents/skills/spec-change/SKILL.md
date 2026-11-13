@@ -17,7 +17,7 @@ Verb carries intent: `add_`, `change_`, `remove_`, `adopt_`, `spike_`, `scaffold
 
 - **Context**: the problem in 3–6 sentences; existing behaviour by `R-ID`.
 - **Options**: 2–4, each one line + evidence + cost. Evidence = measured in this repo (a number, a spike, a repro) or an external source with a link and a date. "Feels idiomatic", "widely used" is not evidence; mark anything unverified `unverified` and it cannot carry the decision. A mirror decision keeps the same shape: the options are mirror the reference and design it in-house, and the evidence names the reference's version and the section read.
-- **Decision + consequences**: the option, what gets easier, what you now own (invariants, budgets, migrations, deletions), and the leaf spec each new rule lands in.
+- **Decision + consequences**: the option, what gets easier, what you now own (invariants, budgets, migrations, deletions), and the leaf spec each new rule lands in. A rule you own and do not write as a delta clause never enters `spec/`.
 
 - **Eval**: `none needed`, or the suite name, when the value depends on real-LLM quality.
 
@@ -26,7 +26,7 @@ If the value depends on real-LLM quality, name the eval suite in the proposal an
 
 ## 3. Deltas
 
-Delta files mirror the target: `changes/<id>/specs/<domain>/spec.md` for a domain index, `changes/<id>/specs/<domain>/<area>/spec.md` for a leaf.
+Delta files mirror the target: `changes/<id>/specs/<domain>/spec.md` for a domain index, `changes/<id>/specs/<domain>/<area>/spec.md` for a leaf. A domain with no children keeps its rules in `spec/<domain>/spec.md`, and the delta sits at the same path. A domain index gains an invariant only through the change that names its proof. `spec/index.md` is edited in place by the change that touches it: its invariants name a proof and carry no `R-` ID.
 
 ```markdown
 ## ADDED Requirements
@@ -60,7 +60,7 @@ One line per committable unit, ≤15 words each; implementation lines name an `R
 - [ ] spec-review (reviewer ticks)
 ```
 
-Spec text moves in the same commit as the code it describes.
+No code lands before its delta clause exists; a docs-only delta lands alone while implementation is blocked (for tau, until `scaffold_workspace`). `archive` moves the deltas into `spec/` at close.
 
 ## 5. Apply
 
