@@ -73,5 +73,6 @@ Run the gates in `AGENTS.md`. Gates that exist must be green; gates marked `M0` 
 
 ## 6. Archive
 
+`archive` needs each clause's acceptance ref to have run: a scenario that has never run, or a gate that has never passed, keeps the change open.
 `cargo run -p tau-tools --bin spec -- archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
-Archive is append-only: never edited afterwards. New facts are a new change.
+Archive creates `spec/<domain>/spec.md` when the delta names a domain that has no file yet. Archive is append-only: never edited afterwards. New facts are a new change.

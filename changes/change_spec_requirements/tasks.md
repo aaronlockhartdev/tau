@@ -7,7 +7,8 @@
 - [x] templates: delta clause, step definition, `Why:` under ADDED
 - [x] `workspace` domain row and stub
 - [x] gate rows exist: workspace layout · no local state tracked · toolchain pinned (skipped, M0)
-- [ ] spec lint parses `Acceptance: gate <name>` against the `AGENTS.md` gate table
-- [ ] steps generator emits crates/tau-test/tests/features/STEPS.md (placeholder text today)
+- [x] linter obligations land as R-harness-01..03 in the harness delta
+- [ ] R-harness-01,02: resolve acceptance refs in crates/tau-tools (tag → feature, gate → AGENTS.md)
+- [ ] R-harness-03: steps generator emits crates/tau-test/tests/features/STEPS.md
 - [ ] check: spec --check · contracts --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
