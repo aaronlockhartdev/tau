@@ -8,6 +8,7 @@ Cross-cutting invariants live here and are never restated in a domain:
 - Real-LLM eval is run by hand when deciding whether a feature is worth building; never in CI. Proof: spec-review check 14.
 - Live output is independent of storage: frontends consume core's in-memory event stream, rendering reads no storage, and no storage write, checkpoint, or reader gates emission. Proof: gate `live output under load` (M0).
 - A scenario uses only steps in the generated step vocabulary. Proof: gate `steps current` (M0).
+- A gate report states each `AGENTS.md` §Gates row as it stands: an unimplemented row reports `skipped (M0)`, never a pass. Proof: spec-review check 15.
 - `AGENTS.md` carries commands and rules that bind every task; it states no fact a `spec/` file owns. Proof: spec-review check 9.
 
 ## Domains
