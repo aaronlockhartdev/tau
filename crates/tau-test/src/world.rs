@@ -1,5 +1,6 @@
 use cucumber::World as CucumberWorld;
 use std::path::PathBuf;
+use tau_core::storage::Store;
 
 /// The lane's state for one scenario: the repo root the steps read, what a step
 /// found wrong, and the git index rows a step listed.
@@ -8,6 +9,9 @@ pub struct World {
     pub root: PathBuf,
     pub findings: Vec<String>,
     pub tracked: Vec<String>,
+    /// The store the scenario opened, and the file it opened it at.
+    pub store: Option<Store>,
+    pub store_path: PathBuf,
 }
 
 impl World {

@@ -69,3 +69,9 @@ Acceptance: gate live output under load
 WHILE the transcript renders a tape at full token rate with a storage writer and checkpoint running alongside THE SYSTEM SHALL stay inside the frame budget the surface spike records.
 
 Acceptance: gate live output under load
+
+### R-surface-23  A block shows its event time
+
+WHEN a block renders THE SYSTEM SHALL label it with the event time of its first event.
+
+Acceptance: @R-surface-23

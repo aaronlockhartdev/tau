@@ -6,6 +6,8 @@ use cucumber::{given, then, when};
 use std::fs;
 use std::process::Command;
 
+pub mod session;
+
 /// The `[package] name = "…"` value in a Cargo.toml, without a TOML dependency.
 fn package_name(manifest: &str) -> Option<String> {
     let mut in_package = false;
@@ -32,11 +34,11 @@ fn package_name(manifest: &str) -> Option<String> {
     None
 }
 
-fn report(world: &mut World, finding: impl Into<String>) {
+pub(crate) fn report(world: &mut World, finding: impl Into<String>) {
     world.findings.push(finding.into());
 }
 
-fn assert_clean(world: &mut World, expectation: &str) {
+pub(crate) fn assert_clean(world: &mut World, expectation: &str) {
     if !world.findings.is_empty() {
         panic!("{expectation}: {}", world.findings.join("; "));
     }

@@ -10,6 +10,7 @@ Cross-cutting invariants live here and are never restated in a domain:
 - A scenario uses only steps in the generated step vocabulary. Proof: gate `steps current`.
 - A gate report states each `AGENTS.md` §Gates row as it stands: an unimplemented row reports `skipped (M0)`, never a pass. Proof: spec-review check 15.
 - `AGENTS.md` carries commands and rules that bind every task; it states no fact a `spec/` file owns. Proof: spec-review check 9.
+- A schema whose change is not archived is edited in place: its migration is rewritten, never followed by a new one. Proof: spec-review check 16.
 
 ## Domains
 

@@ -5,6 +5,9 @@ members = ["crates/*"]
 [workspace.dependencies]
 cucumber = "0.23"
 proptest = "1.12"
+rusqlite = { version = "0.41", default-features = false, features = ["bundled"] }
+rusqlite_migration = "2.7"
+tau-core = { path = "crates/tau-core" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [workspace.lints.rust]

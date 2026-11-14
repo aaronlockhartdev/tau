@@ -23,3 +23,4 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `tail`: the newest messages of a session, kept verbatim.
 `project`: the working directory's git root, or the working directory when it is not a git tree.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
+`event time`: the moment core emits an event, in Unix milliseconds UTC.

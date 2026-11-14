@@ -34,6 +34,7 @@ Scopes: **B** = behaviour changes only (skip with `N/A: docs-only`), **D** = doc
 | 13 | A | `README.md` gained nothing internal (architecture, internal commands, doc map) | revert |
 | 14 | A | No new dependency from core to a frontend; no CI step runs a real-LLM eval | block |
 | 15 | A | The gate report covers every `AGENTS.md` §Gates row, each with its own status; an unimplemented row is `skipped (M0)`, never a pass | block |
+| 16 | B | A schema whose change is not archived is edited in place: no new migration follows one that has not shipped (invariant in `spec/index.md`) | fix |
 
 ## Report
 
