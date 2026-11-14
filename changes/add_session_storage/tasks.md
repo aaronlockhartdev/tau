@@ -15,3 +15,4 @@
 - [x] check: nextest · features · spec --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
 - [ ] Scenario: R-session-18 store opens at `<project>/.tau/state.db`
+- [ ] at archive: the session row's Leaves cell in spec/index.md names storage/spec.md

@@ -113,4 +113,4 @@ Why: export and the eval harness join log rows to state rows, and an orphan row 
 
 ### R-session-12  No network filesystem
 
-Why: WAL needs shared memory on one host, so a store on a network filesystem is unsupported. Core probes no mount type: the limit is a fact in `docs/stack.md`, and a refusal the lane cannot run on a real mount would be a rule with no proof.
+Why: WAL needs shared memory on one host, so a store on a network filesystem is unsupported.
