@@ -5,15 +5,17 @@
 - [x] unblocked: the six crates exist, and `crates/tau-core/storage` owns the schema
 - [x] R-session-01,02: one write connection; event and state in one transaction (crates/tau-core/storage), with scenarios in crates/tau-test/tests/features/session.feature and their steps in crates/tau-test/src/steps/session.rs
 - [x] R-session-03,04,05: event content lands in the log and in no state table (every table and column of the store is scanned by name, NULL values included), a read between turns leaves no read transaction open (a `TRUNCATE` checkpoint on a reader connection reports no lock and zero frames left), `synchronous = NORMAL` read from the store's own connection; scenarios in crates/tau-test/tests/features/session.feature
-- [ ] R-session-04's `WHILE` window has no acceptance: no step opens a turn, so no reader is measured across one. The shape is a second connection that opens a read transaction across a turn and still holds it at the checkpoint.
+- [ ] R-session-04's `WHILE` window has no acceptance: no step opens a turn, so no reader is measured across one. The shape is a second connection that opens a read transaction across a turn and still holds it at the checkpoint. `Store::run` is a new reader with no checkpoint proof of its own, and its scenario cannot supply one: its closing step is the reader. The proof lands in the shape above.
 - [x] R-session-06,07: the crash child `crates/tau-test/src/bin/crash_store.rs`, killed by a signal, with scenarios in crates/tau-test/tests/features/session.feature, and a unit test in crates/tau-core for the marker's transaction
 - [x] R-session-08,09: `Store::fork` copies an inclusive turn range into a session that names its parent, `Store::compact` appends a summary event and sets `sessions.visible_from_turn`; scenarios in crates/tau-test/tests/features/session.feature
 - [ ] How a fork resumes has no clause: the copy lands uncommitted, so the fork's last turn is open and a next tool call writes into the copied turn under its old number, and readers see a complete turn as uncommitted.
 - [x] R-session-10: `Store::search` answers from the FTS5 index over the stored events (`events_fts`, external content, kept in step by an insert trigger on the log); scenario in crates/tau-test/tests/features/session.feature
 - [x] R-session-11: `Store::export_jsonl` writes one JSON line per stored event and changes no row, read off the store's own change counter; scenario in crates/tau-test/tests/features/session.feature
 - [ ] The export command has no surface: the proposal names `tau sessions export <id>`, and no CLI exists to write the lines to a file
-- [ ] R-session-13: the eval harness answers a run from store queries
-- [ ] R-session-01..11, 13: scenarios in crates/tau-test/tests/features/session.feature
+- [x] R-session-13: `Store::run` answers a run as a query — each turn's state, its committed marker, its events, a turn with no events arriving with an empty list; scenario in crates/tau-test/tests/features/session.feature
+- [ ] A run with a turn in flight has no scenario: every turn the scenario answers is committed, while an eval reads the last turn uncommitted and a fork's copied turns arrive uncommitted (line 11). `Store::run` answers both as a turn with `committed: false` and the events it has; nothing measures it.
+- [ ] The eval harness has no surface: the `eval` gate row is `manual`, no `--bin eval` and no `crates/tau-test/suites/`, so nothing reads a run through `Store::run` yet
+- [x] R-session-01..11, 13: scenarios in crates/tau-test/tests/features/session.feature, each id tagged there; R-session-12 is withdrawn and needs none
 - [x] R-session-28,29: `events.ts` and `sessions.created` in Unix milliseconds UTC; scenarios in crates/tau-test/tests/features/session.feature
 - [x] R-session-30,31: triggers that refuse a late event and any update or delete of a log row; scenarios in crates/tau-test/tests/features/session.feature
 - [x] R-session-32: the composite foreign key from `events` to `turn`; scenario in crates/tau-test/tests/features/session.feature

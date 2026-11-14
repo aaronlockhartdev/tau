@@ -25,3 +25,4 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
 `event time`: the moment core emits an event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any event.
+`run`: a session's turns in order, with the events each produced.

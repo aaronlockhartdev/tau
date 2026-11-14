@@ -11,7 +11,7 @@ use cucumber::{given, then, when};
 use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tau_core::storage::{Error, Store, Turn};
+use tau_core::storage::{Error, RunTurn, Store, Turn};
 
 /// The session a scenario opens, and the turn a tool call commits. `pub` because the
 /// crash child (`bin/crash_store.rs`) writes exactly these rows, so the steps assert on
@@ -933,6 +933,119 @@ async fn export_the_session(world: &mut World) {
             format!("the export wrote {} rows of the store", after - before),
         );
     }
+}
+
+/// The state a compaction leaves on its turn; core keeps its own copy.
+const COMPACTED_STATE: &str = "compacted";
+/// The state of a turn that produced no events.
+const EMPTY_STATE: &str = "awaiting-user";
+
+#[when("a turn that produced no events commits")]
+async fn commit_a_turn_with_no_events(world: &mut World) {
+    // R-session-13: a model turn with no tool call is a real shape of a run, and the
+    // harness reads it as a turn with an empty event list.
+    let Some(store) = world.store.as_mut() else {
+        no_store(world);
+        return;
+    };
+    let turn = Turn {
+        session: SESSION,
+        turn: TURN + 2,
+        state: EMPTY_STATE,
+        events: &[],
+    };
+    if let Err(e) = store.commit(&turn) {
+        report(world, format!("the turn with no events failed: {e}"));
+    }
+}
+
+#[then("the run answers every turn of the session with its events")]
+async fn run_answers_from_the_store(world: &mut World) {
+    // R-session-13: a run is a query over the state table and the log — each turn's
+    // state, its committed marker, its events. The summary turn is a committed turn, and
+    // a turn that produced no events arrives with an empty list, not as a missing turn.
+    let mut findings = Vec::new();
+    if let Some(store) = world.store.as_ref() {
+        match store.run(SESSION) {
+            Ok(run) => {
+                let want = RunTurn {
+                    turn: TURN,
+                    state: STATE.to_string(),
+                    committed: true,
+                    events: EVENTS
+                        .iter()
+                        .map(|(kind, payload, ts)| {
+                            (*ts, (*kind).to_string(), (*payload).to_string())
+                        })
+                        .collect(),
+                };
+                match run.first() {
+                    Some(got) if *got == want => {}
+                    Some(got) => findings.push(format!(
+                        "the run's first turn is {got:?}, expected {want:?}"
+                    )),
+                    None => findings.push("the run answers no turns".to_string()),
+                }
+                match run.get(1) {
+                    None => {
+                        findings.push(format!("the run answers {} turns, expected 3", run.len()))
+                    }
+                    Some(second) => {
+                        if second.turn != TURN + 1 {
+                            findings.push(format!(
+                                "the run's second turn is {}, expected {}",
+                                second.turn,
+                                TURN + 1
+                            ));
+                        }
+                        if !second.committed {
+                            findings.push("the summary turn is not committed".to_string());
+                        }
+                        if second.state != COMPACTED_STATE {
+                            findings.push(format!(
+                                "the summary turn's state is {:?}, expected {COMPACTED_STATE:?}",
+                                second.state
+                            ));
+                        }
+                        let kinds: Vec<(&str, &str)> = second
+                            .events
+                            .iter()
+                            .map(|(_, kind, payload)| (kind.as_str(), payload.as_str()))
+                            .collect();
+                        if kinds != [(SUMMARY_KIND, SUMMARY)] {
+                            findings.push(format!(
+                                "the summary turn's events are {kinds:?}, expected [({SUMMARY_KIND:?}, {SUMMARY:?})]"
+                            ));
+                        }
+                    }
+                }
+                let want = RunTurn {
+                    turn: TURN + 2,
+                    state: EMPTY_STATE.to_string(),
+                    committed: true,
+                    events: Vec::new(),
+                };
+                match run.get(2) {
+                    Some(got) if *got == want => {}
+                    Some(got) => findings.push(format!(
+                        "the run's third turn is {got:?}, expected a turn with no events: {want:?}"
+                    )),
+                    None => {
+                        findings.push("the run answers no turn that produced no events".to_string())
+                    }
+                }
+            }
+            Err(e) => findings.push(format!("reading the run: {e}")),
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(
+        world,
+        "the run answers every turn of the session with its events",
+    );
 }
 
 #[then("the export holds one line per event and the store answers the same")]

@@ -130,3 +130,14 @@ Feature: Session storage
     And the session is exported
     Then the export holds one line per event and the store answers the same
     And the log checkpoints with no reader in the way
+
+  # The eval harness reads a run as a store query: the state table joined to the log, so
+  # every turn arrives with its state, its committed marker and its events. The harness
+  # binary is M0, so the query is what lands here; the open tasks line says so.
+  @R-session-13
+  Scenario: A run is answered from store queries
+    Given an open store
+    When a tool call commits its events and its state change
+    And the session is compacted at the next turn
+    And a turn that produced no events commits
+    Then the run answers every turn of the session with its events

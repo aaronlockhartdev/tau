@@ -46,6 +46,11 @@ const SEARCH_SELECT: &str = "SELECT e.session, e.turn, e.ts, e.kind, e.payload \
      WHERE events_fts MATCH ?1 ORDER BY e.seq";
 const EXPORT_SELECT: &str =
     "SELECT turn, seq, ts, kind, payload FROM events WHERE session = ?1 ORDER BY seq";
+/// A run reads the state table and joins the log to it, so a turn with no events still
+/// answers, and no row is invented for a turn that has none.
+const RUN_SELECT: &str = "SELECT t.turn, t.state, t.committed, e.ts, e.kind, e.payload
+     FROM turn t LEFT JOIN events e ON e.session = t.session AND e.turn = t.turn
+     WHERE t.session = ?1 ORDER BY t.turn, e.seq";
 /// A compaction appends this kind, and its turn's state says the same.
 const SUMMARY_KIND: &str = "summary";
 const COMPACTED_STATE: &str = "compacted";
@@ -58,6 +63,16 @@ pub struct Turn<'a> {
     pub turn: i64,
     pub state: &'a str,
     pub events: &'a [(&'a str, &'a str, i64)],
+}
+
+/// One turn of a run, as the store answers it: the state the turn left, whether it
+/// committed, and the events it produced as `(ts, kind, payload)` in log order.
+#[derive(Debug, PartialEq)]
+pub struct RunTurn {
+    pub turn: i64,
+    pub state: String,
+    pub committed: bool,
+    pub events: Vec<(i64, String, String)>,
 }
 
 /// Why a store write did not happen.
@@ -461,6 +476,40 @@ impl Store {
     /// the store's own, and a reader connection cannot answer for it. Not a statistics API.
     pub fn total_changes(&self) -> u64 {
         self.conn.total_changes()
+    }
+
+    /// A run, as the store holds it (R-session-13): every turn of a session with its
+    /// state, its committed marker, and the events it produced, in log order. A turn
+    /// that produced no events arrives with an empty list, and an id that is not stored
+    /// answers empty. One query over the two tables, so a reader parses no format. No
+    /// range and no `visible_from_turn`: every turn and every payload arrives
+    /// materialised, which a caller reading a window of a long session will bound.
+    pub fn run(&self, session: &str) -> Result<Vec<RunTurn>, Error> {
+        let mut stmt = self.conn.prepare(RUN_SELECT)?;
+        let mut rows = stmt.query(rusqlite::params![session])?;
+        let mut run: Vec<RunTurn> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let turn: i64 = row.get(0)?;
+            // The log rows of one turn arrive in `seq` order after the state row, so a
+            // turn opens when its number arrives and closes when the next one does.
+            if run.last().is_none_or(|last| last.turn != turn) {
+                run.push(RunTurn {
+                    turn,
+                    state: row.get(1)?,
+                    committed: row.get::<_, i64>(2)? == 1,
+                    events: Vec::new(),
+                });
+            }
+            // A turn with no log rows arrives with NULL on the joined side.
+            if let (Some(kind), Some(payload)) = (
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+            ) && let Some(last) = run.last_mut()
+            {
+                last.events.push((row.get::<_, i64>(3)?, kind, payload));
+            }
+        }
+        Ok(run)
     }
 }
 

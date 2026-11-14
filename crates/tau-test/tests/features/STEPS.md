@@ -48,4 +48,6 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Then the summary is in the log and the visible range starts at its turn
 - Then the index answers a search of the stored events
 - When the session is exported
+- When a turn that produced no events commits
+- Then the run answers every turn of the session with its events
 - Then the export holds one line per event and the store answers the same
