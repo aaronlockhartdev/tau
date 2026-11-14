@@ -170,8 +170,11 @@ pub struct Store {
 
 impl Store {
     /// Open the store at `path`, creating it and its parent directory, in WAL mode
-    /// with `synchronous = NORMAL`. Both settings are read back: a PRAGMA that is
-    /// declined is not an error.
+    /// with `synchronous = NORMAL`. The journal mode and the synchronous level are read
+    /// back, because a declined PRAGMA answers instead of erroring. `foreign_keys = ON` is set, not
+    /// read back. It is set outside a transaction, where SQLite honours it — inside one the
+    /// PRAGMA is a no-op — and nothing observes the store's own setting: the foreign-key
+    /// scenario runs on a connection of its own, which sets the PRAGMA for itself.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
@@ -290,6 +293,15 @@ impl Store {
         let mut stmt = self.conn.prepare(SESSION_SELECT)?;
         let mut rows = stmt.query(rusqlite::params![session])?;
         Ok(rows.next()?.map(|row| row.get::<_, i64>(0)).transpose()?)
+    }
+
+    /// The connection's own `synchronous` setting (R-session-05). The setting is per
+    /// connection, so a reader cannot learn it from a connection of its own. It exists for
+    /// the clause's readback; it is not a settings API.
+    pub fn synchronous(&self) -> Result<i64, Error> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))?)
     }
 }
 

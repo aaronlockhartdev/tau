@@ -1,7 +1,10 @@
 //! The storage steps: the lane opens a project store, commits a tool call, and
-//! reads the store back (R-session-01, 02, 28, 29, 30, 31, 32). A crash is a child
-//! process the lane kills (`bin/crash_store.rs`), and the store is read back after it
-//! dies (R-session-06, 07).
+//! The storage steps: the lane opens a project store, commits a tool call, and
+//! reads the store back (R-session-01, 02, 28, 29, 30, 31, 32). The scan for log
+//! content in the mutable tables and the checkpoint probe run on a reader connection
+//! of the lane's own, `synchronous` on the store's connection, and the schema refuses
+//! writes (R-session-03, 04, 05). A crash is a child process the lane kills
+//! (`bin/crash_store.rs`), and the store is read back after it dies (R-session-06, 07).
 
 use crate::steps::{assert_clean, report};
 use crate::world::World;
@@ -535,4 +538,201 @@ async fn killed_transaction_leaves_the_turn_empty(world: &mut World) {
     }
     clean_store(world);
     assert_clean(world, "the killed transaction leaves the turn empty");
+}
+
+#[then("the state tables hold no log content")]
+async fn state_tables_hold_no_log(world: &mut World) {
+    // R-session-03: event content goes to the log and nowhere else. A copy in a
+    // mutable table is the finding, because that copy needs reconciling on the
+    // crash day, and the readback proves the commit under test actually ran.
+    let mut findings: Vec<String> = Vec::new();
+    match world
+        .store
+        .as_ref()
+        .map(|store| store.events(SESSION, TURN))
+    {
+        None => findings.push("no store is open".to_string()),
+        Some(Err(e)) => findings.push(format!("reading events: {e}")),
+        Some(Ok(rows)) if rows.len() != EVENTS.len() => findings.push(format!(
+            "{} events are stored, expected {}",
+            rows.len(),
+            EVENTS.len()
+        )),
+        Some(Ok(_)) => {}
+    }
+    // Every table and every column is read, not an agreed list: `turn` and `sessions`
+    // gaining a column, or a new table appearing, has to be scanned for log text. An
+    // FTS index (R-session-10) will land here as its own tables, and the split to
+    // make then is by kind — an index's shadow tables hold indexed text by design and
+    // need no reconciliation on the crash day.
+    // Rows are joined on 0x1f, a character JSON payloads cannot contain, so a stored
+    // value never splits where a payload does not.
+    const MUTABLE: &[&str] = &["sessions", "turn"];
+    let read = raw_conn(world).and_then(|conn| {
+        let tables = conn
+            .prepare(
+                "SELECT name FROM sqlite_master \
+                 WHERE type = 'table' AND name <> 'events' ORDER BY name",
+            )
+            .map_err(|e| e.to_string())?
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| e.to_string())?;
+        let mut text = String::new();
+        for table in &tables {
+            let cols = conn
+                .prepare("SELECT name FROM pragma_table_info(?) ORDER BY cid")
+                .map_err(|e| e.to_string())?
+                .query_map(rusqlite::params![table], |row| row.get::<_, String>(0))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<String>, _>>()
+                .map_err(|e| e.to_string())?;
+            let cast: Vec<String> = cols
+                .iter()
+                .map(|c| format!("IFNULL(CAST(\"{}\" AS TEXT), '')", c.replace('"', "\"\"")))
+                .collect();
+            let sql = format!(
+                "SELECT IFNULL(group_concat(\"v\", char(31)), '') \
+                 FROM (SELECT {} AS \"v\" FROM \"{}\")",
+                cast.join(" || char(31) || "),
+                table.replace('"', "\"\"")
+            );
+            let one = conn
+                .query_row(&sql, [], |row| row.get::<_, String>(0))
+                .map_err(|e| format!("reading {table}: {e}"))?;
+            text.push_str(&one);
+            text.push('\u{1f}');
+        }
+        Ok((tables, text))
+    });
+    match read {
+        Err(e) => findings.push(format!("reading the store's rows: {e}")),
+        Ok((tables, text)) => {
+            let names: Vec<&str> = tables.iter().map(String::as_str).collect();
+            if names != MUTABLE {
+                findings.push(format!(
+                    "the store holds the tables {}, this step reads {}",
+                    names.join(", "),
+                    MUTABLE.join(", ")
+                ));
+            }
+            // Each stored value is asked on its own, and a payload too short to be
+            // distinctive is skipped: matching a one-character payload would report
+            // the schema's own values as log content.
+            let values: Vec<&str> = text.split('\u{1f}').collect();
+            for (_kind, payload, _ts) in EVENTS {
+                if payload.len() < 2 {
+                    continue;
+                }
+                if values
+                    .iter()
+                    .any(|value| value.len() >= 2 && value.contains(payload))
+                {
+                    findings.push(format!("a state table holds log content {payload:?}"));
+                }
+            }
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(world, "the state tables hold no log content");
+}
+
+#[then("the store's synchronous is NORMAL")]
+async fn synchronous_is_normal(world: &mut World) {
+    // R-session-05: 1 is NORMAL, and the store's own connection is the one that
+    // answers, since the setting is per connection.
+    match world.store.as_ref().map(Store::synchronous) {
+        None => report(world, "no store is open".to_string()),
+        Some(Err(e)) => report(world, format!("reading synchronous: {e}")),
+        Some(Ok(1)) => {}
+        Some(Ok(v)) => report(world, format!("synchronous is {v}, expected 1 (NORMAL)")),
+    }
+    clean_store(world);
+    assert_clean(world, "the store's synchronous is NORMAL");
+}
+
+#[when("the log is read between turns")]
+async fn read_between_turns(world: &mut World) {
+    // The store's reader API, in autocommit: each read ends its own read
+    // transaction. No turn is open here, because a turn's rows exist only once its
+    // commit has run, so this is not the clause's `WHILE` window — see the open line
+    // in `changes/add_session_storage/tasks.md` for the gap.
+    let mut findings: Vec<String> = Vec::new();
+    match world.store.as_ref() {
+        None => findings.push("no store is open".to_string()),
+        Some(store) => {
+            if let Err(e) = store.events(SESSION, TURN + 1) {
+                findings.push(format!("reading events: {e}"));
+            }
+            if let Err(e) = store.turn_state(SESSION, TURN + 1) {
+                findings.push(format!("reading the turn state: {e}"));
+            }
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+}
+
+#[then("the log checkpoints with no reader in the way")]
+async fn checkpoint_has_no_reader(world: &mut World) {
+    // R-session-04's `Why:` names the 1000-page auto-checkpoint, and that one is
+    // PASSIVE: with a reader in the way it copies what it can and leaves the frames,
+    // so the harm it promises is a log that does not shrink. `TRUNCATE` is the
+    // stricter probe — it reports a lock — and its lock leg only speaks when the log
+    // holds frames, which is why a commit runs before this step.
+    let mut findings: Vec<String> = Vec::new();
+    match world.store.as_ref() {
+        None => findings.push("no store is open".to_string()),
+        Some(store) => {
+            match store.events(SESSION, TURN) {
+                Err(e) => findings.push(format!("reading events: {e}")),
+                // No frames means the checkpoint has nothing to do, and answers
+                // `(0, 0)` for reasons unrelated to a free log.
+                Ok(rows) if rows.is_empty() => findings.push(
+                    "the log holds no events, so the checkpoint has no frames to copy".to_string(),
+                ),
+                Ok(_) => {}
+            }
+            if let Err(e) = store.turn_state(SESSION, TURN) {
+                findings.push(format!("reading the turn state: {e}"));
+            }
+        }
+    }
+    let outcome = raw_conn(world).and_then(|conn| {
+        // No waiting: a checkpoint that blocks out a reader which then finishes is
+        // the probe passing while the clause is violated.
+        conn.busy_timeout(std::time::Duration::ZERO)
+            .map_err(|e| e.to_string())?;
+        conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())
+    });
+    match outcome {
+        Err(e) => findings.push(format!("the checkpoint failed: {e}")),
+        // A store not in WAL mode answers with -1 frames; `Store::open` rules that
+        // out, so this is a report, not a route.
+        Ok((_, -1)) => findings.push("the store answers the checkpoint as not WAL".to_string()),
+        Ok((busy, _)) if busy != 0 => {
+            findings.push("the checkpoint hit a lock: a reader holds the log".to_string());
+        }
+        // The pragma's second column is the frames left in the log, the number the
+        // `Why:` says must not grow.
+        Ok((_, frames)) if frames != 0 => {
+            findings.push(format!(
+                "the checkpoint left {frames} frames in the log: the log grows"
+            ));
+        }
+        Ok((_, _)) => {}
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(world, "the log checkpoints with no reader in the way");
 }

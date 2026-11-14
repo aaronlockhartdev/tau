@@ -38,3 +38,7 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Given a store whose rows were written by a process that is killed
 - Then the committed turn is returned in full
 - Then the killed transaction leaves the turn empty
+- Then the state tables hold no log content
+- Then the store's synchronous is NORMAL
+- When the log is read between turns
+- Then the log checkpoints with no reader in the way

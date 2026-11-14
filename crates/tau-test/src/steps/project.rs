@@ -252,7 +252,8 @@ async fn store_is_the_project_state_file(world: &mut World) {
     }
     match state {
         Ok(Some(state)) if state == STATE => {}
-        Ok(_) => report(world, "no turn state is stored".to_string()),
+        Ok(Some(state)) => report(world, format!("the stored state is {state}")),
+        Ok(None) => report(world, "no turn state is stored".to_string()),
         Err(e) => report(world, format!("read the turn state: {e}")),
     }
     assert_clean(world, "the store is the project's state file");

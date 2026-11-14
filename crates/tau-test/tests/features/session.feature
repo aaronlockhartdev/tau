@@ -71,3 +71,24 @@ Feature: Session storage
     When the store opens at the project's state file
     Then the store is the project's state file
     And the project directory is removed
+
+  # The reads are the store's own reader API, in autocommit. The commit before them is
+  # load-bearing: `TRUNCATE` reports a lock, and reports frames left, only when the log
+  # has frames to copy.
+  @R-session-04
+  Scenario: Store reads leave the log free to checkpoint
+    Given an open store
+    When a tool call commits its events and its state change
+    When the log is read between turns
+    Then the log checkpoints with no reader in the way
+
+  @R-session-03
+  Scenario: A state change writes event content to the log only
+    Given an open store
+    When a tool call commits its events and its state change
+    Then the state tables hold no log content
+
+  @R-session-05
+  Scenario: The store opens with synchronous NORMAL
+    Given an open store
+    Then the store's synchronous is NORMAL

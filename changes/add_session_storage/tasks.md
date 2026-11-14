@@ -4,7 +4,8 @@
 - [x] R-session-01..13, 18: delta clauses in changes/add_session_storage/specs/session/storage/spec.md, with `R-session-12` withdrawn under `## REMOVED Requirements`
 - [x] unblocked: the six crates exist, and `crates/tau-core/storage` owns the schema
 - [x] R-session-01,02: one write connection; event and state in one transaction (crates/tau-core/storage), with scenarios in crates/tau-test/tests/features/session.feature and their steps in crates/tau-test/src/steps/session.rs
-- [ ] R-session-03,04,05: append-only log; short readers; `synchronous = NORMAL`
+- [x] R-session-03,04,05: event content lands in the log and in no state table (every table and column of the store is scanned by name, NULL values included), a read between turns leaves no read transaction open (a `TRUNCATE` checkpoint on a reader connection reports no lock and zero frames left), `synchronous = NORMAL` read from the store's own connection; scenarios in crates/tau-test/tests/features/session.feature
+- [ ] R-session-04's `WHILE` window has no acceptance: no step opens a turn, so no reader is measured across one. The shape is a second connection that opens a read transaction across a turn and still holds it at the checkpoint.
 - [x] R-session-06,07: the crash child `crates/tau-test/src/bin/crash_store.rs`, killed by a signal, with scenarios in crates/tau-test/tests/features/session.feature, and a unit test in crates/tau-core for the marker's transaction
 - [ ] R-session-08,09: fork copies a range with a parent; compaction appends a summary
 - [ ] R-session-10,11,13: FTS5 search; export command; harness queries the store
