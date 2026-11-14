@@ -11,3 +11,12 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+# The bug-catching groups are denied; the style groups stay warn, where the
+# false-positive rate is high and there is no auto-fix (R-workspace-09).
+correctness = { level = "deny", priority = -1 }
+suspicious = { level = "deny", priority = -1 }
+perf = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+# `unwrap_used`/`expect_used` deny everywhere except test code, which opts out
+# at the crate root with `#![cfg_attr(test, allow(...))]`.

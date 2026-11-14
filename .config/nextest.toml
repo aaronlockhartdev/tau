@@ -1,0 +1,5 @@
+# Gate config for `cargo nextest run -P ci` (AGENTS.md: unit + surface).
+# CI reports every failure; the local default stops at the first.
+
+[profile.ci]
+fail-fast = false

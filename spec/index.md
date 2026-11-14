@@ -45,6 +45,8 @@ Corpus: 0 requirements. Each requirement arrives through a change.
 | `crates/tau-test/suites/` | eval suites, run by hand | deciding whether a feature is worth building |
 | `contracts/` | generated wire/tool schemas | touching the wire |
 | `.rumdl.toml` | doc-gate tool config | changing a doc gate |
+| `deny.toml`, `.config/nextest.toml` | dependency and test-lane gate config | changing a gate command |
+| `.github/` | CI workflow, Dependabot, gate-coverage check | changing what CI runs |
 | `docs/glossary.md` | canonical terms | a term is ambiguous |
 | `docs/stack.md` | decided dependencies and pins | choosing a dependency, bumping a pin |
 | `.agents/skills/`, `.agents/agents/` | skills; subagent definitions | task matches |

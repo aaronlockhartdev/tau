@@ -1,0 +1,21 @@
+# Second advisory source for R-workspace-11 (AGENTS.md: dependencies current).
+# `cargo deny check` reads RustSec; Dependabot reads GitHub's reviewed
+# advisories. The two drifted apart in 2026, so both are wired here.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      patches:
+        patterns:
+          - "*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

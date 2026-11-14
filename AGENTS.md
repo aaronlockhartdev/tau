@@ -25,15 +25,17 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | run |
 | doc lint | `rumdl check spec changes docs AGENTS.md README.md` | run |
 | links | `lychee spec changes docs AGENTS.md README.md` | run |
-| unit + surface | `cargo nextest run` | run |
+| unit + surface | `cargo nextest run -P ci` | run |
 | behaviour | `cargo test -p tau-test --test features` | run |
 | steps current | `cargo run -p tau-test --bin steps -- --check` | run |
+| dependencies current | `cargo deny check && test -f .github/dependabot.yml` | run |
 | workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | run |
 | no local state tracked | `git ls-files target .tau` is empty | run |
 | toolchain pinned | `rust-toolchain.toml` names the stable release in `docs/stack.md` | run |
 | core has no UI logic | `cargo tree -p tau-core` lists no UI crate: no gpui, no `tau-app`, no `tau-acp` | run |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
-| lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` | run |
+| lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
+| ci covers gates | `bash .github/gate-coverage.sh` | run |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
 | desktop | `cargo run -p tau-app` | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |
