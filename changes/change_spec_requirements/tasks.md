@@ -6,11 +6,12 @@
 - [x] skills: check 11b, `Why:` enumeration, index edited in place
 - [x] templates: delta clause, step definition, `Why:` under ADDED
 - [x] `workspace` domain row and stub
-- [x] gate rows exist: workspace layout · no local state tracked · toolchain pinned (skipped, M0)
+- [x] gate rows exist: `workspace layout` (manual) · `no local state tracked` · `toolchain pinned` (both `run`)
 - [x] linter obligations land as R-harness-01..03 in the harness delta
-- [ ] R-harness-01,02: resolve acceptance refs in crates/tau-tools (tag → feature, gate → AGENTS.md)
-- [ ] R-harness-03: steps generator emits crates/tau-test/tests/features/STEPS.md
+- [x] R-harness-01,02: acceptance refs resolve in crates/tau-tools/src/bin/spec.rs (`gate_names`, `feature_tags`, `check_acceptance`): a tag names a feature scenario, a gate names an `AGENTS.md` row
+- [x] R-harness-03: `crates/tau-test` bin `steps` generates crates/tau-test/tests/features/STEPS.md from the step definitions; the `steps current` gate compares them
 - [x] R-harness-11: a withdrawal inside its own change keeps its number and needs nothing at archive (crates/tau-tools/src/bin/spec.rs, `## REMOVED Requirements`)
-- [ ] check: spec --check · contracts --check · steps --check · doc lint · links
+- [x] check: spec --check · contracts --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
-- [ ] Implement: `<project>/.tau/.gitignore` containing `*`, written once, disclosed at start (R-workspace-06..08)
+- [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
+- [ ] R-workspace-08: `Project::disclosure()` returns the line naming the write, and no session start output exists to print it, so no scenario is tagged for it (`headless session` is `M0`)

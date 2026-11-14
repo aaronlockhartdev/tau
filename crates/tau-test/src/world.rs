@@ -12,6 +12,9 @@ pub struct World {
     /// The store the scenario opened, and the file it opened it at.
     pub store: Option<Store>,
     pub store_path: PathBuf,
+    /// The project tau opened, and the checkout root it was given.
+    pub project: Option<tau_core::project::Project>,
+    pub project_root: PathBuf,
 }
 
 impl World {

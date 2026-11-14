@@ -26,7 +26,7 @@ Why: `.tau/` holds sessions and machine-local state; a committed one is a leaked
 THE SYSTEM SHALL keep the generated `contracts/` output committed with the wire types it came from.
 Acceptance: gate contracts current
 
-### R-workspace-05  Toolchain pinned to the named stable release
+### R-workspace-05  Toolchain pinned to the named release
 
 THE SYSTEM SHALL pin `rust-toolchain.toml` to the stable release named in `docs/stack.md`.
 Acceptance: gate toolchain pinned

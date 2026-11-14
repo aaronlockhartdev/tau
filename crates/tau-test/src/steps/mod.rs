@@ -6,6 +6,7 @@ use cucumber::{given, then, when};
 use std::fs;
 use std::process::Command;
 
+pub mod project;
 pub mod session;
 
 /// The `[package] name = "…"` value in a Cargo.toml, without a TOML dependency.

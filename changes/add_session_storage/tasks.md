@@ -14,5 +14,5 @@
 - [x] R-session-32: the composite foreign key from `events` to `turn`; scenario in crates/tau-test/tests/features/session.feature
 - [x] check: nextest · features · spec --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
-- [ ] Scenario: R-session-18 store opens at `<project>/.tau/state.db`
+- [x] Scenario: R-session-18 store opens at `<project>/.tau/state.db` (`crates/tau-core/src/project.rs` names the path; the scenario is in crates/tau-test/tests/features/session.feature)
 - [ ] at archive: the session row's Leaves cell in spec/index.md names storage/spec.md

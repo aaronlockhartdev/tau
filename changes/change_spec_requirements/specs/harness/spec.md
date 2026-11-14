@@ -24,6 +24,6 @@ Why: a hand-listed step drifts from the code, and a scenario then asserts someth
 
 ### R-harness-11  A withdrawn clause keeps its number
 
-WHEN a delta clause sits under `## REMOVED Requirements` with no `Supersedes:` line, and `spec/` holds no clause with its id, THE SYSTEM SHALL keep that number consumed and require no acceptance ref for the clause.
+WHEN a delta clause sits under `## REMOVED Requirements` with no `Supersedes:` line, and `spec/` holds no clause with its id, THE SYSTEM SHALL keep that number consumed, require no acceptance ref for the clause, and leave `spec archive` no clause to delete.
 Acceptance: gate spec lint
 Why: an unissued hole reads as a hand-picked id, so dropping one rule costs renumbering every later id in the domain.

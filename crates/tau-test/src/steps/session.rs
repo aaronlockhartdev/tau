@@ -49,11 +49,11 @@ fn clean_store(world: &mut World) {
     }
 }
 
-#[given("an open store")]
-async fn open_store(world: &mut World) {
-    world.findings.clear();
+/// Open the store at `path` and claim the lane's session, leaving the handle in the
+/// world. A failure is reported, not panicked: the scenario's own steps report it.
+pub(crate) fn open_at(world: &mut World, path: PathBuf) {
     world.store = None;
-    world.store_path = store_path("lane");
+    world.store_path = path;
     match Store::open(&world.store_path) {
         Ok(store) => world.store = Some(store),
         Err(e) => {
@@ -67,6 +67,29 @@ async fn open_store(world: &mut World) {
     {
         report(world, format!("opening the session: {e}"));
     }
+}
+
+/// Commit the lane's turn — `SESSION`, `TURN`, `EVENTS` — through the open store.
+pub(crate) fn commit_tool_call(world: &mut World) {
+    let Some(store) = world.store.as_mut() else {
+        no_store(world);
+        return;
+    };
+    let turn = Turn {
+        session: SESSION,
+        turn: TURN,
+        state: STATE,
+        events: EVENTS,
+    };
+    if let Err(e) = store.commit(&turn) {
+        report(world, format!("the commit failed: {e}"));
+    }
+}
+
+#[given("an open store")]
+async fn open_store(world: &mut World) {
+    world.findings.clear();
+    open_at(world, store_path("lane"));
 }
 
 #[when("the store is opened again")]
@@ -96,19 +119,7 @@ async fn second_open_refused(world: &mut World) {
 
 #[when("a tool call commits its events and its state change")]
 async fn commit_a_tool_call(world: &mut World) {
-    let Some(store) = world.store.as_mut() else {
-        no_store(world);
-        return;
-    };
-    let turn = Turn {
-        session: SESSION,
-        turn: TURN,
-        state: STATE,
-        events: EVENTS,
-    };
-    if let Err(e) = store.commit(&turn) {
-        report(world, format!("the commit failed: {e}"));
-    }
+    commit_tool_call(world);
 }
 
 #[then("the events and the state change are stored together")]

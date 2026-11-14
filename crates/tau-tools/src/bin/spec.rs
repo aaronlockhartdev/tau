@@ -570,6 +570,13 @@ fn withdrawn(clause: &Clause) -> bool {
     clause.section.contains("REMOVED") && !clause.text.contains("Supersedes:")
 }
 
+/// A withdrawal, judged against the `spec/` file it applies to: `## REMOVED` with no
+/// `Supersedes:` naming an id that file does not hold. The same shape naming an id the
+/// file does hold retires a landed rule, and `apply_delta` deletes it (R-harness-11).
+fn withdrawn_in(text: &str, clause: &Clause) -> bool {
+    withdrawn(clause) && clause_range(text, &clause.id).is_none()
+}
+
 /// The numbers a change withdraws inside its own change, by domain.
 fn withdrawn_ids(delta: &[Clause], spec_ids: &BTreeSet<&str>) -> BTreeMap<String, BTreeSet<u32>> {
     let mut numbers: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
@@ -993,7 +1000,7 @@ fn apply_delta(text: &str, clauses: &[Clause]) -> Result<String, Vec<String>> {
             added.push(clause.text.clone());
             continue;
         }
-        if withdrawn(clause) {
+        if withdrawn_in(&text, clause) {
             // The rule never landed, so `spec/` has no clause to delete (R-harness-11).
             continue;
         }
@@ -1336,6 +1343,22 @@ mod tests {
             retired.is_err_and(|r| r.iter().any(|f| f.contains("R-session-04"))),
             "a retirement whose rule `spec/` holds is refused, not skipped"
         );
+    }
+
+    #[test]
+    fn a_removed_clause_naming_a_landed_rule_is_deleted_not_skipped() {
+        // R-harness-11's precondition is part of the shape: a withdrawal is the clause
+        // `spec/` never held. The same shape naming a landed rule is a retirement, and
+        // archive deletes that rule rather than skipping over it.
+        let landed = "## Requirements\n\n### R-session-05  Log rows are append-only\n\nTHE SYSTEM SHALL x.\n\n### R-session-06  Reads are short\n\nTHE SYSTEM SHALL y.\n";
+        let removed = clause("R-session-05", "## REMOVED Requirements", "Why: it moved.");
+        assert!(
+            !withdrawn_in(landed, &removed),
+            "a REMOVED clause naming a landed rule is not a withdrawal"
+        );
+        let applied = apply_delta(landed, &[removed]).expect("the removal applies");
+        assert!(!applied.contains("R-session-05"), "the landed rule goes");
+        assert!(applied.contains("R-session-06"), "its neighbour survives");
     }
 
     #[test]

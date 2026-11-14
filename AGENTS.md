@@ -37,7 +37,7 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
 | lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
-| desktop | `cargo run -p tau-app` | M0 |
+| desktop | `cargo run -p tau-app` (stub bin, no surface) | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |
 
 Authoring and review rules belong to the skills; don't restate them here.

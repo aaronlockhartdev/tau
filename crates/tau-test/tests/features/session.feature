@@ -64,3 +64,10 @@ Feature: Session storage
   Scenario: A process killed with a transaction open leaves the turn empty
     Given a store whose rows were written by a process that is killed
     Then the killed transaction leaves the turn empty
+
+  @R-session-18
+  Scenario: A session's store is the project's state file
+    Given a git project directory
+    When the store opens at the project's state file
+    Then the store is the project's state file
+    And the project directory is removed

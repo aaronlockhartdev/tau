@@ -10,6 +10,16 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Given the git index
 - When the local state paths are listed
 - Then target and .tau are untracked
+- Given a git project directory
+- Given a git project directory with an edited ignore file
+- When the project is opened again
+- Then the tau directory is ignored by git
+- Then the ignore file is unchanged
+- Then the write is disclosed
+- Then the reopen discloses nothing
+- When the store opens at the project's state file
+- Then the store is the project's state file
+- Then the project directory is removed
 - Given an open store
 - When the store is opened again
 - Then the second open is refused

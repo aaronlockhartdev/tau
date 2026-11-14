@@ -5,4 +5,5 @@
 // Test code opts out of the unwrap ban, per the note in the workspace lints.
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+pub mod project;
 pub mod storage;
