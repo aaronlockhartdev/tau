@@ -33,7 +33,7 @@ Consequences:
 - The core-decoupling invariant gains a gate row in `AGENTS.md`.
 - `.tau/` is runtime state and gitignored; `.agents/` is tracked.
 - `resolver = "3"` and `[workspace.lints]` are set at the root, so members inherit the lint set and the MSRV-aware floor.
-- cucumber-rs resolving `/tests/features/...` from the crate root is `unverified` until the first `scaffold_workspace` task runs a stub feature.
+- cucumber-rs resolving `/tests/features/...` from the crate root is `unverified` until the first `scaffold_workspace` task runs a stub feature — closed at that scaffold's archive: the features lane runs its scenarios from the crate root, gate `behaviour` `run`.
 - No new dependency: `tau-tools` replaces a script, and no member depends on gpui except `tau-app`.
 - The layout rules are owned by `change_spec_requirements` as R-workspace-01..05 in `spec/workspace/spec.md`; this change's tasks cite those IDs when they are written.
 - Adopted 2026-11-13: the moves landed in `AGENTS.md`, both skills, `STEPS.md`, `spec/index.md`, `spec/harness/spec.md` and the tasks template, and `tau-mock-llm` folds into `crates/tau-test/` as `bin mock-llm`, so the workspace has six members.
