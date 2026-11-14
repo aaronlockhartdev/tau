@@ -141,3 +141,14 @@ Feature: Session storage
     And the session is compacted at the next turn
     And a turn that produced no events commits
     Then the run answers every turn of the session with its events
+
+  # The clause's window, opened: the turn's own transaction sits open on a second
+  # connection while the store's reader API runs. The closing step's checkpoint is the
+  # probe, and it runs after that transaction closes: a writer in flight blocks a
+  # checkpoint by itself, which is a different fact from the one this clause states.
+  @R-session-04
+  Scenario: Store reads inside an open turn leave the log free to checkpoint
+    Given an open store
+    When a tool call commits its events and its state change
+    And the log is read while a turn's transaction is open
+    Then the log checkpoints with no reader in the way

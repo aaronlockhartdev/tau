@@ -41,6 +41,7 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Then the state tables hold no log content
 - Then the store's synchronous is NORMAL
 - When the log is read between turns
+- When the log is read while a turn's transaction is open
 - Then the log checkpoints with no reader in the way
 - When the session is forked at the committed turn
 - Then the fork holds the copied events and names its parent

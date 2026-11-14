@@ -484,6 +484,9 @@ impl Store {
     /// answers empty. One query over the two tables, so a reader parses no format. No
     /// range and no `visible_from_turn`: every turn and every payload arrives
     /// materialised, which a caller reading a window of a long session will bound.
+    /// shortcut: the read stays open while the lines are written, so an export to a
+    /// slow writer holds a read transaction for as long as it takes; bound it by session
+    /// range when the CLI opens the file.
     pub fn run(&self, session: &str) -> Result<Vec<RunTurn>, Error> {
         let mut stmt = self.conn.prepare(RUN_SELECT)?;
         let mut rows = stmt.query(rusqlite::params![session])?;

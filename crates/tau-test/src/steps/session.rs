@@ -564,6 +564,10 @@ async fn state_tables_hold_no_log(world: &mut World) {
     // Rows are joined on 0x1f, a character JSON payloads cannot contain, so a stored
     // value never splits where a payload does not.
     const MUTABLE: &[&str] = &["sessions", "turn"];
+    // shortcut: this is today's schema, and a new mutable table is meant to fire the
+    // guard by name. `adopt_observational_memory` adds observation and reflection
+    // tables to the same store; whoever lands it names them here, and the scan covers
+    // them from that line on.
     let read = raw_conn(world).and_then(|conn| {
         let rows = conn
             .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
@@ -677,8 +681,8 @@ async fn synchronous_is_normal(world: &mut World) {
 async fn read_between_turns(world: &mut World) {
     // The store's reader API, in autocommit: each read ends its own read
     // transaction. No turn is open here, because a turn's rows exist only once its
-    // commit has run, so this is not the clause's `WHILE` window — see the open line
-    // in `changes/add_session_storage/tasks.md` for the gap.
+    // commit has run. The clause's `WHILE` window is the other scenario's: there, the
+    // turn's own transaction sits open on a second connection while these same reads run.
     let mut findings: Vec<String> = Vec::new();
     match world.store.as_ref() {
         None => findings.push("no store is open".to_string()),
@@ -696,11 +700,61 @@ async fn read_between_turns(world: &mut World) {
     }
 }
 
+#[when("the log is read while a turn's transaction is open")]
+async fn read_inside_an_open_turn(world: &mut World) {
+    // R-session-04's `WHILE` window, opened: the turn's own transaction — state row
+    // first, then events, the order the schema's foreign key asks for — sits open on a
+    // second connection while the store's reader API runs. The transaction closes at the
+    // end of this step: a writer in flight blocks a checkpoint on its own, and the
+    // closing step's probe measures readers.
+    let mut findings: Vec<String> = Vec::new();
+    let in_flight = TURN + 1;
+    match raw_conn(world) {
+        Err(e) => findings.push(format!("opening a writer connection: {e}")),
+        Ok(writer) => {
+            let open = writer.execute_batch("BEGIN IMMEDIATE").and_then(|_| {
+                writer.execute(
+                    "INSERT INTO turn (session, turn, state) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![SESSION, in_flight, STATE],
+                )?;
+                writer.execute(
+                    "INSERT INTO events (session, turn, ts, kind, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![SESSION, in_flight, 1003, "tool_call", "in flight"],
+                )
+            });
+            if let Err(e) = open {
+                findings.push(format!("opening the turn's transaction: {e}"));
+            }
+            match world.store.as_ref() {
+                None => findings.push("no store is open".to_string()),
+                Some(store) => {
+                    if let Err(e) = store.events(SESSION, in_flight) {
+                        findings.push(format!("reading events: {e}"));
+                    }
+                    if let Err(e) = store.turn_state(SESSION, in_flight) {
+                        findings.push(format!("reading the turn state: {e}"));
+                    }
+                    if let Err(e) = store.run(SESSION) {
+                        findings.push(format!("reading the run: {e}"));
+                    }
+                }
+            }
+            if let Err(e) = writer.execute_batch("COMMIT") {
+                findings.push(format!("closing the turn's transaction: {e}"));
+            }
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+}
+
 #[then("the log checkpoints with no reader in the way")]
 async fn checkpoint_has_no_reader(world: &mut World) {
-    // R-session-04's `Why:` names the 1000-page auto-checkpoint, and that one is
-    // PASSIVE: with a reader in the way it copies what it can and leaves the frames,
-    // so the harm it promises is a log that does not shrink. `TRUNCATE` is the
+    // R-session-04's `Why:` names the auto-checkpoint, and that one is PASSIVE: with a
+    // reader in the way it copies what it can and leaves the frames, so the harm it
+    // promises is a log that does not shrink. `TRUNCATE` is the
     // stricter probe — it reports a lock — and its lock leg only speaks when the log
     // holds frames, which is why a commit runs before this step.
     let mut findings: Vec<String> = Vec::new();

@@ -4,11 +4,11 @@ Apply to `spec/session/storage/spec.md` at archive time. Describe the difference
 
 ## ADDED Requirements
 
-### R-session-01  One write connection
+### R-session-01  One write connection per process
 
-WHILE a session is open THE SYSTEM SHALL hold one write connection to the project's store in core.
+WHILE a session is open THE SYSTEM SHALL hold one write connection to the project's store in core, in one process.
 Acceptance: @R-session-01
-Why: the scope is one process; a second process's writer is serialized by SQLite, not refused.
+Why: a second process's writer is serialized by SQLite, not refused.
 
 ### R-session-02  Event and state commit together
 
@@ -25,7 +25,7 @@ Why: a copy of log content in a mutable table needs a reconciliation path, and i
 
 WHILE a turn is in flight THE SYSTEM SHALL hold no open read transaction.
 Acceptance: @R-session-04
-Why: an open read transaction stalls the 1000-page auto-checkpoint and grows the log.
+Why: an open read transaction stalls the auto-checkpoint and grows the log.
 
 ### R-session-05  Synchronous is NORMAL
 
@@ -38,13 +38,13 @@ Why: NORMAL keeps a committed turn durable across an application crash; FULL is 
 WHEN the process restarts after a turn committed THE SYSTEM SHALL return that turn in full.
 Acceptance: @R-session-06
 
-### R-session-07  The committed marker is a storage fact
+### R-session-07  The committed marker is stored
 
 WHEN a turn's transaction commits THE SYSTEM SHALL set that turn's committed marker in the same transaction.
 Acceptance: @R-session-07
 Why: a renderer that waits on the marker couples the screen to the checkpoint.
 
-### R-session-08  Fork copies a range, records a parent
+### R-session-08  A fork copies a range
 
 WHEN a session is forked THE SYSTEM SHALL copy the selected event range into a new session and record the parent session.
 Acceptance: @R-session-08
