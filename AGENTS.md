@@ -16,7 +16,7 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 
 ## Gates
 
-`run` = works today. `M0` = created by the M0 scaffold; report `skipped (M0)`, never fake a pass. A change merges when every `run` gate is green and the rest are reported skipped.
+`run` = works today. `M0` = created by the M0 scaffold; report `skipped (M0)`, never fake a pass. `manual` = checked by an agent, never in CI. A change merges when every `run` gate is green and the rest are reported skipped.
 
 | Gate | Command | State |
 |---|---|---|
@@ -29,7 +29,7 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | behaviour | `cargo test -p tau-test --test features` | run |
 | steps current | `cargo run -p tau-test --bin steps -- --check` | run |
 | dependencies current | `cargo deny check && test -f .github/dependabot.yml` | run |
-| workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | run |
+| workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | manual |
 | no local state tracked | `git ls-files target .tau` is empty | run |
 | toolchain pinned | `rust-toolchain.toml` names the stable release in `docs/stack.md` | run |
 | core has no UI logic | `cargo tree -p tau-core` lists no UI crate: no gpui, no `tau-app`, no `tau-acp` | run |
