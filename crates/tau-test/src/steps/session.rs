@@ -907,3 +907,83 @@ async fn index_answers_the_search(world: &mut World) {
     clean_store(world);
     assert_clean(world, "the index answers a search of the stored events");
 }
+
+#[when("the session is exported")]
+async fn export_the_session(world: &mut World) {
+    // R-session-11: the export goes to bytes the lane keeps, so the next step reads the
+    // lines the store wrote. The store counts the rows its connection has changed, read
+    // on either side of the export: a reader connection cannot answer for that counter,
+    // and "leave the store unchanged" is a fact about the store's writes. It is measured
+    // at row level, not as bytes of the file.
+    let Some(store) = world.store.as_mut() else {
+        no_store(world);
+        return;
+    };
+    let before = store.total_changes();
+    let mut out: Vec<u8> = Vec::new();
+    let written = store.export_jsonl(SESSION, &mut out);
+    let after = store.total_changes();
+    world.exported = String::from_utf8_lossy(&out).into_owned();
+    if let Err(e) = written {
+        report(world, format!("the export failed: {e}"));
+    }
+    if after != before {
+        report(
+            world,
+            format!("the export wrote {} rows of the store", after - before),
+        );
+    }
+}
+
+#[then("the export holds one line per event and the store answers the same")]
+async fn export_lines_and_store(world: &mut World) {
+    // R-session-11: each line carries the store's row, and the store answers the same
+    // afterwards. The counter check that proves the export wrote nothing runs in the
+    // export step, where the store can be measured on either side of it.
+    let mut findings: Vec<String> = Vec::new();
+    let lines: Vec<&str> = world.exported.lines().collect();
+    if lines.len() != EVENTS.len() {
+        findings.push(format!(
+            "the export writes {} lines, expected {}",
+            lines.len(),
+            EVENTS.len()
+        ));
+    }
+    for (line, (kind, payload, ts)) in lines.iter().zip(EVENTS) {
+        // The payload is JSON text, so it arrives escaped inside the line's string.
+        let escaped = payload.replace('"', "\\\"");
+        for want in [
+            format!(r#""session":"{SESSION}""#),
+            format!(r#""turn":{TURN}"#),
+            format!(r#""ts":{ts}"#),
+            format!(r#""kind":"{kind}""#),
+            format!(r#""payload":"{escaped}""#),
+            r#""seq":"#.to_string(),
+        ] {
+            if !line.contains(&want) {
+                findings.push(format!("an export line holds no {want}: {line}"));
+            }
+        }
+    }
+    if let Some(store) = world.store.as_ref() {
+        match store.events(SESSION, TURN) {
+            Ok(rows) if rows.len() == EVENTS.len() => {}
+            Ok(rows) => findings.push(format!(
+                "{} events are stored after the export, expected {}",
+                rows.len(),
+                EVENTS.len()
+            )),
+            Err(e) => findings.push(format!("reading events after the export: {e}")),
+        }
+        match store.turn_state(SESSION, TURN) {
+            Ok(Some(state)) if state == STATE => {}
+            Ok(other) => findings.push(format!(
+                "the state change after the export is {other:?}, expected {STATE:?}"
+            )),
+            Err(e) => findings.push(format!("reading the state after the export: {e}")),
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+}

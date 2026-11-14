@@ -1293,6 +1293,7 @@ version = "0.0.0"
 dependencies = [
  "rusqlite",
  "rusqlite_migration",
+ "serde_json",
 ]
 
 [[package]]

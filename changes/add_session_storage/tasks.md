@@ -10,7 +10,8 @@
 - [x] R-session-08,09: `Store::fork` copies an inclusive turn range into a session that names its parent, `Store::compact` appends a summary event and sets `sessions.visible_from_turn`; scenarios in crates/tau-test/tests/features/session.feature
 - [ ] How a fork resumes has no clause: the copy lands uncommitted, so the fork's last turn is open and a next tool call writes into the copied turn under its old number, and readers see a complete turn as uncommitted.
 - [x] R-session-10: `Store::search` answers from the FTS5 index over the stored events (`events_fts`, external content, kept in step by an insert trigger on the log); scenario in crates/tau-test/tests/features/session.feature
-- [ ] R-session-11: export writes JSONL and leaves the store unchanged
+- [x] R-session-11: `Store::export_jsonl` writes one JSON line per stored event and changes no row, read off the store's own change counter; scenario in crates/tau-test/tests/features/session.feature
+- [ ] The export command has no surface: the proposal names `tau sessions export <id>`, and no CLI exists to write the lines to a file
 - [ ] R-session-13: the eval harness answers a run from store queries
 - [ ] R-session-01..11, 13: scenarios in crates/tau-test/tests/features/session.feature
 - [x] R-session-28,29: `events.ts` and `sessions.created` in Unix milliseconds UTC; scenarios in crates/tau-test/tests/features/session.feature

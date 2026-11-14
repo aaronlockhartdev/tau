@@ -119,3 +119,14 @@ Feature: Session storage
     When a tool call commits its events and its state change
     And the session is forked at the committed turn
     Then the index answers a search of the stored events
+
+  # The lines are the store's rows. The export step reads the store's own change counter
+  # on either side of itself, which is the fact "leave the store unchanged" states; the
+  # closing step proves the export's read leaves the log free to checkpoint.
+  @R-session-11 @R-session-04
+  Scenario: Exporting a session writes JSONL and leaves the store alone
+    Given an open store
+    When a tool call commits its events and its state change
+    And the session is exported
+    Then the export holds one line per event and the store answers the same
+    And the log checkpoints with no reader in the way

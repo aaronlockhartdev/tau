@@ -15,6 +15,8 @@ pub struct World {
     /// The project tau opened, and the checkout root it was given.
     pub project: Option<tau_core::project::Project>,
     pub project_root: PathBuf,
+    /// The bytes an export step wrote, so the next step can read the lines back.
+    pub exported: String,
 }
 
 impl World {

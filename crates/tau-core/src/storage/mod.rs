@@ -14,6 +14,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::io;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -43,6 +44,8 @@ pub type Hit = (String, i64, i64, String, String);
 const SEARCH_SELECT: &str = "SELECT e.session, e.turn, e.ts, e.kind, e.payload \
      FROM events_fts JOIN events e ON e.seq = events_fts.rowid \
      WHERE events_fts MATCH ?1 ORDER BY e.seq";
+const EXPORT_SELECT: &str =
+    "SELECT turn, seq, ts, kind, payload FROM events WHERE session = ?1 ORDER BY seq";
 /// A compaction appends this kind, and its turn's state says the same.
 const SUMMARY_KIND: &str = "summary";
 const COMPACTED_STATE: &str = "compacted";
@@ -429,6 +432,35 @@ impl Store {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// One JSON line per stored event, in log order (R-session-11). The payload goes out
+    /// as the text the store holds, so the export carries the store's rows and adds
+    /// nothing to them. Writing an export reads the store and never writes it. An id that
+    /// is not stored writes nothing and answers `Ok`. A line's keys arrive in the order
+    /// `serde_json`'s map gives them — alphabetical — not the order written here.
+    pub fn export_jsonl(&self, session: &str, w: &mut impl Write) -> Result<(), Error> {
+        let mut stmt = self.conn.prepare(EXPORT_SELECT)?;
+        let mut rows = stmt.query(rusqlite::params![session])?;
+        while let Some(row) = rows.next()? {
+            let line = serde_json::json!({
+                "session": session,
+                "turn": row.get::<_, i64>(0)?,
+                "seq": row.get::<_, i64>(1)?,
+                "ts": row.get::<_, i64>(2)?,
+                "kind": row.get::<_, String>(3)?,
+                "payload": row.get::<_, String>(4)?,
+            });
+            writeln!(w, "{line}").map_err(Error::Io)?;
+        }
+        Ok(())
+    }
+
+    /// Rows this connection has changed since it opened. R-session-11's acceptance reads
+    /// it on either side of an export, to prove the export changed no row: the counter is
+    /// the store's own, and a reader connection cannot answer for it. Not a statistics API.
+    pub fn total_changes(&self) -> u64 {
+        self.conn.total_changes()
     }
 }
 
