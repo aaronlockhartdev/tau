@@ -11,4 +11,4 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [x] R-workspace-13: `.config/nextest.toml` `[profile.ci]`; `unit + surface` gate row gains `-P ci`
 - [x] docs: pins in `docs/stack.md`, layout rows in `spec/index.md`
 - [x] check: nextest · features · spec --check · contracts --check · steps --check · clippy · fmt
-- [ ] spec-review (reviewer ticks)
+- [x] spec-review (reviewer ticks)

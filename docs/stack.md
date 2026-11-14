@@ -9,7 +9,7 @@ Decided, with pins; a deviation needs a change. A pin is a fact, so it lives her
 | UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
 | Async | tokio | latest stable |
 | Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
-| Unit + surface tests | `cargo nextest` (`-P ci` in CI: `.config/nextest.toml`), `#[gpui::test]` | nextest 0.9.152 |
+| Unit + surface tests | `cargo nextest` (`-P ci` in CI: `.config/nextest.toml`), `proptest`, `#[gpui::test]` | nextest 0.9.152 · proptest 1.12 |
 | Advisory gates | `cargo-deny` reads RustSec; Dependabot reads GitHub's reviewed advisories; the two drifted apart in 2026, so both run | cargo-deny 0.20.2 |
 | CI | GitHub Actions: `.github/workflows/gates.yml` runs every `run` gate row; `.github/gate-coverage.sh` proves coverage of the table | actions pinned by commit SHA |
 | Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |

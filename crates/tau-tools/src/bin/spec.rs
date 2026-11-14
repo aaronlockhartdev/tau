@@ -1,5 +1,8 @@
 //! The spec corpus tool (R-harness-01, R-harness-02): `id`, `new`, `count`,
 //! `archive`, `--check`. Run from the repo root, as the gate rows in `AGENTS.md` do.
+// A panic in a test is a failure; a panic in the tool is a crash. The workspace
+// denies both panic lints, and test code opts back in here.
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -1247,5 +1250,116 @@ mod tests {
         assert_eq!(clauses[0].section, "## ADDED Requirements");
         assert_eq!(clauses[0].acceptance, "gate workspace layout");
         assert!(clauses[0].text.contains("THE SYSTEM SHALL list members."));
+    }
+}
+
+#[cfg(test)]
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // The shapes a spec file holds: section headings, clause headings, fences,
+    // prose, and indented prose that must not read as a heading.
+    const SHAPES: [&str; 10] = [
+        "## Requirements",
+        "## Notes",
+        "### R-a-01  one",
+        "### R-a-01  one again",
+        "### R-b-02  two",
+        "### not-an-id",
+        "```",
+        "# index",
+        "    ### R-a-03  indented",
+        "THE SYSTEM SHALL list members.",
+    ];
+
+    fn doc() -> impl Strategy<Value = String> {
+        prop::collection::vec(
+            prop_oneof![
+                proptest::sample::select(
+                    SHAPES
+                        .iter()
+                        .map(|s| s.to_string())
+                        .collect::<Vec<String>>()
+                ),
+                "[a-z ]{0,12}",
+                "[a-z ]{0,12}".prop_map(|s| format!("  {s}")),
+            ],
+            0..24,
+        )
+        .prop_map(|lines| lines.join("\n"))
+    }
+
+    fn removed(id: &str) -> Clause {
+        Clause {
+            path: "delta".to_string(),
+            line: 1,
+            id: id.to_string(),
+            section: "## REMOVED Requirements".to_string(),
+            text: String::new(),
+            acceptance: String::new(),
+        }
+    }
+
+    /// The clause IDs, sorted, so a multiset comparison is an equality.
+    fn ids(text: &str) -> Vec<String> {
+        let mut found: Vec<String> = clauses_in("t.md", text)
+            .iter()
+            .map(|c| c.id.clone())
+            .collect();
+        found.sort();
+        found
+    }
+
+    proptest! {
+        #[test]
+        fn both_scans_find_the_same_clauses(ref text in doc()) {
+            for clause in clauses_in("t.md", text) {
+                prop_assert!(
+                    clause_range(text, &clause.id).is_some(),
+                    "clause_range lost {} that clauses_in found",
+                    clause.id
+                );
+            }
+            for id in ["R-a-01", "R-a-012", "R-a-03", "R-b-02"] {
+                if clause_range(text, id).is_some() {
+                    prop_assert!(
+                        ids(text).contains(&id.to_string()),
+                        "clauses_in lost {} that clause_range found",
+                        id
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn removing_a_clause_leaves_the_others(ref text in doc()) {
+            let before = ids(text);
+            let Some(id) = before.first().cloned() else {
+                return Ok(());
+            };
+            let result = apply_delta(text, &[removed(&id)]);
+            prop_assert!(result.is_ok(), "refused: {:?}", result.unwrap_err());
+            let mut want = before;
+            want.remove(0);
+            let after = result.unwrap();
+            prop_assert_eq!(ids(&after), want);
+        }
+
+        #[test]
+        fn blank_run_collapse_is_idempotent(ref text in doc()) {
+            let once = collapse_blank_runs(text);
+            prop_assert_eq!(once.clone(), collapse_blank_runs(&once));
+            // MD012's blank run is the one outside a fence; a fenced example keeps
+            // its own blank lines, so mask fenced lines before counting.
+            let lines: Vec<&str> = once.lines().collect();
+            let fenced = fence_flags(&lines);
+            let mut prev_blank = false;
+            for (i, line) in lines.iter().enumerate() {
+                let blank = line.trim().is_empty() && !fenced[i];
+                prop_assert!(!(blank && prev_blank), "blank run at line {i} of {once:?}");
+                prev_blank = blank;
+            }
+        }
     }
 }
