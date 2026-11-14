@@ -28,7 +28,7 @@ Counts: `cargo run -p tau-tools --bin spec -- count`.
 | config | `crates/tau-core/config` | [config/spec.md](./config/spec.md) | — |
 | workspace | root `Cargo.toml`, `crates/`, `.gitignore`, `contracts/`, `rust-toolchain.toml`, `docs/stack.md` | [workspace/spec.md](./workspace/spec.md) | — |
 
-Corpus: 0 requirements. Each requirement arrives through a change.
+Corpus: 6 requirements. Each requirement arrives through a change.
 
 ## Layout
 
