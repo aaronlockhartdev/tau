@@ -48,6 +48,8 @@ Acceptance: @R-<domain>-<NN>
 Supersedes: R-<domain>-<NN> → R-<domain>-<MM>
 ```
 
+A change withdraws a clause it added that never landed in `spec/` by moving that heading under `## REMOVED Requirements` with no `Acceptance:` ref and no `Supersedes:` line: the number stays consumed, `spec lint` reads it as issued, `spec archive` finds no clause to delete, and no later id moves. A `Supersedes:` line means the opposite: the rule is in `spec/`, is retired from there, and is checked as before (R-harness-11). The heading moves with its `Why:`; the obligation line goes, since it binds nothing.
+
 - Describe the difference, never the whole file.
 - Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`. A clause keeps its ID from the first scenario citation: never renamed, renumbered, or reused. A delta clause no scenario has run yet may be renumbered inside its own change.
 - Markers, one each: a delta clause that blocks coding carries `[NEEDS CLARIFICATION]`; an unresolved question in a proposal goes on the `Open:` line. `cargo run -p tau-tools --bin spec -- --check` counts `[NEEDS CLARIFICATION]` and the count must not rise across a change.

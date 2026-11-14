@@ -358,6 +358,8 @@ fn check_cmd() -> i32 {
     }
 
     let spec_ids: BTreeSet<&str> = spec_clauses.iter().map(|c| c.id.as_str()).collect();
+    // R-harness-11: a withdrawal inside its own change keeps its number issued.
+    let withdrawn_numbers = withdrawn_ids(&delta_clauses, &spec_ids);
     let mut seen_spec: BTreeMap<&str, &str> = BTreeMap::new();
     let mut seen_delta: BTreeMap<&str, &str> = BTreeMap::new();
     let mut pending = 0;
@@ -417,23 +419,35 @@ fn check_cmd() -> i32 {
         } else {
             seen_delta.insert(&clause.id, &clause.path);
         }
-        problems += check_acceptance(
-            clause,
-            &gates,
-            &checks,
-            &tags,
-            false,
-            &mut pending,
-            FEATURES_DIR,
-        );
+        // A withdrawal inside its own change has no acceptance ref: the rule is gone and
+        // no scenario runs it (R-harness-11).
+        let is_withdrawn = number.parse::<u32>().is_ok_and(|n| {
+            withdrawn_numbers
+                .get(domain)
+                .is_some_and(|nums| nums.contains(&n))
+        });
+        if !is_withdrawn {
+            problems += check_acceptance(
+                clause,
+                &gates,
+                &checks,
+                &tags,
+                false,
+                &mut pending,
+                FEATURES_DIR,
+            );
+        }
 
         if !MARKERS.iter().any(|m| clause.section.contains(m)) {
             problems += report("delta clause sits under no ADDED/MODIFIED/REMOVED marker");
-        } else if clause.section.contains("MODIFIED") || clause.section.contains("REMOVED") {
-            if !spec_ids.contains(clause.id.as_str()) {
-                problems += report("MODIFIED/REMOVED names no requirement in spec/");
-            }
-        } else if spec_ids.contains(clause.id.as_str()) {
+        } else if clause.section.contains("MODIFIED") && !spec_ids.contains(clause.id.as_str()) {
+            problems += report("MODIFIED names no requirement in spec/");
+        } else if clause.section.contains("REMOVED")
+            && !withdrawn(clause)
+            && !spec_ids.contains(clause.id.as_str())
+        {
+            problems += report("REMOVED names no requirement in spec/");
+        } else if clause.section.contains("ADDED") && spec_ids.contains(clause.id.as_str()) {
             problems += report("ADDED names a requirement spec/ already has");
         }
     }
@@ -545,6 +559,35 @@ fn archived_numbers(findings: &mut Vec<String>) -> BTreeMap<String, BTreeSet<u32
         }
     }
     out
+}
+
+/// A clause a change retires inside the change that added it: `## REMOVED` with no
+/// `Supersedes:` line, so it retires nothing `spec/` holds. The rule never landed, so it
+/// needs no acceptance ref, has no clause to delete at archive, and keeps its number
+/// consumed so `id` never issues it again (R-harness-11). A `## REMOVED` clause that does
+/// carry `Supersedes:` retires a rule `spec/` holds, and stays checked as before.
+fn withdrawn(clause: &Clause) -> bool {
+    clause.section.contains("REMOVED") && !clause.text.contains("Supersedes:")
+}
+
+/// The numbers a change withdraws inside its own change, by domain.
+fn withdrawn_ids(delta: &[Clause], spec_ids: &BTreeSet<&str>) -> BTreeMap<String, BTreeSet<u32>> {
+    let mut numbers: BTreeMap<String, BTreeSet<u32>> = BTreeMap::new();
+    for clause in delta {
+        if !withdrawn(clause) {
+            continue;
+        }
+        let Some((domain, number)) = split_id(&clause.id) else {
+            continue;
+        };
+        if spec_ids.contains(clause.id.as_str()) || number.len() > 4 {
+            continue;
+        }
+        if let Ok(n) = number.parse::<u32>() {
+            numbers.entry(domain.to_string()).or_default().insert(n);
+        }
+    }
+    numbers
 }
 
 /// Numbers in `1..=highest` of a domain that are neither live nor archived: IDs no
@@ -880,7 +923,8 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
                     "{}: clause {} sits under no ADDED/MODIFIED/REMOVED marker",
                     clause.path, clause.id
                 ));
-            } else if (clause.section.contains("MODIFIED") || clause.section.contains("REMOVED"))
+            } else if (clause.section.contains("MODIFIED")
+                || (clause.section.contains("REMOVED") && !withdrawn(clause)))
                 && clause_range(&text, &clause.id).is_none()
             {
                 refusals.push(format!(
@@ -947,6 +991,10 @@ fn apply_delta(text: &str, clauses: &[Clause]) -> Result<String, Vec<String>> {
     for clause in clauses {
         if clause.section.contains("ADDED") {
             added.push(clause.text.clone());
+            continue;
+        }
+        if withdrawn(clause) {
+            // The rule never landed, so `spec/` has no clause to delete (R-harness-11).
             continue;
         }
         let Some(range) = clause_range(&text, &clause.id) else {
@@ -1116,7 +1164,7 @@ mod tests {
         let deltas = [clause(
             "R-workspace-02",
             "## REMOVED Requirements",
-            "### R-workspace-02  Two",
+            "### R-workspace-02  Two — Supersedes: R-workspace-02 → R-workspace-04",
         )];
         let out = apply_delta(text, &deltas).unwrap();
         assert!(!out.contains("### R-workspace-02"));
@@ -1144,7 +1192,7 @@ mod tests {
             clause(
                 "R-workspace-02",
                 "## REMOVED Requirements",
-                "### R-workspace-02  Named",
+                "### R-workspace-02  Named — Supersedes: R-workspace-02 → R-workspace-04",
             ),
         ];
         let out = apply_delta(text, &deltas).unwrap();
@@ -1204,6 +1252,90 @@ mod tests {
         assert_eq!(ids, vec!["R-tools-01"]);
         // The clause runs past the fenced `#` line, to the end of the file.
         assert_eq!(clause_range(text, "R-tools-01").unwrap().end, text.len());
+    }
+
+    #[test]
+    fn a_withdrawn_clause_keeps_its_number_issued() {
+        let clauses: Vec<Clause> = [
+            clause("R-session-01", "## ADDED Requirements", ""),
+            clause("R-session-02", "## REMOVED Requirements", "Why: it landed."),
+            clause("R-session-03", "## ADDED Requirements", ""),
+            clause(
+                "R-session-04",
+                "## REMOVED Requirements",
+                "Supersedes: R-session-04 → R-session-05",
+            ),
+        ]
+        .into_iter()
+        .collect();
+        let retired = withdrawn_ids(&clauses, &BTreeSet::new());
+        assert_eq!(retired.get("session").map(|n| n.len()), Some(1));
+        // A `## REMOVED` clause carrying `Supersedes:` retires a rule `spec/` holds.
+        assert!(!retired.get("session").is_some_and(|n| n.contains(&4)));
+        let live: Vec<&Clause> = clauses.iter().filter(|c| !withdrawn(c)).collect();
+        // 2 is a hole in the numbers that reach `spec/`, so the scan flags it on its own;
+        // the withdrawal counts as issued, and the delta needs no successor.
+        // Production consumes it the same way: `id_cmd` issues max+1 over `spec/` and
+        // every open delta, so a withdrawn number is never handed out again.
+        assert_eq!(
+            allocation_gaps(&live, &BTreeMap::new())
+                .into_iter()
+                .map(|(_, n)| n)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert!(allocation_gaps(&live, &retired).is_empty());
+    }
+
+    #[test]
+    fn a_withdrawn_clause_needs_nothing_in_spec_at_archive() {
+        let plan = [(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![
+                clause("R-session-02", "## REMOVED Requirements", "Why: it landed."),
+                clause(
+                    "R-session-03",
+                    "## MODIFIED Requirements",
+                    "WHEN x THE SYSTEM SHALL y.",
+                ),
+                clause(
+                    "R-session-04",
+                    "## REMOVED Requirements",
+                    "Supersedes: R-session-04 → R-session-05",
+                ),
+            ],
+        )];
+        let refusals = validate_plan(&plan);
+        // The withdrawal has no clause in `spec/` to delete. The retirement and the
+        // modification each name a rule the target file has to hold.
+        assert_eq!(refusals.len(), 2, "{refusals:?}");
+        assert!(refusals.iter().any(|r| r.contains("R-session-03")));
+        assert!(refusals.iter().any(|r| r.contains("R-session-04")));
+        let applied = apply_delta(
+            "",
+            &[clause(
+                "R-session-02",
+                "## REMOVED Requirements",
+                "Why: it landed.",
+            )],
+        )
+        .expect("a withdrawal has nothing to apply");
+        assert!(
+            !applied.contains("R-session-02"),
+            "a withdrawal writes nothing"
+        );
+        let retired = apply_delta(
+            "",
+            &[clause(
+                "R-session-04",
+                "## REMOVED Requirements",
+                "Supersedes: R-session-04 → R-session-05",
+            )],
+        );
+        assert!(
+            retired.is_err_and(|r| r.iter().any(|f| f.contains("R-session-04"))),
+            "a retirement whose rule `spec/` holds is refused, not skipped"
+        );
     }
 
     #[test]
@@ -1296,7 +1428,7 @@ mod proptests {
             line: 1,
             id: id.to_string(),
             section: "## REMOVED Requirements".to_string(),
-            text: String::new(),
+            text: format!("Supersedes: {id} → R-tools-99"),
             acceptance: String::new(),
         }
     }

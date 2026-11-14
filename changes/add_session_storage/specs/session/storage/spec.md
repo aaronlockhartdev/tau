@@ -65,12 +65,6 @@ Acceptance: @R-session-10
 WHEN a session is exported THE SYSTEM SHALL write JSONL and leave the store unchanged.
 Acceptance: @R-session-11
 
-### R-session-12  No network filesystem
-
-IF the project lives on a network filesystem THEN THE SYSTEM SHALL refuse to open the store.
-Acceptance: @R-session-12
-Why: WAL needs shared memory on one host.
-
 ### R-session-13  The harness queries the store
 
 WHEN the eval harness reads a run THE SYSTEM SHALL answer from store queries, not a per-tool log format.
@@ -114,3 +108,9 @@ IF an event names a turn with no state row THEN THE SYSTEM SHALL refuse the writ
 
 Acceptance: @R-session-32
 Why: export and the eval harness join log rows to state rows, and an orphan row is a corrupt store.
+
+## REMOVED Requirements
+
+### R-session-12  No network filesystem
+
+Why: WAL needs shared memory on one host, so a store on a network filesystem is unsupported. Core probes no mount type: the limit is a fact in `docs/stack.md`, and a refusal the lane cannot run on a real mount would be a rule with no proof.

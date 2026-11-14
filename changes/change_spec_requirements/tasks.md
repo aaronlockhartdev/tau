@@ -10,6 +10,7 @@
 - [x] linter obligations land as R-harness-01..03 in the harness delta
 - [ ] R-harness-01,02: resolve acceptance refs in crates/tau-tools (tag → feature, gate → AGENTS.md)
 - [ ] R-harness-03: steps generator emits crates/tau-test/tests/features/STEPS.md
+- [x] R-harness-11: a withdrawal inside its own change keeps its number and needs nothing at archive (crates/tau-tools/src/bin/spec.rs, `## REMOVED Requirements`)
 - [ ] check: spec --check · contracts --check · steps --check · doc lint · links
 - [ ] spec-review (reviewer ticks)
 - [ ] Implement: `<project>/.tau/.gitignore` containing `*`, written once, disclosed at start (R-workspace-06..08)

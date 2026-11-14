@@ -21,3 +21,9 @@ Why: an ID nobody can trace leaves the requirement with no owner and no test.
 WHEN a step definition changes THE SYSTEM SHALL keep `crates/tau-test/tests/features/STEPS.md` matching the definitions in `crates/tau-test/src/steps/`.
 Acceptance: gate steps current
 Why: a hand-listed step drifts from the code, and a scenario then asserts something the runner never defined.
+
+### R-harness-11  A withdrawn clause keeps its number
+
+WHEN a delta clause sits under `## REMOVED Requirements` with no `Supersedes:` line, and `spec/` holds no clause with its id, THE SYSTEM SHALL keep that number consumed and require no acceptance ref for the clause.
+Acceptance: gate spec lint
+Why: an unissued hole reads as a hand-picked id, so dropping one rule costs renumbering every later id in the domain.
