@@ -13,7 +13,8 @@
 - [x] R-session-11: `Store::export_jsonl` writes one JSON line per stored event and changes no row, read off the store's own change counter; scenario in crates/tau-test/tests/features/session.feature
 - [ ] The export command has no surface: the proposal names `tau sessions export <id>`, and no CLI exists to write the lines to a file
 - [x] R-session-13: `Store::run` answers a run as a query — each turn's state, its committed marker, its events, a turn with no events arriving with an empty list; scenario in crates/tau-test/tests/features/session.feature
-- [ ] A run with a turn in flight has no scenario: every turn the scenario answers is committed, while an eval reads the last turn uncommitted and a fork's copied turns arrive uncommitted (line 11). `Store::run` answers both as a turn with `committed: false` and the events it has; nothing measures it.
+- [x] A run read while a turn is in flight answers the committed turns only: the window scenario asserts it, and asking for the in-flight turn turns it red (`a run read inside the window answers turns [1], expected [2]`).
+- [ ] A run answering an uncommitted turn has no scenario: a fork's copied turns sit in the store with `committed = 0`, and `Store::run` returns them as turns with `committed: false` and their events; nothing measures that shape, and line 11's fork-resume gap is where it belongs.
 - [ ] The eval harness has no surface: the `eval` gate row is `manual`, no `--bin eval` and no `crates/tau-test/suites/`, so nothing reads a run through `Store::run` yet
 - [x] R-session-01..11, 13: scenarios in crates/tau-test/tests/features/session.feature, each id tagged there; R-session-12 is withdrawn and needs none
 - [x] R-session-28,29: `events.ts` and `sessions.created` in Unix milliseconds UTC; scenarios in crates/tau-test/tests/features/session.feature

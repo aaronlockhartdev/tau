@@ -744,8 +744,20 @@ async fn read_inside_an_open_turn(world: &mut World) {
                     if let Err(e) = store.turn_state(SESSION, in_flight) {
                         findings.push(format!("reading the turn state: {e}"));
                     }
-                    if let Err(e) = store.run(SESSION) {
-                        findings.push(format!("reading the run: {e}"));
+                    match store.run(SESSION) {
+                        Err(e) => findings.push(format!("reading the run: {e}")),
+                        // The turn in flight is invisible here: its transaction is open
+                        // on the other connection, so a run read inside the window
+                        // answers the committed turns and nothing else.
+                        Ok(run) => {
+                            let turns: Vec<i64> = run.iter().map(|t| t.turn).collect();
+                            let want = vec![TURN];
+                            if turns != want {
+                                findings.push(format!(
+                                    "a run read inside the window answers turns {turns:?}, expected {want:?}"
+                                ));
+                            }
+                        }
                     }
                 }
             }

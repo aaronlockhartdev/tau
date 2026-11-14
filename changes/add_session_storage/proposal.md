@@ -25,4 +25,4 @@ The planned `crates/tau-core/storage` owns the schema and its migrations, and [`
 
 Eval: none needed. Storage is deterministic and covered by the behaviour lane.
 
-Open: a fork's resume has no clause (tasks.md line 11) — the copy lands uncommitted, so its next tool call writes into a copied turn under the old number. The export command and the eval harness have no surface, so `tau sessions export <id>` and a reader of `Store::run` await a CLI (tasks.md lines 14, 17). A run with a turn in flight has no scenario (line 16).
+Open: a fork's resume has no clause (tasks.md line 11) — the copy lands uncommitted, so its next tool call writes into a copied turn under the old number. The export command and the eval harness have no surface, so `tau sessions export <id>` and a reader of `Store::run` await a CLI (tasks.md lines 14, 18). A run answering an uncommitted turn has no scenario (line 17).
