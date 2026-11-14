@@ -51,3 +51,16 @@ Feature: Session storage
   Scenario: A session records its creation time
     Given an open store
     Then the session records a creation time
+
+  # The child process is killed by a signal: an application crash, which is what
+  # `synchronous = NORMAL` promises durability across (R-session-05). A power loss is
+  # not claimed.
+  @R-session-06 @R-session-07
+  Scenario: A turn committed by a process that is killed is returned in full
+    Given a store whose turn was committed by a process that is killed
+    Then the committed turn is returned in full
+
+  @R-session-02
+  Scenario: A process killed with a transaction open leaves the turn empty
+    Given a store whose rows were written by a process that is killed
+    Then the killed transaction leaves the turn empty

@@ -1,18 +1,23 @@
 //! The storage steps: the lane opens a project store, commits a tool call, and
-//! reads the store back (R-session-01, 02, 28, 29, 30, 31, 32).
+//! reads the store back (R-session-01, 02, 28, 29, 30, 31, 32). A crash is a child
+//! process the lane kills (`bin/crash_store.rs`), and the store is read back after it
+//! dies (R-session-06, 07).
 
 use crate::steps::{assert_clean, report};
 use crate::world::World;
 use cucumber::{given, then, when};
+use std::io::BufRead;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tau_core::storage::{Error, Store, Turn};
 
-/// The session a scenario opens, and the turn a tool call commits.
-const SESSION: &str = "lane-session";
-const TURN: i64 = 1;
-const STATE: &str = "awaiting-model";
-const EVENTS: &[(&str, &str, i64)] = &[
+/// The session a scenario opens, and the turn a tool call commits. `pub` because the
+/// crash child (`bin/crash_store.rs`) writes exactly these rows, so the steps assert on
+/// rows the child can only have written as written.
+pub const SESSION: &str = "lane-session";
+pub const TURN: i64 = 1;
+pub const STATE: &str = "awaiting-model";
+pub const EVENTS: &[(&str, &str, i64)] = &[
     ("tool_call", r#"{"tool":"read"}"#, 1001),
     ("tool_result", "ok", 1002),
 ];
@@ -340,4 +345,183 @@ async fn session_records_creation(world: &mut World) {
     }
     clean_store(world);
     assert_clean(world, "the session records a creation time");
+}
+
+/// The crash child, a bin of this package: cargo names its binary to the test process.
+fn crash_bin() -> Result<PathBuf, String> {
+    std::env::var("CARGO_BIN_EXE_crash_store")
+        .map(PathBuf::from)
+        .map_err(|_| "the crash child's binary is not set".to_string())
+}
+
+/// The crash steps run two processes on one store path. `claims()` is per process, so
+/// this is not the second write connection R-session-01 refuses: SQLite serializes two
+/// processes per transaction, and the parent only reads. The rows the child writes are
+/// this module's constants, which `bin/crash_store.rs` imports, so the lane asserts on
+/// rows the child can only have written as written.
+fn kill_after_report(world: &mut World, mode: &str, token: &str) {
+    world.store_path = store_path("crash");
+    world.store = match Store::open(&world.store_path) {
+        Ok(store) => Some(store),
+        Err(e) => {
+            report(world, format!("opening the store: {e}"));
+            return;
+        }
+    };
+    let bin = match crash_bin() {
+        Ok(bin) => bin,
+        Err(e) => {
+            report(world, e);
+            return;
+        }
+    };
+    let mut child = match std::process::Command::new(bin)
+        .args([mode, &world.store_path.to_string_lossy()])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(e) => {
+            report(world, format!("spawning the crash child: {e}"));
+            return;
+        }
+    };
+    // The child prints its token, then idles under an open connection, so the read
+    // ends at the token and the kill lands on a live process.
+    // shortcut: the read has no deadline; the child's own sleep is bounded, and its
+    // error paths exit and close the pipe. Add a recv timeout if a hang ever shows up.
+    let line = child.stdout.take().and_then(|out| {
+        std::io::BufReader::new(out)
+            .lines()
+            .next()
+            .and_then(|l| l.ok())
+    });
+    match line.as_deref() {
+        Some(got) if got == token => {}
+        Some(got) => {
+            report(
+                world,
+                format!("the crash child reported {got}, expected {token}"),
+            );
+        }
+        None => report(world, "the crash child printed nothing".to_string()),
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Closes the lane's connection and opens the store again: the process restart, seen
+/// from the store's side.
+fn reopen(world: &mut World) -> Result<Store, String> {
+    drop(world.store.take());
+    Store::open(&world.store_path).map_err(|e| e.to_string())
+}
+
+#[given("a store whose turn was committed by a process that is killed")]
+async fn killed_after_commit(world: &mut World) {
+    world.findings.clear();
+    kill_after_report(world, "committed", "committed");
+}
+
+#[given("a store whose rows were written by a process that is killed")]
+async fn killed_mid_transaction(world: &mut World) {
+    world.findings.clear();
+    // The child names the rows it wrote before it is killed, so a pass means a
+    // transaction was open with rows in it, not that the child wrote nothing.
+    let token = format!("writing {}", EVENTS.len());
+    kill_after_report(world, "mid", &token);
+}
+
+#[then("the committed turn is returned in full")]
+async fn committed_turn_survives(world: &mut World) {
+    // R-session-06: the process died after the commit, and the reopened store answers
+    // with the whole turn. R-session-07 is the marker read below: it reads committed
+    // after the crash. That the marker arrived inside the transaction, and not after
+    // it, is the unit test in tau-core, which fails the transaction's last statement.
+    let mut findings: Vec<String> = Vec::new();
+    let store = match reopen(world) {
+        Ok(store) => store,
+        Err(e) => {
+            report(world, format!("reopening the store: {e}"));
+            clean_store(world);
+            assert_clean(world, "the committed turn is returned in full");
+            return;
+        }
+    };
+    let expected: Vec<(i64, &str, &str)> = EVENTS.iter().map(|(k, p, ts)| (*ts, *k, *p)).collect();
+    match store.events(SESSION, TURN) {
+        Ok(events)
+            if events
+                .iter()
+                .map(|(ts, kind, payload)| (*ts, kind.as_str(), payload.as_str()))
+                .eq(expected.clone()) => {}
+        Ok(events) => findings.push(format!(
+            "the committed turn's events are {events:?}, expected {expected:?}"
+        )),
+        Err(e) => findings.push(format!("reading events: {e}")),
+    }
+    match store.turn_state(SESSION, TURN) {
+        Ok(Some(state)) if state == STATE => {}
+        Ok(Some(state)) => {
+            findings.push(format!("the stored state is {state}, expected {STATE}"));
+        }
+        Ok(None) => findings.push("the state change is not stored".to_string()),
+        Err(e) => findings.push(format!("reading the state: {e}")),
+    }
+    drop(store);
+    let marker = raw_conn(world).and_then(|conn| {
+        conn.query_row(
+            "SELECT committed FROM turn WHERE session = ?1 AND turn = ?2",
+            rusqlite::params![SESSION, TURN],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())
+    });
+    match marker {
+        Ok(1) => {}
+        Ok(other) => findings.push(format!("the turn's committed marker is {other}")),
+        Err(e) => findings.push(format!("reading the committed marker: {e}")),
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(world, "the committed turn is returned in full");
+}
+
+#[then("the killed transaction leaves the turn empty")]
+async fn killed_transaction_leaves_the_turn_empty(world: &mut World) {
+    // R-session-02's fact under a crash: rows written inside a transaction that never
+    // committed are gone after the restart, so the turn has no log rows and no state.
+    let mut findings: Vec<String> = Vec::new();
+    let store = match reopen(world) {
+        Ok(store) => store,
+        Err(e) => {
+            report(world, format!("reopening the store: {e}"));
+            clean_store(world);
+            assert_clean(world, "the killed transaction leaves the turn empty");
+            return;
+        }
+    };
+    match store.events(SESSION, TURN) {
+        Ok(events) if events.is_empty() => {}
+        Ok(events) => findings.push(format!(
+            "{} events are stored by a killed transaction",
+            events.len()
+        )),
+        Err(e) => findings.push(format!("reading events: {e}")),
+    }
+    match store.turn_state(SESSION, TURN) {
+        Ok(None) => {}
+        Ok(Some(state)) => {
+            findings.push(format!("a killed transaction stored the state {state}"));
+        }
+        Err(e) => findings.push(format!("reading the state: {e}")),
+    }
+    drop(store);
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(world, "the killed transaction leaves the turn empty");
 }

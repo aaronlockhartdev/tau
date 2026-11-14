@@ -24,3 +24,7 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Then the store refuses the write
 - Then the stored events carry the times they were given
 - Then the session records a creation time
+- Given a store whose turn was committed by a process that is killed
+- Given a store whose rows were written by a process that is killed
+- Then the committed turn is returned in full
+- Then the killed transaction leaves the turn empty
