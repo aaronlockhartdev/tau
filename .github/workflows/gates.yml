@@ -1,6 +1,6 @@
-# Runs every gate row in state `run` from `AGENTS.md` §Gates.
-# `.github/gate-coverage.sh` fails the run when a row's command is missing here,
-# so the table and this file cannot drift apart.
+# The gate lane runs the gate table in `AGENTS.md` §Gates, so the table is the
+# only place a gate is defined. The steps here install what the table's commands
+# need; they are not gates.
 name: gates
 on:
   push:
@@ -16,62 +16,28 @@ env:
 jobs:
   gates:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      # Actions are pinned to a commit SHA; the tag it names is on the line above.
+      # Actions are pinned to a commit SHA; its tag is on the line above.
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: ci covers gates
-        run: bash .github/gate-coverage.sh
-      # dtolnay/rust-toolchain master; the toolchain comes from rust-toolchain.toml
+      # dtolnay/rust-toolchain master; toolchain comes from rust-toolchain.toml
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8
       # Swatinem/rust-cache v2.9.3
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       # taiki-e/install-action v2.90.3
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39
         with:
-          tool: cargo-deny@0.20.2,cargo-nextest
-      - name: toolchain pinned
-        run: >-
-          grep -q 'channel = "1.100.0"' rust-toolchain.toml &&
-          grep -q '1.100.0 (2026-11-12)' docs/stack.md
-      - name: spec tool
-        run: cargo run -p tau-tools --bin spec -- count
-      - name: spec lint
-        run: cargo run -p tau-tools --bin spec -- --check
-      - name: contracts current
-        run: cargo run -p tau-protocol --bin contracts -- --check
-      - name: install rumdl (doc lint)
-        # taiki-e/cache-cargo-install-action v3.0.8
-        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389
+          tool: cargo-deny@0.20.2,cargo-nextest@0.9.152
+      # taiki-e/cache-cargo-install-action v3.0.8: rumdl and lychee are not in
+      # install-action, and this action installs one crate per step.
+      - uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389
         with:
           tool: rumdl@0.3.4
-      - name: doc lint
-        run: rumdl check spec changes docs AGENTS.md README.md
-      - name: install lychee (links)
-        # taiki-e/cache-cargo-install-action v3.0.8
-        uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389
+      - uses: taiki-e/cache-cargo-install-action@9ee83daaa7b96a6fab930949ecf1122bba04a389
         with:
           tool: lychee@0.24.2
-      - name: links
-        run: lychee spec changes docs AGENTS.md README.md
-      - name: unit + surface
-        run: cargo nextest run -P ci
-      - name: behaviour
-        run: cargo test -p tau-test --test features
-      - name: steps current
-        run: cargo run -p tau-test --bin steps -- --check
-      - name: no local state tracked
-        run: test -z "$(git ls-files target .tau)"
-      - name: dependencies current
-        run: cargo deny check && test -f .github/dependabot.yml
-      - name: core has no UI logic
-        run: >-
-          test -z "$(cargo tree -p tau-core |
-          grep -E 'gpui|tau-app|tau-acp')"
-      - name: lints
-        run: >-
-          cargo fmt --all --check &&
-          cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: gates
+        run: cargo run -p tau-tools --bin gates

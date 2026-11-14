@@ -8,6 +8,10 @@ publish = false
 name = "spec"
 path = "src/bin/spec.rs"
 
+[[bin]]
+name = "gates"
+path = "src/bin/gates.rs"
+
 [dependencies]
 
 [dev-dependencies]

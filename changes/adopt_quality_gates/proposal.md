@@ -13,7 +13,7 @@ Every gate in `AGENTS.md` §Gates is a command an agent runs by hand, so a commi
 ## Decision
 
 A: gates become runnable by a machine, not only by an agent reading a table.
-Consequences: `.github/workflows/gates.yml` repeats each gate command, so changing a gate row is a two-file change — guarded by the new `ci covers gates` gate that fails when a `run` row's command is missing from the workflow; `deny.toml` carries a license allow list that a new dependency may need extended; `.config/nextest.toml` and `.github/` join the layout table in `spec/index.md`; the pins (`cargo-deny` 0.20.2, nextest `ci` profile, Dependabot as the second advisory source) join `docs/stack.md`. Clauses land as R-workspace-09..13 in `spec/workspace/spec.md` (childless domain). Layout rows go into `spec/index.md` in place. See spec-authoring.
+Consequences: `.github/workflows/gates.yml` installs what the commands need and runs one lane step, `cargo run -p tau-tools --bin gates`, which reads the gate table — so a gate is defined once, in `AGENTS.md`, and the lane follows it; `deny.toml` carries a license allow list that a new dependency may need extended; `.config/nextest.toml` and `.github/` join the layout table in `spec/index.md`; the pins (`cargo-deny` 0.20.2, nextest `ci` profile, Dependabot as the second advisory source) join `docs/stack.md`. Clauses land as R-workspace-09..13 in `spec/workspace/spec.md` (childless domain). Layout rows go into `spec/index.md` in place. See spec-authoring.
 Eval: none needed
 
 Open: none

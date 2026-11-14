@@ -5,6 +5,7 @@
 /.tau
 # tooling caches
 /.cache
+/.rumdl_cache
 *.log
 *.tmp
 .DS_Store

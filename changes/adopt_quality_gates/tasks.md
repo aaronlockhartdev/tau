@@ -7,7 +7,7 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [x] R-workspace-10: `lints` gate row gains `--all-features` (AGENTS.md)
 - [x] R-workspace-11: `deny.toml`; `.github/dependabot.yml`; gate row `dependencies current`
 - [x] R-workspace-11: the six crates gain `publish = false` (scaffold: 0.0.0, no `license`); `deny.toml` skips the license check for private members, so a crate that becomes publishable needs a `license` field first
-- [x] R-workspace-12: `.github/workflows/gates.yml`; `.github/gate-coverage.sh`; gate row `ci covers gates`
+- [x] R-workspace-12: `crates/tau-tools/src/bin/gates.rs` (gate table runner); `.github/workflows/gates.yml` (installs, then one lane step); gate row `ci lane`
 - [x] R-workspace-13: `.config/nextest.toml` `[profile.ci]`; `unit + surface` gate row gains `-P ci`
 - [x] docs: pins in `docs/stack.md`, layout rows in `spec/index.md`
 - [x] check: nextest · features · spec --check · contracts --check · steps --check · clippy · fmt

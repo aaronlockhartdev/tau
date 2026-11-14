@@ -19,10 +19,11 @@ Acceptance: gate lints
 THE SYSTEM SHALL gate `Cargo.lock` with `cargo deny check` and enable Dependabot for cargo and github-actions, so no advisory source is the only one.
 Acceptance: gate dependencies current
 
-### R-workspace-12  CI runs every `run` gate
+### R-workspace-12  CI runs the gate table
 
-WHEN a push or pull request lands THE SYSTEM SHALL run every gate row in state `run`, and THE SYSTEM SHALL fail the `ci covers gates` gate when a `run` row's command is absent from the workflow.
-Acceptance: gate ci covers gates
+WHEN a push or pull request lands THE SYSTEM SHALL run the `ci lane` gate row, whose command runs the command cell of every other gate row in state `run` in `AGENTS.md` and reports rows in state `M0` and `manual` as skipped.
+Acceptance: gate ci lane
+Why: the table defines the lane; a workflow that lists steps of its own drifts from it.
 
 ### R-workspace-13  Test lane reports every failure in CI
 
