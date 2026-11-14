@@ -30,6 +30,15 @@ const EVENTS_SELECT: &str =
     "SELECT ts, kind, payload FROM events WHERE session = ?1 AND turn = ?2 ORDER BY seq";
 const TURN_SELECT: &str = "SELECT state FROM turn WHERE session = ?1 AND turn = ?2";
 const SESSION_SELECT: &str = "SELECT created FROM sessions WHERE id = ?1";
+const PARENT_SELECT: &str = "SELECT parent FROM sessions WHERE id = ?1";
+const VISIBLE_SELECT: &str = "SELECT visible_from_turn FROM sessions WHERE id = ?1";
+/// A turn's state row, inserted before its events (the composite foreign key wants it
+/// first) and re-written when the turn is re-opened.
+const TURN_UPSERT: &str = "INSERT INTO turn (session, turn, state) VALUES (?1, ?2, ?3)
+             ON CONFLICT (session, turn) DO UPDATE SET state = excluded.state";
+/// A compaction appends this kind, and its turn's state says the same.
+const SUMMARY_KIND: &str = "summary";
+const COMPACTED_STATE: &str = "compacted";
 /// One tool call's worth of storage: the turn's new state and the events it
 /// produced, as `(kind, payload, ts)` triples in the order they are appended.
 /// `ts` is the event time (glossary): the caller stamps it, the store records it.
@@ -101,7 +110,8 @@ fn migrations() -> Migrations<'static> {
         "CREATE TABLE sessions (
              id TEXT PRIMARY KEY,
              parent TEXT REFERENCES sessions(id),
-             created INTEGER NOT NULL
+             created INTEGER NOT NULL,
+             visible_from_turn INTEGER
          );
          CREATE TABLE turn (
              session TEXT NOT NULL REFERENCES sessions(id),
@@ -237,8 +247,7 @@ impl Store {
     fn commit_marked(&mut self, turn: &Turn<'_>, marker: i64) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
         tx.execute(
-            "INSERT INTO turn (session, turn, state) VALUES (?1, ?2, ?3)
-             ON CONFLICT (session, turn) DO UPDATE SET state = excluded.state",
+            TURN_UPSERT,
             rusqlite::params![turn.session, turn.turn, turn.state],
         )?;
         {
@@ -302,6 +311,89 @@ impl Store {
         Ok(self
             .conn
             .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))?)
+    }
+
+    /// Copy an inclusive turn range into a new session, recording the parent
+    /// (R-session-08). The copied turn rows arrive uncommitted on purpose: a committed
+    /// turn refuses the events a fork copies, so a copy that carried the marker would
+    /// be refused by its own log.
+    pub fn fork(
+        &mut self,
+        parent: &str,
+        child: &str,
+        from_turn: i64,
+        to_turn: i64,
+    ) -> Result<(), Error> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO sessions (id, parent, created) VALUES (?1, ?2, ?3)",
+            rusqlite::params![child, parent, now_ms()],
+        )?;
+        tx.execute(
+            "INSERT INTO turn (session, turn, state)
+             SELECT ?1, turn, state FROM turn
+             WHERE session = ?2 AND turn BETWEEN ?3 AND ?4 ORDER BY turn",
+            rusqlite::params![child, parent, from_turn, to_turn],
+        )?;
+        tx.execute(
+            "INSERT INTO events (session, turn, ts, kind, payload)
+             SELECT ?1, turn, ts, kind, payload FROM events
+             WHERE session = ?2 AND turn BETWEEN ?3 AND ?4 ORDER BY seq",
+            rusqlite::params![child, parent, from_turn, to_turn],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Append a summary event for a turn and mark the session visible from that turn
+    /// (R-session-09). The log keeps every event: the mark is where a transcript
+    /// starts, not what is dropped. The marker rides the same transaction as the
+    /// summary, as any other turn's does (R-session-07). The turn must not be committed:
+    /// the log refuses an event for a committed turn, so the whole compaction aborts. A
+    /// turn row that exists uncommitted has its state rewritten and is closed.
+    pub fn compact(&mut self, session: &str, turn: i64, summary: &str) -> Result<(), Error> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            TURN_UPSERT,
+            rusqlite::params![session, turn, COMPACTED_STATE],
+        )?;
+        tx.execute(
+            EVENT_INSERT,
+            rusqlite::params![session, turn, now_ms(), SUMMARY_KIND, summary],
+        )?;
+        tx.execute(
+            "UPDATE turn SET committed = 1 WHERE session = ?1 AND turn = ?2",
+            rusqlite::params![session, turn],
+        )?;
+        tx.execute(
+            "UPDATE sessions SET visible_from_turn = ?2 WHERE id = ?1",
+            rusqlite::params![session, turn],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The session a fork copied from, if it is a fork. A root session stores no parent,
+    /// and an id that is not stored answers the same way, so `None` covers both.
+    pub fn parent(&self, session: &str) -> Result<Option<String>, Error> {
+        let mut stmt = self.conn.prepare(PARENT_SELECT)?;
+        let mut rows = stmt.query(rusqlite::params![session])?;
+        Ok(rows
+            .next()?
+            .map(|row| row.get::<_, Option<String>>(0))
+            .transpose()?
+            .flatten())
+    }
+
+    /// The turn a compacted session is visible from, if it was compacted.
+    pub fn visible_from(&self, session: &str) -> Result<Option<i64>, Error> {
+        let mut stmt = self.conn.prepare(VISIBLE_SELECT)?;
+        let mut rows = stmt.query(rusqlite::params![session])?;
+        Ok(rows
+            .next()?
+            .map(|row| row.get::<_, Option<i64>>(0))
+            .transpose()?
+            .flatten())
     }
 }
 

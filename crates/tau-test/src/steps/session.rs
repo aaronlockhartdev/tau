@@ -1,5 +1,4 @@
 //! The storage steps: the lane opens a project store, commits a tool call, and
-//! The storage steps: the lane opens a project store, commits a tool call, and
 //! reads the store back (R-session-01, 02, 28, 29, 30, 31, 32). The scan for log
 //! content in the mutable tables and the checkpoint probe run on a reader connection
 //! of the lane's own, `synchronous` on the store's connection, and the schema refuses
@@ -735,4 +734,118 @@ async fn checkpoint_has_no_reader(world: &mut World) {
     }
     clean_store(world);
     assert_clean(world, "the log checkpoints with no reader in the way");
+}
+
+/// The fork's session id, and the summary event a compaction appends. The kind is the
+/// lane's own copy of core's, because the clause's fact is the shape in the log.
+const FORK: &str = "lane-fork";
+const SUMMARY_KIND: &str = "summary";
+const SUMMARY: &str = "42 turns compacted";
+
+#[when("the session is forked at the committed turn")]
+async fn fork_the_session(world: &mut World) {
+    // R-session-08: one committed turn, copied into a session of its own.
+    let Some(store) = world.store.as_mut() else {
+        no_store(world);
+        return;
+    };
+    if let Err(e) = store.fork(SESSION, FORK, TURN, TURN) {
+        report(world, format!("the fork failed: {e}"));
+    }
+}
+
+#[then("the fork holds the copied events and names its parent")]
+async fn fork_holds_the_copy(world: &mut World) {
+    // R-session-08: the copied range reads back the same, and the new session records
+    // the session it came from.
+    let mut findings = Vec::new();
+    if let Some(store) = world.store.as_ref() {
+        match (store.events(SESSION, TURN), store.events(FORK, TURN)) {
+            (Ok(want), Ok(got)) => {
+                if got.is_empty() {
+                    findings.push("the fork holds no events".to_string());
+                } else if got != want {
+                    findings.push(format!("the fork's events are {got:?}, expected {want:?}"));
+                }
+            }
+            (Err(e), _) => findings.push(format!("reading the parent's events: {e}")),
+            (_, Err(e)) => findings.push(format!("reading the fork's events: {e}")),
+        }
+        match store.parent(FORK) {
+            Ok(Some(parent)) if parent == SESSION => {}
+            Ok(Some(parent)) => findings.push(format!(
+                "the fork names {parent} as its parent, expected {SESSION}"
+            )),
+            Ok(None) => findings.push("the fork names no parent".to_string()),
+            Err(e) => findings.push(format!("reading the fork's parent: {e}")),
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(
+        world,
+        "the fork holds the copied events and names its parent",
+    );
+}
+
+#[when("the session is compacted at the next turn")]
+async fn compact_the_session(world: &mut World) {
+    // R-session-09: the summary is a turn of its own, so a later turn is never reused.
+    let Some(store) = world.store.as_mut() else {
+        no_store(world);
+        return;
+    };
+    if let Err(e) = store.compact(SESSION, TURN + 1, SUMMARY) {
+        report(world, format!("the compaction failed: {e}"));
+    }
+}
+
+#[then("the summary is in the log and the visible range starts at its turn")]
+async fn summary_marks_the_visible_range(world: &mut World) {
+    // R-session-09: the summary is appended, what came before stays in the log, and the
+    // session is visible from the summary's turn.
+    let mut findings = Vec::new();
+    if let Some(store) = world.store.as_ref() {
+        match (store.events(SESSION, TURN), store.events(SESSION, TURN + 1)) {
+            (Ok(before), Ok(summary)) => {
+                if before.len() != EVENTS.len() {
+                    findings.push(format!(
+                        "{} events are stored before the compaction, expected {}",
+                        before.len(),
+                        EVENTS.len()
+                    ));
+                }
+                let text: Vec<(&str, &str)> = summary
+                    .iter()
+                    .map(|(_, kind, payload)| (kind.as_str(), payload.as_str()))
+                    .collect();
+                if text != [(SUMMARY_KIND, SUMMARY)] {
+                    findings.push(format!(
+                        "the compacted turn's events are {text:?}, expected [({SUMMARY_KIND:?}, {SUMMARY:?})]"
+                    ));
+                }
+            }
+            (Err(e), _) => findings.push(format!("reading the events before the summary: {e}")),
+            (_, Err(e)) => findings.push(format!("reading the summary event: {e}")),
+        }
+        match store.visible_from(SESSION) {
+            Ok(Some(turn)) if turn == TURN + 1 => {}
+            Ok(Some(turn)) => findings.push(format!(
+                "the session is visible from turn {turn}, expected {}",
+                TURN + 1
+            )),
+            Ok(None) => findings.push("the session marks no visible range".to_string()),
+            Err(e) => findings.push(format!("reading the visible range: {e}")),
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(
+        world,
+        "the summary is in the log and the visible range starts at its turn",
+    );
 }

@@ -92,3 +92,20 @@ Feature: Session storage
   Scenario: The store opens with synchronous NORMAL
     Given an open store
     Then the store's synchronous is NORMAL
+
+  # The fork's copy is uncommitted in the new session: a committed turn refuses the
+  # events a fork copies, so a copy that carried the marker would be refused by its own
+  # log. The compaction appends; the log never loses an event.
+  @R-session-08
+  Scenario: A forked session carries the copied range and names its parent
+    Given an open store
+    When a tool call commits its events and its state change
+    And the session is forked at the committed turn
+    Then the fork holds the copied events and names its parent
+
+  @R-session-09
+  Scenario: A compacted session appends a summary and marks what is visible
+    Given an open store
+    When a tool call commits its events and its state change
+    And the session is compacted at the next turn
+    Then the summary is in the log and the visible range starts at its turn
