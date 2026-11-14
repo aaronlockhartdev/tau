@@ -6,6 +6,7 @@
 # tooling caches
 /.cache
 *.log
+*.tmp
 .DS_Store
 
 # generated docs site (if added)

@@ -1,0 +1,13 @@
+[package]
+name = "tau-tools"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "spec"
+path = "src/bin/spec.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

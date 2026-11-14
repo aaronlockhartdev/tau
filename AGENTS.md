@@ -12,7 +12,7 @@ Auto-loaded: this file (nested `AGENTS.md` files, nearest wins) and each skill's
 5. A skill, when the task matches its description.
 
 Read nothing else by default. If the load feels heavy, you are reading files you don't need.
-Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `docs/glossary.md`, pins in `docs/stack.md`, steps in `STEPS.md`. This file carries commands and the rules that bind every task.
+Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `docs/glossary.md`, pins in `docs/stack.md`, steps in `crates/tau-test/tests/features/STEPS.md`. This file carries commands and the rules that bind every task.
 
 ## Gates
 
@@ -20,20 +20,20 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 
 | Gate | Command | State |
 |---|---|---|
-| spec tool | `cargo run -p tau-tools --bin spec -- {id,new,count,archive}` | M0 |
-| spec lint | `cargo run -p tau-tools --bin spec -- --check` | M0 |
-| contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | M0 |
-| doc lint | `rumdl check spec changes docs AGENTS.md README.md` | M0 |
-| links | `lychee spec changes docs AGENTS.md README.md` | M0 |
-| unit + surface | `cargo nextest run` | M0 |
-| behaviour | `cargo test -p tau-test --test features` | M0 |
-| steps current | `cargo run -p tau-test --bin steps -- --check` | M0 |
-| workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | M0 |
-| no local state tracked | `git ls-files target .tau` is empty | M0 |
-| toolchain pinned | `rust-toolchain.toml` names the stable release in `docs/stack.md` | M0 |
-| core has no UI logic | `cargo tree -p tau-core` lists no UI crate: no gpui, no `tau-app`, no `tau-acp` | M0 |
+| spec tool | `cargo run -p tau-tools --bin spec -- {id,new,count,archive}` | run |
+| spec lint | `cargo run -p tau-tools --bin spec -- --check` | run |
+| contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | run |
+| doc lint | `rumdl check spec changes docs AGENTS.md README.md` | run |
+| links | `lychee spec changes docs AGENTS.md README.md` | run |
+| unit + surface | `cargo nextest run` | run |
+| behaviour | `cargo test -p tau-test --test features` | run |
+| steps current | `cargo run -p tau-test --bin steps -- --check` | run |
+| workspace layout | `cargo metadata --no-deps` members match the crate list in `docs/stack.md`, each crate named after its directory, and the root manifest sets `resolver = "3"` | run |
+| no local state tracked | `git ls-files target .tau` is empty | run |
+| toolchain pinned | `rust-toolchain.toml` names the stable release in `docs/stack.md` | run |
+| core has no UI logic | `cargo tree -p tau-core` lists no UI crate: no gpui, no `tau-app`, no `tau-acp` | run |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
-| lints | `cargo fmt && cargo clippy -- -D warnings` | M0 |
+| lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings` | run |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
 | desktop | `cargo run -p tau-app` | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |

@@ -1,0 +1,4 @@
+# The pin is the stable release named in docs/stack.md (R-workspace-05).
+[toolchain]
+channel = "1.100.0"
+components = ["clippy", "rustfmt"]

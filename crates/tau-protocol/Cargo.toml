@@ -1,0 +1,13 @@
+[package]
+name = "tau-protocol"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "contracts"
+path = "src/bin/contracts.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

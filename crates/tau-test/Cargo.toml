@@ -1,0 +1,22 @@
+[package]
+name = "tau-test"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "steps"
+path = "src/bin/steps.rs"
+
+[[test]]
+name = "features"
+path = "tests/features/main.rs"
+harness = false
+
+[dependencies]
+cucumber = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true
