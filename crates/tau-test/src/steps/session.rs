@@ -344,11 +344,20 @@ async fn stored_events_carry_times(world: &mut World) {
 #[then("the session records a creation time")]
 async fn session_records_creation(world: &mut World) {
     let mut findings: Vec<String> = Vec::new();
+    // R-session-29 says Unix milliseconds UTC, so the value is measured as a
+    // millisecond stamp near now: a seconds stamp (1000x smaller) and a microseconds
+    // stamp (1000x larger) both fail here, as the clause says they should.
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis().try_into().unwrap_or(i64::MAX))
+        .unwrap_or(0);
     match world.store.as_ref() {
         None => findings.push("no store is open".to_string()),
         Some(store) => match store.created(SESSION) {
-            Ok(Some(ts)) if ts > 0 => {}
-            Ok(Some(ts)) => findings.push(format!("the session records a creation time of {ts}")),
+            Ok(Some(ts)) if (now_ms - 60_000..=now_ms + 60_000).contains(&ts) => {}
+            Ok(Some(ts)) => findings.push(format!(
+                "the session's creation time {ts} is not a millisecond stamp near {now_ms}"
+            )),
             Ok(None) => findings.push("the session records no creation time".to_string()),
             Err(e) => findings.push(format!("reading the creation time: {e}")),
         },
