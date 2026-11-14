@@ -59,6 +59,7 @@ Acceptance: @R-session-09
 
 WHEN a user searches sessions THE SYSTEM SHALL answer from the FTS5 index over stored events.
 Acceptance: @R-session-10
+Why: the index is derived from the log and rebuilt from it, so its tables are no place for a fact that needs reconciling.
 
 ### R-session-11  Export writes JSONL, the store stays
 

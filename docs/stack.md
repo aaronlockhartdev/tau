@@ -15,4 +15,4 @@ Decided, with pins; a deviation needs a change. A pin is a fact, so it lives her
 | Doc gates | `rumdl`, `lychee` | 0.3.4 · 0.24.2 |
 | Markdown / diff | core parses with `pulldown-cmark`; the app renders it | spike in M0 |
 | Config | TOML + hot reload (`add_user_config`) | `toml_edit` 0.25 · `notify` 8.2 |
-| Storage | SQLite via `rusqlite` (`bundled`, WAL): append-only `events` + state tables, JSONL by export, network filesystems unsupported (`add_session_storage`) | rusqlite 0.41 · migrations 2.7 |
+| Storage | SQLite via `rusqlite` (`bundled`, WAL): append-only `events` + state tables, FTS5 index over the log, JSONL by export, network filesystems unsupported (`add_session_storage`) | rusqlite 0.41 · migrations 2.7 |

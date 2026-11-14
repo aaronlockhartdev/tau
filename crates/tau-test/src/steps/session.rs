@@ -560,24 +560,43 @@ async fn state_tables_hold_no_log(world: &mut World) {
         Some(Ok(_)) => {}
     }
     // Every table and every column is read, not an agreed list: `turn` and `sessions`
-    // gaining a column, or a new table appearing, has to be scanned for log text. An
-    // FTS index (R-session-10) will land here as its own tables, and the split to
-    // make then is by kind — an index's shadow tables hold indexed text by design and
-    // need no reconciliation on the crash day.
+    // gaining a column, or a new table appearing, has to be scanned for log text.
     // Rows are joined on 0x1f, a character JSON payloads cannot contain, so a stored
     // value never splits where a payload does not.
     const MUTABLE: &[&str] = &["sessions", "turn"];
     let read = raw_conn(world).and_then(|conn| {
-        let tables = conn
-            .prepare(
-                "SELECT name FROM sqlite_master \
-                 WHERE type = 'table' AND name <> 'events' ORDER BY name",
-            )
+        let rows = conn
+            .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'table' ORDER BY name")
             .map_err(|e| e.to_string())?
-            .query_map([], |row| row.get::<_, String>(0))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })
             .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<String>, _>>()
+            .collect::<Result<Vec<(String, Option<String>)>, _>>()
             .map_err(|e| e.to_string())?;
+        // An FTS index is a set of tables: the virtual table and its shadow tables, whose
+        // rows are indexed text by design, so they are not mutable state. shortcut: the
+        // split is by name — a virtual table and `<name>_*` — so a mutable table wearing
+        // an index shadow name would hide from this step; upgrade to reading the schema's
+        // own kinds if a real table ever collides.
+        let index: Vec<&str> = rows
+            .iter()
+            .filter(|(_, sql)| {
+                sql.as_deref()
+                    .is_some_and(|s| s.starts_with("CREATE VIRTUAL TABLE"))
+            })
+            .map(|(name, _)| name.as_str())
+            .collect();
+        let tables: Vec<String> = rows
+            .iter()
+            .filter(|(name, _)| {
+                name != "events"
+                    && !index
+                        .iter()
+                        .any(|v| name == v || name.starts_with(&format!("{v}_")))
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
         let mut text = String::new();
         for table in &tables {
             let cols = conn
@@ -848,4 +867,43 @@ async fn summary_marks_the_visible_range(world: &mut World) {
         world,
         "the summary is in the log and the visible range starts at its turn",
     );
+}
+
+#[then("the index answers a search of the stored events")]
+async fn index_answers_the_search(world: &mut World) {
+    // R-session-10: the answer comes from the index, so the query is FTS5 syntax. The
+    // first query names a column, which no scan of the payload text can answer; the
+    // second asks for a term no event holds, so an index that matched everything is caught.
+    let mut findings = Vec::new();
+    if let Some(store) = world.store.as_ref() {
+        match store.search(r#"kind:"tool call""#) {
+            Ok(hits) => {
+                let rows: Vec<(&str, &str)> = hits
+                    .iter()
+                    .map(|(session, _, _, kind, _)| (session.as_str(), kind.as_str()))
+                    .collect();
+                // The fork's copy arrives by `INSERT … SELECT`, so its index rows prove
+                // the trigger fires on the bulk path, not only on a one-row insert.
+                if rows != [(SESSION, "tool_call"), (FORK, "tool_call")] {
+                    findings.push(format!(
+                        "the search answers with {rows:?}, expected [({SESSION:?}, \"tool_call\"), ({FORK:?}, \"tool_call\")]"
+                    ));
+                }
+            }
+            Err(e) => findings.push(format!("the search failed: {e}")),
+        }
+        match store.search("no such term appears here") {
+            Ok(hits) if hits.is_empty() => {}
+            Ok(hits) => findings.push(format!(
+                "a search for a term no event holds answers {} hits",
+                hits.len()
+            )),
+            Err(e) => findings.push(format!("the second search failed: {e}")),
+        }
+    }
+    for finding in findings {
+        report(world, finding);
+    }
+    clean_store(world);
+    assert_clean(world, "the index answers a search of the stored events");
 }

@@ -9,7 +9,9 @@
 - [x] R-session-06,07: the crash child `crates/tau-test/src/bin/crash_store.rs`, killed by a signal, with scenarios in crates/tau-test/tests/features/session.feature, and a unit test in crates/tau-core for the marker's transaction
 - [x] R-session-08,09: `Store::fork` copies an inclusive turn range into a session that names its parent, `Store::compact` appends a summary event and sets `sessions.visible_from_turn`; scenarios in crates/tau-test/tests/features/session.feature
 - [ ] How a fork resumes has no clause: the copy lands uncommitted, so the fork's last turn is open and a next tool call writes into the copied turn under its old number, and readers see a complete turn as uncommitted.
-- [ ] R-session-10,11,13: FTS5 search; export command; harness queries the store
+- [x] R-session-10: `Store::search` answers from the FTS5 index over the stored events (`events_fts`, external content, kept in step by an insert trigger on the log); scenario in crates/tau-test/tests/features/session.feature
+- [ ] R-session-11: export writes JSONL and leaves the store unchanged
+- [ ] R-session-13: the eval harness answers a run from store queries
 - [ ] R-session-01..11, 13: scenarios in crates/tau-test/tests/features/session.feature
 - [x] R-session-28,29: `events.ts` and `sessions.created` in Unix milliseconds UTC; scenarios in crates/tau-test/tests/features/session.feature
 - [x] R-session-30,31: triggers that refuse a late event and any update or delete of a log row; scenarios in crates/tau-test/tests/features/session.feature

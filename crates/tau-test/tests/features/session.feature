@@ -109,3 +109,13 @@ Feature: Session storage
     When a tool call commits its events and its state change
     And the session is compacted at the next turn
     Then the summary is in the log and the visible range starts at its turn
+
+  # The search is answered by the FTS5 index over the stored events, so the query is
+  # index syntax: a column name that no scan of the payload text can answer, and a term
+  # no event holds, which must answer empty.
+  @R-session-10
+  Scenario: A search of stored events is answered by the index
+    Given an open store
+    When a tool call commits its events and its state change
+    And the session is forked at the committed turn
+    Then the index answers a search of the stored events

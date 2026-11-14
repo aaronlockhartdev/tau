@@ -36,6 +36,13 @@ const VISIBLE_SELECT: &str = "SELECT visible_from_turn FROM sessions WHERE id = 
 /// first) and re-written when the turn is re-opened.
 const TURN_UPSERT: &str = "INSERT INTO turn (session, turn, state) VALUES (?1, ?2, ?3)
              ON CONFLICT (session, turn) DO UPDATE SET state = excluded.state";
+/// A search hit: a stored event, located — `(session, turn, ts, kind, payload)`.
+pub type Hit = (String, i64, i64, String, String);
+/// The index answers, joined back to the log, so a hit is a row a caller can act on and
+/// not an index position.
+const SEARCH_SELECT: &str = "SELECT e.session, e.turn, e.ts, e.kind, e.payload \
+     FROM events_fts JOIN events e ON e.seq = events_fts.rowid \
+     WHERE events_fts MATCH ?1 ORDER BY e.seq";
 /// A compaction appends this kind, and its turn's state says the same.
 const SUMMARY_KIND: &str = "summary";
 const COMPACTED_STATE: &str = "compacted";
@@ -130,6 +137,12 @@ fn migrations() -> Migrations<'static> {
              FOREIGN KEY (session, turn) REFERENCES turn (session, turn)
          );
          CREATE INDEX events_turn ON events (session, turn, seq);
+         CREATE VIRTUAL TABLE events_fts USING fts5(kind, payload, content='events',
+             content_rowid='seq');
+         CREATE TRIGGER events_fts_insert AFTER INSERT ON events BEGIN
+             INSERT INTO events_fts (rowid, kind, payload)
+             VALUES (NEW.seq, NEW.kind, NEW.payload);
+         END;
          CREATE TRIGGER events_no_late_insert
              BEFORE INSERT ON events
              WHEN EXISTS (SELECT 1 FROM turn WHERE turn.session = NEW.session
@@ -394,6 +407,28 @@ impl Store {
             .map(|row| row.get::<_, Option<i64>>(0))
             .transpose()?
             .flatten())
+    }
+
+    /// Search the stored events, answered by the FTS5 index (R-session-10). The query is
+    /// FTS5 syntax, so a caller can name a column (`kind:"tool_call"`) or a phrase; a
+    /// query with no match answers empty. Text typed by a user is not a query: `"`, `:`,
+    /// `-` and parens are syntax, so the caller quotes it before it arrives here. Every
+    /// stored event is searched, including events a compaction hid from the transcript
+    /// (R-session-09 marks where a transcript starts, not what is dropped).
+    pub fn search(&self, query: &str) -> Result<Vec<Hit>, Error> {
+        let mut stmt = self.conn.prepare(SEARCH_SELECT)?;
+        let rows = stmt
+            .query_map(rusqlite::params![query], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
 

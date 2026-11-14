@@ -46,3 +46,4 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Then the fork holds the copied events and names its parent
 - When the session is compacted at the next turn
 - Then the summary is in the log and the visible range starts at its turn
+- Then the index answers a search of the stored events
