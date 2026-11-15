@@ -105,6 +105,13 @@ IF an event names a turn with no state row THEN THE SYSTEM SHALL refuse the writ
 Acceptance: @R-session-32
 Why: export and the eval harness join log rows to state rows, and an orphan row is a corrupt store.
 
+### R-session-33  A setup race opens
+
+WHEN a process opens the store while another process is setting it up THE SYSTEM SHALL open the store for both.
+
+Acceptance: @R-session-33
+Why: A fresh store's setup locks the file, and SQLite's busy handler cannot settle that lock, so two processes opening a new store would fail.
+
 ## REMOVED Requirements
 
 ### R-session-09  Compaction appends a summary

@@ -6,11 +6,13 @@
 //! (`bin/crash_store.rs`), and the store is read back after it dies (R-session-06, 07).
 //! A fork copies a range, the index answers a search, an export writes JSONL, and a run
 //! is answered from the two tables (R-session-08, 10, 11, 13).
+//! A second process opening a store whose setup is locked is a child process as well
+//! (`bin/open_store.rs`), and the refusals it waited out are read back (R-session-33).
 
 use crate::steps::{assert_clean, report};
 use crate::world::World;
 use cucumber::{given, then, when};
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tau_core::storage::{Error, RunTurn, Store, Turn};
@@ -688,6 +690,289 @@ async fn synchronous_is_normal(world: &mut World) {
     assert_clean(world, "the store's synchronous is NORMAL");
 }
 
+#[given("the store's own connection enforces foreign keys")]
+async fn store_enforces_foreign_keys(world: &mut World) {
+    // R-session-32: the schema's keys bind the store's own writes. The setting is per
+    // connection, so a reader connection cannot answer for the store.
+    match world.store.as_ref().map(Store::foreign_keys) {
+        None => report(world, "no store is open".to_string()),
+        Some(Err(e)) => report(world, format!("reading foreign_keys: {e}")),
+        Some(Ok(1)) => {}
+        Some(Ok(v)) => report(world, format!("foreign keys are {v}, expected 1 (ON)")),
+    }
+}
+
+/// What the setup child ended with: its stdout lines, its stderr, its exit status, and
+/// the scratch path it was given.
+struct SetupChild {
+    path: PathBuf,
+    lines: Vec<String>,
+    stderr: String,
+    status: std::process::ExitStatus,
+}
+
+/// The R-session-33 premise: a fresh store path, a connection of the step's own holding a
+/// write lock across the store's setup, and a child instance opening the same path behind
+/// that lock. `leg` picks what sits behind the lock: `wal` leaves the file in the mode a
+/// fresh file starts in, so the journal upgrade is what is refused; `migrations` puts the
+/// file in WAL first, so the upgrade succeeds and the migrations are what is refused. The
+/// witness under the lock proves the store's setup had not finished while the lock stood.
+fn setup_race(leg: &str, beat: u64) -> Result<SetupChild, String> {
+    let path = store_path("setup-race");
+    // The locking connection opens the file before the store does, and only the store
+    // creates the directory, so the directory is made here.
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("creating the store directory: {e}"))?;
+    }
+    let locker = rusqlite::Connection::open(&path)
+        .map_err(|e| format!("opening the locking connection: {e}"))?;
+    // A cold setup has no store tables yet, so the lock is held on a marker table of the
+    // step's own. `execute_batch` leaves the transaction open, which is the point: an open
+    // write transaction is what the setup waits behind.
+    let sql = if leg == "migrations" {
+        // WAL from the locker first: the store's own upgrade then succeeds, and the lock
+        // falls on the migrations, whose refusal has the other shape.
+        "PRAGMA journal_mode = WAL; CREATE TABLE IF NOT EXISTS setup_lock (a); \
+         BEGIN IMMEDIATE; INSERT INTO setup_lock (a) VALUES (1);"
+    } else {
+        "CREATE TABLE IF NOT EXISTS setup_lock (a); \
+         BEGIN IMMEDIATE; INSERT INTO setup_lock (a) VALUES (1);"
+    };
+    locker
+        .execute_batch(sql)
+        .map_err(|e| format!("taking the setup lock: {e}"))?;
+    let bin = std::env::var("CARGO_BIN_EXE_open_store")
+        .map(PathBuf::from)
+        .map_err(|_| "the setup child's binary is not set".to_string())?;
+    let mut child = std::process::Command::new(&bin)
+        .args([path.to_string_lossy().as_ref()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawning the setup child: {e}"))?;
+    let outcome = race_behind_the_lock(&mut child, &locker, &path, leg, beat);
+    // The child is reaped on every path, red included: a child left opening a store keeps
+    // writing into a directory this scenario deletes, and the store recreates it.
+    child.kill().ok();
+    child.wait().ok();
+    outcome
+}
+
+fn race_behind_the_lock(
+    child: &mut std::process::Child,
+    locker: &rusqlite::Connection,
+    path: &std::path::Path,
+    leg: &str,
+    beat: u64,
+) -> Result<SetupChild, String> {
+    // Both pipes are drained by a thread of their own. A child blocked on the lock has
+    // nothing else to say, and a full pipe would stop it for the wrong reason.
+    let stdout = child.stdout.take().ok_or("the setup child has no stdout")?;
+    let mut stderr = child.stderr.take().ok_or("the setup child has no stderr")?;
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let (etx, erx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = stderr.read_to_string(&mut text);
+        let _ = etx.send(text);
+    });
+    // The child's first line says it has reached the store, so the parent is measuring an
+    // instance at the setup, not one that merely started.
+    let reaching = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| "the setup child never reported reaching the store".to_string())?;
+    if reaching.trim() != "opening" {
+        return Err(format!("the setup child spoke first with {reaching:?}"));
+    }
+    // shortcut: a fixed beat, held long enough for the child to meet the lock and be
+    // refused at least once. It is not what makes the scenario non-vacuous: the refusals
+    // the child reports are, and a beat that ends too early turns the scenario red.
+    std::thread::sleep(std::time::Duration::from_millis(beat));
+    // The setup is provably unfinished on this side of the lock, while the lock stands.
+    if leg == "migrations" {
+        // The leg's own premise, checked: the file is already in WAL, so the store's
+        // upgrade succeeds and the lock it meets is the migrations'.
+        let mode = locker
+            .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("reading the mode under the lock: {e}"))?;
+        if mode != "wal" {
+            return Err(format!(
+                "the migration leg left the store in {mode} mode, expected wal"
+            ));
+        }
+        let tables = locker
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'events'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|e| format!("reading the schema under the lock: {e}"))?;
+        if tables != 0 {
+            return Err("the store's tables were created while the lock was held".to_string());
+        }
+    } else {
+        let mode = locker
+            .query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("reading the mode under the lock: {e}"))?;
+        if mode != "delete" {
+            return Err(format!(
+                "the store was set up to {mode} mode while the lock was held"
+            ));
+        }
+    }
+    locker
+        .execute_batch("COMMIT")
+        .map_err(|e| format!("releasing the setup lock: {e}"))?;
+    let status = child
+        .wait()
+        .map_err(|e| format!("waiting for the setup child: {e}"))?;
+    // The reader thread closes the channel when the child's stdout ends, so this drains
+    // every line the child said and returns when it has heard them all.
+    let mut lines = Vec::new();
+    while let Ok(line) = rx.recv_timeout(std::time::Duration::from_millis(500)) {
+        lines.push(line);
+    }
+    let stderr_text = erx
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .unwrap_or_default();
+    Ok(SetupChild {
+        path: path.to_path_buf(),
+        lines,
+        stderr: stderr_text,
+        status,
+    })
+}
+
+/// The child opened, and met the lock. A refusal count of 0 is reported: it would mean
+/// the beat ended before the child met the lock, and a scenario that measured no retry
+/// must not be allowed to read as a pass.
+fn report_setup_open(world: &mut World, child: &SetupChild) {
+    if !child.status.success() {
+        report(
+            world,
+            format!("the second instance failed: {}", child.stderr.trim()),
+        );
+        return;
+    }
+    let refusals = child
+        .lines
+        .iter()
+        .find(|line| line.starts_with("opened"))
+        .and_then(|line| line.split("refusals=").last())
+        .and_then(|tail| tail.trim().parse::<u32>().ok());
+    match refusals {
+        Some(0) => report(
+            world,
+            "the second instance met no refusal, so the setup race was never measured".to_string(),
+        ),
+        Some(_) => {}
+        None => report(
+            world,
+            format!(
+                "the second instance reported no refusal count: {}",
+                child.lines.join(" ")
+            ),
+        ),
+    }
+}
+
+#[when("a second instance opens the store while its setup is locked")]
+async fn second_instance_opens_under_a_locked_setup(world: &mut World) {
+    // R-session-33, the journal-upgrade leg: the WAL upgrade is refused the moment a lock
+    // stands, so the store's bounded retry is what carries the open.
+    match setup_race("wal", 300) {
+        Ok(child) => {
+            world.store_path = child.path.clone();
+            report_setup_open(world, &child);
+        }
+        Err(e) => report(world, e),
+    }
+}
+
+#[when("a second instance opens the store while its migrations are locked")]
+async fn second_instance_opens_under_a_locked_migration(world: &mut World) {
+    // R-session-33, the migration leg, whose refusal has the other shape: SQLite rolls the
+    // deferred migration transaction back, so the statement fails even after the busy
+    // handler has waited. The beat is longer, because an attempt here spends the setup's
+    // 100 ms busy timeout before it is refused.
+    match setup_race("migrations", 400) {
+        Ok(child) => {
+            world.store_path = child.path.clone();
+            report_setup_open(world, &child);
+        }
+        Err(e) => report(world, e),
+    }
+}
+
+#[when("the setup lock outlasts the store's retry budget")]
+async fn setup_lock_outlasts_the_budget(world: &mut World) {
+    // The retry is bounded, so a lock that outlasts it ends the open instead of parking
+    // the instance. The beat is 1.5 s: past the budget the upgrade leg spends, and well
+    // inside any plausible stall.
+    let outcome = setup_race("wal", 1500);
+    if let Ok(child) = outcome.as_ref() {
+        // Kept as text, so the Then step reads the caller-visible refusal.
+        world.setup_child = format!(
+            "exit {}; {}; {}",
+            child.status.code().unwrap_or(-1),
+            child.lines.join(" "),
+            child.stderr.trim()
+        );
+        // Nothing after this step reads the store, so its scratch goes here.
+        if let Some(dir) = child.path.parent() {
+            std::fs::remove_dir_all(dir).ok();
+        }
+    }
+    if let Err(e) = outcome {
+        report(world, e);
+    }
+}
+
+#[then("the store on disk is in WAL mode")]
+async fn store_on_disk_is_in_wal(world: &mut World) {
+    // The mode lives in the file, so a reader connection answers for every instance.
+    match rusqlite::Connection::open(&world.store_path)
+        .and_then(|conn| conn.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0)))
+    {
+        Ok(mode) if mode == "wal" => {}
+        Ok(mode) => report(
+            world,
+            format!("the store on disk is in {mode} mode, expected wal"),
+        ),
+        Err(e) => report(world, format!("reading the store's journal mode: {e}")),
+    }
+    // This scenario's store is its own scratch, so it is removed here.
+    if let Some(dir) = world.store_path.parent() {
+        std::fs::remove_dir_all(dir).ok();
+    }
+    clean_store(world);
+    assert_clean(world, "the store on disk is in WAL mode");
+}
+
+#[then("the second instance is refused with a busy store")]
+async fn second_instance_is_refused_by_the_setup_lock(world: &mut World) {
+    // The budget is bounded, so this is what a caller sees: the open fails with SQLite's
+    // own words, and no store is reported open.
+    let said = std::mem::take(&mut world.setup_child);
+    if !said.contains("database is locked") || said.contains("opened") {
+        report(
+            world,
+            format!("the second instance did not report a busy store: {said}"),
+        );
+    }
+    clean_store(world);
+    assert_clean(world, "the second instance is refused with a busy store");
+}
 #[when("the log is read between turns")]
 async fn read_between_turns(world: &mut World) {
     // The store's reader API, in autocommit: each read ends its own read

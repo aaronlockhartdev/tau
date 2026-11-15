@@ -28,9 +28,32 @@ Feature: Session storage
   @R-session-32
   Scenario: An event with no state row is refused
     Given an open store
+    # The setting belongs to a connection, so the store's own answer is the one that
+    # binds its writes: a reader connection sets the pragma for itself.
+    And the store's own connection enforces foreign keys
     # No turn row is written for turn 7, so it is the key that refuses this row.
     When an event for a turn with no state row is inserted
     Then the store refuses the write
+
+  @R-session-33
+  Scenario: A second instance meets a store mid-setup
+    # The locking connection is a writer, so the setup the child attempts is locked.
+    When a second instance opens the store while its setup is locked
+    Then the store on disk is in WAL mode
+
+  @R-session-33
+  Scenario: A second instance meets a store mid-migration
+    # The locking connection puts the file in WAL first, so the store's own upgrade
+    # succeeds and the lock falls on the migrations, whose refusal has the other shape.
+    When a second instance opens the store while its migrations are locked
+    Then the store on disk is in WAL mode
+
+  @R-session-33
+  Scenario: A setup lock that outlasts the budget is refused
+    # The retry is bounded, so an instance meeting a setup that will not clear is refused
+    # with SQLite's busy error rather than parked.
+    When the setup lock outlasts the store's retry budget
+    Then the second instance is refused with a busy store
 
   @R-session-30
   Scenario: A committed turn accepts no further event

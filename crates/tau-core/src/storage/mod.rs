@@ -16,6 +16,7 @@ use std::fs;
 use std::io;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -24,6 +25,55 @@ use rusqlite_migration::{M, Migrations};
 
 /// A busy store is waited for, not failed on: SQLite keeps one writer at a time.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Two setup refusals are the ones a busy handler cannot settle. The WAL upgrade opens a
+/// write transaction and is refused the moment a lock stands. The migrations run in a
+/// deferred transaction: SQLite rolls that transaction back when it meets a lock, and the
+/// statement answers SQLITE_BUSY even after the busy handler has waited, so a long timeout
+/// only spends itself. Both are therefore waited out by the retry below, this many attempts
+/// apart by this backoff, with the busy timeout held at SETUP_BUSY_TIMEOUT so that one
+/// attempt cannot burn the runtime's BUSY_TIMEOUT.
+const SETUP_ATTEMPTS: u32 = 20;
+const SETUP_BACKOFF: Duration = Duration::from_millis(50);
+/// The setup's own busy timeout: short, because for these two refusals a long one buys
+/// nothing, and every other cold-open lock is absorbed by the retry above.
+const SETUP_BUSY_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// The refusals this process's setup waited out, as the largest count of any one of its
+/// steps, read back by `Store::setup_refusals`.
+static SETUP_REFUSALS: AtomicU32 = AtomicU32::new(0);
+
+/// The refusal that means "another writer holds what this step needs".
+fn locked(error: &rusqlite::Error) -> bool {
+    matches!(error, rusqlite::Error::SqliteFailure(failure, _)
+        if failure.code == rusqlite::ErrorCode::DatabaseBusy)
+}
+
+fn migration_locked(error: &rusqlite_migration::Error) -> bool {
+    matches!(error, rusqlite_migration::Error::RusqliteError { err, .. } if locked(err))
+}
+
+/// Run a setup step, waiting out a lock refusal. Any other failure is returned as it is,
+/// and so is the refusal that ends the last attempt.
+fn setup<T, E>(
+    mut step: impl FnMut() -> Result<T, E>,
+    locked: impl Fn(&E) -> bool,
+) -> Result<T, E> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match step() {
+            Ok(value) => {
+                SETUP_REFUSALS.fetch_max(attempt - 1, Ordering::Relaxed);
+                return Ok(value);
+            }
+            Err(error) if locked(&error) && attempt < SETUP_ATTEMPTS => {
+                std::thread::sleep(SETUP_BACKOFF);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
 
 const EVENT_INSERT: &str =
     "INSERT INTO events (session, turn, ts, kind, payload) VALUES (?1, ?2, ?3, ?4, ?5)";
@@ -81,8 +131,10 @@ pub enum Error {
     Claimed,
     /// The store settled on a journal mode that is not WAL.
     NotWal(String),
-    /// `synchronous` did not come back as NORMAL.
+    /// `synchronous` did not come back as NORMAL, so every commit would pay the fsync.
     NotNormal(i64),
+    /// `foreign_keys` did not come back as ON, so the store would write unchecked rows.
+    NotForeignKeys(i64),
     Io(io::Error),
     Sqlite(rusqlite::Error),
     Migration(rusqlite_migration::Error),
@@ -95,6 +147,7 @@ impl fmt::Display for Error {
             Self::Claimed => f.write_str("the open-store claim is poisoned"),
             Self::NotWal(mode) => write!(f, "journal mode is {mode}, expected wal"),
             Self::NotNormal(sync) => write!(f, "synchronous is {sync}, expected 1 (NORMAL)"),
+            Self::NotForeignKeys(fk) => write!(f, "foreign keys are {fk}, expected 1 (ON)"),
             Self::Io(e) => write!(f, "store file: {e}"),
             Self::Sqlite(e) => write!(f, "sqlite: {e}"),
             Self::Migration(e) => write!(f, "migrations: {e}"),
@@ -207,10 +260,12 @@ pub struct Store {
 impl Store {
     /// Open the store at `path`, creating it and its parent directory, in WAL mode
     /// with `synchronous = NORMAL`. The journal mode and the synchronous level are read
-    /// back, because a declined PRAGMA answers instead of erroring. `foreign_keys = ON` is set, not
-    /// read back. It is set outside a transaction, where SQLite honours it — inside one the
-    /// PRAGMA is a no-op — and nothing observes the store's own setting: the foreign-key
-    /// scenario runs on a connection of its own, which sets the PRAGMA for itself.
+    /// back, because a declined PRAGMA answers instead of erroring. `foreign_keys` is read
+    /// back too: it belongs to the connection, and a connection that skipped it writes
+    /// unchecked rows. It is set outside a transaction, where SQLite honours it — inside
+    /// one the PRAGMA is a no-op.
+    /// A setup that stays locked past the retry budget is refused with SQLite's busy
+    /// error: the open is bounded, not waited on forever.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
@@ -218,13 +273,20 @@ impl Store {
         }
         let mut conn = Connection::open(path)?;
         let key = path.canonicalize()?;
-        conn.busy_timeout(BUSY_TIMEOUT)?;
+        // Setup runs at its own short busy timeout: the refusals it meets are the two a
+        // busy handler cannot settle, and the retry paces them (SETUP_BUSY_TIMEOUT).
+        conn.busy_timeout(SETUP_BUSY_TIMEOUT)?;
         // A declined PRAGMA is not an error: journal_mode answers with the mode it
         // settled on, so the answer is checked. WAL is the design — readers,
         // checkpoint — and a store that stayed in delete mode would not be it.
-        let mode = conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
-            row.get::<_, String>(0)
-        })?;
+        let mode = setup(
+            || {
+                conn.query_row("PRAGMA journal_mode = WAL", [], |row| {
+                    row.get::<_, String>(0)
+                })
+            },
+            |error: &rusqlite::Error| locked(error),
+        )?;
         if mode != "wal" {
             return Err(Error::NotWal(mode));
         }
@@ -236,7 +298,22 @@ impl Store {
             return Err(Error::NotNormal(sync));
         }
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        migrations().to_latest(&mut conn)?;
+        // The setting belongs to the connection, and one that skipped it writes unchecked
+        // rows, so the store's own answer is read back like the journal mode and the
+        // synchronous level.
+        let fk = conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))?;
+        if fk != 1 {
+            return Err(Error::NotForeignKeys(fk));
+        }
+        // The migrations run in a deferred transaction, which SQLite rolls back when it
+        // meets a lock: the statement fails even after the busy handler has waited, so
+        // this retry is what waits a second instance's setup out.
+        setup(
+            || migrations().to_latest(&mut conn),
+            |error: &rusqlite_migration::Error| migration_locked(error),
+        )?;
+        // Setup is over: from here a busy store is waited for, not retried.
+        conn.busy_timeout(BUSY_TIMEOUT)?;
         // The claim is taken last, so a store that failed to configure itself leaves
         // the path open for the next attempt.
         let mut held = claims().lock().map_err(|_| Error::Claimed)?;
@@ -337,6 +414,24 @@ impl Store {
         Ok(self
             .conn
             .query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))?)
+    }
+
+    /// The connection's own `foreign_keys` setting (R-session-32). It is per connection,
+    /// so a reader cannot learn it from a connection of its own; the store's answer is
+    /// what enforces the schema's keys on the store's writes.
+    pub fn foreign_keys(&self) -> Result<i64, Error> {
+        Ok(self
+            .conn
+            .query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))?)
+    }
+
+    /// The refusals this process's setup waited out (R-session-33), as the largest count
+    /// of any one setup step: 0 means no other instance held the setup, so the retry never
+    /// ran. It answers for the process, not for this store's path; it exists so a scenario
+    /// can tell a met lock from a beat that was too short.
+    #[must_use]
+    pub fn setup_refusals(&self) -> u32 {
+        SETUP_REFUSALS.load(Ordering::Relaxed)
     }
 
     /// Copy an inclusive turn range into a new session, recording the parent

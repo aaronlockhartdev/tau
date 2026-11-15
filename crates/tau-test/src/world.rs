@@ -17,6 +17,9 @@ pub struct World {
     pub project_root: PathBuf,
     /// The bytes an export step wrote, so the next step can read the lines back.
     pub exported: String,
+    /// What the setup child said and how it ended, so the next step can read the
+    /// caller-visible refusal back (R-session-33).
+    pub setup_child: String,
 }
 
 impl World {

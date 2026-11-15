@@ -40,6 +40,12 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - Then the killed transaction leaves the turn empty
 - Then the state tables hold no log content
 - Then the store's synchronous is NORMAL
+- Given the store's own connection enforces foreign keys
+- When a second instance opens the store while its setup is locked
+- When a second instance opens the store while its migrations are locked
+- When the setup lock outlasts the store's retry budget
+- Then the store on disk is in WAL mode
+- Then the second instance is refused with a busy store
 - When the log is read between turns
 - When the log is read while a turn's transaction is open
 - Then the log checkpoints with no reader in the way
