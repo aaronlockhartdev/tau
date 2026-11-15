@@ -24,7 +24,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `project`: the working directory's git root, or the working directory when it is not one.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
 `event time`: the moment core emits an event, in Unix milliseconds UTC.
-`session start output`: the `info` log lines tau emits on stderr when a session opens, before any block.
+`session start output`: the lines tau prints when a session opens, before any event.
 `run`: a session's turns in order, with the events each produced.
 `store setup`: a fresh store's journal upgrade and migrations, the steps a second process waits out.
 `log`: the `events` table — every event, append-only, one row each.

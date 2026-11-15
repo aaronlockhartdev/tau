@@ -23,7 +23,7 @@ Why: a provider's stored chain expires on its retention window, and the provider
 
 ### R-agent-04  A tool call is answered
 
-WHEN a tool call block commits THE SYSTEM SHALL commit a result block for it.
+WHEN a tool call block commits THE SYSTEM SHALL commit a result block for it, naming the reason when the tool did not run.
 Acceptance: @R-agent-04
 Why: a call with no result is refused by the provider, so the session cannot continue.
 
@@ -34,7 +34,7 @@ Acceptance: @R-agent-05
 
 ### R-agent-06  A cancel leaves no open call
 
-WHEN a run is cancelled THE SYSTEM SHALL commit no truncated tool call, and answer every committed tool call with a result block naming the reason it did not run.
+WHEN a run is cancelled THE SYSTEM SHALL commit no truncated tool call.
 Acceptance: @R-agent-06
 Why: a call left open poisons the next request, which the provider rejects.
 

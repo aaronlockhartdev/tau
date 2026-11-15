@@ -48,9 +48,12 @@ committed, context sent whole with no provider-side state, a call answered by a 
 cancel rules, a request recorded with no block, the stream-gap rule, resume closing an open request,
 steering at the boundary with a bounded queue, stop conditions from config, injection slots, injection
 bytes recorded, session start output). `spec/protocol/` gains the stream event set, the tool's declared
-shape and the trait that runs it in `tau-core`, the registry rule, kinds and reasons generated as one
-vocabulary, and no HTTP in core (R-protocol-01..04 and 06..07), the schemas generated into `contracts/`
-under the invariant in `spec/index.md`.
+shape, and the kinds and reasons generated as one vocabulary (R-protocol-01..03), the schemas generated
+into `contracts/` under the invariant in `spec/index.md`. `spec/tools/` gains the registry the binary
+injects and the trait that runs a tool in `tau-core` (R-tools-30, 31). `spec/workspace/` gains the logging
+rules and the rule that the HTTP client to a model provider stays out of core and its graph (R-workspace-16,
+17, 18): libraries emit on the `tracing` facade, only a binary installs a subscriber, and logs go to stderr
+at the default level.
 `spec/workspace/` gains the logging rules (R-workspace-16, R-workspace-17): libraries emit on the
 `tracing` facade, only a binary installs a subscriber, and logs go to stderr at the default level.
 `spec/session/storage/` gains the session row's facts (R-session-41..44: working directory, last model,

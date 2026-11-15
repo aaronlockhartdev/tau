@@ -15,7 +15,9 @@ reasoning, text, and several tool calls, and each of those closes at its own mom
 The provider stream is block-shaped. Anthropic streams `message_start`, `content_block_start`,
 `content_block_delta`, `content_block_stop` (platform.claude.com, read 2026-11-15); the Responses API
 streams output items with `added`/`delta`/`done` per part and reports true usage only in
-`response.completed` (community.openai.com field guide, 2025-10-19, 53 event types). Chat Completions
+`response.completed` (community.openai.com field guide, 53 event types, read 2026-11-15). Chat Completions
+closes every block at `finish_reason` in one batch, and reports usage only in a final chunk, when asked
+(developers.openai.com reference, read 2026-11-15).
 closes every block at `finish_reason` in one batch, and reports usage only in a final chunk, when asked.
 
 State cannot be bytes on a mutable row: R-session-03's scan flags log content that appears in a
@@ -28,9 +30,11 @@ Pointers from a mutable row into the log are the shape that keeps both clauses g
   model, usage, and terminal reason; state is pointers, appended on the block row; the committed
   marker retires. Evidence: the wire closes blocks at its own events (above); measured today with
   `sqlite3` at `page_size=4096`, 3000 blocks with 200-byte payloads is 888,832 bytes and 3000 request
-  rows add 278,528 (≈93 bytes each, +31% at one request per block, ≈8% at four blocks per request);
+rows add 278,528 (≈93 bytes each, +31% at one request per block, ≈8% at four blocks per request), the run
+  recorded in tasks.md;
   R-session-03 stays green because pointers are not payload text. Cost: no new dependency; one extra
-  write per request open and one per terminal; the archive's two-writer run measured a worst commit of 41 ms
+write per request open and one per terminal; latency under contention, not cost: the archive's two-writer
+  run measured a worst commit of 41 ms
   with `busy_timeout` 5 s (`changes/archive/2026-11-15-add_session_storage/tasks.md`); a schema rewrite.
 - B. Keep the turn row and add a block key under it, keeping the marker. Evidence: it preserves 10
   clauses and the lane as written. Cost: the caller still closes the turn last, the marker still gates
@@ -61,10 +65,9 @@ retired with `Supersedes:`. Terms in `docs/glossary.md`: `block`, `request`, `in
 added; `turn` and `committed marker` dropped; `log`, `run`, `session`, `steer` re-worded.
 Six open changes carry wording in the old unit — `add_subagent_support`, `add_realtime_gui_output`, `add_user_config`,
 `add_test_lanes`, `adopt_context_file_loading`, `adopt_skills_convention` — and are re-worded by this
-re-worded by this change, or the corpus ships two vocabularies. `adopt_observational_memory` needs more
+change, or the corpus ships two vocabularies.
 than wording: its R-session-19 promised to replace the oldest messages, and R-session-31 refuses any
 update to a log row, so that clause now appends an observation block naming the range it supersedes.
-update to a log row, so that clause has to select blocks instead of replacing rows.
 The `crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, which is not a live
 clause (workspace runs 09..15): the citation moves to the invariant at `spec/index.md:7`.
 Eval: none needed — a log's unit is mechanical, and the lanes count commits and rows.

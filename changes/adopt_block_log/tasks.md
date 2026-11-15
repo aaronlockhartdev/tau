@@ -28,6 +28,20 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`; drop `turn` and `committed marker`; re-word `log`, `run` (the loop stops, and the run is what it produced), `session`, `steer`, `session start output`
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
-- [ ] re-word the open changes written in the old unit: `add_subagent_support` (its two delta specs), `add_realtime_gui_output`, `adopt_hash_anchor_editing`, `adopt_context_file_loading`, `adopt_skills_convention`
-- [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool, spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under load, headless session, desktop — reported `skipped (M0)`; manual rows — workspace layout, eval — reported by hand
+- [ ] re-word the open changes written in the old unit — `add_subagent_support` (its delta specs),
+`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
+`adopt_skills_convention`; a grep for `turn`, `event` and `committed` over `changes/*/` finds those six and
+no other, so `adopt_hash_anchor_editing` needs nothing
+- [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` and `page_size=4096` — 3000 blocks of
+200-byte payload in the current schema, and the same with 3000 request rows added; the row sizes and the two
+percentages in the proposal come off that run, which is a scratch probe, so it carries no committed repro.
+- [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
+`spec/session/storage/spec.md` gains 6 requirements and retires 2, its count and `spec/session/spec.md`'s
+leaf count and `spec/index.md`'s Corpus count move by the same numbers read off the files
+- [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool,
+spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies
+current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns
+nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under
+load, headless session, desktop — reported `skipped (M0)`; manual rows — workspace layout, eval — reported
+by hand
 - [ ] spec-review (reviewer ticks)

@@ -15,3 +15,9 @@ Why: a subscriber's non-blocking writer starts a thread, and R-workspace-15 bans
 THE SYSTEM SHALL write log output to stderr, at the default level `info`.
 Acceptance: @R-workspace-17
 Why: a surface owns its own pane, and a log on stdout steals a line from the reader.
+
+### R-workspace-18  Core speaks no HTTP
+
+THE SYSTEM SHALL keep the client that speaks HTTP to a model provider out of `tau-core` and out of its dependency graph.
+Acceptance: gate core has no HTTP client
+Why: the stream is the boundary, and a provider SDK in core would carry a runtime in with it.
