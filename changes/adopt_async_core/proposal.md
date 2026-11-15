@@ -34,7 +34,7 @@ is one that every consumer inherits.
   load-bearing (`add_session_storage` tasks.md:26). A child instance meeting a setup lock counted 56
   refusals and then opened, with the retry budget raised to 1000 attempts for the measurement — 50 ms
   of backoff each, so ~2.8 s spent waiting on a lock a normal budget refuses
-  (`add_session_storage` tasks.md:25). A model stream lives for seconds.
+  (`add_session_storage` tasks.md:25). A model stream is long-lived by nature — that is the premise of the decision, not a measurement made here.
   `futures` joins `tau-core` (`Stream` is not in std); trait objects over async methods box
   (`Pin<Box<dyn Future>>`); every payload that crosses a task boundary is `Send` + owned, a cost of
   any boundary a surface crosses, worked out where the wire types are written (`crates/tau-protocol`,
@@ -104,7 +104,7 @@ Open: the gaps this decision leaves, each with the tasks line that tracks it.
   timers the Decision promises (the WAL checkpoint cadence, the setup backoff, the reload debounce),
   are unwritten design, not unsaid rules (tasks.md:10).
 - The gates name shapes, not absences: `core has no runtime` reads the tree at `--all-features` and
-  names nineteen crate families, and `core spawns nothing` greps the crate directory for seventeen
+  names eighteen crate families, and `core spawns nothing` greps the crate directory for seventeen
   literal tokens, so a hand-rolled poll loop (`now_or_never` with `noop_waker`) passes both.
   `tau-core`'s own tests meet that same pair, and their executor answer lands with core's first
   async code (tasks.md:11).
