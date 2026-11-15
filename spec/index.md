@@ -21,6 +21,7 @@ Counts: `cargo run -p tau-tools --bin spec -- count`. An `Owns` cell names where
 | domain-model | `crates/tau-core/model` | [domain-model/spec.md](./domain-model/spec.md) | — |
 | protocol | `crates/tau-protocol` | [protocol/spec.md](./protocol/spec.md) | — |
 | session | `crates/tau-core/session`, `crates/tau-core/storage` | [session/spec.md](./session/spec.md) | [storage/spec.md](./session/storage/spec.md) |
+| agent | `crates/tau-core/agent` | [agent/spec.md](./agent/spec.md) | — |
 | context | `crates/tau-core/context` | [context/spec.md](./context/spec.md) | — |
 | tools | `crates/tau-core/tools` | [tools/spec.md](./tools/spec.md) | — |
 | acp | `crates/tau-acp` | [acp/spec.md](./acp/spec.md) | — |
