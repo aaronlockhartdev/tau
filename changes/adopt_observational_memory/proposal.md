@@ -21,8 +21,16 @@ Tau's own rules:
 
 ## Consequences
 
-Memory is a core component; the desktop view shows its state, and ACP exposes it as session metadata. Storage adds observation and reflection tables to session storage. Token budgets move from prompt text into storage. Cost and latency are measured by eval. The clauses are in `changes/adopt_observational_memory/specs/session/memory/spec.md` as `R-session-19..27`, archived to `spec/session/memory/spec.md`.
+Memory is a core component; the desktop view shows its state, and ACP exposes it as session metadata. An
+observation and a reflection are blocks in the log, in the `observations` slot: the log stays append-only
+(R-session-31), so a condensation replaces nothing — an observation names the block range it supersedes,
+and the next context is built from the observations and the kept tail. `adopt_block_log` lands that unit, and
+archives before this change. Token budgets move from prompt text into storage. Cost and latency are
+measured by eval. The clauses are in
+`changes/adopt_observational_memory/specs/session/memory/spec.md` as `R-session-19..27`, archived to
+`spec/session/memory/spec.md`.
 
 Eval: on demand. Whether observations beat the raw message tail is a real-LLM quality question, so the suite runs by hand before a threshold changes.
 
-Open: none.
+Open: the threshold defaults sit with the config change; the context cap policy that sets the observation
+threshold is `add_turn_loop`'s ground, and this change reads it from there.

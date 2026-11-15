@@ -62,7 +62,8 @@ added; `turn` and `committed marker` dropped; `log`, `run`, `session`, `steer` r
 Six open changes carry wording in the old unit — `add_subagent_support`, `add_realtime_gui_output`, `add_user_config`,
 `add_test_lanes`, `adopt_context_file_loading`, `adopt_skills_convention` — and are re-worded by this
 re-worded by this change, or the corpus ships two vocabularies. `adopt_observational_memory` needs more
-than wording: its R-session-19 promises to replace the oldest messages, and R-session-31 refuses any
+than wording: its R-session-19 promised to replace the oldest messages, and R-session-31 refuses any
+update to a log row, so that clause now appends an observation block naming the range it supersedes.
 update to a log row, so that clause has to select blocks instead of replacing rows.
 The `crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, which is not a live
 clause (workspace runs 09..15): the citation moves to the invariant at `spec/index.md:7`.
