@@ -28,15 +28,15 @@ is one that every consumer inherits.
   the runtime sits in one leaf, `crates/reqwest_client`, which resolves `tokio::runtime::Handle::try_current()`
   first and only builds a `rt-multi-thread` runtime with `worker_threads(1)` when there is none —
   its own comment: "Since we now have two executors, let's try to keep our footprint small"
-  (all read 2026-11-15). Measured here, on 2026-11-15: the store is not the long I/O. A commit measured
-  ~0.06 ms in a probe since deleted; 300 commits per writer across two processes ran with 0 failures
-  and a worst commit of 41 ms (`add_session_storage` tasks.md:25). A child instance meeting a setup
-  lock counted 28 refusals before it opened — with the retry budget raised to 1000 attempts for the
-  measurement — so 50 ms of backoff each is ~1.4 s spent waiting on a lock (`add_session_storage`
-  tasks.md:24). A model stream lives for seconds, and nothing in the store is measured near that.
+  (all read 2026-11-15). Measured here, on 2026-11-15: the store is not the long I/O. 300 commits per
+  writer across two processes ran with 0 failures and a worst commit of 41 ms
+  (`add_session_storage` tasks.md:25). A child instance meeting a setup lock counted 28 refusals
+  before it opened — with the retry budget raised to 1000 attempts for the measurement — so 50 ms of
+  backoff each is ~1.4 s spent waiting on a lock (`add_session_storage` tasks.md:24). A model stream
+  lives for seconds, and nothing measured in the store comes near that.
   `futures` joins `tau-core` (`Stream` is not in std); trait objects over async methods box
   (`Pin<Box<dyn Future>>`); every payload crossing a task boundary is `Send` + owned — the ACP SDK's
-  handlers, transports and connection futures are `Send` (docs.rs, read 2026-11-15), and
+  published API is `Send`-bound throughout (docs.rs root, version unpinned, read 2026-11-15), and
   `crates/tau-acp` has no dependency to inherit that from today; `futures::select!` is more verbose than
   `tokio::select!` (no default arm, needs `&mut` futures); the desktop binary runs two schedulers,
   gpui's and the HTTP leaf's, and that bridge has known sharp edges: the leaf's own regression test
@@ -58,7 +58,7 @@ is one that every consumer inherits.
   plus timers (WAL checkpoint cadence, the setup backoff, the reload debounce) — so three seams and
   hand-written reactor work: one reader thread per pipe, flags checked at turn boundaries, a
   `Duration::sleep`-based debounce. Arithmetic, unverified: `add_subagent_support` plans
-  `subagent.max_concurrent` 20 at depth 3, so a reader thread per pipe is ~60 threads before a stream
+  `subagent.max_concurrent` 20 at depth 3, two pipes per child: ~120 reader threads before a stream
   per session adds one each, where one runtime makes them all tasks; no such code exists to measure.
   Cancellation loses `select!`: a blocking socket read ignores a cancel flag, so a cancel becomes a
   socket close from the canceller.
@@ -71,7 +71,7 @@ results back through `to_send()`, a tokio web server polls the same futures on i
 the behaviour lane (already tokio) needs nothing new; timers become deterministic, which is the only
 clean fix for a timing-vacuous scenario (this change's predecessor shipped one: a setup-race scenario
 that could pass having measured zero retries, closed by counting refusals). What tau keeps:
-`Store` stays blocking `rusqlite` (Anki proves the shape), reached through an actor thread, so
+`Store` stays blocking `rusqlite` (Anki shows the shape at one call site), reached through an actor thread, so
 neither edge needs a blocking pool.
 
 Consequences: `tau-core` depends on `futures` and on no runtime, and spawns nothing — both become gate
@@ -86,8 +86,8 @@ the binary that has a tokio runtime shares it (`Handle::try_current()`), the bin
 gets a 1-worker runtime behind the client trait, which is Zed's exact resolution. No core code moves
 in this change: nothing async exists yet, so the deliverable is the shape, its gates, and the two
 measurements the shape depends on — added as spikes to `changes/spike_gpui_surface/tasks.md`, where
-the surface clauses are written from. Rules this change does not own and names on `Open:`: the
-Rules this decision implies and this change does not own are listed under Gaps below, each with the
+the surface clauses are written from. Rules this decision implies and this change does not own are
+listed under `Open:` below, each with the
 tasks line that tracks it; the cancel-mid-stream scenario with real latency belongs to
 `add_subagent_support`, and the surface stream's bound and coalescing to `add_realtime_gui_output`.
 Eval: none needed — the decision is about who polls what, and no turn's quality depends on it.

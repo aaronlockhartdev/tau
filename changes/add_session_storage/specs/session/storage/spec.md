@@ -110,14 +110,14 @@ Why: export and the eval harness join log rows to state rows, and an orphan row 
 WHEN a process opens the store while another process is setting it up THE SYSTEM SHALL wait the setup out and open the store for both.
 
 Acceptance: @R-session-33
-Why: A fresh store's setup locks the file, and SQLite's busy handler cannot settle that lock, so two processes opening a new store would fail.
+Why: a fresh store's setup locks the file, and SQLite's busy handler cannot settle that lock, so two processes opening a new store would fail.
 
 ### R-session-34  A setup lock is refused
 
 IF a setup lock outlasts the store's retry budget THEN THE SYSTEM SHALL refuse the open with SQLite's busy error.
 
 Acceptance: @R-session-34
-Why: The retry exists for a refusal no busy handler can settle, and an open that never stops waiting parks an instance behind a lock it cannot break.
+Why: a lock that outlasts the budget is a fact a caller can act on, so the setup does not loop until it clears.
 
 ## REMOVED Requirements
 

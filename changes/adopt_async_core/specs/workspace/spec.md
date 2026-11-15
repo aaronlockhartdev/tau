@@ -4,13 +4,13 @@
 
 ### R-workspace-14  Core carries no runtime
 
-THE SYSTEM SHALL keep no async runtime crate in `tau-core`'s dependency graph, at any feature set.
+THE SYSTEM SHALL keep no async runtime or task-executor crate in `tau-core`'s dependency graph, at any feature set.
 Acceptance: gate core has no runtime
-Why: a runtime in core is inherited by every consumer of the library, and the UI is pinned to a framework with a scheduler of its own.
+Why: a runtime in core is inherited by every consumer, and the UI is pinned to a framework with a scheduler of its own.
 
 ### R-workspace-15  Core spawns no task
 
-THE SYSTEM SHALL spawn no task and drive no runtime inside `tau-core`: core returns futures and streams, and the binary that calls it spawns them.
+THE SYSTEM SHALL spawn no task, run no task pool and drive no runtime inside `tau-core`: core returns futures and streams, and the binary that calls it spawns them.
 Acceptance: gate core spawns nothing
 Why: the caller owns the executor, so a spawn inside core picks a runtime for every consumer of the library.
 

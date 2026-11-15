@@ -21,10 +21,9 @@ all = { level = "warn", priority = -1 }
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 perf = { level = "deny", priority = -1 }
-# No lock is held across an await, and no blocking call runs inside a polled
-# future: core's callers own the executor, so this is a rule, not a runtime
-# choice (R-workspace-09, R-workspace-15). `await_holding_invalid_type` is the
-# opt-in half, listing the blocking types one by one as core grows them.
+# The two `await_holding_*` denies are the mechanical form of a rule the lanes cannot test, at the
+# clauses' request (R-workspace-09, R-workspace-15). `await_holding_invalid_type` is the opt-in
+# half: `clippy.toml` names the blocking types one by one as core grows them.
 await_holding_lock = "deny"
 await_holding_invalid_type = "deny"
 unwrap_used = "deny"

@@ -931,10 +931,10 @@ async fn second_instance_opens_under_a_locked_migration(world: &mut World) {
 
 #[when("the setup lock outlasts the store's retry budget")]
 async fn setup_lock_outlasts_the_budget(world: &mut World) {
-    // The retry is bounded, so a lock that outlasts it ends the open instead of parking
-    // the instance. The beat is 1.5 s: past the budget the upgrade leg spends, and well
-    // inside any plausible stall.
-    let outcome = setup_race("wal", 1500);
+    // The retry is bounded, so a lock that outlasts it ends the open instead of parking the
+    // instance. The beat is 3 s: the upgrade leg spends ~1 s of budget, so the refusal lands ~2 s
+    // before the lock clears. A beat near the budget turns the scenario red on a loaded box.
+    let outcome = setup_race("wal", 3000);
     if let Ok(child) = outcome.as_ref() {
         // Kept as text, so the Then step reads the caller-visible refusal.
         world.setup_child = format!(
