@@ -2,8 +2,7 @@
 //! table is the only place a gate is defined. Rows in state `M0` and `manual`
 //! report skipped, never a fake pass. Run from the repo root:
 //! `cargo run -p tau-tools --bin gates`.
-// A panic in a test is a failure; a panic in the tool is a crash. The workspace
-// denies both panic lints, and test code opts back in here.
+// Test code opts out of the two panic lints at the crate root (R-workspace-09).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 use std::fs;
 use std::io::Write;

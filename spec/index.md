@@ -25,7 +25,7 @@ Counts: `cargo run -p tau-tools --bin spec -- count`.
 | tools | `crates/tau-core/tools` | [tools/spec.md](./tools/spec.md) | — |
 | acp | `crates/tau-acp` | [acp/spec.md](./acp/spec.md) | — |
 | surface | `crates/tau-app` | [surface/spec.md](./surface/spec.md) | — |
-| harness | `crates/tau-test`, `crates/tau-test/suites`, `crates/tau-tools` | [harness/spec.md](./harness/spec.md) | — |
+| harness | `crates/tau-test`, `crates/tau-tools` | [harness/spec.md](./harness/spec.md) | — |
 | config | `crates/tau-core/config` | [config/spec.md](./config/spec.md) | — |
 | workspace | root `Cargo.toml`, `crates/`, `.gitignore`, `contracts/`, `rust-toolchain.toml`, `docs/stack.md` | [workspace/spec.md](./workspace/spec.md) | — |
 
@@ -43,11 +43,11 @@ Corpus: 6 requirements. Each requirement arrives through a change.
 | `crates/` | workspace members, listed in `spec/workspace/spec.md` | any code |
 | `crates/tau-test/tests/features/` | Gherkin acceptance, tagged `@R-…` | writing/reading acceptance |
 | `crates/tau-test/tests/features/STEPS.md` | allowed step vocabulary | before writing a scenario |
-| `crates/tau-test/suites/` | eval suites, run by hand | deciding whether a feature is worth building |
+| `crates/tau-test/suites/` | eval suites, run by hand; no directory until a suite lands | deciding whether a feature is worth building |
 | `contracts/` | generated wire/tool schemas | touching the wire |
 | `.rumdl.toml` | doc-gate tool config | changing a doc gate |
 | `deny.toml`, `.config/nextest.toml` | dependency and test-lane gate config | changing a gate command |
 | `.github/` | CI workflow, Dependabot | changing what CI runs |
 | `docs/glossary.md` | canonical terms | a term is ambiguous |
 | `docs/stack.md` | decided dependencies and pins | choosing a dependency, bumping a pin |
-| `.agents/skills/`, `.agents/agents/` | skills; subagent definitions | task matches |
+| `.agents/skills/` | skills, loaded by description | task matches |

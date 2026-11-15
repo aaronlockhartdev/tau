@@ -34,11 +34,11 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | no local state tracked | `git ls-files target .tau > /tmp/tracked && test ! -s /tmp/tracked` | run |
 | toolchain pinned | `v=$(grep -o 'channel = ".*"' rust-toolchain.toml \| cut -d'"' -f2) && test -n "$v" && grep -qF "$v" docs/stack.md` the pinned channel is the stable release `docs/stack.md` names | run |
 | core has no UI logic | `cargo tree -p tau-core > /tmp/core-tree && ! grep -qe gpui -e tau-app -e tau-acp /tmp/core-tree` | run |
-| core has no runtime | `cargo tree -p tau-core --all-features > /tmp/core-tree && ! grep -qF -e tokio -e smol -e async-std -e async-io -e mio -e futures-executor -e async-executor -e async-task -e pollster /tmp/core-tree` | run |
-| core spawns nothing | `! grep -rqF -e '::spawn(' -e 'spawn_obj' -e 'spawn_local' -e 'spawn_blocking' -e 'LocalPool' -e 'LocalSet' -e 'LocalExecutor' -e 'LocalSpawner' -e 'TaskPool' -e 'block_on' -e 'run_until' -e 'runtime::Builder' -e 'Runtime::new' crates/tau-core` | run |
+| core has no runtime | `cargo tree -p tau-core --all-features > /tmp/core-tree && ! grep -qF -e tokio -e smol -e async-std -e async-io -e mio -e polling -e io-uring -e tokio-uring -e epoll -e glommio -e monoio -e embassy-executor -e concurrent-local-executor -e wasm-bindgen-futures -e futures-executor -e async-executor -e async-task -e pollster -e rayon /tmp/core-tree` | run |
+| core spawns nothing | `! grep -rqF -e '::spawn(' -e '.spawn(' -e 'spawn_obj' -e 'spawn_local' -e 'spawn_blocking' -e 'LocalPool' -e 'LocalSet' -e 'LocalExecutor' -e 'LocalSpawner' -e 'TaskPool' -e 'thread::Builder' -e 'thread::scope' -e 'process::Command' -e 'block_on' -e 'run_until' -e 'runtime::Builder' -e 'Runtime::new' crates/tau-core` | run |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
 | lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
-| headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |
+| headless session | `cargo run -p tau-test --example headless -- --tape <f>` — the driver that polls core's futures lives in a member that owns a runtime, not in `tau-core` (R-workspace-14, R-workspace-15) | M0 |
 | desktop | `cargo run -p tau-app` (stub bin, no surface) | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |
 

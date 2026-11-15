@@ -1,7 +1,6 @@
 //! The spec corpus tool (R-harness-01, R-harness-02): `id`, `new`, `count`,
 //! `archive`, `--check`. Run from the repo root, as the gate rows in `AGENTS.md` do.
-// A panic in a test is a failure; a panic in the tool is a crash. The workspace
-// denies both panic lints, and test code opts back in here.
+// Test code opts out of the two panic lints at the crate root (R-workspace-09).
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use std::collections::{BTreeMap, BTreeSet};

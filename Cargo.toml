@@ -27,5 +27,4 @@ await_holding_lock = "deny"
 await_holding_invalid_type = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
-# `unwrap_used`/`expect_used` deny everywhere except test code, which opts out
-# at the crate root with `#![cfg_attr(test, allow(...))]`.
+# Test code opts out of the two panic lints above, at the crate root (R-workspace-09).

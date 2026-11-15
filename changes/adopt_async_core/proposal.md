@@ -30,10 +30,11 @@ is one that every consumer inherits.
   its own comment: "Since we now have two executors, let's try to keep our footprint small"
   (all read 2026-11-15). Measured here, on 2026-11-15: the store is not the long I/O. Two processes
   committing to one store, 300 commits each, ran with 0 failures and a worst commit of 41 ms with
-  `busy_timeout` 5 s and every write failing at 0 (`add_session_storage` tasks.md:26). A child
-  instance meeting a setup lock counted 56 refusals before it was refused, with the retry budget
-  raised to 1000 attempts for the measurement — 50 ms of backoff each, so ~2.8 s spent waiting on a
-  lock (`add_session_storage` tasks.md:25). A model stream lives for seconds.
+  `busy_timeout` 5 s, and with the timeout at 0 every one of those writes failed, so the timeout is
+  load-bearing (`add_session_storage` tasks.md:26). A child instance meeting a setup lock counted 56
+  refusals and then opened, with the retry budget raised to 1000 attempts for the measurement — 50 ms
+  of backoff each, so ~2.8 s spent waiting on a lock a normal budget refuses
+  (`add_session_storage` tasks.md:25). A model stream lives for seconds.
   `futures` joins `tau-core` (`Stream` is not in std); trait objects over async methods box
   (`Pin<Box<dyn Future>>`); every payload that crosses a task boundary is `Send` + owned, a cost of
   any boundary a surface crosses, worked out where the wire types are written (`crates/tau-protocol`,
@@ -97,20 +98,25 @@ Open: the gaps this decision leaves, each with the tasks line that tracks it.
 - The provider HTTP leaf's runtime shape — share a tokio runtime that exists, build a 1-worker one
   where none exists — is measured by `changes/spike_gpui_surface` (its lines 10, 11) and lands with
   the leaf's own change, which writes the clause and the scenario. No row here sees a tokio binary
-  that builds a second runtime (tasks.md:12).
+  that builds a second runtime (tasks.md:14).
 - `Store` owns a non-`Sync` connection, so decision A forces one store-actor thread as its only
   caller, and no clause owns it; its request/reply types, and the clock trait that injects the three
   timers the Decision promises (the WAL checkpoint cadence, the setup backoff, the reload debounce),
   are unwritten design, not unsaid rules (tasks.md:10).
 - The gates name shapes, not absences: `core has no runtime` reads the tree at `--all-features` and
-  names eight crate families, and `core spawns nothing` greps the crate directory for thirteen
+  names nineteen crate families, and `core spawns nothing` greps the crate directory for seventeen
   literal tokens, so a hand-rolled poll loop (`now_or_never` with `noop_waker`) passes both.
   `tau-core`'s own tests meet that same pair, and their executor answer lands with core's first
   async code (tasks.md:11).
 - `await_holding_invalid_type` denies with no type list, so its blocking-`rusqlite::Connection` half
   cannot fire yet; the list is a task, not a rule (tasks.md:9).
 - The shape rests on two measurements that are handed to `spike_gpui_surface`, not run here
-  (tasks.md:7).
+- The shape rests on two spikes handed to `spike_gpui_surface` (tasks.md:7), not run here. The two
+  measurements the Decision quotes are the store's, recorded in `add_session_storage` tasks.md:25-26.
+- A payload crossing a task boundary must be `Send` and owned, and no clause carries it; `spec/protocol`
+  holds 0 requirements, so the wire types' owner writes it with the first payload that crosses (tasks.md:12).
+- The `headless session` gate row needs a driver that polls core's futures, which core may not host, so
+  its command names a member that owns a runtime (tasks.md:13).
 
 ## Sources (read 2026-11-15)
 
