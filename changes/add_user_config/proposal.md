@@ -25,4 +25,4 @@ Config is read in core, and the frontends subscribe to it, so ACP exposes the sa
 
 Eval: none needed. Reload and key application are deterministic, and the behaviour lane covers them.
 
-Open: none. The store is per-project, at `<project>/.tau/state.db`; that clause is R-session-18 in `add_session_storage`, and the two changes land together. Placement outside git is R-workspace-06's rule, not restated here.
+Open: none. The store is per-project, at `<project>/.tau/state.db`; that clause is live as R-session-18 in `spec/session/storage/spec.md`. Placement outside git is R-workspace-06's rule, not restated here.

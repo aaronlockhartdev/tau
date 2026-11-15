@@ -14,13 +14,13 @@ Cross-cutting invariants live here and are never restated in a domain:
 
 ## Domains
 
-Counts: `cargo run -p tau-tools --bin spec -- count`.
+Counts: `cargo run -p tau-tools --bin spec -- count`. An `Owns` cell names where a domain lives; a `crates/tau-core/<module>` entry is a module under `crates/tau-core/src/`, and a module arrives with the change that fills it.
 
 | Domain | Owns | Spec | Leaves |
 |---|---|---|---|
 | domain-model | `crates/tau-core/model` | [domain-model/spec.md](./domain-model/spec.md) | — |
 | protocol | `crates/tau-protocol` | [protocol/spec.md](./protocol/spec.md) | — |
-| session | `crates/tau-core/session`, `crates/tau-core/storage` | [session/spec.md](./session/spec.md) | — |
+| session | `crates/tau-core/session`, `crates/tau-core/storage` | [session/spec.md](./session/spec.md) | [storage/spec.md](./session/storage/spec.md) |
 | context | `crates/tau-core/context` | [context/spec.md](./context/spec.md) | — |
 | tools | `crates/tau-core/tools` | [tools/spec.md](./tools/spec.md) | — |
 | acp | `crates/tau-acp` | [acp/spec.md](./acp/spec.md) | — |
@@ -29,7 +29,7 @@ Counts: `cargo run -p tau-tools --bin spec -- count`.
 | config | `crates/tau-core/config` | [config/spec.md](./config/spec.md) | — |
 | workspace | root `Cargo.toml`, `crates/`, `.gitignore`, `contracts/`, `rust-toolchain.toml`, `docs/stack.md` | [workspace/spec.md](./workspace/spec.md) | — |
 
-Corpus: 6 requirements. Each requirement arrives through a change.
+Corpus: 27 requirements. Each requirement arrives through a change.
 
 ## Layout
 

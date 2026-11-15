@@ -270,7 +270,6 @@ async fn remove_project_directory(world: &mut World) {
     world.store = None;
     let root = world.project_root.clone();
     // Refuse to remove anything outside this repo's `target/tmp`: both paths compared
-    // Refuse to remove anything outside this repo's `target/tmp`: both paths compared
     // absolute, and never the shared directory itself.
     // shortcut: a lexical prefix check, enough while `project_root` only ever comes
     // from `project_root()`; canonicalize if a step ever takes a path from a feature.

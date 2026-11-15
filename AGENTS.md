@@ -38,7 +38,7 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | core spawns nothing | `! grep -rqF -e '::spawn(' -e '.spawn(' -e 'spawn_obj' -e 'spawn_local' -e 'spawn_blocking' -e 'LocalPool' -e 'LocalSet' -e 'LocalExecutor' -e 'LocalSpawner' -e 'TaskPool' -e 'thread::Builder' -e 'thread::scope' -e 'process::Command' -e 'block_on' -e 'run_until' -e 'runtime::Builder' -e 'Runtime::new' crates/tau-core` | run |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
 | lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
-| headless session | `cargo run -p tau-test --example headless -- --tape <f>` — the driver that polls core's futures lives in a member that owns a runtime, not in `tau-core` (R-workspace-14, R-workspace-15) | M0 |
+| headless session | `cargo run -p tau-test --example headless -- --tape <f>` (R-workspace-14, R-workspace-15) | M0 |
 | desktop | `cargo run -p tau-app` (stub bin, no surface) | M0 |
 | eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |
 

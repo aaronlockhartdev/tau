@@ -1,0 +1,110 @@
+# storage index
+
+## Requirements
+
+### R-session-01  One write connection per process
+
+WHILE a session is open THE SYSTEM SHALL hold one write connection to the project's store in core, in one process.
+Acceptance: @R-session-01
+Why: a second process's writer is serialized by SQLite, not refused.
+
+### R-session-02  Event and state commit together
+
+WHEN a tool call produces events THE SYSTEM SHALL commit those events and their state changes in one transaction.
+Acceptance: @R-session-02
+
+### R-session-03  Log rows and mutable rows separate
+
+WHEN state changes THE SYSTEM SHALL append to the `events` table and write mutable rows only in the state tables.
+Acceptance: @R-session-03
+Why: a copy of log content in a mutable table needs a reconciliation path, and it runs on the crash day.
+
+### R-session-04  Readers never hold across a turn
+
+WHILE a turn is in flight THE SYSTEM SHALL hold no open read transaction.
+Acceptance: @R-session-04
+Why: an open read transaction stalls the auto-checkpoint and grows the log.
+
+### R-session-05  Synchronous is NORMAL
+
+WHEN the store opens THE SYSTEM SHALL set `synchronous = NORMAL`.
+Acceptance: @R-session-05
+Why: NORMAL keeps a committed turn durable across an application crash; FULL is not needed for that.
+
+### R-session-06  A committed turn survives restart
+
+WHEN the process restarts after a turn committed THE SYSTEM SHALL return that turn in full.
+Acceptance: @R-session-06
+
+### R-session-07  The committed marker is stored
+
+WHEN a turn's transaction commits THE SYSTEM SHALL set that turn's committed marker in the same transaction.
+Acceptance: @R-session-07
+Why: a renderer that waits on the marker couples the screen to the checkpoint.
+
+### R-session-08  A fork copies a range
+
+WHEN a session is forked THE SYSTEM SHALL copy the selected event range into a new session and record the parent session.
+Acceptance: @R-session-08
+Why: a copied turn row arrives uncommitted, because a closed turn refuses the events a fork copies.
+
+### R-session-10  Search is an index query
+
+WHEN a user searches sessions THE SYSTEM SHALL answer from the FTS5 index over stored events.
+Acceptance: @R-session-10
+Why: the index is derived from the log and rebuilt from it, so its tables are no place for a fact that needs reconciling.
+
+### R-session-11  Export writes JSONL, the store stays
+
+WHEN a session is exported THE SYSTEM SHALL write JSONL and leave the store unchanged.
+Acceptance: @R-session-11
+
+### R-session-13  The harness queries the store
+
+WHEN the eval harness reads a run THE SYSTEM SHALL answer from store queries, not a per-tool log format.
+Acceptance: @R-session-13
+
+### R-session-18  The store is per project
+
+WHEN a session starts THE SYSTEM SHALL open its store at `<project>/.tau/state.db`.
+Acceptance: @R-session-18
+
+### R-session-28  The store keeps the event time
+
+WHEN the store appends an event THE SYSTEM SHALL record the event time the event carried.
+Acceptance: @R-session-28
+Why: a column default invents a second value for a fact the stream already carries.
+
+### R-session-29  A session records its creation
+
+WHEN the store records a session THE SYSTEM SHALL record its creation time in Unix milliseconds UTC.
+Acceptance: @R-session-29
+
+### R-session-30  A committed turn is closed
+
+IF a turn is committed THEN THE SYSTEM SHALL refuse a further event for it.
+Acceptance: @R-session-30
+Why: a committed turn is the record readers answer from, and a late event would rewrite it.
+
+### R-session-31  The log refuses update and delete
+
+IF an `events` row is updated or deleted THEN THE SYSTEM SHALL refuse the write.
+Acceptance: @R-session-31
+
+### R-session-32  A log row names a turn
+
+IF an event names a turn with no state row THEN THE SYSTEM SHALL refuse the write.
+Acceptance: @R-session-32
+Why: export and the eval harness join log rows to state rows, and an orphan row is a corrupt store.
+
+### R-session-33  A setup race opens
+
+WHEN a process opens the store while another process is setting it up THE SYSTEM SHALL wait the setup out and open the store for both.
+Acceptance: @R-session-33
+Why: a fresh store's setup locks the file, and SQLite's busy handler cannot settle that lock, so two processes opening a new store would fail.
+
+### R-session-34  A setup lock is refused
+
+IF a setup lock outlasts the store's retry budget THEN THE SYSTEM SHALL refuse the open with SQLite's busy error.
+Acceptance: @R-session-34
+Why: a lock that outlasts the budget is a fact a caller can act on, so the setup does not loop until it clears.

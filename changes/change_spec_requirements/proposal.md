@@ -2,7 +2,7 @@
 
 ## Context
 
-`spec/` carries 5 cross-cutting invariants and 0 requirements while 11 open proposals specify behaviour in prose. An audit of the corpus (2026-11-13) found 14 obligation groups with no path into `spec/`, 13 rules an implementer would violate without a `Why:` note, and 5 spec lines that are table mechanics, self-duplication, or narration rather than obligations. `spec/index.md` demands an `R-<DOMAIN>-<NN>` ID and a scenario for every requirement, which the unnumbered invariants cannot satisfy, so the rule reads as waived for the index. Decisions are recorded; specified behaviour is not, and that gap is where an implementer guesses.
+As of 2026-11-13, `spec/` carried 5 cross-cutting invariants and 0 requirements while 11 open proposals specified behaviour in prose. An audit of the corpus (2026-11-13) found 14 obligation groups with no path into `spec/`, 13 rules an implementer would violate without a `Why:` note, and 5 spec lines that are table mechanics, self-duplication, or narration rather than obligations. `spec/index.md` demands an `R-<DOMAIN>-<NN>` ID and a scenario for every requirement, which the unnumbered invariants cannot satisfy, so the rule reads as waived for the index. Decisions are recorded; specified behaviour is not, and that gap is where an implementer guesses.
 
 ## Options
 
@@ -13,7 +13,14 @@
 ## Decision
 
 A: an invariant is a rule with a named proof, everything else a numbered requirement with a delta clause. An implementer reads obligations they can check, and a rule nobody can prove stops posing as a spec line.
-Consequences: `spec/index.md` bullets name their gate, lint, lane, or review check, and the committed-marker clause moves to `add_session_storage`'s delta as R-session-07. A `workspace` domain takes the repo-layout rules as R-workspace-01..08 in `spec/workspace/spec.md`, the spec `add_repo_layout` now names as its destination. `spec-review` gains check 11b (owned rule, no delta → block); `spec-change` §3 says index files are edited in place and code lands with its delta clause; the templates list a delta clause, a step definition, and a `Why:` slot under ADDED. Two gates exist to make invariants checkable: `live output under load`, `steps current`. The obligations behind `spec lint` and `steps current` land as R-harness-01..03 in `spec/harness/spec.md`. Numerical file and corpus budgets are removed repo-wide: length is a judgement spec-review makes, `AGENTS.md` keeps commands and rules that bind every task, pins move to `docs/stack.md`, and an ID becomes permanent at its first scenario citation, which lets an unrun delta clause be renumbered inside its own change. A clause a change withdraws before it lands keeps its number, needs no acceptance ref, and leaves the archive nothing to delete; that rule lands as R-harness-11 in `spec/harness/spec.md`. The domain table and Layout table in `spec/index.md` name owned paths and what to read; neither restates a rule. See spec-authoring.
+Consequences: `spec/index.md` bullets name their gate, lint, lane, or review check, and the committed-marker clause moved to `add_session_storage`'s delta as R-session-07, and lands live as R-session-07 in `spec/session/storage/spec.md`. A `workspace` domain takes the repo-layout rules as R-workspace-01..08 in `spec/workspace/spec.md`, the spec `add_repo_layout` now names as its destination. `spec-review` gains check 11b (owned rule, no delta → block); `spec-change` §3 says index files are edited in place and code lands with its delta clause; the templates list a delta clause, a step definition, and a `Why:` slot under ADDED. Two gates exist to make invariants checkable: `live output under load`, `steps current`. The obligations behind `spec lint` and `steps current` land as R-harness-01..03 in `spec/harness/spec.md`. Numerical file and corpus budgets are removed repo-wide: length is a judgement spec-review makes, `AGENTS.md` keeps commands and rules that bind every task, pins move to `docs/stack.md`, and an ID becomes permanent at its first scenario citation, which lets an unrun delta clause be renumbered inside its own change. A clause a change withdraws before it lands keeps its number, needs no acceptance ref, and leaves the archive nothing to delete; that rule lands as R-harness-11 in `spec/harness/spec.md`. The domain table and Layout table in `spec/index.md` name owned paths and what to read; neither restates a rule. See spec-authoring.
 Eval: none needed.
 
-Open: none.
+Open: two lines keep this change open, each with the tasks line that tracks it.
+
+- R-workspace-08 (the write is disclosed) carries acceptance `@R-workspace-08`, and no scenario
+  carries that tag: nothing prints session start output, so the disclosure has no surface to
+  appear on. The scenario lands with the `headless session` gate row, which is `M0`. The clause
+  cannot archive before that tag runs, because a clause in `spec/` needs a resolvable acceptance
+  ref (tasks.md:17).
+- spec-review has not ticked this change (tasks.md:15).

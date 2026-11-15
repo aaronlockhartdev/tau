@@ -8,7 +8,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `committed marker`: the storage fact that a turn's transaction committed.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
-`invariant`: a rule in `spec/index.md` or a domain index that names the gate, lint, lane, or review check proving it.
+`invariant`: a rule in `spec/index.md` or a domain index, with the check that proves it.
 `root`: tau's user file root, `~/.tau`; XDG config home overrides the config path.
 `fork`: a child session that copies the parent's history and prompt cache.
 `steer`: send input to a running child, applied at its next turn boundary.
@@ -21,9 +21,13 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `tape`: a recorded model transcript that answers calls in the behaviour lane.
 `layer`: the agent-directory level or the project level of a config, context, or skill file.
 `tail`: the newest messages of a session, kept verbatim.
-`project`: the working directory's git root, or the working directory when it is not a git tree.
+`project`: the working directory's git root, or the working directory when it is not one.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
 `event time`: the moment core emits an event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any event.
 `run`: a session's turns in order, with the events each produced.
 `store setup`: a fresh store's journal upgrade and migrations, the steps a second process waits out.
+`log`: the `events` table — every event, append-only, one row each.
+`turn`: one request to the model and what it produced, numbered per session.
+`session`: one running agent's stored conversation: its row, its turns, its events.
+`checkpoint`: WAL frames copied into the store file; `TRUNCATE` empties the WAL.

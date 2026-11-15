@@ -110,7 +110,6 @@ Open: the gaps this decision leaves, each with the tasks line that tracks it.
   async code (tasks.md:11).
 - `await_holding_invalid_type` denies with no type list, so its blocking-`rusqlite::Connection` half
   cannot fire yet; the list is a task, not a rule (tasks.md:9).
-- The shape rests on two measurements that are handed to `spike_gpui_surface`, not run here
 - The shape rests on two spikes handed to `spike_gpui_surface` (tasks.md:7), not run here. The two
   measurements the Decision quotes are the store's, recorded in `add_session_storage` tasks.md:25-26.
 - A payload crossing a task boundary must be `Send` and owned, and no clause carries it; `spec/protocol`
