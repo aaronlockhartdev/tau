@@ -21,9 +21,8 @@ all = { level = "warn", priority = -1 }
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 perf = { level = "deny", priority = -1 }
-# The two `await_holding_*` denies are the mechanical form of a rule the lanes cannot test, at the
-# clauses' request (R-workspace-09, R-workspace-15). `await_holding_invalid_type` is the opt-in
-# half: `clippy.toml` names the blocking types one by one as core grows them.
+# The two `await_holding_*` denies are at the clause's request (R-workspace-09); the type list is a
+# `clippy.toml` item, not a level here (tasks.md in `changes/adopt_async_core`).
 await_holding_lock = "deny"
 await_holding_invalid_type = "deny"
 unwrap_used = "deny"

@@ -28,16 +28,16 @@ is one that every consumer inherits.
   the runtime sits in one leaf, `crates/reqwest_client`, which resolves `tokio::runtime::Handle::try_current()`
   first and only builds a `rt-multi-thread` runtime with `worker_threads(1)` when there is none —
   its own comment: "Since we now have two executors, let's try to keep our footprint small"
-  (all read 2026-11-15). Measured here, on 2026-11-15: the store is not the long I/O. 300 commits per
-  writer across two processes ran with 0 failures and a worst commit of 41 ms
-  (`add_session_storage` tasks.md:25). A child instance meeting a setup lock counted 28 refusals
-  before it opened — with the retry budget raised to 1000 attempts for the measurement — so 50 ms of
-  backoff each is ~1.4 s spent waiting on a lock (`add_session_storage` tasks.md:24). A model stream
-  lives for seconds, and nothing measured in the store comes near that.
+  (all read 2026-11-15). Measured here, on 2026-11-15: the store is not the long I/O. Two processes
+  committing to one store, 300 commits each, ran with 0 failures and a worst commit of 41 ms with
+  `busy_timeout` 5 s and every write failing at 0 (`add_session_storage` tasks.md:26). A child
+  instance meeting a setup lock counted 56 refusals before it was refused, with the retry budget
+  raised to 1000 attempts for the measurement — 50 ms of backoff each, so ~2.8 s spent waiting on a
+  lock (`add_session_storage` tasks.md:25). A model stream lives for seconds.
   `futures` joins `tau-core` (`Stream` is not in std); trait objects over async methods box
-  (`Pin<Box<dyn Future>>`); every payload crossing a task boundary is `Send` + owned — the ACP SDK's
-  published API is `Send`-bound throughout (docs.rs root, version unpinned, read 2026-11-15), and
-  `crates/tau-acp` has no dependency to inherit that from today; `futures::select!` is more verbose than
+  (`Pin<Box<dyn Future>>`); every payload that crosses a task boundary is `Send` + owned, a cost of
+  any boundary a surface crosses, worked out where the wire types are written (`crates/tau-protocol`,
+  `spec/protocol`); `futures::select!` is more verbose than
   `tokio::select!` (no default arm, needs `&mut` futures); the desktop binary runs two schedulers,
   gpui's and the HTTP leaf's, and that bridge has known sharp edges: the leaf's own regression test
   covers a hand-rolled `StreamReader` that dropped its reader on `Pending` and silently truncated
@@ -94,19 +94,19 @@ Eval: none needed — the decision is about who polls what, and no turn's qualit
 
 Open: the gaps this decision leaves, each with the tasks line that tracks it.
 
-- The provider HTTP leaf's runtime rule — share a tokio runtime that exists, build a 1-worker one
-  only where none exists — is decided and spiked, not gated: a tokio binary that builds a second
-  runtime turns nothing red. Its clause and scenario land with the leaf's own change (tasks.md:13).
+- The provider HTTP leaf's runtime shape — share a tokio runtime that exists, build a 1-worker one
+  where none exists — is measured by `changes/spike_gpui_surface` (its lines 10, 11) and lands with
+  the leaf's own change, which writes the clause and the scenario. No row here sees a tokio binary
+  that builds a second runtime (tasks.md:12).
 - `Store` owns a non-`Sync` connection, so decision A forces one store-actor thread as its only
   caller, and no clause owns it; its request/reply types, and the clock trait that injects the three
   timers the Decision promises (the WAL checkpoint cadence, the setup backoff, the reload debounce),
   are unwritten design, not unsaid rules (tasks.md:10).
-- `Send` and owned payloads on `tau-protocol` types are a cost decision A accepts; no clause in
-  `spec/protocol` says it, and the ACP frontend's change is where a scenario would (tasks.md:11).
-- The gates cut both ways: `core has no runtime` reads the dependency tree, dev-dependencies
-  included, and `core spawns nothing` greps the crate directory, test modules included, so
-  `tau-core` has no means of polling a future in its own test that passes both. That answer lands
-  with core's first async code (tasks.md:12).
+- The gates name shapes, not absences: `core has no runtime` reads the tree at `--all-features` and
+  names eight crate families, and `core spawns nothing` greps the crate directory for thirteen
+  literal tokens, so a hand-rolled poll loop (`now_or_never` with `noop_waker`) passes both.
+  `tau-core`'s own tests meet that same pair, and their executor answer lands with core's first
+  async code (tasks.md:11).
 - `await_holding_invalid_type` denies with no type list, so its blocking-`rusqlite::Connection` half
   cannot fire yet; the list is a task, not a rule (tasks.md:9).
 - The shape rests on two measurements that are handed to `spike_gpui_surface`, not run here
