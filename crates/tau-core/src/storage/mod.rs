@@ -265,7 +265,8 @@ impl Store {
     /// unchecked rows. It is set outside a transaction, where SQLite honours it — inside
     /// one the PRAGMA is a no-op.
     /// A setup that stays locked past the retry budget is refused with SQLite's busy
-    /// error: the open is bounded, not waited on forever.
+    /// error: a setup absorbs a foreign writer for ~1 s (the journal upgrade) to ~3 s (the
+    /// migrations), where the 5 s timeout restored after setup absorbs a hundred times more.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let path = path.as_ref();
         if let Some(dir) = path.parent().filter(|dir| !dir.as_os_str().is_empty()) {
@@ -428,7 +429,8 @@ impl Store {
     /// The refusals this process's setup waited out (R-session-33), as the largest count
     /// of any one setup step: 0 means no other instance held the setup, so the retry never
     /// ran. It answers for the process, not for this store's path; it exists so a scenario
-    /// can tell a met lock from a beat that was too short.
+    /// can tell a met lock from a beat that was too short. It never resets, so a nonzero
+    /// count can belong to an earlier open in the same process.
     #[must_use]
     pub fn setup_refusals(&self) -> u32 {
         SETUP_REFUSALS.load(Ordering::Relaxed)

@@ -26,3 +26,4 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `event time`: the moment core emits an event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any event.
 `run`: a session's turns in order, with the events each produced.
+`store setup`: a fresh store's journal upgrade and migrations, the steps a second process waits out.

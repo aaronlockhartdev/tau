@@ -29,8 +29,10 @@ is one that every consumer inherits.
   first and only builds a `rt-multi-thread` runtime with `worker_threads(1)` when there is none —
   its own comment: "Since we now have two executors, let's try to keep our footprint small"
   (all read 2026-11-15). Measured here: the store is not the long I/O — a commit is ~0.06 ms and the
-  worst commit under two writers is 41 ms, while a model stream is seconds; the setup race a sync
-  open survives is 28 refusals in ~1.4 s (add_session_storage tasks.md:24, 2026-11-15). Cost:
+  (all read 2026-11-15). Measured here: the store is not the long I/O — a commit was measured at ~0.06 ms
+  in a probe since deleted, and the worst commit under two writers is 41 ms
+  (`add_session_storage` tasks.md:25), while a model stream lives for seconds; a setup race was waited out
+  at 28 refusals, and 50 ms apart that is ~1.4 s (`add_session_storage` tasks.md:24, both 2026-11-15).
   `futures` joins `tau-core` (`Stream` is not in std); trait objects over async methods box
   (`Pin<Box<dyn Future>>`); every payload crossing a task boundary is `Send` + owned (the ACP SDK
   demands `Send` handlers and connection futures anyway); `futures::select!` is more verbose than

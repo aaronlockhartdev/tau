@@ -718,13 +718,25 @@ struct SetupChild {
 /// file in WAL first, so the upgrade succeeds and the migrations are what is refused. The
 /// witness under the lock proves the store's setup had not finished while the lock stood.
 fn setup_race(leg: &str, beat: u64) -> Result<SetupChild, String> {
-    let path = store_path("setup-race");
     // The locking connection opens the file before the store does, and only the store
     // creates the directory, so the directory is made here.
+    let path = store_path("setup-race");
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("creating the store directory: {e}"))?;
     }
-    let locker = rusqlite::Connection::open(&path)
+    let outcome = run_setup_race(&path, leg, beat);
+    if outcome.is_err() {
+        // A red path removes its own scratch: the Then step that deletes the directory
+        // never runs once the scenario has already failed.
+        if let Some(dir) = path.parent() {
+            std::fs::remove_dir_all(dir).ok();
+        }
+    }
+    outcome
+}
+
+fn run_setup_race(path: &std::path::Path, leg: &str, beat: u64) -> Result<SetupChild, String> {
+    let locker = rusqlite::Connection::open(path)
         .map_err(|e| format!("opening the locking connection: {e}"))?;
     // A cold setup has no store tables yet, so the lock is held on a marker table of the
     // step's own. `execute_batch` leaves the transaction open, which is the point: an open
@@ -750,7 +762,7 @@ fn setup_race(leg: &str, beat: u64) -> Result<SetupChild, String> {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("spawning the setup child: {e}"))?;
-    let outcome = race_behind_the_lock(&mut child, &locker, &path, leg, beat);
+    let outcome = race_behind_the_lock(&mut child, &locker, path, leg, beat);
     // The child is reaped on every path, red included: a child left opening a store keeps
     // writing into a directory this scenario deletes, and the store recreates it.
     child.kill().ok();
@@ -795,8 +807,11 @@ fn race_behind_the_lock(
         return Err(format!("the setup child spoke first with {reaching:?}"));
     }
     // shortcut: a fixed beat, held long enough for the child to meet the lock and be
-    // refused at least once. It is not what makes the scenario non-vacuous: the refusals
-    // the child reports are, and a beat that ends too early turns the scenario red.
+    // refused at least once. The beat is not what makes the scenario non-vacuous: the
+    // refusals the child reports are. Cutting every beat to 0 turns all three scenarios
+    // red — `the second instance met no refusal, so the setup race was never measured`,
+    // and on the bounded leg `the second instance did not report a busy store: exit 0;
+    // opened refusals=0`.
     std::thread::sleep(std::time::Duration::from_millis(beat));
     // The setup is provably unfinished on this side of the lock, while the lock stands.
     if leg == "migrations" {

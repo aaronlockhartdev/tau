@@ -48,7 +48,7 @@ Feature: Session storage
     When a second instance opens the store while its migrations are locked
     Then the store on disk is in WAL mode
 
-  @R-session-33
+  @R-session-34
   Scenario: A setup lock that outlasts the budget is refused
     # The retry is bounded, so an instance meeting a setup that will not clear is refused
     # with SQLite's busy error rather than parked.
