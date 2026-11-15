@@ -7,7 +7,7 @@ Decided, with pins; a deviation needs a change. A pin is a fact, so it lives her
 | Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` (mock LLM, harness, eval) · `tau-tools` (spec CLI) | workspace |
 | Toolchain | Rust stable, latest release, bumped on release; `rust-toolchain.toml` pins it, `resolver = "3"` resolves MSRV-aware | 1.100.0 (2026-11-12) |
 | UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
-| Async | tokio | latest stable |
+| Async | futures at core's boundary: no runtime crate in `tau-core`, each binary polls on the scheduler it already has, and the provider HTTP leaf builds a 1-worker tokio runtime only in a binary that has none (`adopt_async_core`) | tokio latest stable, a `crates/tau-test` dev-dependency; `futures` joins this row when it lands in `tau-core` |
 | Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
 | Unit + surface tests | `cargo nextest` (`-P ci` in CI: `.config/nextest.toml`), `proptest`, `#[gpui::test]` | nextest 0.9.152 · proptest 1.12 |
 | Advisory gates | `cargo-deny` reads RustSec; Dependabot reads GitHub's reviewed advisories; the two drifted apart in 2026, so both run | cargo-deny 0.20.2 |

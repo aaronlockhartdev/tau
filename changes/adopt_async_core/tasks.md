@@ -1,0 +1,8 @@
+# Tasks: adopt_async_core
+
+- [x] gate: AGENTS.md gains rows `core has no runtime` (`cargo tree -p tau-core`, grep for a runtime crate) and `core spawns nothing` (grep `crates/tau-core/src` for `tokio::spawn`, `async_std::spawn`, `block_on`, `Runtime::new`), both state `run` and green today; R-workspace-14, R-workspace-15: delta clauses in changes/adopt_async_core/specs/workspace/spec.md; archive applies them
+- [x] R-workspace-09: root `Cargo.toml` `[workspace.lints.clippy]` gains `await_holding_lock` and `await_holding_invalid_type` at `deny`; the `lints` gate row is green
+- [x] docs: `docs/stack.md`'s Async row states the rule — no runtime crate in `tau-core`, each binary polls on the scheduler it has, and the provider HTTP leaf builds a 1-worker tokio runtime only in a binary that has none — and pins tokio as today's only owner, with `futures` named as the pin that joins when it lands in `tau-core`
+- [x] hand over spikes to `changes/spike_gpui_surface/tasks.md` (lines 9, 10), where the surface clauses are written from: the cross-executor stream (bytes, cancel-by-drop, main-thread CPU of a TLS + gzip response), and the push queue at full token rate (bounded lossy coalesces, unbounded grows memory)
+- [x] check: the 15 gate rows the ci lane runs are PASS, including the two rows this change adds (`core has no runtime`, `core spawns nothing`); `workspace layout` manual, checked by hand — 6 crates match `docs/stack.md`'s Crates row, each named after its directory, root manifest sets `resolver = "3"`; `eval` manual, nothing to run; `live output under load`, `headless session` and `desktop` skipped (M0)
+- [ ] spec-review (reviewer ticks)

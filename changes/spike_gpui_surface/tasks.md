@@ -7,6 +7,8 @@
 - [ ] spike: open block renders monospace; table grids lay out at close
 - [ ] spike: text field, IME composition, and paste under load
 - [ ] spike: AccessKit tree present in a headless window
+- [ ] spike: a stream from a tokio-owned HTTP leaf, polled on gpui's executor: bytes arrive, cancel-by-drop stops it, and the main-thread CPU of a real TLS + gzip response is measured — `adopt_async_core`'s two-scheduler topology rests on this
+- [ ] spike: a push queue at full token rate: a bounded lossy queue coalesces, an unbounded one grows the surface's memory, both inside the frame budget row 4 sets — the surface's event-stream clause is written from this
 - [ ] spike: record the fallback B verdict against closed-block immutability
 - [ ] spike: write results into proposal.md
 - [ ] spec-review (reviewer ticks)

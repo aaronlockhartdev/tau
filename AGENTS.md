@@ -34,6 +34,8 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | no local state tracked | `git ls-files target .tau > /tmp/tracked && test ! -s /tmp/tracked` | run |
 | toolchain pinned | `v=$(grep -o 'channel = ".*"' rust-toolchain.toml \| cut -d'"' -f2) && test -n "$v" && grep -qF "$v" docs/stack.md` the pinned channel is the stable release `docs/stack.md` names | run |
 | core has no UI logic | `cargo tree -p tau-core > /tmp/core-tree && ! grep -qe gpui -e tau-app -e tau-acp /tmp/core-tree` | run |
+| core has no runtime | `cargo tree -p tau-core > /tmp/core-tree && ! grep -qe tokio -e smol -e async-std -e async-io -e mio /tmp/core-tree` | run |
+| core spawns nothing | `! grep -rq -e tokio::spawn -e async_std::spawn -e block_on -e Runtime::new crates/tau-core/src` | run |
 | live output under load | `cargo run -p tau-app --example tape_render -- --tape <f> --storage` renders at full token rate with a writer and a checkpoint running, inside the frame budget `spike_gpui_surface` sets, and the render path reads no storage | M0 |
 | lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
 | headless session | `cargo run -p tau-core --example run -- --tape <f>` | M0 |

@@ -21,6 +21,12 @@ all = { level = "warn", priority = -1 }
 correctness = { level = "deny", priority = -1 }
 suspicious = { level = "deny", priority = -1 }
 perf = { level = "deny", priority = -1 }
+# No lock is held across an await, and no blocking call runs inside a polled
+# future: core's callers own the executor, so this is a rule, not a runtime
+# choice (R-workspace-09, R-workspace-15). `await_holding_invalid_type` is the
+# opt-in half, listing the blocking types one by one as core grows them.
+await_holding_lock = "deny"
+await_holding_invalid_type = "deny"
 unwrap_used = "deny"
 expect_used = "deny"
 # `unwrap_used`/`expect_used` deny everywhere except test code, which opts out
