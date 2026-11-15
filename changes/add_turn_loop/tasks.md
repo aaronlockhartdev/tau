@@ -2,7 +2,7 @@
 
 One line per committable unit. Implementation lines name an `R-ID`. Spikes and gates first.
 Lands after `adopt_block_log`: these clauses name blocks, requests, and state pointers.
-IDs: this change claims R-protocol-01, 02 and 06; R-tools-30 and 31; R-workspace-16..18; R-agent-01..15;
+IDs: this change claims R-protocol-01..03; R-tools-30 and 31; R-workspace-16..18; R-agent-01..15;
 R-session-41..44. `add_realtime_gui_output` holds R-protocol-04 in the same domain; the corpus check
 requires every number up to a domain's highest to be issued, so the range is split between the two open
 changes, recorded here and in that change's tasks.md.
@@ -39,6 +39,6 @@ changes, recorded here and in that change's tasks.md.
 - [ ] lane: `crates/tau-test/tests/features/agent.feature` driven by the in-process stub provider; steps in `crates/tau-test/src/steps/agent.rs`; `STEPS.md` regenerates
 - [ ] docs: `docs/stack.md` pins for `futures`, `tracing`, `uuid`, `petname`, and the row naming the provider leaf when it lands
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops) and `delta` in its token sense, both used by these clauses and defined nowhere
-- [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before `change_spec_requirements`, which archives on the scenario `@R-workspace-08` this change's R-agent-15 writes; at archive, `spec/agent/spec.md` gains 15 requirements, `spec/tools/spec.md` gains 2, `spec/protocol/spec.md` gains 3, `spec/workspace/spec.md` gains 3, `spec/session/spec.md`'s storage leaf gains 4, and `spec/index.md`'s Corpus count and Leaves cells move by the same counts read off the files
+`spec/workspace/spec.md` gains 3
 - [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool, spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under load, headless session, desktop — reported `skipped (M0)`; manual rows — workspace layout, eval — reported by hand
 - [ ] spec-review (reviewer ticks)

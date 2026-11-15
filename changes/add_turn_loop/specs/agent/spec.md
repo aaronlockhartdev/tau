@@ -8,6 +8,7 @@ Apply to `spec/agent/spec.md` at archive time, for a domain with no children. De
 
 WHEN the provider stream closes a block THE SYSTEM SHALL commit that block.
 Acceptance: @R-agent-01
+Why: a token delta is a prefix of the answer, and a row per delta fills the index with text that is never sent again.
 
 ### R-agent-02  A delta never commits
 
@@ -31,6 +32,7 @@ Why: a call with no result is refused by the provider, so the session cannot con
 
 WHEN a run is cancelled mid-stream THE SYSTEM SHALL commit the text received so far.
 Acceptance: @R-agent-05
+Why: the text received is the part of the answer the user read, and a cancel that drops it loses the record of a turn.
 
 ### R-agent-06  A cancel leaves no open call
 
@@ -42,16 +44,19 @@ Why: a call left open poisons the next request, which the provider rejects.
 
 WHEN a provider request fails before any block THE SYSTEM SHALL record the request row with its reason.
 Acceptance: @R-agent-07
+Why: a refusal that records nothing leaves a session whose requests are invisible, and the budget is spent on them.
 
 ### R-agent-08  A stream gap fails the request
 
 IF a provider stream skips a number in its sequence THEN THE SYSTEM SHALL fail the request with the stream-gap reason.
 Acceptance: @R-agent-08
+Why: a stream that skipped events is an answer with holes, and a hole recorded as content is a lie in the log.
 
 ### R-agent-09  Resume closes an open request
 
 WHEN a session resumes and the newest request has no reason THE SYSTEM SHALL close it as interrupted before a new request starts.
 Acceptance: @R-agent-09
+Why: a request row with no reason reads as still running, and the next request would append to a stream that died.
 
 ### R-agent-10  Steering lands at the boundary
 
@@ -61,13 +66,15 @@ Why: recording at arrival places the input before the output it did not cause.
 
 ### R-agent-11  The steering queue is bounded
 
-THE SYSTEM SHALL refuse steering input past the configured queue cap, the key owned by the config change.
+THE SYSTEM SHALL refuse steering input past the configured queue cap.
 Acceptance: @R-agent-11
+Why: an unbounded queue lets a user type a session's worth of input into a run that cannot answer it.
 
 ### R-agent-12  Stop conditions come from config
 
 THE SYSTEM SHALL stop the loop at the configured token budget, wall clock limit, or repeated tool call, and record the reason.
 Acceptance: @R-agent-12
+Why: a run with no ceiling spends tokens and wall clock on a loop that will not end by itself.
 
 ### R-agent-13  Injections land in named slots
 
@@ -85,3 +92,4 @@ Why: pointers rebuild the context only if every byte sent is in the log.
 
 WHEN a session opens THE SYSTEM SHALL emit its session start output before any block.
 Acceptance: @R-agent-15
+Why: a session that opens silently hides the store it just created in the user's own directory.
