@@ -50,11 +50,6 @@ WHEN a session is forked THE SYSTEM SHALL copy the selected event range into a n
 Acceptance: @R-session-08
 Why: a copied turn row arrives uncommitted, because a closed turn refuses the events a fork copies.
 
-### R-session-09  Compaction appends a summary
-
-WHEN a session is compacted THE SYSTEM SHALL append a summary event and mark the visible range.
-Acceptance: @R-session-09
-
 ### R-session-10  Search is an index query
 
 WHEN a user searches sessions THE SYSTEM SHALL answer from the FTS5 index over stored events.
@@ -111,6 +106,10 @@ Acceptance: @R-session-32
 Why: export and the eval harness join log rows to state rows, and an orphan row is a corrupt store.
 
 ## REMOVED Requirements
+
+### R-session-09  Compaction appends a summary
+
+Why: observational memory owns context management, and a summary turn invalidates the prompt prefix memory keeps stable.
 
 ### R-session-12  No network filesystem
 

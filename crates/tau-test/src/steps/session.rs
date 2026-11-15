@@ -4,6 +4,8 @@
 //! of the lane's own, `synchronous` on the store's connection, and the schema refuses
 //! writes (R-session-03, 04, 05). A crash is a child process the lane kills
 //! (`bin/crash_store.rs`), and the store is read back after it dies (R-session-06, 07).
+//! A fork copies a range, the index answers a search, an export writes JSONL, and a run
+//! is answered from the two tables (R-session-08, 10, 11, 13).
 
 use crate::steps::{assert_clean, report};
 use crate::world::World;
@@ -830,11 +832,8 @@ async fn checkpoint_has_no_reader(world: &mut World) {
     assert_clean(world, "the log checkpoints with no reader in the way");
 }
 
-/// The fork's session id, and the summary event a compaction appends. The kind is the
-/// lane's own copy of core's, because the clause's fact is the shape in the log.
+/// The fork's session id.
 const FORK: &str = "lane-fork";
-const SUMMARY_KIND: &str = "summary";
-const SUMMARY: &str = "42 turns compacted";
 
 #[when("the session is forked at the committed turn")]
 async fn fork_the_session(world: &mut World) {
@@ -881,66 +880,6 @@ async fn fork_holds_the_copy(world: &mut World) {
     assert_clean(
         world,
         "the fork holds the copied events and names its parent",
-    );
-}
-
-#[when("the session is compacted at the next turn")]
-async fn compact_the_session(world: &mut World) {
-    // R-session-09: the summary is a turn of its own, so a later turn is never reused.
-    let Some(store) = world.store.as_mut() else {
-        no_store(world);
-        return;
-    };
-    if let Err(e) = store.compact(SESSION, TURN + 1, SUMMARY) {
-        report(world, format!("the compaction failed: {e}"));
-    }
-}
-
-#[then("the summary is in the log and the visible range starts at its turn")]
-async fn summary_marks_the_visible_range(world: &mut World) {
-    // R-session-09: the summary is appended, what came before stays in the log, and the
-    // session is visible from the summary's turn.
-    let mut findings = Vec::new();
-    if let Some(store) = world.store.as_ref() {
-        match (store.events(SESSION, TURN), store.events(SESSION, TURN + 1)) {
-            (Ok(before), Ok(summary)) => {
-                if before.len() != EVENTS.len() {
-                    findings.push(format!(
-                        "{} events are stored before the compaction, expected {}",
-                        before.len(),
-                        EVENTS.len()
-                    ));
-                }
-                let text: Vec<(&str, &str)> = summary
-                    .iter()
-                    .map(|(_, kind, payload)| (kind.as_str(), payload.as_str()))
-                    .collect();
-                if text != [(SUMMARY_KIND, SUMMARY)] {
-                    findings.push(format!(
-                        "the compacted turn's events are {text:?}, expected [({SUMMARY_KIND:?}, {SUMMARY:?})]"
-                    ));
-                }
-            }
-            (Err(e), _) => findings.push(format!("reading the events before the summary: {e}")),
-            (_, Err(e)) => findings.push(format!("reading the summary event: {e}")),
-        }
-        match store.visible_from(SESSION) {
-            Ok(Some(turn)) if turn == TURN + 1 => {}
-            Ok(Some(turn)) => findings.push(format!(
-                "the session is visible from turn {turn}, expected {}",
-                TURN + 1
-            )),
-            Ok(None) => findings.push("the session marks no visible range".to_string()),
-            Err(e) => findings.push(format!("reading the visible range: {e}")),
-        }
-    }
-    for finding in findings {
-        report(world, finding);
-    }
-    clean_store(world);
-    assert_clean(
-        world,
-        "the summary is in the log and the visible range starts at its turn",
     );
 }
 
@@ -1010,8 +949,6 @@ async fn export_the_session(world: &mut World) {
     }
 }
 
-/// The state a compaction leaves on its turn; core keeps its own copy.
-const COMPACTED_STATE: &str = "compacted";
 /// The state of a turn that produced no events.
 const EMPTY_STATE: &str = "awaiting-user";
 
@@ -1025,7 +962,7 @@ async fn commit_a_turn_with_no_events(world: &mut World) {
     };
     let turn = Turn {
         session: SESSION,
-        turn: TURN + 2,
+        turn: TURN + 1,
         state: EMPTY_STATE,
         events: &[],
     };
@@ -1037,8 +974,8 @@ async fn commit_a_turn_with_no_events(world: &mut World) {
 #[then("the run answers every turn of the session with its events")]
 async fn run_answers_from_the_store(world: &mut World) {
     // R-session-13: a run is a query over the state table and the log — each turn's
-    // state, its committed marker, its events. The summary turn is a committed turn, and
-    // a turn that produced no events arrives with an empty list, not as a missing turn.
+    // state, its committed marker, its events. A turn that produced no events arrives with
+    // an empty list, not as a missing turn.
     let mut findings = Vec::new();
     if let Some(store) = world.store.as_ref() {
         match store.run(SESSION) {
@@ -1061,53 +998,21 @@ async fn run_answers_from_the_store(world: &mut World) {
                     )),
                     None => findings.push("the run answers no turns".to_string()),
                 }
-                match run.get(1) {
-                    None => {
-                        findings.push(format!("the run answers {} turns, expected 3", run.len()))
-                    }
-                    Some(second) => {
-                        if second.turn != TURN + 1 {
-                            findings.push(format!(
-                                "the run's second turn is {}, expected {}",
-                                second.turn,
-                                TURN + 1
-                            ));
-                        }
-                        if !second.committed {
-                            findings.push("the summary turn is not committed".to_string());
-                        }
-                        if second.state != COMPACTED_STATE {
-                            findings.push(format!(
-                                "the summary turn's state is {:?}, expected {COMPACTED_STATE:?}",
-                                second.state
-                            ));
-                        }
-                        let kinds: Vec<(&str, &str)> = second
-                            .events
-                            .iter()
-                            .map(|(_, kind, payload)| (kind.as_str(), payload.as_str()))
-                            .collect();
-                        if kinds != [(SUMMARY_KIND, SUMMARY)] {
-                            findings.push(format!(
-                                "the summary turn's events are {kinds:?}, expected [({SUMMARY_KIND:?}, {SUMMARY:?})]"
-                            ));
-                        }
-                    }
-                }
                 let want = RunTurn {
-                    turn: TURN + 2,
+                    turn: TURN + 1,
                     state: EMPTY_STATE.to_string(),
                     committed: true,
                     events: Vec::new(),
                 };
-                match run.get(2) {
+                match run.get(1) {
                     Some(got) if *got == want => {}
                     Some(got) => findings.push(format!(
-                        "the run's third turn is {got:?}, expected a turn with no events: {want:?}"
+                        "the run's second turn is {got:?}, expected a turn with no events: {want:?}"
                     )),
-                    None => {
-                        findings.push("the run answers no turn that produced no events".to_string())
-                    }
+                    None => findings.push(format!(
+                        "the run answers {} turns, expected 2 with a turn that produced no events",
+                        run.len()
+                    )),
                 }
             }
             Err(e) => findings.push(format!("reading the run: {e}")),

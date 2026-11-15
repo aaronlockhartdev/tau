@@ -32,7 +32,6 @@ const EVENTS_SELECT: &str =
 const TURN_SELECT: &str = "SELECT state FROM turn WHERE session = ?1 AND turn = ?2";
 const SESSION_SELECT: &str = "SELECT created FROM sessions WHERE id = ?1";
 const PARENT_SELECT: &str = "SELECT parent FROM sessions WHERE id = ?1";
-const VISIBLE_SELECT: &str = "SELECT visible_from_turn FROM sessions WHERE id = ?1";
 /// A turn's state row, inserted before its events (the composite foreign key wants it
 /// first) and re-written when the turn is re-opened.
 const TURN_UPSERT: &str = "INSERT INTO turn (session, turn, state) VALUES (?1, ?2, ?3)
@@ -51,9 +50,6 @@ const EXPORT_SELECT: &str =
 const RUN_SELECT: &str = "SELECT t.turn, t.state, t.committed, e.ts, e.kind, e.payload
      FROM turn t LEFT JOIN events e ON e.session = t.session AND e.turn = t.turn
      WHERE t.session = ?1 ORDER BY t.turn, e.seq";
-/// A compaction appends this kind, and its turn's state says the same.
-const SUMMARY_KIND: &str = "summary";
-const COMPACTED_STATE: &str = "compacted";
 /// One tool call's worth of storage: the turn's new state and the events it
 /// produced, as `(kind, payload, ts)` triples in the order they are appended.
 /// `ts` is the event time (glossary): the caller stamps it, the store records it.
@@ -135,8 +131,7 @@ fn migrations() -> Migrations<'static> {
         "CREATE TABLE sessions (
              id TEXT PRIMARY KEY,
              parent TEXT REFERENCES sessions(id),
-             created INTEGER NOT NULL,
-             visible_from_turn INTEGER
+             created INTEGER NOT NULL
          );
          CREATE TABLE turn (
              session TEXT NOT NULL REFERENCES sessions(id),
@@ -376,34 +371,6 @@ impl Store {
         Ok(())
     }
 
-    /// Append a summary event for a turn and mark the session visible from that turn
-    /// (R-session-09). The log keeps every event: the mark is where a transcript
-    /// starts, not what is dropped. The marker rides the same transaction as the
-    /// summary, as any other turn's does (R-session-07). The turn must not be committed:
-    /// the log refuses an event for a committed turn, so the whole compaction aborts. A
-    /// turn row that exists uncommitted has its state rewritten and is closed.
-    pub fn compact(&mut self, session: &str, turn: i64, summary: &str) -> Result<(), Error> {
-        let tx = self.conn.transaction()?;
-        tx.execute(
-            TURN_UPSERT,
-            rusqlite::params![session, turn, COMPACTED_STATE],
-        )?;
-        tx.execute(
-            EVENT_INSERT,
-            rusqlite::params![session, turn, now_ms(), SUMMARY_KIND, summary],
-        )?;
-        tx.execute(
-            "UPDATE turn SET committed = 1 WHERE session = ?1 AND turn = ?2",
-            rusqlite::params![session, turn],
-        )?;
-        tx.execute(
-            "UPDATE sessions SET visible_from_turn = ?2 WHERE id = ?1",
-            rusqlite::params![session, turn],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-
     /// The session a fork copied from, if it is a fork. A root session stores no parent,
     /// and an id that is not stored answers the same way, so `None` covers both.
     pub fn parent(&self, session: &str) -> Result<Option<String>, Error> {
@@ -416,23 +383,11 @@ impl Store {
             .flatten())
     }
 
-    /// The turn a compacted session is visible from, if it was compacted.
-    pub fn visible_from(&self, session: &str) -> Result<Option<i64>, Error> {
-        let mut stmt = self.conn.prepare(VISIBLE_SELECT)?;
-        let mut rows = stmt.query(rusqlite::params![session])?;
-        Ok(rows
-            .next()?
-            .map(|row| row.get::<_, Option<i64>>(0))
-            .transpose()?
-            .flatten())
-    }
-
     /// Search the stored events, answered by the FTS5 index (R-session-10). The query is
     /// FTS5 syntax, so a caller can name a column (`kind:"tool_call"`) or a phrase; a
     /// query with no match answers empty. Text typed by a user is not a query: `"`, `:`,
     /// `-` and parens are syntax, so the caller quotes it before it arrives here. Every
-    /// stored event is searched, including events a compaction hid from the transcript
-    /// (R-session-09 marks where a transcript starts, not what is dropped).
+    /// stored event is searched: the index mirrors the log row for row.
     pub fn search(&self, query: &str) -> Result<Vec<Hit>, Error> {
         let mut stmt = self.conn.prepare(SEARCH_SELECT)?;
         let rows = stmt
@@ -454,6 +409,9 @@ impl Store {
     /// nothing to them. Writing an export reads the store and never writes it. An id that
     /// is not stored writes nothing and answers `Ok`. A line's keys arrive in the order
     /// `serde_json`'s map gives them — alphabetical — not the order written here.
+    /// shortcut: the read stays open while the lines are written, so an export to a
+    /// slow writer holds a read transaction for as long as it takes; bound it by session
+    /// range when the CLI opens the file.
     pub fn export_jsonl(&self, session: &str, w: &mut impl Write) -> Result<(), Error> {
         let mut stmt = self.conn.prepare(EXPORT_SELECT)?;
         let mut rows = stmt.query(rusqlite::params![session])?;
@@ -482,11 +440,8 @@ impl Store {
     /// state, its committed marker, and the events it produced, in log order. A turn
     /// that produced no events arrives with an empty list, and an id that is not stored
     /// answers empty. One query over the two tables, so a reader parses no format. No
-    /// range and no `visible_from_turn`: every turn and every payload arrives
+    /// range: every turn and every payload arrives
     /// materialised, which a caller reading a window of a long session will bound.
-    /// shortcut: the read stays open while the lines are written, so an export to a
-    /// slow writer holds a read transaction for as long as it takes; bound it by session
-    /// range when the CLI opens the file.
     pub fn run(&self, session: &str) -> Result<Vec<RunTurn>, Error> {
         let mut stmt = self.conn.prepare(RUN_SELECT)?;
         let mut rows = stmt.query(rusqlite::params![session])?;

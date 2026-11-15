@@ -95,20 +95,13 @@ Feature: Session storage
 
   # The fork's copy is uncommitted in the new session: a committed turn refuses the
   # events a fork copies, so a copy that carried the marker would be refused by its own
-  # log. The compaction appends; the log never loses an event.
+  # log.
   @R-session-08
   Scenario: A forked session carries the copied range and names its parent
     Given an open store
     When a tool call commits its events and its state change
     And the session is forked at the committed turn
     Then the fork holds the copied events and names its parent
-
-  @R-session-09
-  Scenario: A compacted session appends a summary and marks what is visible
-    Given an open store
-    When a tool call commits its events and its state change
-    And the session is compacted at the next turn
-    Then the summary is in the log and the visible range starts at its turn
 
   # The search is answered by the FTS5 index over the stored events, so the query is
   # index syntax: a column name that no scan of the payload text can answer, and a term
@@ -138,7 +131,6 @@ Feature: Session storage
   Scenario: A run is answered from store queries
     Given an open store
     When a tool call commits its events and its state change
-    And the session is compacted at the next turn
     And a turn that produced no events commits
     Then the run answers every turn of the session with its events
 
