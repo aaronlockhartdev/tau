@@ -11,7 +11,8 @@ R-workspace-08's acceptance `@R-workspace-08` has no scenario — nothing prints
 carries no runtime (R-workspace-14) and starts no task, thread, pool, reactor, future driver, or child
 process (R-workspace-15). R-session-01 keeps one write connection per process, so a process running N
 sessions runs them through one loop. `adopt_block_log` lands the unit this loop commits: a block per
-transaction, one request row per round-trip, and state as pointers on the block row.
+commit, or every block a stream closes at once, one request row per round-trip, and state as pointers on
+the block row.
 
 The record decides most of the loop's shape. Anthropic reports input and cache tokens at
 `message_start` and the stop reason at `message_delta`; the Responses API reports true usage only in

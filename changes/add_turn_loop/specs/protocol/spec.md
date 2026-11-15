@@ -16,6 +16,7 @@ Why: adapters speak the generated set, so the vocabulary is checked by a gate, n
 THE SYSTEM SHALL generate each tool's name, description, and input schema into `contracts/`.
 Acceptance: gate contracts current
 Acceptance: @R-protocol-02
+Why: a schema no type builds is a claim about the tool, and a provider rejects the claim, not the code.
 
 ### R-protocol-03  Tools run through the injected registry
 
@@ -35,7 +36,7 @@ Why: the stream is the boundary, and a provider SDK in core would carry a runtim
 THE SYSTEM SHALL generate the block kind set and the request reason set into `contracts/`.
 Acceptance: gate contracts current
 Acceptance: @R-protocol-06
-Why: clauses across three domains name a kind or a reason, and a hand-written list drifts from the type that checks it.
+Why: clauses across several domains name a kind or a reason, and a hand-written list drifts from the type that checks it.
 
 ### R-protocol-07  The tool trait is core's
 

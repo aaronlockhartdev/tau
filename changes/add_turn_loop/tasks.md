@@ -25,7 +25,7 @@ between the two open changes, recorded here and in that change's tasks.md.
 - [ ] R-agent-08: a stream gap failing the request with the stream-gap reason
 - [ ] R-agent-09: resume closing a reason-less request as interrupted, driven by the crash child
 - [ ] R-agent-10: the in-memory steering queue applied and recorded at the request boundary, in arrival order
-- [ ] R-agent-11: the queue cap refusing further input, with the lane at the cap
+- [ ] R-agent-11: the queue cap refusing further input, with the lane at the cap; no clause names the cap's key yet, so this change asks the config change for it
 - [ ] R-agent-12: stop conditions read from config — token budget, wall clock, refusal, repeated tool call
 - [ ] R-agent-13: slot order in the builder, stable slots first, volatile last
 - [ ] R-agent-14: injection blocks naming slot and bytes, and the rebuild that reproduces the sent bytes
