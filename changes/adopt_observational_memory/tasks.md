@@ -9,4 +9,5 @@
 - [ ] Implement: the observation and reflection slots as blocks in the log, no table, each naming the range it supersedes
 - [ ] Implement: observer and reflector prompts
 - [ ] Eval: observations versus the raw message tail, on demand
+- [ ] Storage: the naming an observation carries (which range it supersedes) is a column of the memory leaf, with the leaf's own spec, and no clause here promises it
 - [ ] spec-review before commit

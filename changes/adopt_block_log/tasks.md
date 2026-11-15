@@ -25,7 +25,7 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-30: delete the late-event scenarios; `blocks` immutability is R-session-31's
 - [ ] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
-- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`; drop `turn` and `committed marker`; re-word `log`, `run` (the loop stops, and the run is what it produced), `session`, `steer`, `session start output`
+drop `turn` and `committed marker`; the glossary's `log` and `session` cells name the `events` table, which this change renames, and `run` reads "Stop the loop", a word the agent domain uses with no entry — all re-worded here
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
 - [ ] re-word the open changes written in the old unit — `add_subagent_support` (its delta specs),

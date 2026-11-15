@@ -1,6 +1,8 @@
 # Tasks: add_realtime_gui_output
 
-was R-protocol-01; `add_turn_loop` claims R-protocol-01..03 and archives first, so this clause is R-protocol-04
+- [ ] IDs: this change's protocol clause was R-protocol-01; `add_turn_loop` claims R-protocol-01..03 and archives
+first, so this clause is R-protocol-04. Re-check the numbers against `cargo run -p tau-tools --bin spec -- id
+protocol` at archive.
 - [ ] Scenario: R-surface-08,09 one stream drives both frontends
 - [ ] Scenario: R-surface-10..12 closed block kept, never re-parsed, tail only
 - [ ] Scenario: R-surface-13..15 open block, close render, table grid
