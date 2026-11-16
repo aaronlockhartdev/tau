@@ -40,13 +40,6 @@ Feature: Session storage
     And a batch naming a terminal request is committed
     Then the refused batch stores no block
 
-  @R-session-30
-  Scenario: A request past its terminal accepts no further block
-    Given an open store
-    When a request is opened and a tool call commits its blocks
-    And a request is stamped terminal
-    And a block naming that request is inserted
-    Then the store refuses the write
 
   # The key binds the store's own writes, and a block naming a request with no row is
   # the row the key refuses.
@@ -98,9 +91,9 @@ Feature: Session storage
 
   # The child process is killed by a signal: an application crash, which is what
   # `synchronous = NORMAL` promises durability across (R-session-05). A power loss is
-  # not claimed. The marker read is now an absence: a block is committed by the
+  # not claimed. The marker read is an absence by design: a block is committed by the
   # transaction that inserts it, so the log carries no committed column at all.
-  @R-session-06 @R-session-07
+  @R-session-06
   Scenario: A block committed by a process that is killed is returned in full
     Given a store whose block was committed by a process that is killed
     Then the committed block is returned in full

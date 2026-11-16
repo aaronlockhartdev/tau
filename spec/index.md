@@ -30,7 +30,7 @@ Counts: `cargo run -p tau-tools --bin spec -- count`. An `Owns` cell names where
 | config | `crates/tau-core/config` | [config/spec.md](./config/spec.md) | — |
 | workspace | root `Cargo.toml`, `crates/`, `.gitignore`, `contracts/`, `rust-toolchain.toml`, `docs/stack.md` | [workspace/spec.md](./workspace/spec.md) | — |
 
-Corpus: 27 requirements. Each requirement arrives through a change.
+Corpus: 33 requirements. Each requirement arrives through a change.
 
 ## Layout
 
