@@ -517,9 +517,9 @@ fn check_cmd() -> i32 {
             problems += report("id is not R-<domain>-<NN>");
             continue;
         };
-        if !domains.iter().any(|d| d == domain) {
+        if !domains.iter().any(|d| d == domain) && !delta_creates(domain, &clause.path) {
             problems += report(&format!(
-                "domain {domain} has no directory under {SPEC_DIR}"
+                "domain {domain} has no directory under {SPEC_DIR}, and no delta creates it"
             ));
         }
         if !is_issued_form(number) {
@@ -809,13 +809,32 @@ fn check_acceptance(
     report(&format!("unrecognised acceptance ref {value:?}"))
 }
 
+/// True when an open delta's own path names the domain: the change is the domain's
+/// first, and `archive` creates `spec/<domain>/spec.md` for it, so its clauses have
+/// no directory to resolve against yet.
+fn delta_creates(domain: &str, path: &str) -> bool {
+    let parts: Vec<String> = Path::new(path)
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    parts.windows(2).any(|w| w[0] == "specs" && w[1] == domain)
+}
+
 fn id_cmd(args: &[String]) -> i32 {
     let Some(domain) = args.first() else {
         eprintln!("spec: id needs a domain");
         return 1;
     };
-    if !domain_names().iter().any(|d| d == domain) {
-        eprintln!("spec: no domain {domain} under {SPEC_DIR}");
+    // A domain with no directory is allocatable while an open delta creates it: the
+    // archive writes `spec/<domain>/spec.md`, and its first clause is number 01.
+    let creating = {
+        let (_, deltas) = corpus_files();
+        deltas
+            .iter()
+            .any(|path| delta_creates(domain, &path.display().to_string()))
+    };
+    if !domain_names().iter().any(|d| d == domain) && !creating {
+        eprintln!("spec: no domain {domain} under {SPEC_DIR}, and no delta creates it");
         return 1;
     }
     // An archived (retired) number was issued once, so `id` must never hand it out
@@ -1590,6 +1609,23 @@ mod tests {
     /// The scenario tags the features carry, as `validate_plan` probes them.
     fn tags(ids: &[&str]) -> BTreeSet<String> {
         ids.iter().map(|id| (*id).to_string()).collect()
+    }
+
+    #[test]
+    fn a_delta_creating_a_domain_names_it_in_its_path() {
+        assert!(delta_creates(
+            "telemetry",
+            "changes/add_lanes/specs/telemetry/spec.md"
+        ));
+        assert!(delta_creates(
+            "telemetry",
+            "changes/add_lanes/specs/telemetry/export/spec.md"
+        ));
+        assert!(!delta_creates(
+            "telemetry",
+            "changes/add_lanes/specs/tools/spec.md"
+        ));
+        assert!(!delta_creates("tools", "changes/tools/specs/agent/spec.md"));
     }
 
     #[test]

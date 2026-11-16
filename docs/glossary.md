@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a runner with a fixed scope; a gate row in state run runs it.
+`lane`: a runner with a fixed scope; the gate table names it as a row.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.

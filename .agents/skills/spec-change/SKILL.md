@@ -52,7 +52,13 @@ Supersedes: R-<domain>-<NN> → R-<domain>-<MM>
 A change withdraws a clause it added that never landed in `spec/` by moving that heading under `## REMOVED Requirements` with no `Acceptance:` ref and no `Supersedes:` line: the number stays consumed, `spec lint` reads it as issued, `spec archive` finds no clause to delete, and no later id moves. A `Supersedes:` line means the opposite: the rule is in `spec/`, is retired from there, and is checked as before (R-harness-11). The heading moves with its `Why:`; the obligation line goes, since it binds nothing.
 
 - Describe the difference, never the whole file.
-- Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`. A clause keeps its ID from the first scenario citation: never renamed, renumbered, or reused. A delta clause no scenario has run yet may be renumbered inside its own change.
+- Behaviour change = `MODIFIED` with full replacement text. Retirement = `REMOVED` + `Supersedes:`, and the
+retired clause's scenario goes in the same commit: `spec lint` reports a scenario tag that names no
+requirement. A clause keeps its ID from the first scenario citation: never renamed, renumbered, or reused.
+A delta clause no scenario has run yet keeps its number: `spec lint` requires every number up to a domain's
+highest to be issued, so renumbering by hand vacates a number and turns the corpus check red. A number moves
+only into a slot some change claims — `add_turn_loop` and `add_realtime_gui_output` split the `protocol`
+range between them, each recording the split in its `tasks.md`.
 - Markers, one each: a delta clause that blocks coding carries `[NEEDS CLARIFICATION]`; an unresolved question in a proposal goes on the `Open:` line. `cargo run -p tau-tools --bin spec -- --check` counts `[NEEDS CLARIFICATION]` and the count must not rise across a change.
 
 ## 4. Tasks (`tasks.md`)
@@ -80,9 +86,10 @@ A decision worth keeping past the session lands in `spec/` through a change; pro
 
 `archive` refuses a delta whose clause has a number `spec -- id` never issues, sits under no marker, names
 no live clause to change, repeats an id `spec/` holds anywhere, retires an id `spec/` holds in a leaf the
-delta does not write, withdraws (no `Supersedes:`) an id `spec/` holds, or hides a heading no scan reads; for
-an ADDED or MODIFIED clause, also a heading over the six-word cap, out of column 0, or with an unclosed fence
-in its own text, and for any target leaf, one whose fences never close. Whether each clause's acceptance ref
-has run is a reviewer's call: the tool reads no run ledger.
+delta does not write, withdraws (no `Supersedes:`) an id `spec/` holds, accepts an `@R-…` ref no scenario
+tag carries, or hides a heading no scan reads; for an ADDED or MODIFIED clause, also a heading over the
+six-word cap, out of column 0, or with an unclosed fence in its own text, and for any target leaf, one whose
+fences never close. That tag check is shape, not history: whether a ref has *run* is a reviewer's call, and
+the tool reads no run ledger.
 `cargo run -p tau-tools --bin spec -- archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
 Archive creates `spec/<domain>/spec.md` when the delta names a domain that has no file yet. Archive is append-only: never edited afterwards. New facts are a new change.

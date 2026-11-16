@@ -6,7 +6,7 @@ Apply to `spec/harness/spec.md` at archive time. Describe the difference, not th
 
 ### R-harness-01  Acceptance refs resolve
 
-WHEN the spec linter runs THE SYSTEM SHALL resolve every acceptance ref: a `@R-<domain>-<NN>` tag against a scenario in `crates/tau-test/tests/features/`, and a `gate <name>` against a row in `AGENTS.md`.
+WHEN the spec linter runs THE SYSTEM SHALL resolve every acceptance ref: a `@R-<domain>-<NN>` tag against a scenario in `crates/tau-test/tests/features/`, a `gate <name>` against a row in `AGENTS.md`, and a `spec-review check <n>` against a check in `.agents/skills/spec-review/SKILL.md`.
 Acceptance: gate spec lint
 Why: an unresolvable ref is a rule nobody enforces, and the ref is the traceability, not the clause.
 
