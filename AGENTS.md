@@ -25,7 +25,7 @@ The table's state column is `gate state` (`docs/glossary.md`): `run` today, `man
 | spec lint | `cargo run -p tau-tools --bin spec -- --check` | run |
 | contracts current | `cargo run -p tau-protocol --bin contracts -- --check` | run |
 | doc lint | `rumdl check spec changes docs AGENTS.md README.md` | run |
-| links | `lychee spec changes docs AGENTS.md README.md` | run |
+| links | `lychee --host-concurrency 4 --retry-wait-time 2 spec changes docs AGENTS.md README.md` (GitHub answers `502` to a burst, so the row paces itself and retries) | run |
 | unit + surface | `awk '{if (index($0,"[profile.ci]")>0) s=1; else if (substr($0,1,1)=="[") s=0; if (s && index($0,"fail-fast = false")>0) f=1} END{exit !f}' .config/nextest.toml && cargo nextest run -P ci` | run |
 | behaviour | `cargo test -p tau-test --test features` | run |
 | steps current | `cargo run -p tau-test --bin steps -- --check` | run |
