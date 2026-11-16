@@ -54,10 +54,8 @@ injects and the trait that runs a tool in `tau-core` (R-tools-30, 31). `spec/wor
 rules and the rule that the HTTP client to a model provider stays out of core and its graph (R-workspace-16..19):
 libraries emit on the `tracing` facade, only a binary installs a subscriber, logs go to stderr at the default
 level, and the provider client stays out of core.
-17, 18): libraries emit on the `tracing` facade, only a binary installs a subscriber, and logs go to stderr
-at the default level.
 `spec/session/storage/` gains the session row's facts (R-session-41..44: working directory, last model,
-generated display name, and a UUID v7 key in canonical text).
+a display name supplied at the surface boundary, and a UUID v7 key in canonical text).
 Two gate rows join `AGENTS.md`: `core has no HTTP client` and `core installs no subscriber`, both tree
 greps in the shape of `core has no runtime`.
 The lane runs on an in-process stub provider in `crates/tau-test` implementing the trait; tapes are
@@ -67,10 +65,11 @@ This change also closes `change_spec_requirements`: the session start output lin
 `@R-workspace-08` gains its scenario.
 Cost, stated: new dependencies `futures` (core), `tracing` (facade, core), `uuid` (v7) and `petname`
 (display names, at the surface boundary); the loop pays two store writes per request — open and terminal —
-plus one per block, each a transaction. Contention is measured, cost is not:
-(`changes/archive/2026-11-15-add_session_storage/tasks.md`). Tokens: the context is resent whole every request, priced by
-prefix caching, where one write and nine reads cost 2.15× the input against 10× uncached: 1.25× a cache
-write and 0.1× a cache read (platform.claude.com prompt-caching page, read 2026-11-15).
+plus one per block, each a transaction. Contention is measured — 300 commits each, 0 failures, worst
+commit 41 ms at `busy_timeout` 5 s (`changes/archive/2026-11-15-add_session_storage/tasks.md`) — cost is not.
+Tokens: the context is resent whole every request, priced by prefix caching, where one write and nine
+reads cost 2.15× the input against 10× uncached — 1.25× a cache write and 0.1× a cache read
+(platform.claude.com prompt-caching page, read 2026-11-15).
 Eval: none needed. The mechanics are lane-testable against the stub; conversation quality is the eval
 lane's question, and that gate row is `manual` with no suite file to run.
 

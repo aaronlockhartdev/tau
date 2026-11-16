@@ -104,9 +104,11 @@ Why: an orphan block breaks the export join, and a block after the terminal is a
 ### R-session-07  The committed marker is stored
 
 Acceptance: @R-session-07
+Why: a renderer that waits on the marker couples the screen to the checkpoint.
 Supersedes: R-session-07 → R-session-02 in `spec/session/storage/spec.md`.
 
 ### R-session-30  A committed turn is closed
 
 Acceptance: @R-session-30
+Why: a committed turn is the record readers answer from, and a late event would rewrite it.
 Supersedes: R-session-30 → R-session-32 in `spec/session/storage/spec.md`.

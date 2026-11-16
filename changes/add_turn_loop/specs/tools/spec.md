@@ -8,7 +8,7 @@ Apply to `spec/tools/spec.md` at archive time, for a domain with no children. De
 
 THE SYSTEM SHALL run a tool that starts a process in a crate other than `tau-core`, from the registry the binary injects.
 Acceptance: @R-tools-30
-Why: the first real tool spawns a process, and R-workspace-15 bans core starting one.
+Why: the first real tool spawns a process, and core starts no process.
 
 ### R-tools-31  The tool trait is core's
 

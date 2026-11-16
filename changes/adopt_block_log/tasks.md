@@ -25,19 +25,22 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-30: delete the late-event scenarios; `blocks` immutability is R-session-31's
 - [ ] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [ ] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
-- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`; drop `turn` and `committed marker`;
-re-word `log`, `session`, `steer`, `session start output`; its `log` and `session` cells name the `events`
-and its `run` cell reads "a session's turns in order, with the events each produced", the unit this change
-retires, while `add_turn_loop` says "stop the loop" with no `loop` entry of its own — all of it re-worded here
+- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot` and `user input`; drop `turn` and
+`committed marker`; re-word `log`, `run`, `session`, `steer` and `session start output`. The live `log` cell
+names `events`, `run` reads "a session's turns in order, with the events each produced", `turn` reads "one
+request to the model and what it produced, numbered per session", and `session` names turns: all of it is
+this change's unit
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
 - [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
-- [ ] re-word the open changes written in the old unit — `add_subagent_support` (its delta specs),
-`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
-`adopt_skills_convention`; a word-boundary grep (`grep -rilwE --exclude-dir=archive
-`spike_gpui_surface` are the new unit's own words
-- [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` and `page_size=4096` — 3000 blocks of
-200-byte payload in the current schema, and the same with 3000 request rows added; the row sizes and the two
-percentages in the proposal come off that run, which is a scratch probe, so it carries no committed repro.
+- [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
+`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
+`adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e
+committed changes/` finds those six and no other change; the files it also lists — `_template`,
+`adopt_block_log`, `add_turn_loop`, `change_spec_requirements`, `spike_gpui_surface` — hold the new unit's
+own words, not the old one's
+- [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
+200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
+percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
 `spec/session/storage/spec.md` gains 6 requirements and retires 2, its count and `spec/session/spec.md`'s
 leaf count and `spec/index.md`'s Corpus count move by the same numbers read off the files

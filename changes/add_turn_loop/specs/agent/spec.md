@@ -30,7 +30,8 @@ Why: a call with no result is refused by the provider, so the session cannot con
 
 ### R-agent-05  A cancel commits what is complete
 
-WHEN a run is cancelled mid-stream THE SYSTEM SHALL commit the text received so far.
+WHEN a run is cancelled mid-stream THE SYSTEM SHALL commit the text received so far, before the request's
+reason is stamped.
 Acceptance: @R-agent-05
 Why: the text that arrived is what the user saw, and a cancel that drops it leaves no record of an answer.
 

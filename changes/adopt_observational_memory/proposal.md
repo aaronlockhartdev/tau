@@ -36,5 +36,3 @@ Eval: on demand. Whether observations beat the raw message tail is a real-LLM qu
 
 Open: the threshold defaults sit with the config change; the context cap that bounds the slot an
 observation fills is `add_turn_loop`'s to set, and this change owns the threshold that triggers one.
-the context cap that bounds the slot an observation fills is `add_turn_loop`'s to set, and this change owns
-the threshold that triggers one.

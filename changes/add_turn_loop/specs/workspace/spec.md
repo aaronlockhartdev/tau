@@ -8,7 +8,7 @@ Apply to `spec/workspace/spec.md` at archive time, for a domain with no children
 
 THE SYSTEM SHALL install a log subscriber only in a binary, never in a library.
 Acceptance: gate core installs no subscriber
-Why: a subscriber's non-blocking writer starts a thread, and R-workspace-15 bans core starting one.
+Why: a subscriber's non-blocking writer starts a thread, and core starts no thread.
 
 ### R-workspace-17  Logs land on stderr
 
