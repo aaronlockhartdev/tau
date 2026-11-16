@@ -170,6 +170,20 @@ fn is_clause_head(line: &str) -> bool {
     clause_head(line).is_some()
 }
 
+/// A line that names a clause ID next to its hashes, in a form no scan reads:
+/// `###R-tools-01  Name` opens no clause, so the ID escapes the duplicate, cap and
+/// acceptance checks and `spec -- id` hands the same number out again.
+fn stray_heading(line: &str) -> Option<&'static str> {
+    let rest = line.trim_start().strip_prefix("###")?;
+    if is_clause_head(line) {
+        return None;
+    }
+    rest.trim_start_matches('#')
+        .trim_start()
+        .starts_with("R-")
+        .then_some("a clause heading has no space after its hashes, so no scan reads it")
+}
+
 /// The heading shape rules, read off the clause's own first line: `spec-authoring`
 /// sets `### R-<domain>-<NN>  <name <=6 words>` at column 0. A clause the scanner
 /// skipped would escape every other check, so an indented heading is reported, in
@@ -178,8 +192,10 @@ fn is_clause_head(line: &str) -> bool {
 fn heading_problems(cap: bool, clause: &Clause) -> Vec<String> {
     let head = clause.text.lines().next().unwrap_or_default();
     let mut out = Vec::new();
-    if !head.starts_with("### ") {
+    if head.starts_with(' ') || head.starts_with('\t') {
         out.push("a clause heading sits out of column 0".to_string());
+    } else if !head.starts_with("### ") {
+        out.push("a clause heading separates its hashes with no space".to_string());
     }
     let words = head.split_whitespace().skip(2).count();
     if cap && words > 6 {
@@ -383,6 +399,17 @@ fn check_cmd() -> i32 {
                             path.display()
                         );
                         problems += 1;
+                    }
+                    let lines: Vec<&str> = text.lines().collect();
+                    let fenced = fence_flags(&lines);
+                    for (i, line) in lines.iter().enumerate() {
+                        if fenced[i] {
+                            continue;
+                        }
+                        if let Some(msg) = stray_heading(line) {
+                            println!("{}:{}: {msg}", path.display(), i + 1);
+                            problems += 1;
+                        }
                     }
                     clauses.extend(clauses_in(&path.display().to_string(), &text));
                 }
@@ -968,11 +995,28 @@ fn archive_cmd(args: &[String]) -> i32 {
 fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
     let mut refusals = Vec::new();
     for (target, clauses) in plan {
-        let text = fs::read_to_string(target).unwrap_or_default();
+        // The same read the write path uses: a missing target is the new-file case, and
+        // any other read error is a refusal, not an "empty file" that answers the
+        // MODIFIED/REMOVED probes with "no clause here" and lets a write overwrite it.
+        let text = match current_text(target) {
+            Ok(text) => text,
+            Err(message) => {
+                refusals.push(message);
+                continue;
+            }
+        };
         for clause in clauses {
             // ADDED and MODIFIED headings land in the live corpus, where the lint counts
             // them, so archiving an over-cap heading would turn `spec lint` red: refuse.
             if clause.section.contains("ADDED") || clause.section.contains("MODIFIED") {
+                // A clause appends at the file's end; an unbalanced fence in its own text
+                // leaves the file fenced, and every clause after it is example text.
+                if !fences_balanced(&clause.text) {
+                    refusals.push(format!(
+                        "{}: clause {} carries an unclosed code fence",
+                        clause.path, clause.id
+                    ));
+                }
                 for msg in heading_problems(true, clause) {
                     refusals.push(format!(
                         "{}: clause {} heading: {msg}",
@@ -1374,6 +1418,47 @@ mod tests {
             vec![2]
         );
         assert!(allocation_gaps(&live, &retired).is_empty());
+    }
+
+    #[test]
+    fn archive_refuses_a_clause_whose_fence_never_closes() {
+        let plan = [(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## ADDED Requirements",
+                "### R-session-02  A name\nTHE SYSTEM SHALL x.\n```\nexample",
+            )],
+        )];
+        let refusals = validate_plan(&plan);
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(refusals[0].contains("unclosed code fence"), "{refusals:?}");
+        // A closed pair is the shape a clause carries an example in.
+        let ok = [(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## ADDED Requirements",
+                "### R-session-02  A name\nTHE SYSTEM SHALL x.\n```\nexample\n```",
+            )],
+        )];
+        assert_eq!(validate_plan(&ok), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_heading_with_no_space_after_the_hashes_is_stray() {
+        assert_eq!(
+            stray_heading("###R-tools-01  Name"),
+            Some("a clause heading has no space after its hashes, so no scan reads it")
+        );
+        assert_eq!(
+            stray_heading("    ####R-tools-01  Name"),
+            Some("a clause heading has no space after its hashes, so no scan reads it")
+        );
+        // The forms a scan reads: a space, a tab, prose, and a heading with no id.
+        assert_eq!(stray_heading("### R-tools-01  Name"), None);
+        assert_eq!(stray_heading("###\tR-tools-01  Name"), None);
+        assert_eq!(stray_heading("### notes"), None);
     }
 
     #[test]
