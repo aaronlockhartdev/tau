@@ -146,8 +146,8 @@ one of: a stream event (the provider's,
 numbered by R-protocol-01; a child's, in `add_subagent_support`'s acp delta; core's event stream,
 which R-surface-08 owns), the glossary's `event time`, the store's `commit` or git's `committed`,
 the noun in a quote of the retired design (`change_spec_requirements`'s "the store of turns and
-events"), `add_turn_loop`'s own name, and the verb "turns". That change's prose still says "the turn
-loop" for the loop it builds, and its tasks carry the sweep to "the request loop"
+events"), the words "the turn loop" in `add_turn_loop`'s prose, and the verb "turns". That change
+carries the sweep of its prose to "the request loop"
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
@@ -168,7 +168,13 @@ Carried: the three lines above stay open, and each has a named home. The delta-f
 clause-layout sweep belong with `change_spec_requirements`, the change that owns the spec format, and
 land there as its task lines. The Measure belongs with the `blobs` change this proposal promises to
 open, which is not in `changes/` yet, because the numbers it reproduces are that option's evidence and
-the schema to measure is the one this change landed.
+the schema to measure is the one this change landed. Two gate rows read nothing today and stay green:
+`contracts current` compares an empty generated set (teeth come with R-protocol-02 in `add_turn_loop`),
+and `spec tool` is a count smoke that prints 0 on an empty corpus. The name-list rows
+(`core has no HTTP client`, `core installs no subscriber`) match dependencies, not a hand-rolled client
+in core's own source, which is the scope their clauses state. `core spawns nothing` greps prose too, so
+a comment naming `.spawn(` reddens it — a false red, not a false green. `add_subagent_support` carries no
+`IDs:` line, unlike the other open changes; the format sweep above owns adding it.
 
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
 (07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,

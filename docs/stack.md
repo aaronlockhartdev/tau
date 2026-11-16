@@ -4,7 +4,7 @@ Decided, with pins; a deviation needs a change. A pin is a fact, so it lives her
 
 | Layer | Choice | Pin |
 |---|---|---|
-| Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` (harness, lane; a stub provider and an eval lane come with the loop) · `tau-tools` (spec CLI) | workspace |
+| Crates | `tau-core` · `tau-protocol` · `tau-acp` · `tau-app` · `tau-test` (harness, lane; a stub provider and an eval lane come with the loop) · `tau-tools` (the `spec` and `gates` CLIs) | workspace |
 | Toolchain | Rust stable, latest release, bumped on release; `rust-toolchain.toml` pins it, `resolver = "3"` resolves MSRV-aware | 1.100.0 (2026-11-12) |
 | UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, in `crates/tau-app` only | gpui-kit 0.9 · MSRV Rust 1.92 |
 | Async | runtime rule: R-workspace-14, R-workspace-15 | tokio 1 (`macros`, `rt-multi-thread`), a `crates/tau-test` dev-dependency |

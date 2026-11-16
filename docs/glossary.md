@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a test runner with a fixed scope: the ci lane, behaviour, surface, eval.
+`lane`: a test runner with a fixed scope: the ci lane, unit, behaviour, surface, eval.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -12,12 +12,12 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fork`: a child session that copies a range of the parent's blocks and their requests.
 `steer`: send input to a running session, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
-`config layer`: the global config file, or the project file merged over it key by key.
+`config layer`: one of the two config levels, global and project, the project merged key by key.
 `anchor`: the five-character handle a read serves for one line of one file.
 `outline`: a file's anchored declaration rows, bodies read on demand.
 `observation`: a condensation of a session's oldest messages, appended to its observations slot.
 `reflection`: a condensation of observations.
-`tape`: a recorded model transcript that answers calls in the behaviour lane.
+`tape`: a recorded model transcript that answers calls in a lane, once the eval lane lands.
 `layer`: the agent-directory level or the project level of a config, context, or skill file.
 `tail`: the newest messages of a session, kept verbatim.
 `project`: the working directory's git root, or the working directory when it is not one.
@@ -25,7 +25,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `event time`: the moment core produced a block or emitted a stream event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any block.
 `block`: one item of a conversation, stored as one row of the log; the store's unit.
-`request`: one provider round-trip: the blocks it sent, its provider and model, its usage and terminal.
+`request`: one provider round-trip: the blocks it produced, its provider and model, usage and terminal.
 `injection`: a block the runtime adds to the context, not text from a user.
 `slot`: the context position a block names, such as a prompt part.
 `user input`: text from a user that reaches the log outside a round-trip, stored as a block.
@@ -33,9 +33,9 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `terminal`: the reason a request ended, stamped on its row together with its counts.
 `state`: a pair of log sequences naming the context a block was built from.
 `stream`: the blocks one model call produces, closed at once by its provider.
-`event stream`: core's channel to the frontends: the events of a session, one per state change.
-`frontend`: a client of core's event stream: the terminal, the desktop app, an ACP client.
-`message`: a block of user, assistant, tool or system text in a log.
+`event stream`: core's channel to the frontends: the events of a session, as core emits them.
+`frontend`: a client of core's event stream: the desktop app `tau-app`, the ACP adapter `tau-acp`.
+`message`: a block of user, assistant, tool or injected text in a log.
 `markdown block`: a renderable range of transcript markdown — paragraph, list, fence, table; the renderer's block tree.
 `fence`: a markdown block of fenced code, open until its closing line.
 `resume`: read a session's stored log to continue it in a new process.
