@@ -8,7 +8,7 @@ Decided, with pins; a deviation needs a change. A pin is a fact, so it lives her
 | Toolchain | Rust stable, latest release, bumped on release; `rust-toolchain.toml` pins it, `resolver = "3"` resolves MSRV-aware | 1.100.0 (2026-11-12) |
 | UI | `gpui-kit`: `gpui-component` styled layer over `gpui-base`, to sit in `crates/tau-app` only | unpinned; lands with `spike_gpui_surface` and `add_surface_components` |
 | Async | runtime rule: R-workspace-14, R-workspace-15 | tokio 1 (`macros`, `rt-multi-thread`), a `crates/tau-test` dev-dependency |
-| Behaviour tests | `cucumber`, `gherkin` (`harness = false`) | 0.23.0 · 0.16.0 |
+| Behaviour tests | `cucumber`, and the `features` test target sets `harness = false` | 0.23.0 · `gherkin` 0.16.0, transitive through cucumber |
 | Unit + surface tests | `cargo nextest` (`-P ci` in CI: `.config/nextest.toml`), `proptest` | nextest 0.9.152 · proptest 1.12 · `#[gpui::test]` lands with the surface, unpinned |
 | Advisory gates | `cargo-deny` reads RustSec; Dependabot reads GitHub's reviewed advisories; the two drifted apart in 2026, so both run | cargo-deny 0.20.2 |
 | CI | GitHub Actions lane: `.github/workflows/gates.yml` runs `tau-tools --bin gates` | actions pinned by commit SHA |

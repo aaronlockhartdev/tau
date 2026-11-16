@@ -21,14 +21,20 @@ struct Gate {
 }
 
 /// Split a markdown table row into cells. A `\|` inside a cell is an escaped
-/// pipe, kept as a literal `|`.
+/// pipe, kept as a literal `|`. Any other backslash pair is kept whole, so a command
+/// cell's `\t`, `\n` or `\d` reaches the shell as written.
 fn cells(line: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut cell = String::new();
     let mut escaped = false;
     for c in line.chars() {
         if escaped {
-            cell.push(if c == '|' { '|' } else { c });
+            if c == '|' {
+                cell.push('|');
+            } else {
+                cell.push('\\');
+                cell.push(c);
+            }
             escaped = false;
             continue;
         }
@@ -175,6 +181,7 @@ mod tests {
 |---|---|---|
 | a run | `true` prose | run |
 | escaped | `test -z "$(ls \| grep -q x)` | run |
+| backslash | `grep -q 'a\tb' file` | run |
 | scaffold | `cargo run --example x` prose | M0 |
 | by hand | `cargo run --bin eval` prose | manual |
 | no command | prose only | run |
@@ -193,7 +200,14 @@ mod tests {
         let names: Vec<&str> = rows.iter().map(|g| g.name.as_str()).collect();
         assert_eq!(
             names,
-            ["a run", "escaped", "scaffold", "by hand", "no command"]
+            [
+                "a run",
+                "escaped",
+                "backslash",
+                "scaffold",
+                "by hand",
+                "no command"
+            ]
         );
     }
 
@@ -205,6 +219,16 @@ mod tests {
             .find(|g| g.name == "escaped")
             .unwrap();
         assert_eq!(row.command, r#"test -z "$(ls | grep -q x)"#);
+    }
+
+    #[test]
+    fn a_backslash_that_escapes_nothing_is_kept_whole() {
+        let row = gates(TABLE)
+            .0
+            .into_iter()
+            .find(|g| g.name == "backslash")
+            .unwrap();
+        assert_eq!(row.command, r"grep -q 'a\tb' file");
     }
 
     #[test]
@@ -250,6 +274,6 @@ mod tests {
     fn states_survive_the_scan() {
         let rows = gates(TABLE).0;
         let states: Vec<&str> = rows.iter().map(|g| g.state.as_str()).collect();
-        assert_eq!(states, ["run", "run", "M0", "manual", "run"]);
+        assert_eq!(states, ["run", "run", "run", "M0", "manual", "run"]);
     }
 }

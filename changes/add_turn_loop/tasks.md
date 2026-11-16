@@ -45,7 +45,7 @@ and `@R-workspace-08` that lets `change_spec_requirements` archive
 - [ ] R-workspace-17: the log lines on stderr at `info`, read from a child binary's stderr, with the lane asserting stdout stays empty
 - [ ] lane: `crates/tau-test/tests/features/agent.feature` driven by the in-process stub provider; steps in `crates/tau-test/src/steps/agent.rs`; `STEPS.md` regenerates
 - [ ] lane: a child binary that opens a session, runs the loop against the stub provider and writes its logs, so a scenario reads its stdout and stderr (the pattern `open_store` and `crash_store` set)
-- [ ] docs: `docs/stack.md` — pins for `futures`, `tracing`, `uuid` and `petname`; the rows stating the log rules (R-workspace-16..19) as graph rules, in the shape of the rows R-workspace-14 and 15 hold; the Storage row's clause range after `adopt_block_log` moved it; the row naming the provider leaf when that change lands
+- [ ] docs: `docs/stack.md` — pins for `futures`, `tracing`, `uuid` and `petname`; the rows stating the log rules (R-workspace-16..19) as graph rules, in the shape of the rows R-workspace-14 and 15 hold; the Storage row's range gaining 41..44 as this change's archive lands them
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops), `delta` in its token sense, `display name`,
 `prompt cache`, `provider`, `queue cap`, the two the log clauses use (`library`, `binary`),
 and the stream a reader meets in one protocol leaf: `provider stream` (the events of one provider

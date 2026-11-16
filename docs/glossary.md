@@ -12,7 +12,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fork`: a child session that copies a range of the parent's blocks and their requests.
 `steer`: send input to a running session, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
-`config layer`: one of the two config levels, global and project, merged by the config clauses.
+`config layer`: the `layer` a config file sits at.
 `anchor`: the five-character handle a read serves for one line of one file.
 `outline`: a file's anchored declaration rows, bodies read on demand.
 `observation`: a condensation of a session's oldest messages, appended to its observations slot.

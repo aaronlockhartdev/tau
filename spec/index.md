@@ -4,11 +4,11 @@ Cross-cutting invariants live here and are never restated in a domain:
 
 - Core carries no user-interface logic: no UI crate, no frontend crate. Frontends: `crates/tau-app` (GPUI), `crates/tau-acp`. Proof: gate `core has no UI logic`.
 - Every requirement has an allocated `R-<domain>-<NN>` and an acceptance ref: a scenario in `crates/tau-test/tests/features/` tagged with it, or a named gate when the rule constrains a build fact. Proof: spec lint (IDs, refs) and the behaviour lane.
-- Wire shapes live in Rust types; `contracts/` is generated, never hand-edited. Proof: gate `contracts current`.
+- Wire shapes live in Rust types; `contracts/` is generated, never hand-edited. Proof: gate `contracts current`, which compares an empty generated set until `add_turn_loop`'s R-protocol-02 lands, so the proof has no teeth today.
 - Real-LLM eval is run by hand when deciding whether a feature is worth building; never in CI. Proof: spec-review check 14.
-- Live output is independent of storage: frontends consume core's in-memory event stream, rendering reads no storage, and no storage write, checkpoint, or reader gates emission. Proof: gate `live output under load`.
+- Live output is independent of storage: frontends consume core's in-memory event stream, rendering reads no storage, and no storage write, checkpoint, or reader gates emission. Proof: gate `live output under load`, an `M0` row that runs nowhere today.
 - A scenario uses only steps in the generated step vocabulary. Proof: gate `steps current`.
-- A gate report states each `AGENTS.md` §Gates row as it stands: an unimplemented row reports `skipped (M0)`, never a pass. Proof: spec-review check 15.
+- A gate report states each `AGENTS.md` §Gates row as it stands: each row's `gate state` (`docs/glossary.md`) is what it reports, never a pass. Proof: spec-review check 15.
 - `AGENTS.md` carries commands and rules that bind every task; it states no fact a `spec/` file owns. Proof: spec-review check 9.
 - A schema whose change is not archived is edited in place: its migration is rewritten, never followed by a new one. Proof: spec-review check 16.
 

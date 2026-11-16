@@ -181,9 +181,11 @@ no UI logic`, `core has no HTTP client`, `core installs no subscriber`) match de
 hand-rolled client in core's own source, or a subscriber installed there under another name, stays
 green; the clauses those two rows answer to are pending in `add_turn_loop` (R-workspace-16..19) and
 speak core's source and graph and every install site, so the rows are narrower than they will need to
-be. `unit + surface` reads a `fail-fast = false` line and `-P ci` selects a profile by name; both are
-greps, not a config parse, and the grep is blind to which profile the line sits under. Separately, and
-in the other direction: `core spawns nothing` greps prose too, so a comment naming `.spawn(` reddens
+be. `unit + surface` text-matches `fail-fast = false` inside the `[profile.ci]` section — an awk over
+lines, not a config parse, so a header indented out of column 1, a section that never closes, or
+`fail-fast=false` without spaces slips past it — and `-P ci` selects a profile by name. Separately,
+and in the other direction: `core spawns nothing` greps prose too, so a comment naming `.spawn(`
+reddens
 it — a false red, not a false green.
 
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
