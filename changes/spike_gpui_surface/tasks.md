@@ -12,3 +12,5 @@
 - [ ] spike: record the fallback B verdict against closed-block immutability
 - [ ] spike: write results into proposal.md
 - [ ] spec-review (reviewer ticks)
+- [ ] check: `cargo run -p tau-tools --bin gates`; this spike's own build gate, and rows in state M0
+reported `skipped (M0)` (it owns no delta clause, so no `archive:` line)

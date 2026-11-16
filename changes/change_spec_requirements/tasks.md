@@ -12,7 +12,10 @@
 - [x] R-harness-03: `crates/tau-test` bin `steps` generates crates/tau-test/tests/features/STEPS.md from the step definitions; the `steps current` gate compares them
 - [x] R-harness-11: a withdrawal inside its own change keeps its number and needs nothing at archive (crates/tau-tools/src/bin/spec.rs, `## REMOVED Requirements`)
 - [x] check: spec --check · contracts --check · steps --check · doc lint · links
-- [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`
+- [ ] archive: after `add_turn_loop`, whose R-agent-15 scenario carries `@R-workspace-08`; at archive the
+cells move by the numbers read off the files — `spec/harness/spec.md` 1 → 5, `spec/workspace/spec.md` 7 → 15,
+`spec/index.md`'s Corpus count 33 → 45, its harness and workspace Leaves cells unchanged (both deltas are
+domain indexes)
 - [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
 - [x] docs: the six-word heading cap, swept across the open deltas: 17 ADDED headings re-worded
 (`add_subagent_support` 9, `add_surface_components` 3, `add_user_config` 2, `add_test_lanes` 1,
@@ -21,8 +24,9 @@
 - [ ] docs: the delta-format sweep `adopt_block_log` carried here — bare `## ADDED` markers to
 `## ADDED Requirements`, clauses phrased as a bare negation (no negated form in `spec-authoring`'s
 §Requirement form), the `Apply to` line naming each delta's live leaf, and the `IDs:` line — ten of the
-twelve open changes state no clause IDs, `add_turn_loop` listing its claims under `IDs:` and
-`add_realtime_gui_output` opening with an `IDs:` task. The nine delta files the sweep re-formats, in six
+twelve open changes lack an `IDs:` line, `add_turn_loop` listing its claims under `IDs:` and
+`add_realtime_gui_output` opening with an `IDs:` task; the task lines themselves name clause IDs in eleven
+of the twelve. The nine delta files the sweep re-formats, in six
 changes, are
 `add_subagent_support`, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_hash_anchor_editing`, `adopt_skills_convention`

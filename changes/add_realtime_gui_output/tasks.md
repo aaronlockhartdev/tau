@@ -15,6 +15,7 @@ protocol` at archive.
 - [ ] Measure: frame budget at `spike_gpui_surface`
 - [ ] Gate: live output under load; desktop for IME and prompt field
 - [ ] archive: `spec/surface/transcript/spec.md` is a new leaf, so `spec/surface/spec.md`'s Leaves cell,
-`spec/index.md`'s surface Leaves cell and the Corpus count move by the numbers read off the files
+`spec/index.md`'s surface Leaves cell and the Corpus count move by the numbers read off the files, and
+`spec/protocol/spec.md`'s count cell moves 0 → 1 with its R-protocol-04
 - [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, manual rows by hand
 - [ ] spec-review before commit

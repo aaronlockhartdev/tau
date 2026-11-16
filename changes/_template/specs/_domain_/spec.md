@@ -14,10 +14,7 @@ Why: {only if an implementer would otherwise violate this: ≤25 words}
 
 THE SYSTEM SHALL {response}.
 Acceptance: gate {name in AGENTS.md}
-
-A ref can also name a review check, when no gate and no lane can observe the rule:
-`Acceptance: spec-review check {n}`, numbering a check in `.agents/skills/spec-review/SKILL.md`.
-Why: {optional}
+Why: {only a rule no gate and no lane can observe: `Acceptance: spec-review check {n}`, a check in `.agents/skills/spec-review/SKILL.md`}
 
 ## MODIFIED Requirements
 
