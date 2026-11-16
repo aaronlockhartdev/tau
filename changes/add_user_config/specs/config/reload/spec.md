@@ -78,3 +78,11 @@ Why: appending arrays across layers makes a project's tool list depend on an uns
 WHEN a config file at either layer changes on disk THE SYSTEM SHALL rebuild the merged view under R-config-05.
 
 Acceptance: @R-config-12
+
+### R-config-13  The key list lives in the spec
+
+THE SYSTEM SHALL list every config key with its default in `spec/config/reload/spec.md`, the queue cap, the
+token budget, the wall clock limit, the repeated-tool-call stop, the observation and reflection thresholds
+and the memory context budget among them.
+Acceptance: @R-config-13
+Why: a key set by reading source is a key nobody can set without reading source.

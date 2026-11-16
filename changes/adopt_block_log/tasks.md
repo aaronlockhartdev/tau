@@ -9,7 +9,8 @@ One line per committable unit. Implementation lines name an `R-ID`. Spikes and g
 - [ ] R-session-37: state pointers on the block row; drop `turn.state` and `Store::turn_state`
 - [ ] R-session-38: the request column, nullable, and the user-input and injection cases in the lane
 - [ ] R-session-39: `Store::latest_request` and `Store::blocks_after` reads; the mutation that proves `Store::run` is not the resume read
-- [ ] R-session-45: the slot read, answering a session's blocks by the slot they name
+- [ ] R-session-45: the slot on the block row, and an injection block that fills one
+- [ ] R-session-46: the slot read, answering a session's blocks by the slot they record
 - [ ] R-session-40: the terminal stamp, and a request row with a reason and no block
 - [ ] R-session-02: the block-and-state transaction, proved by the crash child
 - [ ] R-session-03: the scan's mutable set becomes `sessions` and `requests` in `crates/tau-test/src/steps/session.rs`
@@ -37,13 +38,16 @@ this change's unit
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
 `adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e
 committed changes/` finds those six and no other change; the files it also lists — `_template`,
-`adopt_block_log`, `add_turn_loop`, `change_spec_requirements`, `spike_gpui_surface` — hold the new unit's
+`adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`, `change_spec_requirements` and
+`spike_gpui_surface` — speak the new unit themselves, not the old one
 own words, not the old one's
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
-`spec/session/storage/spec.md` gains 7 requirements and retires 2
+`spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
+count and `spec/index.md`'s Corpus count move by the same numbers read off the files
+count and `spec/index.md`'s Corpus count move by the same numbers read off the files
 leaf count and `spec/index.md`'s Corpus count move by the same numbers read off the files
 - [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool,
 spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies

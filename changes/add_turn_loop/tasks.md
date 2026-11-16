@@ -28,8 +28,9 @@ two open changes, recorded here and in that change's tasks.md.
 - [ ] R-agent-11: the queue cap refusing further input, with the lane at the cap; no clause names the cap's key, so this change asks `add_user_config` for it
 - [ ] R-agent-12: stop conditions read from config — token budget, wall clock, repeated tool call; these keys are unnamed today, so this change asks `add_user_config` to hold them
 - [ ] R-agent-13: slot order in the builder, stable slots first, volatile last
-- [ ] R-agent-14: injection blocks naming slot and bytes, and the rebuild that reproduces the sent bytes
-- [ ] R-agent-15: the session start output line at `info` on stderr, and the scenario tagged `@R-agent-15` that lets `change_spec_requirements` archive
+- [ ] R-agent-14: injection blocks naming the bytes sent, and the rebuild that reproduces them
+- [ ] R-agent-15: the session start output line at `info` on stderr, and the scenario tagged `@R-agent-15`
+and `@R-workspace-08` that lets `change_spec_requirements` archive
 - [ ] R-session-41: the session's working directory recorded, and the resume that reads it
 - [ ] R-session-42: the last model recorded per request, and a mid-session model switch in the lane
 - [ ] R-session-43: the adjective-noun display name, supplied at the surface boundary with a seeded generator in the lane
@@ -40,6 +41,7 @@ two open changes, recorded here and in that change's tasks.md.
 - [ ] lane: a child binary that opens a session, runs the loop against the stub provider and writes its logs, so a scenario reads its stdout and stderr (the pattern `open_store` and `crash_store` set)
 - [ ] docs: `docs/stack.md` — pins for `futures`, `tracing`, `uuid` and `petname`; the rows stating the log rules (R-workspace-16..19) as graph rules, in the shape of the rows R-workspace-14 and 15 hold; the Storage row's clause range after `adopt_block_log` moved it; the row naming the provider leaf when that change lands
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops), `delta` in its token sense, `display name`,
+`prompt cache`, `provider`, `queue cap`, and the three the log clauses use: `library`, `binary`, `frontend`
 `prompt cache`, `provider` and `queue cap`, all used by these clauses and defined nowhere
 - [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
 `change_spec_requirements`, which archives on the scenario `@R-agent-15` writes; at archive the counts move

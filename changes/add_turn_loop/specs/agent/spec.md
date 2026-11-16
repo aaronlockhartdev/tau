@@ -85,7 +85,8 @@ Why: a byte change before the cache breakpoint rewrites the whole prefix; a tail
 
 ### R-agent-14  An injection records its bytes
 
-WHEN an injection reaches the model THE SYSTEM SHALL record a block naming its slot and the bytes sent; an
+WHEN an injection reaches the model THE SYSTEM SHALL record its bytes as a block; an observation block is
+that record, not a second one.
 observation block is that record, not a second one.
 Acceptance: @R-agent-14
 Why: pointers rebuild the context only if every byte sent is in the log.

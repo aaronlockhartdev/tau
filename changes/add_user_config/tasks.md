@@ -10,7 +10,10 @@
 - [ ] Implement: TOML read, write, and layer merge in core via `toml_edit`
 - [ ] Implement: `notify` on both layers, announced on core's event stream
 - [ ] Implement: frontends subscribe; ACP exposes the same state
-- [ ] Implement: the key table, naming the queue cap, the token budget, wall clock limit and repeated-tool-call
+- [ ] R-config-13: the key table in `spec/config/reload/spec.md`, naming the queue cap, the token budget,
+wall clock limit and repeated-tool-call stop keys `R-agent-11` and `R-agent-12` ask for, the observation and
+reflection thresholds `R-session-25` reads, and the context budget `R-session-22` bounds memory by, each
+with a default (@R-config-13)
 stop keys `R-agent-11` and `R-agent-12` ask for, the observation and reflection thresholds `R-session-25` reads,
 and the context budget `R-session-22` bounds memory by
 - [ ] archive: at archive `spec/config/reload/spec.md` is a new leaf, so `spec/config/spec.md`'s Leaves cell

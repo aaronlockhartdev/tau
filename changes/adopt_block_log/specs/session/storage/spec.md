@@ -18,7 +18,8 @@ Why: usage is a provider number the log cannot derive, and a request that stream
 
 ### R-session-37  State is pointers on the block
 
-WHEN the store records a block THE SYSTEM SHALL record the state as `blocks` pointers on the `blocks` row.
+WHEN the store records a block THE SYSTEM SHALL record the state as pointers into `blocks`, on the `blocks`
+row.
 Acceptance: @R-session-37
 Why: a cached context in a mutable row needs a reconciliation path, and pointers rebuild from the log alone.
 
@@ -39,10 +40,16 @@ WHEN a request reaches a terminal event THE SYSTEM SHALL stamp its usage and rea
 Acceptance: @R-session-40
 Why: one API reports input tokens at the open and another only at the close, so a null is a fact.
 
-### R-session-45  A slot's blocks answer
+### R-session-45  A block records its slot
 
-THE SYSTEM SHALL answer the blocks of a session that name a given slot.
+EACH block records the context slot it fills, when it fills one.
 Acceptance: @R-session-45
+Why: a context rebuilt from the log needs the slot, and the loop's order is not a record.
+
+### R-session-46  A slot's blocks answer
+
+THE SYSTEM SHALL answer a session's blocks that name a given slot.
+Acceptance: @R-session-46
 Why: a resume rebuilds observations, and `blocks_after` reaches only what follows the newest request.
 
 ## MODIFIED Requirements
