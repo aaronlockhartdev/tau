@@ -10,7 +10,7 @@ THE SYSTEM SHALL deny `clippy::correctness`, `clippy::suspicious`, `clippy::perf
 Acceptance: gate lints
 Why: the two `await_holding_*` lints are the mechanical form of a rule the lanes cannot test.
 
-### R-workspace-10  Lint gate covers every feature and target
+### R-workspace-10  Lint gate covers every target
 
 WHEN the lint gate runs THE SYSTEM SHALL lint `--workspace --all-targets --all-features`.
 Acceptance: gate lints
@@ -26,7 +26,7 @@ WHEN a push or pull request lands THE SYSTEM SHALL run the `ci lane` gate row, w
 Acceptance: gate ci lane
 Why: the table defines the lane; a workflow that lists steps of its own drifts from it.
 
-### R-workspace-13  Test lane reports every failure in CI
+### R-workspace-13  Test lane reports every failure
 
 WHEN the test lane runs in CI THE SYSTEM SHALL use nextest's `ci` profile, where `fail-fast` is off.
 Acceptance: gate unit + surface

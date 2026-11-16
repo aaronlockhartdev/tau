@@ -50,7 +50,7 @@ and `@R-workspace-08` that lets `change_spec_requirements` archive
 `prompt cache`, `provider`, `queue cap`, the two the log clauses use (`library`, `binary`),
 and the stream a reader meets in one protocol leaf: `provider stream` (the events of one provider
 request, numbered by R-protocol-01); `event stream` has its cell already
-The three the storage and surface clauses lean on — `tool call`, `write connection`, `frame budget`
+Of the terms the storage and surface clauses lean on, `write connection` and `frame budget` have cells, `tool call` does not
 - [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
 `change_spec_requirements`, which archives on the scenario `@R-agent-15` writes; at archive the counts move
 by what the deltas add — `spec/agent/spec.md` +15, `spec/protocol/spec.md` +3, `spec/tools/spec.md` +2,

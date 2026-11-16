@@ -153,8 +153,10 @@ carries the sweep of its prose to "the request loop"
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] sweep: the clause layout is the template's — obligation, `Acceptance:` and `Why:` adjacent, with no
 blank line between them. The live corpus has none, and none of the deltas these changes own has one. A
-clause whose `Acceptance:` sits in its own paragraph reads as a second obligation. This counts them, skipping
-`REMOVED` headings because a REMOVED block carries no obligation:
+clause whose `Acceptance:` sits in its own paragraph reads as a second obligation. The command counts an
+`Acceptance:` whose previous line is blank and the line before that is not a `###` heading, so a clause
+heading directly above is skipped by adjacency (a `REMOVED` block carries no obligation of its own), and
+its `find` covers `changes/` outside `*/archive/*`:
 
 `awk 'FNR==1{prev=""} /^Acceptance:/{if(prev=="" && pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n+0}' $(find changes -name "*.md" -not -path "*/archive/*")`
 
@@ -181,9 +183,11 @@ no UI logic`, `core has no HTTP client`, `core installs no subscriber`) match de
 hand-rolled client in core's own source, or a subscriber installed there under another name, stays
 green; the clauses those two rows answer to are pending in `add_turn_loop` (R-workspace-16..19) and
 speak core's source and graph and every install site, so the rows are narrower than they will need to
-be. `unit + surface` text-matches `fail-fast = false` inside the `[profile.ci]` section — an awk over
-lines, not a config parse, so a header indented out of column 1, a section that never closes, or
-`fail-fast=false` without spaces slips past it — and `-P ci` selects a profile by name. Separately,
+be. `unit + surface` text-matches `fail-fast = false` under a line naming `[profile.ci]` — an awk over
+lines, not a TOML parse, so a comment naming `[profile.ci]` opens the section, an indented `[profile.x]`
+header does not close it (measured: a `fail-fast = false` under such a header keeps the row green), and a
+`fail-fast=false` written without spaces goes unread, which reddens the row rather than hiding the flag —
+and `-P ci` selects a profile by name.
 and in the other direction: `core spawns nothing` greps prose too, so a comment naming `.spawn(`
 reddens
 it — a false red, not a false green.

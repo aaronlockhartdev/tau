@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a runner with a fixed scope: the ci lane, unit, behaviour, eval.
+`lane`: a runner with a fixed scope: the ci lane, unit and surface, behaviour, eval.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -41,8 +41,10 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `fence`: a markdown block of fenced code, open until its closing line.
 `resume`: read a session's stored log to continue it in a new process.
 `payload`: a block's content: the text or result a single block carries.
-`run`: a session's blocks, in the log's sequence order.
+`run`: a session's blocks, in the store's sequence order.
 `store setup`: a fresh store's journal upgrade and migrations, the steps a second process waits out.
+`write connection`: the connection that writes a store; core holds one per process.
+`frame budget`: the time one render may take before it drops a frame.
 `log`: the `blocks` table — every block, append-only, one row each.
 `session`: one running agent's stored conversation: its row, its requests, its blocks.
 `checkpoint`: WAL frames copied into the store file; `TRUNCATE` empties the WAL.

@@ -16,8 +16,8 @@ it supersedes, read back through `R-session-46`'s slot read
 - [ ] R-session-26: the count path from the memory leaf to the frontend event, and the step that reads it
 - [ ] docs: `docs/glossary.md` — `observation` and `reflection`, each a row of 15 words at most, as blocks
 appended to the log, an observation naming the range it supersedes and a reflection naming the observations
-it condenses; the live `observation` row reads "a condensation of a session's oldest messages, stored in
-the session", which places it outside the log
+it condenses; the live `observation` row reads "a condensation of a session's oldest messages, appended
+to its observations slot", which places it outside the log
 - [ ] Eval: observations versus the raw message tail, on demand
 - [ ] archive: `spec/session/memory/spec.md` is a new leaf, so `spec/session/spec.md`'s Leaves cell, `spec/index.md`'s session Leaves cell and Corpus count move by the numbers read off the files
 - [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, manual rows by hand
