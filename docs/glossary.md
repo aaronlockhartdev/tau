@@ -3,7 +3,7 @@
 One term per line: `term`: definition (≤15 words). Specs use these terms and define nothing inline.
 
 `gate`: a named command in `AGENTS.md`, with the state that says who runs it and when.
-`lane`: a runner with a fixed scope; a gate row runs it.
+`lane`: a runner with a fixed scope; a gate row in state run runs it.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
@@ -18,13 +18,13 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `reflection`: a condensation of observations.
 `tape`: a recorded model transcript that answers calls in place of a provider.
 `layer`: one of two levels, global and project; a nested guide is the project level's.
-`tail`: a session's newest messages, kept verbatim; the transcript's tail block renders them.
-`project`: the directory a session works in, its root.
+`tail`: a session's newest messages; the transcript's tail block renders them.
+`project`: the directory a session works in.
 `gate state`: the column saying who runs a row: `run` today, `manual` by an agent, `M0` never.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
 `event time`: the moment core produced a block or emitted a stream event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any block.
-`block`: one item of a conversation, stored as one row of the log; the store's unit.
+`block`: one item of a conversation, stored as one row of the log; the log's unit.
 `request`: one provider round-trip: the blocks it produced, its provider and model, usage and terminal.
 `injection`: a block the runtime adds to the context, not text from a user.
 `slot`: the context position a block names, such as a prompt part.

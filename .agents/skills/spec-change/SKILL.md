@@ -77,6 +77,9 @@ A decision worth keeping past the session lands in `spec/` through a change; pro
 
 ## 6. Archive
 
-`archive` needs each clause's acceptance ref to have run: a scenario that has never run, or a gate that has never passed, keeps the change open.
+`archive` refuses a delta whose clause has a malformed id, sits under no marker, names no live clause to
+change, repeats an id `spec/` has, withdraws a clause `spec/` still holds, runs its heading over the six-word
+cap, sits out of column 0, carries an unclosed fence, or hides a heading no scan reads. Whether each clause's
+acceptance ref has run is a reviewer's call: the tool reads no run ledger.
 `cargo run -p tau-tools --bin spec -- archive <id>` applies the deltas into `spec/` and moves the change to `changes/archive/<YYYY-MM-DD>-<id>/`.
 Archive creates `spec/<domain>/spec.md` when the delta names a domain that has no file yet. Archive is append-only: never edited afterwards. New facts are a new change.

@@ -170,6 +170,25 @@ fn is_clause_head(line: &str) -> bool {
     clause_head(line).is_some()
 }
 
+/// Every id a `###`-level heading line names, in any hash form and indent, fenced
+/// lines included: the candidates `clause_range` is probed with, so the agreement
+/// property covers every shape the generator can produce.
+#[cfg(test)]
+fn clause_head_ids(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|line| {
+            let rest = line.trim_start().strip_prefix("###")?;
+            let id = rest
+                .trim_start_matches('#')
+                .trim_start()
+                .split([' ', '\t'])
+                .next()?
+                .to_string();
+            id.starts_with("R-").then_some(id)
+        })
+        .collect()
+}
+
 /// A line that names a clause ID next to its hashes, in a form no scan reads:
 /// `###R-tools-01  Name` opens no clause, so the ID escapes the duplicate, cap and
 /// acceptance checks and `spec -- id` hands the same number out again.
@@ -187,14 +206,15 @@ fn stray_heading(line: &str) -> Option<&'static str> {
 /// The heading shape rules, read off the clause's own first line: `spec-authoring`
 /// sets `### R-<domain>-<NN>  <name <=6 words>` at column 0. A clause the scanner
 /// skipped would escape every other check, so an indented heading is reported, in
-/// deltas too. The word cap is checked on the live corpus only: the delta sweep
-/// that brings the open changes to it is a task of `change_spec_requirements`.
+/// deltas too. `cap` asks for the six-word count: `--check` sets it for `spec/`
+/// only, since an open delta's over-cap heading is refused at archive by
+/// `validate_plan`, which runs the same check on every ADDED and MODIFIED clause.
 fn heading_problems(cap: bool, clause: &Clause) -> Vec<String> {
     let head = clause.text.lines().next().unwrap_or_default();
     let mut out = Vec::new();
     if head.starts_with(' ') || head.starts_with('\t') {
         out.push("a clause heading sits out of column 0".to_string());
-    } else if !head.starts_with("### ") {
+    } else if !(head.starts_with("### ") || head.starts_with("###\t")) {
         out.push("a clause heading separates its hashes with no space".to_string());
     }
     let words = head.split_whitespace().skip(2).count();
@@ -515,6 +535,14 @@ fn check_cmd() -> i32 {
         } else if clause.section.contains("MODIFIED") && !spec_ids.contains(clause.id.as_str()) {
             problems += report("MODIFIED names no requirement in spec/");
         } else if clause.section.contains("REMOVED")
+            && withdrawn(clause)
+            && spec_ids.contains(clause.id.as_str())
+        {
+            // A withdrawal (R-harness-11) retires an id `spec/` does not hold: it is
+            // withdrawn by an earlier change. Naming a live clause with no `Supersedes:`
+            // deletes a rule with no replacement recorded.
+            problems += report("REMOVED with no Supersedes: names a requirement in spec/");
+        } else if clause.section.contains("REMOVED")
             && !withdrawn(clause)
             && !spec_ids.contains(clause.id.as_str())
         {
@@ -621,6 +649,14 @@ fn archived_numbers(findings: &mut Vec<String>) -> BTreeMap<String, BTreeSet<u32
             ));
             continue;
         };
+        if !fences_balanced(&text) {
+            // Every clause after an unclosed fence is example text, so its id drops out
+            // of the retired set and `spec -- id` hands a retired number out again.
+            findings.push(format!(
+                "{}: unclosed code fence, the ids after it are not counted as retired",
+                path.display()
+            ));
+        }
         for clause in clauses_in(&path.display().to_string(), &text) {
             if let Some((domain, number)) = split_id(&clause.id)
                 && number.len() <= 4
@@ -917,6 +953,18 @@ fn archive_cmd(args: &[String]) -> i32 {
         let Ok(relative) = delta.strip_prefix(&specs) else {
             continue;
         };
+        // A heading no scan reads would be dropped: the change archives, spec/ gains
+        // nothing, and the obligation vanishes. Refuse, naming the line.
+        let lines: Vec<&str> = text.lines().collect();
+        let fenced = fence_flags(&lines);
+        for (i, line) in lines.iter().enumerate() {
+            if !fenced[i]
+                && let Some(msg) = stray_heading(line)
+            {
+                eprintln!("spec: {}:{}: {msg}", delta.display(), i + 1);
+                return 1;
+            }
+        }
         let target = Path::new(SPEC_DIR).join(relative);
         plan.push((target, clauses_in(&delta.display().to_string(), &text)));
     }
@@ -1028,6 +1076,18 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)]) -> Vec<String> {
                 refusals.push(format!(
                     "{}: clause {} sits under no ADDED/MODIFIED/REMOVED marker",
                     clause.path, clause.id
+                ));
+            } else if clause.section.contains("REMOVED")
+                && withdrawn(clause)
+                && clause_range(&text, &clause.id).is_some()
+            {
+                // R-harness-11 waives the acceptance ref of a withdrawal, which retires an
+                // id spec/ no longer holds; a live clause is a retirement, which names a
+                // replacement, so refuse rather than delete a rule with no record.
+                refusals.push(format!(
+                    "{}: REMOVED with no Supersedes: names {}, a clause spec/ holds",
+                    target.display(),
+                    clause.id
                 ));
             } else if (clause.section.contains("MODIFIED")
                 || (clause.section.contains("REMOVED") && !withdrawn(clause)))
@@ -1421,6 +1481,39 @@ mod tests {
     }
 
     #[test]
+    fn a_withdrawal_names_no_clause_spec_holds() {
+        // The withdrawal shape: REMOVED, no Supersedes:, an id spec/ does not hold.
+        let withdrawal = [(
+            PathBuf::from("spec/session/never-exists/spec.md"),
+            vec![clause(
+                "R-session-07",
+                "## REMOVED Requirements",
+                "### R-session-07  A retired rule\nTHE SYSTEM SHALL x.",
+            )],
+        )];
+        assert_eq!(validate_plan(&withdrawal), Vec::<String>::new());
+
+        // The same shape naming a clause the live leaf holds: a retirement, and the
+        // archive refuses it rather than delete a rule with no replacement recorded.
+        let retirement = [(
+            // Read relative to the test's cwd (the crate root), so the live leaf opens.
+            PathBuf::from("../../spec/session/storage/spec.md"),
+            vec![clause(
+                "R-session-02",
+                "## REMOVED Requirements",
+                "### R-session-02  A live rule\nTHE SYSTEM SHALL x.",
+            )],
+        )];
+        let refusals = validate_plan(&retirement);
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(
+            refusals[0].contains("names a clause spec/ holds")
+                || refusals[0].contains("a clause spec/ holds"),
+            "{refusals:?}"
+        );
+    }
+
+    #[test]
     fn archive_refuses_a_clause_whose_fence_never_closes() {
         let plan = [(
             PathBuf::from("spec/session/never-exists/spec.md"),
@@ -1661,7 +1754,18 @@ mod proptests {
                     clause.id
                 );
             }
-            for id in ["R-a-01", "R-a-012", "R-a-03", "R-b-02"] {
+            // Every id the text can carry, not a hand-picked few: a scan that finds a
+            // clause the other misses must be caught for that shape, not four shapes.
+            let mut found: Vec<String> = clauses_in("t.md", text)
+                .iter()
+                .map(|c| c.id.clone())
+                .collect();
+            for id in clause_head_ids(text) {
+                if !found.contains(&id) {
+                    found.push(id);
+                }
+            }
+            for id in &found {
                 if clause_range(text, id).is_some() {
                     prop_assert!(
                         ids(text).contains(&id.to_string()),
