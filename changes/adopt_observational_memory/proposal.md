@@ -23,12 +23,12 @@ Tau's own rules:
 
 ## Consequences
 
-ACP exposes it on core's event stream, the shape `add_realtime_gui_output` owns for frontend events (R-surface-08).
-observation and a reflection are blocks in the log, in the `observations` slot: the log stays append-only
-(R-session-31), so a condensation replaces nothing — an observation names the block range it supersedes,
-and the next context is built from the observations and the kept tail. `adopt_block_log` lands that unit, and
-archives before this change. Token budgets move from prompt text into storage. Cost and latency are
-measured by eval. The clauses are in
+An observation and a reflection are blocks in the log, in the `observations` slot: the log stays
+append-only (R-session-31), so a condensation replaces nothing — an observation names the block range it
+supersedes, and the next context is built from the observations and the kept tail. `adopt_block_log` lands
+that unit, and archives before this change. The count reaches a frontend on core's event stream, the shape
+`add_realtime_gui_output` owns (R-surface-08). Token budgets move from prompt text into storage.
+Eval: none needed — the thresholds are lane-testable. The clauses are in
 `changes/adopt_observational_memory/specs/session/memory/spec.md` as `R-session-19..27`, archived to
 `spec/session/memory/spec.md`.
 

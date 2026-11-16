@@ -28,10 +28,9 @@ Rendering rules:
 
 The protocol widens to streaming events, and `contracts/` regenerates. Each event carries its event time (R-protocol-04) and the transcript labels a block with the time of its first event (R-surface-23); core stamps it once and the store records the same value (R-session-28, `spec/session/storage/spec.md`), so one clock owns the fact and the render path still reads no storage. Live text reaches the screen ahead of durability, per the live-output invariant in `spec/index.md`, so a turn that never committed rolls back with its transaction. The trade is a re-parse per token delta for one re-parse per block close. The rendering clauses are in `changes/add_realtime_gui_output/specs/surface/transcript/spec.md` as `R-surface-08..18` and `R-surface-23`, with frame cost at the `live output under load` gate.
 
-Eval: none needed — the frame cost is a gate row and the stream is a lane scenario.
-
 R-surface-09's scenario asserts stream equivalence, and `spike_gpui_surface` measures the frame budget
-R-surface-18 holds the surface to.
+R-surface-18 holds the surface to. Eval: none needed — the frame cost is a gate row and the stream is a
+lane scenario.
 
 Open: the frame budget R-surface-18 holds the surface to is the number `spike_gpui_surface` records, and
 is fixed by that spike's measurement, not by this change.
