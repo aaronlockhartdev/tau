@@ -63,15 +63,16 @@ the clause — the tag and the ref leave the corpus together, so `spec --check` 
 the clause; `blocks` immutability is R-session-31's
 - [x] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [x] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
-- [ ] docs: `docs/glossary.md` — add `block`, `request`, `injection`, `slot`, `user input`, `usage`, `terminal`
-and `state`; drop `turn` and `committed marker`; re-word `log`, `run`, `session`, `steer` and `session start
-output`. The live `log` cell names `events`, `run` reads "a session's turns in order, with the events each
-produced", `turn` reads "one request to the model and what it produced, numbered per session", and
-`session` names turns: all of it is this change's unit
-- [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
-- [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause
-`change_spec_requirements` issues and that goes live at its archive; each comment marks the clause pending, and
-the citation stays (R-workspace-04)
+- [x] docs: `docs/glossary.md` adds `block`, `request`, `injection`, `slot`, `user input`, `usage`,
+  `terminal` and `state`; drops `turn` and `committed marker`; re-words `log`, `run`, `session`,
+  `steer`, `event time` and `session start output`. The live cells named `events`, turns and the
+  committed marker, the unit this change retires
+- [x] docs: `docs/stack.md` Storage row names `blocks` and `requests`, the state as a pair of
+  pointers, the clause ranges 01..08, 10, 11, 13, 18, 28..46, and the vocabularies' home in
+  `tau-protocol`, generated into `contracts/` (R-session-29, 30)
+- [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause
+  `change_spec_requirements` issues and that goes live at its archive; each comment marks the clause
+  pending, and the citation stays (R-workspace-04)
 - [ ] docs: sweep the deltas this change does not re-format: bare `## ADDED` markers to `## ADDED Requirements`
 (`add_subagent_support` 4 leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_hash_anchor_editing`, `adopt_skills_convention`); headings over the six-word cap (`R-config-01`,

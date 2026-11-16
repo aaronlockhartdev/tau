@@ -5,13 +5,12 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `gate`: a named command in `AGENTS.md` that a change must pass.
 `lane`: a test runner with a fixed scope: behaviour, surface, eval.
 `delta clause`: one EARS requirement in `changes/<id>/specs/`, applied to `spec/` at archive.
-`committed marker`: the storage fact that a turn's transaction committed.
 `step vocabulary`: the generated list of allowed Gherkin steps in `STEPS.md`.
 `harness`: the test and spec-tooling crates: lanes, step vocabulary, spec linter.
 `invariant`: a rule in `spec/index.md` or a domain index, with the check that proves it.
 `root`: tau's user file root, `~/.tau`; XDG config home overrides the config path.
 `fork`: a child session that copies the parent's history and prompt cache.
-`steer`: send input to a running child, applied at its next turn boundary.
+`steer`: send input to a running child, stored as a block in its log.
 `roster`: the view listing a session's children with their states.
 `config layer`: the global config file, or the project file merged over it key by key.
 `anchor`: the five-character handle a read serves for one line of one file.
@@ -23,11 +22,21 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `tail`: the newest messages of a session, kept verbatim.
 `project`: the working directory's git root, or the working directory when it is not one.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
-`event time`: the moment core emits an event, in Unix milliseconds UTC.
-`session start output`: the lines tau prints when a session opens, before any event.
-`run`: a session's turns in order, with the events each produced.
+`event time`: the moment core produces a block, in Unix milliseconds UTC.
+`session start output`: the lines tau prints when a session opens, before any block.
+`block`: one item of a conversation, stored as one row of the log; the store's unit.
+`request`: one round-trip to a provider: its model, its usage, its terminal reason.
+`injection`: a block the runtime adds to the context, not text from a user.
+`slot`: the context position a block names, such as a prompt part.
+`user input`: steering text that arrives mid-run, stored as a block.
+`usage`: a request's counts: input, cache read, cache write, output.
+`terminal`: the reason a request ended, and the last block of its run.
+`state`: a pair of log sequences naming the context a block was built from.
+`stream`: the blocks one model call produces, closed at once by its provider.
+`resume`: read a session's stored log to continue it in a new process.
+`payload`: a block's content: the text or result a single block carries.
+`run`: a session's requests in order, with the blocks each produced.
 `store setup`: a fresh store's journal upgrade and migrations, the steps a second process waits out.
-`log`: the `events` table — every event, append-only, one row each.
-`turn`: one request to the model and what it produced, numbered per session.
-`session`: one running agent's stored conversation: its row, its turns, its events.
+`log`: the `blocks` table — every block, append-only, one row each.
+`session`: one running agent's stored conversation: its row, its requests, its blocks.
 `checkpoint`: WAL frames copied into the store file; `TRUNCATE` empties the WAL.
