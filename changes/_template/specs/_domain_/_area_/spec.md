@@ -28,4 +28,5 @@ Why: {only if an implementer would otherwise violate this: ≤25 words}
 
 ### R-<domain>-<NN>  {name}
 
+Acceptance: @R-<domain>-<NN>
 Supersedes: R-<domain>-<NN> → R-<other>-<MM> in `spec/{domain}/{area}/spec.md`.

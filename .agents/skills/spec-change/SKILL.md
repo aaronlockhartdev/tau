@@ -45,6 +45,7 @@ Acceptance: @R-<domain>-<NN>
 
 ## REMOVED Requirements
 ### R-<domain>-<NN>  <name>
+Acceptance: @R-<domain>-<NN>
 Supersedes: R-<domain>-<NN> → R-<domain>-<MM>
 ```
 

@@ -243,6 +243,10 @@ fn heading_problems(cap: bool, clause: &Clause) -> Vec<String> {
 
 /// True for the lines of a ``` fenced block, fences included: a `#` there is
 /// example text, so it neither opens a clause nor ends one.
+/// Which lines sit inside a code fence. shortcut: a marker opens on ` ``` ` or `~~~ `
+/// at any indent, and closes on any later marker, where CommonMark indents a fence
+/// under four spaces and matches a closer's length; a spec example that uses those
+/// shapes reports an unclosed fence. No `spec/` or delta file does today.
 fn fence_flags(lines: &[&str]) -> Vec<bool> {
     let mut flags = vec![false; lines.len()];
     let mut inside = false;
@@ -527,7 +531,11 @@ fn check_cmd() -> i32 {
             seen_delta.insert(&clause.id, &clause.path);
         }
         // A withdrawal inside its own change has no acceptance ref: the rule is gone and
-        // no scenario runs it (R-harness-11).
+        // no scenario runs it (R-harness-11). shortcut: the waiver is keyed on
+        // (domain, number) across every open delta, so a withdrawal in one change waives
+        // a same-numbered clause in another; the id checks redden the lint for the
+        // non-canonical and duplicate forms today. Scope per change if a delta ever
+        // retires a number another change claims.
         let is_withdrawn = number.parse::<u32>().is_ok_and(|n| {
             withdrawn_numbers
                 .get(domain)
@@ -994,7 +1002,7 @@ fn archive_cmd(args: &[String]) -> i32 {
     }
 
     // Refuse before touching anything: spec/ and changes/ stay as they were.
-    let refusals = validate_plan(&plan, &live_ids());
+    let refusals = validate_plan(&plan, &live_ids(), &feature_tags());
     if !refusals.is_empty() {
         for refusal in refusals {
             eprintln!("spec: {refusal}");
@@ -1074,7 +1082,11 @@ fn live_ids() -> BTreeSet<String> {
         .collect()
 }
 
-fn validate_plan(plan: &[(PathBuf, Vec<Clause>)], live: &BTreeSet<String>) -> Vec<String> {
+fn validate_plan(
+    plan: &[(PathBuf, Vec<Clause>)],
+    live: &BTreeSet<String>,
+    tags: &BTreeSet<String>,
+) -> Vec<String> {
     let mut refusals = Vec::new();
     for (target, clauses) in plan {
         // The same read the write path uses: a missing target is the new-file case, and
@@ -1124,6 +1136,18 @@ fn validate_plan(plan: &[(PathBuf, Vec<Clause>)], live: &BTreeSet<String>) -> Ve
                         clause.path, clause.id
                     ));
                 }
+            }
+            // A delta's `@R-…` ref may name a scenario that lands with the change; once
+            // the clause is in `spec/` the lint requires the tag to exist, so archiving a
+            // clause whose scenario was never written reddens `spec lint` in the commit.
+            if (clause.section.contains("ADDED") || clause.section.contains("MODIFIED"))
+                && let Some(tag) = clause.acceptance.trim().strip_prefix('@')
+                && !tags.contains(tag)
+            {
+                refusals.push(format!(
+                    "{}: {} accepts @{tag}, which matches no scenario tag",
+                    clause.path, clause.id
+                ));
             }
             if !MARKERS.iter().any(|m| clause.section.contains(m)) {
                 refusals.push(format!(
@@ -1358,13 +1382,18 @@ mod tests {
     use super::*;
 
     fn clause(id: &str, section: &str, text: &str) -> Clause {
+        // The ref the scans read off the clause's own lines, so a test states it in text.
+        let acceptance = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Acceptance:").map(|a| a.trim().to_string()))
+            .unwrap_or_else(|| "gate workspace layout".to_string());
         Clause {
             path: "delta".to_string(),
             line: 1,
             id: id.to_string(),
             section: section.to_string(),
             text: text.to_string(),
-            acceptance: "gate workspace layout".to_string(),
+            acceptance,
         }
     }
 
@@ -1558,6 +1587,33 @@ mod tests {
         ids.iter().map(|id| (*id).to_string()).collect()
     }
 
+    /// The scenario tags the features carry, as `validate_plan` probes them.
+    fn tags(ids: &[&str]) -> BTreeSet<String> {
+        ids.iter().map(|id| (*id).to_string()).collect()
+    }
+
+    #[test]
+    fn added_needs_the_scenario_that_lands_with_it() {
+        let plan = [(
+            PathBuf::from("spec/workspace/never-exists/spec.md"),
+            vec![clause(
+                "R-workspace-16",
+                "## ADDED Requirements",
+                "### R-workspace-16  A rule\nTHE SYSTEM SHALL x.\nAcceptance: @R-workspace-16",
+            )],
+        )];
+        let refusals = validate_plan(&plan, &live(&[]), &tags(&[]));
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(
+            refusals[0].contains("matches no scenario tag"),
+            "{refusals:?}"
+        );
+        assert_eq!(
+            validate_plan(&plan, &live(&[]), &tags(&["R-workspace-16"])),
+            Vec::<String>::new()
+        );
+    }
+
     #[test]
     fn added_refuses_an_id_the_corpus_holds_elsewhere() {
         let plan = [(
@@ -1568,7 +1624,7 @@ mod tests {
                 "### R-session-02  A duplicate in a sibling leaf\nTHE SYSTEM SHALL x.\nAcceptance: @R-session-02",
             )],
         )];
-        let refusals = validate_plan(&plan, &live(&["R-session-02"]));
+        let refusals = validate_plan(&plan, &live(&["R-session-02"]), &tags(&["R-session-02"]));
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(
             refusals[0].contains("ADDED would duplicate"),
@@ -1599,18 +1655,31 @@ mod tests {
 
         // 1. A withdrawal: no Supersedes:, an id spec/ no longer holds. Waived.
         assert_eq!(
-            validate_plan(&plan("## REMOVED Requirements", false), &live(&[])),
+            validate_plan(
+                &plan("## REMOVED Requirements", false),
+                &live(&[]),
+                &tags(&[])
+            ),
             Vec::<String>::new()
         );
         // 2. The same shape naming an id the corpus holds: a retirement written as a
         // withdrawal, and it would delete a rule with no replacement recorded.
         assert_eq!(
-            validate_plan(&plan("## REMOVED Requirements", false), &held).len(),
+            validate_plan(
+                &plan("## REMOVED Requirements", false),
+                &held,
+                &tags(&["R-session-02"])
+            )
+            .len(),
             1
         );
         // 3. A retirement, with Supersedes:, naming the clause its own target holds.
         assert_eq!(
-            validate_plan(&plan("## REMOVED Requirements", true), &held),
+            validate_plan(
+                &plan("## REMOVED Requirements", true),
+                &held,
+                &tags(&["R-session-02"])
+            ),
             Vec::<String>::new()
         );
         // 4. A retirement naming a rule the corpus holds elsewhere, and one naming
@@ -1624,9 +1693,17 @@ mod tests {
                 &removed(true),
             )],
         )];
-        assert_eq!(validate_plan(&elsewhere, &held).len(), 1);
         assert_eq!(
-            validate_plan(&plan("## REMOVED Requirements", true), &live(&[])).len(),
+            validate_plan(&elsewhere, &held, &tags(&["R-session-02"])).len(),
+            1
+        );
+        assert_eq!(
+            validate_plan(
+                &plan("## REMOVED Requirements", true),
+                &live(&[]),
+                &tags(&["R-session-02"])
+            )
+            .len(),
             1
         );
     }
@@ -1642,7 +1719,10 @@ mod tests {
                 "### R-session-07  A retired rule\nTHE SYSTEM SHALL x.",
             )],
         )];
-        assert_eq!(validate_plan(&withdrawal, &live(&[])), Vec::<String>::new());
+        assert_eq!(
+            validate_plan(&withdrawal, &live(&[]), &tags(&[])),
+            Vec::<String>::new()
+        );
 
         // The same shape naming a clause the corpus holds: a retirement, and the
         // archive refuses it rather than delete a rule with no replacement recorded.
@@ -1655,7 +1735,11 @@ mod tests {
                 "### R-session-02  A live rule\nTHE SYSTEM SHALL x.",
             )],
         )];
-        let refusals = validate_plan(&retirement, &live(&["R-session-02"]));
+        let refusals = validate_plan(
+            &retirement,
+            &live(&["R-session-02"]),
+            &tags(&["R-session-02"]),
+        );
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(
             refusals[0].contains("names a clause spec/ holds")
@@ -1674,7 +1758,7 @@ mod tests {
                 "### R-session-02  A name\nTHE SYSTEM SHALL x.\n```\nexample",
             )],
         )];
-        let refusals = validate_plan(&plan, &live(&[]));
+        let refusals = validate_plan(&plan, &live(&[]), &tags(&["R-tools-99"]));
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(refusals[0].contains("unclosed code fence"), "{refusals:?}");
         // A closed pair is the shape a clause carries an example in.
@@ -1686,7 +1770,10 @@ mod tests {
                 "### R-session-02  A name\nTHE SYSTEM SHALL x.\n```\nexample\n```",
             )],
         )];
-        assert_eq!(validate_plan(&ok, &live(&[])), Vec::<String>::new());
+        assert_eq!(
+            validate_plan(&ok, &live(&[]), &tags(&["R-session-02"])),
+            Vec::<String>::new()
+        );
 
         // A tilde fence is a fence: one opener in a clause leaves the target fenced.
         let tilde = [(
@@ -1697,7 +1784,7 @@ mod tests {
                 "### R-session-02  A name\nTHE SYSTEM SHALL x.\n~~~\nexample",
             )],
         )];
-        let tilde_refusals = validate_plan(&tilde, &live(&[]));
+        let tilde_refusals = validate_plan(&tilde, &live(&[]), &tags(&["R-session-02"]));
         assert!(
             tilde_refusals
                 .iter()
@@ -1740,7 +1827,7 @@ mod tests {
                 "### R-session-02  A heading with eight words in its name here\nTHE SYSTEM SHALL x.",
             )],
         )];
-        let refusals = validate_plan(&plan, &live(&[]));
+        let refusals = validate_plan(&plan, &live(&[]), &tags(&["R-tools-99"]));
         assert_eq!(refusals.len(), 1, "{refusals:?}");
         assert!(refusals[0].contains("the cap is 6"), "{refusals:?}");
     }
@@ -1763,7 +1850,7 @@ mod tests {
                 ),
             ],
         )];
-        let refusals = validate_plan(&plan, &live(&[]));
+        let refusals = validate_plan(&plan, &live(&[]), &tags(&["R-tools-99"]));
         // The withdrawal has no clause in `spec/` to delete. The retirement and the
         // modification each name a rule the target file has to hold.
         assert_eq!(refusals.len(), 2, "{refusals:?}");
@@ -1866,7 +1953,7 @@ mod proptests {
 
     // The shapes a spec file holds: section headings, clause headings, fences,
     // prose, and indented prose that must not read as a heading.
-    const SHAPES: [&str; 11] = [
+    const SHAPES: [&str; 13] = [
         "## Requirements",
         "## Notes",
         "### R-a-01  one",
@@ -1877,6 +1964,8 @@ mod proptests {
         "# index",
         "    ### R-a-03  indented",
         "###\tR-a-04  tabbed",
+        "~~~",
+        "### #R-a-06  hidden behind a hash",
         "THE SYSTEM SHALL list members.",
     ];
 
