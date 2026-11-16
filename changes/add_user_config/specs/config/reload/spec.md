@@ -54,9 +54,9 @@ Why: a key absent from the list is set by reading source, so the list is the key
 
 ### R-config-10  No value reaches a session log
 
-THE SYSTEM SHALL write no config value into a session event.
+THE SYSTEM SHALL write no config value into a session block.
 Acceptance: @R-config-10
-Why: the file carries provider keys, and events are exported, copied, and shared.
+Why: the file carries provider keys, and blocks are exported, copied, and shared.
 
 ### R-config-11  A table merges key by key
 

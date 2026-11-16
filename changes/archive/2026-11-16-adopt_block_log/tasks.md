@@ -107,13 +107,10 @@ this one, so the session range is split until that change archives — the gap c
   refused on the spot, so its budget is 20 attempts of a 50 ms backoff (~1 s) and the 5 s beat
   leaves ~4 s for the refusal to land. The migration leg is the slow one, ~2.95 s: every attempt
   burns its 100 ms busy timeout before the backoff, so a 3 s beat there leaves ~50 ms
-- [ ] R-session-07: the `turn.committed` column, the `events_no_late_insert` trigger and the
-`RunTurn.committed` field are gone with the rewritten migration and lane, and a scenario reads the
-absence (`the log carries no committed marker`). What is left is the scenarios tagged
-`@R-session-07`: they go in the same archive commit that retires the clause, so the tag and the ref
-leave the corpus together and `spec --check` stays green
-- [ ] R-session-30: the late-event scenarios tagged `@R-session-30` go in the same archive commit that retires
-the clause; `blocks` immutability is R-session-31's
+- [x] R-session-07, R-session-30: the archive retires both clauses, and their scenario tags leave the
+corpus in the same commit — the late-event scenario is deleted and the killed-process scenario keeps
+`@R-session-06` alone, so no tag names a retired clause and no live clause loses its ref. The marker
+is absent from the schema and a scenario reads that absence
 - [x] R-session-33, R-session-34: the setup-race steps renamed to the new unit, behaviour unchanged
 - [x] lane: re-word `crates/tau-test/tests/features/session.feature` and `crates/tau-test/src/steps/session.rs` to blocks and requests; `STEPS.md` regenerates
 - [x] docs: `docs/glossary.md` adds `block`, `request`, `injection`, `slot`, `user input`, `usage`,
@@ -137,12 +134,14 @@ the clause; `blocks` immutability is R-session-31's
 `R-tools-28`, `R-harness-04`); the `THE SYSTEM SHALL NOT` obligations that sit outside the five EARS
 forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`, `R-harness-08`); and the
 `Apply to` line naming the live leaf each delta applies to, missing from those six deltas
-- [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
-`add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
-`adopt_skills_convention` and `change_spec_requirements` (its proposal states the retired committed marker as
-landing live). `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e committed changes/`
-finds those seven, plus `adopt_block_log`, `add_turn_loop`, `adopt_observational_memory` and
-`spike_gpui_surface`, which speak the new unit themselves, not the old one
+- [x] re-worded: the seven open changes no longer speak the retired unit as a live concept — directed
+messages are blocks in each participant's log (`add_subagent_support`, and its `send` queues to the
+next request), a block shows its own event time (`add_realtime_gui_output`), no config value reaches a
+session block (`add_user_config`), and skill and context costs are counted per request
+(`adopt_skills_convention`, `adopt_context_file_loading`); `change_spec_requirements` names the
+committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
+events -e committed changes/` now answers only the protocol's stream events (R-protocol-01 numbers
+them), the glossary's `event time`, git's `committed`, and the verb "turns"
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
@@ -158,13 +157,15 @@ It prints 66 today: `add_subagent_support` 27, `adopt_context_file_loading` 10, 
 belong to no change in this range; `add_test_lanes` re-formats its own 6. The form is the template's, in
 `changes/_template/specs/_domain_/_area_/spec.md`
 
-- [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
-`spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
-count and `spec/index.md`'s Corpus count move by the same numbers read off the files
-- [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool,
-spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies
-current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns
-nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under
-load, headless session, desktop — reported `skipped (M0)`; manual rows — workspace layout, eval — reported
-by hand
+Carried: the three lines above stay open, and each has a named home. The delta-format sweep and the
+clause-layout sweep belong with `change_spec_requirements`, the change that owns the spec format. The
+Measure belongs with the `blobs` change this proposal promises to open, because the numbers it
+reproduces are that option's evidence and the current schema is the one to measure.
+
+- [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
+(07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,
+both counted off the files. `add_turn_loop` lands after, and its 41..44 fill the gap this leaf leaves
+- [x] check: `cargo run -p tau-tools --bin gates` — 17 `run` rows PASS, `live output under load`,
+`headless session` and `desktop` report `skipped (M0)`, `eval` reports `skipped (M0)`; the
+workspace layout row is checked by hand, and the lane runs 45 scenarios with 9 tau-core unit tests
 - [ ] spec-review (reviewer ticks)

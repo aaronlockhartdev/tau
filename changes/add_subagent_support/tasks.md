@@ -9,7 +9,7 @@
 - [ ] Implement: `task` and `send`, with the target roster in context
 - [ ] Implement: `subagent_update` and directed messages in `tau-protocol`
 - [ ] Implement: roster view, attach, steer, cancel
-- [ ] Implement: directed-message event kinds. The parent column is not to be added: `add_session_storage` landed it as `sessions.parent` (R-session-08), and `Store::fork` writes it.
+- [ ] Implement: directed-message block kinds. The parent column is not to be added: `add_session_storage` landed it as `sessions.parent` (R-session-08), and `Store::fork` writes it.
 - [ ] Verify: contracts current after the new wire types
 - [ ] Eval: a fan-out review task, on demand
 - [ ] spec-review before commit

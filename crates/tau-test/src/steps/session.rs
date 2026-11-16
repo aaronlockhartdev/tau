@@ -499,21 +499,6 @@ async fn insert_orphan_block(world: &mut World) {
     });
 }
 
-#[when("a block naming that request is inserted")]
-async fn insert_block_after_terminal(world: &mut World) {
-    refused_write(
-        world,
-        "block for a request past its terminal",
-        "a terminal request produces no further block",
-        |conn| {
-            conn.execute(
-                "INSERT INTO blocks (session, request, ts, kind, payload) VALUES (?1, ?2, 1004, 'tool_result', 'late')",
-                rusqlite::params![SESSION, REQUEST],
-            )
-        },
-    );
-}
-
 #[when("a stored block row is updated")]
 async fn update_block_row(world: &mut World) {
     refused_write(

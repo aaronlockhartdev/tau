@@ -33,7 +33,6 @@ The allowed step vocabulary: a scenario uses only steps listed here, and adding 
 - When a batch naming a terminal request is committed
 - Then the refused batch stores no block
 - When a block for a request with no row is inserted
-- When a block naming that request is inserted
 - When a stored block row is updated
 - When a stored block row is deleted
 - Then the store refuses the write

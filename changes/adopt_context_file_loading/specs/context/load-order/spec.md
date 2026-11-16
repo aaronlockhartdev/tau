@@ -56,7 +56,7 @@ Acceptance: @R-context-08
 THE SYSTEM SHALL load no document as context unless a loaded file names its path.
 
 Acceptance: @R-context-09
-Why: an auto-loaded document is a token bill every turn pays, and its absence from the report is invisible.
+Why: an auto-loaded document is a token bill every request pays, and its absence from the report is invisible.
 
 ### R-context-10  The loaded set is reported
 

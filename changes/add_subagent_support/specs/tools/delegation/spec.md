@@ -64,7 +64,7 @@ Acceptance: @R-tools-10
 
 ### R-tools-11  A fork shares the parent's prompt cache
 
-WHEN a fork runs THE SYSTEM SHALL read the parent's prompt cache for its first turn.
+WHEN a fork runs THE SYSTEM SHALL read the parent's prompt cache on its first request.
 
 Acceptance: @R-tools-11
 

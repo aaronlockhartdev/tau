@@ -1,4 +1,5 @@
-//! Writes the generated wire schemas into `contracts/` (R-workspace-04).
+//! Writes the generated wire schemas into `contracts/` (R-workspace-04, a clause `change_spec_requirements`
+//! issues: the citation is live here, the clause is pending there).
 //! Run from the repo root: `cargo run -p tau-protocol --bin contracts [-- --check]`.
 
 use std::fs;

@@ -64,5 +64,5 @@ Acceptance: gate live output under load
 
 ### R-surface-23  A block shows its event time
 
-WHEN a block renders THE SYSTEM SHALL label it with the event time of its first event.
+WHEN a block renders THE SYSTEM SHALL label it with its event time.
 Acceptance: @R-surface-23

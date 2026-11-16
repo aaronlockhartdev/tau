@@ -42,7 +42,7 @@ Every fact a task needs lives elsewhere by kind: rules in `spec/`, terms in `doc
 | lints | `cargo fmt --all --check && cargo clippy --workspace --all-targets --all-features -- -D warnings` | run |
 | headless session | `cargo run -p tau-test --example headless -- --tape <f>` (R-workspace-14, R-workspace-15) | M0 |
 | desktop | `cargo run -p tau-app` (stub bin, no surface) | M0 |
-| eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` | manual |
+| eval (never CI) | `cargo run -p tau-test --bin eval -- --suite crates/tau-test/suites/<x>.md` (no `eval` bin, no `suites/`) | M0 |
 
 Authoring and review rules belong to the skills; don't restate them here.
 

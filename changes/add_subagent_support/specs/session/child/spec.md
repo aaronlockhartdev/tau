@@ -8,9 +8,9 @@ WHEN a child session is created THE SYSTEM SHALL record the parent session id on
 
 Acceptance: @R-session-14
 
-### R-session-15  A directed message is an event
+### R-session-15  A directed message is a block
 
-WHEN one session messages another THE SYSTEM SHALL append the message to each participant's event log.
+WHEN one session messages another THE SYSTEM SHALL append the message as a block to each participant's log.
 
 Acceptance: @R-session-15
 

@@ -5,7 +5,7 @@
 - [ ] Scenario: R-config-06,07 restart key marked in file and announced
 - [ ] Scenario: R-config-08 frontends share one config state
 - [ ] Scenario: R-config-09 every listed key applies with its default
-- [ ] Scenario: R-config-10 no config value in a session event
+- [ ] Scenario: R-config-10 no config value in a session block
 - [ ] Scenario: R-config-11,12,14 table merge, array replace, reload either layer
 - [ ] Implement: TOML read, write, and layer merge in core via `toml_edit`
 - [ ] Implement: `notify` on both layers, announced on core's event stream

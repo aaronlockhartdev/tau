@@ -28,7 +28,7 @@ Acceptance: @R-acp-04
 
 ### R-acp-05  A client can steer a child
 
-WHEN a client sends a prompt scoped to a child session THE SYSTEM SHALL queue it to the child's next turn boundary.
+WHEN a client sends a prompt scoped to a child session THE SYSTEM SHALL queue it as a block for the child's next request.
 
 Acceptance: @R-acp-05
 Why: the draft forbids client-initiated prompting, so tau ships the RFD's named follow-up for its own app.
