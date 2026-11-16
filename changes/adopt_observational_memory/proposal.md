@@ -23,7 +23,7 @@ Tau's own rules:
 
 ## Consequences
 
-Memory is a core component; the desktop view shows its state, and ACP exposes it as session metadata. An
+ACP exposes it as session metadata, the shape `add_realtime_gui_output` owns for frontend events (R-surface-08).
 observation and a reflection are blocks in the log, in the `observations` slot: the log stays append-only
 (R-session-31), so a condensation replaces nothing — an observation names the block range it supersedes,
 and the next context is built from the observations and the kept tail. `adopt_block_log` lands that unit, and

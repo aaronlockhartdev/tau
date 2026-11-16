@@ -1,5 +1,8 @@
 # Delta: surface/transcript
 
+Apply to `spec/surface/transcript/spec.md` at archive time. Describe the difference, not the whole file.
+Apply to `spec/surface/transcript/spec.md` at archive time. Describe the difference, not the whole file.
+
 ## ADDED Requirements
 
 ### R-surface-08  One stream carries every state change

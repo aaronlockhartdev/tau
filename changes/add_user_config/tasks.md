@@ -10,11 +10,12 @@
 - [ ] Implement: TOML read, write, and layer merge in core via `toml_edit`
 - [ ] Implement: `notify` on both layers, announced on core's event stream
 - [ ] Implement: frontends subscribe; ACP exposes the same state
-- [ ] R-config-13: the key table in `spec/config/reload/spec.md`, naming the queue cap, the token budget,
+- [ ] R-config-13: the key table in `docs/stack.md`'s Config row, naming the queue cap, the token budget,
 the wall clock limit and the repeated-tool-call stop keys `R-agent-11` and `R-agent-12` ask for, the
 observation and reflection thresholds `R-session-25` reads, and the memory context budget
 `R-session-22` bounds memory by, each with a default (@R-config-13)
-- [ ] docs: `docs/stack.md` gains the config row (`toml_edit`, `notify`) with its pin
+- [ ] docs: `docs/stack.md`'s Config row gains the pin (`toml_edit`, `notify`) and the key table R-config-13
+lists
 - [ ] archive: `spec/config/reload/spec.md` is a new leaf, so `spec/config/spec.md`'s Leaves cell,
 `spec/index.md`'s config Leaves cell and the Corpus count move by the numbers read off the files
 - [ ] check: `cargo run -p tau-tools --bin gates`; rows in state M0 reported `skipped (M0)`, manual rows by hand
