@@ -51,7 +51,9 @@ bytes recorded, session start output). `spec/protocol/` gains the stream event s
 shape, and the kinds and reasons generated as one vocabulary (R-protocol-01..03), the schemas generated
 into `contracts/` under the invariant in `spec/index.md`. `spec/tools/` gains the registry the binary
 injects and the trait that runs a tool in `tau-core` (R-tools-30, 31). `spec/workspace/` gains the logging
-rules and the rule that the HTTP client to a model provider stays out of core and its graph (R-workspace-16,
+rules and the rule that the HTTP client to a model provider stays out of core and its graph (R-workspace-16..19):
+libraries emit on the `tracing` facade, only a binary installs a subscriber, logs go to stderr at the default
+level, and the provider client stays out of core.
 17, 18): libraries emit on the `tracing` facade, only a binary installs a subscriber, and logs go to stderr
 at the default level.
 `spec/session/storage/` gains the session row's facts (R-session-41..44: working directory, last model,
@@ -60,12 +62,12 @@ Two gate rows join `AGENTS.md`: `core has no HTTP client` and `core installs no 
 greps in the shape of `core has no runtime`.
 The lane runs on an in-process stub provider in `crates/tau-test` implementing the trait; tapes are
 deferred until a working loop can generate them, so the `headless session` gate row stays `M0` and
-`crates/tau-test/suites/` is a directory no suite has created yet.
+`crates/tau-test/suites/` has no directory until a suite lands.
 This change also closes `change_spec_requirements`: the session start output line is printed, so
 `@R-workspace-08` gains its scenario.
 Cost, stated: new dependencies `futures` (core), `tracing` (facade, core), `uuid` (v7) and `petname`
-two store writes per request — open and terminal — plus one per block,
-a transaction. Contention is measured, cost is not: the store's worst commit under two writers ran 41 ms
+(display names, at the surface boundary); the loop pays two store writes per request — open and terminal —
+plus one per block, each a transaction. Contention is measured, cost is not:
 (`changes/archive/2026-11-15-add_session_storage/tasks.md`). Tokens: the context is resent whole every request, priced by
 prefix caching, where one write and nine reads cost 2.15× the input against 10× uncached: 1.25× a cache
 write and 0.1× a cache read (platform.claude.com prompt-caching page, read 2026-11-15).

@@ -8,7 +8,7 @@ Apply to `spec/session/storage/spec.md` at archive time. Describe the difference
 
 THE SYSTEM SHALL record one block per commit, or every block a stream closes at once, ordered by a store-wide sequence.
 Acceptance: @R-session-35
-Why: a turn-scoped marker made the caller close the unit last, and nothing checked that it did.
+Why: a block is committed by the transaction that inserts it, so a marker closed after the fact is a second truth about the same row.
 
 ### R-session-36  A request records one round-trip
 

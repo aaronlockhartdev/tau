@@ -46,8 +46,8 @@ Why: a changed prefix invalidates the provider's prompt cache, which is the cost
 
 ### R-session-25  Thresholds come from config
 
-THE SYSTEM SHALL read the observation and reflection thresholds from user config, at the defaults the
-config change's key table lists (R-config-09).
+THE SYSTEM SHALL read the observation and reflection thresholds from user config, at the defaults user
+config lists.
 
 Acceptance: @R-session-25
 Why: a threshold baked into code cannot rise on a machine with room and fall on one without.
@@ -59,9 +59,8 @@ WHILE memory updates THE SYSTEM SHALL expose observation and reflection counts t
 Acceptance: @R-session-26
 Why: a compression that runs unseen looks like a stall, and counts are the smallest sign it works.
 
-### R-session-27  Observations are stored
+### R-session-27  An observation outlives the process
 
-WHEN an observation is created THE SYSTEM SHALL write it to the session store.
-
+WHEN a session resumes THE SYSTEM SHALL rebuild the observations from the log, not from prompt state alone.
 Acceptance: @R-session-27
-Why: an observation kept in prompt state dies with the process, and the log is the record.
+Why: prompt state dies with the process, and the log is what a resume reads.

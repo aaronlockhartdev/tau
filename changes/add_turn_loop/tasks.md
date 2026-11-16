@@ -2,7 +2,8 @@
 
 One line per committable unit. Implementation lines name an `R-ID`. Spikes and gates first.
 Lands after `adopt_block_log`: these clauses name blocks, requests, and state pointers.
-IDs: this change claims R-protocol-01..03; R-tools-30 and 31; R-workspace-16..18; R-agent-01..15;
+IDs: this change claims R-protocol-01..03; R-tools-30 and 31; R-workspace-16..19; R-agent-01..15;
+R-session-41..44.
 R-session-41..44. `add_realtime_gui_output` holds R-protocol-04 in the same domain; the corpus check
 requires every number up to a domain's highest to be issued, so the range is split between the two open
 changes, recorded here and in that change's tasks.md.
@@ -34,16 +35,20 @@ changes, recorded here and in that change's tasks.md.
 - [ ] R-session-42: the last model recorded per request, and a mid-session model switch in the lane
 - [ ] R-session-43: the adjective-noun display name, generated at the surface boundary with a seeded generator in the lane
 - [ ] R-session-44: UUID v7 ids in canonical lowercase text, and the sort-by-id scenario
-- [ ] R-workspace-16: the `tracing` facade in the libraries, a subscriber installed only in binaries, logs on stderr
+- [ ] R-workspace-16, 19: the `tracing` facade in the libraries, a subscriber installed only in binaries
+- [ ] R-workspace-17: logs on stderr at the default level, read from a child binary's stderr
 - [ ] R-workspace-17: the log lines on stderr at `info`, with the lane asserting stdout stays empty
 - [ ] lane: `crates/tau-test/tests/features/agent.feature` driven by the in-process stub provider; steps in `crates/tau-test/src/steps/agent.rs`; `STEPS.md` regenerates
-- [ ] docs: `docs/stack.md` pins for `futures`, `tracing`, `uuid`, `petname`, and the row naming the provider leaf when it lands
+- [ ] docs: `docs/stack.md` pins for `futures`, `tracing`, `uuid`, `petname`; the rows stating the log rules
+(R-workspace-16..19) as graph rules, and the row naming the provider leaf when it lands
+- [ ] lane: a child binary that opens a session, runs the loop against the stub provider, and writes its logs,
+so a scenario reads its stdout and stderr (the pattern `open_store` and `crash_store` set)
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops), `delta` in its token sense, `prompt cache`,
 `provider` and `queue cap`, all used by these clauses and defined nowhere
 - [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
 `change_spec_requirements`, which archives on the scenario `@R-workspace-08` this change's `R-agent-15`
 writes; at archive the counts move by what the deltas add — `spec/agent/spec.md` +15, `spec/protocol/spec.md`
-+3, `spec/tools/spec.md` +2, `spec/workspace/spec.md` +3, `spec/session/storage/spec.md` +4 — read off the
+`spec/workspace/spec.md` +4
 files, with `spec/session/spec.md`'s leaf cell and `spec/index.md`'s Corpus count moved to match
 - [ ] check: `cargo run -p tau-tools --bin gates` (runs every `run` row: ci lane reports the rest — spec tool, spec lint, contracts current, doc lint, links, unit + surface, behaviour, steps current, dependencies current, no local state tracked, toolchain pinned, core has no UI logic, core has no runtime, core spawns nothing, core has no HTTP client, core installs no subscriber, lints); rows in state M0 — live output under load, headless session, desktop — reported `skipped (M0)`; manual rows — workspace layout, eval — reported by hand
 - [ ] spec-review (reviewer ticks)

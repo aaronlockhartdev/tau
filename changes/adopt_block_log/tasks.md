@@ -34,9 +34,7 @@ retires, while `add_turn_loop` says "stop the loop" with no `loop` entry of its 
 - [ ] re-word the open changes written in the old unit — `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_skills_convention`; a word-boundary grep (`grep -rilwE --exclude-dir=archive
-'turn(s)?|event(s)?|committed' changes/*/`) finds those six and no other change; the hits in `_template`,
-`adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`, `change_spec_requirements` and
-`spike_gpui_surface` are the new unit's own words, and `adopt_hash_anchor_editing`'s are `return`
+`spike_gpui_surface` are the new unit's own words
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` and `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added; the row sizes and the two
 percentages in the proposal come off that run, which is a scratch probe, so it carries no committed repro.

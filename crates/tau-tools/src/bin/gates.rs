@@ -121,14 +121,14 @@ fn main() {
     }
     let mut failed = bad.len();
     for finding in &bad {
-        println!("{:<23}FAIL  {finding}", "malformed row");
+        println!("{:<28}FAIL  {finding}", "malformed row");
     }
     let runnable = rows
         .iter()
         .filter(|r| r.state == "run" && !r.command.contains(THIS_LANE))
         .count();
     for row in &rows {
-        print!("{:<23}", row.name);
+        print!("{:<28}", row.name);
         let _ = std::io::stdout().flush();
         // The lane row runs this binary, so running it here would recurse. The
         // command is the test, not the row name: renaming the row keeps the skip.
