@@ -16,4 +16,12 @@
 - [x] Implement: `<project>/.tau/.gitignore` containing `*`, written once, and the store path inside `.tau` (`crates/tau-core/src/project.rs`; scenarios `@R-workspace-06,07` in crates/tau-test/tests/features/workspace.feature, `@R-session-18` in crates/tau-test/tests/features/session.feature)
 - [ ] R-workspace-08: `Project::disclosure()` returns the line naming the write, and the scenario that prints it
 is `add_turn_loop`'s `R-agent-15`, tagged `@R-workspace-08`
+- [ ] docs: the delta-format sweep `adopt_block_log` carried here — bare `## ADDED` markers to
+`## ADDED Requirements`, headings over the six-word cap, `THE SYSTEM SHALL NOT` obligations outside
+the five EARS forms, and the `Apply to` line naming each delta's live leaf (`add_subagent_support`,
+`add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`, `adopt_hash_anchor_editing`,
+`adopt_skills_convention`)
+- [ ] docs: the clause-layout sweep `adopt_block_log` carried here — obligation, `Acceptance:` and
+`Why:` adjacent, no blank line between them; the count and the file list are in
+`changes/archive/2026-11-16-adopt_block_log/tasks.md`
 - [ ] spec-review (reviewer ticks)

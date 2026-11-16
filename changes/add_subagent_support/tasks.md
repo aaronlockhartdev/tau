@@ -10,6 +10,8 @@
 - [ ] Implement: `subagent_update` and directed messages in `tau-protocol`
 - [ ] Implement: roster view, attach, steer, cancel
 - [ ] Implement: directed-message block kinds. The parent column is not to be added: `add_session_storage` landed it as `sessions.parent` (R-session-08), and `Store::fork` writes it.
+- [ ] R-config-13: `subagent.max_concurrent` (20) and `subagent.max_depth` (3) land in
+`docs/stack.md`'s Config row with their defaults, that row being where every key is listed
 - [ ] Verify: contracts current after the new wire types
 - [ ] Eval: a fan-out review task, on demand
 - [ ] spec-review before commit

@@ -2,9 +2,9 @@
 
 One line per committable unit. Implementation lines name an `R-ID`. Spikes and gates first.
 
-- [ ] IDs: this change claims `R-session-35..40, 45 and 46`; `add_turn_loop` claims 41..44 and lands after
-this one, so the session range is split until that change archives — the gap check counts open deltas, so
-`spec -- --check` stays green across the split
+- [x] IDs: this change claims `R-session-35..40, 45 and 46`; `add_turn_loop` claims 41..44 and lands after
+this one, so the session range is split — the leaf holds 35..40, 45, 46 and `add_turn_loop`'s delta
+holds 41..44, so the gap check counts open deltas and `spec -- --check` stays green across the split
 - [x] gates: confirm `core has no UI logic`, `core has no runtime`, `core spawns nothing` stay green over the renamed schema (no new rows in this change)
 - [x] R-session-35: delta clause in changes/adopt_block_log/specs/session/storage/spec.md, then rewrite the migration in place in `crates/tau-core/src/storage/mod.rs` — `events` → `blocks`, drop the `turn` table, the `committed` column and `events_no_late_insert`, add `requests`, rebuild `blocks_fts` (external content: drop, recreate, rebuild); pre-v1, so no store upgrade ships
 - [x] R-session-35: `Store::commit(&Block)` — one transaction per block, and one transaction for the batch a stream closes at once, store-wide sequence
@@ -27,9 +27,9 @@ this one, so the session range is split until that change archives — the gap c
 - [x] R-session-11: `export_jsonl` writes one line per block, and the store is unchanged after the export
 - [x] The mutable-state read — `MUTABLE` in `crates/tau-test/src/steps/session.rs` — names `sessions`
   and `requests`, the tables a store setup migrates; the R-session-03 scan is the step that reads
-  both names; the migrations leg reads both, the journal-upgrade leg only the journal mode
+  both names; the migrations leg reads the mode and the schema name, the journal-upgrade leg only the mode
 - [x] R-session-13: the store side answers a run from queries over blocks, proved by the lane's
-  harness-read step over `run` and `latest_request`. The `eval` lane is `AGENTS.md`'s `manual` row,
+  harness-read step over `run` and `latest_request`. The `eval` lane is `AGENTS.md`'s `M0` row,
   and no `eval` bin or suite file is in the tree, so nothing proves the harness end to end
 - [x] R-session-28: the event time lands on the block row
 - [x] R-session-31: the update and delete triggers name `blocks`
@@ -140,8 +140,10 @@ next request), a block shows its own event time (`add_realtime_gui_output`), no 
 session block (`add_user_config`), and skill and context costs are counted per request
 (`adopt_skills_convention`, `adopt_context_file_loading`); `change_spec_requirements` names the
 committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
-events -e committed changes/` now answers only the protocol's stream events (R-protocol-01 numbers
-them), the glossary's `event time`, git's `committed`, and the verb "turns"
+committed-marker clause as retired. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e
+events -e committed changes/` now answers only: the protocol's stream events (the provider's, numbered
+by R-protocol-01, and core's event stream, which R-surface-08 owns), the glossary's `event time`, the
+store's `commit` and git's `committed`, `add_turn_loop`'s own name, and the verb "turns"
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
@@ -158,9 +160,10 @@ belong to no change in this range; `add_test_lanes` re-formats its own 6. The fo
 `changes/_template/specs/_domain_/_area_/spec.md`
 
 Carried: the three lines above stay open, and each has a named home. The delta-format sweep and the
-clause-layout sweep belong with `change_spec_requirements`, the change that owns the spec format. The
-Measure belongs with the `blobs` change this proposal promises to open, because the numbers it
-reproduces are that option's evidence and the current schema is the one to measure.
+clause-layout sweep belong with `change_spec_requirements`, the change that owns the spec format, and
+land there as its task lines. The Measure belongs with the `blobs` change this proposal promises to
+open, which is not in `changes/` yet, because the numbers it reproduces are that option's evidence and
+the schema to measure is the one this change landed.
 
 - [x] archive: `spec -- archive adopt_block_log` ran; the leaf gained 8 (35..40, 45, 46) and retired 2
 (07, 30), so `spec/session/storage/spec.md` reads 25 requirements and `spec/index.md`'s corpus 33,

@@ -2,8 +2,8 @@
 //! reads the store back (R-session-01, 02, 28, 29, 35, 36, 37, 38, 45). The scan for log
 //! content in the mutable tables and the checkpoint probe run on a reader connection
 //! of the lane's own, `synchronous` on the store's connection, and the schema refuses
-//! writes (R-session-03, 04, 05, 30, 31, 32). A crash is a child process the lane kills
-//! (`bin/crash_store.rs`), and the store is read back after it dies (R-session-06, 07).
+//! writes (R-session-03, 04, 05, 31, 32). A crash is a child process the lane kills
+//! (`bin/crash_store.rs`), and the store is read back after it dies (R-session-06).
 //! A fork copies a range and the requests it names, the index answers a search, an
 //! export writes JSONL, a run and a resume are answered from the log, and the terminal
 //! stamps a request's counts (R-session-08, 10, 11, 13, 39, 40, 46).

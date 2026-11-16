@@ -22,7 +22,7 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `tail`: the newest messages of a session, kept verbatim.
 `project`: the working directory's git root, or the working directory when it is not one.
 `M0`: a gate the scaffold created and nothing implements, reported `skipped (M0)`.
-`event time`: the moment core produces a block, in Unix milliseconds UTC.
+`event time`: the moment core produced a block or emitted a stream event, in Unix milliseconds UTC.
 `session start output`: the lines tau prints when a session opens, before any block.
 `block`: one item of a conversation, stored as one row of the log; the store's unit.
 `request`: one round-trip to a provider: its model, its usage, its terminal reason.
@@ -33,9 +33,12 @@ One term per line: `term`: definition (≤15 words). Specs use these terms and d
 `terminal`: the reason a request ended, stamped on its row together with its counts.
 `state`: a pair of log sequences naming the context a block was built from.
 `stream`: the blocks one model call produces, closed at once by its provider.
+`event stream`: core's channel to the frontends: the events of a session, one per state change.
+`markdown block`: a renderable range of transcript markdown — paragraph, list, fence, table; gpui's block tree.
+`fence`: markdown's fenced code span, open until its closing line.
 `resume`: read a session's stored log to continue it in a new process.
 `payload`: a block's content: the text or result a single block carries.
-`run`: a session's requests in order, with the blocks each produced.
+`run`: a session's blocks, in the log's sequence order.
 `store setup`: a fresh store's journal upgrade and migrations, the steps a second process waits out.
 `log`: the `blocks` table — every block, append-only, one row each.
 `session`: one running agent's stored conversation: its row, its requests, its blocks.
