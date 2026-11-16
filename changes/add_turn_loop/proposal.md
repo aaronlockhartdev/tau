@@ -56,8 +56,9 @@ injects and the trait that runs a tool in `tau-core` (R-tools-30, 31). `spec/wor
 rules and the rule that the HTTP client to a model provider stays out of core and its graph (R-workspace-16..19):
 libraries emit on the `tracing` facade, only a binary installs a subscriber, logs go to stderr at the default
 level.
-gains four session facts (R-session-41..44:
-a display name supplied at the surface boundary, and a UUID v7 key in canonical text).
+`spec/session/storage/` gains four session facts (R-session-41..44: the working directory a session opened
+at, the last model answered from its newest request, a display name supplied at the surface boundary, and
+a UUID v7 key in canonical text).
 Two gate rows join `AGENTS.md`: `core has no HTTP client` and `core installs no subscriber`, both tree
 greps in the shape of `core has no runtime`.
 The lane runs on an in-process stub provider in `crates/tau-test` implementing the trait; tapes are

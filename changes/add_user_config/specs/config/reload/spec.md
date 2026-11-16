@@ -65,12 +65,6 @@ key.
 Acceptance: @R-config-11
 Why: a whole-table replace makes a project file erase a provider the user set globally.
 
-### R-config-14  An array replaces wholesale
-
-WHEN the project layer sets a key whose global value is an array THE SYSTEM SHALL replace that array.
-Acceptance: @R-config-14
-Why: appending arrays across layers makes a project's tool list depend on an unseen global file.
-
 ### R-config-12  Either layer reloads live
 
 WHEN a config file at either layer changes on disk THE SYSTEM SHALL rebuild the merged view under R-config-05.
@@ -83,3 +77,9 @@ token budget, the wall clock limit, the repeated-tool-call stop, the observation
 and the memory context budget among them.
 Acceptance: @R-config-13
 Why: a key set by reading source is a key nobody can set without reading source.
+
+### R-config-14  An array replaces wholesale
+
+WHEN the project layer sets a key whose global value is an array THE SYSTEM SHALL replace that array.
+Acceptance: @R-config-14
+Why: appending arrays across layers makes a project's tool list depend on an unseen global file.

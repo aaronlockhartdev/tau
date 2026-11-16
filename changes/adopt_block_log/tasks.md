@@ -64,10 +64,9 @@ finds those seven, plus `adopt_block_log`, `add_turn_loop`, `adopt_observational
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] sweep: the clause layout is the template's — obligation, `Acceptance:` and `Why:` adjacent, with no
-blank line between them. The live corpus has none, and none of the deltas these changes own has one; this
-range already cleaned the one in `add_test_lanes`. A clause whose `Acceptance:` sits in its own paragraph
-reads as a second obligation. This counts them, skipping `REMOVED` headings because a REMOVED block carries
-no obligation:
+blank line between them. The live corpus has none, and none of the deltas these changes own has one. A
+clause whose `Acceptance:` sits in its own paragraph reads as a second obligation. This counts them, skipping
+`REMOVED` headings because a REMOVED block carries no obligation:
 
 `awk 'FNR==1{prev=""} /^Acceptance:/{if(prev=="" && pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n+0}' $(find changes -name "*.md" -not -path "*/archive/*")`
 
