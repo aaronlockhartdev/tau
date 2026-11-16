@@ -43,7 +43,8 @@ the layout is R-agent-13's.
 
 ### R-session-25  Thresholds come from config
 
-THE SYSTEM SHALL read the observation and reflection thresholds from user config, at the defaults user config lists.
+THE SYSTEM SHALL read the observation and reflection thresholds from user config, at the defaults
+`R-config-13` lists.
 Acceptance: @R-session-25
 Why: a context budget the model's own window sets is one ceiling shared by two agents.
 

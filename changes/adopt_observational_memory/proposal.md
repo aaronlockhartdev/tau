@@ -25,7 +25,9 @@ An observation is a block in the `observations` slot and a reflection a block in
 
 Eval: on demand. Whether observations beat the raw message tail is a real-LLM quality question, so the suite runs by hand before a threshold changes.
 
-Open: the threshold defaults sit with the config change, and `R-config-13` lists the memory context budget
+Open: the surface and ACP shape of a session's memory state are owned by no change — `R-session-26` carries a
+count to a frontend, not the state itself — so they open as their own. The threshold defaults sit with the
+config change, and `R-config-13` lists the memory context budget
 among the keys. No change owns the rule that turns that budget into the threshold to write at —
 `add_turn_loop` defers the cap policy to a later change — so it opens as its own; this change owns only the
 threshold that triggers an observation.

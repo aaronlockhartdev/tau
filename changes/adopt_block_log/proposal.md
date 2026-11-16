@@ -80,7 +80,6 @@ row, so that clause now appends an observation block naming the range it superse
 `crates/tau-protocol/src/bin/contracts.rs:1` comment cites R-workspace-04, a clause issued by
 `change_spec_requirements` and live only once that change archives: the citation stays, and the comment
 notes the clause is pending.
-(workspace runs 09..15): the citation moves to the invariant at `spec/index.md:7`.
 
 Eval: none needed — a log's unit is mechanical, and the lanes count commits and rows.
 

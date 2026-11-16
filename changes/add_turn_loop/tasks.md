@@ -48,7 +48,10 @@ and `@R-workspace-08` that lets `change_spec_requirements` archive
 - [ ] lane: a child binary that opens a session, runs the loop against the stub provider and writes its logs, so a scenario reads its stdout and stderr (the pattern `open_store` and `crash_store` set)
 - [ ] docs: `docs/stack.md` — pins for `futures`, `tracing`, `uuid` and `petname`; the rows stating the log rules (R-workspace-16..19) as graph rules, in the shape of the rows R-workspace-14 and 15 hold; the Storage row's clause range after `adopt_block_log` moved it; the row naming the provider leaf when that change lands
 - [ ] docs: `docs/glossary.md` — `loop` (what R-agent-12 stops), `delta` in its token sense, `display name`,
-`prompt cache`, `provider`, `queue cap`, and the three the log clauses use: `library`, `binary`, `frontend`
+`prompt cache`, `provider`, `queue cap`, the three the log clauses use (`library`, `binary`, `frontend`),
+and the two streams a reader meets in one protocol leaf: `provider stream` (the events of one provider
+request, numbered by R-protocol-01) and `event stream` (core's stream a frontend renders, whose clauses are
+`add_realtime_gui_output`'s)
 - [ ] archive: lands after `adopt_block_log` (its clauses own blocks and requests) and before
 `change_spec_requirements`, which archives on the scenario `@R-agent-15` writes; at archive the counts move
 by what the deltas add — `spec/agent/spec.md` +15, `spec/protocol/spec.md` +3, `spec/tools/spec.md` +2,

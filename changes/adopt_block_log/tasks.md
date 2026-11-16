@@ -43,7 +43,9 @@ output`. The live `log` cell names `events`, `run` reads "a session's turns in o
 produced", `turn` reads "one request to the model and what it produced, numbered per session", and
 `session` names turns: all of it is this change's unit
 - [ ] docs: `docs/stack.md` Storage row names the new tables and the clause ranges
-- [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1` cites R-workspace-04, which is not live; point it at the invariant in `spec/index.md`
+- [ ] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:66` and `:74` cite R-workspace-04, a clause
+`change_spec_requirements` issues and that goes live at its archive; each comment marks the clause pending, and
+the citation stays (R-workspace-04)
 - [ ] docs: sweep the deltas this change does not touch: bare `## ADDED` markers to `## ADDED Requirements`
 (`add_subagent_support` 4 leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
 `adopt_hash_anchor_editing`, `adopt_skills_convention`); headings over the six-word cap (`R-config-01`,
@@ -62,12 +64,13 @@ finds those seven, plus `adopt_block_log`, `add_turn_loop`, `adopt_observational
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
 - [ ] sweep: the clause layout is the template's — obligation, `Acceptance:` and `Why:` adjacent, with no
-blank line between them. The live corpus has none, and no in-range delta does after this change.
+blank line between them. The live corpus has none, and no delta owned by these changes does after this one.
 A clause whose `Acceptance:` sits in its own paragraph reads as a second obligation. `awk 'FNR==1{prev=""}
-/^Acceptance:/{if(prev=="" && pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n}' $(find changes -name
-"*.md" -not -path "*/archive/*")` counts 66 today, all of them in the out-of-range deltas named above; the
+pprev !~ /^###/) n++} {pprev=prev; prev=$0} END{print n+0}' $(find changes -name
+"*.md" -not -path "*/archive/*")` counts 66 today: 60 in the out-of-range deltas named above, 6 in `add_test_lanes`, whose delta this range
+edits and whose clauses the sweep re-formats as well; the
 headings of `REMOVED` clauses are skipped, since a REMOVED block carries no obligation. The sweep takes
-those 66 and the count reaches 0; the form is the template's, `changes/_template/specs/_domain_/_area_/spec.md`
+those 66 and the count reaches 0; the form is the template's,
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
 `spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
 count and `spec/index.md`'s Corpus count move by the same numbers read off the files
