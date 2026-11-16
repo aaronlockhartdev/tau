@@ -2,8 +2,9 @@
 
 - [x] audit the corpus against the requirement-focused standard
 - [x] index invariants name their proof; mechanics and duplication cut
-- [x] gates: `core has no UI logic`, `contracts current`, `steps current` PASS; `live output under load`
-reported `skipped (M0)` — its row's state is `M0` and nothing implements it
+- [x] gates: the four rows this change added — `core has no UI logic`, `contracts current`, `steps current`
+PASS; `live output under load` reported `skipped (M0)`, its state, nothing implementing it. The report over
+every row is the unticked `check:` line naming `--bin gates`
 - [x] skills: check 11b, `Why:` enumeration, index edited in place
 - [x] templates: delta clause, step definition, `Why:` under ADDED
 - [x] `workspace` domain row and stub
