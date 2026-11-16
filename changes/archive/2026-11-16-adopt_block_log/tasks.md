@@ -127,14 +127,17 @@ is absent from the schema and a scenario reads that absence
 - [x] docs: `crates/tau-protocol/src/bin/contracts.rs:1`, `:67` and `:75` cite R-workspace-04, a clause
   `change_spec_requirements` issues and that goes live at its archive; the comments cite the clause
   where it applies and carry no marker of their own, and the citation stays (R-workspace-04)
-- [ ] docs: sweep the deltas this change does not re-format: bare `## ADDED` markers to `## ADDED Requirements`
-(`add_subagent_support` 4 leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
-`adopt_hash_anchor_editing`, `adopt_skills_convention`); headings over the six-word cap (`R-config-01`,
-`R-config-05`, `R-acp-01`, `R-acp-04`, `R-acp-06`, `R-surface-01`, `R-surface-02`, `R-surface-07`,
-`R-surface-21`, `R-tools-02`, `R-tools-06`, `R-tools-07`, `R-tools-09`, `R-tools-11`, `R-tools-14`,
-`R-tools-28`, `R-harness-04`); the `THE SYSTEM SHALL NOT` obligations that sit outside the five EARS
-forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`, `R-harness-08`); and the
-`Apply to` line naming the live leaf each delta applies to, missing from those six deltas
+- [ ] docs: sweep the deltas this change does not re-format, in six changes (`add_subagent_support` 4
+leaves, `add_surface_components`, `add_test_lanes`, `adopt_context_file_loading`,
+`adopt_hash_anchor_editing`, `adopt_skills_convention`): bare `## ADDED` markers to
+`## ADDED Requirements`; the `Apply to` line naming the live leaf each delta applies to; the clauses
+phrased as a bare negation, where §Requirement form of `spec-authoring` names no negated form
+(`R-context-04`, `R-tools-16`, `R-tools-23` negate the invariant form, `R-tools-28` negates a `WHERE`
+form; `R-surface-02` and `R-harness-08` keep `SHALL NOT` as a second verb inside an EARS clause, so they
+need no re-form). The 17 headings that ran over the six-word cap — `R-config-01`, `R-config-05`,
+`R-acp-01`, `R-acp-04`, `R-acp-06`, `R-surface-01`, `R-surface-02`, `R-surface-07`, `R-surface-21`,
+`R-tools-02`, `R-tools-06`, `R-tools-07`, `R-tools-09`, `R-tools-11`, `R-tools-14`, `R-tools-28`,
+`R-harness-04` — are re-worded, ticked in `change_spec_requirements`, and no open delta heading runs over
 - [x] re-worded: the seven open changes no longer speak the retired unit as a live concept — directed
 messages are blocks in each participant's log (`add_subagent_support`, and its client `prompt` queues to the
 next request), a block shows its own event time (`add_realtime_gui_output`), no config value reaches a

@@ -14,7 +14,7 @@ WHILE a child awaits input THE SYSTEM SHALL show that count on the roster.
 
 Acceptance: @R-surface-20
 
-### R-surface-21  Attaching brings one child to the foreground
+### R-surface-21  Attaching brings a child forward
 
 WHEN the user attaches to a child THE SYSTEM SHALL render that child's stream in the foreground view.
 

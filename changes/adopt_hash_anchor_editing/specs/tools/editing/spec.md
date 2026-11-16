@@ -39,7 +39,7 @@ WHEN a tool call requests undo THE SYSTEM SHALL revert that session's last edit,
 
 Acceptance: @R-tools-27
 
-### R-tools-28  The outline tool is off by default
+### R-tools-28  The outline tool defaults off
 
 WHERE `tools.outline` is off THE SYSTEM SHALL NOT register the outline tool.
 

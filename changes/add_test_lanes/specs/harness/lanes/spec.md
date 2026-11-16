@@ -2,7 +2,7 @@
 
 ## ADDED
 
-### R-harness-04  The behaviour lane runs the feature tree
+### R-harness-04  The behaviour lane runs features
 
 WHEN the behaviour lane runs THE SYSTEM SHALL run every scenario in `crates/tau-test/tests/features/` through cucumber, each tagged with a requirement ID.
 

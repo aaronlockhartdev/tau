@@ -12,7 +12,7 @@ Why: a block is committed by the transaction that inserts it, so a marker closed
 
 ### R-session-36  A request records one round-trip
 
-THE SYSTEM SHALL record one `requests` row per provider round-trip, with its model, usage, and terminal reason, and no payload.
+THE SYSTEM SHALL record one `requests` row per provider round-trip, with its provider, model, usage, and terminal reason, and no payload.
 Acceptance: @R-session-36
 Why: usage is a provider number the log cannot derive, and a request that streamed no block is a fact.
 
@@ -33,7 +33,7 @@ Acceptance: @R-session-38
 
 WHEN a session resumes THE SYSTEM SHALL answer the newest `requests` row and only the `blocks` rows that follow it.
 Acceptance: @R-session-39
-Why: the whole-session read materialises every payload of every block, and resume runs on every open, so the narrow read's scope is what keeps its cost down.
+Why: a whole-session read materialises every payload, and resume runs on every open, so the narrow read's scope is what keeps its cost down.
 
 ### R-session-40  Usage arrives at the terminal
 

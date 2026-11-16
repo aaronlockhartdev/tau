@@ -2,7 +2,7 @@
 
 ## ADDED
 
-### R-tools-14  Skill directories load in a fixed order
+### R-tools-14  Skill directories load in order
 
 THE SYSTEM SHALL load skills from `<project>/skills`, `<project>/.agents/skills`, `<root>/skills`, `<root>/.agents/skills`, then the configured extra directories, in that order.
 

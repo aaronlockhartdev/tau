@@ -2,13 +2,13 @@
 
 ## ADDED
 
-### R-surface-01  The component library stays in the app crate
+### R-surface-01  The component library stays app-only
 
 WHERE the desktop app builds THE SYSTEM SHALL keep the component library out of `crates/tau-core`.
 
 Acceptance: gate core has no UI logic
 
-### R-surface-02  The pin is a library version, not a Zed revision
+### R-surface-02  The pin is a library version
 
 THE SYSTEM SHALL take GPUI through a published component-library release, and SHALL NOT depend on a Zed source revision.
 
@@ -40,7 +40,7 @@ WHEN a control accepts focus THE SYSTEM SHALL expose its semantics through Acces
 
 Acceptance: gate desktop
 
-### R-surface-07  Fallback when a closed block cannot hold layout
+### R-surface-07  Fallback for unhostable block layout
 
 IF the surface spike shows `TextView` unable to retain a closed block's layout while the tail re-parses THEN THE SYSTEM SHALL style the unstyled layer's `TextView` in tau.
 

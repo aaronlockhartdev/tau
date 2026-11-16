@@ -8,7 +8,7 @@ WHERE definitions live at `~/.agents/agents/<name>/agent.md` and `.agents/agents
 
 Acceptance: @R-tools-01
 
-### R-tools-02  A definition becomes a capability list and a prompt
+### R-tools-02  A definition becomes a capability list
 
 WHEN a definition loads THE SYSTEM SHALL read `name`, `description`, `model`, `tools`, `permissions`, and `mode` from its frontmatter and take its body as the child's system prompt.
 
@@ -32,13 +32,13 @@ WHEN a session's context is assembled THE SYSTEM SHALL list the session ids vali
 
 Acceptance: @R-tools-05
 
-### R-tools-06  Concurrency is capped at the config key
+### R-tools-06  Concurrency caps at a config key
 
 WHEN the running children of one parent reach `subagent.max_concurrent` THE SYSTEM SHALL refuse a further child and report the cap.
 
 Acceptance: @R-tools-06
 
-### R-tools-07  Depth is capped at the config key
+### R-tools-07  Depth caps at a config key
 
 WHEN a session's depth reaches `subagent.max_depth` THE SYSTEM SHALL omit the `task` tool from its context.
 
@@ -50,7 +50,7 @@ WHILE a child runs THE SYSTEM SHALL apply the parent's permission rules to the c
 
 Acceptance: @R-tools-08
 
-### R-tools-09  A child gains no right its parent lacks
+### R-tools-09  A child gains no parental right
 
 WHEN a child requests a permission THE SYSTEM SHALL refuse any right absent from the parent's rules.
 
@@ -62,7 +62,7 @@ WHEN a child is a fork THE SYSTEM SHALL copy the parent's history into the child
 
 Acceptance: @R-tools-10
 
-### R-tools-11  A fork shares the parent's prompt cache
+### R-tools-11  A fork shares the prompt cache
 
 WHEN a fork runs THE SYSTEM SHALL read the parent's prompt cache on its first request.
 

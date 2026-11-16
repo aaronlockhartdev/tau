@@ -4,7 +4,7 @@ Apply to `spec/config/reload/spec.md` at archive time. Describe the difference, 
 
 ## ADDED Requirements
 
-### R-config-01  One root for a user's global files
+### R-config-01  One root for global files
 
 THE SYSTEM SHALL keep a user's global files under one root, `~/.tau` by default.
 Acceptance: @R-config-01
@@ -25,7 +25,7 @@ Why: a project that changes one model key must not have to restate the whole glo
 WHEN tau writes a config file at either layer THE SYSTEM SHALL preserve its comments, formatting, and key order.
 Acceptance: @R-config-04
 
-### R-config-05  A live key applies without a restart
+### R-config-05  A config key applies without restart
 
 WHERE a config key takes effect live THE SYSTEM SHALL apply a changed value to the running session without a restart.
 Acceptance: @R-config-05
