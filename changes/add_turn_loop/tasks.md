@@ -15,8 +15,11 @@ gate reports the new files
 - [ ] R-protocol-02: the tool's declared shape in `crates/tau-protocol`, its schema generated, and the stub tool's schema among them; the scenario reads the generated schema and asserts it names the tool's input schema, and deleting that field from the type turns it red (@R-protocol-02)
 - [ ] R-protocol-03: the block kind set and the request reason set as generated shapes in `crates/tau-protocol`, into `contracts/`; the scenario reads both sets and asserts every kind a block commits and every reason a request row is there (@R-protocol-03)
 - [ ] R-tools-30: the registry type core consumes, and the stub tool in `crates/tau-test` answering a call through it (@R-tools-30)
-- [ ] R-tools-31: the trait that runs a tool, declared in `tau-core`, with the stub tool implementing it (@R-tools-31)
+- [ ] R-tools-31: the trait that runs a tool, declared in `tau-core`, with the stub tool implementing it; the
+scenario calls a tool through the trait and reads the result block it returns (@R-tools-31)
 - [ ] R-workspace-18: confirm `tau-core`'s graph carries no HTTP client after the trait lands
+- [ ] R-workspace-19: libraries emit on `EventSink`, a facade the frontend builds; the scenario opens a
+session through a stub sink and asserts every event of the run reaches it (@R-workspace-19)
 - [ ] R-agent-01: the loop in `crates/tau-core/src/agent/`, committing a block at the stream's block stop
 - [ ] R-agent-02: deltas folded, never committed; the scenario counts commits
 - [ ] R-agent-03: the context built from the log and sent whole, with the stub asserting a full context on every request

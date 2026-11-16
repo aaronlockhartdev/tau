@@ -6,9 +6,7 @@ A tau session must run for days without compaction. Rolling summaries destroy ea
 
 ## Options
 
-- Mirror Mastra OM: <https://mastra.ai/reference/memory/observational-memory> and the `packages/memory`
-source (read 2026-11-13); the docs state 5–40x compression and cache-first ordering. Cost: one session
-leaf spec; an observation and a reflection are blocks in the log, so no table lands.
+- Mirror Mastra OM: <https://mastra.ai/reference/memory/observational-memory> and the `packages/memory` source (read 2026-11-13); the docs state 5–40x compression and cache-first ordering. Cost: one session leaf spec; an observation and a reflection are blocks in the log, so no table lands.
 - Rolling summary: no external evidence in its favour; it discards earlier decisions, regrows context rot, and invalidates the prompt cache.
 
 ## Decision
@@ -23,17 +21,11 @@ Tau's own rules:
 
 ## Consequences
 
-An observation and a reflection are blocks in the log, in the `observations` slot: the log stays
-append-only (R-session-31), so a condensation replaces nothing — an observation names the block range it
-supersedes, and the next context is built from the observations and the kept tail. `adopt_block_log` lands
-that unit, and archives before this change. The count reaches a frontend on core's event stream, the shape
-`add_realtime_gui_output` owns (R-surface-08). Token budgets move from prompt text into storage.
-The clauses are in
-`changes/adopt_observational_memory/specs/session/memory/spec.md` as `R-session-19..27`, archived to
-`spec/session/memory/spec.md`.
+An observation is a block in the `observations` slot and a reflection a block in the `reflections` slot: the log stays append-only (R-session-31), so a condensation replaces nothing — an observation names the block range it supersedes, and the next context is built from the observations and the kept tail. `adopt_block_log` lands that unit, and archives before this change. The count reaches a frontend on core's event stream, the shape `add_realtime_gui_output` owns (R-surface-08). Token budgets move from prompt text into storage. The clauses are in `changes/adopt_observational_memory/specs/session/memory/spec.md` as `R-session-19..27`, archived to `spec/session/memory/spec.md`.
 
 Eval: on demand. Whether observations beat the raw message tail is a real-LLM quality question, so the suite runs by hand before a threshold changes.
 
-Open: the threshold defaults sit with the config change. The context cap that bounds the slot an
-observation fills is owned by no change — `add_turn_loop` defers the cap policy to a later change — so it
-opens as its own; this change owns only the threshold that triggers an observation.
+Open: the threshold defaults sit with the config change, and `R-config-13` lists the memory context budget
+among the keys. No change owns the rule that turns that budget into the threshold to write at —
+`add_turn_loop` defers the cap policy to a later change — so it opens as its own; this change owns only the
+threshold that triggers an observation.

@@ -18,6 +18,7 @@ this one, so the session range is split until that change archives — the gap c
 - [ ] R-session-02: the block-and-state transaction, proved by the crash child
 - [ ] R-session-03: the scan's mutable set becomes `sessions` and `requests` in `crates/tau-test/src/steps/session.rs`
 - [ ] R-session-04: the in-flight window scenario at block scale, with the checkpoint probe kept after the writer closes
+- [ ] R-session-05: `synchronous = NORMAL` stated for a committed block, not a committed turn (@R-session-05)
 - [ ] R-session-06: `crash_store` child — a block killed after its commit is present, a killed transaction leaves no row
 - [ ] R-session-08: `Store::fork` copies blocks and the request rows they name, and fork-resume appends without duplicating a copied block
 - [ ] R-session-10: the FTS index over `blocks`, with the search scenarios unchanged in result
@@ -54,12 +55,18 @@ forms (`R-context-04`, `R-tools-16`, `R-tools-23`, `R-tools-28`, `R-surface-02`,
 - [ ] re-word the open changes written in the old unit: `add_subagent_support` (its delta specs),
 `add_realtime_gui_output`, `add_user_config`, `add_test_lanes`, `adopt_context_file_loading` and
 `adopt_skills_convention`. `grep -rilw --exclude-dir=archive -e turn -e turns -e event -e events -e
-committed changes/` finds those six and no other change; the files it also lists — `_template`,
-`adopt_block_log`, `add_turn_loop`, `adopt_observational_memory`, `change_spec_requirements` and
-`spike_gpui_surface` — speak the new unit themselves, not the old one.
+committed changes/` finds those seven, counting `change_spec_requirements`, whose proposal states the retired
+committed marker as landing live; the matches in `_template`, `adopt_block_log`, `add_turn_loop`,
+`adopt_observational_memory` and `spike_gpui_surface` speak the new unit themselves, not the old one
+(R-workspace-08; gate doc lint)
 - [ ] Measure: the cost claim in the proposal, reproduced with `sqlite3` at `page_size=4096` — 3000 blocks of
 200-byte payload in the current schema, and the same with 3000 request rows added. The row sizes and the two
 percentages in the proposal come off a scratch probe, so they carry no committed repro until this lands.
+- [ ] sweep: the clause layout is the template's — obligation, `Acceptance:` and `Why:` adjacent, with no
+blank line between them. The live corpus has none; 69 clauses across the out-of-range deltas named above do,
+and the in-range deltas were re-formatted here. A clause whose `Acceptance:` sits in its own paragraph reads as a
+second obligation. `awk 'FNR==1{prev=""} /^Acceptance:/{if(prev=="")n++} {prev=$0} END{print n}' $(find changes -name "*.md" -not -path "*/archive/*")` counts them
+and reaches 0; the sweep re-formats them (gate doc lint)
 - [ ] archive: lands before `add_turn_loop`, whose clauses name blocks and requests; at archive
 `spec/session/storage/spec.md` gains 8 requirements and retires 2; `spec/session/spec.md`'s storage leaf
 count and `spec/index.md`'s Corpus count move by the same numbers read off the files
